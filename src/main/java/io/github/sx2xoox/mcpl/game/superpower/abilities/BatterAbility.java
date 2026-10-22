@@ -26,6 +26,7 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.Block;
 import org.bukkit.damage.DamageType;
@@ -38,6 +39,7 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
@@ -141,6 +143,10 @@ public final class BatterAbility extends Ability {
     private static final double SWING_TO = -70;
     private static final long FLIGHT_MAX_TICKS = 100;
     private static final int FLIGHT_MIN_TICKS = 5;
+    /** A launched enemy the server has not seen leave the ground by then was never launched (a ceiling above it). */
+    private static final int FLIGHT_NEVER_AIRBORNE_TICKS = 40;
+    /** Vanilla's safe fall distance, for entities without the attribute. */
+    private static final double SAFE_FALL = 3.0;
     private static final int HOMERUN_TEXT_TICKS = 40;
 
     /** Landed melee hits in the current streak and when the last one landed. */
@@ -539,11 +545,17 @@ public final class BatterAbility extends Ability {
     private record Hit(LivingEntity victim, Vector point, double distance) {
     }
 
-    /** Stars circling a staggered head: white for a body hit, red and white for a head hit. */
+    /**
+     * Stars circling a staggered head: white for a body hit, red and white for a head hit. None over an enemy hidden
+     * from the batter (stealth): they would mark where it hides.
+     */
     private void daze(LivingEntity victim, long ticks, boolean head) {
         Loop.repeat(ctx(), player(), 1, 2, Math.max(1, ticks / 2), run -> {
             if (!victim.isValid() || victim.isDead()) {
                 return false;
+            }
+            if (!isVisible(victim)) {
+                return true;
             }
             Location top = victim.getLocation().add(0, victim.getHeight() + 0.2, 0);
             int stars = head ? 3 : 2;
@@ -781,14 +793,22 @@ public final class BatterAbility extends Ability {
 
     /**
      * One enemy flying off a home run: its fall distance is kept at zero on the way (vanilla fall damage would be
-     * nobody's), the peak is recorded, and on landing it takes the fall as credited damage (capped).
+     * nobody's), the fall is measured like vanilla measures it, and on landing it takes the fall as credited damage
+     * (capped).
+     *
+     * <p>A player's position on the server lags its client by the ping: the flight only lands once the server has seen
+     * the enemy leave the ground, otherwise a laggy enemy would "land" before it took off and then take its real fall
+     * as vanilla damage that is nobody's. Nothing traces an enemy hidden from the batter.
      */
     private final class Flight implements LongPredicate {
 
         private final Player owner;
         private final LivingEntity enemy;
         private double peak;
+        /** Where the current fall began; whatever ends a vanilla fall (slow falling, water, a ladder) restarts it. */
+        private double fallTop;
         private Location last;
+        private boolean airborne;
         private boolean twinkled;
 
         Flight(Player owner, LivingEntity enemy) {
@@ -796,6 +816,7 @@ public final class BatterAbility extends Ability {
             this.enemy = enemy;
             this.last = Fx.body(enemy);
             this.peak = enemy.getLocation().getY();
+            this.fallTop = peak;
         }
 
         void start() {
@@ -810,23 +831,32 @@ public final class BatterAbility extends Ability {
             }
             enemy.setFallDistance(0);
             double y = enemy.getLocation().getY();
+            fallTop = breaksFall(enemy) ? y : Math.max(fallTop, y);
+            boolean grounded = Motion.isGrounded(enemy) || enemy.isInWater();
+            if (!grounded) {
+                airborne = true;
+            }
+            boolean shown = isVisible(enemy);
             if (y > peak) {
                 peak = y;
             } else if (!twinkled && tick > 2 && y < peak - 0.1) {
                 twinkled = true;
-                twinkle();
+                if (shown) {
+                    twinkle();
+                }
             }
             Location now = Fx.body(enemy);
-            if (now.distanceSquared(last) > 1.0E-3) {
+            if (shown && now.distanceSquared(last) > 1.0E-3) {
                 Vfx.line(ctx(), last, now, 2, Particle.DUST, CHALK, true);
                 Vfx.dot(now, Particle.DUST, STITCH, false);
             }
             last = now;
-            if (tick >= FLIGHT_MIN_TICKS && (Motion.isGrounded(enemy) || enemy.isInWater())) {
-                land();
+            if (airborne && tick >= FLIGHT_MIN_TICKS && grounded) {
+                land(shown);
                 return false;
             }
-            return true;
+            // Never seen off the ground (a ceiling right above it): there is no fall to credit.
+            return airborne || tick < FLIGHT_NEVER_AIRBORNE_TICKS;
         }
 
         /** The top of the flight: a star twinkles like a ball vanishing into the sky. */
@@ -837,12 +867,14 @@ public final class BatterAbility extends Ability {
             Fx.sound(at, Sound.ENTITY_FIREWORK_ROCKET_TWINKLE_FAR, 1.0f, 1.5f + Fx.jitter(0.1f));
         }
 
-        private void land() {
+        private void land(boolean shown) {
             Location feet = enemy.getLocation();
-            double fallen = peak - feet.getY();
-            double damage = enemy.isInWater() ? 0 : Math.clamp(fallen - 3, 0, Math.max(0, params().num("ult_fall_max")));
+            double damage = enemy.isInWater() ? 0 : fallDamage(enemy, fallTop - feet.getY());
             if (damage > 0) {
                 Combat.hit(ctx(), owner, enemy, damage, DamageType.FALL);
+            }
+            if (!shown) {
+                return;
             }
             Location ground = feet.clone().add(0, 0.1, 0);
             Vfx.ring(ctx(), ground, 0.9, 14, 0, Particle.DUST, CHALK, false);
@@ -940,6 +972,33 @@ public final class BatterAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** False for an enemy player hidden from the batter (stealth): nothing may trace or mark it. */
+    private boolean isVisible(LivingEntity entity) {
+        return !(entity instanceof Player hidden) || player().canSee(hidden);
+    }
+
+    /** True while {@code entity} is somewhere a vanilla fall ends or never builds up: slow falling, water, a ladder. */
+    private static boolean breaksFall(LivingEntity entity) {
+        return entity.isInWater() || entity.isClimbing() || entity.hasPotionEffect(PotionEffectType.SLOW_FALLING)
+                || entity instanceof Player flier && flier.isFlying();
+    }
+
+    /**
+     * The fall damage {@code entity} would take from {@code fallen} blocks, capped by {@code ult_fall_max}: like
+     * vanilla it starts past the entity's safe fall distance and is scaled by its fall damage multiplier, so passives
+     * that soften falls (a lighter landing, a fairy's jump) still work against a home run.
+     */
+    private double fallDamage(LivingEntity entity, double fallen) {
+        double safe = attribute(entity, Attribute.SAFE_FALL_DISTANCE, SAFE_FALL);
+        double multiplier = Math.max(0, attribute(entity, Attribute.FALL_DAMAGE_MULTIPLIER, 1.0));
+        return Math.clamp((fallen - safe) * multiplier, 0, Math.max(0, params().num("ult_fall_max")));
+    }
+
+    private static double attribute(LivingEntity entity, Attribute attribute, double fallback) {
+        AttributeInstance instance = entity.getAttribute(attribute);
+        return instance == null ? fallback : instance.getValue();
+    }
 
     /** The owner's batting hands: chest height, a little forward and to the right. */
     private static Location hand(Player owner) {
