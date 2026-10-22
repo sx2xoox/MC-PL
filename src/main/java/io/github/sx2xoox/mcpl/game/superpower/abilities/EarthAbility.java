@@ -15,6 +15,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
@@ -117,6 +118,14 @@ public final class EarthAbility extends Ability {
     private static final int SHOCKWAVE_TICKS = 8;
     /** Cages that get the four erupting corner spikes (the rest only get particles), to cap display entities. */
     private static final int MAX_SPIKED_CAGES = 5;
+    /**
+     * Distance of a corner spike's foot from the cage's centre, along the diagonal: just outside the cage's 3x3
+     * footprint, so the spike's display never stands inside a corner pillar (clients light a display from the block
+     * at its position, and inside a solid pillar it renders black).
+     */
+    private static final double CORNER_SPIKE_DISTANCE = 2.35;
+    /** A corner spike's display stands this far above its foot, safely inside the air above the ground. */
+    private static final float SPIKE_ANCHOR_LIFT = 0.05f;
     private static final int RUBBLE_PER_CAGE = 3;
     private static final int MAX_RUBBLE = 12;
     private static final long TRICKLE_PERIOD = 6;
@@ -453,8 +462,17 @@ public final class EarthAbility extends Ability {
      * display's block (0 is the top of the ground below), tilted around that point.
      */
     private static Transformation spikePose(float width, float height, Quaternionf tilt, float baseY) {
+        return spikePose(width, height, tilt, 0.5f, baseY, 0.5f);
+    }
+
+    /**
+     * A block of the given width and height standing on its bottom centre at ({@code footX}, {@code baseY},
+     * {@code footZ}) of the display, tilted around that point.
+     */
+    private static Transformation spikePose(float width, float height, Quaternionf tilt, float footX, float baseY,
+                                            float footZ) {
         Vector3f bottom = new Quaternionf(tilt).transform(new Vector3f(width / 2, 0, width / 2));
-        Vector3f translation = new Vector3f(0.5f, baseY, 0.5f).sub(bottom);
+        Vector3f translation = new Vector3f(footX, baseY, footZ).sub(bottom);
         return new Transformation(translation, new Quaternionf(tilt), new Vector3f(width, height, width),
                 new Quaternionf());
     }
@@ -540,30 +558,41 @@ public final class EarthAbility extends Ability {
         return new Cage(body, feet, spikes);
     }
 
-    /** Four dripstone spikes burst out of the ground at the cage's diagonals, flaring outwards. */
+    /**
+     * Four dripstone spikes burst out of the ground at the cage's diagonals, flaring outwards. Each display stands
+     * on its spike's foot (on the ground of its own column), outside the cage, and skips a spot inside a wall.
+     */
     private void spikeCorners(Location feet, long ticks, List<BlockDisplay> spikes) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        Location base = feet.clone();
-        base.setX(feet.getBlockX() + 0.5);
-        base.setZ(feet.getBlockZ() + 0.5);
+        World world = feet.getWorld();
         for (int corner = 0; corner < 4; corner++) {
             double angle = Math.PI / 4 + corner * Math.PI / 2;
             double dx = Math.cos(angle);
             double dz = Math.sin(angle);
-            // The spike's block frame: its (0.5, 0, 0.5) is the spike's foot on the ground.
-            Location at = base.clone().add(dx * 1.9 - 0.5, 0, dz * 1.9 - 0.5);
+            Location foot = new Location(world, feet.getBlockX() + 0.5 + dx * CORNER_SPIKE_DISTANCE, feet.getY(),
+                    feet.getBlockZ() + 0.5 + dz * CORNER_SPIKE_DISTANCE);
+            Spots.snapToGround(world, foot, START_DEPTH);
+            Location anchor = foot.add(0, SPIKE_ANCHOR_LIFT, 0);
+            if (anchor.getBlock().getType().isOccluding()) {
+                continue; // inside a wall: it would render black and stick out of the wall
+            }
             float width = 0.8f + random.nextFloat() * 0.25f;
             float height = 1.6f + random.nextFloat() * 0.7f;
             Quaternionf lean = new Quaternionf().rotateAxis(0.3f + random.nextFloat() * 0.15f, (float) dz, 0,
                     (float) -dx);
-            BlockDisplay spike = Displays.spawn(ctx(), player(), at, BlockDisplay.class, ticks + 8, d -> {
+            BlockDisplay spike = Displays.spawn(ctx(), player(), anchor, BlockDisplay.class, ticks + 8, d -> {
                 d.setBlock(SPIKE);
                 d.setBrightness(null);
-                d.setTransformation(spikePose(width, 0.05f, lean, -0.2f));
+                d.setTransformation(cornerSpikePose(width, 0.05f, lean, -0.2f));
             });
-            Displays.animateNextTick(ctx(), player(), spike, spikePose(width, height, lean, -0.15f), 3);
+            Displays.animateNextTick(ctx(), player(), spike, cornerSpikePose(width, height, lean, -0.15f), 3);
             spikes.add(spike);
         }
+    }
+
+    /** {@link #spikePose} for a corner spike, whose display stands {@link #SPIKE_ANCHOR_LIFT} above its foot. */
+    private static Transformation cornerSpikePose(float width, float height, Quaternionf tilt, float baseY) {
+        return spikePose(width, height, tilt, 0, baseY - SPIKE_ANCHOR_LIFT, 0);
     }
 
     /** While a cage stands, grit trickles from its roof. */
@@ -622,18 +651,22 @@ public final class EarthAbility extends Ability {
 
     /**
      * Moves the target to the middle of its block column when that space is free (and inside the arena), so the cage
-     * fits around it.
+     * fits around it. Only slid sideways within its column: its height stays exactly what it was.
+     *
+     * <p>A player is teleported even when it already stands centred: its client runs ahead of the position the
+     * server knows, and the cage is built around the server's position. Without the teleport a running player's
+     * client could already be a block further, inside a cage wall, and simply walk out of the cage.
      */
     private void centerInBlock(LivingEntity target) {
         Location location = target.getLocation();
-        double dx = location.getBlockX() + 0.5 - location.getX();
-        double dz = location.getBlockZ() + 0.5 - location.getZ();
-        if (Math.abs(dx) < 0.05 && Math.abs(dz) < 0.05) {
+        Location centered = location.clone();
+        centered.setX(location.getBlockX() + 0.5);
+        centered.setZ(location.getBlockZ() + 0.5);
+        if (!(target instanceof Player) && centered.distanceSquared(location) < 0.05 * 0.05) {
             return;
         }
-        BoundingBox moved = target.getBoundingBox().shift(dx, 0, dz).expand(-0.01);
-        Location centered = location.clone().add(dx, 0, dz);
-        if (target.getWorld().hasCollisionsIn(moved) || !ctx().isInsideArena(centered)) {
+        if (!Spots.isFree(target.getWorld(), centered, target.getWidth(), target.getHeight())
+                || !ctx().isInsideArena(centered)) {
             return;
         }
         target.teleport(centered);
@@ -656,7 +689,7 @@ public final class EarthAbility extends Ability {
             if (spike.isValid()) {
                 Transformation current = spike.getTransformation();
                 Quaternionf lean = new Quaternionf(current.getLeftRotation());
-                Displays.animate(spike, spikePose(current.getScale().x(), 0.05f, lean, -0.6f), 5);
+                Displays.animate(spike, cornerSpikePose(current.getScale().x(), 0.05f, lean, -0.6f), 5);
             }
         }
         ThreadLocalRandom random = ThreadLocalRandom.current();

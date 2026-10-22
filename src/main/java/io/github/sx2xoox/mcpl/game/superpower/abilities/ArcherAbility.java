@@ -16,6 +16,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
@@ -119,6 +120,8 @@ public final class ArcherAbility extends Ability {
     private static final long RAIN_WINDUP = 8;
     /** Random spread of an arrow aimed at an enemy inside the zone. */
     private static final double RAIN_AIM_JITTER = 0.45;
+    /** How far below the aimed point (an enemy's feet or a block) the rain zone still finds the ground. */
+    private static final double AIM_GROUND_DROP = 8;
 
     /** Ticks an ability arrow stays stuck in the ground before vanishing. */
     private static final long STUCK_TICKS = 20;
@@ -400,7 +403,9 @@ public final class ArcherAbility extends Ability {
         Vector recoil = look.clone().setY(0);
         if (recoil.lengthSquared() > 1.0E-4) {
             recoil.normalize().multiply(-VOLLEY_RECOIL).setY(0.12);
-            player().setVelocity(Motion.clamp(player().getVelocity().add(recoil), MAX_SPEED));
+            // Set, not added: a player's velocity on the server is stale (its client moves it), and adding to it
+            // would fling the archer with whatever old push the server still remembers.
+            player().setVelocity(Motion.clamp(recoil, MAX_SPEED));
         }
 
         volleyFlash(eye, look, directions);
@@ -417,12 +422,16 @@ public final class ArcherAbility extends Ability {
     private void volleyFlash(Location eye, Vector look, List<Vector> directions) {
         World world = eye.getWorld();
         Location muzzle = eye.clone().add(look.clone().multiply(1.0)).subtract(0, 0.25, 0);
-        // Low in the archer's view and short-lived, so it never hides where the arrows go.
+        // Low in the archer's view and short-lived, so it never hides where the arrows go. It faces along the shot
+        // through its transformation (the display itself stays unrotated).
         Location bowAt = eye.clone().add(look.clone().multiply(1.4)).subtract(0, 0.5, 0);
-        bowAt.setDirection(look);
+        Location facing = bowAt.clone().setDirection(look);
+        float yaw = facing.getYaw();
+        float pitch = facing.getPitch();
         ItemDisplay bow = Displays.item(ctx(), player(), bowAt, ItemStack.of(Material.BOW),
-                Displays.centered(0, 0, 0, 0.3f, 0.3f, 0.3f, 0, 0, -45), 12);
-        Displays.animateNextTick(ctx(), player(), bow, Displays.centered(0, 0, 0, 0.9f, 0.9f, 0.35f, 0, 0, -45), 2);
+                Displays.centered(0, 0, 0, 0.3f, 0.3f, 0.3f, yaw, pitch, -45), 12);
+        Displays.animateNextTick(ctx(), player(), bow,
+                Displays.centered(0, 0, 0, 0.9f, 0.9f, 0.35f, yaw, pitch, -45), 2);
         ctx().runLater(player(), 3, () -> {
             if (bow.isValid()) {
                 Displays.shrinkAway(ctx(), player(), bow, 4);
@@ -477,8 +486,8 @@ public final class ArcherAbility extends Ability {
         if (target.isValid() && !target.isDead()) {
             Vector push = flight.setY(0);
             if (push.lengthSquared() > 1.0E-4) {
-                push.normalize().multiply(VOLLEY_PUSH * Motion.knockbackFactor(target)).setY(0.1);
-                target.setVelocity(Motion.clamp(target.getVelocity().add(push), MAX_SPEED));
+                // Replaces the velocity: a player's velocity on the server is stale, never add to it.
+                Motion.push(target, push.normalize().multiply(VOLLEY_PUSH).setY(0.1), MAX_SPEED);
             }
         }
     }
@@ -784,24 +793,29 @@ public final class ArcherAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /** The ground point the owner aims at within {@code range}: an aimed enemy's feet, else the aimed block. */
+    /**
+     * The ground point the owner aims at within {@code range}: below an aimed enemy's feet (a jumping enemy marks
+     * the ground under it, not a spot in mid-air), else below the aimed block.
+     */
     private @Nullable Location aimedGround(double range) {
         LivingEntity target = ctx().findTarget(player(), range);
+        Location point;
         if (target != null) {
-            return target.getLocation();
+            point = target.getLocation();
+        } else {
+            Location eye = player().getEyeLocation();
+            RayTraceResult ray = eye.getWorld().rayTraceBlocks(eye, eye.getDirection(), range,
+                    FluidCollisionMode.NEVER, true);
+            if (ray == null) {
+                return null;
+            }
+            point = ray.getHitPosition().toLocation(eye.getWorld());
+            BlockFace face = ray.getHitBlockFace();
+            if (face != null) {
+                point.add(face.getDirection().multiply(0.3));
+            }
         }
-        Location eye = player().getEyeLocation();
-        World world = eye.getWorld();
-        RayTraceResult ray = world.rayTraceBlocks(eye, eye.getDirection(), range, FluidCollisionMode.NEVER, true);
-        if (ray == null) {
-            return null;
-        }
-        Location point = ray.getHitPosition().toLocation(world);
-        BlockFace face = ray.getHitBlockFace();
-        if (face != null) {
-            point.add(face.getDirection().multiply(0.3));
-        }
-        RayTraceResult ground = world.rayTraceBlocks(point, new Vector(0, -1, 0), 8, FluidCollisionMode.NEVER, true);
-        return ground == null ? point : ground.getHitPosition().toLocation(world);
+        Spots.snapToGround(point.getWorld(), point, AIM_GROUND_DROP);
+        return point;
     }
 }

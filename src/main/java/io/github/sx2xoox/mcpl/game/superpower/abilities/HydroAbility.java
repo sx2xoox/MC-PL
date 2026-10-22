@@ -1,5 +1,7 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -151,6 +153,8 @@ public final class HydroAbility extends Ability {
     private static final double RIDE_LOST = 3.0;
     private static final double CRASH_PUSH = 0.4;
     private static final double CRASH_LIFT = 0.3;
+    /** The rider steering predicts a player's client at most this many ticks ahead (a 500 ms round trip). */
+    private static final int MAX_LAG_TICKS = 10;
     /** Roughly how far the crash shove carries a rider; it is only shoved forward if it lands inside the arena. */
     private static final double CRASH_TRAVEL = 3.0;
     private static final long PUDDLE_TICKS = 20;
@@ -589,8 +593,47 @@ public final class HydroAbility extends Ability {
         }
     }
 
-    /** An enemy swept along by a column. */
-    private record Rider(LivingEntity entity, Column column) {
+    /** An enemy swept along by a column, with the velocities most recently sent to it (newest first). */
+    private static final class Rider {
+        final LivingEntity entity;
+        final Column column;
+        final Deque<Vector> sent = new ArrayDeque<>();
+
+        Rider(LivingEntity entity, Column column) {
+            this.entity = entity;
+            this.column = column;
+        }
+
+        /**
+         * Where the rider really is. A player's client runs ahead of the position the server knows: the pushes sent
+         * during the last round trip are already applied there but not yet reported back. Steering from the stale
+         * position would keep pushing a rider that is already in place, overshoot, and at a high ping make the
+         * ride oscillate ever harder; adding those pushes predicts the client's position instead.
+         */
+        Vector predictedPosition() {
+            Vector position = entity.getLocation().toVector();
+            int lag = lagTicks(entity);
+            Iterator<Vector> iterator = sent.iterator();
+            for (int i = 0; i < lag && iterator.hasNext(); i++) {
+                position.add(iterator.next());
+            }
+            return position;
+        }
+
+        void remember(Vector velocity) {
+            sent.addFirst(velocity.clone());
+            while (sent.size() > MAX_LAG_TICKS) {
+                sent.removeLast();
+            }
+        }
+    }
+
+    /** About how many ticks a player's client is ahead of the server (its round trip); 0 for mobs. */
+    private static int lagTicks(LivingEntity entity) {
+        if (!(entity instanceof Player player)) {
+            return 0;
+        }
+        return Math.clamp(Math.round(player.getPing() / 50.0), 0, MAX_LAG_TICKS);
     }
 
     /**
@@ -603,7 +646,8 @@ public final class HydroAbility extends Ability {
         private final World world;
         private final Location origin;
         private final Vector forward;
-        private final float yaw;
+        /** Turns the columns' poses (local +z forward) to the wave's heading; the displays stay unrotated. */
+        private final Quaternionf heading;
         private final Column[] columns;
         private final double distance;
         private final double speed;
@@ -616,8 +660,9 @@ public final class HydroAbility extends Ability {
         Wave(Location feet, int groundY) {
             this.world = feet.getWorld();
             this.forward = Motion.horizontalFacing(feet);
-            this.yaw = (float) Math.toDegrees(Math.atan2(-forward.getX(), forward.getZ()));
-            this.origin = feet.clone();
+            // Minecraft's yaw turns +z towards (-sin yaw, cos yaw); a display transformation turns by -yaw around y.
+            this.heading = new Quaternionf().rotateY((float) -Math.atan2(-forward.getX(), forward.getZ()));
+            this.origin = Displays.unrotated(feet);
             double width = Math.max(1, params().num("wave_width"));
             int count = Math.clamp(Math.round(width / COLUMN_SPACING), MIN_COLUMNS, MAX_COLUMNS);
             double spacing = width / count;
@@ -643,10 +688,10 @@ public final class HydroAbility extends Ability {
                 if (!reserveDisplays(3, lifetime)) {
                     break;
                 }
-                Location at = columnAt(column);
-                column.body = spawnLayer(at, WAVE_BODY, bodyPose(column, 0.12f), lifetime);
-                column.face = spawnLayer(at, WAVE_FACE, facePose(column, 0.12f, 18), lifetime);
-                column.crest = spawnLayer(at, WAVE_CREST, crestPose(column, 0.12f, 50), lifetime);
+                Location at = frontAt(column.offset, column.groundY);
+                column.body = spawnLayer(at, WAVE_BODY, turned(bodyPose(column, 0.12f)), lifetime);
+                column.face = spawnLayer(at, WAVE_FACE, turned(facePose(column, 0.12f, 18)), lifetime);
+                column.crest = spawnLayer(at, WAVE_CREST, turned(crestPose(column, 0.12f, 50)), lifetime);
             }
             telegraph();
             Loop.repeat(ctx(), owner, 0, 1, totalTicks, this, this::crashAll);
@@ -747,10 +792,10 @@ public final class HydroAbility extends Ability {
         }
 
         private void moveColumn(Column column, long tick) {
-            Location at = columnAt(column);
+            Location at = frontAt(column.offset, column.groundY);
             for (BlockDisplay display : new BlockDisplay[] {column.body, column.face, column.crest}) {
-                if (display != null && display.isValid()) {
-                    display.teleport(at);
+                if (display != null) {
+                    Displays.moveTo(display, at);
                 }
             }
             if (tick % POSE_PERIOD != 0) {
@@ -767,7 +812,7 @@ public final class HydroAbility extends Ability {
 
         private void animate(@Nullable BlockDisplay display, Transformation pose) {
             if (display != null && display.isValid()) {
-                Displays.animate(display, pose, (int) POSE_PERIOD);
+                Displays.animate(display, turned(pose), (int) POSE_PERIOD);
             }
         }
 
@@ -801,15 +846,14 @@ public final class HydroAbility extends Ability {
             Iterator<Rider> iterator = riders.values().iterator();
             while (iterator.hasNext()) {
                 Rider rider = iterator.next();
-                LivingEntity entity = rider.entity();
-                if (!Combat.isTargetable(ctx(), player(), entity) || !rider.column().alive) {
+                LivingEntity entity = rider.entity;
+                if (!Combat.isTargetable(ctx(), player(), entity) || !rider.column.alive) {
                     iterator.remove();
                     continue;
                 }
-                Location target = frontAt(rider.column().offset, rider.column().groundY)
+                Location target = frontAt(rider.column.offset, rider.column.groundY)
                         .add(forward.clone().multiply(RIDE_AHEAD)).add(0, RIDE_HEIGHT, 0);
-                Location at = entity.getLocation();
-                Vector to = target.toVector().subtract(at.toVector());
+                Vector to = target.toVector().subtract(rider.predictedPosition());
                 if (Math.hypot(to.getX(), to.getZ()) > RIDE_LOST) {
                     iterator.remove();
                     continue;
@@ -817,7 +861,9 @@ public final class HydroAbility extends Ability {
                 Vector velocity = forward.clone().multiply(speed)
                         .add(new Vector(to.getX(), 0, to.getZ()).multiply(RIDE_GAIN));
                 velocity.setY(Math.clamp(to.getY() * RIDE_GAIN, -0.35, 0.4));
-                entity.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+                velocity = Motion.clamp(velocity, MAX_SPEED);
+                entity.setVelocity(velocity);
+                rider.remember(velocity);
                 entity.setFallDistance(0);
                 if (ThreadLocalRandom.current().nextInt(3) == 0) {
                     Vfx.dot(Fx.body(entity), Particle.SPLASH, null, true);
@@ -869,7 +915,7 @@ public final class HydroAbility extends Ability {
                 }
             }
             for (Rider rider : riders.values()) {
-                slam(rider.entity());
+                slam(rider.entity);
             }
             riders.clear();
             int hit = caught.size();
@@ -900,8 +946,8 @@ public final class HydroAbility extends Ability {
                 Iterator<Rider> iterator = riders.values().iterator();
                 while (iterator.hasNext()) {
                     Rider rider = iterator.next();
-                    if (rider.column() == column) {
-                        slam(rider.entity());
+                    if (rider.column == column) {
+                        slam(rider.entity);
                         iterator.remove();
                     }
                 }
@@ -920,7 +966,7 @@ public final class HydroAbility extends Ability {
             if (display == null || !display.isValid()) {
                 return;
             }
-            Displays.animate(display, pose, (int) CRASH_TICKS - 1);
+            Displays.animate(display, turned(pose), (int) CRASH_TICKS - 1);
             ctx().runLater(player(), CRASH_TICKS, () -> {
                 if (display.isValid()) {
                     display.remove();
@@ -980,19 +1026,21 @@ public final class HydroAbility extends Ability {
             return 0;
         }
 
-        /** The front of the wave at {@code offset} across it, standing on ground block {@code groundY}. */
+        /**
+         * The front of the wave at {@code offset} across it, standing on ground block {@code groundY}: where that
+         * column's displays stand.
+         */
         private Location frontAt(double offset, int groundY) {
             Location at = origin.clone().add(forward.clone().multiply(travelled)).add(right().multiply(offset));
             at.setY(groundY + 1.0);
             return at;
         }
 
-        /** Where a column's displays stand, turned to face along the wave (their local +z is forward). */
-        private Location columnAt(Column column) {
-            Location at = frontAt(column.offset, column.groundY);
-            at.setYaw(yaw);
-            at.setPitch(0);
-            return at;
+        /** A column pose, built in the wave's frame (local +z forward), turned to the wave's heading. */
+        private Transformation turned(Transformation pose) {
+            Vector3f translation = heading.transform(pose.getTranslation(), new Vector3f());
+            Quaternionf rotation = new Quaternionf(heading).mul(pose.getLeftRotation());
+            return new Transformation(translation, rotation, pose.getScale(), pose.getRightRotation());
         }
     }
 

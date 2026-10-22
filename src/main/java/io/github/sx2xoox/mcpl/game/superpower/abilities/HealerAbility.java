@@ -105,8 +105,9 @@ public final class HealerAbility extends Ability {
     private static final float PILLAR_WIDTH = 0.12f;
     private static final float PILLAR_LOW = 1.7f;
     private static final float PILLAR_HIGH = 2.7f;
-    /** The pane of light an enemy is thrown against. */
+    /** The pane of light an enemy is thrown against, and how far towards the sanctuary from the enemy it stands. */
     private static final int PANE_TICKS = 7;
+    private static final double PANE_INSET = 0.45;
     /** A rising halo takes this many ticks to climb over a healed body. */
     private static final long HALO_TICKS = 8;
 
@@ -386,18 +387,23 @@ public final class HealerAbility extends Ability {
         Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.8f, 1.2f + Fx.jitter(0.1f));
     }
 
-    /** A pane of light flashing up between an enemy being thrown out and the sanctuary's center. */
+    /**
+     * A pane of light flashing up between an enemy being thrown out and the sanctuary's center: facing
+     * {@code outwards} (a horizontal unit vector) through its transformation, the display itself unrotated.
+     */
     private void barrierFlash(LivingEntity enemy, Vector outwards) {
         Location at = enemy.getLocation();
-        at.setDirection(outwards);
-        at.setPitch(0);
         float width = (float) Math.max(1.0, enemy.getWidth() * 2.0);
         float height = (float) Math.max(1.4, enemy.getHeight() * 1.1);
+        float yaw = (float) Math.toDegrees(Math.atan2(-outwards.getX(), outwards.getZ()));
+        // Just inside the enemy, on the sanctuary's side.
+        float x = (float) (-PANE_INSET * outwards.getX());
+        float z = (float) (-PANE_INSET * outwards.getZ());
         BlockDisplay pane = Displays.block(ctx(), player(), at, Material.YELLOW_STAINED_GLASS.createBlockData(),
-                Displays.transform(0, height * 0.5f, -0.45f, width * 0.5f, height * 0.5f, 0.05f, 0, 0, 0),
+                Displays.transform(x, height * 0.5f, z, width * 0.5f, height * 0.5f, 0.05f, yaw, 0, 0),
                 PANE_TICKS + 2);
         Displays.animateNextTick(ctx(), player(), pane,
-                Displays.transform(0, height * 0.5f, -0.45f, width, height, 0.05f, 0, 0, 0), 2);
+                Displays.transform(x, height * 0.5f, z, width, height, 0.05f, yaw, 0, 0), 2);
         ctx().runLater(player(), 3, () -> {
             if (pane.isValid()) {
                 Displays.shrinkAway(ctx(), player(), pane, PANE_TICKS - 3);
