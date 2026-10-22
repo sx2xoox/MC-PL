@@ -384,7 +384,7 @@ public final class HackerAbility extends Ability {
     private void followLabel(Backdoor backdoor) {
         TextDisplay label = backdoor.label;
         if (label != null && label.isValid() && label.getWorld().equals(backdoor.target.getWorld())) {
-            label.teleport(labelPoint(backdoor.target));
+            Displays.moveTo(label, labelPoint(backdoor.target));
         }
     }
 
@@ -770,7 +770,7 @@ public final class HackerAbility extends Ability {
                 }
                 TextDisplay bar = bars.get(target.getUniqueId());
                 if (bar != null && bar.isValid()) {
-                    bar.teleport(barPoint(target));
+                    Displays.moveTo(bar, barPoint(target));
                     if (tick % 2 == 0) {
                         bar.text(Text.mm(progress(t)));
                     }
@@ -793,7 +793,7 @@ public final class HackerAbility extends Ability {
                 if (column == null || !column.isValid() || !column.getWorld().equals(owner.getWorld())) {
                     continue;
                 }
-                column.teleport(rainPoint(owner, i, tick));
+                Displays.moveTo(column, rainPoint(owner, i, tick));
                 long phase = (tick + i * 2) % RAIN_PERIOD;
                 if (phase == 0) {
                     column.text(Text.mm(codeColumn()));
@@ -926,7 +926,7 @@ public final class HackerAbility extends Ability {
                 if (!bar.isValid() || !target.isValid() || target.isDead()) {
                     return false;
                 }
-                bar.teleport(barPoint(target));
+                Displays.moveTo(bar, barPoint(target));
                 if (run % 3 == 0) {
                     long left = Math.max(0, reboot - 10 - run * 2);
                     int filled = (int) Math.round(BAR_CELLS * (1 - (double) left / reboot));

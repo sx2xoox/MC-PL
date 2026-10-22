@@ -283,7 +283,7 @@ public final class AstronomerAbility extends Ability {
         for (int i = 0; i < stars; i++) {
             TextDisplay star = starLabels[i];
             if (star != null && star.isValid() && star.getWorld().equals(owner.getWorld())) {
-                star.teleport(starPoint(owner, i, tick));
+                Displays.moveTo(star, starPoint(owner, i, tick));
             }
         }
     }
@@ -468,10 +468,10 @@ public final class AstronomerAbility extends Ability {
             }
             long fallStart = Math.max(0, landTick - FALL_TICKS);
             if (tick == fallStart) {
+                // Spawned at the top of its streak; it moves from the next tick on, so the client can interpolate.
                 spawn();
-            }
-            if (tick >= fallStart) {
-                fall((double) (tick - fallStart + 1) / (landTick - fallStart + 1));
+            } else if (tick > fallStart) {
+                fall((double) (tick - fallStart) / (landTick - fallStart));
             }
             return true;
         }
@@ -514,11 +514,11 @@ public final class AstronomerAbility extends Ability {
             spin += 35f;
             Quaternionf rotation = new Quaternionf().rotateAxis((float) Math.toRadians(spin), TUMBLE_AXIS);
             if (core != null && core.isValid()) {
-                core.teleport(plain(at));
+                Displays.moveTo(core, at);
                 Displays.animate(core, cube(METEOR_CORE_SIZE, rotation), 1);
             }
             if (shell != null && shell.isValid()) {
-                shell.teleport(plain(at));
+                Displays.moveTo(shell, at);
                 Displays.animate(shell, cube(METEOR_SHELL_SIZE, new Quaternionf(rotation).conjugate()), 1);
             }
             Vfx.line(ctx(), from, at, 3, Particle.DUST_COLOR_TRANSITION, GLOW_SMALL, false);
@@ -712,23 +712,23 @@ public final class AstronomerAbility extends Ability {
                 if (rock == null || !rock.isValid()) {
                     continue;
                 }
-                rock.teleport(at);
+                Displays.moveTo(rock, at);
                 Quaternionf rotation = new Quaternionf().rotateAxis(angle * (1 + 0.2f * i), TUMBLE_AXIS)
                         .mul(ROCK_ORIENTATIONS[i]);
                 Displays.animate(rock, cube(ROCK_SIZE * growth, rotation), POSE_PERIOD);
             }
             float pulse = 1f + 0.05f * (float) Math.sin(targetTick * 0.6);
             if (corona != null && corona.isValid()) {
-                corona.teleport(at);
+                Displays.moveTo(corona, at);
                 Displays.animate(corona, cube(CORONA_SIZE * growth * pulse, new Quaternionf().rotateAxis(-angle,
                         TUMBLE_AXIS)), POSE_PERIOD);
             }
             if (tail != null && tail.isValid()) {
-                tail.teleport(at);
+                Displays.moveTo(tail, at);
                 Displays.animate(tail, streak(TAIL_WIDTH * growth, TAIL_LENGTH * growth), POSE_PERIOD);
             }
             if (wake != null && wake.isValid()) {
-                wake.teleport(at);
+                Displays.moveTo(wake, at);
                 Displays.animate(wake, streak(WAKE_WIDTH * growth * pulse, WAKE_LENGTH * growth), POSE_PERIOD);
             }
         }
@@ -867,7 +867,7 @@ public final class AstronomerAbility extends Ability {
                 Location to = impact.clone().add(Math.cos(angle) * radius * 0.8, 0.6 + random.nextDouble(),
                         Math.sin(angle) * radius * 0.8);
                 rock.setTeleportDuration(5);
-                rock.teleport(plain(to));
+                Displays.moveTo(rock, to);
                 Displays.animate(rock, cube(ROCK_SIZE * 0.45f, randomRotation(random)), 5);
                 ctx().runLater(owner, 5, () -> {
                     if (rock.isValid()) {

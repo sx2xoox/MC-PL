@@ -8,10 +8,12 @@ import static org.junit.jupiter.api.Assertions.fail;
 import java.util.List;
 import java.util.stream.Stream;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Registry;
@@ -26,7 +28,10 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -421,6 +426,7 @@ class SpaceNewAbilitiesTest {
             assertEquals(8 * (1 - s.param("ult_armor") / 100) * (1 - s.param("armor_projectile") / 100),
                     s.damageTaken(s.owner), EPSILON, "arrows are blunted twice");
 
+            s.ticks(2); // the steel fist's shove lands the tick after the hit
             s.clearHits();
             s.place(s.enemy, 0.5, 6.5, 180);
             s.aimAt(s.owner, s.enemy);
@@ -444,6 +450,135 @@ class SpaceNewAbilitiesTest {
             s.assertSucceeded(s.active(), "미사일 포드 again");
             assertEquals(s.param("cooldown"), s.ctx().cooldownRemaining(s.owner), 0.06, "the normal cooldown");
             s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The left rotation a display was given. MockBukkit 4.118 rebuilds {@code getTransformation()} from its matrix
+     * and hands back the <em>conjugated</em> rotation as both the left and the right rotation (one quaternion object
+     * conjugated in place). These abilities always set an identity right rotation, so a non-identity right rotation
+     * means the conjugation happened and is undone here; with a correct implementation the left rotation is used as
+     * it is.
+     */
+    private static Quaternionf rotationOf(Display display) {
+        Transformation t = display.getTransformation();
+        Quaternionf left = t.getLeftRotation();
+        return t.getRightRotation().equals(new Quaternionf(), 1.0E-5f) ? left : left.conjugate();
+    }
+
+    /** {@code local} turned by the display's left rotation. */
+    private static Vector3f rotated(Display display, Vector3f local) {
+        return rotationOf(display).transform(new Vector3f(local));
+    }
+
+    /** The world-space center of a block display's box, relative to the display's own position. */
+    private static Vector3f boxCenter(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        return new Vector3f(t.getTranslation()).add(rotated(display, new Vector3f(t.getScale()).mul(0.5f)));
+    }
+
+    private static List<BlockDisplay> blocks(Scenario s, Material material) {
+        return entities(s, BlockDisplay.class).stream().filter(d -> d.getBlock().getMaterial() == material).toList();
+    }
+
+    private static void assertUnrotated(Entity display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    @Test
+    void mechSuitIsBuiltInTheTransformationAndTurnsWithThePilot() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            s.place(s.owner, 0.5, 0.5, 90); // facing west (-x)
+            s.assertSucceeded(s.ultimate(), "메카 변신");
+            s.ticks(25);
+            for (BlockDisplay piece : entities(s, BlockDisplay.class)) {
+                assertUnrotated(piece, "suit piece " + piece.getBlock().getMaterial());
+            }
+            float scale = (float) s.param("ult_scale");
+            Vector3f core = boxCenter(blocks(s, Material.SHROOMLIGHT).getFirst());
+            assertTrue(core.x() < -0.15f * scale && Math.abs(core.z()) < 0.05f,
+                    "the chest core sits on the front of a pilot facing west: " + core);
+            Vector3f visor = boxCenter(blocks(s, Material.ORANGE_STAINED_GLASS).getFirst());
+            assertTrue(visor.x() < -0.2f * scale && Math.abs(visor.z()) < 0.05f, "so does the visor: " + visor);
+            List<BlockDisplay> pads = blocks(s, Material.ORANGE_CONCRETE);
+            assertEquals(2, pads.size(), "two striped shoulder pads");
+            for (BlockDisplay pad : pads) {
+                Vector3f center = boxCenter(pad);
+                assertTrue(Math.abs(center.z()) > 0.3f * scale && Math.abs(center.x()) < 0.05f,
+                        "the shoulders are to the pilot's sides: " + center);
+            }
+
+            s.place(s.owner, 0.5, 0.5, 180); // turns to face north (-z)
+            s.ticks(2);
+            core = boxCenter(blocks(s, Material.SHROOMLIGHT).getFirst());
+            assertTrue(core.z() < -0.15f * scale && Math.abs(core.x()) < 0.05f, "the suit turns with the pilot: " + core);
+            for (BlockDisplay piece : entities(s, BlockDisplay.class)) {
+                assertUnrotated(piece, "suit piece after turning");
+            }
+            s.ticks(s.paramTicks("ult_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mechMissilePodsSitOnTheShouldersOfAPilotFacingAnyWay() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.place(s.enemy, -5.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "미사일 포드");
+            s.ticks(4);
+            List<BlockDisplay> casings = blocks(s, Material.IRON_BLOCK);
+            assertEquals(2, casings.size(), "two pod casings");
+            for (BlockDisplay casing : casings) {
+                assertUnrotated(casing, "pod casing");
+                Vector3f center = boxCenter(casing);
+                Location at = casing.getLocation();
+                double side = at.getZ() + center.z() - s.owner.getLocation().getZ();
+                double along = at.getX() + center.x() - s.owner.getLocation().getX();
+                assertTrue(Math.abs(side) > 0.25 && Math.abs(along) < 0.2,
+                        "the pods are over the shoulders of a pilot facing west: side " + side + ", along " + along);
+                assertTrue(center.y() > 1.5f, "above the shoulders: " + center.y());
+            }
+            s.ticks(60);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the missiles still find the enemy to the west");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mechMissilesAndRocketFistPointAlongTheirFlight() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.place(s.enemy, -12.5, 0.5, 270);
+            s.place(s.enemy2, 9.5, 9.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "미사일 포드");
+            s.ticks(6);
+            BlockDisplay missile = blocks(s, Material.LIGHTNING_ROD).getFirst();
+            Location before = missile.getLocation();
+            s.ticks(1);
+            assertUnrotated(missile, "missile");
+            Vector moved = missile.getLocation().toVector().subtract(before.toVector()).normalize();
+            Vector3f axis = rotated(missile, new Vector3f(0, 1, 0));
+            double dot = axis.x() * moved.getX() + axis.y() * moved.getY() + axis.z() * moved.getZ();
+            assertTrue(dot > 0.9, "the rod's tip leads its flight (cos=" + dot + ")");
+            s.ticks(60);
+
+            s.assertSucceeded(s.ultimate(), "메카 변신");
+            s.ticks(15);
+            s.aimAt(s.owner, s.enemy);
+            Vector aim = s.owner.getEyeLocation().getDirection();
+            s.assertSucceeded(s.active(), "로켓 펀치");
+            s.ticks(2);
+            BlockDisplay fist = blocks(s, Material.PISTON).getFirst();
+            assertUnrotated(fist, "rocket fist");
+            Vector3f face = rotated(fist, new Vector3f(0, 1, 0));
+            double facing = face.x() * aim.getX() + face.y() * aim.getY() + face.z() * aim.getZ();
+            assertTrue(facing > 0.98, "the fist flies face first along the aim (cos=" + facing + ")");
+            s.ticks(s.paramTicks("ult_duration") + 30);
             s.finishClean();
         }
     }
@@ -588,6 +723,29 @@ class SpaceNewAbilitiesTest {
     }
 
     @Test
+    void astronomerCometTailTrailsBackUpTheFallPath() {
+        try (Scenario s = Scenario.ffa("astronomer")) {
+            s.place(s.owner, 0.5, 0.5, 90); // facing west: the meteor comes in from the east, behind the astronomer
+            s.place(s.enemy, -5.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "대운석");
+            s.ticks(6);
+            for (BlockDisplay piece : entities(s, BlockDisplay.class)) {
+                assertUnrotated(piece, "meteor piece");
+            }
+            BlockDisplay tail = blocks(s, Material.WHITE_STAINED_GLASS).getFirst();
+            Vector3f back = rotated(tail, new Vector3f(0, 0, 1));
+            assertTrue(back.y() > 0.5f, "the tail points up the sky: " + back);
+            assertTrue(back.x() > 0.2f, "towards the east, where the meteor came from: " + back);
+            for (TextDisplay text : entities(s, TextDisplay.class)) {
+                assertUnrotated(text, "countdown");
+            }
+            s.ticks(s.paramTicks("ult_delay") + 80);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void astronomerGreatMeteorCanBeOutrun() {
         try (Scenario s = Scenario.ffa("astronomer")) {
             s.aimAt(s.owner, s.enemy);
@@ -695,6 +853,59 @@ class SpaceNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(20);
             assertTrue(entities(s, BlockDisplay.class).isEmpty(), "the afterimages faded");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerGlitchSetsTheTargetDownExactlyOnTheGround() {
+        try (Scenario s = Scenario.ffa("hacker")) {
+            // Steps around the enemy: some hops land on the floor, some on top of a block.
+            for (int[] step : new int[][] {{2, 3}, {-2, 5}, {1, 7}, {-1, 2}}) {
+                s.world.setBlock(step[0], 64, step[1], Material.STONE);
+            }
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "글리치");
+            Location last = s.enemy.getLocation();
+            int hops = 0;
+            for (int i = 0; i < 24; i++) {
+                s.ticks(1);
+                Location at = s.enemy.getLocation();
+                if (at.distanceSquared(last) < 1.0E-8) {
+                    continue;
+                }
+                last = at;
+                hops++;
+                double y = at.getY();
+                assertTrue(Math.abs(y - FlatWorld.SURFACE) < 1.0E-6 || Math.abs(y - (FlatWorld.SURFACE + 1)) < 1.0E-6,
+                        "the enemy stands exactly on a surface, not in it: y=" + y);
+                assertTrue(Spots.isFree(s.world, at, s.enemy.getWidth(), s.enemy.getHeight()),
+                        "and its body is clear of blocks at " + at.toVector());
+            }
+            assertTrue(hops >= 1, "the glitch moved the enemy");
+            for (int[] step : new int[][] {{2, 3}, {-2, 5}, {1, 7}, {-1, 2}}) {
+                s.world.setBlock(step[0], 64, step[1], Material.AIR);
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerReadoutsAndCodeRainAreUnrotatedBillboards() {
+        try (Scenario s = Scenario.ffa("hacker")) {
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.place(s.enemy, -3.5, 0.5, 270);
+            s.melee(s.owner, s.enemy, 2);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "시스템 다운");
+            s.ticks(5);
+            List<TextDisplay> texts = entities(s, TextDisplay.class);
+            assertFalse(texts.isEmpty(), "readouts, bars and code rain");
+            for (TextDisplay text : texts) {
+                assertUnrotated(text, "text display");
+                assertEquals(Display.Billboard.CENTER, text.getBillboard(), "faces every viewer");
+            }
+            s.ticks(120);
             s.finishClean();
         }
     }

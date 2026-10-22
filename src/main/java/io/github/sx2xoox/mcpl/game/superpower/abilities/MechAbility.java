@@ -178,7 +178,12 @@ public final class MechAbility extends Ability {
     private static final int ASSEMBLE_TICKS = 5;
     private static final int EJECT_TICKS = 7;
     private static final long STEP_PERIOD = 8;
-    private static final double MELEE_SHOVE = 0.4;
+    /** A suit piece flies in from this fraction of its size. */
+    private static final float FLY_IN_SIZE = 0.25f;
+    private static final long NOT_PLACED = Long.MIN_VALUE / 2;
+    /** A suit punch knocks back like a vanilla hit (0.4 horizontal, 0.36 up) and then some. */
+    private static final double MELEE_SHOVE = 0.75;
+    private static final double MELEE_SHOVE_LIFT = 0.36;
 
     // ultimate: rocket punch
     private static final double PUNCH_SPEED = 1.6;
@@ -459,60 +464,69 @@ public final class MechAbility extends Ability {
         /** Part layout: casing, muzzle, stripe per side; left side first. */
         private static final int PER_SIDE = 3;
         private final float scale;
-        private final long life;
         private long age;
+        private long kickLeftUntil = -1;
+        private long kickRightUntil = -1;
         private boolean folded;
 
         Pods(Player owner, long life) {
             this.scale = (float) Body.scaleOf(owner);
-            this.life = life;
             if (!reserveDisplays(PER_SIDE * 2, life + POD_FOLD_TICKS + 2)) {
                 return;
             }
-            Location at = anchor(owner, false);
+            float yaw = owner.getBodyYaw();
+            Location feet = owner.getLocation();
             for (boolean left : new boolean[] {true, false}) {
                 for (int part = 0; part < PER_SIDE; part++) {
                     Material block = part == 0 ? POD_CASING : part == 1 ? POD_MUZZLE : POD_STRIPE;
-                    BlockDisplay display = Displays.block(ctx(), owner, at, block.createBlockData(),
-                            podPose(left, part, 0.01f, 0), life + POD_FOLD_TICKS + 2);
+                    BlockDisplay display = Displays.block(ctx(), owner, feet, block.createBlockData(),
+                            podPose(left, part, 0.01f, 0, yaw), life + POD_FOLD_TICKS + 2);
                     display.setTeleportDuration(1);
                     if (part == 0) {
                         display.setBrightness(null);
                     }
-                    Displays.animateNextTick(ctx(), owner, display, podPose(left, part, 1f, 0), POD_RISE_TICKS);
                     parts.add(display);
                 }
             }
             Loop.repeat(ctx(), owner, 1, 1, life, this::follow, this::fold);
         }
 
+        /**
+         * Follows the owner every tick. The displays stay unrotated: the body's yaw, the rise out of the shoulders
+         * and the recoil all live in the transformation, re-sent each tick with a one-tick interpolation.
+         */
         private boolean follow(long tick) {
             age = tick;
             Player owner = player();
-            Location at = anchor(owner, false);
-            for (BlockDisplay part : parts) {
-                if (part.isValid() && part.getWorld().equals(owner.getWorld())) {
-                    part.teleport(at);
+            Location feet = owner.getLocation();
+            float yaw = owner.getBodyYaw();
+            float grow = growth();
+            for (int i = 0; i < parts.size(); i++) {
+                BlockDisplay part = parts.get(i);
+                if (!part.isValid() || !part.getWorld().equals(owner.getWorld())) {
+                    continue;
                 }
+                boolean left = i < PER_SIDE;
+                float kick = age < (left ? kickLeftUntil : kickRightUntil) ? -0.12f : 0f;
+                Displays.moveTo(part, feet);
+                Displays.animate(part, podPose(left, i % PER_SIDE, grow, kick, yaw), 1);
             }
             return true;
         }
 
-        /** The pod kicks back along the owner's back and settles again. */
+        private float growth() {
+            return age < POD_RISE_TICKS ? (age + 1f) / POD_RISE_TICKS : 1f;
+        }
+
+        /** The pod kicks back along the owner's back for a moment and settles again. */
         void recoil(boolean left) {
-            if (parts.isEmpty() || folded) {
+            if (folded) {
                 return;
             }
-            int first = left ? 0 : PER_SIDE;
-            for (int part = 0; part < PER_SIDE; part++) {
-                BlockDisplay display = parts.get(first + part);
-                int index = part;
-                Displays.animate(display, podPose(left, index, 1f, -0.12f), 1);
-                ctx().runLater(player(), POD_RECOIL_TICKS, () -> {
-                    if (!folded) {
-                        Displays.animate(display, podPose(left, index, 1f, 0), POD_RECOIL_TICKS);
-                    }
-                });
+            if (left) {
+                kickLeftUntil = age + POD_RECOIL_TICKS;
+            } else {
+                kickRightUntil = age + POD_RECOIL_TICKS;
             }
             Location vent = muzzle(player(), left).add(Motion.horizontalFacing(player().getLocation()).multiply(-0.5));
             Vfx.dot(vent, Particle.WHITE_SMOKE, null, false);
@@ -533,17 +547,16 @@ public final class MechAbility extends Ability {
         /** The world position of a pod's muzzle (or the shoulder, when the pods could not be shown). */
         Location muzzle(Player owner, boolean left) {
             Location at = anchor(owner, false);
-            float growth = age < POD_RISE_TICKS ? (age + 1f) / POD_RISE_TICKS : 1f;
-            Vector3f local = new Vector3f(left ? 0.36f : -0.36f, 1.45f + 0.18f * growth, 0.27f).mul(scale);
+            Vector3f local = new Vector3f(left ? 0.36f : -0.36f, 1.45f + 0.18f * growth(), 0.27f).mul(scale);
             return bodyToWorld(at, local);
         }
 
         /**
          * One part of a pod in body space: the casing is a box above the shoulder, the muzzle a black plate on its
          * front face and the stripe an orange band on its top, all scaled by {@code grow} and pushed back by
-         * {@code kick}.
+         * {@code kick}, turned to the body's {@code yaw}.
          */
-        private Transformation podPose(boolean left, int part, float grow, float kick) {
+        private Transformation podPose(boolean left, int part, float grow, float kick, float yaw) {
             float side = left ? 1f : -1f;
             float s = scale * Math.max(0.01f, grow);
             float baseY = 1.45f * scale + 0.18f * s;
@@ -563,7 +576,7 @@ public final class MechAbility extends Ability {
                     size = new Vector3f(0.27f, 0.03f, 0.3f).mul(s);
                 }
             }
-            return box(center, size, 0);
+            return box(center, size, 0, yaw);
         }
     }
 
@@ -694,7 +707,7 @@ public final class MechAbility extends Ability {
         private void fly(Location from, long tick) {
             BlockDisplay display = visual;
             if (display != null && display.isValid()) {
-                display.teleport(plain(position));
+                Displays.moveTo(display, position);
                 if (tick > 1) {
                     Displays.animate(display, pointPose(direction, MISSILE_SCALE), 1);
                 }
@@ -853,12 +866,12 @@ public final class MechAbility extends Ability {
                 Particle.DUST_COLOR_TRANSITION, HEAT, false);
         Fx.sound(body, Sound.ENTITY_IRON_GOLEM_ATTACK, 0.9f, 0.9f + Fx.jitter(0.1f));
         Fx.sound(body, Sound.BLOCK_ANVIL_PLACE, 0.25f, 1.6f + Fx.jitter(0.1f));
-        Vector shove = Motion.horizontalFacing(owner.getLocation()).multiply(MELEE_SHOVE).setY(0.08);
-        // Vanilla knockback is applied after this event; add the shove on top of it next tick.
+        // Vanilla knockback is applied after this event; replace it next tick with a heavier one. It is built from
+        // scratch: a player's server-side velocity is stale, so it cannot be added to.
+        Vector shove = Motion.horizontalFacing(owner.getLocation()).multiply(MELEE_SHOVE).setY(MELEE_SHOVE_LIFT);
         ctx().runLater(owner, 1, () -> {
             if (Combat.isTargetable(ctx(), owner, victim)) {
-                Vector extra = shove.clone().multiply(Motion.knockbackFactor(victim));
-                victim.setVelocity(Motion.clamp(victim.getVelocity().add(extra), MAX_SPEED));
+                Motion.push(victim, shove, MAX_SPEED);
             }
         });
     }
@@ -878,8 +891,13 @@ public final class MechAbility extends Ability {
         private final long duration;
         private final List<NamespacedKey> buffs = new ArrayList<>();
         private final BlockDisplay[] pieces = new BlockDisplay[SUIT.length];
-        /** Pieces whose fly-in has started; only those follow the growth (the others still fly in). */
-        private final boolean[] placed = new boolean[SUIT.length];
+        /** Where each piece flies in from (body space). */
+        private final Vector3f[] flyFrom = new Vector3f[SUIT.length];
+        /** The tick each piece's fly-in started, {@link #NOT_PLACED} before. */
+        private final long[] flyStart = new long[SUIT.length];
+        /** The yaw and body scale each piece was last posed with (to send only what changed). */
+        private final float[] posedYaw = new float[SUIT.length];
+        private final float[] posedScale = new float[SUIT.length];
         private @Nullable Location lastStep;
         private @Nullable NamespacedKey scaleKey;
         private int step;
@@ -921,16 +939,17 @@ public final class MechAbility extends Ability {
                 return;
             }
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            Location anchor = anchor(owner, false);
+            Location feet = owner.getLocation();
             for (int i = 0; i < SUIT.length; i++) {
                 Piece piece = SUIT[i];
-                Location spawn = piece.head() ? anchor(owner, true) : anchor;
                 double angle = random.nextDouble(TAU);
-                Vector3f from = new Vector3f((float) Math.cos(angle) * 1.6f, 0.4f + random.nextFloat() * 0.8f,
+                flyFrom[i] = new Vector3f((float) Math.cos(angle) * 1.6f, 0.4f + random.nextFloat() * 0.8f,
                         (float) Math.sin(angle) * 1.6f);
-                BlockDisplay display = Displays.block(ctx(), owner, spawn, piece.block().createBlockData(),
-                        piecePose(piece, (float) baseScale, 0.25f, from), duration + 4L * GROW_INTERVAL + EJECT_TICKS
-                                + 30);
+                flyStart[i] = NOT_PLACED;
+                float yaw = yawOf(owner, piece);
+                BlockDisplay display = Displays.block(ctx(), owner, feet, piece.block().createBlockData(),
+                        piecePose(piece, (float) baseScale, FLY_IN_SIZE, flyFrom[i], yaw),
+                        duration + 4L * GROW_INTERVAL + EJECT_TICKS + 30);
                 display.setTeleportDuration(1);
                 if (!piece.glow()) {
                     display.setBrightness(null);
@@ -943,10 +962,8 @@ public final class MechAbility extends Ability {
                 long delay = 1 + i * ASSEMBLE_STAGGER;
                 int index = i;
                 ctx().runLater(owner, delay, () -> {
-                    if (display.isValid() && !ended) {
-                        placed[index] = true;
-                        Displays.animate(display, piecePose(piece, currentScale(), 1f, new Vector3f()),
-                                ASSEMBLE_TICKS);
+                    if (!ended) {
+                        flyStart[index] = ctx().currentTick();
                     }
                 });
                 ctx().runLater(owner, delay + ASSEMBLE_TICKS, () -> {
@@ -1021,14 +1038,8 @@ public final class MechAbility extends Ability {
                 blocked = true;
                 return;
             }
+            // The pieces follow the new size in the next follow().
             setStep(owner, next);
-            for (int i = 0; i < pieces.length; i++) {
-                BlockDisplay display = pieces[i];
-                if (display != null && display.isValid() && placed[i]) {
-                    Displays.animate(display, piecePose(SUIT[i], currentScale(), 1f, new Vector3f()),
-                            (int) GROW_INTERVAL);
-                }
-            }
             Location feet = owner.getLocation().add(0, 0.1, 0);
             Vfx.ring(ctx(), feet, owner.getWidth() * 0.8, 10, next * 0.6, Particle.DUST, STEEL_DUST, true);
             Fx.sound(feet, Sound.BLOCK_PISTON_EXTEND, 0.6f, 0.5f + next * 0.08f);
@@ -1051,14 +1062,38 @@ public final class MechAbility extends Ability {
             return (float) (baseScale + growth * step / GROW_STEPS);
         }
 
+        /**
+         * Keeps the suit on the pilot. The displays stay unrotated at the pilot's feet ({@link Displays#moveTo});
+         * the body's (or, for the helmet, the head's) yaw, the fly-in and the size live in each piece's
+         * transformation, re-sent with a one-tick interpolation whenever one of them changed.
+         */
         private void follow(Player owner) {
-            Location body = anchor(owner, false);
-            Location head = anchor(owner, true);
+            Location feet = owner.getLocation();
+            long now = ctx().currentTick();
+            float scale = currentScale();
             for (int i = 0; i < pieces.length; i++) {
                 BlockDisplay display = pieces[i];
-                if (display != null && display.isValid() && display.getWorld().equals(owner.getWorld())) {
-                    display.teleport(SUIT[i].head() ? head : body);
+                if (display == null || !display.isValid() || !display.getWorld().equals(owner.getWorld())) {
+                    continue;
                 }
+                Displays.moveTo(display, feet);
+                if (flyStart[i] == NOT_PLACED) {
+                    continue;
+                }
+                Piece piece = SUIT[i];
+                float yaw = yawOf(owner, piece);
+                double progress = Math.min(1.0, (now - flyStart[i] + 1.0) / ASSEMBLE_TICKS);
+                boolean flying = now - flyStart[i] < ASSEMBLE_TICKS;
+                if (!flying && Math.abs(yaw - posedYaw[i]) < 0.25f && scale == posedScale[i]) {
+                    continue;
+                }
+                // Ease out: the piece rushes in and settles into place.
+                float eased = (float) (1 - (1 - progress) * (1 - progress));
+                Vector3f offset = new Vector3f(flyFrom[i]).mul(1 - eased);
+                float size = FLY_IN_SIZE + (1 - FLY_IN_SIZE) * eased;
+                Displays.animate(display, piecePose(piece, scale, size, offset, yaw), 1);
+                posedYaw[i] = yaw;
+                posedScale[i] = scale;
             }
         }
 
@@ -1267,7 +1302,7 @@ public final class MechAbility extends Ability {
             position.setZ(to.getZ());
             for (BlockDisplay display : new BlockDisplay[] {fist, flame}) {
                 if (display != null && display.isValid()) {
-                    display.teleport(plain(position));
+                    Displays.moveTo(display, position);
                 }
             }
         }
@@ -1360,7 +1395,7 @@ public final class MechAbility extends Ability {
             Location at = rightHand(owner);
             for (BlockDisplay display : new BlockDisplay[] {hand, cuff}) {
                 if (display != null && display.isValid()) {
-                    display.teleport(plain(at));
+                    Displays.moveTo(display, at);
                     Displays.shrinkAway(ctx(), owner, display, 2);
                 }
             }
@@ -1395,21 +1430,32 @@ public final class MechAbility extends Ability {
         return copy;
     }
 
-    /** A box of {@code size} centered on {@code center} (block display space), rolled around the Z axis. */
-    private static Transformation box(Vector3f center, Vector3f size, float rollDegrees) {
-        Quaternionf rotation = new Quaternionf().rotateZ((float) Math.toRadians(rollDegrees));
-        Vector3f translation = new Vector3f(center).sub(rotation.transform(new Vector3f(size).mul(0.5f)));
-        return new Transformation(translation, rotation, size, new Quaternionf());
+    /**
+     * A box of {@code size} centered on the body-space point {@code center} (local +Z = facing, +X = left), rolled
+     * around the facing axis and turned to {@code yawDegrees} (Minecraft yaw: 0 faces +Z, 90 faces −X). The yaw is
+     * part of the transformation; the display entity itself stays unrotated.
+     */
+    private static Transformation box(Vector3f center, Vector3f size, float rollDegrees, float yawDegrees) {
+        Quaternionf facing = new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees));
+        Quaternionf rotation = new Quaternionf(facing).rotateZ((float) Math.toRadians(rollDegrees));
+        Vector3f translation = facing.transform(new Vector3f(center))
+                .sub(rotation.transform(new Vector3f(size).mul(0.5f)));
+        return new Transformation(translation, rotation, new Vector3f(size), new Quaternionf());
     }
 
     /**
-     * A suit piece's pose on a body of {@code scale}, grown to {@code grow} of its size and moved by {@code offset}
-     * (body space, used for the fly-in).
+     * A suit piece's pose on a body of {@code scale} facing {@code yaw}, grown to {@code grow} of its size and moved
+     * by {@code offset} (body space, used for the fly-in).
      */
-    private static Transformation piecePose(Piece piece, float scale, float grow, Vector3f offset) {
+    private static Transformation piecePose(Piece piece, float scale, float grow, Vector3f offset, float yaw) {
         Vector3f center = new Vector3f(piece.x(), piece.y(), piece.z()).mul(scale).add(offset);
         Vector3f size = new Vector3f(piece.sx(), piece.sy(), piece.sz()).mul(scale * Math.max(0.01f, grow));
-        return box(center, size, piece.roll());
+        return box(center, size, piece.roll(), yaw);
+    }
+
+    /** The yaw a suit piece turns with: the head's for the helmet, the body's for everything else. */
+    private static float yawOf(Player owner, Piece piece) {
+        return piece.head() ? owner.getLocation().getYaw() : owner.getBodyYaw();
     }
 
     /** A block of edge {@code size} centered on the origin with its +Y axis along {@code direction}. */
