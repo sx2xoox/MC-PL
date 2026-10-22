@@ -45,6 +45,8 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -54,8 +56,8 @@ import org.jspecify.annotations.Nullable;
  * the farmer's team heals in it, and pumpkins sprout and roll into enemies to burst.
  *
  * <p>Look: wheat gold and leaf green. Crops are real wheat blocks shown as display entities that grow through their
- * ages; the scythe (dark oak snath, curved iron blade) is turned as one body through its anchor's yaw so the swing
- * reads cleanly from any angle, trailing a golden crescent and chaff. The field has a scarecrow with a carved pumpkin
+ * ages; the scythe (dark oak snath, curved iron blade) is turned as one body (the turn folded into every part's
+ * transformation, the displays themselves unrotated) so the swing reads cleanly from any angle, trailing a golden crescent and chaff. The field has a scarecrow with a carved pumpkin
  * head in the middle and jack o'lanterns that roll (spinning about their axle) towards their prey.
  */
 public final class FarmerAbility extends Ability {
@@ -155,6 +157,7 @@ public final class FarmerAbility extends Ability {
     private static final int MAX_BOUND = 3;
     private static final int HARVEST_TICKS = 8;
     private static final double FIELD_HEIGHT = 2.5;
+    private static final float SWAY_DEGREES = 3f;
 
     private final Map<UUID, Bleed> bleeding = new HashMap<>();
     private boolean swinging;
@@ -259,6 +262,8 @@ public final class FarmerAbility extends Ability {
         private final double sweetBonus;
         private final Set<UUID> reaped = new HashSet<>();
         private final List<BlockDisplay> scythe = new ArrayList<>();
+        /** Each scythe part's pose in the blade's own frame (snath along +z), in the order of {@link #scythe}. */
+        private final List<Transformation> scytheShape = new ArrayList<>();
         private int struck;
         private int sweet;
 
@@ -273,27 +278,28 @@ public final class FarmerAbility extends Ability {
         }
 
         void start() {
-            Location anchor = anchor(bladeYaw(0));
+            Location anchor = anchor();
             long lifetime = WINDUP_TICKS + SWING_TICKS + 12;
             float reach = (float) radius;
             float snathStart = 0.45f;
             float snathLength = Math.max(0.5f, reach - 0.3f - snathStart);
-            scythe.add(Displays.block(ctx(), owner, anchor, SNATH.createBlockData(),
-                    Displays.transform(0, 0, snathStart + snathLength / 2, SNATH_WIDTH, SNATH_WIDTH, snathLength,
-                            0, 0, 0), lifetime));
+            scytheShape.add(Displays.transform(0, 0, snathStart + snathLength / 2, SNATH_WIDTH, SNATH_WIDTH,
+                    snathLength, 0, 0, 0));
             // The blade leaves the end of the snath sideways (towards the swing), curving back to the farmer.
             float bladeZ = reach - 0.25f;
-            scythe.add(Displays.block(ctx(), owner, anchor, BLADE.createBlockData(),
-                    Displays.transform(BLADE_LENGTH / 2, 0, bladeZ, BLADE_LENGTH, BLADE_THICKNESS, BLADE_WIDTH,
-                            0, 0, 0), lifetime));
+            scytheShape.add(Displays.transform(BLADE_LENGTH / 2, 0, bladeZ, BLADE_LENGTH, BLADE_THICKNESS,
+                    BLADE_WIDTH, 0, 0, 0));
             double tipAngle = Math.toRadians(BLADE_CURVE);
             float tipX = BLADE_LENGTH + (float) (Math.cos(tipAngle) * BLADE_TIP_LENGTH / 2);
             float tipZ = bladeZ - (float) (Math.sin(tipAngle) * BLADE_TIP_LENGTH / 2);
-            scythe.add(Displays.block(ctx(), owner, anchor, BLADE.createBlockData(),
-                    Displays.transform(tipX, 0, tipZ, BLADE_TIP_LENGTH, BLADE_THICKNESS, BLADE_WIDTH * 0.75f,
-                            -BLADE_CURVE, 0, 0), lifetime));
-            for (BlockDisplay part : scythe) {
+            scytheShape.add(Displays.transform(tipX, 0, tipZ, BLADE_TIP_LENGTH, BLADE_THICKNESS,
+                    BLADE_WIDTH * 0.75f, -BLADE_CURVE, 0, 0));
+            Material[] materials = {SNATH, BLADE, BLADE};
+            for (int i = 0; i < materials.length; i++) {
+                BlockDisplay part = Displays.block(ctx(), owner, anchor, materials[i].createBlockData(),
+                        turned(scytheShape.get(i), (float) bladeYaw(0), 0), lifetime);
                 part.setTeleportDuration(1);
+                scythe.add(part);
             }
             Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
             Fx.sound(chest, Sound.ITEM_HOE_TILL, 0.9f, 0.7f + Fx.jitter(0.05f));
@@ -306,7 +312,7 @@ public final class FarmerAbility extends Ability {
             if (tick < WINDUP_TICKS) {
                 // Wind-up: the blade glints at the farmer's right.
                 pose(bladeYaw(0));
-                Location tip = anchor(bladeYaw(0)).add(direction(bladeYaw(0)).multiply(radius));
+                Location tip = anchor().add(direction(bladeYaw(0)).multiply(radius));
                 Vfx.dot(tip, Particle.END_ROD, null, false);
                 Vfx.cloud(ctx(), tip, Particle.WAX_OFF, 2, 0.15, 0, null, false);
                 return true;
@@ -329,18 +335,19 @@ public final class FarmerAbility extends Ability {
             return facing + half - 2 * half * Math.min(1.0, (double) k / SWING_TICKS);
         }
 
-        private Location anchor(double yaw) {
-            Location at = owner.getLocation().add(0, BLADE_HEIGHT, 0);
-            at.setYaw((float) yaw);
-            at.setPitch(0);
-            return at;
+        /** The scythe's pivot at the farmer's waist (a plain position; the blade's turn is in the transformations). */
+        private Location anchor() {
+            return Displays.unrotated(owner.getLocation().add(0, BLADE_HEIGHT, 0));
         }
 
+        /** Follows the farmer and turns the whole scythe to {@code yaw} over one tick. */
         private void pose(double yaw) {
-            Location at = anchor(yaw);
-            for (BlockDisplay part : scythe) {
+            Location at = anchor();
+            for (int i = 0; i < scythe.size(); i++) {
+                BlockDisplay part = scythe.get(i);
                 if (part.isValid()) {
-                    part.teleport(at);
+                    Displays.moveTo(part, at);
+                    Displays.animate(part, turned(scytheShape.get(i), (float) yaw, 0), 1);
                 }
             }
         }
@@ -531,7 +538,10 @@ public final class FarmerAbility extends Ability {
         private final long pumpkinInterval;
         private final List<Crop> crops = new ArrayList<>();
         private final List<BlockDisplay> scarecrow = new ArrayList<>();
+        /** The scarecrow's parts in its own frame (facing +z, standing on the origin), in {@link #scarecrow} order. */
+        private final List<Transformation> scarecrowShape = new ArrayList<>();
         private final List<Pumpkin> pumpkins = new ArrayList<>();
+        private final float scarecrowYaw;
         private final Map<UUID, NamespacedKey> slowed = new HashMap<>();
         private long nextPumpkin;
 
@@ -547,6 +557,7 @@ public final class FarmerAbility extends Ability {
             this.heal = Math.max(0, params().num("ult_heal"));
             this.pumpkinInterval = Math.max(5, params().ticks("pumpkin_interval"));
             this.nextPumpkin = grow;
+            this.scarecrowYaw = owner.getLocation().getYaw();
         }
 
         void till() {
@@ -592,9 +603,7 @@ public final class FarmerAbility extends Ability {
 
         /** The scarecrow: a fence post with a crossbar, a hay body and a carved pumpkin head, rising from the soil. */
         private void raiseScarecrow(long lifetime) {
-            Location anchor = center.clone();
-            anchor.setYaw(owner.getLocation().getYaw());
-            anchor.setPitch(0);
+            Location anchor = Displays.unrotated(center);
             BlockData head = Material.CARVED_PUMPKIN.createBlockData();
             if (head instanceof Directional directional) {
                 directional.setFacing(BlockFace.SOUTH);
@@ -610,7 +619,9 @@ public final class FarmerAbility extends Ability {
                 BlockDisplay part = Displays.block(ctx(), owner, anchor, blocks[i], Displays.scaled(0.01f), lifetime);
                 part.setViewRange(2.0f);
                 scarecrow.add(part);
-                Transformation pose = poses[i];
+                scarecrowShape.add(poses[i]);
+                // It looks out where the farmer looked; the turn lives in the transformation.
+                Transformation pose = turned(poses[i], scarecrowYaw, 0);
                 ctx().runLater(owner, 1L + i, () -> Displays.animate(part, pose, RISE_TICKS));
             }
         }
@@ -717,12 +728,8 @@ public final class FarmerAbility extends Ability {
                     return false;
                 }
                 Location at = enemy.getLocation();
-                at.setYaw(0);
-                at.setPitch(0);
                 for (BlockDisplay stalk : stalks) {
-                    if (stalk.isValid()) {
-                        stalk.teleport(at);
-                    }
+                    Displays.moveTo(stalk, at);
                 }
                 if (run % 4 == 0) {
                     Vfx.ring(ctx(), at.clone().add(0, 0.3 + (run % 8) * 0.1, 0), 0.45, 8, run * 0.4, Particle.DUST,
@@ -870,14 +877,13 @@ public final class FarmerAbility extends Ability {
             return spot;
         }
 
+        /** The scarecrow rocks gently on its post (a turn about its foot, in the transformations). */
         private void swayScarecrow(long tick) {
-            Location anchor = center.clone();
-            anchor.setYaw(owner.getLocation().getYaw());
-            anchor.setPitch((tick / 40) % 2 == 0 ? 3f : -3f);
-            for (BlockDisplay part : scarecrow) {
+            float lean = (tick / 40) % 2 == 0 ? SWAY_DEGREES : -SWAY_DEGREES;
+            for (int i = 0; i < scarecrow.size(); i++) {
+                BlockDisplay part = scarecrow.get(i);
                 if (part.isValid()) {
-                    part.setTeleportDuration(20);
-                    part.teleport(anchor);
+                    Displays.animate(part, turned(scarecrowShape.get(i), scarecrowYaw, lean), 20);
                 }
             }
         }
@@ -992,7 +998,7 @@ public final class FarmerAbility extends Ability {
                 pos.setZ(next.getZ());
                 yaw = yawOf(step);
                 spin += Math.toDegrees(step.length() / (PUMPKIN_SIZE * 0.5));
-                display.teleport(pos);
+                Displays.moveTo(display, pos);
                 if (age % 2 == 0) {
                     Displays.animate(display, pumpkinPose(PUMPKIN_SIZE, yaw, (float) spin), 2);
                     Vfx.dot(pos.clone().add(0, 0.1, 0), Particle.DUST, PUMPKIN_DUST, false);
@@ -1088,6 +1094,19 @@ public final class FarmerAbility extends Ability {
             }
         }
         return null;
+    }
+
+    /**
+     * {@code local} (a pose in the rig's own frame, facing +z) turned as part of a rigid body by {@code yaw} and
+     * {@code pitch} (Minecraft degrees: yaw 0 = +z, 90 = -x; positive pitch looks down). The rotation lives in the
+     * transformation only, so the display entity keeps yaw/pitch 0 and is moved with {@link Displays#moveTo}.
+     */
+    private static Transformation turned(Transformation local, float yaw, float pitch) {
+        Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch));
+        return new Transformation(turn.transform(new Vector3f(local.getTranslation())),
+                new Quaternionf(turn).mul(local.getLeftRotation()), new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /** The horizontal unit vector of a Minecraft yaw. */

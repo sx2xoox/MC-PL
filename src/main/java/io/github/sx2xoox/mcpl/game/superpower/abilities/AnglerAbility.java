@@ -152,6 +152,8 @@ public final class AnglerAbility extends Ability {
     private static final float CROWN_LEAN = 20f;
     private static final int DROPLETS = 4;
     private static final long DROPLET_TICKS = 14;
+    /** The salmon grows out of the ground over its first ticks of the leap. */
+    private static final int FISH_GROW_TICKS = 4;
 
     /** The salmon's blocks in its own frame (nose along +z), at scale 1. */
     private static final FishPart[] FISH = {
@@ -584,13 +586,8 @@ public final class AnglerAbility extends Ability {
         }
 
         private void placeBobber(Location at) {
-            Location spot = at.clone();
-            spot.setYaw(0);
-            spot.setPitch(0);
             for (BlockDisplay display : floats) {
-                if (display.isValid()) {
-                    display.teleport(spot);
-                }
+                Displays.moveTo(display, at);
             }
         }
 
@@ -601,9 +598,8 @@ public final class AnglerAbility extends Ability {
             if (beam == null || !beam.isValid() || delta.lengthSquared() < 1.0E-4) {
                 return;
             }
-            tip.setYaw(0);
-            tip.setPitch(0);
-            beam.teleport(tip);
+            // The beam's direction lives in its transformation; the display itself stays unrotated.
+            Displays.moveTo(beam, tip);
             Displays.animate(beam, beamPose(delta, LINE_WIDTH), 1);
         }
 
@@ -707,6 +703,7 @@ public final class AnglerAbility extends Ability {
         private final Location apex;
         private final Location end;
         private final Location control;
+        private final float fishYaw;
         private @Nullable BlockDisplay line;
         private Location anchor;
         private final double shadowPhase = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
@@ -729,6 +726,7 @@ public final class AnglerAbility extends Ability {
             // Control point of the quadratic curve that passes through the apex halfway.
             this.control = apex.clone().multiply(2).subtract(start.clone().add(end).multiply(0.5));
             this.anchor = start.clone();
+            this.fishYaw = yawOf(leap);
         }
 
         void start() {
@@ -820,7 +818,7 @@ public final class AnglerAbility extends Ability {
             Location bobberAt = ground.clone().add(0, 0.25 + bob, 0);
             for (BlockDisplay display : floats) {
                 if (display.isValid()) {
-                    display.teleport(bobberAt);
+                    Displays.moveTo(display, bobberAt);
                 }
             }
             if (untilStrike == 4) {
@@ -840,18 +838,14 @@ public final class AnglerAbility extends Ability {
             }
             floats.clear();
             anchor = curve(0);
+            float pitch = pitchOf(tangent(0));
             for (FishPart part : FISH) {
                 BlockDisplay display = Displays.block(ctx(), owner, anchor, part.material().createBlockData(),
-                        fishPose(part, 0.05f), LEAP_TICKS + SINK_START + SINK_TICKS + 10);
+                        turned(fishPose(part, 0.05f), fishYaw, pitch), LEAP_TICKS + SINK_START + SINK_TICKS + 10);
                 display.setTeleportDuration(1);
                 display.setViewRange(2.0f);
                 fish.add(display);
             }
-            ctx().runLater(owner, 1, () -> {
-                for (int i = 0; i < fish.size(); i++) {
-                    Displays.animate(fish.get(i), fishPose(FISH[i], FISH_SCALE), 4);
-                }
-            });
             Location center = ground.clone();
             waterColumns(center);
             sprayDroplets(center);
@@ -882,23 +876,24 @@ public final class AnglerAbility extends Ability {
             }
         }
 
-        /** The salmon flies along its curve, nose following the motion; the line stays hooked in its mouth. */
+        /**
+         * The salmon flies along its curve, nose following the motion (it grows out of the ground over the first
+         * ticks); the line stays hooked in its mouth.
+         */
         private void fly(long t) {
             double s = (double) t / LEAP_TICKS;
             Location at = curve(s);
-            Vector tangent = tangent(s);
-            at.setYaw(yawOf(leap));
-            at.setPitch((float) -Math.toDegrees(Math.atan2(tangent.getY(),
-                    Math.hypot(tangent.getX(), tangent.getZ()))));
+            float pitch = pitchOf(tangent(s));
+            float scale = FISH_SCALE * (float) Math.min(1.0, (t + 1) / (double) FISH_GROW_TICKS);
             anchor = at;
-            for (BlockDisplay display : fish) {
-                if (display.isValid()) {
-                    display.teleport(at);
-                }
-            }
-            Location mouth = at.clone().add(at.getDirection().multiply(1.6 * FISH_SCALE));
+            poseFish(at, 1, scale, pitch, 1);
+            Location nose = at.clone();
+            nose.setYaw(fishYaw);
+            nose.setPitch(pitch);
+            Vector heading = nose.getDirection();
+            Location mouth = at.clone().add(heading.clone().multiply(1.6 * scale));
             drawLine(mouth);
-            Location tail = at.clone().subtract(at.getDirection().multiply(1.6 * FISH_SCALE));
+            Location tail = at.clone().subtract(heading.multiply(1.6 * scale));
             Vfx.cloud(ctx(), tail, Particle.FALLING_WATER, 6, 0.5, 0, null, true);
             Vfx.cloud(ctx(), at, Particle.SPLASH, 6, 0.8, 0.05, null, true);
             Vfx.dot(tail, Particle.DUST_COLOR_TRANSITION, SEA_FADE, true);
@@ -920,15 +915,8 @@ public final class AnglerAbility extends Ability {
             }
             line = null;
             Location rest = end.clone();
-            rest.setYaw(yawOf(leap));
-            rest.setPitch(0);
             anchor = rest;
-            for (BlockDisplay display : fish) {
-                if (display.isValid()) {
-                    display.setTeleportDuration(2);
-                    display.teleport(rest);
-                }
-            }
+            poseFish(rest, 2, FISH_SCALE, 0, 2);
             Location center = ground.clone();
             crown(center);
             Vfx.dot(center.clone().add(0, 1, 0), Particle.FLASH, PALETTE.core(), true);
@@ -981,23 +969,14 @@ public final class AnglerAbility extends Ability {
         private void aftermath(long after) {
             if (after == FLOP_1 || after == FLOP_2) {
                 Location hop = anchor.clone().add(0, after == FLOP_1 ? 0.9 : 0.5, 0);
-                hop.setPitch(after == FLOP_1 ? -14 : 10);
-                teleportFish(hop, 3);
-                ctx().runLater(owner, 3, () -> teleportFish(anchor, 3));
+                poseFish(hop, 3, FISH_SCALE, after == FLOP_1 ? -14 : 10, 3);
+                ctx().runLater(owner, 3, () -> poseFish(anchor, 3, FISH_SCALE, 0, 3));
                 Fx.sound(hop, Sound.ENTITY_SALMON_FLOP, 1.4f, after == FLOP_1 ? 0.6f : 0.75f);
                 Vfx.cloud(ctx(), ground.clone().add(0, 0.3, 0), Particle.SPLASH, 30, radius * 0.3, 0.2, null, true);
             }
             if (after == SINK_START) {
                 Location sunk = anchor.clone().subtract(0, FISH_REST_HEIGHT * 2.2, 0);
-                for (BlockDisplay display : fish) {
-                    if (display.isValid()) {
-                        display.setTeleportDuration((int) SINK_TICKS);
-                        display.teleport(sunk);
-                    }
-                }
-                for (int i = 0; i < fish.size(); i++) {
-                    Displays.animate(fish.get(i), fishPose(FISH[i], FISH_SCALE * 0.6f), (int) SINK_TICKS);
-                }
+                poseFish(sunk, (int) SINK_TICKS, FISH_SCALE * 0.6f, 0, (int) SINK_TICKS);
                 Fx.sound(ground, Sound.AMBIENT_UNDERWATER_ENTER, 1.0f, 0.7f);
                 Fx.sound(ground, Sound.BLOCK_BUBBLE_COLUMN_WHIRLPOOL_INSIDE, 1.0f, 1.0f);
             }
@@ -1011,12 +990,20 @@ public final class AnglerAbility extends Ability {
             }
         }
 
-        private void teleportFish(Location at, int duration) {
-            for (BlockDisplay display : fish) {
-                if (display.isValid()) {
-                    display.setTeleportDuration(duration);
-                    display.teleport(at);
+        /**
+         * Moves the salmon to {@code at} over {@code moveTicks} and poses it at {@code scale}, pitched by {@code pitch}
+         * (nose up when negative) over {@code poseTicks}. The fish turns as one body through its parts'
+         * transformations; the displays themselves stay unrotated.
+         */
+        private void poseFish(Location at, int moveTicks, float scale, float pitch, int poseTicks) {
+            for (int i = 0; i < fish.size(); i++) {
+                BlockDisplay display = fish.get(i);
+                if (!display.isValid()) {
+                    continue;
                 }
+                display.setTeleportDuration(moveTicks);
+                Displays.moveTo(display, at);
+                Displays.animate(display, turned(fishPose(FISH[i], scale), fishYaw, pitch), poseTicks);
             }
         }
 
@@ -1076,7 +1063,7 @@ public final class AnglerAbility extends Ability {
                 Vector at = droplet.from().clone().add(droplet.velocity().clone().multiply(t))
                         .add(new Vector(0, -0.06 * t * t, 0));
                 Location location = at.toLocation(world);
-                display.teleport(location);
+                Displays.moveTo(display, location);
                 if (t % 2 == 0) {
                     Vfx.dot(location, Particle.FALLING_WATER, null, false);
                 }
@@ -1132,9 +1119,7 @@ public final class AnglerAbility extends Ability {
             if (delta.lengthSquared() < 1.0E-4) {
                 return;
             }
-            tip.setYaw(0);
-            tip.setPitch(0);
-            beam.teleport(tip);
+            Displays.moveTo(beam, tip);
             Displays.animate(beam, beamPose(delta, LINE_WIDTH * 1.5f), 1);
         }
 
@@ -1161,6 +1146,24 @@ public final class AnglerAbility extends Ability {
                 line.remove();
             }
         }
+    }
+
+    /** The Minecraft pitch (degrees, positive looks down) of a direction. */
+    private static float pitchOf(Vector direction) {
+        return (float) -Math.toDegrees(Math.atan2(direction.getY(), Math.hypot(direction.getX(), direction.getZ())));
+    }
+
+    /**
+     * {@code local} (a pose in the rig's own frame, nose along +z) turned as part of a rigid body by {@code yaw} and
+     * {@code pitch} (Minecraft degrees: yaw 0 = +z, 90 = -x; positive pitch looks down). The rotation lives in the
+     * transformation only, so the display entity keeps yaw/pitch 0 and is moved with {@link Displays#moveTo}.
+     */
+    private static Transformation turned(Transformation local, float yaw, float pitch) {
+        Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch));
+        return new Transformation(turn.transform(new Vector3f(local.getTranslation())),
+                new Quaternionf(turn).mul(local.getLeftRotation()), new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /** One block of the salmon at {@code scale}, relative to the fish's anchor. */

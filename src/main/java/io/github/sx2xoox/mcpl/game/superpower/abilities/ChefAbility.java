@@ -55,6 +55,7 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
@@ -68,8 +69,8 @@ import org.jspecify.annotations.Nullable;
  * data components that make them quick to eat and edible at full hunger; eating one is caught with a consume
  * listener that lives exactly as long as the ability.
  *
- * <p>Look: cream, tomato red and warm brown. The pan is a dark disc on a wooden handle swung through its anchor's
- * yaw, the hit pops a "팅!" sign, a fried egg flies off and a gold star circles the stunned head. The table assembles
+ * <p>Look: cream, tomato red and warm brown. The pan is a dark disc on a wooden handle swung as one body (the turn
+ * folded into its parts' transformations; displays never carry a rotation of their own), the hit pops a "팅!" sign, a fried egg flies off and a gold star circles the stunned head. The table assembles
  * leg by leg (top, white cloth, red runner, a cake, dishes and a lit candle), steams while it serves, and every hot
  * dish is a spinning food item on a telegraphed arc that shatters like a plate where it lands.
  */
@@ -409,31 +410,38 @@ public final class ChefAbility extends Ability {
         return found;
     }
 
-    /** The pan sweeps across the front: a dark disc on a wooden handle, turned as one through its anchor's yaw. */
+    /**
+     * The pan sweeps across the front: a dark disc on a wooden handle, turned as one body around the cook's shoulder
+     * (the turn lives in the parts' transformations; the displays stay unrotated).
+     */
     private void swingPan(Player owner) {
         float facing = owner.getLocation().getYaw();
-        Location anchor = panAnchor(owner, facing + PAN_SWING_FROM);
+        Location anchor = panAnchor(owner);
         long lifetime = PAN_SWING_TICKS + PAN_HOLD_TICKS + 8;
+        Transformation[] shape = {
+                Displays.transform(0, 0, 0.7f, 0.08f, 0.08f, 0.8f, 0, 0, 0),
+                Displays.transform(0, 0, 1.45f, 0.07f, 0.72f, 0.72f, 0, 0, 0),
+                Displays.transform(0, 0, 1.45f, 0.07f, 0.52f, 0.86f, 0, 0, 0)};
+        Material[] materials = {HANDLE_BLOCK, PAN_BLOCK, PAN_BLOCK};
         List<BlockDisplay> parts = new ArrayList<>();
-        parts.add(Displays.block(ctx(), owner, anchor, HANDLE_BLOCK.createBlockData(),
-                Displays.transform(0, 0, 0.7f, 0.08f, 0.08f, 0.8f, 0, 0, 0), lifetime));
-        parts.add(Displays.block(ctx(), owner, anchor, PAN_BLOCK.createBlockData(),
-                Displays.transform(0, 0, 1.45f, 0.07f, 0.72f, 0.72f, 0, 0, 0), lifetime));
-        parts.add(Displays.block(ctx(), owner, anchor, PAN_BLOCK.createBlockData(),
-                Displays.transform(0, 0, 1.45f, 0.07f, 0.52f, 0.86f, 0, 0, 0), lifetime));
-        for (BlockDisplay part : parts) {
+        for (int i = 0; i < shape.length; i++) {
+            BlockDisplay part = Displays.block(ctx(), owner, anchor, materials[i].createBlockData(),
+                    turned(shape[i], (float) (facing + PAN_SWING_FROM), 0), lifetime);
             part.setTeleportDuration(1);
             displays.add(part);
+            parts.add(part);
         }
         Fx.sound(owner.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.9f, 1.3f + Fx.jitter(0.1f));
         Fx.sound(owner.getLocation(), Sound.ITEM_ARMOR_EQUIP_IRON, 0.8f, 1.6f + Fx.jitter(0.1f));
         Loop.repeat(ctx(), owner, 1, 1, PAN_SWING_TICKS + PAN_HOLD_TICKS, run -> {
             double t = Math.min(1.0, (double) (run + 1) / PAN_SWING_TICKS);
             double yaw = facing + PAN_SWING_FROM + (PAN_SWING_TO - PAN_SWING_FROM) * t;
-            Location at = panAnchor(owner, yaw);
-            for (BlockDisplay part : parts) {
+            Location at = panAnchor(owner);
+            for (int i = 0; i < parts.size(); i++) {
+                BlockDisplay part = parts.get(i);
                 if (part.isValid()) {
-                    part.teleport(at);
+                    Displays.moveTo(part, at);
+                    Displays.animate(part, turned(shape[i], (float) yaw, 0), 1);
                 }
             }
             if (run < PAN_SWING_TICKS) {
@@ -450,11 +458,9 @@ public final class ChefAbility extends Ability {
         });
     }
 
-    private static Location panAnchor(Player owner, double yaw) {
-        Location at = owner.getLocation().add(0, PAN_HEIGHT, 0);
-        at.setYaw((float) yaw);
-        at.setPitch(0);
-        return at;
+    /** The pan's pivot at the cook's shoulder (a plain position: the swing's turn is in the transformations). */
+    private static Location panAnchor(Player owner) {
+        return Displays.unrotated(owner.getLocation().add(0, PAN_HEIGHT, 0));
     }
 
     /** The ringing "팅!": a sign popping off the first enemy hit, with metal-on-skull sounds. */
@@ -511,7 +517,7 @@ public final class ChefAbility extends Ability {
             float tumble = landed ? 0 : run * 47f;
             for (ItemDisplay part : List.of(white, yolk)) {
                 if (part.isValid()) {
-                    part.teleport(pos);
+                    Displays.moveTo(part, pos);
                     float lift = part == yolk ? 0.03f : 0f;
                     float w = part == yolk ? 0.16f : 0.42f;
                     float h = part == yolk ? 0.06f : 0.04f;
@@ -553,7 +559,7 @@ public final class ChefAbility extends Ability {
             Location head = target.getLocation().add(0, target.getHeight() + 0.3, 0);
             Location at = head.clone().add(Math.cos(angle) * 0.45, Math.sin(run * 0.9) * 0.05, Math.sin(angle) * 0.45);
             if (shown != null && shown.isValid()) {
-                shown.teleport(at);
+                Displays.moveTo(shown, at);
             }
             Location opposite = head.clone().add(-Math.cos(angle) * 0.45, 0, -Math.sin(angle) * 0.45);
             Vfx.dot(opposite, Particle.DUST, STAR, false);
@@ -626,6 +632,7 @@ public final class ChefAbility extends Ability {
         private final double splash;
         private final List<TablePart> parts = new ArrayList<>();
         private final List<Dish> dishes = new ArrayList<>();
+        private final float tableYaw;
         private @Nullable Location candleTip;
         private long nextThrow = ASSEMBLE_TICKS + 6;
 
@@ -640,6 +647,7 @@ public final class ChefAbility extends Ability {
             this.throwTargets = Math.max(0, params().integer("ult_throw_targets"));
             this.throwDamage = Math.max(0, params().num("ult_throw_damage"));
             this.splash = Math.max(0.5, params().num("ult_splash"));
+            this.tableYaw = table.getYaw();
         }
 
         void lay() {
@@ -657,10 +665,8 @@ public final class ChefAbility extends Ability {
 
         /** Legs, top, white cloth, red runner, a cake, three dishes and a lit candle. */
         private void build(long lifetime) {
-            // The table stands broadside to the cook: its length runs across the cook's view.
-            Location anchor = table.clone();
-            anchor.setYaw(table.getYaw());
-            anchor.setPitch(0);
+            // The table stands broadside to the cook: its length (local x) runs across the cook's view.
+            Location anchor = Displays.unrotated(table);
             for (int i = 0; i < 4; i++) {
                 float x = i % 2 == 0 ? -0.85f : 0.85f;
                 float z = i < 2 ? -0.38f : 0.38f;
@@ -678,12 +684,12 @@ public final class ChefAbility extends Ability {
             for (int i = 0; i < TABLE_DISHES.length; i++) {
                 TableDish dish = TABLE_DISHES[i];
                 ItemDisplay item = Displays.item(ctx(), owner, anchor, ItemStack.of(dish.item()),
-                        Displays.centered(dish.x(), 1.6f, dish.z(), 0.01f, 0.01f, 0.01f, dish.turn(), 90, 0),
-                        lifetime);
+                        turned(Displays.centered(dish.x(), 1.6f, dish.z(), 0.01f, 0.01f, 0.01f, dish.turn(), 90, 0),
+                                tableYaw, 0), lifetime);
                 item.setViewRange(2.0f);
                 displays.add(item);
-                parts.add(new TablePart(item, Displays.centered(dish.x(), 1.03f, dish.z(), 0.42f, 0.42f, 0.42f,
-                        dish.turn(), 90, 0), 9 + i));
+                parts.add(new TablePart(item, turned(Displays.centered(dish.x(), 1.03f, dish.z(), 0.42f, 0.42f,
+                        0.42f, dish.turn(), 90, 0), tableYaw, 0), 9 + i));
             }
             BlockData candle = Material.CANDLE.createBlockData();
             if (candle instanceof Candle candles) {
@@ -694,21 +700,22 @@ public final class ChefAbility extends Ability {
             }
             addBlock(anchor, candle, Displays.transform(0.35f, 1.3f, -0.22f, 0.6f, 0.6f, 0.6f, 0, 0, 0), 11,
                     lifetime);
-            candleTip = table.clone().add(rotated(0.35, -0.22, anchor.getYaw())).add(0, 1.38, 0);
+            candleTip = table.clone().add(rotated(0.35, -0.22, tableYaw)).add(0, 1.38, 0);
         }
 
         private void addBlock(Location anchor, Material material, Transformation pose, long delay, long lifetime) {
             addBlock(anchor, material.createBlockData(), pose, delay, lifetime);
         }
 
-        private void addBlock(Location anchor, BlockData data, Transformation pose, long delay, long lifetime) {
+        /** Adds a block of the table; {@code local} is its pose in the table's own frame (length along x). */
+        private void addBlock(Location anchor, BlockData data, Transformation local, long delay, long lifetime) {
             // Starts small and a little above its place, then drops into it.
-            Transformation start = new Transformation(new Vector3f(pose.getTranslation()).add(0, 1.0f, 0),
-                    pose.getLeftRotation(), new Vector3f(0.01f), pose.getRightRotation());
-            BlockDisplay display = Displays.block(ctx(), owner, anchor, data, start, lifetime);
+            Transformation start = new Transformation(new Vector3f(local.getTranslation()).add(0, 1.0f, 0),
+                    local.getLeftRotation(), new Vector3f(0.01f), local.getRightRotation());
+            BlockDisplay display = Displays.block(ctx(), owner, anchor, data, turned(start, tableYaw, 0), lifetime);
             display.setViewRange(2.0f);
             displays.add(display);
-            parts.add(new TablePart(display, pose, delay));
+            parts.add(new TablePart(display, turned(local, tableYaw, 0), delay));
         }
 
         @Override
@@ -895,7 +902,7 @@ public final class ChefAbility extends Ability {
                 Vector at = from.toVector().multiply(1 - s).add(to.toVector().multiply(s))
                         .add(new Vector(0, 4 * FLIGHT_APEX * s * (1 - s), 0));
                 Location location = at.toLocation(world);
-                display.teleport(location);
+                Displays.moveTo(display, location);
                 if (age % 2 == 0) {
                     float spin = age * 40f;
                     Displays.animate(display, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, spin, spin * 0.5f, 0),
@@ -988,6 +995,19 @@ public final class ChefAbility extends Ability {
             }
         }
         return null;
+    }
+
+    /**
+     * {@code local} (a pose in the rig's own frame, facing +z) turned as part of a rigid body by {@code yaw} and
+     * {@code pitch} (Minecraft degrees: yaw 0 = +z, 90 = -x; positive pitch looks down). The rotation lives in the
+     * transformation only, so the display entity keeps yaw/pitch 0 and is moved with {@link Displays#moveTo}.
+     */
+    private static Transformation turned(Transformation local, float yaw, float pitch) {
+        Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch));
+        return new Transformation(turn.transform(new Vector3f(local.getTranslation())),
+                new Quaternionf(turn).mul(local.getLeftRotation()), new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /** A point of the table's own frame ({@code x} along its length, {@code z} across) in world space. */

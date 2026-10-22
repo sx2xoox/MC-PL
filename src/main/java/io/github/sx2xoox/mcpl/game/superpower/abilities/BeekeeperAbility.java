@@ -167,6 +167,8 @@ public final class BeekeeperAbility extends Ability {
     private static final float LUNGE_PITCH = 18f;
     private static final float LEAVE_PITCH = -30f;
     private static final int LUNGE_TICKS = 6;
+    /** Share of the remaining turn towards the keeper's view the queen makes per wing beat. */
+    private static final double QUEEN_TURN = 0.5;
 
     private final List<Display> displays = new ArrayList<>();
     private final List<Swarm> swarms = new ArrayList<>();
@@ -211,7 +213,8 @@ public final class BeekeeperAbility extends Ability {
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled() || event.getFinalDamage() <= 0
+        // getDamage, not getFinalDamage: a blow soaked up by honey (absorption) still shakes more honey loose.
+        if (event.isCancelled() || event.getDamage() <= 0
                 || !(event instanceof EntityDamageByEntityEvent byEntity)) {
             return;
         }
@@ -252,7 +255,7 @@ public final class BeekeeperAbility extends Ability {
             at.setYaw(0);
             at.setPitch(0);
             if (drop != null && drop.isValid()) {
-                drop.teleport(at);
+                Displays.moveTo(drop, at);
             }
             Vfx.dot(at.clone().add(0, 0.2, 0), Particle.FALLING_HONEY, null, false);
             return true;
@@ -751,7 +754,7 @@ public final class BeekeeperAbility extends Ability {
                 return;
             }
             if (display != null && display.isValid()) {
-                display.teleport(pos);
+                Displays.moveTo(display, pos);
             } else {
                 // Over the display budget: a particle bee, a yellow body with a dark band.
                 Vfx.dot(pos, Particle.DUST, BEE_BODY, false);
@@ -811,7 +814,11 @@ public final class BeekeeperAbility extends Ability {
         private final long poisonTicks;
         private final double heal;
         private final double healRadius;
+        /** Where the queen's body is centred: a plain position, her turn lives in {@link #yaw}/{@link #pitch}. */
         private Location anchor;
+        private float yaw;
+        private float pitch;
+        private float wings = WING_UP;
         private long nextWave = QUEEN_FIRST_WAVE;
         private long leaveStart = -1;
         private int lunge;
@@ -825,16 +832,16 @@ public final class BeekeeperAbility extends Ability {
             this.poisonTicks = params().ticks("ult_poison");
             this.heal = Math.max(0, params().num("ult_heal"));
             this.healRadius = Math.max(0, params().num("ult_heal_radius"));
-            this.anchor = owner.getLocation().add(0, owner.getHeight() + 0.3, 0);
-            this.anchor.setPitch(0);
+            this.anchor = Displays.unrotated(owner.getLocation().add(0, owner.getHeight() + 0.3, 0));
+            this.yaw = owner.getLocation().getYaw();
         }
 
         void summon() {
             Player owner = player();
             long lifetime = duration + STRIKE_MAX_AGE + QUEEN_LEAVE_TICKS + 20;
             build(owner, lifetime);
-            pose(0.05f, WING_UP, 0);
-            ctx().runLater(owner, 1, () -> pose(1f, WING_UP, QUEEN_GROW_TICKS));
+            pose(0.05f, 0);
+            ctx().runLater(owner, 1, () -> pose(1f, QUEEN_GROW_TICKS));
 
             Location at = anchor.clone();
             World world = at.getWorld();
@@ -874,16 +881,19 @@ public final class BeekeeperAbility extends Ability {
             BlockDisplay display = Displays.block(ctx(), owner, anchor, material.createBlockData(),
                     Displays.scaled(0.01f), lifetime);
             display.setViewRange(2.0f);
+            display.setTeleportDuration(2);
             displays.add(display);
             parts.add(new QueenPart(display, x, y, z, w, h, l, pitch, wing));
         }
 
         /**
-         * Poses every part at {@code scale} with the wings raised by {@code wingAngle}, interpolated. The queen as a
-         * whole turns and leans through the anchor's yaw and pitch (all parts share it), so she moves as one body.
+         * Poses every part at {@code scale} with the wings at their current beat, interpolated over {@code ticks}. The
+         * queen turns and leans as one body by {@link #yaw} and {@link #pitch}, folded into every part's
+         * transformation (the displays themselves stay unrotated).
          */
-        private void pose(float scale, float wingAngle, int ticks) {
+        private void pose(float scale, int ticks) {
             float s = scale * QUEEN_SCALE;
+            float wingAngle = wings;
             for (QueenPart part : parts) {
                 BlockDisplay display = part.display();
                 if (!display.isValid()) {
@@ -902,7 +912,7 @@ public final class BeekeeperAbility extends Ability {
                     pose = Displays.transform(center.x, center.y, center.z, part.w() * s, part.h() * s,
                             part.l() * s, 0, 0, roll);
                 }
-                Displays.animate(display, pose, ticks);
+                Displays.animate(display, turned(pose, yaw, pitch), ticks);
             }
         }
 
@@ -939,19 +949,17 @@ public final class BeekeeperAbility extends Ability {
             } else {
                 anchor.add(goal.toVector().subtract(anchor.toVector()).multiply(QUEEN_FOLLOW));
             }
-            anchor.setYaw(feet.getYaw());
-            // She dips her head towards the enemies for a moment when she sends a wave.
-            anchor.setPitch(lunge > 0 ? LUNGE_PITCH : 0);
-            lunge = Math.max(0, lunge - 1);
             for (QueenPart part : parts) {
-                if (part.display().isValid()) {
-                    part.display().teleport(anchor);
-                }
+                Displays.moveTo(part.display(), anchor);
             }
             if (tick > QUEEN_GROW_TICKS && tick % FLAP_PERIOD == 0) {
-                boolean up = (tick / FLAP_PERIOD) % 2 == 0;
-                pose(1f, up ? WING_UP : WING_DOWN, (int) FLAP_PERIOD);
+                // Turn towards where the keeper looks (smoothly), dip the head for a moment when a wave leaves, beat.
+                yaw += (float) (wrap(feet.getYaw() - yaw) * QUEEN_TURN);
+                pitch = lunge > 0 ? LUNGE_PITCH : 0;
+                wings = (tick / FLAP_PERIOD) % 2 == 0 ? WING_UP : WING_DOWN;
+                pose(1f, (int) FLAP_PERIOD);
             }
+            lunge = Math.max(0, lunge - 1);
             if (tick % 3 == 0) {
                 Location tail = stingerPoint();
                 Vfx.dot(tail, Particle.DUST_COLOR_TRANSITION, HONEY_FADE, false);
@@ -980,7 +988,7 @@ public final class BeekeeperAbility extends Ability {
             World world = from.getWorld();
             world.spawnParticle(Particle.DUST_COLOR_TRANSITION, from, Vfx.n(ctx(), 14), 0.3, 0.3, 0.3, 0,
                     HONEY_GLOW, true);
-            hexRing(from, Motion.horizontalFacing(anchor), 0.7, Particle.DUST_COLOR_TRANSITION, HONEY_GLOW, true);
+            hexRing(from, facing(yaw), 0.7, Particle.DUST_COLOR_TRANSITION, HONEY_GLOW, true);
             Fx.sound(from, Sound.BLOCK_BEEHIVE_EXIT, 1.2f, 0.9f + Fx.jitter(0.1f));
             Fx.sound(from, Sound.ENTITY_BEE_POLLINATE, 1.0f, 0.7f + Fx.jitter(0.1f));
             Fx.sound(from, Sound.ENTITY_BEE_LOOP_AGGRESSIVE, 1.0f, 1.2f + Fx.jitter(0.1f));
@@ -1025,14 +1033,15 @@ public final class BeekeeperAbility extends Ability {
         private void leave(Player owner, long tick) {
             leaveStart = tick;
             Location at = anchor.clone();
-            pose(0.05f, WING_UP, (int) QUEEN_LEAVE_TICKS);
+            pitch = LEAVE_PITCH;
+            wings = WING_UP;
+            pose(0.05f, (int) QUEEN_LEAVE_TICKS);
             Location up = anchor.clone().add(0, 4, 0);
-            up.setPitch(LEAVE_PITCH);
             for (QueenPart part : parts) {
                 BlockDisplay display = part.display();
                 if (display.isValid()) {
                     display.setTeleportDuration((int) QUEEN_LEAVE_TICKS);
-                    display.teleport(up);
+                    Displays.moveTo(display, up);
                 }
             }
             Vfx.cloud(ctx(), at, Particle.FALLING_HONEY, 16, 1.0, 0, null, true);
@@ -1062,8 +1071,7 @@ public final class BeekeeperAbility extends Ability {
 
         /** The tip of the queen's abdomen, where her bees leave. */
         private Location stingerPoint() {
-            Vector forward = Motion.horizontalFacing(anchor);
-            return anchor.clone().add(forward.multiply(-1.0 * QUEEN_SCALE)).subtract(0, 0.25 * QUEEN_SCALE, 0);
+            return anchor.clone().add(facing(yaw).multiply(-1.0 * QUEEN_SCALE)).subtract(0, 0.25 * QUEEN_SCALE, 0);
         }
 
         /** One bee of a wave homing on its enemy; it stings once and drops away. */
@@ -1222,6 +1230,36 @@ public final class BeekeeperAbility extends Ability {
         }
         int n = bees.size();
         return new Location(first.getWorld(), x / n, y / n, z / n);
+    }
+
+    /**
+     * {@code local} (a pose in the rig's own frame, nose along +z) turned as part of a rigid body by {@code yaw} and
+     * {@code pitch} (Minecraft degrees: yaw 0 = +z, 90 = -x; positive pitch looks down). The rotation lives in the
+     * transformation only, so the display entity keeps yaw/pitch 0 and is moved with {@link Displays#moveTo}.
+     */
+    private static Transformation turned(Transformation local, float yaw, float pitch) {
+        Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch));
+        return new Transformation(turn.transform(new Vector3f(local.getTranslation())),
+                new Quaternionf(turn).mul(local.getLeftRotation()), new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
+    }
+
+    /** The horizontal unit vector a Minecraft yaw faces. */
+    private static Vector facing(double yawDegrees) {
+        double yaw = Math.toRadians(yawDegrees);
+        return new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
+    }
+
+    /** {@code degrees} wrapped into -180..180. */
+    private static double wrap(double degrees) {
+        double wrapped = degrees % 360;
+        if (wrapped > 180) {
+            wrapped -= 360;
+        } else if (wrapped <= -180) {
+            wrapped += 360;
+        }
+        return wrapped;
     }
 
     /** The Minecraft yaw (degrees) of a direction. */

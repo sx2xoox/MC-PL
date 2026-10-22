@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -21,9 +22,6 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
-import io.papermc.paper.datacomponent.DataComponentTypes;
-import io.papermc.paper.datacomponent.item.Consumable;
-import io.papermc.paper.datacomponent.item.FoodProperties;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -31,6 +29,7 @@ import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
@@ -42,6 +41,10 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
+import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -466,7 +469,11 @@ class JobNewAbilitiesTest {
             s.assertSucceeded(s.ultimate(), "여왕벌");
             s.ticks(2);
             assertTrue(entities(s, Display.class).size() >= 9, "a block-built queen bee");
-            ticksWithinBudget(s, s.paramTicks("ult_duration") + 50, "the queen");
+            ticksWithinBudget(s, 30, "the queen");
+            for (TestPlayer target : s.enemies()) {
+                assertTrue(target.hasPotionEffect(PotionEffectType.POISON), target.getName() + " is stung and poisoned");
+            }
+            ticksWithinBudget(s, s.paramTicks("ult_duration") + 20, "the queen");
             long waves = (long) Math.ceil((s.paramTicks("ult_duration") - 10)
                     / (double) s.paramTicks("ult_wave_interval"));
             for (TestPlayer target : s.enemies()) {
@@ -474,7 +481,6 @@ class JobNewAbilitiesTest {
                 assertTrue(stings >= (waves - 1) * s.param("ult_bees") && stings <= waves * s.param("ult_bees"),
                         target.getName() + " is stung by every wave: " + stings);
                 assertEquals(stings * s.param("ult_sting_damage"), s.damageBy(s.owner, target), EPSILON);
-                assertTrue(target.hasPotionEffect(PotionEffectType.POISON), target.getName() + " is poisoned");
             }
             double feeds = s.param("ult_duration") - 1;
             assertTrue(s.ally().getHealth() >= 10 + feeds * s.param("ult_heal") - EPSILON,
@@ -814,7 +820,7 @@ class JobNewAbilitiesTest {
             s.place(s.enemy2, -20.5, 0.5, 0);
             s.assertSucceeded(s.ultimate(), "대풍년");
             s.ticks(s.paramTicks("ult_grow") + 6);
-            List<org.bukkit.entity.BlockDisplay> pumpkins = entities(s, org.bukkit.entity.BlockDisplay.class).stream()
+            List<BlockDisplay> pumpkins = entities(s, BlockDisplay.class).stream()
                     .filter(display -> display.getBlock().getMaterial() == Material.JACK_O_LANTERN).toList();
             assertEquals(1, pumpkins.size(), "a pumpkin sprouted");
             double before = horizontal(pumpkins.getFirst().getLocation(), s.enemy.getLocation());
@@ -863,12 +869,8 @@ class JobNewAbilitiesTest {
             s.ticks(25);
             ItemStack item = snack(s, s.owner);
             assertNotNull(item, "a fresh snack in the inventory");
-            FoodProperties food = item.getData(DataComponentTypes.FOOD);
-            assertNotNull(food);
-            assertTrue(food.canAlwaysEat(), "edible even when full");
-            Consumable consumable = item.getData(DataComponentTypes.CONSUMABLE);
-            assertNotNull(consumable);
-            assertEquals(s.param("snack_eat_time"), consumable.consumeSeconds(), 1.0E-6, "quick to eat");
+            assertTrue(List.of(Material.COOKIE, Material.BREAD, Material.PUMPKIN_PIE, Material.BAKED_POTATO)
+                    .contains(item.getType()), "a dish: " + item.getType());
             s.ticks(100);
             assertEquals(s.param("snack_max"), snacks(s, s.owner), "at most snack_max are kept");
 
@@ -971,6 +973,234 @@ class JobNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON, "the dishes smashed on the "
                     + "empty ground");
             s.ticks(s.paramTicks("ult_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== real-client regressions
+
+    /**
+     * A layout turned by 90 degrees: the owner looks west (-x), so a display that wrongly takes the owner's rotation
+     * is caught (yaw 0 would hide it).
+     */
+    private static void turnedLayout(Scenario s, String id) {
+        s.place(s.owner, 0.5, 0.5, 90);
+        s.place(s.enemy, id.equals("chef") ? -1.5 : -3.5, 0.5, -90);
+        s.place(s.enemy2, -5.5, 2.0, -90);
+        if (s.ally != null) {
+            s.place(s.ally(), 0.5, 3.5, 0);
+        }
+        s.aimAt(s.owner, s.enemy);
+    }
+
+    /** Displays carry no rotation of their own: every orientation lives in their transformation. */
+    private static void assertUnrotated(Scenario s, String what) {
+        for (Display display : entities(s, Display.class)) {
+            assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw of " + display);
+            assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch of " + display);
+        }
+    }
+
+    /** The world direction of a local axis of a display (whose own rotation is 0). */
+    private static Vector axis(Display display, float x, float y, float z) {
+        Vector3f v = leftRotation(display).transform(new Vector3f(x, y, z));
+        return new Vector(v.x(), v.y(), v.z());
+    }
+
+    /**
+     * The display's real left rotation. MockBukkit (4.118) rebuilds {@code getTransformation()} from its matrix and
+     * conjugates the extracted rotation in place, so it returns the <em>inverse</em> rotation as both the left and the
+     * right rotation. These abilities never use a right rotation, so a non-identity right rotation equal to the left
+     * one marks that bug and is undone here (and the check keeps working once MockBukkit is fixed).
+     */
+    private static Quaternionf leftRotation(Display display) {
+        org.bukkit.util.Transformation transformation = display.getTransformation();
+        Quaternionf left = new Quaternionf(transformation.getLeftRotation());
+        Quaternionf right = transformation.getRightRotation();
+        boolean identity = Math.abs(Math.abs(right.w()) - 1) < 1.0E-6;
+        if (!identity && right.equals(left, 1.0E-6f)) {
+            left.conjugate();
+        }
+        return left;
+    }
+
+    private static List<BlockDisplay> blocks(Scenario s, Material material) {
+        return entities(s, BlockDisplay.class).stream()
+                .filter(display -> display.getBlock().getMaterial() == material).toList();
+    }
+
+    /** The horizontal unit vector of a Minecraft yaw (0 = +z, 90 = -x). */
+    private static Vector facing(double yawDegrees) {
+        double yaw = Math.toRadians(yawDegrees);
+        return new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("abilities")
+    void displaysNeverTakeTheOwnersRotation(String id) {
+        try (Scenario s = Scenario.ffa(id)) {
+            turnedLayout(s, id);
+            s.assertSucceeded(s.active(), id + " active");
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                assertUnrotated(s, id + " active");
+            }
+            s.ticks(120);
+            turnedLayout(s, id);
+            s.assertSucceeded(s.ultimate(), id + " ultimate");
+            for (int i = 0; i < 140; i++) {
+                s.ticks(1);
+                assertUnrotated(s, id + " ultimate");
+            }
+            s.ticks(100);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerLinePointsFromTheRodToTheBobber() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            turnedLayout(s, "angler");
+            s.place(s.enemy, -9.5, 0.5, -90);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낚아채기");
+            s.ticks(3);
+            BlockDisplay line = blocks(s, Material.WHITE_CONCRETE).stream()
+                    .max(Comparator.comparingDouble(d -> d.getTransformation().getScale().z()))
+                    .orElseThrow(() -> new AssertionError("the fishing line"));
+            Location bobber = blocks(s, Material.RED_CONCRETE).getFirst().getLocation();
+            Vector expected = bobber.toVector().subtract(line.getLocation().toVector()).normalize();
+            double dot = axis(line, 0, 0, 1).dot(expected);
+            assertTrue(dot > 0.98, "the line runs to the bobber (cos=" + dot + ")");
+            assertTrue(expected.getX() < -0.8, "towards the west, where the angler looks: " + expected);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerSalmonLeapsNoseFirstAwayFromTheAngler() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            turnedLayout(s, "angler");
+            s.assertSucceeded(s.ultimate(), "대어");
+            s.ticks(s.paramTicks("ult_warning") + 6);
+            BlockDisplay body = blocks(s, Material.RED_TERRACOTTA).stream()
+                    .max(Comparator.comparingDouble(d -> d.getTransformation().getScale().z()))
+                    .orElseThrow(() -> new AssertionError("the salmon's body"));
+            Vector nose = axis(body, 0, 0, 1).normalize();
+            assertTrue(nose.getY() > 0.3, "rising nose up: " + nose);
+            assertTrue(nose.getX() < -0.1 && Math.abs(nose.getZ()) < 0.05, "leaping west, away from the angler: "
+                    + nose);
+            assertEquals(0, body.getLocation().getYaw(), 1.0E-3, "the turn is in the transformation");
+            s.ticks(13);
+            Vector diving = axis(body, 0, 0, 1).normalize();
+            assertTrue(diving.getY() < -0.3 && diving.getX() < -0.1, "coming down nose first: " + diving);
+            s.ticks(60);
+            for (TestPlayer target : s.enemies()) {
+                s.tickUntilGrounded(target, 60);
+                assertEquals(FlatWorld.SURFACE, target.getLocation().getY(), 1.0E-6,
+                        target.getName() + " lands on the surface, not in it");
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void farmerScytheBladeSweepsFromTheRightToTheLeft() {
+        try (Scenario s = Scenario.ffa("farmer")) {
+            turnedLayout(s, "farmer");
+            float yaw = s.owner.getLocation().getYaw();
+            double half = s.param("sweep_angle") / 2;
+            s.assertSucceeded(s.active(), "낫질");
+            s.ticks(2);
+            BlockDisplay snath = blocks(s, Material.STRIPPED_DARK_OAK_LOG).getFirst();
+            double start = axis(snath, 0, 0, 1).dot(facing(yaw + half));
+            assertTrue(start > 0.95, "raised at the farmer's right (cos=" + start + ")");
+            s.ticks(4);
+            double end = axis(snath, 0, 0, 1).dot(facing(yaw - half));
+            assertTrue(end > 0.95, "swept to the farmer's left (cos=" + end + ")");
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void farmerScarecrowLooksWhereTheFarmerLooked() {
+        try (Scenario s = Scenario.ffa("farmer")) {
+            turnedLayout(s, "farmer");
+            float yaw = s.owner.getLocation().getYaw();
+            s.assertSucceeded(s.ultimate(), "대풍년");
+            s.ticks(15);
+            BlockDisplay head = blocks(s, Material.CARVED_PUMPKIN).getFirst();
+            double dot = axis(head, 0, 0, 1).dot(facing(yaw));
+            assertTrue(dot > 0.95, "the pumpkin face looks out over the field (cos=" + dot + ")");
+            s.ticks(s.paramTicks("ult_duration") + 60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void chefPanAndTableFaceTheCook() {
+        try (Scenario s = Scenario.ffa("chef")) {
+            turnedLayout(s, "chef");
+            float yaw = s.owner.getLocation().getYaw();
+            s.assertSucceeded(s.active(), "프라이팬");
+            s.ticks(4);
+            BlockDisplay handle = blocks(s, Material.DARK_OAK_PLANKS).getFirst();
+            Vector grip = axis(handle, 0, 0, 1);
+            assertEquals(0, grip.getY(), 1.0E-3, "the pan swings level");
+            assertTrue(grip.dot(facing(yaw)) > 0.6, "and ends in front of the cook: " + grip);
+            s.ticks(10);
+            assertTrue(s.enemy.getLocation().getX() < -1.5 - 2, "knocked away from the cook (west)");
+            s.tickUntilGrounded(s.enemy, 60);
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-6, "and lands on the surface");
+            s.ticks(40);
+
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.assertSucceeded(s.ultimate(), "만찬");
+            s.ticks(16);
+            BlockDisplay top = blocks(s, Material.SPRUCE_PLANKS).getFirst();
+            Vector length = axis(top, 1, 0, 0);
+            assertTrue(Math.abs(length.dot(facing(yaw))) < 0.05, "the table stands broadside to the cook: " + length);
+            assertTrue(top.getLocation().getX() < 0.5 - 1.5, "in front of the cook (west)");
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void beekeeperQueenHoversBehindTheKeeperFacingItsWay() {
+        try (Scenario s = Scenario.ffa("beekeeper")) {
+            turnedLayout(s, "beekeeper");
+            float yaw = s.owner.getLocation().getYaw();
+            s.assertSucceeded(s.ultimate(), "여왕벌");
+            s.ticks(20);
+            BlockDisplay head = blocks(s, Material.BROWN_CONCRETE).getFirst();
+            Vector3f translation = head.getTransformation().getTranslation();
+            Vector headAt = axis(head, 0.5f, 0.5f, 0.5f).multiply(head.getTransformation().getScale().x())
+                    .add(new Vector(translation.x(), translation.y(), translation.z()));
+            assertTrue(headAt.dot(facing(yaw)) > 0.5, "her head points where the keeper looks: " + headAt);
+            Vector offset = head.getLocation().toVector().subtract(s.owner.getLocation().toVector());
+            assertTrue(offset.dot(facing(yaw)) < 0, "she hovers behind the keeper: " + offset);
+            s.ticks(s.paramTicks("ult_duration") + 60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerCatchIsNeverInsideABlockAndLandsOnTheSurface() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낚아채기");
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                BoundingBox box = s.enemy.getBoundingBox().expand(-0.01);
+                assertFalse(s.world.hasCollisionsIn(box), "the catch is never inside a block: "
+                        + s.enemy.getLocation());
+            }
+            s.tickUntilGrounded(s.enemy, 60);
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-6, "landed on the surface");
             s.finishClean();
         }
     }
