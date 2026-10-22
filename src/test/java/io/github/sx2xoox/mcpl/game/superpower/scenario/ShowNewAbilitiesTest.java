@@ -120,7 +120,8 @@ class ShowNewAbilitiesTest {
 
     /** Ticks until {@code player} has stood on the ground for a few ticks. */
     private static void settle(Scenario s, Player player) {
-        s.h.tickUntil(() -> player.isOnGround() && player.getVelocity().getY() <= 0, 120,
+        Entity body = player; // the entity flag (Player#isOnGround is deprecated: the client reports it)
+        s.h.tickUntil(() -> body.isOnGround() && player.getVelocity().getY() <= 0, 120,
                 player.getName() + " landing");
         s.ticks(3);
     }
