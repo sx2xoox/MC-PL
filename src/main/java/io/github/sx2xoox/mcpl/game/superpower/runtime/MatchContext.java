@@ -165,6 +165,10 @@ public final class MatchContext implements AbilityContext {
             return !target.getUniqueId().equals(ownerId) && session.isParticipant(target) && session.isInPlay(target)
                     && !session.sameTeam(ownerId, target.getUniqueId());
         }
+        if (match.isDummy(entity)) {
+            // Practice training dummies are everyone's enemy.
+            return living.isValid();
+        }
         Summon summon = summons.get(entity.getUniqueId());
         if (summon == null || !living.isValid() || summon.owner().equals(ownerId)) {
             return false;
@@ -241,7 +245,7 @@ public final class MatchContext implements AbilityContext {
     private record Ranked(LivingEntity entity, double distance) {
     }
 
-    /** Alive participants and live summons: everything that can ever be an enemy. */
+    /** Alive participants, live summons and practice dummies: everything that can ever be an enemy. */
     private List<LivingEntity> candidates() {
         List<LivingEntity> all = new ArrayList<>(session.alivePlayers());
         for (Summon summon : summons.values()) {
@@ -249,6 +253,7 @@ public final class MatchContext implements AbilityContext {
                 all.add(summon.entity());
             }
         }
+        all.addAll(match.liveDummies());
         return all;
     }
 

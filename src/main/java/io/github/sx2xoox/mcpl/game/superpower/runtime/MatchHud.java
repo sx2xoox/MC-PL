@@ -56,7 +56,7 @@ final class MatchHud {
             }
             try {
                 Sidebar sidebar = session.sidebar(viewer);
-                sidebar.title(messages.get("hud.title"));
+                sidebar.title(messages.get(match.isPractice() ? "hud.title-practice" : "hud.title"));
                 Participant participant = match.participant(viewer.getUniqueId());
                 sidebar.lines(participant != null && session.isInPlay(viewer)
                         ? playerLines(participant) : spectatorLines(participant));
@@ -97,6 +97,11 @@ final class MatchHud {
     }
 
     private void fightBossBar() {
+        if (match.isPractice()) {
+            show(messages.get("bossbar.practice", Messages.tag("cooldown", messages.get(match.cooldownsEnabled()
+                    ? "practice.state-on" : "practice.state-off"))), 1f, BossBar.Color.GREEN);
+            return;
+        }
         BorderController border = match.border();
         long fight = match.fightTicks();
         switch (border.state(fight)) {

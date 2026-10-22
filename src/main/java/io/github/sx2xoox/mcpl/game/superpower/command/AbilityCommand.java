@@ -41,14 +41,18 @@ import org.bukkit.entity.Player;
  * /게임 능력 선택방식|mode [RANDOM|CHOICE]      admin: selection mode (saved to config.yml)
  * /게임 능력 리롤|reroll                        reroll during the prep phase (RANDOM)
  * /게임 능력 선택|pick                          reopen the CHOICE menu (selection phase, not picked yet)
+ * /게임 능력 연습|practice [능력]               ability practice with training dummies (see {@link PracticeCommand})
+ * /게임 능력 변경|충전|쿨타임|허수아비           practice only: switch, charge, cooldown on/off, dummies
  * </pre>
  */
 public final class AbilityCommand {
 
     private final SuperpowerGame game;
+    private final PracticeCommand practice;
 
     public AbilityCommand(SuperpowerGame game) {
         this.game = game;
+        this.practice = new PracticeCommand(game);
     }
 
     private Messages messages() {
@@ -103,6 +107,7 @@ public final class AbilityCommand {
             for (String name : List.of("선택", "pick")) {
                 node.then(Commands.literal(name).executes(ctx -> pick(ctx.getSource().getSender())));
             }
+            practice.addTo(node, registrar, english, this::suggestAbilities);
             registrar.register(node);
         }
     }

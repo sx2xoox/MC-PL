@@ -166,6 +166,17 @@ public final class GameManager {
      * @throws GameStartException with a ready-to-send Korean message if the match cannot start
      */
     public GameSession start(MiniGame game, @Nullable CommandSender starter) throws GameStartException {
+        return start(game, starter, eligiblePlayers());
+    }
+
+    /**
+     * Starts a match of {@code game} with only the given players as participants (e.g. a solo practice started for
+     * one player). Everyone else online watches as usual and may join if the mode allows late joining.
+     *
+     * @throws GameStartException with a ready-to-send Korean message if the match cannot start
+     */
+    public GameSession start(MiniGame game, @Nullable CommandSender starter, Collection<? extends Player> players)
+            throws GameStartException {
         Messages messages = hub.messages();
         if (shuttingDown) {
             throw new GameStartException(messages.prefixed("error.internal"));
@@ -174,7 +185,7 @@ public final class GameManager {
             throw new GameStartException(messages.prefixed("error.already-running",
                     Messages.tag("game", session.game().displayComponent())));
         }
-        List<Player> eligible = eligiblePlayers();
+        List<Player> eligible = List.copyOf(players);
         if (eligible.size() < Math.max(1, game.minPlayers())) {
             throw new GameStartException(messages.prefixed("error.not-enough-players",
                     Messages.tag("count", eligible.size()), Messages.tag("min", game.minPlayers())));

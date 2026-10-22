@@ -2,10 +2,12 @@ package io.github.sx2xoox.mcpl.game.superpower;
 
 import java.io.File;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.Hub;
@@ -49,6 +51,11 @@ public final class SuperpowerGame implements MiniGame {
     private final AbilityTexts texts;
     private final AbilityItems items;
     private final Map<UUID, String> pendingAssignments = new LinkedHashMap<>();
+    /** Abilities asked for with {@code /게임 능력 연습 <능력>}, used when the player enters a practice session. */
+    private final Map<UUID, String> practiceRequests = new LinkedHashMap<>();
+    /** Players who asked to join the running practice ({@code /게임 능력 연습}). */
+    private final Set<UUID> practiceJoins = new HashSet<>();
+    private final SuperpowerPracticeGame practice;
     private @Nullable SuperpowerMatch current;
 
     public SuperpowerGame(Hub hub) {
@@ -61,6 +68,7 @@ public final class SuperpowerGame implements MiniGame {
         this.abilities.load(registry);
         this.texts = new AbilityTexts(messages);
         this.items = new AbilityItems(hub);
+        this.practice = new SuperpowerPracticeGame(this);
     }
 
     // =================================================================== MiniGame
@@ -113,7 +121,12 @@ public final class SuperpowerGame implements MiniGame {
 
     @Override
     public GameInstance createInstance(GameSession session) {
-        SuperpowerMatch match = new SuperpowerMatch(this, session);
+        return createMatch(session, false);
+    }
+
+    /** A new match of this mode or a practice session (both are the {@link #currentMatch()} while they run). */
+    SuperpowerMatch createMatch(GameSession session, boolean practiceSession) {
+        SuperpowerMatch match = new SuperpowerMatch(this, session, practiceSession);
         current = match;
         return match;
     }
@@ -141,12 +154,47 @@ public final class SuperpowerGame implements MiniGame {
     public void onShutdown() {
         current = null;
         pendingAssignments.clear();
+        practiceRequests.clear();
+        practiceJoins.clear();
     }
 
     // =================================================================== shared state
 
     public Hub hub() {
         return hub;
+    }
+
+    /** The ability practice ({@code /게임 능력 연습}), a second mini-game sharing this mode's abilities. */
+    public SuperpowerPracticeGame practice() {
+        return practice;
+    }
+
+    /** Remembers the ability {@code player} wants in practice (null = random). */
+    public void requestPractice(UUID player, @Nullable String abilityId) {
+        if (abilityId == null) {
+            practiceRequests.remove(player);
+        } else {
+            practiceRequests.put(player, abilityId);
+        }
+    }
+
+    /** Removes and returns the practice ability requested by {@code player}, or null for a random one. */
+    public @Nullable String takePracticeRequest(UUID player) {
+        return practiceRequests.remove(player);
+    }
+
+    /** {@code player} asked to join the running practice (only such players, and rejoining ones, are let in). */
+    public void allowPracticeJoin(UUID player, boolean allowed) {
+        if (allowed) {
+            practiceJoins.add(player);
+        } else {
+            practiceJoins.remove(player);
+        }
+    }
+
+    /** Removes and returns whether {@code player} asked to join the running practice. */
+    public boolean takePracticeJoin(UUID player) {
+        return practiceJoins.remove(player);
     }
 
     public AbilityRegistry registry() {
