@@ -134,12 +134,9 @@ class RangedSupportAbilitiesTest {
     }
 
     @Test
-    @Disabled("BUG: Archer skill arrows are re-dealt as MAGIC damage from the archer, so Blink's projectile dodge "
-            + "never triggers on them")
     void blinkDodgesArcherVolleyArrows() {
-        // ArcherAbility#volleyHit cancels the arrow's ProjectileHitEvent and deals Combat.hit (MAGIC, direct entity =
-        // the archer). BlinkAbility#isProjectileHit only recognises projectile damagers / PROJECTILE causes, so a
-        // blink player with a 100% dodge chance still takes every volley arrow.
+        // ArcherAbility#volleyHit cancels the arrow's ProjectileHitEvent and re-deals the hit as ARROW damage, which
+        // BlinkAbility#isProjectileHit recognises, so a blink player with a 100% dodge chance avoids every arrow.
         try (Scenario s = Scenario.builder("archer").enemyAbility("blink")
                 .configure(h -> h.setParam("blink", "dodge_chance", 100)).start()) {
             s.aimAt(s.owner, s.enemy);
@@ -152,8 +149,6 @@ class RangedSupportAbilitiesTest {
     }
 
     @Test
-    @Disabled("BUG: Archer skill arrows are re-dealt as MAGIC damage from the archer, so Mirror's projectile "
-            + "refraction never reduces them")
     void mirrorRefractsArcherVolleyArrows() {
         try (Scenario s = Scenario.builder("archer").enemyAbility("mirror")
                 .configure(h -> h.setParam("mirror", "projectile_reduction", 100)).start()) {
