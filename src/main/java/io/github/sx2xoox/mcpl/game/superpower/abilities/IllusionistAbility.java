@@ -117,6 +117,9 @@ public final class IllusionistAbility extends Ability {
     private static final int HALL_STEP_TICKS = 4;
     private static final double HALL_STEP_DEGREES = 22.5;
     private static final long SHIELD_BLOCK_TICKS = 3;
+    /** At most this many shard displays per {@link #SHARD_WINDOW_TICKS}, e.g. when an area hit shatters every copy. */
+    private static final int MAX_SHARDS_PER_WINDOW = 12;
+    private static final long SHARD_WINDOW_TICKS = SHARD_FLIGHT_TICKS + 8;
 
     // Copies
     private static final int MAX_CLONES = 8;
@@ -151,6 +154,10 @@ public final class IllusionistAbility extends Ability {
 
     // Stealth
     private final Stealth stealth = new Stealth();
+
+    // Shard display budget
+    private long shardWindowStart = Long.MIN_VALUE / 2;
+    private int shardsInWindow;
 
     // Owner motion (sampled every few ticks), so a decoy can keep running the way the owner was going.
     private @Nullable Location motionSample;
@@ -922,7 +929,17 @@ public final class IllusionistAbility extends Ability {
     }
 
     /** Crystal splinters (item displays) flying out of {@code center}, tumbling, then fading. */
-    private void shardBurst(Location center, int count, double reach) {
+    private void shardBurst(Location center, int wanted, double reach) {
+        long now = ctx().currentTick();
+        if (now - shardWindowStart >= SHARD_WINDOW_TICKS) {
+            shardWindowStart = now;
+            shardsInWindow = 0;
+        }
+        int count = Math.min(wanted, MAX_SHARDS_PER_WINDOW - shardsInWindow);
+        if (count <= 0) {
+            return;
+        }
+        shardsInWindow += count;
         Player owner = player();
         Location at = center.clone();
         at.setYaw(0);

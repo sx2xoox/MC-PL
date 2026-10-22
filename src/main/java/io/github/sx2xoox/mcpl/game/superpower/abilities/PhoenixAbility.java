@@ -232,7 +232,7 @@ public final class PhoenixAbility extends Ability {
         // Out of the ashes: a white-hot flash, a pillar of fire spiralling up and feathers bursting free.
         Location feet = owner.getLocation();
         Location body = feet.clone().add(0, owner.getHeight() * 0.5, 0);
-        Vfx.burst(ctx(), body, PALETTE, 1.2, Particle.FLAME, true);
+        Vfx.burst(ctx(), body, PALETTE, 1.2, Particle.FLAME, false);
         Vfx.cloud(ctx(), feet.clone().add(0, 0.2, 0), Particle.LARGE_SMOKE, 8, 0.5, 0.02, null, false);
         firePillar(feet);
         featherBurst(body);
@@ -255,12 +255,12 @@ public final class PhoenixAbility extends Ability {
             double t = (double) (run + 1) / PILLAR_TICKS;
             double height = PILLAR_HEIGHT * Math.min(1, t * 1.6);
             double radius = 0.9 - 0.5 * t;
-            Vfx.helix(ctx(), base, radius, height, 1.25, 2, 10, run * 0.45, Particle.FLAME, null, true);
+            Vfx.helix(ctx(), base, radius, height, 1.25, 2, 10, run * 0.45, Particle.FLAME, null, false);
             Vfx.helix(ctx(), base, radius * 0.75, height, 1.25, 2, 6, run * 0.45 + Math.PI / 2,
-                    Particle.DUST_COLOR_TRANSITION, HEAT, true);
+                    Particle.DUST_COLOR_TRANSITION, HEAT, false);
             if (run % 3 == 0) {
                 Vfx.line(ctx(), base.clone().add(0, 0.2, 0), base.clone().add(0, height, 0), 1.5, Particle.END_ROD,
-                        null, true);
+                        null, false);
             }
             return true;
         });
@@ -314,9 +314,9 @@ public final class PhoenixAbility extends Ability {
         Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.5f);
         // A ring of fire racing out to the radius, a heat ring behind it, then embers rising where it passed.
         Location ground = center.clone().add(0, 0.15, 0);
-        Vfx.shockwave(ctx(), owner, ground, 0.4, radius, SHOCKWAVE_TICKS, Particle.FLAME, null, true);
+        Vfx.shockwave(ctx(), owner, ground, 0.4, radius, SHOCKWAVE_TICKS, Particle.FLAME, null, false);
         Vfx.shockwave(ctx(), owner, ground.clone().add(0, 0.2, 0), 0.2, radius * 0.85, SHOCKWAVE_TICKS,
-                Particle.DUST_COLOR_TRANSITION, EMBER, true);
+                Particle.DUST_COLOR_TRANSITION, EMBER, false);
         Loop.repeat(ctx(), owner, SHOCKWAVE_TICKS, 3, 6, run -> {
             for (int i = 0; i < Vfx.n(ctx(), 5); i++) {
                 Location at = Vfx.scatter(ground, radius);
