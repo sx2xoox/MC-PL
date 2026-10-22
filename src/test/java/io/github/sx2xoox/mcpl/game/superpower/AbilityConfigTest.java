@@ -106,6 +106,44 @@ class AbilityConfigTest {
     }
 
     @Test
+    void aBrokenFileKeepsThePreviousSettingsAndIsLeftUntouched() throws IOException {
+        assertTrue(config.load(registry));
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
+        yaml.set("abilities.frost.enabled", false);
+        yaml.set("abilities.pyro.params.cooldown", 3);
+        yaml.save(file);
+        assertTrue(config.load(registry));
+
+        String broken = Files.readString(file.toPath(), StandardCharsets.UTF_8) + "\n  bad:\n\t- [unclosed\n";
+        Files.writeString(file.toPath(), broken, StandardCharsets.UTF_8);
+        assertFalse(config.load(registry), "a YAML error is reported");
+        assertFalse(config.snapshot().isEnabled("frost"), "a disabled ability stays disabled");
+        assertEquals(3.0, config.snapshot().params(registry.get("pyro").info()).cooldownSeconds(), 1.0E-9,
+                "tuned numbers are kept");
+        assertEquals(broken, Files.readString(file.toPath(), StandardCharsets.UTF_8), "the file is not touched");
+
+        AbilityConfig fresh = new AbilityConfig(file, Logger.getLogger("AbilityConfigTest"));
+        assertFalse(fresh.load(registry));
+        assertEquals(registry.all().size(), fresh.snapshot().enabledIds().size(),
+                "without earlier settings the defaults are used");
+    }
+
+    @Test
+    void enabledAcceptsQuotedBooleansAndKeepsInvalidValues() throws IOException {
+        config.load(registry);
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
+        yaml.set("abilities.frost.enabled", "false");
+        yaml.set("abilities.pyro.enabled", 0);
+        yaml.save(file);
+        assertTrue(config.load(registry));
+        assertFalse(config.snapshot().isEnabled("frost"), "\"false\" turns the ability off");
+        assertTrue(config.snapshot().isEnabled("pyro"), "an invalid value keeps the previous state");
+        YamlConfiguration reread = YamlConfiguration.loadConfiguration(file);
+        assertEquals("false", reread.getString("abilities.frost.enabled"), "the owner's value is not rewritten");
+        assertEquals(0, reread.getInt("abilities.pyro.enabled"), "the owner's value is not rewritten");
+    }
+
+    @Test
     void unchangedFileIsNotRewritten() throws IOException {
         config.load(registry);
         long modified = file.lastModified();
