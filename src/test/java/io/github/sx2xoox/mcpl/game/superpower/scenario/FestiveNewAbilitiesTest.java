@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -15,6 +16,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Registry;
@@ -826,7 +828,7 @@ class FestiveNewAbilitiesTest {
     }
 
     @Test
-    void djMissedDropWaitsForTheNextBeatAndGoesOffPlain() {
+    void djMissedDropWaitsForTheNextBeatAndGoesOffWeak() {
         try (Scenario s = Scenario.ffa("dj")) {
             long beat = s.paramTicks("beat_interval");
             tickToPhase(s, beat / 2);
@@ -835,7 +837,9 @@ class FestiveNewAbilitiesTest {
             s.ticks((int) (beat - beat / 2) - 1);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the bass waits for the beat");
             s.ticks(8);
-            assertEquals(s.param("drop_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "and drops plain");
+            assertTrue(s.param("miss_penalty") > 0, "a miss costs something");
+            assertEquals(s.param("drop_damage") * (1 - s.param("miss_penalty") / 100), s.damageBy(s.owner, s.enemy),
+                    EPSILON, "and drops weak");
             s.ticks(40);
             s.finishClean();
         }
@@ -1095,12 +1099,16 @@ class FestiveNewAbilitiesTest {
                     "all three waves at the landing spot: " + s.hitsBy(s.owner, s.enemy));
             assertEquals(s.param("ring_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "only the last wave out there");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage");
-            List<BlockDisplay> rink = blocks(s, Material.PACKED_ICE).stream()
-                    .filter(sheet -> sheet.getTransformation().getScale().x() > 5).toList();
-            assertEquals(3, rink.size(), "a twelve-sided rink of three sheets");
+            List<BlockDisplay> rink = blocks(s, Material.PACKED_ICE);
+            assertTrue(rink.size() >= 12, "a rink of ice tiles: " + rink.size());
             for (BlockDisplay sheet : rink) {
                 assertUnrotated(sheet, "rink sheet");
+                Vector3f scale = sheet.getTransformation().getScale();
+                assertTrue(scale.x() <= 3.05f && scale.z() <= 3.05f, "no texture stretched across the whole rink: "
+                        + scale);
             }
+            assertIceOnTheGround(s, "rink");
+            assertNoZFighting(s);
             assertTrue(entities(s, TextDisplay.class).stream().anyMatch(text -> Scenario.plain(text.text())
                     .contains("10.0")), "the judges' scores");
             s.ticks(s.paramTicks("rink_duration") + 30);
@@ -1143,6 +1151,452 @@ class FestiveNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.world.wallAlongX(-3, 3, 4, 6, Material.AIR);
             s.ticks(s.paramTicks("rink_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== real terrain and timing (review regressions)
+
+    /** Fills x {@code x1..x2}, z {@code z1..z2} from the floor up {@code height} blocks with {@code type}. */
+    private static void box(Scenario s, int x1, int x2, int z1, int z2, int height, Material type) {
+        for (int x = x1; x <= x2; x++) {
+            for (int z = z1; z <= z2; z++) {
+                for (int y = 0; y < height; y++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 1 + y, z, type);
+                }
+            }
+        }
+    }
+
+    /** The top of the highest solid block at or below {@code y} under (x, z). */
+    private static double groundUnder(Scenario s, double x, double y, double z) {
+        for (int by = (int) Math.floor(y); by > FlatWorld.FLOOR_Y - 2; by--) {
+            if (s.world.getBlockAt((int) Math.floor(x), by, (int) Math.floor(z)).getType().isSolid()) {
+                return by + 1;
+            }
+        }
+        return Double.NaN;
+    }
+
+    /** The corners (x, y, z) of the top face of a flat block display, in order around the face. */
+    private static double[][] topFace(BlockDisplay sheet) {
+        Transformation t = sheet.getTransformation();
+        Quaternionf rotation = leftRotation(sheet);
+        Vector3f scale = t.getScale();
+        Location at = sheet.getLocation();
+        float[][] unit = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        double[][] corners = new double[4][];
+        for (int i = 0; i < 4; i++) {
+            Vector3f corner = rotation.transform(new Vector3f(unit[i][0] * scale.x(), scale.y(), unit[i][1] * scale.z()))
+                    .add(t.getTranslation());
+            corners[i] = new double[] {at.getX() + corner.x(), at.getY() + corner.y(), at.getZ() + corner.z()};
+        }
+        return corners;
+    }
+
+    private static List<BlockDisplay> iceSheets(Scenario s) {
+        return blocks(s, Material.PACKED_ICE).stream().filter(sheet -> sheet.getTransformation().getScale().y() < 0.2f)
+                .toList();
+    }
+
+    /** Every ice sheet lies on the ground under its middle: never floating over a drop, never inside a block. */
+    private static void assertIceOnTheGround(Scenario s, String what) {
+        for (BlockDisplay sheet : iceSheets(s)) {
+            double[][] face = topFace(sheet);
+            double x = 0;
+            double z = 0;
+            for (double[] corner : face) {
+                x += corner[0] / 4;
+                z += corner[2] / 4;
+            }
+            double bottom = face[0][1] - sheet.getTransformation().getScale().y();
+            double ground = groundUnder(s, x, bottom + 0.5, z);
+            assertTrue(bottom >= ground - 0.01 && bottom <= ground + 0.1, what + ": an ice sheet at (" + x + ", " + z
+                    + ") lies on the ground: bottom " + bottom + ", ground " + ground);
+        }
+    }
+
+    /** Ice sheets that overlap are far enough apart in height not to flicker (z-fight) on a real client. */
+    private static void assertNoZFighting(Scenario s) {
+        List<double[][]> faces = iceSheets(s).stream().map(FestiveNewAbilitiesTest::topFace).toList();
+        for (int i = 0; i < faces.size(); i++) {
+            for (int j = i + 1; j < faces.size(); j++) {
+                double[][] a = faces.get(i);
+                double[][] b = faces.get(j);
+                if (overlap(a, b)) {
+                    assertTrue(Math.abs(a[0][1] - b[0][1]) >= 0.015, "overlapping ice sheets " + Math.abs(a[0][1]
+                            - b[0][1]) + " apart would z-fight");
+                }
+            }
+        }
+    }
+
+    /** True if two convex quads (x at [0], z at [2]) overlap with a positive area (separating axis test). */
+    private static boolean overlap(double[][] a, double[][] b) {
+        for (double[][] poly : List.of(a, b)) {
+            for (int i = 0; i < 4; i++) {
+                double[] p = poly[i];
+                double[] q = poly[(i + 1) % 4];
+                double nx = p[2] - q[2];
+                double nz = q[0] - p[0];
+                double length = Math.hypot(nx, nz);
+                if (length < 1.0E-9) {
+                    continue;
+                }
+                double[] ra = project(a, nx / length, nz / length);
+                double[] rb = project(b, nx / length, nz / length);
+                if (ra[1] <= rb[0] + 1.0E-3 || rb[1] <= ra[0] + 1.0E-3) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static double[] project(double[][] poly, double nx, double nz) {
+        double min = Double.POSITIVE_INFINITY;
+        double max = Double.NEGATIVE_INFINITY;
+        for (double[] p : poly) {
+            double d = p[0] * nx + p[2] * nz;
+            min = Math.min(min, d);
+            max = Math.max(max, d);
+        }
+        return new double[] {min, max};
+    }
+
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    private static void enemiesAway(Scenario s) {
+        s.place(s.enemy, 9.5, -6.5, 0);
+        s.place(s.enemy2, 12.5, -9.5, 0);
+    }
+
+    @Test
+    void skaterGlideStopsAtTheEdgeOfADropInsteadOfFloatingOverIt() {
+        try (Scenario s = Scenario.ffa("skater")) {
+            box(s, -3, 3, -3, 4, 3, Material.STONE);
+            double top = FlatWorld.SURFACE + 3;
+            enemiesAway(s);
+            s.place(s.owner, 0.5, top, 0.5, 0, 0);
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "빙판 질주 towards a 3-block drop");
+            for (int i = 0; i < 30; i++) {
+                s.ticks(1);
+                assertTrue(s.owner.getLocation().getY() < top + 0.3, "the skater never floats up: "
+                        + s.owner.getLocation().toVector());
+                assertIceOnTheGround(s, "tick " + i);
+            }
+            Location feet = s.owner.getLocation();
+            assertEquals(top, feet.getY(), EPSILON, "stopped on the platform: " + feet.toVector());
+            assertTrue(feet.getZ() - s.owner.getWidth() / 2 < 5, "at the edge, not over it: " + feet.toVector());
+            assertFalse(iceSheets(s).isEmpty(), "the lane up to the edge");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            box(s, -3, 3, -3, 4, 3, Material.AIR);
+            s.ticks(s.paramTicks("ice_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void skaterGlideStepsDownALedgeWithoutHovering() {
+        try (Scenario s = Scenario.ffa("skater")) {
+            box(s, -3, 3, -3, 4, 1, Material.STONE);
+            enemiesAway(s);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1, 0.5, 0, 0);
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "빙판 질주 off a step");
+            for (int i = 0; i < 25; i++) {
+                s.ticks(1);
+                Location feet = s.owner.getLocation();
+                if (feet.getZ() - s.owner.getWidth() / 2 > 5 + 2 * 0.9) {
+                    assertEquals(FlatWorld.SURFACE, feet.getY(), EPSILON, "down the step at once, no hovering: "
+                            + feet.toVector());
+                }
+                assertIceOnTheGround(s, "tick " + i);
+            }
+            assertTrue(s.owner.getLocation().getZ() > 10, "glided on below the step: "
+                    + s.owner.getLocation().toVector());
+            assertNoZFighting(s);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            box(s, -3, 3, -3, 4, 1, Material.AIR);
+            s.ticks(s.paramTicks("ice_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void skaterGlideNeedsTheGroundUnderItsBlades() {
+        try (Scenario s = Scenario.ffa("skater")) {
+            enemiesAway(s);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 4, 0.5, 0, 0);
+            assertFalse(s.active().succeeded(), "no glide high up in the air");
+            assertTrue(iceSheets(s).isEmpty(), "and no ice");
+            // Just after a jump (about a block up) the glide takes off and puts the skater straight down on the ice.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1.0, 0.5, 0, 0);
+            s.assertSucceeded(s.active(), "빙판 질주 from a hop");
+            s.ticks(2);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), EPSILON, "down on the floor at once");
+            s.ticks(20);
+            assertIceOnTheGround(s, "hop");
+            s.ticks(s.paramTicks("ice_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void skaterTripleAxelOutOfAGlideStillLeaps() {
+        try (Scenario s = noGaugeGain(Scenario.builder("skater")).start()) {
+            enemiesAway(s);
+            s.assertSucceeded(s.active(), "빙판 질주");
+            s.ticks(4);
+            s.assertSucceeded(s.ultimate(), "트리플 악셀 out of the glide");
+            s.ticks(4);
+            assertTrue(s.owner.getLocation().getY() > FlatWorld.SURFACE + 0.8, "up in the air: "
+                    + s.owner.getLocation().toVector());
+            s.tickUntilGrounded(s.owner, 80);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), EPSILON, "landed on the floor");
+            s.ticks(14);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage");
+            s.ticks(s.paramTicks("rink_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void skaterCannotGlideInTheMiddleOfTheAxel() {
+        try (Scenario s = Scenario.ffa("skater")) {
+            enemiesAway(s);
+            s.assertSucceeded(s.ultimate(), "트리플 악셀");
+            s.ticks(3);
+            assertFalse(s.active().succeeded(), "no glide during the leap");
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(14);
+            s.assertSucceeded(s.active(), "빙판 질주 after the landing");
+            s.ticks(s.paramTicks("rink_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void skaterKeepsItsIceSpeedThroughAHop() {
+        try (Scenario s = Scenario.ffa("skater")) {
+            enemiesAway(s);
+            double fast = baseSpeed(s.owner) * (1 + s.param("ice_speed") / 100);
+            s.assertSucceeded(s.active(), "빙판 질주");
+            s.ticks(25);
+            assertEquals(fast, speed(s.owner), EPSILON, "on the ice");
+            Location feet = s.owner.getLocation();
+            s.place(s.owner, feet.getX(), feet.getY() + 0.9, feet.getZ(), feet.getYaw(), 0);
+            s.ticks(3);
+            assertTrue(s.owner.getLocation().getY() > FlatWorld.SURFACE + 0.1, "in the air");
+            assertEquals(fast, speed(s.owner), EPSILON, "a hop keeps the speed");
+            s.tickUntilGrounded(s.owner, 40);
+            s.ticks(2);
+            assertEquals(fast, speed(s.owner), EPSILON, "and lands with it");
+            s.ticks(s.paramTicks("ice_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void skaterRinkFollowsUnevenGround() {
+        try (Scenario s = noGaugeGain(Scenario.builder("skater")).start()) {
+            enemiesAway(s);
+            // A raised step beside the landing spot, inside the rink.
+            box(s, 2, 6, 5, 11, 1, Material.STONE);
+            s.assertSucceeded(s.ultimate(), "트리플 악셀");
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(10);
+            assertIceOnTheGround(s, "rink");
+            assertTrue(iceSheets(s).stream().anyMatch(sheet -> topFace(sheet)[0][1] > FlatWorld.SURFACE + 1),
+                    "part of the rink lies on the step");
+            assertTrue(iceSheets(s).stream().anyMatch(sheet -> topFace(sheet)[0][1] < FlatWorld.SURFACE + 0.5),
+                    "and part on the floor");
+            assertNoZFighting(s);
+            box(s, 2, 6, 5, 11, 1, Material.AIR);
+            s.ticks(s.paramTicks("rink_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void djBassDropStaysInTheBandOfTheOtherSlams() {
+        try (Scenario s = Scenario.ffa("dj")) {
+            // 거인: 5 damage in radius 4 every 9 s. A drop of nothing but perfects may beat that a little (it takes
+            // timing), but not by far, and a miss must cost something.
+            double radius = s.param("drop_radius");
+            double perfect = s.param("drop_damage") * (1 + s.param("perfect_bonus") / 100);
+            double fastest = s.param("cooldown") - s.param("perfect_refund");
+            assertTrue(radius <= 5, "radius " + radius);
+            assertTrue(perfect <= 5, "perfect damage " + perfect);
+            assertTrue(perfect * radius * radius / fastest <= 1.5 * 5 * 16 / 9.0, "area damage per second");
+            assertTrue(s.param("miss_penalty") > 0, "a miss costs something");
+            s.place(s.enemy, 0.5, 0.5 + radius + 0.8, 180);
+            s.place(s.enemy2, 9.5, -9.5, 0);
+            tickToPhase(s, 0);
+            s.assertSucceeded(s.active(), "베이스 드롭");
+            s.ticks(10);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "just out of reach");
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void djMetronomeLeavesTheActionBarAloneWhileTheDropWaits() {
+        try (Scenario s = Scenario.ffa("dj")) {
+            s.ticks(100);
+            actionBars(s.owner);
+            s.ticks(60);
+            List<String> spam = actionBars(s.owner).stream().filter(bar -> bar.contains("♪")).toList();
+            assertTrue(spam.isEmpty(), "no metronome over the action bar while the drop just waits: " + spam);
+            // It counts in the next drop as the cooldown runs out.
+            tickToPhase(s, 0);
+            s.assertSucceeded(s.active(), "베이스 드롭");
+            s.ticks(s.paramTicks("cooldown") - 15);
+            actionBars(s.owner);
+            s.ticks(20);
+            assertTrue(actionBars(s.owner).stream().anyMatch(bar -> bar.contains("♪")), "the count-in");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void djPartyFloorDoesNotReachUpOntoALedge() {
+        try (Scenario s = noGaugeGain(Scenario.builder("dj")).start()) {
+            box(s, 3, 3, 3, 3, 3, Material.STONE);
+            s.place(s.enemy, 3.5, FlatWorld.SURFACE + 3, 3.5, 180, 0);
+            s.assertSucceeded(s.ultimate(), "파티 타임");
+            s.ticks(s.paramTicks("beat_interval") * 4 + 4);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "up on a pillar, not on the dance floor");
+            assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "the floor below dances");
+            s.ticks(s.paramTicks("party_duration") + 30);
+            box(s, 3, 3, 3, 3, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void santaPresentArcStaysUnderACeiling() {
+        try (Scenario s = Scenario.ffa("santa")) {
+            int ceiling = FlatWorld.FLOOR_Y + 4;
+            for (int x = -4; x <= 4; x++) {
+                for (int z = -2; z <= 14; z++) {
+                    s.world.setBlock(x, ceiling, z, Material.STONE);
+                }
+            }
+            s.place(s.enemy, 0.5, 10.5, 180);
+            s.place(s.enemy2, 9.5, -9.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "선물 상자 indoors");
+            for (int i = 0; i < 25 && s.damageTaken(s.enemy) <= 0; i++) {
+                for (BlockDisplay part : entities(s, BlockDisplay.class)) {
+                    assertTrue(part.getLocation().getY() + 0.45 <= ceiling + EPSILON, "the present flies under the "
+                            + "ceiling: " + part.getLocation().toVector());
+                }
+                s.ticks(1);
+            }
+            assertTrue(s.damageTaken(s.enemy) > 0, "and still lands on the enemy");
+            s.ticks(30);
+            for (int x = -4; x <= 4; x++) {
+                for (int z = -2; z <= 14; z++) {
+                    s.world.setBlock(x, ceiling, z, Material.AIR);
+                }
+            }
+            s.ticks(s.paramTicks("naughty_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void santaTreeAlwaysGetsItsStarEvenWhenTheSackIsBusy() {
+        try (Scenario s = noGaugeGain(Scenario.builder("santa")).start()) {
+            // A gift waits over Santa's head and both enemies are on the naughty list...
+            s.ticks(s.paramTicks("gift_interval") + 6);
+            s.melee(s.enemy, s.owner, 1);
+            s.melee(s.enemy2, s.owner, 1);
+            s.healAll();
+            s.ticks(3);
+            assertEquals(2, items(s, Material.COAL).size(), "two naughty marks");
+            // ...one present has just burst into coal and the next one is in the air.
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "선물 상자");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 30, "the first present lands");
+            s.readyActive();
+            s.aimAt(s.owner, s.enemy2);
+            s.assertSucceeded(s.active(), "another 선물 상자");
+            s.assertSucceeded(s.ultimate(), "크리스마스의 기적");
+            s.ticks(2);
+            assertEquals(1, blocks(s, Material.SPRUCE_LOG).size(), "the trunk");
+            assertEquals(8, blocks(s, Material.SPRUCE_LEAVES).size(), "every tier");
+            assertTrue(blocks(s, Material.GOLD_BLOCK).stream().anyMatch(Display::isGlowing), "and the star on top");
+            assertTrue(entities(s, Display.class).size() <= 24, "within the display budget: "
+                    + entities(s, Display.class).size());
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void santaStringLightsNeedASightOfTheTree() {
+        try (Scenario s = noGaugeGain(Scenario.builder("santa")).start()) {
+            s.world.wallAlongX(-4, 4, 5, 4, Material.STONE);
+            s.place(s.enemy, 0.5, 7.5, 180);
+            s.place(s.enemy2, 2.0, 8.5, 180);
+            s.assertSucceeded(s.ultimate(), "크리스마스의 기적");
+            s.ticks(s.paramTicks("ult_bind_delay") + 2);
+            for (TestPlayer enemy : s.enemies()) {
+                assertEquals(0, s.damageTaken(enemy), EPSILON, enemy.getName() + ": the wall keeps the lights off");
+                assertEquals(baseSpeed(enemy), speed(enemy), EPSILON, enemy.getName() + " is not bound");
+            }
+            s.ticks(s.paramTicks("ult_duration") + 10);
+            assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON, "nor the star's burst");
+            s.world.wallAlongX(-4, 4, 5, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void santaTreeOnlyReachesAroundItsFoot() {
+        try (Scenario s = noGaugeGain(Scenario.builder("santa")).start()) {
+            box(s, 4, 4, 6, 6, 3, Material.STONE);
+            s.place(s.enemy, 4.5, FlatWorld.SURFACE + 3, 6.5, 180, 0);
+            s.assertSucceeded(s.ultimate(), "크리스마스의 기적");
+            s.ticks(s.paramTicks("ult_bind_delay") + 2);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "up on a pillar, out of the tree's reach");
+            assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "the one at its foot is wrapped up");
+            s.ticks(s.paramTicks("ult_duration") + 10);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "nor hit by the star's burst");
+            box(s, 4, 4, 6, 6, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void snowmanSnowballsNeverGiveAHiddenEnemyAway() {
+        try (Scenario s = noGaugeGain(Scenario.builder("snowman")).start()) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.aimAt(s.owner, s.enemy);
+            actionBars(s.owner);
+            s.owner.getHeardSounds().clear();
+            s.assertSucceeded(s.active(), "눈덩이 연사 at a hidden enemy");
+            s.ticks(40);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the snowballs still hit");
+            List<String> bars = actionBars(s.owner);
+            assertTrue(bars.stream().noneMatch(bar -> bar.contains("적중") || bar.contains("눈 범벅")
+                    || bar.contains("눈사람")), "nothing tells the snowman it hit someone: " + bars);
+            assertTrue(s.owner.getHeardSounds().stream().noneMatch(sound -> sound.getSound().contains("snow_golem.hurt")),
+                    "no hurt cry where the hidden enemy stands");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(s.paramTicks("freeze_immunity") + s.paramTicks("snow_duration"));
             s.finishClean();
         }
     }

@@ -74,7 +74,8 @@ public final class SnowmanAbility extends Ability {
                     "내 눈덩이나 근접 공격에 맞은 적에게 눈이 한 겹씩 쌓입니다(최대 {snow_max}겹, {snow_duration}초 유지, "
                             + "근접 공격은 같은 적에게 {melee_stack_cooldown}초마다). 한 겹마다 이동 속도가 {snow_slow}% "
                             + "느려지고, {snow_max}겹이 쌓이면 눈사람이 되어 {freeze_damage} 피해를 입고 {freeze_duration}초간 "
-                            + "꽁꽁 얼어붙습니다(같은 적은 {freeze_immunity}초마다).")
+                            + "꽁꽁 얼어붙습니다. 얼어붙은 적에게는 그때부터 {freeze_immunity}초 동안 눈이 쌓이지 않습니다(피해는 "
+                            + "그대로 받습니다).")
             .active("눈덩이 연사",
                     "눈덩이 {ball_count}개를 {ball_interval}초 간격으로 연달아 던집니다({ball_range}블록). 눈덩이는 던지는 "
                             + "순간 바라보는 곳으로 날아가 처음 맞은 적에게 {ball_damage} 피해를 주고 살짝 밀쳐내며 눈을 한 겹 "
@@ -155,6 +156,9 @@ public final class SnowmanAbility extends Ability {
 
     // ultimate: giant snowball
     private static final double ROLL_SPEED = 0.42;
+    /** Particles per block of the wind-up's lane marker: the middle line and the edges. */
+    private static final double LANE_DENSITY = 1.0;
+    private static final double EDGE_DENSITY = 0.6;
     /** The rolling ball looks this far ahead for walls (beyond its own radius). */
     private static final double WALL_LOOKAHEAD = 0.25;
     /** Ground under the rolling ball is searched this far above (steps) and below (slopes) its foot. */
@@ -348,16 +352,20 @@ public final class SnowmanAbility extends Ability {
         state.mound.clear();
     }
 
-    /** A layer lands: a white puff on the victim and the crunch of packed snow, higher with every layer. */
+    /**
+     * A layer lands: a white puff on the victim and the crunch of packed snow, higher with every layer. Nothing at all
+     * for a victim hidden from the snowman (stealth): no puff, no crunch where it stands, no count in the action bar.
+     */
     private void packFx(LivingEntity enemy, int layers, int max) {
+        if (isHiddenFromOwner(enemy)) {
+            return;
+        }
         Location body = Fx.body(enemy);
         World world = body.getWorld();
-        if (!isHiddenFromOwner(enemy)) {
-            world.spawnParticle(Particle.ITEM_SNOWBALL, body, Vfx.n(ctx(), 8), 0.25, 0.35, 0.25, 0.05);
-            world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, Vfx.n(ctx(), 6), 0.3, 0.4, 0.3, 0, POWDER);
-            Vfx.ring(ctx(), enemy.getLocation().add(0, 0.1 + LAYER_HEIGHT * layers, 0), enemy.getWidth() * 0.5 + 0.3,
-                    10, ThreadLocalRandom.current().nextDouble(TAU), Particle.DUST, SNOW_DUST, false);
-        }
+        world.spawnParticle(Particle.ITEM_SNOWBALL, body, Vfx.n(ctx(), 8), 0.25, 0.35, 0.25, 0.05);
+        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, Vfx.n(ctx(), 6), 0.3, 0.4, 0.3, 0, POWDER);
+        Vfx.ring(ctx(), enemy.getLocation().add(0, 0.1 + LAYER_HEIGHT * layers, 0), enemy.getWidth() * 0.5 + 0.3,
+                10, ThreadLocalRandom.current().nextDouble(TAU), Particle.DUST, SNOW_DUST, false);
         Fx.sound(body, Sound.BLOCK_SNOW_PLACE, 0.9f, 0.8f + 0.2f * layers + Fx.jitter(0.05f));
         Fx.sound(body, Sound.BLOCK_POWDER_SNOW_STEP, 0.7f, 1.1f + 0.15f * layers);
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">❄ 눈 범벅 <white>" + meter(layers, max) + "</white></"
@@ -408,8 +416,10 @@ public final class SnowmanAbility extends Ability {
         buildSnowman(state);
         freezeFx(enemy);
         Combat.hit(ctx(), owner, enemy, params().num("freeze_damage"));
-        owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>☃ 눈사람 완성!</b></" + COLOR_TAG + "> <gray>"
-                + AbilityInfo.formatNumber(ticks / 20.0) + "초 빙결</gray>"));
+        if (!isHiddenFromOwner(enemy)) {
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>☃ 눈사람 완성!</b></" + COLOR_TAG + "> <gray>"
+                    + AbilityInfo.formatNumber(ticks / 20.0) + "초 빙결</gray>"));
+        }
         ctx().runLater(owner, ticks, () -> thaw(state));
     }
 
@@ -490,19 +500,20 @@ public final class SnowmanAbility extends Ability {
         return new Vector3f(-1, -1, 0).normalize();
     }
 
+    /** The freeze: a flash, a burst of snow and a frosty cry (none of it where a hidden victim stands). */
     private void freezeFx(LivingEntity enemy) {
+        if (isHiddenFromOwner(enemy)) {
+            return;
+        }
         Location body = Fx.body(enemy);
         World world = body.getWorld();
-        boolean visible = !isHiddenFromOwner(enemy);
-        if (visible) {
-            Vfx.dot(body, Particle.FLASH, PALETTE.core(), false);
-            world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 20), 0.4, 0.6, 0.4, 0.1, SNOW.createBlockData());
-            world.spawnParticle(Particle.SNOWFLAKE, body, Vfx.n(ctx(), 16), 0.4, 0.6, 0.4, 0.06);
-            Vfx.shockwave(ctx(), player(), enemy.getLocation().add(0, 0.1, 0), 0.3, 1.8, 5,
-                    Particle.DUST_COLOR_TRANSITION, POWDER, false);
-            Vfx.helix(ctx(), enemy.getLocation(), 0.75, enemy.getHeight() + 0.3, 1.5, 2, 10, 0, Particle.SNOWFLAKE,
-                    null, false);
-        }
+        Vfx.dot(body, Particle.FLASH, PALETTE.core(), false);
+        world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 20), 0.4, 0.6, 0.4, 0.1, SNOW.createBlockData());
+        world.spawnParticle(Particle.SNOWFLAKE, body, Vfx.n(ctx(), 16), 0.4, 0.6, 0.4, 0.06);
+        Vfx.shockwave(ctx(), player(), enemy.getLocation().add(0, 0.1, 0), 0.3, 1.8, 5,
+                Particle.DUST_COLOR_TRANSITION, POWDER, false);
+        Vfx.helix(ctx(), enemy.getLocation(), 0.75, enemy.getHeight() + 0.3, 1.5, 2, 10, 0, Particle.SNOWFLAKE,
+                null, false);
         Fx.sound(body, Sound.BLOCK_POWDER_SNOW_PLACE, 1.2f, 0.8f);
         Fx.sound(body, Sound.ENTITY_SNOW_GOLEM_HURT, 0.9f, 0.7f + Fx.jitter(0.05f));
         Fx.sound(body, Sound.ENTITY_PLAYER_HURT_FREEZE, 1.0f, 1.0f);
@@ -799,12 +810,15 @@ public final class SnowmanAbility extends Ability {
                 Player owner = player();
                 Combat.hit(ctx(), owner, target, params().num("ball_damage"));
                 if (Combat.isTargetable(ctx(), owner, target)) {
-                    hit = true;
                     Vector push = Motion.horizontal(velocity).multiply(BALL_PUSH).setY(0.08);
                     Motion.push(target, push, MAX_SPEED);
                     addLayers(target, 1);
-                    Vfx.dot(at, Particle.FLASH, PALETTE.core(), false);
-                    Fx.sound(at, Sound.ENTITY_SNOW_GOLEM_HURT, 0.5f, 1.6f + Fx.jitter(0.1f));
+                    // A hit on someone hidden from the snowman stays a plain splat: no flash, no cry, not counted.
+                    if (!isHiddenFromOwner(target)) {
+                        hit = true;
+                        Vfx.dot(at, Particle.FLASH, PALETTE.core(), false);
+                        Fx.sound(at, Sound.ENTITY_SNOW_GOLEM_HURT, 0.5f, 1.6f + Fx.jitter(0.1f));
+                    }
                 }
             }
             barrage.ballLanded(hit);
@@ -906,7 +920,10 @@ public final class SnowmanAbility extends Ability {
             return rollOn(tick - windup);
         }
 
-        /** The wind-up: the ball is packed up to its starting size, and its lane is marked on the ground. */
+        /**
+         * The wind-up: the ball is packed up to its starting size, and its lane is marked on the ground: the middle
+         * line every tick, one edge of the lane each tick in turn (about 30 particles a tick at most).
+         */
         private void pack(long tick) {
             double progress = (tick + 1) / (double) windup;
             radius = 0.2 + (startRadius - 0.2) * progress;
@@ -914,15 +931,13 @@ public final class SnowmanAbility extends Ability {
             pose(1);
             Location from = ground.clone().add(0, 0.1, 0);
             Location to = from.clone().add(direction.clone().multiply(distance * progress));
-            Vfx.line(ctx(), from, to, 2, Particle.DUST_COLOR_TRANSITION, SHADOW, true);
+            Vfx.line(ctx(), from, to, LANE_DENSITY, Particle.DUST_COLOR_TRANSITION, SHADOW, true);
+            Vector side = axis.clone().multiply(tick % 2 == 0 ? maxRadius : -maxRadius);
+            Vfx.line(ctx(), from.clone().add(side), to.clone().add(side), EDGE_DENSITY, Particle.SNOWFLAKE, null, true);
             if (tick % 2 == 0) {
-                Vector side = axis.clone().multiply(maxRadius);
-                Vfx.line(ctx(), from.clone().add(side), to.clone().add(side), 0.8, Particle.SNOWFLAKE, null, true);
-                Vfx.line(ctx(), from.clone().subtract(side), to.clone().subtract(side), 0.8, Particle.SNOWFLAKE, null,
-                        true);
                 Fx.sound(ground, Sound.BLOCK_SNOW_STEP, 0.9f, 0.6f + 0.6f * (float) progress);
             }
-            Vfx.cloud(ctx(), center(), Particle.ITEM_SNOWBALL, 4, radius * 0.6, 0.06, null, true);
+            Vfx.cloud(ctx(), center(), Particle.ITEM_SNOWBALL, 3, radius * 0.6, 0.06, null, true);
         }
 
         private void launchFx() {

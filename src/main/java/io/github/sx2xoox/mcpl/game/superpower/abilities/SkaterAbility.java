@@ -1,6 +1,8 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -41,6 +43,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -72,8 +75,9 @@ public final class SkaterAbility extends Ability {
                             + "{slip_cooldown}초마다 발이 미끄러져 가던 방향으로 쭉 미끄러지고, {slip_stumble}초간 휘청여 "
                             + "이동 속도가 {slip_slow}% 느려지고 점프할 수 없습니다.")
             .active("빙판 질주",
-                    "얼음을 깔며 바라보는 방향으로 {glide_distance}블록을 미끄러지듯 활주합니다(시선을 돌리면 조금씩 "
-                            + "꺾입니다). 지나간 자리에는 {ice_duration}초간 폭 {ice_width}블록의 빙판이 남고, 부딪힌 적은 "
+                    "땅을 딛고 얼음을 깔며 바라보는 방향으로 {glide_distance}블록을 미끄러지듯 활주합니다(시선을 돌리면 "
+                            + "조금씩 꺾이고, 한 칸 높이의 턱은 타고 내려가며, 더 깊은 낭떠러지나 벽 앞에서는 멈춥니다). "
+                            + "지나간 자리에는 {ice_duration}초간 폭 {ice_width}블록의 빙판이 남고, 부딪힌 적은 "
                             + "{glide_damage} 피해를 입고 옆으로 튕겨 나갑니다.",
                     9)
             .ultimate("트리플 악셀",
@@ -141,6 +145,9 @@ public final class SkaterAbility extends Ability {
     private static final long SLIP_FORGET_TICKS = 40;
     private static final int SLIP_POP_TICKS = 14;
 
+    /** Keeps the ice speed through a hop for this long in the air (it has no effect up there anyway). */
+    private static final long AIR_KEEP_TICKS = 20;
+
     // active: ice glide
     private static final double GLIDE_SPEED = 0.9;
     /** Degrees the glide may turn towards the skater's view per tick. */
@@ -150,10 +157,28 @@ public final class SkaterAbility extends Ability {
     private static final double GLIDE_HIT_REACH = 1.15;
     private static final double SHOVE_SIDE = 0.55;
     private static final double SHOVE_UP = 0.25;
-    private static final double VOID_LOOKAHEAD = GLIDE_SPEED + 0.6;
+    /** What a walking player steps up on its own (slabs, stairs): the glide rides over it. */
+    private static final double STEP_UP = 0.6;
+    /** The glide rides down a step this high (one block); a deeper drop stops it at the edge. */
+    private static final double MAX_STEP_DOWN = 1.25;
+    /** The glide can start this high over the ground (a jump's apex), never higher up in the air. */
+    private static final double MAX_START_DROP = 1.4;
+    /** The fastest the glide pulls the skater down onto lower ground, per tick. */
+    private static final double MAX_DROP_SPEED = MAX_STEP_DOWN + 0.4;
+    /** How far past its next step the glide checks for a drop (the client may run a little ahead of the steps). */
+    private static final double EDGE_MARGIN = 0.6;
+    /** Probes for the ground start this high over the feet: above a step, never inside the floor. */
+    private static final double PROBE_LIFT = STEP_UP + 0.05;
     private static final double TILE_SPACING = 1.8;
     private static final float TILE_LENGTH = 1.95f;
     private static final float SHEET_THICKNESS = 0.05f;
+    /**
+     * Neighbouring lane tiles overlap a little: every other one lies this much higher, so the overlaps never
+     * z-fight (flicker) at a distance; the rink's tiles lie higher still.
+     */
+    private static final float[] LANE_LIFTS = {0.006f, 0.03f};
+    private static final float RINK_LIFT = 0.055f;
+    private static final float EMBLEM_LIFT = 0.08f;
     private static final long CHARGE_GRACE_TICKS = 3;
     private static final double STALL_EPSILON = 0.1;
     private static final int STALL_LIMIT = 3;
@@ -170,13 +195,14 @@ public final class SkaterAbility extends Ability {
     private static final long WAVE_GAP = 4;
     private static final double WAVE_LIFT = 0.42;
     private static final double WAVE_PUSH = 0.3;
-    /** The rink is three square sheets turned 30° apart (a twelve-pointed, nearly round rink). */
-    private static final int RINK_SHEETS = 3;
     /**
-     * The union of three squares 30° apart reaches from 1.155 to 1.414 times their half side from the middle; this
-     * half side puts that outline within about 10% of the rink's radius on either side.
+     * The rink is a round-ish patch of square ice tiles, each lying on the ground under it: a grid of tiles at most
+     * this wide (so the ice texture is never stretched far) whose middles lie in the rink, with smaller tiles filling
+     * the corners between the arms.
      */
-    private static final double RINK_HALF_SIDE = 1 / 1.28;
+    private static final double RINK_MAX_TILE = 3.0;
+    /** The rink's tiles find their ground this far above and below the landing spot. */
+    private static final double RINK_GROUND_REACH = 1.6;
     private static final int RINK_GROW_TICKS = 6;
 
     /** Every display this ability currently has alive, for the budget. */
@@ -187,7 +213,12 @@ public final class SkaterAbility extends Ability {
     private boolean iceTicking;
     private @Nullable NamespacedKey speedKey;
     private @Nullable Location lastFeet;
-    private boolean gliding;
+    /** Ticks the skater has been off the ground (counted every speed check). */
+    private long airTicks;
+    /** The glide running now, if any (also no later than its deadline: an owner's death ends it silently). */
+    private @Nullable Glide glide;
+    /** The triple axel is in the air until this tick (or until it lands). */
+    private long axelUntil = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
 
     @Override
     public AbilityInfo info() {
@@ -202,7 +233,18 @@ public final class SkaterAbility extends Ability {
         slips.clear();
         speedKey = null;
         lastFeet = null;
+        glide = null;
+        axelUntil = Long.MIN_VALUE / 2;
         landing.disarm();
+    }
+
+    private boolean gliding() {
+        Glide current = glide;
+        return current != null && !current.ended && ctx().currentTick() <= current.deadline;
+    }
+
+    private boolean leaping() {
+        return ctx().currentTick() <= axelUntil;
     }
 
     @Override
@@ -220,7 +262,12 @@ public final class SkaterAbility extends Ability {
             return;
         }
         Location feet = owner.getLocation();
-        boolean onIce = Motion.isGrounded(owner) && (isNaturalIce(feet) || onOwnIce(feet));
+        boolean grounded = Motion.isGrounded(owner);
+        airTicks = grounded ? 0 : airTicks + SPEED_CHECK_PERIOD;
+        // Judged on the ground only: a hop over the ice keeps the speed (no flicker of the bonus and its chime on
+        // every jump), a long time in the air does not.
+        boolean onIce = grounded ? isNaturalIce(feet) || onOwnIce(feet)
+                : speedKey != null && airTicks <= AIR_KEEP_TICKS;
         if (onIce && speedKey == null) {
             double bonus = Math.max(0, params().num("ice_speed")) / 100.0;
             if (bonus > 0) {
@@ -284,16 +331,22 @@ public final class SkaterAbility extends Ability {
     // ------------------------------------------------------------------ the skater's ice
 
     /**
-     * A sheet of the skater's ice: a lane (a polyline with a half width) or a round rink. It is a shape on the ground,
-     * drawn with thin packed ice displays: the real ground is never changed.
+     * A sheet of the skater's ice: a lane (a polyline with a half width, each point at the height of the ground there)
+     * or a rink (square tiles, each lying on the ground under it). It is a shape on the ground, drawn with thin packed
+     * ice displays: the real ground is never changed.
      */
     private final class IceZone {
         final World world;
-        /** Lane points (with their ground height); one point, the center, for a rink. */
+        /** Lane points, each at the height of the ground there. */
         final List<Vector> points = new ArrayList<>();
+        /** Rink tiles. */
+        final List<Tile> tiles = new ArrayList<>();
         final double halfWidth;
         final boolean rink;
         final List<BlockDisplay> sheets = new ArrayList<>();
+        /** A rink's middle and reach. */
+        @Nullable Vector middle;
+        double reach;
         long until;
         boolean cracking;
 
@@ -305,40 +358,50 @@ public final class SkaterAbility extends Ability {
         }
 
         boolean contains(Location feet) {
-            if (!feet.getWorld().equals(world) || points.isEmpty()) {
+            if (!feet.getWorld().equals(world)) {
                 return false;
             }
             Vector at = feet.toVector();
             if (rink) {
-                Vector center = points.getFirst();
-                return onSheetHeight(at.getY(), center.getY())
-                        && Math.hypot(at.getX() - center.getX(), at.getZ() - center.getZ()) <= halfWidth;
+                for (Tile tile : tiles) {
+                    if (Math.abs(at.getX() - tile.x()) <= tile.half() && Math.abs(at.getZ() - tile.z()) <= tile.half()
+                            && at.getY() >= tile.y() - ICE_REACH_DOWN && at.getY() <= tile.y() + ICE_REACH_UP) {
+                        return true;
+                    }
+                }
+                return false;
             }
             for (int i = 0; i < points.size(); i++) {
                 Vector a = points.get(i);
                 Vector b = i + 1 < points.size() ? points.get(i + 1) : a;
-                if (segmentDistance(at, a, b) <= halfWidth && onSheetHeight(at.getY(), Math.min(a.getY(), b.getY()))) {
+                if (segmentDistance(at, a, b) <= halfWidth && at.getY() >= Math.min(a.getY(), b.getY()) - ICE_REACH_DOWN
+                        && at.getY() <= Math.max(a.getY(), b.getY()) + ICE_REACH_UP) {
                     return true;
                 }
             }
             return false;
         }
 
+        boolean isEmpty() {
+            return rink ? tiles.isEmpty() : points.isEmpty();
+        }
+
         /** The middle of the zone and how far from it the zone reaches, for finding enemies near it. */
         Vector center() {
-            if (rink) {
-                return points.getFirst().clone();
+            Vector rinkMiddle = middle;
+            if (rinkMiddle != null) {
+                return rinkMiddle.clone();
             }
             Vector sum = new Vector();
             for (Vector point : points) {
                 sum.add(point);
             }
-            return sum.multiply(1.0 / points.size());
+            return points.isEmpty() ? sum : sum.multiply(1.0 / points.size());
         }
 
         double extent() {
-            if (rink) {
-                return halfWidth;
+            if (middle != null) {
+                return reach;
             }
             Vector center = center();
             double far = 0;
@@ -347,10 +410,21 @@ public final class SkaterAbility extends Ability {
             }
             return far + halfWidth;
         }
+
+        /** A random spot on the ice, just over it. */
+        Location randomSpot() {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            if (rink) {
+                Tile tile = tiles.get(random.nextInt(tiles.size()));
+                return new Location(world, tile.x() + random.nextDouble(-tile.half(), tile.half()), tile.y(),
+                        tile.z() + random.nextDouble(-tile.half(), tile.half()));
+            }
+            return Vfx.scatter(points.get(random.nextInt(points.size())).toLocation(world), halfWidth);
+        }
     }
 
-    private static boolean onSheetHeight(double feetY, double sheetY) {
-        return feetY >= sheetY - ICE_REACH_DOWN && feetY <= sheetY + ICE_REACH_UP;
+    /** One square tile of a rink: its middle (on the ground there) and half its side. */
+    private record Tile(double x, double y, double z, double half) {
     }
 
     /** Horizontal distance from {@code p} to the segment {@code a}-{@code b}. */
@@ -479,19 +553,11 @@ public final class SkaterAbility extends Ability {
 
     /** Glints and frost drifting over the sheet, and a few cracks once it is about to melt. */
     private void glitter(IceZone zone, long tick) {
-        if (tick % 4 != 0 || zone.points.isEmpty()) {
+        if (tick % 4 != 0 || zone.isEmpty()) {
             return;
         }
-        ThreadLocalRandom random = ThreadLocalRandom.current();
         for (int i = 0; i < Vfx.n(ctx(), zone.rink ? 3 : 2); i++) {
-            Location at;
-            if (zone.rink) {
-                at = Vfx.scatter(zone.points.getFirst().toLocation(zone.world), zone.halfWidth);
-            } else {
-                Vector point = zone.points.get(random.nextInt(zone.points.size()));
-                at = Vfx.scatter(point.toLocation(zone.world), zone.halfWidth);
-            }
-            at.add(0, 0.12, 0);
+            Location at = zone.randomSpot().add(0, 0.12, 0);
             Vfx.dot(at, zone.cracking ? Particle.DUST : Particle.WAX_OFF, zone.cracking ? FROST_DUST : null, false);
         }
         if (zone.cracking && tick % 8 == 0) {
@@ -511,7 +577,7 @@ public final class SkaterAbility extends Ability {
                 Displays.shrinkAway(ctx(), player(), sheet, 8);
             }
         }
-        if (!zone.points.isEmpty()) {
+        if (!zone.isEmpty()) {
             Location at = zone.center().toLocation(zone.world);
             Fx.sound(at, Sound.BLOCK_GLASS_BREAK, 0.6f, 1.3f + Fx.jitter(0.1f));
             Fx.sound(at, Sound.BLOCK_FIRE_EXTINGUISH, 0.3f, 1.8f);
@@ -526,34 +592,54 @@ public final class SkaterAbility extends Ability {
         if (owner.isInsideVehicle()) {
             return ActivationResult.fail("탈것에 탄 채로는 활주할 수 없습니다");
         }
-        if (gliding) {
+        if (gliding()) {
             return ActivationResult.fail("이미 활주 중입니다");
+        }
+        if (leaping()) {
+            return ActivationResult.fail("점프 중에는 활주할 수 없습니다");
         }
         Location start = owner.getLocation();
         Vector heading = Motion.horizontalFacing(start);
         if (heading.lengthSquared() < 1.0E-6) {
             return ActivationResult.fail("활주할 방향이 없습니다");
         }
-        if (clearAhead(owner, start, heading, 1.2) < 1.0) {
+        World world = start.getWorld();
+        double half = footprint(owner);
+        // The blades need ground under them: right under the feet, or just below them at the top of a jump.
+        double floor = floorUnder(world, start.getX(), start.getZ(), start.getY() + PROBE_LIFT,
+                PROBE_LIFT + MAX_START_DROP, half);
+        if (floor == WALL) {
+            return ActivationResult.fail("여기서는 활주할 수 없습니다");
+        }
+        if (Double.isNaN(floor)) {
+            return ActivationResult.fail("공중에서는 활주할 수 없습니다");
+        }
+        Location feet = start.clone();
+        feet.setY(floor);
+        if (clearAhead(owner, feet, heading, 1.2) < 1.0) {
             return ActivationResult.fail("앞이 막혀 있습니다");
         }
-        if (!Spots.hasGroundBelow(start.getWorld(), start.clone().add(heading.clone().multiply(VOID_LOOKAHEAD))
-                .add(0, 0.5, 0))) {
+        Location ahead = feet.clone().add(heading.clone().multiply(1.0));
+        double floorAhead = floorUnder(world, ahead.getX(), ahead.getZ(), floor + PROBE_LIFT,
+                PROBE_LIFT + MAX_STEP_DOWN, half);
+        if (Double.isNaN(floorAhead) || !Spots.hasGroundBelow(world, ahead.clone().add(0, 0.5, 0))) {
             return ActivationResult.fail("앞이 낭떠러지입니다");
         }
-        gliding = true;
-        Glide glide = new Glide(owner, start, heading);
-        long maxTicks = (long) Math.ceil(glide.distance / GLIDE_SPEED) + CHARGE_GRACE_TICKS + lagTicks(owner) + 4;
-        Loop.repeat(ctx(), owner, 0, 1, maxTicks, glide, glide::end);
+        Glide next = new Glide(owner, start, floor, heading);
+        glide = next;
+        Loop.repeat(ctx(), owner, 0, 1, next.maxTicks, next, next::end);
         return ActivationResult.success();
     }
 
-    /** How far the way along {@code heading} is clear of walls, checked at knee and chest height. */
-    private static double clearAhead(Player owner, Location from, Vector heading, double distance) {
-        World world = from.getWorld();
+    /**
+     * How far the way along {@code heading} is clear of walls, checked from {@code feet} just above a step (slabs and
+     * stairs a walking player steps up on do not count) and at chest height.
+     */
+    private static double clearAhead(Player owner, Location feet, Vector heading, double distance) {
+        World world = feet.getWorld();
         double reach = distance;
-        for (double height : new double[] {0.35, owner.getHeight() * 0.75}) {
-            Location eye = from.clone().add(0, height, 0);
+        for (double height : new double[] {PROBE_LIFT, owner.getHeight() * 0.75}) {
+            Location eye = feet.clone().add(0, height, 0);
             RayTraceResult wall = world.rayTraceBlocks(eye, heading, distance + 0.4, FluidCollisionMode.NEVER, true);
             if (wall != null) {
                 reach = Math.min(reach, wall.getHitPosition().distance(eye.toVector()) - 0.4);
@@ -563,9 +649,11 @@ public final class SkaterAbility extends Ability {
     }
 
     /**
-     * The glide: the skater is sent along a lane that bends towards where it looks, laying ice sheets on the way
-     * (where its client goes: the sum of the steps sent), bumping enemies aside, until the distance is used up or a
-     * wall, a drop or the arena border stops it.
+     * The glide: the skater is sent along a lane that bends towards where it looks, following the ground (it rides
+     * over steps and down one-block ledges), laying ice sheets on the way, bumping enemies aside, until the distance
+     * is used up or a wall, a deeper drop or the arena border stops it. Every tick it reads where the skater really
+     * is (the server's view plus the steps sent that the server has not seen it take yet, one round trip), so the
+     * lane, the ground checks and the ice follow the real terrain under the skater.
      */
     private final class Glide implements LongPredicate {
 
@@ -575,40 +663,60 @@ public final class SkaterAbility extends Ability {
         private final IceZone zone;
         private final Set<UUID> struck = new HashSet<>();
         private final long lag;
+        private final double half;
+        final long maxTicks;
+        /** The glide is over by this tick at the latest (its loop stops silently when the owner dies). */
+        final long deadline;
         private Vector heading;
-        /** Where the skater's client is: the start plus every step sent. */
-        private final Location planned;
         private final Location begin;
         private Location last;
+        /** The ground under the skater after the last step. */
+        private double floor;
+        /** The steps sent that the server has not seen the skater take yet. */
+        private final ArrayDeque<Vector> pending = new ArrayDeque<>();
+        /** The heights the skater stood at over the last few ticks: its client may still be up at any of them. */
+        private final ArrayDeque<Double> recent = new ArrayDeque<>();
         private double sent;
         private double sinceTile;
+        private int tiles;
         private int stalls;
         private boolean moved;
-        private boolean ended;
+        boolean ended;
+        /** Stopped by a wall, a drop or the axel: no glide out of it (never over an edge). */
+        private boolean halted;
         private int hits;
 
-        Glide(Player owner, Location start, Vector heading) {
+        Glide(Player owner, Location start, double floor, Vector heading) {
             this.owner = owner;
             this.world = start.getWorld();
             this.heading = heading.clone();
             this.distance = Spots.arenaReach(ctx(), start, heading, Math.max(1, params().num("glide_distance")));
-            this.planned = Displays.unrotated(start);
             this.begin = start.clone();
             this.last = start.clone();
             this.lag = lagTicks(owner);
-            double half = Math.max(0.3, params().num("ice_width") / 2);
+            this.half = footprint(owner);
+            this.floor = floor;
+            this.maxTicks = (long) Math.ceil(distance / GLIDE_SPEED) + CHARGE_GRACE_TICKS + lag + 4;
+            this.deadline = ctx().currentTick() + maxTicks + 1;
+            recent.add(start.getY());
+            double halfWidth = Math.max(0.3, params().num("ice_width") / 2);
             long until = ctx().currentTick() + (long) Math.ceil(distance / GLIDE_SPEED) + Math.max(1,
                     params().ticks("ice_duration"));
-            this.zone = new IceZone(world, half, false, until);
-            zone.points.add(planned.toVector());
+            this.zone = new IceZone(world, halfWidth, false, until);
+            zone.points.add(new Vector(start.getX(), floor, start.getZ()));
             addZone(zone);
             landing.arm(ctx().currentTick(), LANDING_GUARD_TICKS);
-            launchFx(start);
-            layTile(planned.clone(), yawOf(heading));
+            Location feet = start.clone();
+            feet.setY(floor);
+            launchFx(feet);
+            layTile(start.getX(), start.getZ(), floor, yawOf(heading));
         }
 
         @Override
         public boolean test(long tick) {
+            if (ended) {
+                return false;
+            }
             Location now = owner.getLocation();
             if (!now.getWorld().equals(world) || sent >= distance - 0.05) {
                 return false;
@@ -619,42 +727,78 @@ public final class SkaterAbility extends Ability {
             if (moved || tick >= CHARGE_GRACE_TICKS + lag) {
                 stalls = horizontal(last, now) < STALL_EPSILON ? stalls + 1 : 0;
                 if (stalls >= STALL_LIMIT) {
-                    return false;
+                    return halt();
                 }
             }
             last = now;
             steer();
+            // Where the skater's client is now, and the ground under it.
+            Location at = now.clone();
+            for (Vector step : pending) {
+                at.add(step);
+            }
+            double top = now.getY();
+            for (double height : recent) {
+                top = Math.max(top, height);
+            }
+            double here = floorUnder(world, at.getX(), at.getZ(), top + PROBE_LIFT,
+                    Math.max(0, top - floor) + PROBE_LIFT + MAX_STEP_DOWN, half);
+            if (Double.isNaN(here) || here == WALL) {
+                // Knocked off the ground or into something: the glide lets go.
+                return halt();
+            }
             double step = Math.min(GLIDE_SPEED, distance - sent);
-            if (clearAhead(owner, planned, heading, step) < step - 1.0E-3) {
-                return false;
+            Location feet = at.clone();
+            feet.setY(here);
+            if (clearAhead(owner, feet, heading, step) < step - 1.0E-3) {
+                return halt();
             }
-            Location ahead = planned.clone().add(heading.clone().multiply(step + VOID_LOOKAHEAD - GLIDE_SPEED))
-                    .add(0, 0.5, 0);
-            if (!Spots.hasGroundBelow(world, ahead)) {
-                return false;
+            Location next = feet.clone().add(heading.clone().multiply(step));
+            double there = floorUnder(world, next.getX(), next.getZ(), here + PROBE_LIFT, PROBE_LIFT + MAX_STEP_DOWN,
+                    half);
+            if (Double.isNaN(there) || there == WALL || there > here + STEP_UP + 1.0E-3) {
+                return halt();
             }
-            Location next = planned.clone().add(heading.clone().multiply(step));
-            if (!ctx().isInsideArena(next)) {
-                return false;
+            // A drop (or the void, a lava pit) just past the next step: pull up at the edge.
+            Location probe = next.clone().add(heading.clone().multiply(EDGE_MARGIN));
+            double beyond = floorUnder(world, probe.getX(), probe.getZ(), there + PROBE_LIFT,
+                    PROBE_LIFT + MAX_STEP_DOWN, half);
+            probe.setY(there + 0.5);
+            if (Double.isNaN(beyond) || !Spots.hasGroundBelow(world, probe) || !ctx().isInsideArena(next)) {
+                return halt();
             }
             sent += step;
             sinceTile += step;
-            planned.setX(next.getX());
-            planned.setZ(next.getZ());
-            Location ground = planned.clone().add(0, 0.6, 0);
-            Spots.snapToGround(world, ground, 1.8);
-            planned.setY(ground.getY());
-            owner.setVelocity(Motion.clamp(heading.clone().multiply(step).setY(GLIDE_SINK), MAX_SPEED));
+            // Straight down onto lower ground: the client settles the fall before the step, so it lands this tick or
+            // the next, never hovering out over a step down. On level ground a light push keeps the blades down.
+            double drop = Math.max(-MAX_DROP_SPEED, Math.min(0, Math.min(here, there) - top));
+            Vector move = heading.clone().multiply(step);
+            owner.setVelocity(Motion.clamp(move.clone().setY(drop + GLIDE_SINK), MAX_SPEED));
             owner.setFallDistance(0);
-            zone.points.add(planned.toVector());
+            pending.addLast(move);
+            while (pending.size() > lag) {
+                pending.removeFirst();
+            }
+            recent.addLast(here);
+            while (recent.size() > lag + 2) {
+                recent.removeFirst();
+            }
+            floor = there;
+            zone.points.add(new Vector(next.getX(), there, next.getZ()));
             zone.until = Math.max(zone.until, ctx().currentTick() + Math.max(1, params().ticks("ice_duration")));
             if (sinceTile >= TILE_SPACING) {
                 sinceTile -= TILE_SPACING;
-                layTile(planned.clone().subtract(heading.clone().multiply(TILE_SPACING / 2)), yawOf(heading));
+                Location middle = next.clone().subtract(heading.clone().multiply(TILE_SPACING / 2 + sinceTile));
+                layTile(middle.getX(), middle.getZ(), Math.max(here, there), yawOf(heading));
             }
             strike(now);
             streak(now, tick);
             return true;
+        }
+
+        private boolean halt() {
+            halted = true;
+            return false;
         }
 
         /** The lane bends towards where the skater looks, a few degrees per tick. */
@@ -718,19 +862,37 @@ public final class SkaterAbility extends Ability {
             }
         }
 
-        /** The stop: a fan of snow thrown up by the blades, a last tile under the skater. */
+        /** The glide ran out or was stopped: a fan of snow thrown up by the blades, a last tile under the skater. */
         void end() {
+            finish(true);
+        }
+
+        /** The axel takes over: the glide stops where it is, without touching the skater's motion. */
+        void cancel() {
+            halted = true;
+            finish(false);
+        }
+
+        private void finish(boolean release) {
             if (ended) {
                 return;
             }
             ended = true;
-            gliding = false;
+            if (glide == this) {
+                glide = null;
+            }
             if (!owner.isValid() || owner.isDead()) {
                 return;
             }
-            owner.setVelocity(heading.clone().multiply(GLIDE_EXIT).setY(GLIDE_SINK));
+            if (release) {
+                // Out of a full glide the skater coasts on a little; stopped at a wall or an edge, it stops dead.
+                owner.setVelocity(halted ? new Vector(0, GLIDE_SINK, 0)
+                        : heading.clone().multiply(GLIDE_EXIT).setY(GLIDE_SINK));
+            }
             if (sinceTile > 0.6) {
-                layTile(planned.clone().subtract(heading.clone().multiply(sinceTile / 2)), yawOf(heading));
+                Vector end = zone.points.getLast();
+                layTile(end.getX() - heading.getX() * sinceTile / 2, end.getZ() - heading.getZ() * sinceTile / 2,
+                        floor, yawOf(heading));
             }
             Location feet = owner.getLocation();
             float yaw = yawOf(heading);
@@ -741,25 +903,33 @@ public final class SkaterAbility extends Ability {
                     0.1, 0.4, 0.15, SHEET.createBlockData());
             Fx.sound(feet, Sound.ITEM_AXE_SCRAPE, 0.9f, 1.0f);
             Fx.sound(feet, Sound.BLOCK_POWDER_SNOW_STEP, 1.0f, 1.2f);
-            if (hits > 0) {
+            if (hits > 0 && release) {
                 owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛸ 빙판 질주</" + COLOR_TAG + "> <white>" + hits
                         + "명 적중</white>"));
             }
         }
 
-        /** One sheet of ice along the lane, laid flat on the ground and turned along the glide. */
-        private void layTile(Location at, float yaw) {
+        /**
+         * One sheet of ice along the lane, turned along the glide and laid flat on the ground under its middle
+         * (searched down from {@code above}); none over a gap. Every other sheet lies a little higher, so where
+         * neighbours overlap they never z-fight.
+         */
+        private void layTile(double x, double z, double above, float yaw) {
             if (!roomFor(1)) {
                 return;
             }
-            Location spot = at.clone().add(0, 0.6, 0);
-            Spots.snapToGround(world, spot, 1.8);
+            double ground = groundAt(world, x, z, above + PROBE_LIFT, PROBE_LIFT + MAX_STEP_DOWN + 0.1);
+            if (Double.isNaN(ground)) {
+                return;
+            }
+            Location spot = new Location(world, x, ground, z);
             float width = (float) (zone.halfWidth * 2);
+            float lift = LANE_LIFTS[tiles++ % LANE_LIFTS.length];
             // Generous: the sheet melts with its lane (see melt), the lifetime is only a safety net.
             long life = Math.max(1, zone.until - ctx().currentTick()) + 40;
             BlockDisplay sheet = remember(Displays.block(ctx(), owner, spot, SHEET.createBlockData(),
-                    sheetPose(width * 0.2f, TILE_LENGTH * 0.4f, yaw), life));
-            Displays.animateNextTick(ctx(), owner, sheet, sheetPose(width, TILE_LENGTH, yaw), 3);
+                    sheetPose(width * 0.2f, TILE_LENGTH * 0.4f, yaw, lift), life));
+            Displays.animateNextTick(ctx(), owner, sheet, sheetPose(width, TILE_LENGTH, yaw, lift), 3);
             zone.sheets.add(sheet);
             world.spawnParticle(Particle.SNOWFLAKE, spot.clone().add(0, 0.1, 0), Vfx.n(ctx(), 4), 0.5, 0.02, 0.5,
                     0.03);
@@ -768,11 +938,62 @@ public final class SkaterAbility extends Ability {
     }
 
     /**
-     * A thin sheet of ice lying on the ground, {@code width} across and {@code length} long along {@code yaw}
-     * (Minecraft's yaw: 0 = +Z, 90 = -X): its long side is the block's Z axis, turned by the transformation.
+     * A thin sheet of ice lying {@code lift} over the ground, {@code width} across and {@code length} long along
+     * {@code yaw} (Minecraft's yaw: 0 = +Z, 90 = -X): its long side is the block's Z axis, turned by the
+     * transformation.
      */
-    static Transformation sheetPose(float width, float length, float yaw) {
-        return Displays.transform(0, SHEET_THICKNESS / 2 + 0.006f, 0, width, SHEET_THICKNESS, length, yaw, 0, 0);
+    static Transformation sheetPose(float width, float length, float yaw, float lift) {
+        return Displays.transform(0, SHEET_THICKNESS / 2 + lift, 0, width, SHEET_THICKNESS, length, yaw, 0, 0);
+    }
+
+    // ------------------------------------------------------------------ ground probes
+
+    /** {@link #floorUnder}: a block where the body would be (a wall, or a step too high to step on). */
+    private static final double WALL = Double.POSITIVE_INFINITY;
+    /** The middle and the four corners of a standing body's footprint. */
+    private static final double[][] FOOTPRINT = {{0, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+
+    /** Half the width of {@code player}'s footprint, a hair inside its hitbox. */
+    private static double footprint(Player player) {
+        return Math.max(0.05, player.getWidth() / 2 - 0.001);
+    }
+
+    /**
+     * The ground a standing body of half width {@code half} rests on at (x, z), searched from {@code top} down
+     * {@code depth} blocks: like the game's collision, the highest ground under any part of its footprint. NaN if
+     * there is none in reach (a drop), {@link #WALL} if a probe starts inside a block. The probes start above the
+     * surface, so vanilla's "a ray starting on a face hits inside the block" never applies.
+     */
+    static double floorUnder(World world, double x, double z, double top, double depth, double half) {
+        double best = Double.NEGATIVE_INFINITY;
+        for (double[] corner : FOOTPRINT) {
+            double px = x + corner[0] * half;
+            double pz = z + corner[1] * half;
+            if (insideBlock(world, px, top, pz)) {
+                return WALL;
+            }
+            RayTraceResult hit = world.rayTraceBlocks(new Location(world, px, top, pz), new Vector(0, -1, 0), depth,
+                    FluidCollisionMode.NEVER, true);
+            if (hit != null) {
+                best = Math.max(best, hit.getHitPosition().getY());
+            }
+        }
+        return best == Double.NEGATIVE_INFINITY ? Double.NaN : best;
+    }
+
+    /** The ground right under (x, z), searched from {@code top} down {@code depth} blocks; NaN if none or blocked. */
+    private static double groundAt(World world, double x, double z, double top, double depth) {
+        if (insideBlock(world, x, top, z)) {
+            return Double.NaN;
+        }
+        RayTraceResult hit = world.rayTraceBlocks(new Location(world, x, top, z), new Vector(0, -1, 0), depth,
+                FluidCollisionMode.NEVER, true);
+        return hit == null ? Double.NaN : hit.getHitPosition().getY();
+    }
+
+    private static boolean insideBlock(World world, double x, double y, double z) {
+        return world.hasCollisionsIn(new BoundingBox(x - 1.0E-3, y - 1.0E-3, z - 1.0E-3, x + 1.0E-3, y + 1.0E-3,
+                z + 1.0E-3));
     }
 
     private void launchFx(Location start) {
@@ -793,6 +1014,11 @@ public final class SkaterAbility extends Ability {
         Player owner = player();
         if (owner.isInsideVehicle()) {
             return ActivationResult.fail("탈것에 탄 채로는 뛸 수 없습니다");
+        }
+        // Out of a glide: the glide lets go first, so it never overrides the leap.
+        Glide current = glide;
+        if (current != null) {
+            current.cancel();
         }
         new Axel(owner).leap();
         return ActivationResult.success();
@@ -842,6 +1068,7 @@ public final class SkaterAbility extends Ability {
         }
 
         void leap() {
+            axelUntil = ctx().currentTick() + MAX_AIR_TICKS + lag + 2;
             long guard = MAX_AIR_TICKS + FALL_GRACE_TICKS;
             // No fall damage from this jump, also for a borrowed axel that gets no damage hooks.
             ctx().addModifier(owner, owner, Attribute.FALL_DAMAGE_MULTIPLIER, -1.0, Operation.MULTIPLY_SCALAR_1,
@@ -962,9 +1189,13 @@ public final class SkaterAbility extends Ability {
                 return;
             }
             landed = true;
+            axelUntil = Long.MIN_VALUE / 2;
+            // The orbiting shards shatter on the landing (and make room for the rink).
             for (BlockDisplay shard : orbit) {
                 if (shard.isValid()) {
-                    Displays.shrinkAway(ctx(), owner, shard, 3);
+                    world.spawnParticle(Particle.BLOCK, shard.getLocation(), Vfx.n(ctx(), 6), 0.15, 0.15, 0.15, 0.1,
+                            shard.getBlock());
+                    shard.remove();
                 }
             }
             if (!owner.isValid() || owner.isDead()) {
@@ -1047,7 +1278,11 @@ public final class SkaterAbility extends Ability {
             }
         }
 
-        /** The rink: three square sheets turned 30° apart, together a nearly round rink around the landing. */
+        /**
+         * The rink: square tiles of packed ice around the landing, each lying on the ground under it (so it follows
+         * uneven ground), spreading out from the middle, with a blue ice emblem in the middle. Tiles beyond the display
+         * budget are left out, the outer ones first: the ice is only where it is drawn.
+         */
         private void rink(Location ground) {
             double radius = Math.max(0.5, params().num("rink_radius"));
             long duration = params().ticks("rink_duration");
@@ -1055,24 +1290,78 @@ public final class SkaterAbility extends Ability {
                 return;
             }
             IceZone zone = new IceZone(world, radius, true, ctx().currentTick() + duration);
-            zone.points.add(ground.toVector());
-            float side = (float) (radius * 2 * RINK_HALF_SIDE);
-            for (int i = 0; i < RINK_SHEETS && roomFor(1); i++) {
-                float yaw = i * 30f;
-                float lift = 0.006f + 0.003f * i;
-                BlockDisplay sheet = remember(Displays.block(ctx(), owner, ground, SHEET.createBlockData(),
-                        rinkPose(side * 0.1f, yaw, lift), duration + 12));
+            zone.middle = ground.toVector();
+            zone.reach = radius * 1.1 + 0.5;
+            for (double[] tile : rinkLayout(radius)) {
+                double x = ground.getX() + tile[0];
+                double z = ground.getZ() + tile[1];
+                double y = groundAt(world, x, z, ground.getY() + RINK_GROUND_REACH, 2 * RINK_GROUND_REACH);
+                if (Double.isNaN(y)) {
+                    continue;
+                }
+                if (!roomFor(1)) {
+                    break;
+                }
+                zone.tiles.add(new Tile(x, y, z, tile[2]));
+                float side = (float) (tile[2] * 2);
+                BlockDisplay sheet = remember(Displays.block(ctx(), owner, new Location(world, x, y, z),
+                        SHEET.createBlockData(), rinkPose(side * 0.1f, 0, RINK_LIFT), duration + 12));
                 sheet.setViewRange(2.0f);
-                Displays.animateNextTick(ctx(), owner, sheet, rinkPose(side, yaw, lift), RINK_GROW_TICKS);
                 zone.sheets.add(sheet);
+                long delay = 1 + Math.round(Math.hypot(tile[0], tile[1]) / radius * 4);
+                ctx().runLater(owner, delay, () -> Displays.animate(sheet, rinkPose(side, 0, RINK_LIFT),
+                        RINK_GROW_TICKS));
+            }
+            if (zone.tiles.isEmpty()) {
+                return;
+            }
+            if (roomFor(1)) {
+                float side = (float) Math.min(2.0, radius * 0.35);
+                BlockDisplay emblem = remember(Displays.block(ctx(), owner, ground, BLUE_SHARD.createBlockData(),
+                        rinkPose(0.05f, 45, EMBLEM_LIFT), duration + 12));
+                emblem.setViewRange(2.0f);
+                zone.sheets.add(emblem);
+                ctx().runLater(owner, 3, () -> Displays.animate(emblem, rinkPose(side, 45, EMBLEM_LIFT),
+                        RINK_GROW_TICKS));
             }
             addZone(zone);
         }
     }
 
-    /** A flat square sheet of {@code side} lying on the ground, turned {@code yaw} degrees, {@code lift} above it. */
+    /**
+     * A flat square sheet of {@code side} lying {@code lift} over the ground, turned {@code yaw} degrees about the
+     * vertical.
+     */
     static Transformation rinkPose(float side, float yaw, float lift) {
         return Displays.transform(0, SHEET_THICKNESS / 2 + lift, 0, side, SHEET_THICKNESS, side, yaw, 0, 0);
+    }
+
+    /**
+     * The rink's tiles around its middle as {dx, dz, half side}, the innermost first: a grid of tiles at most
+     * {@link #RINK_MAX_TILE} wide whose middles lie within the radius, and a smaller tile in the inner quarter of
+     * each left-out tile whose middle does (filling the corners between the arms), so the rink is nearly round.
+     */
+    static List<double[]> rinkLayout(double radius) {
+        int n = Math.max(1, (int) Math.ceil(radius / RINK_MAX_TILE - 1.0E-9));
+        double side = radius / n;
+        List<double[]> tiles = new ArrayList<>();
+        for (int i = -n; i < n; i++) {
+            for (int j = -n; j < n; j++) {
+                double x = (i + 0.5) * side;
+                double z = (j + 0.5) * side;
+                if (Math.hypot(x, z) <= radius + 1.0E-9) {
+                    tiles.add(new double[] {x, z, side / 2});
+                    continue;
+                }
+                double qx = x - Math.signum(x) * side / 4;
+                double qz = z - Math.signum(z) * side / 4;
+                if (Math.hypot(qx, qz) <= radius + 1.0E-9) {
+                    tiles.add(new double[] {qx, qz, side / 4});
+                }
+            }
+        }
+        tiles.sort(Comparator.comparingDouble(tile -> Math.hypot(tile[0], tile[1])));
+        return tiles;
     }
 
     /**

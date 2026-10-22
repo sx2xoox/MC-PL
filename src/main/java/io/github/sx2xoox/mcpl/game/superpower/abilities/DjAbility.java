@@ -47,7 +47,11 @@ import org.jspecify.annotations.Nullable;
  * the beat hit harder and skills used on the beat are boosted (a perfect drop also comes back sooner), while a skill
  * that misses the beat waits for the next one and goes off plain. The active drops the bass in a neon shockwave; the
  * ultimate throws a party: a dance floor under a disco ball where enemies are made to dance on every beat (and hurt on
- * the drop) while the DJ's side gets a burst of speed, and every skill of the DJ is a perfect.
+ * the drop) while the DJ's side gets a burst of speed, and every drop and punch of the DJ is a perfect.
+ *
+ * <p>Only the bass drop and melee hits are judged (the ultimate is not). A party borrowed by the gambler plays, dances
+ * and hastens like the DJ's own, but the gambler has no beat to judge, so its "always a perfect" bonus does nothing
+ * for it.
  *
  * <p>Unlike the 음유시인, whose songs are buffs and debuffs, the DJ is about timing: the same skill is weaker, stronger
  * or late depending on when it is pressed, and the judgement allows for the DJ's ping.
@@ -65,28 +69,30 @@ public final class DjAbility extends Ability {
             .difficulty(3)
             .passive("비트",
                     "{beat_interval}초마다 박자가 흐릅니다(발밑에서 박자가 퍼지고, 메트로놈은 나에게만 들립니다). 박자에 맞춰 "
-                            + "근접 공격하면 피해가 {beat_melee}% 늘어납니다. 스킬도 박자에 맞춰 쓰면 강화됩니다: 퍼펙트(±"
-                            + "{perfect_window}초) {perfect_bonus}%, 굿(±{good_window}초) {good_bonus}%. 판정은 내 핑만큼 "
-                            + "보정됩니다.")
+                            + "근접 공격하면 피해가 {beat_melee}% 늘어납니다. 베이스 드롭도 박자에 맞춰 쓰면 강화됩니다: "
+                            + "퍼펙트(±{perfect_window}초) {perfect_bonus}%, 그레이트(±{good_window}초) {good_bonus}%. 판정은 "
+                            + "내 핑만큼 보정됩니다.")
             .active("베이스 드롭",
                     "베이스를 떨어뜨려 반경 {drop_radius}블록으로 충격파를 퍼뜨립니다. 닿은 적은 {drop_damage} 피해를 입고 "
                             + "밀려나며 튕겨 오릅니다. 박자에 맞추면 그 자리에서 터지며 피해와 미는 힘이 강화되고, 퍼펙트면 "
-                            + "쿨타임이 {perfect_refund}초 줄어듭니다. 박자를 놓치면 다음 박자에 강화 없이 터집니다.",
-                    8)
+                            + "쿨타임이 {perfect_refund}초 줄어듭니다. 박자를 놓치면 다음 박자에 피해와 미는 힘이 "
+                            + "{miss_penalty}% 줄어든 채 터집니다.",
+                    9)
             .ultimate("파티 타임",
                     "{party_duration}초간 내 자리에 반경 {party_radius}블록의 댄스 플로어를 깔고 디스코볼을 띄웁니다. "
                             + "플로어 위의 적은 박자마다 억지로 춤추며 휘청이고 {party_damage} 피해를, 4박마다 오는 드롭에는 "
                             + "{party_drop_damage} 피해를 입습니다. 플로어 위의 나와 아군은 신속 II를 얻고, 파티 동안 내 "
-                            + "스킬과 근접 공격은 언제나 퍼펙트 판정입니다.")
+                            + "베이스 드롭과 근접 공격은 언제나 퍼펙트 판정입니다.")
             .param("beat_interval", 0.5)
             .param("perfect_window", 0.05)
             .param("good_window", 0.1)
-            .param("perfect_bonus", 50)
-            .param("good_bonus", 25)
+            .param("perfect_bonus", 40)
+            .param("good_bonus", 20)
+            .param("miss_penalty", 50)
             .param("beat_melee", 20)
-            .param("drop_radius", 6)
-            .param("drop_damage", 4)
-            .param("perfect_refund", 3)
+            .param("drop_radius", 4.5)
+            .param("drop_damage", 3)
+            .param("perfect_refund", 2)
             .param("party_duration", 6)
             .param("party_radius", 8)
             .param("party_damage", 0.5)
@@ -128,8 +134,13 @@ public final class DjAbility extends Ability {
 
     // passive
     private static final long STATUS_TICKS = 24;
-    /** The metronome shows in the action bar from this long (seconds) before the active is ready. */
+    /** The metronome shows in the action bar from this long (seconds) before the active is ready... */
     private static final double METRONOME_LEAD = 1.0;
+    /**
+     * ...until this long (ticks) after: a count-in for the next drop. Otherwise the action bar stays free for the
+     * match's own messages (the border warning, a silence, why a skill was denied).
+     */
+    private static final long METRONOME_TAIL_TICKS = 40;
     private static final double PULSE_RADIUS = 0.75;
 
     // active: bass drop
@@ -142,6 +153,9 @@ public final class DjAbility extends Ability {
     private static final int JUDGE_POP_TICKS = 16;
 
     // ultimate: party
+    /** The dance floor reaches this far above and below its middle: a ledge or a roof over it is not the floor. */
+    private static final double FLOOR_ABOVE = 2.5;
+    private static final double FLOOR_BELOW = 2.0;
     private static final double BALL_HEIGHT = 3.8;
     private static final float BALL_SIZE = 0.8f;
     private static final int FLOOR_TILES = 8;
@@ -169,6 +183,8 @@ public final class DjAbility extends Ability {
     /** The owner's last melee hit was on the beat (the tick of that hit). */
     private long beatHitTick = Long.MIN_VALUE / 2;
     private @Nullable UUID beatHitVictim;
+    /** The beat the active was first seen ready on (MAX_VALUE while it is cooling down). */
+    private long readySince = Long.MAX_VALUE;
 
     @Override
     public AbilityInfo info() {
@@ -217,11 +233,12 @@ public final class DjAbility extends Ability {
         return Judgement.MISS;
     }
 
-    private double bonus(Judgement judgement) {
+    /** How strong a drop with this judgement is: boosted on the beat, weakened when it missed. */
+    private double power(Judgement judgement) {
         return switch (judgement) {
-            case PERFECT -> Math.max(0, params().num("perfect_bonus")) / 100.0;
-            case GOOD -> Math.max(0, params().num("good_bonus")) / 100.0;
-            case MISS -> 0;
+            case PERFECT -> 1 + Math.max(0, params().num("perfect_bonus")) / 100.0;
+            case GOOD -> 1 + Math.max(0, params().num("good_bonus")) / 100.0;
+            case MISS -> 1 - Math.clamp(params().num("miss_penalty") / 100.0, 0.0, 1.0);
         };
     }
 
@@ -256,9 +273,17 @@ public final class DjAbility extends Ability {
         }
         boolean talking = status != null && now < statusUntil;
         boolean partying = now < partyUntil;
-        // Only when it matters (a skill about to be ready, the party, a fresh judgement), so the action bar stays
-        // free for everything else the rest of the time.
-        if (!talking && !partying && ctx().cooldownRemaining(owner) > METRONOME_LEAD) {
+        double remaining = ctx().cooldownRemaining(owner);
+        if (remaining > 0) {
+            readySince = Long.MAX_VALUE;
+        } else if (readySince == Long.MAX_VALUE) {
+            readySince = now;
+        }
+        boolean countIn = remaining > 0 ? remaining <= METRONOME_LEAD : now - readySince <= METRONOME_TAIL_TICKS;
+        // Only when it matters (the count-in of a drop, the party, a fresh judgement), and never over the match's own
+        // warnings: the action bar stays free for everything else the rest of the time.
+        if ((!talking && !partying && !countIn) || ctx().isSilenced(owner)
+                || !ctx().isInsideArena(owner.getLocation())) {
             return;
         }
         String extra = talking ? " " + status : "";
@@ -335,7 +360,7 @@ public final class DjAbility extends Ability {
             drop(owner, judgement);
             return ActivationResult.success();
         }
-        // Off the beat: the bass waits for the next one and drops plain.
+        // Off the beat: the bass waits for the next one and drops weak.
         long delay = Math.floorMod(-ctx().currentTick(), beatTicks());
         judgePop(owner, Judgement.MISS);
         showStatus(label(Judgement.MISS) + " <gray>다음 박자에 드롭</gray>");
@@ -368,7 +393,7 @@ public final class DjAbility extends Ability {
         }
         Location center = Displays.unrotated(owner.getLocation());
         double radius = Math.max(0.5, params().num("drop_radius"));
-        double power = 1 + bonus(judgement);
+        double power = power(judgement);
         double damage = params().num("drop_damage") * power;
         if (judgement != Judgement.MISS) {
             judgePop(owner, judgement);
@@ -401,7 +426,8 @@ public final class DjAbility extends Ability {
                 if (away.lengthSquared() < 1.0E-6) {
                     away = Motion.horizontalFacing(owner.getLocation());
                 }
-                Motion.push(enemy, away.multiply(DROP_PUSH * power).setY(DROP_LIFT * Math.sqrt(power)), MAX_SPEED);
+                Motion.push(enemy, away.multiply(DROP_PUSH * power).setY(DROP_LIFT * Math.sqrt(Math.max(0.25, power))),
+                        MAX_SPEED);
                 if (enemy instanceof Player victim && !owner.canSee(victim)) {
                     continue;
                 }
@@ -697,7 +723,10 @@ public final class DjAbility extends Ability {
             Vfx.ring(ctx(), center.clone().add(0, 0.1, 0), radius, (int) Math.min(48, Math.max(16, radius * 4)),
                     index * 0.2, Particle.DUST, new Particle.DustOptions(NEON[index % NEON.length], 1.3f), true);
             double damage = params().num(drop ? "party_drop_damage" : "party_damage");
-            for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
+            for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius + FLOOR_ABOVE)) {
+                if (!onFloor(enemy)) {
+                    continue;
+                }
                 Combat.hit(ctx(), owner, enemy, damage);
                 hits++;
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
@@ -705,10 +734,9 @@ public final class DjAbility extends Ability {
                 }
                 dance(enemy, index);
             }
-            List<LivingEntity> crew = new ArrayList<>(ctx().alliesNear(owner, center, radius));
-            if (owner.getLocation().distance(center) <= radius) {
-                crew.add(owner);
-            }
+            List<LivingEntity> crew = new ArrayList<>(ctx().alliesNear(owner, center, radius + FLOOR_ABOVE));
+            crew.add(owner);
+            crew.removeIf(member -> !onFloor(member));
             for (LivingEntity member : crew) {
                 member.addPotionEffect(new PotionEffect(PotionEffectType.SPEED,
                         (int) Math.min(Integer.MAX_VALUE, beatTicks() + 10), 1, false, true, true));
@@ -723,6 +751,17 @@ public final class DjAbility extends Ability {
                 Vfx.shockwave(ctx(), owner, center.clone().add(0, 0.15, 0), 0.5, radius, 5,
                         Particle.DUST_COLOR_TRANSITION, NEON_GLOW, true);
             }
+        }
+
+        /**
+         * True if {@code entity} is on the dance floor: within its radius and about at its height (not up on a
+         * ledge or a roof over it, not down in a pit under it).
+         */
+        private boolean onFloor(LivingEntity entity) {
+            Location feet = entity.getLocation();
+            double dy = feet.getY() - center.getY();
+            return feet.getWorld().equals(world) && dy >= -FLOOR_BELOW && dy <= FLOOR_ABOVE
+                    && Math.hypot(feet.getX() - center.getX(), feet.getZ() - center.getZ()) <= radius;
         }
 
         /**

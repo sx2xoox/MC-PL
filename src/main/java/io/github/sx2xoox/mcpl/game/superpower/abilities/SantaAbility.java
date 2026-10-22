@@ -41,6 +41,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -53,7 +54,11 @@ import org.jspecify.annotations.Nullable;
  * side is hurt the worst; enemies who hit Santa land on the naughty list. The active throws a present that opens on
  * landing: a gift for Santa and the allies there, a burst of coal for the enemies (worse for the naughty). The
  * ultimate raises a Christmas tree that heals and hastens Santa's side, wraps every enemy around it in string lights
- * and ends with its star bursting into fireworks.
+ * and ends with its star bursting into fireworks. The tree reaches the ground around its foot (not a roof or a ledge
+ * high over it), and its lights and its star only reach enemies who can see it.
+ *
+ * <p>The gifts come from Santa's own sack (the passive): a tree borrowed by the gambler works like Santa's, but the
+ * gambler gets no gifts.
  *
  * <p>Look: Christmas red, snow white, pine green and gold. Presents are red, green or white boxes with gold ribbons
  * and a bow; a ready gift bobs over Santa's head. Naughty enemies carry a lump of coal over their heads. The coal
@@ -78,11 +83,11 @@ public final class SantaAbility extends Ability {
                             + "입고 밀려나며 {coal_blind}초간 앞이 보이지 않습니다.",
                     9)
             .ultimate("크리스마스의 기적",
-                    "앞에 거대한 크리스마스 트리가 {ult_duration}초간 솟아납니다. 반경 {ult_radius}블록 안의 나와 아군은 "
-                            + "{ult_heal_interval}초마다 {ult_heal} 회복하고 신속 I을 얻습니다. 트리가 다 자라는 "
-                            + "{ult_bind_delay}초 뒤 반경 안의 적은 전구 줄에 칭칭 감겨 {ult_bind_damage} 피해를 입고 "
-                            + "{ult_bind}초간 움직이지 못합니다. 트리가 사라질 때 꼭대기의 별이 터져 반경 안의 적에게 "
-                            + "{ult_finale_damage} 피해를 줍니다.")
+                    "앞에 거대한 크리스마스 트리가 {ult_duration}초간 솟아납니다. 트리 둘레 반경 {ult_radius}블록 안의 나와 "
+                            + "아군은 {ult_heal_interval}초마다 {ult_heal} 회복하고 신속 I을 얻습니다. 트리가 다 자라는 "
+                            + "{ult_bind_delay}초 뒤 반경 안에서 트리가 보이는 적은 전구 줄에 칭칭 감겨 {ult_bind_damage} "
+                            + "피해를 입고 {ult_bind}초간 움직이지 못합니다. 트리가 사라질 때 꼭대기의 별이 터져 반경 안에서 "
+                            + "트리가 보이는 적에게 {ult_finale_damage} 피해를 줍니다.")
             .param("gift_interval", 15)
             .param("gift_radius", 10)
             .param("gift_heal", 3)
@@ -158,6 +163,11 @@ public final class SantaAbility extends Ability {
     private static final int COAL_LUMPS = 4;
     /** Ground under the aim is searched this far below the aimed point. */
     private static final double AIM_GROUND_SNAP = 6;
+    /** A lob is lowered by these shares of its height until nothing (a ceiling, a wall) is in the way of the box. */
+    private static final double[] ARC_SHARES = {1.0, 0.75, 0.5, 0.25, 0.0};
+    /** The thrown present's extent around its middle: half its box, and up to the top of its bow. */
+    private static final double PRESENT_HALF = 0.25;
+    private static final double PRESENT_TOP = 0.45;
 
     // ultimate: the tree
     private static final double TREE_AHEAD = 2.0;
@@ -165,6 +175,13 @@ public final class SantaAbility extends Ability {
     private static final float[][] TIERS = {{3.2f, 1.1f, 0.85f}, {2.5f, 1.0f, 1.7f}, {1.8f, 0.9f, 2.5f},
             {1.1f, 0.8f, 3.25f}};
     private static final float STAR_HEIGHT = 4.4f;
+    /** Display entities of a whole tree: trunk, star, two boxes per tier and the baubles. */
+    private static final int TREE_DISPLAYS = 2 + 4 * 2 + 6;
+    /** The tree reaches this far above and below its foot: a ledge or a roof over it is out of its reach. */
+    private static final double TREE_ABOVE = 2.5;
+    private static final double TREE_BELOW = 2.0;
+    /** The heights on the tree its lights and its star are seen from (trunk and crown). */
+    private static final double[] TREE_EYES = {1.5, 3.0};
     private static final float STAR_SIZE = 0.48f;
     private static final int TIER_GROW_TICKS = 5;
     private static final long FINALE_TICKS = 6;
@@ -174,6 +191,11 @@ public final class SantaAbility extends Ability {
 
     /** Every display this ability currently has alive, for the budget. */
     private final List<Display> displays = new ArrayList<>();
+    /**
+     * The displays that make way for the tree when the budget is tight: naughty marks (they come back), coal lumps and
+     * opened presents (both about to vanish).
+     */
+    private final List<Display> optional = new ArrayList<>();
     /** Enemies on the naughty list, by entity id. */
     private final Map<UUID, Naughty> naughty = new HashMap<>();
     private long nextGiftAt = Long.MAX_VALUE;
@@ -196,6 +218,7 @@ public final class SantaAbility extends Ability {
     public void onRevoke() {
         // Displays are owner-scoped: the framework removes them. Only forget them here.
         displays.clear();
+        optional.clear();
         naughty.clear();
         hovering = null;
         giftReady = false;
@@ -452,7 +475,7 @@ public final class SantaAbility extends Ability {
             boolean hidden = enemy instanceof Player victim && !owner.canSee(victim);
             ItemDisplay coal = entry.coal;
             if ((coal == null || !coal.isValid()) && !hidden && marks < MAX_NAUGHTY_MARKS && roomFor(1)) {
-                coal = remember(Displays.item(ctx(), owner, over, new ItemStack(COAL_ITEM),
+                coal = rememberOptional(Displays.item(ctx(), owner, over, new ItemStack(COAL_ITEM),
                         Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), 0));
                 coal.setBillboard(Display.Billboard.CENTER);
                 coal.setTeleportDuration(2);
@@ -526,7 +549,7 @@ public final class SantaAbility extends Ability {
             this.target = target.clone().add(0, THROWN_SIZE / 2, 0);
             double distance = start.distance(this.target);
             this.flight = Math.clamp(Math.round(6 + distance * 0.55), 8, 18);
-            this.arc = 1.0 + distance * 0.22;
+            this.arc = clearArc(start, this.target, 1.0 + distance * 0.22);
             this.box = new GiftBox(start, THROWN_SIZE * 0.4f, randomBox(), flight + 14);
         }
 
@@ -617,6 +640,36 @@ public final class SantaAbility extends Ability {
         }
     }
 
+    /**
+     * The highest lob from {@code from} to {@code to}, {@code arc} high at most, along which nothing (a ceiling
+     * indoors, an overhang) is in the way of the present; a straight throw if every lob is blocked.
+     */
+    private static double clearArc(Location from, Location to, double arc) {
+        for (double share : ARC_SHARES) {
+            if (arcIsClear(from, to, arc * share)) {
+                return arc * share;
+            }
+        }
+        return 0;
+    }
+
+    private static boolean arcIsClear(Location from, Location to, double height) {
+        World world = from.getWorld();
+        Vector delta = to.toVector().subtract(from.toVector());
+        int samples = Math.max(6, (int) Math.ceil((delta.length() + 2 * height) / 0.4));
+        for (int i = 1; i < samples; i++) {
+            double t = (double) i / samples;
+            Vector at = from.toVector().add(delta.clone().multiply(t)).add(new Vector(0, Math.sin(t * Math.PI) * height,
+                    0));
+            if (world.hasCollisionsIn(new BoundingBox(at.getX() - PRESENT_HALF, at.getY() - PRESENT_HALF,
+                    at.getZ() - PRESENT_HALF, at.getX() + PRESENT_HALF, at.getY() + PRESENT_TOP,
+                    at.getZ() + PRESENT_HALF))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** The box bursts open: ribbons fly, confetti everywhere and a jingle. */
     private void openFx(Location center, boolean onlyGift) {
         World world = center.getWorld();
@@ -652,7 +705,7 @@ public final class SantaAbility extends Ability {
         Player owner = player();
         for (int i = 0; i < COAL_LUMPS && roomFor(1); i++) {
             double angle = i * TAU / COAL_LUMPS + random.nextDouble(-0.4, 0.4);
-            ItemDisplay lump = remember(Displays.item(ctx(), owner, center, new ItemStack(COAL_ITEM),
+            ItemDisplay lump = rememberOptional(Displays.item(ctx(), owner, center, new ItemStack(COAL_ITEM),
                     Displays.centered(0, 0, 0, 0.35f, 0.35f, 0.35f, 0, 0, 0), 16));
             lump.setBillboard(Display.Billboard.CENTER);
             lump.setTeleportDuration(8);
@@ -706,6 +759,7 @@ public final class SantaAbility extends Ability {
         /** The ribbons spring off upwards, the box and bow shrink away. */
         void burst(Location center) {
             Player owner = player();
+            optional.addAll(parts);
             for (int i = 0; i < parts.size(); i++) {
                 BlockDisplay part = parts.get(i);
                 if (!part.isValid()) {
@@ -810,10 +864,23 @@ public final class SantaAbility extends Ability {
 
         void raise() {
             long lifetime = duration + 20;
-            BlockDisplay trunk = remember(Displays.block(ctx(), owner, base, TRUNK.createBlockData(),
-                    standing(0.42f, 0.01f, 0.42f, 0, 0), lifetime));
-            parts.add(trunk);
-            Displays.animateNextTick(ctx(), owner, trunk, standing(0.42f, 1.0f, 0.42f, 0, 0), TIER_GROW_TICKS);
+            // The tree is the centrepiece: naughty marks, coal lumps and opened presents make way for it.
+            makeRoom(TREE_DISPLAYS);
+            if (roomFor(1)) {
+                BlockDisplay trunk = remember(Displays.block(ctx(), owner, base, TRUNK.createBlockData(),
+                        standing(0.42f, 0.01f, 0.42f, 0, 0), lifetime));
+                parts.add(trunk);
+                Displays.animateNextTick(ctx(), owner, trunk, standing(0.42f, 1.0f, 0.42f, 0, 0), TIER_GROW_TICKS);
+            }
+            if (roomFor(1)) {
+                BlockDisplay top = remember(Displays.block(ctx(), owner, base, STAR.createBlockData(),
+                        starPose(0.02f, 0), lifetime));
+                top.setViewRange(2.5f);
+                Displays.outline(top, GOLD);
+                star = top;
+                ctx().runLater(owner, Math.max(2, bindAt - 3), () -> Displays.animate(top, starPose(STAR_SIZE, 45),
+                        3));
+            }
             for (int i = 0; i < TIERS.length; i++) {
                 float[] tier = TIERS[i];
                 for (int turn = 0; turn < 2 && roomFor(1); turn++) {
@@ -825,15 +892,6 @@ public final class SantaAbility extends Ability {
                     ctx().runLater(owner, delay, () -> Displays.animate(leaves, standing(tier[0], tier[1], tier[0],
                             tier[2], yaw), TIER_GROW_TICKS));
                 }
-            }
-            if (roomFor(1)) {
-                BlockDisplay top = remember(Displays.block(ctx(), owner, base, STAR.createBlockData(),
-                        starPose(0.02f, 0), lifetime));
-                top.setViewRange(2.5f);
-                Displays.outline(top, GOLD);
-                star = top;
-                ctx().runLater(owner, Math.max(2, bindAt - 3), () -> Displays.animate(top, starPose(STAR_SIZE, 45),
-                        3));
             }
             hangBaubles(lifetime);
 
@@ -941,11 +999,9 @@ public final class SantaAbility extends Ability {
         /** Santa and the allies in reach are healed and hastened, a golden thread from the star to each. */
         private void cheer() {
             double heal = Math.max(0, params().num("ult_heal"));
-            List<LivingEntity> friends = new ArrayList<>();
-            if (owner.getLocation().distance(base) <= radius) {
-                friends.add(owner);
-            }
-            friends.addAll(ctx().alliesNear(owner, base, radius));
+            List<LivingEntity> friends = new ArrayList<>(ctx().alliesNear(owner, base, radius + TREE_ABOVE));
+            friends.add(owner);
+            friends.removeIf(friend -> !aroundTree(friend));
             Location top = base.clone().add(0, STAR_HEIGHT, 0);
             for (LivingEntity friend : friends) {
                 if (heal > 0) {
@@ -964,7 +1020,7 @@ public final class SantaAbility extends Ability {
             long hold = params().ticks("ult_bind");
             double damage = params().num("ult_bind_damage");
             Location trunk = base.clone().add(0, 1.5, 0);
-            for (LivingEntity enemy : ctx().enemiesNear(owner, base, radius)) {
+            for (LivingEntity enemy : reachedEnemies()) {
                 Combat.hit(ctx(), owner, enemy, damage);
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
@@ -1022,11 +1078,7 @@ public final class SantaAbility extends Ability {
             Location top = base.clone().add(0, STAR_HEIGHT, 0);
             double damage = params().num("ult_finale_damage");
             int hits = 0;
-            Location heart = base.clone().add(0, 2.0, 0);
-            for (LivingEntity enemy : ctx().enemiesNear(owner, base, radius)) {
-                if (!Spots.clearPath(heart, Fx.body(enemy))) {
-                    continue;
-                }
+            for (LivingEntity enemy : reachedEnemies()) {
                 Combat.hit(ctx(), owner, enemy, damage);
                 hits++;
                 if (enemy instanceof Player victim && !owner.canSee(victim)) {
@@ -1070,9 +1122,39 @@ public final class SantaAbility extends Ability {
                 });
             }
             if (hits > 0 && owner.isOnline()) {
-                owner.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>★ 별이 터졌습니다</b></" + GOLD_TAG + "> <white>" + hits
+                String title = shining != null ? "★ 별이 터졌습니다" : "🎄 크리스마스의 기적";
+                owner.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>" + title + "</b></" + GOLD_TAG + "> <white>" + hits
                         + "명 적중!</white>"));
             }
+        }
+
+        /** True if {@code entity} is around the tree: within its radius and about at the height of its foot. */
+        private boolean aroundTree(LivingEntity entity) {
+            Location feet = entity.getLocation();
+            double dy = feet.getY() - base.getY();
+            return feet.getWorld().equals(world) && dy >= -TREE_BELOW && dy <= TREE_ABOVE
+                    && Math.hypot(feet.getX() - base.getX(), feet.getZ() - base.getZ()) <= radius;
+        }
+
+        /** The enemies the tree's lights and star reach: around the tree, and able to see it. */
+        private List<LivingEntity> reachedEnemies() {
+            List<LivingEntity> reached = new ArrayList<>();
+            for (LivingEntity enemy : ctx().enemiesNear(owner, base, radius + TREE_ABOVE)) {
+                if (aroundTree(enemy) && seesTree(enemy)) {
+                    reached.add(enemy);
+                }
+            }
+            return reached;
+        }
+
+        private boolean seesTree(LivingEntity enemy) {
+            Location body = Fx.body(enemy);
+            for (double height : TREE_EYES) {
+                if (Spots.clearPath(base.clone().add(0, height, 0), body)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /** A box standing on the tree's base (its bottom {@code bottom} blocks up), turned {@code yaw} degrees. */
@@ -1100,5 +1182,24 @@ public final class SantaAbility extends Ability {
     private <T extends Display> T remember(T display) {
         displays.add(display);
         return display;
+    }
+
+    /** {@link #remember}s a display that makes way for the tree when the budget is tight. */
+    private <T extends Display> T rememberOptional(T display) {
+        optional.add(display);
+        return remember(display);
+    }
+
+    /** Removes optional displays (oldest first) until {@code count} more fit in the budget. */
+    private void makeRoom(int count) {
+        displays.removeIf(display -> !display.isValid());
+        optional.removeIf(display -> !display.isValid());
+        Iterator<Display> it = optional.iterator();
+        while (displays.size() + count > MAX_DISPLAYS && it.hasNext()) {
+            Display display = it.next();
+            it.remove();
+            displays.remove(display);
+            display.remove();
+        }
     }
 }
