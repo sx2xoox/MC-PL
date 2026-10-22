@@ -238,8 +238,11 @@ public final class AstronomerAbility extends Ability {
             ThreadLocalRandom random = ThreadLocalRandom.current();
             Location at = owner.getLocation().add(random.nextDouble(-1.2, 1.2), random.nextDouble(0.3, 2.3),
                     random.nextDouble(-1.2, 1.2));
-            Vfx.dot(at, random.nextInt(3) == 0 ? Particle.END_ROD : Particle.DUST,
-                    random.nextInt(3) == 0 ? null : STAR_DUST, false);
+            if (random.nextInt(3) == 0) {
+                Vfx.dot(at, Particle.END_ROD, null, false);
+            } else {
+                Vfx.dot(at, Particle.DUST, STAR_DUST, false);
+            }
         }
     }
 

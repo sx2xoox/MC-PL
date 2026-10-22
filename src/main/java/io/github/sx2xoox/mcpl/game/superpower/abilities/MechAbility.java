@@ -142,12 +142,20 @@ public final class MechAbility extends Ability {
     private static final double MISSILE_TOP_SPEED = 1.3;
     private static final double MISSILE_ACCEL = 0.1;
     /** Ticks a missile flies straight on its launch heading before it starts to steer. */
-    private static final long MISSILE_BOOST_TICKS = 3;
-    /** Base turn per tick: the homing is weak, a strafing target can make missiles miss. */
-    private static final double MISSILE_TURN = Math.toRadians(6.5);
+    private static final long MISSILE_BOOST_TICKS = 2;
+    private static final double MISSILE_TURN = Math.toRadians(7);
     /** Close in, missiles turn harder (by this many blocks over the distance), so they dive into a near target. */
-    private static final double MISSILE_CLOSE_TURN = 2.5;
-    private static final double MISSILE_MAX_TURN = Math.toRadians(28);
+    private static final double MISSILE_CLOSE_TURN = 4;
+    private static final double MISSILE_MAX_TURN = Math.toRadians(35);
+    /**
+     * The homing is weak: a missile steers at a point that follows its target at most this fast (blocks per tick),
+     * slower than a sprinting player, so a target sprinting across the line of fire at range can outrun the volley.
+     */
+    private static final double MISSILE_TRACKING = 0.18;
+    /** The launch climbs more for far targets (distance / this), between {@link #MISSILE_MIN_CLIMB} and max. */
+    private static final double MISSILE_CLIMB_DISTANCE = 16;
+    private static final double MISSILE_MIN_CLIMB = 0.1;
+    private static final double MISSILE_MAX_CLIMB = 0.45;
     /** Proximity fuse: a missile this close to an enemy's hitbox detonates. */
     private static final double MISSILE_FUSE = 0.45;
     private static final double MISSILE_SAMPLE = 0.35;
@@ -418,9 +426,11 @@ public final class MechAbility extends Ability {
         if (side.lengthSquared() < 1.0E-6) {
             side = new Vector(1, 0, 0);
         }
-        // Left pod missiles break left, right pod missiles right, both climbing first.
+        // Left pod missiles break left, right pod missiles right, both climbing first (more for a far target).
         side.normalize().multiply(left ? 0.3 : -0.3);
-        Vector heading = look.clone().normalize().add(new Vector(0, 0.45, 0)).add(side).normalize();
+        double climb = Math.clamp(owner.getEyeLocation().distance(aim) / MISSILE_CLIMB_DISTANCE, MISSILE_MIN_CLIMB,
+                MISSILE_MAX_CLIMB);
+        Vector heading = look.clone().normalize().add(new Vector(0, climb, 0)).add(side).normalize();
         Location goal = aim.clone();
         if (target == null) {
             double angle = index * TAU / Math.max(1, volley.count) + ThreadLocalRandom.current().nextDouble(0.6);
@@ -638,19 +648,26 @@ public final class MechAbility extends Ability {
             return true;
         }
 
-        /** Turns towards the target's chest (or the goal) by a limited angle per tick, more when close. */
+        /**
+         * Turns towards the goal by a limited angle per tick, more when close. While the lock holds, the goal trails
+         * the target's chest at {@link #MISSILE_TRACKING}; a lost lock leaves it where it was.
+         */
         private void steer() {
             LivingEntity current = target;
             if (current != null && (!Combat.isTargetable(ctx(), player(), current) || !isVisible(current)
                     || !current.getWorld().equals(world))) {
-                // The lock is lost: fly on to where the target was.
-                goal.setX(current.getLocation().getX());
-                goal.setZ(current.getLocation().getZ());
                 target = null;
                 current = null;
             }
-            Location aimAt = current != null ? Fx.body(current) : goal;
-            Vector desired = aimAt.toVector().subtract(position.toVector());
+            if (current != null) {
+                Vector follow = Fx.body(current).toVector().subtract(goal.toVector());
+                double lag = follow.length();
+                if (lag > MISSILE_TRACKING) {
+                    follow.multiply(MISSILE_TRACKING / lag);
+                }
+                goal.add(follow);
+            }
+            Vector desired = goal.toVector().subtract(position.toVector());
             double distance = desired.length();
             if (distance < 1.0E-3) {
                 return;
