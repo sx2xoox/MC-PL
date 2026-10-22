@@ -305,6 +305,29 @@ class TechNewAbilitiesTest {
     }
 
     @Test
+    void sniperLaserPointsWhereTheSniperAims() {
+        try (Scenario s = Scenario.ffa("sniper")) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "정조준 사격");
+            s.ticks(3);
+            BlockDisplay laser = entities(s, BlockDisplay.class).stream()
+                    .max(java.util.Comparator.comparingDouble(d -> d.getTransformation().getScale().z()))
+                    .orElseThrow(() -> new AssertionError("the aiming laser"));
+            // The display itself must not carry the sniper's yaw/pitch: its model would be rotated twice.
+            assertEquals(0, laser.getLocation().getYaw(), 1.0E-3, "laser display yaw");
+            assertEquals(0, laser.getLocation().getPitch(), 1.0E-3, "laser display pitch");
+            org.joml.Vector3f beam = laser.getTransformation().getLeftRotation()
+                    .transform(new org.joml.Vector3f(0, 0, 1));
+            org.bukkit.util.Vector expected = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.6, 0).toVector()
+                    .subtract(laser.getLocation().toVector()).normalize();
+            double dot = beam.x() * expected.getX() + beam.y() * expected.getY() + beam.z() * expected.getZ();
+            assertTrue(dot > 0.98, "the laser points at the aimed enemy (cos=" + dot + ")");
+            s.ticks(s.paramTicks("aim_time") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void sniperHeadshotHitsHarderAndRefundsTheCooldown() {
         try (Scenario s = Scenario.ffa("sniper")) {
             s.aimAt(s.owner, s.enemy.getEyeLocation());

@@ -107,10 +107,12 @@ public final class RayTracing {
     private static @Nullable RayTraceResult clipCube(Block block, Vector start, Vector dir, double maxDistance) {
         BoundingBox cube = new BoundingBox(block.getX(), block.getY(), block.getZ(), block.getX() + 1,
                 block.getY() + 1, block.getZ() + 1);
-        if (cube.contains(start)) {
-            // Vanilla VoxelShape#clip: a ray starting inside the shape hits right away.
-            Vector at = start.clone().add(dir.clone().multiply(0.001 * maxDistance));
-            return new RayTraceResult(at, block, approximateFace(dir).getOppositeFace());
+        // Vanilla VoxelShape#clip probes 0.1% of the ray length past the start: if that point is inside the shape
+        // (which includes a ray starting exactly on a face and pointing into the block), it reports a hit there,
+        // slightly inside the block, instead of on the face.
+        Vector probe = start.clone().add(dir.clone().multiply(0.001 * maxDistance));
+        if (cube.contains(probe)) {
+            return new RayTraceResult(probe, block, approximateFace(dir).getOppositeFace());
         }
         return clip(cube, start, dir, maxDistance, block);
     }

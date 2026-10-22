@@ -76,7 +76,8 @@ public interface AbilityContext {
 
     /**
      * The enemy the owner is aiming at: a ray from the eyes along the view direction, up to {@code range} blocks,
-     * stopped by solid blocks, with a slightly enlarged hitbox for forgiving aim. Null if none.
+     * stopped by solid blocks, with a slightly enlarged hitbox for forgiving aim. Players hidden from the owner
+     * (stealth via {@code hidePlayer}) are never returned, so aiming cannot reveal them. Null if none.
      */
     @Nullable LivingEntity findTarget(Player owner, double range);
 
