@@ -418,7 +418,7 @@ public final class PainterAbility extends Ability {
 
         private void drawFlight(Location previous, Location next, long tick) {
             if (body != null && body.isValid()) {
-                body.teleport(flat(next));
+                Displays.moveTo(body, next);
                 float squash = 1f + 0.18f * (float) Math.sin(tick * 1.3);
                 Displays.animate(body, blobPose(tick * 47f, tick * 31f, squash), 1);
             }
@@ -958,10 +958,11 @@ public final class PainterAbility extends Ability {
             float full = CANVAS_WIDTH - 0.24f;
             float y = CANVAS_HEIGHT * STROKE_ROWS[row];
             float z = CANVAS_DEPTH / 2 + 0.015f;
+            float width = full * progress;
             if (within == 0) {
                 BlockDisplay stroke = keep(Displays.block(ctx(), owner, pivot, data(paint.main),
-                        partPose(canvasYaw, 0, 0, new Vector3f(left + 0.01f, y, z),
-                                new Vector3f(0.02f, STROKE_HEIGHT, 0.02f), STROKE_SLANT[row]), floodAt + 12));
+                        partPose(canvasYaw, 0, 0, new Vector3f(left + width / 2, y, z),
+                                new Vector3f(width, STROKE_HEIGHT, 0.02f), STROKE_SLANT[row]), floodAt + 12));
                 stroke.setViewRange(2.0f);
                 strokes.add(stroke);
                 canvasParts.add(new Part(stroke, new Vector3f(0, y, z), new Vector3f(full, STROKE_HEIGHT, 0.02f),
@@ -969,10 +970,11 @@ public final class PainterAbility extends Ability {
                 Fx.sound(pivot, Sound.ITEM_BRUSH_BRUSHING_GENERIC, 1.2f, 0.9f + 0.2f * row);
                 Fx.sound(pivot, Sound.ENTITY_SLIME_SQUISH_SMALL, 0.7f, 1.4f + 0.1f * row);
             }
-            BlockDisplay stroke = strokes.get(strokes.size() - 1);
-            float width = full * progress;
-            Displays.animate(stroke, partPose(canvasYaw, 0, 0, new Vector3f(left + width / 2, y, z),
-                    new Vector3f(width, STROKE_HEIGHT, 0.02f), STROKE_SLANT[row]), 1);
+            if (within > 0) {
+                BlockDisplay stroke = strokes.get(strokes.size() - 1);
+                Displays.animate(stroke, partPose(canvasYaw, 0, 0, new Vector3f(left + width / 2, y, z),
+                        new Vector3f(width, STROKE_HEIGHT, 0.02f), STROKE_SLANT[row]), 1);
+            }
             // The brush rides the wet edge of the stroke.
             Location tip = canvasPoint(left + width, y, z + 0.3f);
             if (brush == null && roomFor(1)) {
@@ -980,7 +982,7 @@ public final class PainterAbility extends Ability {
                         Displays.centered(0, 0, 0, 0.8f, 0.8f, 0.8f, canvasYaw, 0, -35f), floodAt + 4));
                 brush.setTeleportDuration(1);
             } else if (brush != null && brush.isValid()) {
-                brush.teleport(tip);
+                Displays.moveTo(brush, tip);
             }
             world.spawnParticle(Particle.DUST, tip, Vfx.n(ctx(), 3), 0.08, 0.12, 0.08, 0, paint.drop, true);
             if (within % 2 == 0) {

@@ -316,7 +316,7 @@ public final class MycologistAbility extends Ability {
                 return false;
             }
             if (worn != null && worn.isValid()) {
-                worn.teleport(headTop(victim));
+                Displays.moveTo(worn, headTop(victim));
                 if (run % 4 == 0) {
                     Displays.animate(worn, toadstoolPose(1f, (float) Math.sin(run * 0.9) * 14f), 8);
                 }
@@ -434,7 +434,7 @@ public final class MycologistAbility extends Ability {
             Location at = from.clone().add(to.toVector().subtract(from.toVector()).multiply(t))
                     .add(0, 4 * arc * t * (1 - t), 0);
             if (seed != null && seed.isValid()) {
-                seed.teleport(flat(at));
+                Displays.moveTo(seed, at);
                 Displays.animate(seed, cubePose(SEED_SIZE, run * 40f, run * 25f), 1);
             }
             Vfx.line(ctx(), previous[0], at, 3, Particle.DUST, run % 2 == 0 ? RED_SPECK : CREAM_DUST, false);

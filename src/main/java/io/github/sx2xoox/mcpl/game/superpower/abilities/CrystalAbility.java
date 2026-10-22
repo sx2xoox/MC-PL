@@ -9,11 +9,13 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
@@ -150,6 +152,12 @@ public final class CrystalAbility extends Ability {
     private static final double BREAKOUT_DISTANCE = 3.0;
     /** A prisoner drifting farther than this is put back. */
     private static final double HOLD_SLACK = 0.35;
+    /** A prisoner this close above the ground (mid-jump) is pinned down onto it. */
+    private static final double ANCHOR_SNAP = 1.25;
+    /** The cell's ground is searched from this far above the prisoner's feet, which may be a hair in the floor. */
+    private static final double ANCHOR_LIFT = 0.2;
+    /** On the first tick the prisoner is set onto the cell floor unless it already stands there. */
+    private static final double PLACE_EPSILON = 1.0E-4;
     private static final int FLYING_SHARDS = 6;
     private static final double SHATTER_PUSH = 0.9;
     private static final double SHATTER_LIFT = 0.45;
@@ -637,7 +645,15 @@ public final class CrystalAbility extends Ability {
 
         Prison(LivingEntity prisoner) {
             this.prisoner = prisoner;
-            this.anchor = prisoner.getLocation();
+            // The cell stands on the ground: a prisoner caught mid-jump is pinned down onto it, and a server
+            // position a hair inside the floor is lifted onto the surface (never holding a body in the ground).
+            Location at = prisoner.getLocation();
+            Location probe = at.clone().add(0, ANCHOR_LIFT, 0);
+            Spots.snapToGround(probe.getWorld(), probe, ANCHOR_SNAP + ANCHOR_LIFT);
+            if (probe.getY() < at.getY() + ANCHOR_LIFT) {
+                at.setY(probe.getY());
+            }
+            this.anchor = at;
             this.cell = flat(anchor);
             this.world = anchor.getWorld();
             this.hold = Math.max(1, params().ticks("prison_duration"));
@@ -736,7 +752,7 @@ public final class CrystalAbility extends Ability {
                 shatter();
                 return false;
             }
-            holdPrisoner();
+            holdPrisoner(tick == 0);
             shimmer(tick);
             if (hold - tick <= SHIVER_TICKS) {
                 shiver(tick);
@@ -744,16 +760,22 @@ public final class CrystalAbility extends Ability {
             return true;
         }
 
-        /** Keeps the prisoner in its cell: no velocity, put back when something shoved it. */
-        private void holdPrisoner() {
+        /**
+         * Keeps the prisoner in its cell: no velocity; on the first tick it is set exactly onto the cell floor, later
+         * it is put back when something shoved it. Only ever onto a safe spot (it stood there a moment ago).
+         */
+        private void holdPrisoner(boolean first) {
             prisoner.setVelocity(new Vector());
             prisoner.setFallDistance(0);
             Location at = prisoner.getLocation();
-            if (at.distance(anchor) > HOLD_SLACK) {
+            double slack = first ? PLACE_EPSILON : HOLD_SLACK;
+            if (at.distanceSquared(anchor) > slack * slack) {
                 Location back = anchor.clone();
                 back.setYaw(at.getYaw());
                 back.setPitch(at.getPitch());
-                prisoner.teleport(back);
+                if (Spots.isSafe(ctx(), back, Body.standing(prisoner))) {
+                    prisoner.teleport(back);
+                }
             }
         }
 
@@ -881,7 +903,7 @@ public final class CrystalAbility extends Ability {
                 Vector out = new Vector(-Math.sin(radians), 0, Math.cos(radians)).multiply(2.2 + random.nextDouble(1.2))
                         .setY(0.4 + random.nextDouble(0.8));
                 display.setTeleportDuration(6);
-                display.teleport(display.getLocation().add(out));
+                Displays.moveTo(display, display.getLocation().add(out));
                 Displays.animate(display, barPose(bar.angle(), bar.height() * 0.6f, 70f + random.nextFloat() * 40f), 6);
                 ctx().runLater(owner, 6, () -> {
                     if (display.isValid()) {
@@ -915,7 +937,7 @@ public final class CrystalAbility extends Ability {
                     if (!shard.isValid()) {
                         return;
                     }
-                    shard.teleport(center.clone().add(out));
+                    Displays.moveTo(shard, center.clone().add(out));
                     Displays.animate(shard, Displays.centered(0, 0, 0, 0.6f, 0.6f, 0.6f, random.nextFloat() * 360f,
                             random.nextFloat() * 360f, random.nextFloat() * 360f), 8);
                 });

@@ -5,9 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.stream.Stream;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
@@ -19,11 +21,17 @@ import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -80,6 +88,68 @@ class ArtNewAbilitiesTest {
 
     private static double magicDamage(Scenario s, Entity victim) {
         return magicHits(s, victim).stream().mapToDouble(Scenario.Hit::damage).sum();
+    }
+
+    /**
+     * Displays orient through their transformation only: an entity rotation would turn the model a second time on a
+     * real client.
+     */
+    private static void assertUnrotated(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-6, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-6, what + ": display pitch");
+    }
+
+    /**
+     * The model matrix of a display (translation, left rotation, scale, right rotation). MockBukkit's
+     * {@code DisplayMock#getTransformation} cannot be used to read it back: it decomposes its matrix and then
+     * conjugates the rotation in place, returning the <em>inverse</em> rotation as both the left and the right
+     * rotation. So the matrix it keeps is read directly; the API is only the fallback.
+     */
+    private static Matrix4f model(Display display) {
+        for (Class<?> type = display.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField("transformationMatrix");
+                field.setAccessible(true);
+                return new Matrix4f((Matrix4f) field.get(display));
+            } catch (NoSuchFieldException e) {
+                // keep looking up the hierarchy
+            } catch (IllegalAccessException e) {
+                break;
+            }
+        }
+        Transformation pose = display.getTransformation();
+        return new Matrix4f().translation(pose.getTranslation()).rotate(pose.getLeftRotation())
+                .scale(pose.getScale()).rotate(pose.getRightRotation());
+    }
+
+    /** A point of an (unrotated) display's model, in model coordinates (a block spans 0..1), in the world. */
+    private static Vector worldPoint(Display display, float x, float y, float z) {
+        Vector3f point = model(display).transformPosition(new Vector3f(x, y, z));
+        Location at = display.getLocation();
+        return new Vector(at.getX() + point.x, at.getY() + point.y, at.getZ() + point.z);
+    }
+
+    /** Where a direction of the (unrotated) display's model points in the world, normalized. */
+    private static Vector3f worldDirection(Display display, float x, float y, float z) {
+        return model(display).transformDirection(new Vector3f(x, y, z)).normalize();
+    }
+
+    private static double horizontalDistance(Vector point, Location axis) {
+        return Math.hypot(point.getX() - axis.getX(), point.getZ() - axis.getZ());
+    }
+
+    private static List<BlockDisplay> blockDisplays(Scenario s, Material material) {
+        return s.world.getEntities().stream()
+                .filter(entity -> entity instanceof BlockDisplay block && block.getBlock().getMaterial() == material)
+                .map(entity -> (BlockDisplay) entity).toList();
+    }
+
+    /** Feet exactly on the floor and the body clear of every block. */
+    private static void assertOnSurface(Player player, String what) {
+        Location at = player.getLocation();
+        assertEquals(FlatWorld.SURFACE, at.getY(), 1.0E-6, what + ": feet on the surface " + at);
+        assertTrue(Spots.isFree(at.getWorld(), at, player.getWidth(), player.getHeight()),
+                what + ": the body is not inside a block " + at);
     }
 
     /** Exactly what {@code GamblerAbility#fireBorrowed} does. */
@@ -304,6 +374,28 @@ class ArtNewAbilitiesTest {
     }
 
     @Test
+    void mycologistToadstoolKeepsItsOwnRotationOnATurningHead() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE, 4.5, 77, 30);
+            s.melee(s.owner, s.enemy, 1);
+            s.ticks(6);
+            List<Entity> shown = s.world.getEntities().stream().filter(entity -> entity instanceof Display).toList();
+            assertEquals(1, shown.size(), "one toadstool");
+            Display cap = (Display) shown.getFirst();
+            assertUnrotated(cap, "toadstool");
+            assertEquals(4.5, cap.getLocation().getZ(), 1.0E-6, "on the enemy's head");
+            assertEquals(FlatWorld.SURFACE + s.enemy.getHeight(), cap.getLocation().getY(), 0.05, "on top of it");
+            s.place(s.enemy, 2.5, FlatWorld.SURFACE, 5.5, -140, -20);
+            s.ticks(4);
+            assertUnrotated(cap, "toadstool after the head turned");
+            assertEquals(2.5, cap.getLocation().getX(), 1.0E-6, "it follows the head");
+            assertEquals(5.5, cap.getLocation().getZ(), 1.0E-6, "it follows the head");
+            s.ticks(s.paramTicks("spore_nausea") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void mycologistMinesArmThenBurstUnderTheAimedEnemy() {
         try (Scenario s = Scenario.ffa("mycologist")) {
             s.place(s.enemy2, FAR, FAR, 180);
@@ -496,6 +588,12 @@ class ArtNewAbilitiesTest {
             s.ticks(14);
             assertEquals(s.param("erupt_damage"), magicDamage(s, s.enemy), EPSILON, "erupts at the owner's feet");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            for (BlockDisplay part : blockDisplays(s, Material.MUSHROOM_STEM)) {
+                assertUnrotated(part, "giant stem");
+                assertEquals(0.5, worldPoint(part, 0.5f, 0.5f, 0.5f).getX(), 1.0E-3, "rooted under the owner");
+            }
+            s.tickUntilGrounded(s.enemy, 60);
+            assertOnSurface(s.enemy, "the launched enemy lands");
             s.ticks(150);
             assertVisualsGone(s, "after the mushroom sank");
             s.finishClean();
@@ -531,6 +629,8 @@ class ArtNewAbilitiesTest {
             assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + 0.3, "launched: " + s.enemy.getLocation());
             assertTrue(displays(s) >= 8, "a line of crystal spikes: " + displays(s));
             assertTrue(displays(s) <= 24, "within the display budget: " + displays(s));
+            s.tickUntilGrounded(s.enemy, 40);
+            assertOnSurface(s.enemy, "the launched enemy lands");
             s.ticks(30);
             assertEquals(s.param("spike_damage"), magicDamage(s, s.enemy), EPSILON, "one hit per cast");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "beside the line: untouched");
@@ -635,6 +735,74 @@ class ArtNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(s.paramTicks("shard_duration") + 40);
             assertVisualsGone(s, "after the prison and its crystals");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalCageIsUnrotatedAndItsClustersLeanOverThePrisoner() {
+        try (Scenario s = Scenario.ffa("crystal")) {
+            // A turned prisoner: its rotation must not leak into the cage.
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE, 4.5, 77, 25);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "크리스탈 감옥");
+            s.ticks(8);
+            Location axis = s.enemy.getLocation();
+            int bars = 0;
+            for (Entity entity : s.world.getEntities()) {
+                if (entity instanceof Display display) {
+                    assertUnrotated(display, "cage part " + display.getType());
+                }
+            }
+            for (BlockDisplay cluster : blockDisplays(s, Material.AMETHYST_CLUSTER)) {
+                Vector foot = worldPoint(cluster, 0.5f, 0, 0.5f);
+                Vector tip = worldPoint(cluster, 0.5f, 1, 0.5f);
+                if (horizontalDistance(foot, axis) < 0.4) {
+                    continue; // the crown hanging over the head
+                }
+                bars++;
+                assertEquals(FlatWorld.SURFACE, foot.getY(), 0.1, "a cluster stands on the ground");
+                assertTrue(tip.getY() > foot.getY() + 1.5, "and rises upwards");
+                assertTrue(horizontalDistance(tip, axis) < horizontalDistance(foot, axis) - 0.4,
+                        "leaning in over the prisoner: foot " + foot + ", tip " + tip);
+            }
+            assertEquals(6, bars, "six clusters around the prisoner");
+            s.ticks(s.paramTicks("prison_duration") + s.paramTicks("shard_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalPrisonPinsAJumpingEnemyExactlyOntoTheGround() {
+        try (Scenario s = Scenario.ffa("crystal")) {
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE + 0.6, 4.5, 180, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "크리스탈 감옥");
+            s.ticks(1);
+            assertOnSurface(s.enemy, "pinned onto the cell floor");
+            s.ticks(20);
+            assertOnSurface(s.enemy, "held on the floor");
+            s.ticks(s.paramTicks("prison_duration"));
+            s.tickUntilGrounded(s.enemy, 60);
+            assertOnSurface(s.enemy, "after the cage shattered");
+            s.ticks(s.paramTicks("shard_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalPrisonLiftsAnEnemySunkIntoTheFloorOntoTheSurface() {
+        try (Scenario s = Scenario.ffa("crystal")) {
+            // A server position a hair inside the floor, as a real client can leave it.
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE - 0.004, 4.5, 180, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "크리스탈 감옥");
+            s.ticks(1);
+            assertOnSurface(s.enemy, "set onto the surface, not held in the ground");
+            s.enemy.teleport(s.enemy.getLocation().add(0.8, 0, 0));
+            s.ticks(1);
+            assertOnSurface(s.enemy, "put back onto the surface");
+            s.ticks(s.paramTicks("prison_duration") + s.paramTicks("shard_duration") + 40);
             s.finishClean();
         }
     }
@@ -765,6 +933,46 @@ class ArtNewAbilitiesTest {
             s.ticks(s.paramTicks("puddle_duration") + 20);
             assertVisualsGone(s, "after the paint dried");
             s.world.wallAlongX(-2, 3, 3, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void painterCanvasFacesThePainterThenLandsFaceUpOnTheZone() {
+        try (Scenario s = Scenario.ffa("painter")) {
+            s.place(s.enemy, FAR, FAR, 180);
+            s.place(s.enemy2, -FAR, FAR, 180);
+            // Facing west (-X), slightly down: the canvas must not inherit the painter's rotation.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 90, 20);
+            s.assertSucceeded(s.ultimate(), "걸작");
+            s.ticks(10);
+            List<BlockDisplay> canvases = blockDisplays(s, Material.WHITE_WOOL);
+            assertEquals(1, canvases.size(), "one canvas");
+            BlockDisplay canvas = canvases.getFirst();
+            for (Entity entity : s.world.getEntities()) {
+                if (entity instanceof Display display) {
+                    assertUnrotated(display, "masterpiece part " + display.getType());
+                }
+            }
+            Vector3f face = worldDirection(canvas, 0, 0, 1);
+            assertTrue(face.x > 0.95, "the painted face looks back east at the painter: " + face);
+            Vector middle = worldPoint(canvas, 0.5f, 0.5f, 0.5f);
+            assertTrue(middle.getX() < -0.5, "the canvas stands in front of (west of) the painter: " + middle);
+            assertEquals(0.5, middle.getZ(), 1.0E-3, "straight ahead");
+            assertTrue(middle.getY() > FlatWorld.SURFACE + 0.9, "standing upright: " + middle);
+            for (Entity entity : s.world.getEntities()) {
+                if (entity instanceof ItemDisplay brush) {
+                    assertTrue(worldPoint(brush, 0, 0, 0).getX() > middle.getX(), "the brush paints the front");
+                }
+            }
+            s.ticks(16);
+            face = worldDirection(canvas, 0, 0, 1);
+            assertTrue(face.y > 0.95, "it fell over face up: " + face);
+            middle = worldPoint(canvas, 0.5f, 0.5f, 0.5f);
+            assertEquals(-2.5, middle.getX(), 0.05, "lying on the zone in front of the painter: " + middle);
+            assertEquals(FlatWorld.SURFACE, middle.getY(), 0.1, "flat on the ground: " + middle);
+            s.ticks(s.paramTicks("ult_duration") + 30);
+            assertVisualsGone(s, "after the masterpiece dried");
             s.finishClean();
         }
     }
