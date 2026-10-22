@@ -10,17 +10,18 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
-import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -28,13 +29,16 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.Tag;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.tag.DamageTypeTags;
@@ -42,8 +46,6 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -52,6 +54,11 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>No real explosion ever happens: the grenade is a primed TNT entity with zero yield that is removed right before
  * its fuse would run out, the bombs are block displays, and every blast is applied explicitly to enemies only.
+ *
+ * <p>Visuals: the grenade carries a blinking red light and draws a red countdown ring that closes in before it
+ * blows; every blast is a layered fireball of glowing glass cubes with a flash, a fire bloom, debris, an expanding
+ * shock ring and smouldering embers. The carpet is flown in by a small bomber whose bombs drift down onto marked,
+ * closing target rings.
  */
 public final class BomberAbility extends Ability {
 
@@ -108,14 +115,36 @@ public final class BomberAbility extends Ability {
     private static final float BOMB_SIZE = 0.8f;
     private static final float BOMB_SPIN_DEGREES = 35f;
 
-    private static final Particle.DustOptions WARNING_DUST = new Particle.DustOptions(Color.fromRGB(255, 60, 40), 1.2f);
-    private static final Particle.DustTransition BLAST_DUST =
-            new Particle.DustTransition(Color.fromRGB(255, 170, 60), Color.fromRGB(70, 60, 55), 1.6f);
-    private static final Color FLASH_COLOR = Color.fromRGB(255, 200, 140);
+    // ------------------------------------------------------------------ visuals
+
+    /** Pale yellow core, alarm red body, burnt brown edge. */
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFF59D, 0xFF5252, 0x4E342E);
+    /** Fire inside a blast: yellow-white to orange. */
+    private static final Vfx.Palette FIRE = Vfx.Palette.of(0xFFF59D, 0xFF9F43, 0x4E342E);
+    private static final Particle.DustOptions WARNING_DUST = new Particle.DustOptions(PALETTE.body(), 1.2f);
+    private static final Particle.DustOptions WARNING_CORE = new Particle.DustOptions(PALETTE.core(), 0.9f);
+    /** Glass layers of a fireball, inside out. */
+    private static final Material[] FIREBALL = {
+            Material.YELLOW_STAINED_GLASS, Material.ORANGE_STAINED_GLASS, Material.RED_STAINED_GLASS};
+    private static final int FIREBALL_GROW_TICKS = 3;
+    private static final int FIREBALL_FADE_TICKS = 5;
+    /** Ticks the ground smoulders after a blast. */
+    private static final long EMBER_TICKS = 16;
+    private static final float LIGHT_SIZE = 0.24f;
+
+    /** The carpet's bomber flies at most this fast (blocks per tick) and only over carpets of at least this length. */
+    private static final double PLANE_MAX_SPEED = 1.2;
+    private static final long PLANE_MIN_TICKS = 10;
+    /** Ticks the plane keeps flying after the carpet ends before it fades out. */
+    private static final int PLANE_FADE_TICKS = 6;
+    private static final float PLANE_SPAWN_SCALE = 0.25f;
 
     /** Cancels the fall damage of the landing after a blast jump. */
     private final LandingGuard blastJump = new LandingGuard();
     private long blastJumpTick;
+    /** The target of the blast hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     @Override
     public AbilityInfo info() {
@@ -130,8 +159,11 @@ public final class BomberAbility extends Ability {
             return;
         }
         if (blastJump.absorb(event, ctx().currentTick())) {
-            Location feet = player().getLocation();
-            feet.getWorld().spawnParticle(Particle.CLOUD, feet, 10, 0.3, 0.05, 0.3, 0.03);
+            // A soft landing: a ring of dust puffs out from the feet.
+            Location feet = player().getLocation().add(0, 0.1, 0);
+            Vfx.shockwave(ctx(), player(), feet, 0.2, 1.3, 4, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.0f),
+                    false);
+            Vfx.cloud(ctx(), feet, Particle.POOF, 6, 0.3, 0.03, null, false);
             Fx.sound(feet, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 0.6f, 1.3f + Fx.jitter(0.1f));
             return;
         }
@@ -140,8 +172,18 @@ public final class BomberAbility extends Ability {
         }
         double resist = Math.clamp(params().num("blast_resist") / 100.0, 0.0, 1.0);
         event.setDamage(event.getDamage() * (1 - resist));
-        Location body = player().getLocation().add(0, player().getHeight() * 0.5, 0);
-        body.getWorld().spawnParticle(Particle.SMOKE, body, 8, 0.3, 0.4, 0.3, 0.02);
+        // The blast suit soaks it up: a shell of dark plating motes flashes around the body.
+        Location body = Fx.body(player());
+        Vfx.sphere(ctx(), body, 0.65, 14, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.8f), false);
+        Vfx.cloud(ctx(), body, Particle.WHITE_SMOKE, 4, 0.3, 0.02, null, false);
+        Fx.sound(body, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 0.7f, 1.3f + Fx.jitter(0.1f));
+    }
+
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() && victim.equals(pendingTarget)) {
+            landed = true;
+        }
     }
 
     @Override
@@ -152,8 +194,13 @@ public final class BomberAbility extends Ability {
         long now = ctx().currentTick();
         blastJump.update(player(), now);
         if (blastJump.isArmed() && now - blastJumpTick < 20) {
+            // Rocket trail under the flying bomber.
             Location feet = player().getLocation();
-            feet.getWorld().spawnParticle(Particle.SMOKE, feet, 2, 0.1, 0.05, 0.1, 0.01);
+            Vfx.dot(feet, Particle.DUST_COLOR_TRANSITION, FIRE.glow(1.0f), false);
+            Vfx.dot(feet.clone().add(0, -0.2, 0), Particle.SMOKE, null, false);
+            if (tick % 4 == 0) {
+                Vfx.dot(feet, Particle.SMALL_FLAME, null, false);
+            }
         }
     }
 
@@ -202,6 +249,14 @@ public final class BomberAbility extends Ability {
         }
         Fx.sound(eye, Sound.ENTITY_SNOWBALL_THROW, 1.0f, 0.6f + Fx.jitter(0.05f));
         Fx.sound(eye, Sound.ENTITY_TNT_PRIMED, 0.9f, 1.3f + Fx.jitter(0.05f));
+        Fx.sound(eye, Sound.ITEM_FLINTANDSTEEL_USE, 0.8f, 1.2f + Fx.jitter(0.1f));
+        Vfx.cloud(ctx(), spawn, Particle.SMALL_FLAME, 4, 0.08, 0.02, null, false);
+
+        // A small red light rides on top of the grenade and blinks faster as the fuse burns down.
+        BlockDisplay light = Displays.block(ctx(), player(), grenade.getLocation(),
+                Material.REDSTONE_BLOCK.createBlockData(),
+                Displays.transform(0, 0.16f, 0, LIGHT_SIZE, LIGHT_SIZE, LIGHT_SIZE, 45, 0, 0), fuse + FUSE_MARGIN);
+        grenade.addPassenger(light);
 
         double radius = Math.max(0.5, params().num("grenade_radius"));
         Loop.repeat(ctx(), player(), 1, 1, fuse, tick -> {
@@ -210,21 +265,21 @@ public final class BomberAbility extends Ability {
             }
             long left = fuse - tick - 1;
             Location at = grenade.getLocation().add(0, 0.5, 0);
-            if (tick % 2 == 0) {
-                world.spawnParticle(Particle.SMOKE, at.clone().add(0, 0.5, 0), 1, 0.05, 0.05, 0.05, 0.01);
-                world.spawnParticle(Particle.SMALL_FLAME, at.clone().add(0, 0.55, 0), 1, 0.02, 0.02, 0.02, 0.01);
-            }
+            fuseSparks(at.clone().add(0, 0.85, 0), tick); // just above the light
             long beepEvery = left > 15 ? 8 : left > 6 ? 4 : 2;
-            if (left % beepEvery == 0) {
+            boolean beep = left % beepEvery == 0;
+            if (beep) {
                 float progress = 1f - (float) left / fuse;
                 Fx.sound(at, Sound.BLOCK_NOTE_BLOCK_PLING, 0.7f, 1.0f + progress);
             }
-            if (left <= WARNING_TICKS && left % 4 == 0) {
+            blink(light, beep || left % beepEvery == 1, left <= WARNING_TICKS);
+            if (left <= WARNING_TICKS && left % 2 == 0) {
                 Location floor = groundBelow(at, 3);
-                drawRing(floor == null ? at : floor, radius, Particle.DUST, WARNING_DUST);
+                countdownRing(floor == null ? at : floor, radius, (double) left / WARNING_TICKS);
             }
             if (left <= 0) {
                 grenade.remove();
+                light.remove();
                 detonate(at, radius, params().num("grenade_damage"), params().num("grenade_min_damage"), true,
                         target -> true);
                 blastJump(at, radius);
@@ -235,8 +290,43 @@ public final class BomberAbility extends Ability {
             if (grenade.isValid()) {
                 grenade.remove();
             }
+            if (light.isValid()) {
+                light.remove();
+            }
         });
         return ActivationResult.success();
+    }
+
+    /** A burning fuse: alternating sparks and a thin smoke thread. */
+    private void fuseSparks(Location top, long tick) {
+        Vfx.dot(top, tick % 2 == 0 ? Particle.SMALL_FLAME : Particle.ELECTRIC_SPARK, null, false);
+        if (tick % 2 == 0) {
+            Vfx.dot(top.clone().add(0, 0.1, 0), Particle.SMOKE, null, false);
+        }
+    }
+
+    /** The grenade's light: bright while on, dim while off, outlined in red once the blast is imminent. */
+    private static void blink(BlockDisplay light, boolean on, boolean urgent) {
+        if (!light.isValid()) {
+            return;
+        }
+        light.setBrightness(on ? Displays.FULL_BRIGHT : new Display.Brightness(3, 3));
+        if (urgent && on) {
+            Displays.outline(light, PALETTE.body());
+        } else if (light.isGlowing()) {
+            light.setGlowing(false);
+        }
+    }
+
+    /** The blast radius on the ground, with an inner ring closing in on the grenade as the fuse runs out. */
+    private void countdownRing(Location floor, double radius, double remaining) {
+        Location at = floor.clone().add(0, 0.15, 0);
+        int points = (int) Math.max(12, Math.min(40, radius * 7));
+        double phase = ctx().currentTick() * 0.1;
+        Vfx.ring(ctx(), at, radius, points, phase, Particle.DUST, WARNING_DUST, true);
+        double inner = Math.max(0.2, radius * remaining);
+        Vfx.ring(ctx(), at.clone().add(0, 0.05, 0), inner, (int) Math.max(6, points * remaining), -phase,
+                Particle.DUST, WARNING_CORE, true);
     }
 
     /** Launches the owner away from their own grenade, without damage and without the landing damage. */
@@ -266,9 +356,18 @@ public final class BomberAbility extends Ability {
         blastJumpTick = ctx().currentTick();
         blastJump.arm(blastJumpTick, BLAST_JUMP_MAX_AIR);
 
+        // Lift-off: a puff ring at the feet and a jet of flame and smoke pushing down.
         Location feet = self.getLocation();
-        feet.getWorld().spawnParticle(Particle.CLOUD, feet, 14, 0.3, 0.1, 0.3, 0.08);
+        World world = feet.getWorld();
+        Vfx.ring(ctx(), feet.clone().add(0, 0.1, 0), 0.7, 14, 0, Particle.CLOUD, null, false);
+        int jets = Vfx.n(ctx(), 8);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int i = 0; i < jets; i++) {
+            world.spawnParticle(i % 2 == 0 ? Particle.FLAME : Particle.LARGE_SMOKE, feet.getX(), feet.getY(),
+                    feet.getZ(), 0, random.nextGaussian() * 0.2, -1, random.nextGaussian() * 0.2, 0.25, null, false);
+        }
         Fx.sound(feet, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.0f, 0.9f + Fx.jitter(0.1f));
+        Fx.sound(feet, Sound.ENTITY_BREEZE_WIND_BURST, 0.8f, 1.1f + Fx.jitter(0.1f));
         self.sendActionBar(Text.mm("<#FF7A2E>✸ 폭탄 점프!</#FF7A2E>"));
     }
 
@@ -286,6 +385,7 @@ public final class BomberAbility extends Ability {
             forward = new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
         }
         forward.normalize();
+        Vector heading = forward.clone();
         Vector side = new Vector(-forward.getZ(), 0, forward.getX());
 
         int bombs = Math.max(1, params().integer("carpet_bombs"));
@@ -308,20 +408,38 @@ public final class BomberAbility extends Ability {
             releaseAt[i] = bombs == 1 ? 0 : Math.round((double) duration * i / (bombs - 1));
         }
 
+        // A bomber flies the line and drops each bomb so that it drifts onto its target while falling. Under a
+        // ceiling (or for an instant carpet) the bombs simply fall straight down.
+        double speed = duration > 0 ? length / duration : 0;
+        boolean flyover = duration >= PLANE_MIN_TICKS && speed > 0 && speed <= PLANE_MAX_SPEED && openSky(targets);
+        Vector drift = flyover ? forward.clone().multiply(-speed * BOMB_FALL_TICKS) : new Vector();
+        long runs = releaseAt[bombs - 1] + BOMB_FALL_TICKS + 2;
+        Plane plane = flyover ? new Plane(aim, forward, side, -length / 2 - speed * BOMB_FALL_TICKS, speed,
+                runs + PLANE_FADE_TICKS + 4) : null;
+
+        bombingLine(aim, forward, length);
         Fx.sound(player().getEyeLocation(), Sound.ENTITY_TNT_PRIMED, 1.0f, 0.6f);
         Fx.sound(aim, Sound.BLOCK_BEACON_DEACTIVATE, 1.6f, 0.5f);
         Fx.sound(aim, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.6f, 0.5f);
+        if (plane != null) {
+            Fx.sound(aim, Sound.ENTITY_PHANTOM_SWOOP, 2.0f, 0.5f + Fx.jitter(0.05f));
+        }
 
         // A target standing still (or frozen by an ally) must not eat every bomb of the carpet.
         Map<UUID, Integer> hits = new HashMap<>();
         int maxHits = Math.max(1, params().integer("carpet_max_hits"));
         List<FallingBomb> falling = new ArrayList<>();
         int[] released = {0};
-        long runs = releaseAt[bombs - 1] + BOMB_FALL_TICKS + 2;
         Loop.repeat(ctx(), player(), 0, 1, runs, tick -> {
+            if (plane != null) {
+                plane.fly(tick);
+            }
+            if (tick % 3 == 0 && released[0] < bombs) {
+                bombingLine(aim, heading, length);
+            }
             while (released[0] < bombs && releaseAt[released[0]] <= tick) {
                 Location target = targets.get(released[0]++);
-                falling.add(new FallingBomb(target, radius));
+                falling.add(new FallingBomb(target, radius, drift));
             }
             for (Iterator<FallingBomb> it = falling.iterator(); it.hasNext(); ) {
                 FallingBomb bomb = it.next();
@@ -332,41 +450,142 @@ public final class BomberAbility extends Ability {
                 }
             }
             return released[0] < bombs || !falling.isEmpty();
-        }, () -> falling.forEach(FallingBomb::discard));
+        }, () -> {
+            falling.forEach(FallingBomb::discard);
+            if (plane != null) {
+                plane.leave();
+            }
+        });
         return ActivationResult.success();
     }
 
-    /** A TNT block display dropping from the sky onto a marked spot, spinning and trailing smoke. */
+    /** A dashed red line along the carpet: the bombing run's path, visible to everyone in the way. */
+    private void bombingLine(Location aim, Vector forward, double length) {
+        Location from = aim.clone().add(forward.clone().multiply(-length / 2)).add(0, 0.2, 0);
+        Location to = aim.clone().add(forward.clone().multiply(length / 2)).add(0, 0.2, 0);
+        Vfx.line(ctx(), from, to, 1.5, Particle.DUST, WARNING_DUST, true);
+    }
+
+    /** True if nothing blocks the sky above any of the targets up to the drop height. */
+    private static boolean openSky(List<Location> targets) {
+        for (Location target : targets) {
+            RayTraceResult ceiling = target.getWorld().rayTraceBlocks(target.clone().add(0, 0.6, 0),
+                    new Vector(0, 1, 0), BOMB_DROP_HEIGHT + 3, FluidCollisionMode.NEVER, true);
+            if (ceiling != null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The carpet's bomber: a small dark plane of block displays flying the bombing line at drop height, trailing
+     * contrails from its wingtips. It swoops in small, flies at constant speed and shrinks away after the run.
+     */
+    private final class Plane {
+        private final Location base;
+        private final Vector forward;
+        private final Vector side;
+        private final double start;
+        private final double speed;
+        private final List<BlockDisplay> parts = new ArrayList<>();
+        private final List<Transformation> shapes = new ArrayList<>();
+        private long lastTick;
+
+        Plane(Location aim, Vector forward, Vector side, double start, double speed, long lifetime) {
+            this.base = aim.clone().add(0, BOMB_DROP_HEIGHT + 0.6, 0);
+            this.base.setDirection(forward);
+            this.base.setPitch(0);
+            this.forward = forward.clone();
+            this.side = side.clone();
+            this.start = start;
+            this.speed = speed;
+            Location at = position(0);
+            // fuselage, wings, tail plane, tail fin, cockpit stripe (local +Z is the flight direction)
+            add(at, Material.GRAY_CONCRETE, 0, 0, 0, 0.55f, 0.5f, 3.2f, lifetime);
+            add(at, Material.LIGHT_GRAY_CONCRETE, 0, 0.02f, 0.25f, 4.8f, 0.12f, 1.0f, lifetime);
+            add(at, Material.LIGHT_GRAY_CONCRETE, 0, 0.08f, -1.3f, 1.9f, 0.1f, 0.6f, lifetime);
+            add(at, Material.RED_CONCRETE, 0, 0.5f, -1.35f, 0.1f, 0.85f, 0.7f, lifetime);
+            add(at, Material.RED_CONCRETE, 0, 0.27f, 0.9f, 0.5f, 0.06f, 0.5f, lifetime);
+            for (int i = 0; i < parts.size(); i++) {
+                Displays.animateNextTick(ctx(), player(), parts.get(i), shapes.get(i), 4);
+            }
+        }
+
+        private void add(Location at, Material material, float x, float y, float z, float sx, float sy, float sz,
+                         long lifetime) {
+            Transformation full = Displays.transform(x, y, z, sx, sy, sz, 0, 0, 0);
+            float s = PLANE_SPAWN_SCALE;
+            BlockDisplay part = Displays.block(ctx(), player(), at, material.createBlockData(),
+                    Displays.transform(x * s, y * s, z * s, sx * s, sy * s, sz * s, 0, 0, 0), lifetime);
+            part.setTeleportDuration(1);
+            parts.add(part);
+            shapes.add(full);
+        }
+
+        private Location position(long tick) {
+            return base.clone().add(forward.clone().multiply(start + speed * tick));
+        }
+
+        void fly(long tick) {
+            lastTick = tick;
+            Location at = position(tick);
+            for (BlockDisplay part : parts) {
+                if (part.isValid()) {
+                    part.teleport(at);
+                }
+            }
+            // Contrails from the wingtips and a hot exhaust behind the fuselage.
+            Location tail = at.clone().subtract(forward.clone().multiply(1.9));
+            Vfx.dot(tail.clone().add(side.clone().multiply(2.3)), Particle.CLOUD, null, true);
+            Vfx.dot(tail.clone().add(side.clone().multiply(-2.3)), Particle.CLOUD, null, true);
+            Vfx.dot(tail, tick % 2 == 0 ? Particle.SMOKE : Particle.SMALL_FLAME, null, true);
+        }
+
+        void leave() {
+            long last = lastTick;
+            Loop.repeat(ctx(), player(), 1, 1, PLANE_FADE_TICKS, step -> {
+                fly(last + step + 1);
+                return true;
+            });
+            for (BlockDisplay part : parts) {
+                if (part.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), part, PLANE_FADE_TICKS);
+                }
+            }
+        }
+    }
+
+    /**
+     * A glowing TNT block display falling onto a marked spot, spinning and trailing fuse sparks; dropped from a
+     * moving plane it drifts forward onto the spot while it falls. A red ring closes in on the spot meanwhile.
+     */
     private final class FallingBomb {
         private final Location ground;
-        private final double height;
+        private final Location top;
         private final double radius;
         private final BlockDisplay display;
         private int age;
         private float yaw;
 
-        FallingBomb(Location ground, double radius) {
+        FallingBomb(Location ground, double radius, Vector drift) {
             this.ground = ground;
             this.radius = radius;
             World world = ground.getWorld();
             RayTraceResult ceiling = world.rayTraceBlocks(ground.clone().add(0, 0.6, 0), new Vector(0, 1, 0),
                     BOMB_DROP_HEIGHT, FluidCollisionMode.NEVER, true);
-            this.height = ceiling == null ? BOMB_DROP_HEIGHT
+            double height = ceiling == null ? BOMB_DROP_HEIGHT
                     : Math.max(0.5, ceiling.getHitPosition().getY() - ground.getY() - 1.0);
+            this.top = ground.clone().add(drift).add(0, 0.4 + height, 0);
             this.yaw = ThreadLocalRandom.current().nextFloat() * 360f;
-            Location top = ground.clone().add(0, 0.4 + height, 0);
-            top.setYaw(yaw);
-            top.setPitch(0);
-            this.display = ctx().track(player(), world.spawn(top, BlockDisplay.class, bomb -> {
-                bomb.setPersistent(false);
-                bomb.setBlock(Material.TNT.createBlockData());
-                bomb.setBrightness(new Display.Brightness(15, 15));
-                bomb.setTeleportDuration(1);
-                bomb.setTransformation(new Transformation(
-                        new Vector3f(-BOMB_SIZE / 2, -BOMB_SIZE / 2, -BOMB_SIZE / 2), new Quaternionf(),
-                        new Vector3f(BOMB_SIZE, BOMB_SIZE, BOMB_SIZE), new Quaternionf()));
-            }));
-            drawRing(ground, radius, Particle.DUST, WARNING_DUST);
+            Location spawn = top.clone();
+            spawn.setYaw(yaw);
+            spawn.setPitch(0);
+            this.display = Displays.block(ctx(), player(), spawn, Material.TNT.createBlockData(),
+                    Displays.scaled(BOMB_SIZE), BOMB_FALL_TICKS + 4);
+            display.setTeleportDuration(1);
+            Displays.outline(display, PALETTE.body());
+            targetRing(1);
             Fx.sound(top, Sound.ENTITY_TNT_PRIMED, 1.2f, 0.8f + Fx.jitter(0.1f));
         }
 
@@ -378,20 +597,27 @@ public final class BomberAbility extends Ability {
                 return true;
             }
             double progress = (double) age / BOMB_FALL_TICKS;
-            Location at = ground.clone().add(0, 0.4 + height * (1 - progress * progress), 0);
             yaw += BOMB_SPIN_DEGREES;
-            at.setYaw(yaw);
-            at.setPitch(0);
+            // Constant horizontal drift onto the spot, accelerating fall.
+            Location at = new Location(ground.getWorld(),
+                    top.getX() + (ground.getX() - top.getX()) * progress,
+                    ground.getY() + 0.4 + (top.getY() - ground.getY() - 0.4) * (1 - progress * progress),
+                    top.getZ() + (ground.getZ() - top.getZ()) * progress, yaw, 0);
             if (display.isValid()) {
                 display.teleport(at);
             }
-            World world = at.getWorld();
-            world.spawnParticle(Particle.LARGE_SMOKE, at.clone().add(0, 0.6, 0), 1, 0.05, 0.1, 0.05, 0.01);
-            world.spawnParticle(Particle.FLAME, at.clone().add(0, 0.5, 0), 1, 0.05, 0.05, 0.05, 0.01);
-            if (age == BOMB_FALL_TICKS / 2) {
-                drawRing(ground, radius, Particle.DUST, WARNING_DUST);
+            Location fuse = at.clone().add(0, 0.5, 0);
+            Vfx.dot(fuse, Particle.DUST_COLOR_TRANSITION, FIRE.glow(0.9f), true);
+            Vfx.dot(fuse.clone().add(0, 0.15, 0), age % 2 == 0 ? Particle.SMALL_FLAME : Particle.SMOKE, null, false);
+            if (age % 2 == 0) {
+                targetRing(1 - progress);
             }
             return false;
+        }
+
+        /** The landing spot: the blast radius and an inner ring that closes as the bomb comes down. */
+        private void targetRing(double remaining) {
+            countdownRing(ground, radius, Math.max(0.1, remaining));
         }
 
         void discard() {
@@ -409,27 +635,120 @@ public final class BomberAbility extends Ability {
      */
     private void detonate(Location center, double radius, double maxDamage, double minDamage, boolean big,
                           Predicate<LivingEntity> admit) {
-        World world = center.getWorld();
-        world.spawnParticle(big ? Particle.EXPLOSION_EMITTER : Particle.EXPLOSION, center, big ? 1 : 2,
-                0.2, 0.2, 0.2, 0);
-        world.spawnParticle(Particle.FLASH, center, 1, 0, 0, 0, 0, FLASH_COLOR);
-        world.spawnParticle(Particle.FLAME, center, big ? 30 : 16, 0.3, 0.3, 0.3, radius * 0.05);
-        world.spawnParticle(Particle.LARGE_SMOKE, center, big ? 16 : 8, 0.4, 0.3, 0.4, 0.06);
-        drawRing(center.clone().subtract(0, 0.35, 0), radius, Particle.DUST_COLOR_TRANSITION, BLAST_DUST);
-        Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, big ? 2.2f : 1.6f, (big ? 0.95f : 1.1f) + Fx.jitter(0.08f));
-        Fx.sound(center, Sound.ENTITY_FIREWORK_ROCKET_BLAST, 1.2f, 0.6f + Fx.jitter(0.1f));
-
+        explosion(center, radius, big);
         for (LivingEntity target : ctx().enemiesNear(player(), center, radius)) {
             if (!exposed(center, target) || !admit.test(target)) {
                 continue;
             }
             double distance = Math.min(radius, distanceToBox(center, target.getBoundingBox()));
             double proximity = 1 - distance / radius;
-            Combat.hit(ctx(), player(), target, minDamage + (maxDamage - minDamage) * proximity);
-            if (target.isValid() && !target.isDead()) {
+            // The blast only throws targets it actually hit (not one that dodged or blocked it).
+            if (blastHit(target, minDamage + (maxDamage - minDamage) * proximity) && target.isValid()
+                    && !target.isDead()) {
                 knockback(center, target, proximity);
             }
         }
+    }
+
+    /**
+     * The look and sound of a blast: flash, a fireball of nested glowing glass cubes that swells and collapses, a
+     * fire bloom thrown outwards, ground debris, two expanding shock rings and embers smouldering afterwards.
+     */
+    private void explosion(Location center, double radius, boolean big) {
+        boolean force = !big; // the small blasts are the carpet, the ultimate: seen from afar
+        World world = center.getWorld();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Location floor = groundBelow(center, 2);
+        Location ground = (floor == null ? center.clone().subtract(0, 0.5, 0) : floor).add(0, 0.12, 0);
+
+        world.spawnParticle(Particle.FLASH, center, 1, 0, 0, 0, 0, PALETTE.core(), force);
+        world.spawnParticle(big ? Particle.EXPLOSION_EMITTER : Particle.EXPLOSION, center, 1, 0, 0, 0, 0, null,
+                force);
+        fireball(center, radius * (big ? 0.5 : 0.45), big ? 3 : 2);
+
+        // Fire bloom: flames thrown out in every direction, a few hot lava pops.
+        int flames = Vfx.n(ctx(), big ? 26 : 14);
+        for (int i = 0; i < flames; i++) {
+            Vector direction = new Vector(random.nextGaussian(), Math.abs(random.nextGaussian()) * 0.6 + 0.15,
+                    random.nextGaussian()).normalize();
+            world.spawnParticle(i % 3 == 0 ? Particle.SMALL_FLAME : Particle.FLAME, center.getX(), center.getY(),
+                    center.getZ(), 0, direction.getX(), direction.getY(), direction.getZ(),
+                    0.12 + radius * 0.035 * random.nextDouble(0.6, 1.2), null, false);
+        }
+        Vfx.cloud(ctx(), center, Particle.LAVA, big ? 5 : 3, 0.3, 0, null, false);
+        Vfx.cloud(ctx(), center, Particle.DUST_COLOR_TRANSITION, big ? 18 : 10, radius * 0.25, 0, FIRE.glow(1.6f),
+                false);
+        Vfx.cloud(ctx(), center.clone().add(0, 0.4, 0), Particle.LARGE_SMOKE, big ? 12 : 6, 0.45, 0.05, null, false);
+
+        // Debris of the ground it went off on.
+        Block below = ground.clone().subtract(0, 0.3, 0).getBlock();
+        BlockData debris = below.getType().isSolid() ? below.getBlockData() : Material.DIRT.createBlockData();
+        world.spawnParticle(Particle.BLOCK, ground.clone().add(0, 0.3, 0), Vfx.n(ctx(), big ? 24 : 12),
+                radius * 0.25, 0.1, radius * 0.25, 0.35, debris, false);
+
+        // Shock rings: a hot one racing to the edge, a sooty one following.
+        Vfx.shockwave(ctx(), player(), ground, 0.3, radius, big ? 5 : 4, Particle.DUST_COLOR_TRANSITION,
+                PALETTE.glow(1.4f), force);
+        Vfx.shockwave(ctx(), player(), ground.clone().add(0, 0.1, 0), 0.2, radius * 0.85, big ? 9 : 7, Particle.DUST,
+                new Particle.DustOptions(PALETTE.edge(), 1.6f), false);
+        embers(ground, radius * 0.5, big ? EMBER_TICKS : EMBER_TICKS / 2);
+
+        Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, big ? 2.2f : 1.6f, (big ? 0.95f : 1.1f) + Fx.jitter(0.08f));
+        Fx.sound(center, Sound.ENTITY_FIREWORK_ROCKET_BLAST, 1.2f, 0.6f + Fx.jitter(0.1f));
+        Fx.sound(center, big ? Sound.ENTITY_FIREWORK_ROCKET_LARGE_BLAST : Sound.ENTITY_DRAGON_FIREBALL_EXPLODE,
+                big ? 1.4f : 0.7f, 0.7f + Fx.jitter(0.1f));
+    }
+
+    /** Nested glass cubes at odd angles that swell to {@code size} in a few ticks, then collapse. */
+    private void fireball(Location center, double size, int layers) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Location at = center.clone();
+        at.setYaw(0);
+        at.setPitch(0);
+        for (int i = 0; i < layers; i++) {
+            float scale = (float) (size * (0.55 + 0.45 * i / Math.max(1, layers - 1)));
+            float yaw = random.nextFloat() * 90f;
+            float pitch = random.nextFloat() * 90f;
+            float roll = random.nextFloat() * 90f;
+            BlockDisplay layer = Displays.block(ctx(), player(), at, FIREBALL[i % FIREBALL.length].createBlockData(),
+                    Displays.transform(0, 0, 0, 0.1f, 0.1f, 0.1f, yaw, pitch, roll),
+                    FIREBALL_GROW_TICKS + FIREBALL_FADE_TICKS + 2);
+            Displays.animateNextTick(ctx(), player(), layer,
+                    Displays.transform(0, 0, 0, scale, scale, scale, yaw + 30, pitch + 20, roll), FIREBALL_GROW_TICKS);
+            ctx().runLater(player(), FIREBALL_GROW_TICKS + 1, () -> {
+                if (layer.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), layer, FIREBALL_FADE_TICKS);
+                }
+            });
+        }
+    }
+
+    /** The scorched ground smoulders: a few embers and smoke threads rising for a moment. */
+    private void embers(Location ground, double spread, long ticks) {
+        Loop.repeat(ctx(), player(), 2, 2, Math.max(1, ticks / 2), step -> {
+            Location spot = Vfx.scatter(ground, spread);
+            Vfx.dot(spot, step % 2 == 0 ? Particle.SMALL_FLAME : Particle.SMOKE, null, false);
+            Vfx.dot(Vfx.scatter(ground, spread), Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.8f), false);
+            return true;
+        });
+    }
+
+    /**
+     * Deals blast damage and tells whether it landed. Without damage there is nothing to dodge, so the blast still
+     * throws a valid enemy.
+     */
+    private boolean blastHit(LivingEntity target, double damage) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target);
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
     }
 
     private void knockback(Location center, LivingEntity target, double proximity) {
@@ -478,11 +797,6 @@ public final class BomberAbility extends Ability {
         World world = point.getWorld();
         RayTraceResult down = world.rayTraceBlocks(point, new Vector(0, -1, 0), maxDrop, FluidCollisionMode.NEVER, true);
         return down == null ? null : down.getHitPosition().toLocation(world);
-    }
-
-    private static <T> void drawRing(Location center, double radius, Particle particle, T data) {
-        int points = (int) Math.max(12, Math.min(40, radius * 7));
-        Fx.ring(center.clone().add(0, 0.15, 0), radius, points, 0, particle, data);
     }
 
     /** Distance from a point to the closest point of a box (0 inside), matching how enemies are found. */

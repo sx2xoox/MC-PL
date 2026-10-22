@@ -1,7 +1,10 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -9,9 +12,11 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -28,11 +33,15 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.damage.DamageType;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.AbstractArrow;
 import org.bukkit.entity.Arrow;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
@@ -40,6 +49,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -48,7 +58,13 @@ import org.jspecify.annotations.Nullable;
  * point-blank fan of arrows with a small recoil hop, and calls down a rain of arrows on an aimed area.
  *
  * <p>Ability arrows are real, tagged arrows. Their vanilla entity hit is cancelled in {@link #onProjectileHit} and
- * the configured damage is dealt explicitly instead, so it is exact, credited and team-safe.
+ * the configured damage is dealt explicitly instead (as arrow damage, so projectile defences such as dodges and
+ * reflections apply), so it is exact, credited and team-safe. Arrows shot from the archer's own bow are tracked as
+ * well, so none of them outlives the match.
+ *
+ * <p>Visuals: every arrow leaves a green-white streak; the volley flashes a spectral bow and a fan of sparks; the
+ * rain is announced by a dashed reticle of glowing bars that closes in on the zone, a salvo of motes shot into the
+ * sky, and falling light streaks that splash where they land.
  */
 public final class ArcherAbility extends Ability {
 
@@ -110,17 +126,38 @@ public final class ArcherAbility extends Ability {
     private static final long ARROW_LIFETIME = 100;
     private static final double MAX_SPEED = 2.5;
 
-    private static final Color VOLLEY_COLOR = Color.fromRGB(0x9BE15D);
-    private static final Color RAIN_COLOR = Color.fromRGB(0xFFC94D);
-    private static final Particle.DustOptions VOLLEY_DUST = new Particle.DustOptions(VOLLEY_COLOR, 1.0f);
-    private static final Particle.DustOptions RAIN_DUST = new Particle.DustOptions(RAIN_COLOR, 1.3f);
+    /** Bow arrows of the owner are picked up for tracking within this box half-size, in their first ticks. */
+    private static final double SHOT_SCAN = 6;
+    private static final int SHOT_FRESH_TICKS = 3;
+    /** Arrows (bow and ability) leave a streak for at most this many ticks of flight, and at most this many at once. */
+    private static final int TRAIL_TICKS = 60;
+    private static final int MAX_TRAILS = 24;
+
+    // ------------------------------------------------------------------ visuals
+
+    /** White core, pale leaf-green body, deep green edge. */
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFFFFF, 0xC5E1A5, 0x7CB342);
+    private static final Color VOLLEY_TINT = Color.fromRGB(0x9BE15D);
+    private static final Color RAIN_TINT = Color.fromRGB(0xE6F5C9);
+    /** Bars of the rain reticle: a dashed ring of {@link #RETICLE_BARS} plus four inward crosshair ticks. */
+    private static final int RETICLE_BARS = 16;
+    private static final double RETICLE_START = 1.6;
+    private static final float BAR_WIDTH = 0.16f;
+    private static final float BAR_HEIGHT = 0.05f;
 
     /** Volley arrows in flight, by arrow id. */
     private final Map<UUID, Volley> volleyArrows = new HashMap<>();
     /** Rain arrows in flight, by arrow id. */
     private final Map<UUID, Rain> rainArrows = new HashMap<>();
+    /** Arrows (bow shots and ability arrows) that currently leave a streak, by arrow id. */
+    private final Map<UUID, AbstractArrow> streaks = new LinkedHashMap<>();
+    /** Bow shots of the owner already tracked, so a stuck arrow nearby is not looked at again. */
+    private final Set<UUID> bowShots = new HashSet<>();
     private @Nullable NamespacedKey itemKey;
     private long regenProgress;
+    /** The target of the ability hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     @Override
     public AbilityInfo info() {
@@ -139,6 +176,8 @@ public final class ArcherAbility extends Ability {
     public void onRevoke() {
         volleyArrows.clear();
         rainArrows.clear();
+        streaks.clear();
+        bowShots.clear();
         if (itemKey == null) {
             return;
         }
@@ -157,6 +196,8 @@ public final class ArcherAbility extends Ability {
 
     @Override
     public void onTick(long tick) {
+        watchBowShots();
+        drawStreaks();
         if (tick % 20 != 0) {
             return;
         }
@@ -171,24 +212,112 @@ public final class ArcherAbility extends Ability {
         regenProgress = 0;
         if (countArrows() < params().integer("arrows")) {
             giveArrows(1);
+            // A quiet "nock" for the archer and a few green motes at the quiver.
+            Location back = player().getLocation().add(0, 1.2, 0)
+                    .subtract(Motion.horizontalFacing(player().getLocation()).multiply(0.3));
+            Vfx.cloud(ctx(), back, Particle.DUST_COLOR_TRANSITION, 4, 0.15, 0, PALETTE.glow(0.6f), false);
+            player().playSound(player(), Sound.ITEM_ARMOR_EQUIP_LEATHER, SoundCategory.PLAYERS, 0.35f,
+                    1.6f + Fx.jitter(0.1f));
+        }
+    }
+
+    /**
+     * Picks up the owner's freshly shot bow arrows: they are tracked (removed with the match, never saved with the
+     * chunk) and get the archer's streak. There is no shoot hook, so new arrows are found next to the owner.
+     */
+    private void watchBowShots() {
+        for (Entity entity : player().getNearbyEntities(SHOT_SCAN, SHOT_SCAN, SHOT_SCAN)) {
+            if (!(entity instanceof AbstractArrow arrow) || entity.getTicksLived() > SHOT_FRESH_TICKS) {
+                continue;
+            }
+            UUID id = arrow.getUniqueId();
+            if (bowShots.contains(id) || volleyArrows.containsKey(id) || rainArrows.containsKey(id)
+                    || !player().equals(arrow.getShooter())) {
+                continue;
+            }
+            bowShots.add(id);
+            arrow.setPersistent(false);
+            ctx().track(player(), arrow);
+            addStreak(arrow);
+        }
+        if (bowShots.size() > 256) {
+            bowShots.removeIf(id -> ctx().plugin().getServer().getEntity(id) == null);
+        }
+    }
+
+    private void addStreak(AbstractArrow arrow) {
+        if (streaks.size() < MAX_TRAILS) {
+            streaks.put(arrow.getUniqueId(), arrow);
+        }
+    }
+
+    /** A fading white-to-green streak behind every arrow in flight, over the distance it covered this tick. */
+    private void drawStreaks() {
+        for (Iterator<AbstractArrow> it = streaks.values().iterator(); it.hasNext(); ) {
+            AbstractArrow arrow = it.next();
+            if (!arrow.isValid() || arrow.isInBlock() || arrow.getTicksLived() > TRAIL_TICKS) {
+                it.remove();
+                continue;
+            }
+            Location at = arrow.getLocation();
+            Location behind = at.clone().subtract(Motion.clamp(arrow.getVelocity(), MAX_SPEED));
+            Vfx.line(ctx(), behind, at, 1.5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.6f), false);
         }
     }
 
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (ctx().isAbilityDamage() || !(event.getDamager() instanceof AbstractArrow arrow)) {
-            return;
-        }
-        UUID id = arrow.getUniqueId();
-        if (volleyArrows.containsKey(id) || rainArrows.containsKey(id)) {
+        if (!isBowShot(event)) {
             return;
         }
         double bonus = params().num("arrow_bonus") / 100.0;
         if (bonus != 0) {
             event.setDamage(Math.max(0, event.getDamage() * (1 + bonus)));
         }
-        Location body = victim.getLocation().add(0, victim.getHeight() * 0.6, 0);
-        victim.getWorld().spawnParticle(Particle.ENCHANTED_HIT, body, 8, 0.25, 0.3, 0.25, 0.15);
+    }
+
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage()) {
+            if (victim.equals(pendingTarget)) {
+                landed = true;
+            }
+            return;
+        }
+        if (isBowShot(event)) {
+            // Marksman hit: a small green ring snaps around the target and white sparks fly.
+            Location body = victim.getLocation().add(0, victim.getHeight() * 0.6, 0);
+            Vfx.ring(ctx(), body, 0.5, 10, ThreadLocalRandom.current().nextDouble(Math.PI),
+                    Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
+            Vfx.cloud(ctx(), body, Particle.ENCHANTED_HIT, 6, 0.25, 0.15, null, false);
+        }
+    }
+
+    /** A plain arrow from the archer's bow (not an ability arrow, not ability damage). */
+    private boolean isBowShot(EntityDamageByEntityEvent event) {
+        if (ctx().isAbilityDamage() || !(event.getDamager() instanceof AbstractArrow arrow)) {
+            return false;
+        }
+        UUID id = arrow.getUniqueId();
+        return !volleyArrows.containsKey(id) && !rainArrows.containsKey(id);
+    }
+
+    /**
+     * Deals an ability arrow's damage as arrow damage (so projectile dodges and reflections apply) and tells whether
+     * it landed: on-hit effects (shove, impact, hit sound) only follow a hit nothing cancelled.
+     */
+    private boolean arrowHit(LivingEntity target, double damage) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target); // nothing to dodge
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage, DamageType.ARROW);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
     }
 
     private ItemStack createBow() {
@@ -258,11 +387,13 @@ public final class ArcherAbility extends Ability {
         int count = Math.max(1, params().integer("volley_arrows"));
         double fan = Math.toRadians(VOLLEY_FAN_DEGREES);
         Volley volley = new Volley();
+        List<Vector> directions = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             double angle = count == 1 ? 0 : -fan / 2 + fan * i / (count - 1);
             Vector direction = look.clone().rotateAroundAxis(up, angle);
+            directions.add(direction);
             Arrow arrow = world.spawnArrow(origin, direction, VOLLEY_SPEED, 0f);
-            prepare(arrow, VOLLEY_COLOR, TAG_VOLLEY);
+            prepare(arrow, VOLLEY_TINT, TAG_VOLLEY);
             volleyArrows.put(arrow.getUniqueId(), volley);
         }
 
@@ -272,12 +403,43 @@ public final class ArcherAbility extends Ability {
             player().setVelocity(Motion.clamp(player().getVelocity().add(recoil), MAX_SPEED));
         }
 
-        Location muzzle = eye.clone().add(look.clone().multiply(1.0));
-        world.spawnParticle(Particle.CRIT, muzzle, 12, 0.25, 0.15, 0.25, 0.25);
-        world.spawnParticle(Particle.DUST, muzzle, 8, 0.3, 0.2, 0.3, 0, VOLLEY_DUST);
+        volleyFlash(eye, look, directions);
         Fx.sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.0f, 1.1f + Fx.jitter(0.08f));
         Fx.sound(eye, Sound.ENTITY_ARROW_SHOOT, 1.0f, 0.75f + Fx.jitter(0.05f));
+        Fx.sound(eye, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.6f, 1.5f + Fx.jitter(0.1f));
         return ActivationResult.success();
+    }
+
+    /**
+     * The volley's muzzle: a spectral bow that flashes in front of the archer, a white flash, a green arc spanning
+     * the fan and a spark streaking along every arrow.
+     */
+    private void volleyFlash(Location eye, Vector look, List<Vector> directions) {
+        World world = eye.getWorld();
+        Location muzzle = eye.clone().add(look.clone().multiply(1.0)).subtract(0, 0.25, 0);
+        // Low in the archer's view and short-lived, so it never hides where the arrows go.
+        Location bowAt = eye.clone().add(look.clone().multiply(1.4)).subtract(0, 0.5, 0);
+        bowAt.setDirection(look);
+        ItemDisplay bow = Displays.item(ctx(), player(), bowAt, ItemStack.of(Material.BOW),
+                Displays.centered(0, 0, 0, 0.3f, 0.3f, 0.3f, 0, 0, -45), 12);
+        Displays.animateNextTick(ctx(), player(), bow, Displays.centered(0, 0, 0, 0.9f, 0.9f, 0.35f, 0, 0, -45), 2);
+        ctx().runLater(player(), 3, () -> {
+            if (bow.isValid()) {
+                Displays.shrinkAway(ctx(), player(), bow, 4);
+            }
+        });
+
+        world.spawnParticle(Particle.FLASH, muzzle, 1, 0, 0, 0, 0, PALETTE.core(), false);
+        Location chest = eye.clone().subtract(0, 0.35, 0);
+        Vfx.arc(ctx(), chest, 1.3, eye.getYaw(), VOLLEY_FAN_DEGREES + 10, 12, Particle.DUST_COLOR_TRANSITION,
+                PALETTE.glow(0.9f), false);
+        for (Vector direction : directions) {
+            // count 0: the offsets are a velocity, so each spark streaks along its arrow
+            world.spawnParticle(Particle.CRIT, muzzle.getX(), muzzle.getY(), muzzle.getZ(), 0, direction.getX(),
+                    direction.getY(), direction.getZ(), 0.9, null, false);
+            world.spawnParticle(Particle.END_ROD, muzzle.getX(), muzzle.getY(), muzzle.getZ(), 0, direction.getX(),
+                    direction.getY(), direction.getZ(), 0.35, null, false);
+        }
     }
 
     /** One firing of the scatter shot: remembers who was already struck so overlapping arrows deal less. */
@@ -298,6 +460,7 @@ public final class ArcherAbility extends Ability {
             return;
         }
         Volley volley = volleyArrows.remove(arrow.getUniqueId());
+        streaks.remove(arrow.getUniqueId());
         Vector flight = arrow.getVelocity();
         arrow.remove();
 
@@ -305,13 +468,12 @@ public final class ArcherAbility extends Ability {
         if (volley != null && !volley.struck.add(target.getUniqueId())) {
             damage *= Math.max(0, params().num("volley_overlap")) / 100.0;
         }
-        Location body = target.getLocation().add(0, target.getHeight() * 0.6, 0);
-        target.getWorld().spawnParticle(Particle.CRIT, body, 6, 0.2, 0.25, 0.2, 0.2);
-        target.getWorld().spawnParticle(Particle.DUST, body, 4, 0.2, 0.25, 0.2, 0, VOLLEY_DUST);
+        if (!arrowHit(target, damage)) {
+            return;
+        }
+        arrowImpact(target.getLocation().add(0, target.getHeight() * 0.6, 0));
         player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.5f,
                 1.0f + Fx.jitter(0.1f));
-        Combat.hit(ctx(), player(), target, damage);
-
         if (target.isValid() && !target.isDead()) {
             Vector push = flight.setY(0);
             if (push.lengthSquared() > 1.0E-4) {
@@ -319,6 +481,15 @@ public final class ArcherAbility extends Ability {
                 target.setVelocity(Motion.clamp(target.getVelocity().add(push), MAX_SPEED));
             }
         }
+    }
+
+    /** An arrow striking a body: white core sparks, a puff of green and a tiny ring. */
+    private void arrowImpact(Location at) {
+        Vfx.cloud(ctx(), at, Particle.CRIT, 6, 0.2, 0.25, null, false);
+        Vfx.cloud(ctx(), at, Particle.DUST_COLOR_TRANSITION, 5, 0.2, 0, PALETTE.glow(0.9f), false);
+        Vfx.ring(ctx(), at, 0.35, 8, ThreadLocalRandom.current().nextDouble(Math.PI), Particle.DUST,
+                new Particle.DustOptions(PALETTE.edge(), 0.6f), false);
+        Fx.sound(at, Sound.ENTITY_ARROW_HIT, 0.7f, 1.2f + Fx.jitter(0.15f));
     }
 
     // ------------------------------------------------------------------ ultimate: arrow rain
@@ -334,16 +505,16 @@ public final class ArcherAbility extends Ability {
         int arrows = Math.max(1, params().integer("rain_arrows"));
 
         Location eye = player().getEyeLocation();
-        Fx.sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.2f, 0.7f);
+        Fx.sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.2f, 0.7f + Fx.jitter(0.05f));
         Fx.sound(eye, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.0f, 0.8f + Fx.jitter(0.05f));
-        eye.getWorld().spawnParticle(Particle.CRIT, eye.clone().add(0, 0.6, 0), 20, 0.15, 0.8, 0.15, 0.3);
-        Fx.sound(center, Sound.ITEM_CROSSBOW_QUICK_CHARGE_3, 1.5f, 0.6f);
-        player().sendActionBar(Text.mm("<#FFC94D>➶ 화살비 투하!</#FFC94D>"));
+        Fx.sound(center, Sound.ITEM_CROSSBOW_QUICK_CHARGE_3, 1.5f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(center, Sound.BLOCK_NOTE_BLOCK_BELL, 1.2f, 1.6f + Fx.jitter(0.05f));
+        skySalvo(eye);
+        player().sendActionBar(Text.mm("<#C5E1A5>➶ 화살비 투하!</#C5E1A5>"));
 
+        rain.openReticle(RAIN_WINDUP + duration + 2);
         Loop.repeat(ctx(), player(), 0, 1, RAIN_WINDUP + duration, tick -> {
-            if (tick % 6 == 0) {
-                rain.drawZone();
-            }
+            rain.drawZone(tick);
             if (tick < RAIN_WINDUP) {
                 return true;
             }
@@ -353,19 +524,109 @@ public final class ArcherAbility extends Ability {
                 rain.drop(due);
             }
             return true;
-        });
+        }, rain::closeReticle);
         return ActivationResult.success();
     }
 
-    /** One arrow rain: its zone and the per-target hit throttle. */
+    /** The cast: a salvo of light motes shot straight up from the archer's bow hand. */
+    private void skySalvo(Location eye) {
+        World world = eye.getWorld();
+        Location hand = eye.clone().subtract(0, 0.3, 0);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        int motes = Vfx.n(ctx(), 9);
+        for (int i = 0; i < motes; i++) {
+            Location sky = hand.clone().add(random.nextGaussian() * 0.8, 9 + random.nextDouble(4),
+                    random.nextGaussian() * 0.8);
+            Vfx.trail(hand, sky, i % 3 == 0 ? PALETTE.edge() : PALETTE.core(), 8 + random.nextInt(5), true);
+        }
+        world.spawnParticle(Particle.FLASH, hand, 1, 0, 0, 0, 0, PALETTE.core(), true);
+        Vfx.helix(ctx(), player().getLocation(), 0.55, 2.4, 1.5, 2, 12, random.nextDouble(Math.PI * 2),
+                Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), false);
+    }
+
+    /** One arrow rain: its zone, the reticle that marks it and the per-target hit throttle. */
     private final class Rain {
         private final Location center;
         private final double radius;
         private final Map<UUID, Long> lastHit = new HashMap<>();
+        private final List<BlockDisplay> bars = new ArrayList<>();
+        private final List<BlockDisplay> ticks = new ArrayList<>();
+        private final double startAngle = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
 
         Rain(Location center, double radius) {
             this.center = center;
             this.radius = radius;
+        }
+
+        /**
+         * A dashed ring of glowing bars on the ground plus four inward crosshair ticks, spawned wide and closing in
+         * on the zone during the wind-up; afterwards it turns slowly until the rain is over.
+         */
+        void openReticle(long lifetime) {
+            Location at = center.clone().add(0, 0.04, 0);
+            at.setYaw(0);
+            at.setPitch(0);
+            long life = lifetime + 10;
+            for (int i = 0; i < RETICLE_BARS; i++) {
+                double angle = startAngle + i * Math.PI * 2 / RETICLE_BARS;
+                BlockDisplay bar = Displays.block(ctx(), player(), at, Material.LIME_STAINED_GLASS.createBlockData(),
+                        bar(angle, radius * RETICLE_START), life);
+                bars.add(bar);
+                Displays.animateNextTick(ctx(), player(), bar, bar(angle, radius), (int) RAIN_WINDUP);
+            }
+            for (int i = 0; i < 4; i++) {
+                double angle = startAngle + Math.PI / RETICLE_BARS + i * Math.PI / 2;
+                BlockDisplay tick = Displays.block(ctx(), player(), at, Material.WHITE_CONCRETE.createBlockData(),
+                        crosshair(angle, radius * RETICLE_START), life);
+                Displays.outline(tick, PALETTE.edge());
+                ticks.add(tick);
+                Displays.animateNextTick(ctx(), player(), tick, crosshair(angle, radius), (int) RAIN_WINDUP);
+            }
+        }
+
+        /** Turns the reticle to its angle {@code tick} ticks into the rain, over the next 10 ticks. */
+        private void turnReticle(long tick) {
+            double spin = tick * 0.012;
+            for (int i = 0; i < bars.size(); i++) {
+                Displays.animate(bars.get(i), bar(startAngle + spin + i * Math.PI * 2 / RETICLE_BARS, radius), 10);
+            }
+            for (int i = 0; i < ticks.size(); i++) {
+                double angle = startAngle + spin + Math.PI / RETICLE_BARS + i * Math.PI / 2;
+                Displays.animate(ticks.get(i), crosshair(angle, radius), 10);
+            }
+        }
+
+        void closeReticle() {
+            for (BlockDisplay display : bars) {
+                if (display.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), display, 6);
+                }
+            }
+            for (BlockDisplay display : ticks) {
+                if (display.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), display, 6);
+                }
+            }
+            // Afterglow: the zone edge fades out in a ring of rising motes.
+            Location edge = center.clone().add(0, 0.2, 0);
+            Vfx.ring(ctx(), edge, radius, (int) Math.round(radius * 6), startAngle, Particle.DUST_COLOR_TRANSITION,
+                    PALETTE.fade(1.1f), true);
+            Vfx.ring(ctx(), edge.clone().add(0, 0.3, 0), radius * 0.9, (int) Math.round(radius * 2), startAngle,
+                    Particle.END_ROD, null, false);
+            Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.5f + Fx.jitter(0.1f));
+        }
+
+        void drawZone(long tick) {
+            if (tick >= RAIN_WINDUP && (tick - RAIN_WINDUP) % 10 == 0) {
+                turnReticle(tick - RAIN_WINDUP + 10);
+            }
+            if (tick % 4 == 0) {
+                // A sparse particle ring for spectators far away and a soft glow drifting inside the zone.
+                Vfx.ring(ctx(), center.clone().add(0, 0.12, 0), radius, (int) Math.max(12, Math.min(36, radius * 5)),
+                        -tick * 0.04, Particle.DUST, PALETTE.dust(1.0f), true);
+                Vfx.dot(Vfx.scatter(center, radius).add(0, 0.2, 0), Particle.DUST_COLOR_TRANSITION,
+                        PALETTE.glow(0.8f), false);
+            }
         }
 
         void drop(int count) {
@@ -399,14 +660,24 @@ public final class ArcherAbility extends Ability {
                 Location spawn = base.clone().add(0, height, 0);
                 Vector down = new Vector(random.nextGaussian() * 0.03, -1, random.nextGaussian() * 0.03);
                 Arrow arrow = world.spawnArrow(spawn, down, RAIN_SPEED, 0f);
-                prepare(arrow, RAIN_COLOR, TAG_RAIN);
+                prepare(arrow, RAIN_TINT, TAG_RAIN);
                 rainArrows.put(arrow.getUniqueId(), this);
+                // A falling streak of light ahead of the arrow (same speed), so the rain reads from afar.
+                int fall = (int) Math.max(1, Math.round(height / RAIN_SPEED));
+                Vfx.trail(spawn.clone().add(0, 1.5, 0), base, random.nextBoolean() ? PALETTE.core() : PALETTE.body(),
+                        fall + 1, true);
             }
         }
 
         void impact(Location at) {
             World world = at.getWorld();
-            world.spawnParticle(Particle.CRIT, at, 4, 0.15, 0.05, 0.15, 0.15);
+            Vfx.cloud(ctx(), at, Particle.CRIT, 4, 0.15, 0.15, null, false);
+            Vfx.ring(ctx(), at.clone().add(0, 0.1, 0), 0.4, 7, ThreadLocalRandom.current().nextDouble(Math.PI),
+                    Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
+            Block below = at.clone().subtract(0, 0.2, 0).getBlock();
+            if (below.getType().isSolid()) {
+                world.spawnParticle(Particle.BLOCK, at, Vfx.n(ctx(), 4), 0.15, 0.05, 0.15, 0.1, below.getBlockData());
+            }
             long now = ctx().currentTick();
             long interval = params().ticks("rain_hit_interval");
             double damage = params().num("rain_damage");
@@ -416,21 +687,29 @@ public final class ArcherAbility extends Ability {
                     continue;
                 }
                 lastHit.put(target.getUniqueId(), now);
-                Location body = target.getLocation().add(0, target.getHeight() * 0.6, 0);
-                world.spawnParticle(Particle.DUST, body, 6, 0.25, 0.3, 0.25, 0, RAIN_DUST);
-                Fx.sound(body, Sound.ENTITY_ARROW_HIT, 0.8f, 1.2f + Fx.jitter(0.1f));
-                player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.4f,
-                        1.1f + Fx.jitter(0.1f));
-                Combat.hit(ctx(), player(), target, damage);
+                if (arrowHit(target, damage)) {
+                    arrowImpact(target.getLocation().add(0, target.getHeight() * 0.6, 0));
+                    player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.4f,
+                            1.1f + Fx.jitter(0.1f));
+                }
             }
         }
+    }
 
-        void drawZone() {
-            int points = (int) Math.max(16, Math.min(48, radius * 7));
-            Location edge = center.clone().add(0, 0.15, 0);
-            Fx.ring(edge, radius, points, 0, Particle.DUST, RAIN_DUST);
-            center.getWorld().spawnParticle(Particle.CRIT, edge.add(0, 0.2, 0), 3, 0.3, 0.1, 0.3, 0.05);
-        }
+    /** A thin glowing bar lying on the ground, tangent to the circle of {@code distance} at {@code angle}. */
+    private static Transformation bar(double angle, double distance) {
+        float length = (float) (2 * distance * Math.sin(Math.PI / RETICLE_BARS) * 0.72);
+        // rotateY(90° - angle) lays the bar's length (local X) along the tangent; transform() takes -yaw.
+        return Displays.transform((float) (Math.cos(angle) * distance), 0, (float) (Math.sin(angle) * distance),
+                length, BAR_HEIGHT, BAR_WIDTH, (float) Math.toDegrees(angle) - 90f, 0, 0);
+    }
+
+    /** A short crosshair tick pointing from the circle of {@code distance} towards its center. */
+    private static Transformation crosshair(double angle, double distance) {
+        float length = (float) Math.max(0.4, distance * 0.22);
+        double middle = distance - length * 0.5 - 0.15;
+        return Displays.transform((float) (Math.cos(angle) * middle), 0.01f, (float) (Math.sin(angle) * middle),
+                length, BAR_HEIGHT, BAR_WIDTH * 0.8f, (float) Math.toDegrees(angle), 0, 0);
     }
 
     private void rainHit(ProjectileHitEvent event, AbstractArrow arrow) {
@@ -441,6 +720,7 @@ public final class ArcherAbility extends Ability {
                 return; // pass through allies and the owner, the arrow keeps falling
             }
             Rain rain = rainArrows.remove(arrow.getUniqueId());
+            streaks.remove(arrow.getUniqueId());
             arrow.remove();
             if (rain != null) {
                 rain.impact(target.getLocation().add(0, target.getHeight() * 0.8, 0));
@@ -481,15 +761,22 @@ public final class ArcherAbility extends Ability {
         arrow.setPersistent(false);
         ctx().tagProjectile(player(), arrow, tag);
         ctx().track(player(), arrow);
+        addStreak(arrow);
         removeLater(arrow, ARROW_LIFETIME);
     }
 
+    /** Removes an ability arrow after {@code ticks}; a stuck one dissolves into green motes. */
     private void removeLater(AbstractArrow arrow, long ticks) {
         UUID id = arrow.getUniqueId();
         ctx().runLater(player(), ticks, () -> {
             volleyArrows.remove(id);
             rainArrows.remove(id);
+            streaks.remove(id);
             if (arrow.isValid()) {
+                if (arrow.isInBlock()) {
+                    Vfx.cloud(ctx(), arrow.getLocation(), Particle.DUST_COLOR_TRANSITION, 4, 0.12, 0,
+                            PALETTE.fade(0.7f), false);
+                }
                 arrow.remove();
             }
         });
