@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.MockEntities;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -26,8 +27,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * ultimate used on enemies standing in front of the owner, the match ended and everything restored. Also the owner
  * dying in the middle of each skill, and team mode with an ally standing in the line of fire.
  *
- * <p>The illusionist is covered by {@link SpecialAbilitiesTest} (its copies cannot spawn on Paper, see the bug test
- * there).
+ * <p>The illusionist runs as if its copies could spawn on Paper (see the bug test in {@link SpecialAbilitiesTest}):
+ * its mannequins ignore drop chances here instead of failing like Paper's equipment does.
  */
 class AbilityLifecycleTest {
 
@@ -58,12 +59,21 @@ class AbilityLifecycleTest {
             Map.entry("healer", new Expect(false, false)),
             Map.entry("pixie", new Expect(false, false)),
             Map.entry("phoenix", new Expect(false, true)),
+            Map.entry("illusionist", new Expect(false, false)),
             Map.entry("gambler", new Expect(false, false)));
 
     static Stream<String> abilities() {
         return Stream.of("pyro", "thunder", "frost", "aero", "blink", "shadow", "grapple", "chrono", "berserker",
                 "titan", "guardian", "vampire", "gravity", "earth", "venom", "mirror", "archer", "bomber", "summoner",
-                "healer", "pixie", "phoenix", "gambler");
+                "healer", "pixie", "phoenix", "illusionist", "gambler");
+    }
+
+    /** A scenario for {@code id}; the illusionist's copies are allowed to spawn (see the class comment). */
+    static Scenario start(String id, boolean teams) {
+        Scenario.Builder builder = Scenario.builder(id);
+        Scenario s = teams ? builder.teams().start() : builder.start();
+        MockEntities.TestMannequin.ignoreDropChances = id.equals("illusionist");
+        return s;
     }
 
     // ------------------------------------------------------------------ helpers
@@ -107,7 +117,7 @@ class AbilityLifecycleTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("abilities")
     void wholeMatch(String id) {
-        try (Scenario s = Scenario.ffa(id)) {
+        try (Scenario s = start(id, false)) {
             s.ticks(60);
             s.assertNoProblems();
 
@@ -147,7 +157,7 @@ class AbilityLifecycleTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("abilities")
     void ownerDiesDuringActive(String id) {
-        try (Scenario s = Scenario.ffa(id)) {
+        try (Scenario s = start(id, false)) {
             s.ticks(40);
             prepareActive(s);
             s.assertSucceeded(s.active(), id + " active");
@@ -159,7 +169,7 @@ class AbilityLifecycleTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("abilities")
     void ownerDiesDuringUltimate(String id) {
-        try (Scenario s = Scenario.ffa(id)) {
+        try (Scenario s = start(id, false)) {
             s.ticks(40);
             prepareUltimate(s);
             s.assertSucceeded(s.ultimate(), id + " ultimate");
@@ -213,7 +223,7 @@ class AbilityLifecycleTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("abilities")
     void teamModeNeverHarmsTheAlly(String id) {
-        try (Scenario s = Scenario.teams(id)) {
+        try (Scenario s = start(id, true)) {
             s.ticks(40);
             s.crossfireAlly();
             prepareActive(s);
