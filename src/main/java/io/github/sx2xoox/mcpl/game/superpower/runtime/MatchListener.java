@@ -8,6 +8,8 @@ import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import org.bukkit.Bukkit;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -123,7 +125,10 @@ final class MatchListener implements Listener {
         }
     }
 
-    /** Hook routing: the attacker's onDealDamage (enemy victims only), then the victim's onTakeDamage. */
+    /**
+     * Hook routing: the attacker's onDealDamage (enemy victims only), then the victim's onTakeDamage. A summon's
+     * melee hit first gets the summon's exact attack damage, then goes to its owner's onDealDamage.
+     */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent event) {
         if (!fighting()) {
@@ -131,11 +136,13 @@ final class MatchListener implements Listener {
         }
         Entity victimEntity = event.getEntity();
         if (event instanceof EntityDamageByEntityEvent byEntity && victimEntity instanceof LivingEntity victim) {
-            Player attacker = attackerOf(byEntity);
+            normalizeSummonHit(byEntity);
+            Player attacker = dealerOf(byEntity);
             Participant dealer = attacker == null ? null : match.participant(attacker.getUniqueId());
             Ability ability = dealer == null ? null : dealer.ability;
             if (ability != null && session.isInPlay(attacker) && ctx().isEnemy(attacker, victim)) {
-                guard.run(dealer.abilityId, "onDealDamage", () -> ability.onDealDamage(byEntity, victim));
+                ctx().runAs(attacker.getUniqueId(), fromUltimateEntity(byEntity), () -> guard.run(dealer.abilityId,
+                        "onDealDamage", () -> ability.onDealDamage(byEntity, victim)));
                 if (event.isCancelled()) {
                     return;
                 }
@@ -148,6 +155,60 @@ final class MatchListener implements Listener {
                 guard.run(taker.abilityId, "onTakeDamage", () -> ability.onTakeDamage(event));
             }
         }
+    }
+
+    /**
+     * The hit landed (nothing cancelled it): the attacker's read-only {@link Ability#onDamageDealt}, for on-hit
+     * effects that must not happen when the victim dodged.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDamageDealt(EntityDamageByEntityEvent event) {
+        if (!fighting() || !(event.getEntity() instanceof LivingEntity victim)) {
+            return;
+        }
+        Player attacker = dealerOf(event);
+        Participant dealer = attacker == null ? null : match.participant(attacker.getUniqueId());
+        Ability ability = dealer == null ? null : dealer.ability;
+        if (ability != null && session.isInPlay(attacker) && ctx().isEnemy(attacker, victim)) {
+            ctx().runAs(attacker.getUniqueId(), fromUltimateEntity(event), () -> guard.run(dealer.abilityId,
+                    "onDamageDealt", () -> ability.onDamageDealt(event, victim)));
+        }
+    }
+
+    /**
+     * Summons hit with exactly their {@link Attribute#ATTACK_DAMAGE}: no vanilla randomness (iron golem) and no
+     * difficulty scaling against players, so the numbers in {@code abilities.yml} are what lands.
+     */
+    private void normalizeSummonHit(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof LivingEntity summon) || ctx().summonOwner(summon) == null
+                || ctx().isAbilityDamage() || event.getDamageSource().getDamageType() != DamageType.MOB_ATTACK) {
+            return;
+        }
+        AttributeInstance attack = summon.getAttribute(Attribute.ATTACK_DAMAGE);
+        if (attack != null && Double.isFinite(attack.getValue())) {
+            event.setDamage(Math.max(0.0, attack.getValue()));
+        }
+    }
+
+    /** True if the hit comes from an entity an ultimate created (its owner's hooks then run as that ultimate). */
+    private boolean fromUltimateEntity(EntityDamageByEntityEvent event) {
+        return ctx().isUltimateEntity(event.getDamager())
+                || ctx().isUltimateEntity(event.getDamageSource().getCausingEntity());
+    }
+
+    /** The participant behind a hit: the player, the shooter/owner of a projectile, or the owner of a summon. */
+    private @Nullable Player dealerOf(EntityDamageByEntityEvent event) {
+        Player attacker = attackerOf(event);
+        if (attacker != null) {
+            return attacker;
+        }
+        UUID owner = ctx().summonOwner(event.getDamager());
+        Entity causing = event.getDamageSource().getCausingEntity();
+        if (owner == null && causing != null) {
+            owner = ctx().summonOwner(causing);
+        }
+        Player player = owner == null ? null : Bukkit.getPlayer(owner);
+        return player != null && session.isParticipant(player) ? player : null;
     }
 
     /** The participant behind a hit: the player, or the shooter/owner of a projectile. */
@@ -167,7 +228,10 @@ final class MatchListener implements Listener {
         return attacker != null && session.isParticipant(attacker) ? attacker : null;
     }
 
-    /** Ultimate gauge: damage taken, and damage dealt to enemy players. */
+    /**
+     * Ultimate gauge: damage taken, and damage dealt to enemy players. Damage that belongs to the attacker's own
+     * ultimate never charges the attacker; nothing charges during the post-ultimate lock.
+     */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDamageMonitor(EntityDamageEvent event) {
         if (!fighting() || !(event.getEntity() instanceof Player victim) || !session.isParticipant(victim)
@@ -180,12 +244,12 @@ final class MatchListener implements Listener {
         }
         DamageType type = event.getDamageSource().getDamageType();
         if (type != DamageType.OUTSIDE_BORDER && type != DamageType.OUT_OF_WORLD && type != DamageType.GENERIC_KILL) {
-            match.addGauge(victim, amount * match.settings().gaugePerDamageTaken());
+            match.addEarnedGauge(victim, amount * match.settings().gaugePerDamageTaken());
         }
         Player attacker = session.combat().resolveAttacker(event);
         if (attacker != null && !attacker.equals(victim) && session.isInPlay(attacker)
-                && ctx().isEnemy(attacker, victim)) {
-            match.addGauge(attacker, amount * match.settings().gaugePerDamageDealt());
+                && ctx().isEnemy(attacker, victim) && !ctx().isUltimateHit(event, attacker.getUniqueId())) {
+            match.addEarnedGauge(attacker, amount * match.settings().gaugePerDamageDealt());
         }
     }
 
@@ -222,7 +286,9 @@ final class MatchListener implements Listener {
         Participant owner = match.participant(tagged.owner());
         Ability ability = owner == null ? null : owner.ability;
         if (ability != null) {
-            guard.run(owner.abilityId, "onProjectileHit", () -> ability.onProjectileHit(event, tagged.tag()));
+            // A projectile an ultimate launched keeps counting as that ultimate when its hit is handled.
+            ctx().runAs(tagged.owner(), ctx().isUltimateEntity(event.getEntity()), () -> guard.run(owner.abilityId,
+                    "onProjectileHit", () -> ability.onProjectileHit(event, tagged.tag())));
         }
     }
 
@@ -327,15 +393,18 @@ final class MatchListener implements Listener {
         }
     }
 
+    /**
+     * Every click while any choice menu is open is cancelled, including the moment between a pick and the menu
+     * closing (a stale menu is no longer the participant's, but its icons are real items).
+     */
     @EventHandler(priority = EventPriority.LOW)
     public void onClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-        ChoiceMenu menu = match.menuOf(player);
-        if (menu != null && event.getView().getTopInventory() == menu.getInventory()) {
+        if (event.getView().getTopInventory().getHolder(false) instanceof ChoiceMenu menu) {
             event.setCancelled(true);
-            if (event.getClickedInventory() == menu.getInventory()) {
+            if (event.getClickedInventory() == menu.getInventory() && menu == match.menuOf(player)) {
                 match.onMenuClick(player, menu, event.getSlot());
             }
             return;
@@ -364,8 +433,7 @@ final class MatchListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
-        ChoiceMenu menu = match.menuOf(player);
-        if (menu != null && event.getView().getTopInventory() == menu.getInventory()) {
+        if (event.getView().getTopInventory().getHolder(false) instanceof ChoiceMenu) {
             event.setCancelled(true);
             return;
         }
@@ -382,7 +450,7 @@ final class MatchListener implements Listener {
         }
         ChoiceMenu menu = match.menuOf(player);
         if (menu != null && event.getInventory() == menu.getInventory()) {
-            match.onMenuClosed(player, menu);
+            match.onMenuClosed(player, menu, event.getReason());
         }
     }
 }

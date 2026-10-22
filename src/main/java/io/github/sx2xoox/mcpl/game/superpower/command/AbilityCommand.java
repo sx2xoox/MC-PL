@@ -40,6 +40,7 @@ import org.bukkit.entity.Player;
  * /게임 능력 지정|assign &lt;플레이어&gt; &lt;능력&gt;      admin: for the next match or the running reveal/prep phase
  * /게임 능력 선택방식|mode [RANDOM|CHOICE]      admin: selection mode (saved to config.yml)
  * /게임 능력 리롤|reroll                        reroll during the prep phase (RANDOM)
+ * /게임 능력 선택|pick                          reopen the CHOICE menu (selection phase, not picked yet)
  * </pre>
  */
 public final class AbilityCommand {
@@ -98,6 +99,9 @@ public final class AbilityCommand {
             }
             for (String name : List.of("리롤", "reroll")) {
                 node.then(Commands.literal(name).executes(ctx -> reroll(ctx.getSource().getSender())));
+            }
+            for (String name : List.of("선택", "pick")) {
+                node.then(Commands.literal(name).executes(ctx -> pick(ctx.getSource().getSender())));
             }
             registrar.register(node);
         }
@@ -254,5 +258,22 @@ public final class AbilityCommand {
         SuperpowerMatch.RerollResult result = match.reroll(player);
         match.reportReroll(player, result);
         return result == SuperpowerMatch.RerollResult.OK ? Command.SINGLE_SUCCESS : 0;
+    }
+
+    private int pick(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "command.player-only");
+            return 0;
+        }
+        SuperpowerMatch match = game.currentMatch();
+        if (match == null) {
+            messages().send(sender, "reroll.no-match");
+            return 0;
+        }
+        if (!match.reopenMenu(player)) {
+            messages().send(sender, "choice.nothing-to-pick");
+            return 0;
+        }
+        return Command.SINGLE_SUCCESS;
     }
 }
