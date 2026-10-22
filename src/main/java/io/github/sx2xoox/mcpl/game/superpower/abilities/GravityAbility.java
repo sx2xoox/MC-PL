@@ -7,15 +7,16 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
-import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -23,13 +24,13 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Display;
-import org.bukkit.entity.ItemDisplay;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.RayTraceResult;
@@ -71,12 +72,13 @@ public final class GravityAbility extends Ability {
             .build();
 
     private static final String COLOR_TAG = "#7D6BFF";
-    private static final Color VIOLET = Color.fromRGB(0x9D, 0x7B, 0xFF);
-    private static final Particle.DustOptions VIOLET_DUST = new Particle.DustOptions(VIOLET, 1.0f);
-    private static final Particle.DustOptions EDGE_DUST = new Particle.DustOptions(Color.fromRGB(0x5B, 0x2A, 0xA8), 1.3f);
-    private static final Particle.DustTransition DISK_DUST =
-            new Particle.DustTransition(Color.fromRGB(0xF0, 0xB8, 0xFF), Color.fromRGB(0x2A, 0x05, 0x4A), 1.1f);
-    private static final Color FLASH_COLOR = Color.fromRGB(0xC9, 0x9B, 0xFF);
+    /** Pale lilac glow, indigo body, the near-black violet of the void. */
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xCBB8FF, 0x7D6BFF, 0x12002B);
+    private static final Particle.DustTransition STRAND_GLOW = PALETTE.glow(0.7f);
+    private static final Particle.DustOptions STRAND_DUST = PALETTE.dust(0.6f);
+    private static final Particle.DustTransition DISK_INNER = PALETTE.glow(1.1f);
+    private static final Particle.DustTransition DISK_OUTER = PALETTE.fade(1.0f);
+    private static final Particle.DustTransition MOTE = PALETTE.fade(0.9f);
 
     /** Hard cap for every velocity this ability applies, so nobody is flung out of the arena. */
     private static final double MAX_SPEED = 2.5;
@@ -87,6 +89,9 @@ public final class GravityAbility extends Ability {
     /** Upper bound for how long a lifted enemy counts as juggled (it ends earlier once it lands). */
     private static final long JUGGLE_WINDOW_TICKS = 40;
     private static final long CLEANUP_PERIOD_TICKS = 200;
+    /** The levitation halo under a lifted enemy: runs every 2 ticks, at most this often. */
+    private static final int HALO_RUNS = 10;
+    private static final int COMBO_LABEL_TICKS = 14;
 
     // active
     private static final int PULL_MAX_TICKS = 24;
@@ -94,14 +99,19 @@ public final class GravityAbility extends Ability {
     private static final double PULL_ARRIVE_DISTANCE = 1.4;
     /** Where in front of the owner the pulled enemy is dropped. */
     private static final double PULL_STOP_DISTANCE = 1.8;
+    private static final BlockData TETHER_BLOCK = Material.AMETHYST_BLOCK.createBlockData();
+    private static final float TETHER_WIDTH = 0.07f;
+    private static final int TETHER_POINTS = 14;
+    private static final int LOCK_ON_TICKS = 4;
 
     // ultimate
     /** Core height above the ground: about chest height, so swallowed enemies are held standing on the ground. */
     private static final double CORE_HEIGHT = 1.1;
     private static final int GROUND_SNAP = 8;
-    private static final float CORE_SIZE = 1.15f;
+    private static final float CORE_SIZE = 0.95f;
     private static final float SHELL_SIZE = 1.75f;
-    private static final int POSE_PERIOD = 3;
+    private static final float SHELL_BURST = 3.2f;
+    private static final int POSE_PERIOD = 2;
     private static final int GROW_TICKS = 9;
     private static final int COLLAPSE_TICKS = 6;
     /** The sonic charge sound is about 1.6 s long; start it so it peaks when the black hole collapses. */
@@ -114,17 +124,36 @@ public final class GravityAbility extends Ability {
     private static final double CORE_HOLD_DISTANCE = 0.7;
     private static final double BLAST_PUSH = 1.3;
     private static final double BLAST_LIFT = 0.6;
+    private static final BlockData CORE_BLOCK = Material.BLACK_CONCRETE.createBlockData();
+    private static final BlockData SHELL_BLOCK = Material.PURPLE_STAINED_GLASS.createBlockData();
+    private static final BlockData[] DEBRIS_BLOCKS = {
+            Material.CRYING_OBSIDIAN.createBlockData(),
+            Material.OBSIDIAN.createBlockData(),
+            Material.AMETHYST_BLOCK.createBlockData(),
+    };
+    private static final int DEBRIS_COUNT = 6;
+    /** The core is three black cubes in different orientations, which together read as a rough sphere. */
+    private static final Quaternionf[] CORE_ORIENTATIONS = {
+            new Quaternionf(),
+            new Quaternionf().rotateY((float) Math.toRadians(45)).rotateX((float) Math.toRadians(35.26)),
+            new Quaternionf().rotateZ((float) Math.toRadians(45)).rotateY((float) Math.toRadians(30)),
+    };
     private static final Vector3f CORE_AXIS = new Vector3f(0.35f, 1f, 0.2f).normalize();
     private static final Vector3f SHELL_AXIS = new Vector3f(-0.4f, 1f, 0.3f).normalize();
+    private static final Vector3f DEBRIS_AXIS = new Vector3f(0.3f, 1f, 0.2f).normalize();
+    /** Normal of the tilted accretion disk. */
+    private static final Vector DISK_NORMAL = new Vector(0.18, 1, -0.12).normalize();
+    private static final int AFTERGLOW_TICKS = 16;
 
     /** Enemies this owner has hit or lifted, by entity id. */
     private final Map<UUID, Juggle> juggles = new HashMap<>();
 
-    /** Per-enemy combo state: lift cooldown, the airborne window and the running combo count. */
+    /** Per-enemy combo state: lift cooldown, the airborne window, the running combo count and its floating label. */
     private static final class Juggle {
         long nextLift;
         long airborneUntil;
         int combo;
+        @Nullable TextDisplay label;
     }
 
     @Override
@@ -148,19 +177,30 @@ public final class GravityAbility extends Ability {
 
     // ------------------------------------------------------------------ passive: weightless strike
 
+    /** The air bonus: only changes the damage, since the victim may still cancel the hit. */
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (event.isCancelled() || ctx().isAbilityDamage() || !player().equals(event.getDamager())
-                || event.getCause() != DamageCause.ENTITY_ATTACK || !ctx().isEnemy(player(), victim)) {
+        if (event.isCancelled() || !isOwnMelee(event, victim)) {
+            return;
+        }
+        Juggle juggle = juggles.get(victim.getUniqueId());
+        if (juggle != null && isJuggled(juggle, victim)) {
+            double bonus = Math.max(0, params().num("air_bonus")) / 100.0;
+            event.setDamage(event.getDamage() * (1 + bonus));
+        }
+    }
+
+    /** The hit landed: count the combo and lift the victim. */
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (!isOwnMelee(event, victim)) {
             return;
         }
         long now = ctx().currentTick();
         Juggle juggle = juggles.computeIfAbsent(victim.getUniqueId(), id -> new Juggle());
-        if (now < juggle.airborneUntil && !(Motion.isGrounded(victim) || victim.isInWater())) {
-            double bonus = Math.max(0, params().num("air_bonus")) / 100.0;
-            event.setDamage(event.getDamage() * (1 + bonus));
+        if (isJuggled(juggle, victim)) {
             juggle.combo++;
-            comboFeedback(victim, juggle.combo);
+            comboFeedback(victim, juggle);
         } else {
             juggle.combo = 1;
         }
@@ -170,6 +210,17 @@ public final class GravityAbility extends Ability {
             // Vanilla knockback is applied after this event; lift on the next tick so it is not overwritten.
             ctx().runLater(player(), 1, () -> lift(victim, height));
         }
+    }
+
+    /** The owner's own melee swing at an enemy (not ability damage, projectiles or summon bites). */
+    private boolean isOwnMelee(EntityDamageByEntityEvent event, LivingEntity victim) {
+        return !ctx().isAbilityDamage() && player().equals(event.getDamager())
+                && event.getCause() == DamageCause.ENTITY_ATTACK && ctx().isEnemy(player(), victim);
+    }
+
+    /** True while a lifted enemy is still in the air within its juggle window. */
+    private boolean isJuggled(Juggle juggle, LivingEntity victim) {
+        return ctx().currentTick() < juggle.airborneUntil && !(Motion.isGrounded(victim) || victim.isInWater());
     }
 
     private void lift(LivingEntity victim, double height) {
@@ -182,19 +233,55 @@ public final class GravityAbility extends Ability {
             return;
         }
         markAirborne(victim);
-
-        Location feet = victim.getLocation().add(0, 0.1, 0);
-        Fx.ring(feet, 0.6, 10, 0, Particle.DUST, VIOLET_DUST);
-        victim.getWorld().spawnParticle(Particle.REVERSE_PORTAL, feet, 8, 0.25, 0.1, 0.25, 0.04);
-        Fx.sound(feet, Sound.ENTITY_SHULKER_BULLET_HIT, 0.7f, 1.4f + Fx.jitter(0.15f));
+        liftFx(victim);
     }
 
-    private void comboFeedback(LivingEntity victim, int combo) {
+    /** An upside-down gravity ripple under the lifted enemy, then a small halo while it floats. */
+    private void liftFx(LivingEntity victim) {
+        Location feet = victim.getLocation().add(0, 0.1, 0);
+        double phase = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
+        Vfx.ring(ctx(), feet, 0.8, 14, phase, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.1f), false);
+        Vfx.ring(ctx(), feet.clone().add(0, 0.4, 0), 0.55, 10, phase + 0.3, Particle.DUST, PALETTE.dust(0.8f), false);
+        Vfx.cloud(ctx(), feet, Particle.REVERSE_PORTAL, 6, 0.25, 0.03, null, false);
+        Fx.sound(feet, Sound.ENTITY_SHULKER_BULLET_HIT, 0.7f, 1.4f + Fx.jitter(0.15f));
+        Fx.sound(feet, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.6f, 0.7f + Fx.jitter(0.1f));
+        Loop.repeat(ctx(), player(), 2, 2, HALO_RUNS, run -> {
+            if (!Combat.isTargetable(ctx(), player(), victim)
+                    || run > 1 && (Motion.isGrounded(victim) || victim.isInWater())) {
+                return false;
+            }
+            Vfx.ring(ctx(), victim.getLocation().add(0, 0.05, 0), 0.42, 6, run * 0.6, Particle.DUST,
+                    PALETTE.dust(0.6f), false);
+            return true;
+        });
+    }
+
+    private void comboFeedback(LivingEntity victim, Juggle juggle) {
+        int combo = juggle.combo;
         Location body = Fx.body(victim);
-        victim.getWorld().spawnParticle(Particle.ENCHANTED_HIT, body, 8, 0.3, 0.4, 0.3, 0.15);
-        victim.getWorld().spawnParticle(Particle.DUST, body, 4, 0.3, 0.4, 0.3, 0, VIOLET_DUST);
+        Vfx.cloud(ctx(), body, Particle.ENCHANTED_HIT, 6, 0.3, 0.15, null, false);
+        Vfx.cloud(ctx(), body, Particle.END_ROD, 2, 0.15, 0.04, null, false);
+        Vfx.arc(ctx(), body, 0.75, player().getLocation().getYaw(), 140, 9, Particle.DUST_COLOR_TRANSITION,
+                PALETTE.glow(0.9f), false);
         Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 1.0f, (float) Math.min(2.0, 0.9 + 0.15 * combo));
+        Fx.sound(body, Sound.BLOCK_AMETHYST_CLUSTER_HIT, 0.5f, (float) Math.min(2.0, 1.2 + 0.12 * combo));
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">공중 콤보 <white>×" + combo + "</white></" + COLOR_TAG + ">"));
+
+        // A floating combo counter that pops up over the juggled enemy; only the newest one is kept.
+        if (juggle.label != null && juggle.label.isValid()) {
+            juggle.label.remove();
+        }
+        Location above = victim.getLocation().add(0, victim.getHeight() + 0.35, 0);
+        TextDisplay label = Displays.text(ctx(), player(), above,
+                Text.mm("<b><gradient:#CBB8FF:#7D6BFF>×" + combo + "</gradient></b>"), 0.7f, COMBO_LABEL_TICKS);
+        juggle.label = label;
+        float pop = (float) Math.min(1.6, 1.05 + 0.08 * combo);
+        Displays.animateNextTick(ctx(), player(), label, Displays.centered(0, 0.35f, 0, pop, pop, pop, 0, 0, 0), 4);
+        ctx().runLater(player(), COMBO_LABEL_TICKS - 5, () -> {
+            if (label.isValid()) {
+                Displays.shrinkAway(ctx(), player(), label, 4);
+            }
+        });
     }
 
     /** Opens the juggle window: melee hits get the air bonus while the enemy is still off the ground. */
@@ -212,40 +299,10 @@ public final class GravityAbility extends Ability {
             return ActivationResult.fail("조준한 곳에 적이 없습니다");
         }
         long slowTicks = params().ticks("pull_slow");
-        Fx.sound(player().getEyeLocation(), Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 1.6f + Fx.jitter(0.1f));
-        Fx.sound(Fx.body(target), Sound.ENTITY_SHULKER_SHOOT, 1.0f, 0.6f + Fx.jitter(0.05f));
-        target.getWorld().spawnParticle(Particle.REVERSE_PORTAL, Fx.body(target), 16, 0.3, 0.5, 0.3, 0.05);
-        Loop.repeat(ctx(), player(), 0, 1, PULL_MAX_TICKS, i -> pullStep(target, i, slowTicks));
+        Pull pull = new Pull(target, slowTicks);
+        pull.cast();
+        Loop.repeat(ctx(), player(), 0, 1, PULL_MAX_TICKS, pull, pull::release);
         return ActivationResult.success();
-    }
-
-    /** One tick of the pull: steer the target towards the spot in front of the owner. False when finished. */
-    private boolean pullStep(LivingEntity target, long tick, long slowTicks) {
-        Player owner = player();
-        if (!Combat.isTargetable(ctx(), player(), target) || !target.getWorld().equals(owner.getWorld())) {
-            return false;
-        }
-        Vector to = pullDestination(owner).toVector().subtract(target.getLocation().toVector());
-        double distance = to.length();
-        if (distance <= PULL_ARRIVE_DISTANCE || tick >= PULL_MAX_TICKS - 1) {
-            arrive(target, slowTicks);
-            return false;
-        }
-        double speed = Math.min(PULL_SPEED, Math.max(0.3, distance * 0.45));
-        Vector velocity = Motion.horizontal(to).multiply(speed);
-        // Small hops keep the target off the ground (no ground friction) without launching it.
-        boolean grounded = Motion.isGrounded(target) || target.isInWater();
-        velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.22 : 0.0));
-        target.setVelocity(Motion.clamp(velocity, MAX_SPEED));
-        target.setFallDistance(0);
-
-        Location body = Fx.body(target);
-        World world = target.getWorld();
-        world.spawnParticle(Particle.TRAIL, body, 2, 0.25, 0.4, 0.25, 0, new Particle.Trail(Fx.body(owner), VIOLET, 6));
-        if (tick % 2 == 0) {
-            world.spawnParticle(Particle.REVERSE_PORTAL, body, 3, 0.25, 0.4, 0.25, 0.02);
-        }
-        return true;
     }
 
     /** The spot in front of the owner where pulled enemies are dropped (the owner's spot if a wall is in the way). */
@@ -260,20 +317,172 @@ public final class GravityAbility extends Ability {
         return wall != null ? feet : feet.add(facing.multiply(PULL_STOP_DISTANCE));
     }
 
-    private void arrive(LivingEntity target, long slowTicks) {
-        target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
-        target.setFallDistance(0);
-        if (slowTicks > 0) {
-            int duration = (int) Math.min(Integer.MAX_VALUE, slowTicks);
-            target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, duration, 1, false, true, true));
-        }
-        markAirborne(target);
+    /** Where the gravity tether leaves the owner: just in front of the casting hand. */
+    private static Location hand(Player owner) {
+        Location eye = owner.getEyeLocation();
+        return eye.add(eye.getDirection().multiply(0.55)).subtract(0, 0.3, 0);
+    }
 
-        Location body = Fx.body(target);
-        target.getWorld().spawnParticle(Particle.REVERSE_PORTAL, body, 20, 0.3, 0.5, 0.3, 0.08);
-        Fx.ring(target.getLocation().add(0, 0.1, 0), 0.8, 12, 0, Particle.DUST, VIOLET_DUST);
-        Fx.sound(body, Sound.BLOCK_HEAVY_CORE_PLACE, 1.0f, 0.7f + Fx.jitter(0.05f));
-        Fx.sound(body, Sound.ENTITY_SHULKER_BULLET_HIT, 0.8f, 0.8f);
+    /**
+     * The gravity pull: a thin amethyst tether wound with a violet double helix drags the target to the owner, who
+     * then lands with a small shockwave and a sinking pressure ring for the duration of the slow.
+     */
+    private final class Pull implements LongPredicate {
+
+        private final LivingEntity target;
+        private final long slowTicks;
+        private @Nullable BlockDisplay tether;
+        private boolean arrived;
+
+        Pull(LivingEntity target, long slowTicks) {
+            this.target = target;
+            this.slowTicks = slowTicks;
+        }
+
+        void cast() {
+            Player owner = player();
+            Location hand = hand(owner);
+            Location body = Fx.body(target);
+            Vfx.cloud(ctx(), hand, Particle.DUST_COLOR_TRANSITION, 8, 0.12, 0, PALETTE.glow(0.9f), false);
+            Vfx.cloud(ctx(), body, Particle.REVERSE_PORTAL, 14, 0.3, 0.05, null, false);
+            Fx.sound(owner.getEyeLocation(), Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 1.6f + Fx.jitter(0.1f));
+            Fx.sound(owner.getEyeLocation(), Sound.ENTITY_ILLUSIONER_CAST_SPELL, 0.6f, 0.7f + Fx.jitter(0.05f));
+            Fx.sound(body, Sound.ENTITY_SHULKER_SHOOT, 1.0f, 0.6f + Fx.jitter(0.05f));
+            // Lock-on: a ring closing in around the target.
+            Loop.repeat(ctx(), owner, 0, 1, LOCK_ON_TICKS, run -> {
+                if (!target.isValid()) {
+                    return false;
+                }
+                double radius = 1.4 - 0.9 * (run + 1) / LOCK_ON_TICKS;
+                Vfx.ring(ctx(), Fx.body(target), radius, 16, run * 0.4, Particle.DUST_COLOR_TRANSITION,
+                        PALETTE.glow(1.0f), false);
+                return true;
+            });
+            Vector delta = body.toVector().subtract(hand.toVector());
+            if (delta.lengthSquared() > 1.0E-4) {
+                tether = Displays.block(ctx(), owner, hand, TETHER_BLOCK, beamPose(delta, TETHER_WIDTH),
+                        PULL_MAX_TICKS + 6L);
+                tether.setTeleportDuration(1);
+            }
+        }
+
+        /** One tick of the pull: steer the target towards the spot in front of the owner. False when finished. */
+        @Override
+        public boolean test(long tick) {
+            Player owner = player();
+            if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
+                return false;
+            }
+            Vector to = pullDestination(owner).toVector().subtract(target.getLocation().toVector());
+            double distance = to.length();
+            if (distance <= PULL_ARRIVE_DISTANCE || tick >= PULL_MAX_TICKS - 1) {
+                arrive();
+                return false;
+            }
+            double speed = Math.min(PULL_SPEED, Math.max(0.3, distance * 0.45));
+            Vector velocity = Motion.horizontal(to).multiply(speed);
+            // Small hops keep the target off the ground (no ground friction) without launching it.
+            boolean grounded = Motion.isGrounded(target) || target.isInWater();
+            velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.22 : 0.0));
+            target.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+            target.setFallDistance(0);
+            drawTether(tick);
+            return true;
+        }
+
+        private void drawTether(long tick) {
+            Location hand = hand(player());
+            Location body = Fx.body(target);
+            Vector delta = body.toVector().subtract(hand.toVector());
+            if (tether != null && tether.isValid() && delta.lengthSquared() > 1.0E-4) {
+                tether.teleport(hand);
+                Displays.animate(tether, beamPose(delta, TETHER_WIDTH), 1);
+            }
+            helix(body, hand, tick * 0.55);
+            Vfx.trail(body, hand, PALETTE.core(), 6, false);
+            if (tick % 2 == 0) {
+                Vfx.cloud(ctx(), body, Particle.REVERSE_PORTAL, 2, 0.25, 0.02, null, false);
+            }
+        }
+
+        /** Two violet strands wound around the line from {@code from} to {@code to}. */
+        private void helix(Location from, Location to, double phase) {
+            Vector axis = to.toVector().subtract(from.toVector());
+            double length = axis.length();
+            if (length < 0.3) {
+                return;
+            }
+            axis.multiply(1 / length);
+            Vector u = axis.clone().crossProduct(Math.abs(axis.getY()) > 0.95 ? new Vector(1, 0, 0) : new Vector(0, 1, 0))
+                    .normalize();
+            Vector v = axis.clone().crossProduct(u);
+            int points = Vfx.n(ctx(), (int) Math.min(TETHER_POINTS, Math.ceil(length * 1.2)));
+            World world = from.getWorld();
+            for (int strand = 0; strand < 2; strand++) {
+                for (int i = 0; i < points; i++) {
+                    double t = (i + 0.5) / points;
+                    double angle = phase + strand * Math.PI + t * length * 1.6;
+                    // The coil tightens towards the owner, like matter falling into a well.
+                    double radius = 0.12 + 0.2 * (1 - t);
+                    Vector offset = u.clone().multiply(Math.cos(angle) * radius).add(v.clone().multiply(Math.sin(angle) * radius));
+                    Location at = from.clone().add(axis.clone().multiply(t * length)).add(offset);
+                    if (strand == 0) {
+                        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 1, 0, 0, 0, 0, STRAND_GLOW);
+                    } else {
+                        world.spawnParticle(Particle.DUST, at, 1, 0, 0, 0, 0, STRAND_DUST);
+                    }
+                }
+            }
+        }
+
+        private void arrive() {
+            arrived = true;
+            target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+            target.setFallDistance(0);
+            if (slowTicks > 0) {
+                int duration = (int) Math.min(Integer.MAX_VALUE, slowTicks);
+                target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, duration, 1, false, true, true));
+            }
+            markAirborne(target);
+
+            Location body = Fx.body(target);
+            Location feet = target.getLocation().add(0, 0.1, 0);
+            Vfx.dot(body, Particle.FLASH, PALETTE.core(), false);
+            Vfx.sphere(ctx(), body, 0.7, 18, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), false);
+            Vfx.cloud(ctx(), body, Particle.REVERSE_PORTAL, 12, 0.3, 0.08, null, false);
+            Vfx.shockwave(ctx(), player(), feet, 0.3, 1.6, 5, Particle.DUST, PALETTE.dust(0.9f), false);
+            Fx.sound(body, Sound.BLOCK_HEAVY_CORE_PLACE, 1.0f, 0.7f + Fx.jitter(0.05f));
+            Fx.sound(body, Sound.ENTITY_SHULKER_BULLET_HIT, 0.8f, 0.8f + Fx.jitter(0.08f));
+            Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 0.7f, 0.6f + Fx.jitter(0.05f));
+            pressure();
+        }
+
+        /** Afterglow while the target is slowed: a ring sliding down its body, as if gravity pressed it down. */
+        private void pressure() {
+            long runs = Math.max(1, slowTicks / 3);
+            Loop.repeat(ctx(), player(), 3, 3, runs, run -> {
+                if (!Combat.isTargetable(ctx(), player(), target)) {
+                    return false;
+                }
+                double cycle = (run % 4) / 3.0;
+                Location at = target.getLocation().add(0, target.getHeight() * (1 - cycle) + 0.05, 0);
+                Vfx.ring(ctx(), at, 0.5 - 0.1 * cycle, 8, run * 0.5, Particle.DUST_COLOR_TRANSITION,
+                        PALETTE.fade(0.8f), false);
+                return true;
+            });
+        }
+
+        /** Runs when the pull loop ends by itself: the tether snaps back into the owner's hand. */
+        void release() {
+            if (tether == null || !tether.isValid()) {
+                return;
+            }
+            if (!arrived) {
+                tether.remove();
+                return;
+            }
+            Displays.shrinkAway(ctx(), player(), tether, 3);
+        }
     }
 
     // ------------------------------------------------------------------ ultimate: black hole
@@ -333,7 +542,14 @@ public final class GravityAbility extends Ability {
         return null;
     }
 
-    /** A black hole: pulls enemies in for its lifetime, then collapses into a blast. */
+    /**
+     * A black hole: pulls enemies in for its lifetime, then collapses into a blast.
+     *
+     * <p>Visuals: a spinning core of three black cubes outlined in violet inside a purple glass shell, debris
+     * (obsidian, crying obsidian, amethyst) spiralling in on a tilted accretion disk, violet motes streaming in from
+     * all around, and the event horizon drawn on the floor. Before the collapse a ring closes in to mark the blast
+     * radius; the collapse is a flash, an expanding glass shell, a violet shockwave and the debris thrown outwards.
+     */
     private final class BlackHole implements LongPredicate {
 
         private final Location center;
@@ -341,8 +557,12 @@ public final class GravityAbility extends Ability {
         private final double radius;
         private final double floorY;
         private final long life;
-        private @Nullable ItemDisplay core;
-        private @Nullable ItemDisplay shell;
+        private final BlockDisplay[] core = new BlockDisplay[CORE_ORIENTATIONS.length];
+        private final BlockDisplay[] debris = new BlockDisplay[DEBRIS_COUNT];
+        private final double[] debrisRadius = new double[DEBRIS_COUNT];
+        private final Vector diskU;
+        private final Vector diskV;
+        private @Nullable BlockDisplay shell;
 
         BlackHole(Location center, double radius) {
             this.center = center;
@@ -351,32 +571,40 @@ public final class GravityAbility extends Ability {
             Double ground = groundBelow(center);
             this.floorY = (ground != null ? ground : center.getY() - CORE_HEIGHT) + 0.15;
             this.life = Math.max(20, params().ticks("ult_duration"));
+            this.diskU = DISK_NORMAL.clone().crossProduct(new Vector(0, 0, 1)).normalize();
+            this.diskV = DISK_NORMAL.clone().crossProduct(diskU).normalize();
         }
 
         void open() {
-            core = spawnOrb(Material.BLACK_CONCRETE, new Display.Brightness(0, 0), true);
-            shell = spawnOrb(Material.PURPLE_STAINED_GLASS, new Display.Brightness(15, 15), false);
-            Fx.sound(center, Sound.BLOCK_RESPAWN_ANCHOR_SET_SPAWN, 1.5f, 0.6f);
-            Fx.sound(center, Sound.BLOCK_BEACON_ACTIVATE, 1.2f, 0.5f);
-            Fx.sound(center, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
-            world.spawnParticle(Particle.REVERSE_PORTAL, center, 40, 0.2, 0.2, 0.2, 0.6);
-            Loop.repeat(ctx(), player(), 0, 1, life + 1, this);
-        }
+            Player owner = player();
+            long lifetime = life + 4;
+            for (int i = 0; i < core.length; i++) {
+                core[i] = Displays.block(ctx(), owner, center, CORE_BLOCK, cubePose(0.05f, CORE_ORIENTATIONS[i]),
+                        lifetime);
+                Displays.outline(core[i], PALETTE.body());
+                core[i].setViewRange(2.0f);
+            }
+            shell = Displays.block(ctx(), owner, center, SHELL_BLOCK, cubePose(0.05f, new Quaternionf()), lifetime + 6);
+            shell.setViewRange(2.0f);
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            for (int i = 0; i < debris.length; i++) {
+                debrisRadius[i] = 1.7 + random.nextDouble() * 0.9;
+                Location at = diskPoint(debrisRadius[i], i * Math.PI * 2 / debris.length, 0);
+                float size = 0.18f + random.nextFloat() * 0.12f;
+                debris[i] = Displays.block(ctx(), owner, at, DEBRIS_BLOCKS[i % DEBRIS_BLOCKS.length],
+                        cubePose(size, randomRotation(random)), lifetime + 10);
+                debris[i].setTeleportDuration(POSE_PERIOD);
+            }
 
-        private ItemDisplay spawnOrb(Material material, Display.Brightness brightness, boolean glowing) {
-            ItemStack item = ItemStack.of(material);
-            return ctx().track(player(), world.spawn(center, ItemDisplay.class, display -> {
-                display.setPersistent(false);
-                display.setItemStack(item);
-                display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE);
-                display.setBrightness(brightness);
-                display.setViewRange(2.0f);
-                display.setTransformation(orbPose(0.05f, 0, CORE_AXIS));
-                if (glowing) {
-                    display.setGlowing(true);
-                    display.setGlowColorOverride(VIOLET);
-                }
-            }));
+            // Telegraph: the event horizon spreads over the floor while the void tears open.
+            Vfx.shockwave(ctx(), owner, floorPoint(), 0.5, radius, 6, Particle.DUST_COLOR_TRANSITION,
+                    PALETTE.glow(1.3f), true);
+            Vfx.cloud(ctx(), center, Particle.REVERSE_PORTAL, 40, 0.2, 0.6, null, true);
+            Vfx.dot(center, Particle.FLASH, PALETTE.body(), true);
+            Fx.sound(center, Sound.BLOCK_RESPAWN_ANCHOR_SET_SPAWN, 1.5f, 0.6f + Fx.jitter(0.04f));
+            Fx.sound(center, Sound.BLOCK_BEACON_ACTIVATE, 1.2f, 0.5f);
+            Fx.sound(center, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f + Fx.jitter(0.05f));
+            Loop.repeat(ctx(), owner, 0, 1, life + 1, this);
         }
 
         @Override
@@ -391,35 +619,65 @@ public final class GravityAbility extends Ability {
             if (tick == life - CHARGE_SOUND_LEAD) {
                 Fx.sound(center, Sound.ENTITY_WARDEN_SONIC_CHARGE, 1.5f, 1.1f);
             }
-            suck();
-            drawSwirl(tick);
-            if (tick % 20 == 0) {
+            suck(tick);
+            drawDisk(tick);
+            drawInflow(tick);
+            long untilCollapse = life - tick;
+            if (untilCollapse <= COLLAPSE_TICKS) {
+                // Telegraph of the blast: a ring closing in from the blast radius.
+                double blastRadius = params().num("blast_radius");
+                double closing = blastRadius * (untilCollapse - 1) / COLLAPSE_TICKS + 0.4;
+                Vfx.ring(ctx(), floorPoint(), closing, (int) Math.max(12, closing * 6), tick * 0.3,
+                        Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.4f), true);
+            } else if (tick % 20 == 0) {
                 Fx.sound(center, Sound.BLOCK_PORTAL_AMBIENT, 0.8f, 0.5f + 0.6f * tick / life);
+                Fx.sound(center, Sound.BLOCK_BEACON_AMBIENT, 1.0f, 0.5f + 0.3f * tick / life);
             }
             return true;
         }
 
-        /** Sets the orbs' pose for {@code targetTick}, interpolated over the next {@link #POSE_PERIOD} ticks. */
+        /** Sets the displays' pose for {@code targetTick}, interpolated over the next {@link #POSE_PERIOD} ticks. */
         private void updatePose(long targetTick) {
             float growth = Math.min(1f, (float) targetTick / GROW_TICKS);
             long untilCollapse = life - targetTick;
             float shrink = untilCollapse >= COLLAPSE_TICKS ? 1f : Math.max(0.03f, (float) untilCollapse / COLLAPSE_TICKS);
             float scale = growth * shrink;
+            // Breathing: the core pulses slightly so it never looks static.
+            float pulse = 1f + 0.06f * (float) Math.sin(targetTick * 0.5);
             float angle = targetTick * 0.15f;
-            pose(core, orbPose(CORE_SIZE * scale, angle, CORE_AXIS));
-            pose(shell, orbPose(SHELL_SIZE * scale, -angle * 0.7f, SHELL_AXIS));
-        }
-
-        private void pose(@Nullable ItemDisplay display, Transformation transformation) {
-            if (display == null || !display.isValid()) {
-                return;
+            for (int i = 0; i < core.length; i++) {
+                Quaternionf rotation = new Quaternionf().rotateAxis(angle * (1 + 0.25f * i), CORE_AXIS)
+                        .mul(CORE_ORIENTATIONS[i]);
+                pose(core[i], cubePose(CORE_SIZE * scale * pulse, rotation));
             }
-            display.setInterpolationDelay(0);
-            display.setInterpolationDuration(POSE_PERIOD);
-            display.setTransformation(transformation);
+            pose(shell, cubePose(SHELL_SIZE * scale, new Quaternionf().rotateAxis(-angle * 0.7f, SHELL_AXIS)));
+
+            // Debris spirals in faster and tighter as the collapse nears.
+            double progress = Math.min(1.0, (double) targetTick / life);
+            double orbit = targetTick * (0.18 + 0.25 * progress);
+            for (int i = 0; i < debris.length; i++) {
+                BlockDisplay piece = debris[i];
+                if (piece == null || !piece.isValid()) {
+                    continue;
+                }
+                double r = debrisRadius[i] * (1 - 0.55 * progress * progress) * (shrink < 1 ? shrink : 1);
+                piece.teleport(diskPoint(Math.max(0.3, r), orbit + i * Math.PI * 2 / debris.length,
+                        0.12 * Math.sin(targetTick * 0.3 + i)));
+                Transformation current = piece.getTransformation();
+                float size = current.getScale().x();
+                Quaternionf spin = new Quaternionf(current.getLeftRotation()).rotateAxis(0.5f, DEBRIS_AXIS);
+                Displays.animate(piece, cubePose(size, spin.normalize()), POSE_PERIOD);
+            }
         }
 
-        private void suck() {
+        private void pose(@Nullable BlockDisplay display, Transformation transformation) {
+            if (display != null) {
+                Displays.animate(display, transformation, POSE_PERIOD);
+            }
+        }
+
+        /** The pull is the black hole's crowd control, not knockback: it ignores knockback resistance by design. */
+        private void suck(long tick) {
             for (LivingEntity enemy : ctx().enemiesNear(player(), center, radius)) {
                 Vector to = center.toVector().subtract(Fx.body(enemy).toVector());
                 double distance = to.length();
@@ -436,56 +694,97 @@ public final class GravityAbility extends Ability {
                 }
                 enemy.setVelocity(Motion.clamp(velocity, MAX_SPEED));
                 enemy.setFallDistance(0);
+                if (tick % 2 == 0 && distance >= CORE_HOLD_DISTANCE) {
+                    // Every caught enemy is visibly being drained into the hole.
+                    Vfx.trail(Fx.body(enemy), center, PALETTE.body(), 8, true);
+                }
             }
         }
 
-        private void drawSwirl(long tick) {
+        /** The accretion disk: two spiral arms of glowing dust on the tilted disk plane, plus the floor horizon. */
+        private void drawDisk(long tick) {
             double base = tick * 0.35;
+            int perArm = Vfx.n(ctx(), 7);
             for (int arm = 0; arm < 2; arm++) {
-                for (int k = 0; k < 6; k++) {
-                    double r = 0.9 + k * 0.45;
+                for (int k = 0; k < perArm; k++) {
+                    double r = 0.9 + k * 2.7 / perArm;
                     double a = base + arm * Math.PI + k * 0.55;
-                    world.spawnParticle(Particle.DUST_COLOR_TRANSITION, center.getX() + Math.cos(a) * r,
-                            center.getY() + Math.sin(a) * r * 0.12, center.getZ() + Math.sin(a) * r,
-                            1, 0, 0, 0, 0, DISK_DUST);
+                    Location at = diskPoint(r, a, 0);
+                    world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 1, 0, 0, 0, 0,
+                            k < perArm / 2 ? DISK_INNER : DISK_OUTER, true);
                 }
+            }
+            if (tick % 4 == 0) {
+                Location floor = floorPoint();
+                Vfx.ring(ctx(), floor, radius, (int) Math.min(48, Math.max(16, radius * 3.5)), tick * 0.02,
+                        Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.3f), true);
+                Vfx.ring(ctx(), floor, radius * 0.5, (int) Math.max(10, radius * 1.5), -tick * 0.08, Particle.DUST,
+                        PALETTE.dust(0.9f), true);
+            }
+        }
+
+        /** Matter streaming in from every direction. */
+        private void drawInflow(long tick) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            int motes = Vfx.n(ctx(), 2);
+            for (int i = 0; i < motes; i++) {
+                Vector offset = randomUnit(random).multiply(2.5 + random.nextDouble() * radius * 0.5);
+                Vfx.trail(center.clone().add(offset), center, random.nextBoolean() ? PALETTE.core() : PALETTE.body(),
+                        10 + random.nextInt(6), true);
             }
             if (tick % 2 == 0) {
-                ThreadLocalRandom random = ThreadLocalRandom.current();
-                for (int i = 0; i < 4; i++) {
-                    Vector offset = new Vector(random.nextGaussian(), random.nextGaussian() * 0.6, random.nextGaussian())
-                            .normalize().multiply(2.5 + random.nextDouble() * radius * 0.4);
+                for (int i = 0; i < Vfx.n(ctx(), 3); i++) {
+                    Vector offset = randomUnit(random).multiply(2.5 + random.nextDouble() * radius * 0.4);
                     // Portal particles with count 0 fly from (center + offset) into the center.
-                    world.spawnParticle(Particle.PORTAL, center, 0, offset.getX(), offset.getY(), offset.getZ(), 1.0);
+                    world.spawnParticle(Particle.PORTAL, center, 0, offset.getX(), offset.getY(), offset.getZ(), 1.0,
+                            null, true);
                 }
-            }
-            if (tick % 5 == 0) {
-                Location edge = center.clone();
-                edge.setY(floorY);
-                Fx.ring(edge, radius, (int) Math.min(48, Math.max(16, radius * 3.5)), 0, Particle.DUST, EDGE_DUST);
             }
         }
 
         private void collapse() {
-            removeOrbs();
-            world.spawnParticle(Particle.EXPLOSION_EMITTER, center, 1);
-            world.spawnParticle(Particle.FLASH, center, 1, 0, 0, 0, 0, FLASH_COLOR);
-            world.spawnParticle(Particle.REVERSE_PORTAL, center, 70, 0.3, 0.3, 0.3, 1.0);
-            world.spawnParticle(Particle.SONIC_BOOM, center, 1);
+            Player owner = player();
+            for (BlockDisplay piece : core) {
+                if (piece != null) {
+                    piece.remove();
+                }
+            }
             double blastRadius = params().num("blast_radius");
-            Location edge = center.clone();
-            edge.setY(floorY);
-            int points = (int) Math.min(40, Math.max(14, blastRadius * 5));
-            Fx.ring(edge, blastRadius, points, 0, Particle.DUST, VIOLET_DUST);
-            Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 1.4f, 0.6f);
+            BlockDisplay bubble = shell;
+            if (bubble != null && bubble.isValid()) {
+                // The glass shell bursts outwards like a bubble of light, then pops.
+                Displays.animate(bubble, cubePose(SHELL_BURST, new Quaternionf().rotateAxis(0.6f, SHELL_AXIS)), 3);
+                ctx().runLater(owner, 3, () -> {
+                    if (bubble.isValid()) {
+                        Displays.shrinkAway(ctx(), owner, bubble, 3);
+                    }
+                });
+            }
+            flingDebris(blastRadius);
+
+            Location floor = floorPoint();
+            Vfx.dot(center, Particle.FLASH, PALETTE.core(), true);
+            Vfx.dot(center, Particle.SONIC_BOOM, null, true);
+            Vfx.sphere(ctx(), center, 0.8, 24, Particle.END_ROD, null, true);
+            Vfx.cloud(ctx(), center, Particle.REVERSE_PORTAL, 60, 0.3, 1.0, null, true);
+            Vfx.shockwave(ctx(), owner, floor, 0.5, blastRadius, 6, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.5f),
+                    true);
+            Loop.repeat(ctx(), owner, 0, 1, 5, run -> {
+                double r = 0.8 + (blastRadius * 0.75 - 0.8) * (run + 1) / 5.0;
+                Vfx.sphere(ctx(), center, r, 36, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.3f), true);
+                return true;
+            });
+            afterglow();
+            Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 1.4f, 0.6f + Fx.jitter(0.05f));
             Fx.sound(center, Sound.ENTITY_WARDEN_SONIC_BOOM, 1.2f, 1.3f);
+            Fx.sound(center, Sound.BLOCK_BEACON_DEACTIVATE, 1.2f, 0.5f);
 
             double damage = params().num("blast_damage");
             int hits = 0;
-            for (LivingEntity enemy : ctx().enemiesNear(player(), center, blastRadius)) {
-                Combat.hit(ctx(), player(), enemy, damage);
+            for (LivingEntity enemy : ctx().enemiesNear(owner, center, blastRadius)) {
+                Combat.hit(ctx(), owner, enemy, damage);
                 hits++;
-                if (!Combat.isTargetable(ctx(), player(), enemy)) {
+                if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
                 Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(center.toVector()));
@@ -493,28 +792,96 @@ public final class GravityAbility extends Ability {
                     double angle = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
                     away = new Vector(Math.cos(angle), 0, Math.sin(angle));
                 }
-                enemy.setVelocity(Motion.clamp(away.multiply(BLAST_PUSH).setY(BLAST_LIFT), MAX_SPEED));
-                markAirborne(enemy);
+                // The blast is knockback: resistant targets (giant Titan, Earth) are pushed less or not at all.
+                if (Motion.push(enemy, away.multiply(BLAST_PUSH).setY(BLAST_LIFT), MAX_SPEED)) {
+                    markAirborne(enemy);
+                }
+                Vfx.dot(Fx.body(enemy), Particle.FLASH, PALETTE.body(), false);
             }
-            if (hits > 0 && player().isOnline()) {
-                player().sendActionBar(Text.mm("<" + COLOR_TAG + ">블랙홀 붕괴 <white>" + hits + "명 적중!</white></"
+            if (hits > 0 && owner.isOnline()) {
+                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">블랙홀 붕괴 <white>" + hits + "명 적중!</white></"
                         + COLOR_TAG + ">"));
             }
         }
 
-        private void removeOrbs() {
-            if (core != null) {
-                core.remove();
+        /** The debris is thrown out with the blast, tumbling and shrinking away. */
+        private void flingDebris(double blastRadius) {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            for (BlockDisplay piece : debris) {
+                if (piece == null || !piece.isValid()) {
+                    continue;
+                }
+                Vector out = piece.getLocation().toVector().subtract(center.toVector());
+                if (out.lengthSquared() < 1.0E-4) {
+                    out = randomUnit(random);
+                }
+                out.normalize().multiply(blastRadius * (0.8 + random.nextDouble() * 0.4)).setY(0.6 + random.nextDouble());
+                piece.setTeleportDuration(6);
+                piece.teleport(piece.getLocation().add(out));
+                Transformation current = piece.getTransformation();
+                Displays.animate(piece, cubePose(current.getScale().x(), randomRotation(random)), 6);
+                ctx().runLater(player(), 6, () -> {
+                    if (piece.isValid()) {
+                        Displays.shrinkAway(ctx(), player(), piece, 4);
+                    }
+                });
             }
-            if (shell != null) {
-                shell.remove();
-            }
+        }
+
+        /** Fading violet motes where the black hole was. */
+        private void afterglow() {
+            Loop.repeat(ctx(), player(), 2, 1, AFTERGLOW_TICKS, run -> {
+                double fade = 1 - (double) run / AFTERGLOW_TICKS;
+                int count = (int) Math.round(4 * fade);
+                for (int i = 0; i < count; i++) {
+                    Location at = Vfx.scatter(center, 1.6).add(0, (ThreadLocalRandom.current().nextDouble() - 0.5) * 1.2, 0);
+                    Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, MOTE, false);
+                }
+                if (run % 3 == 0) {
+                    Vfx.cloud(ctx(), center, Particle.REVERSE_PORTAL, 2, 0.4, 0.02, null, false);
+                }
+                return true;
+            });
+        }
+
+        /** A point on the tilted accretion disk around the center. */
+        private Location diskPoint(double r, double angle, double lift) {
+            Vector offset = diskU.clone().multiply(Math.cos(angle) * r).add(diskV.clone().multiply(Math.sin(angle) * r))
+                    .add(DISK_NORMAL.clone().multiply(lift));
+            return center.clone().add(offset);
+        }
+
+        private Location floorPoint() {
+            Location floor = center.clone();
+            floor.setY(floorY);
+            return floor;
         }
     }
 
-    /** A cube centered on the display origin (item displays are centered), rotated around {@code axis}. */
-    private static Transformation orbPose(float size, float angle, Vector3f axis) {
-        Quaternionf rotation = new Quaternionf().rotateAxis(angle, axis);
-        return new Transformation(new Vector3f(), rotation, new Vector3f(size, size, size), new Quaternionf());
+    // ------------------------------------------------------------------ display helpers
+
+    /** A cube of edge {@code size} centered on the block display's origin, rotated around its center. */
+    private static Transformation cubePose(float size, Quaternionf rotation) {
+        Vector3f translation = new Quaternionf(rotation).transform(new Vector3f(size / 2)).negate();
+        return new Transformation(translation, new Quaternionf(rotation), new Vector3f(size), new Quaternionf());
+    }
+
+    /** A thin box of the given width from the block display's origin along {@code delta}. */
+    private static Transformation beamPose(Vector delta, float width) {
+        Vector3f direction = new Vector3f((float) delta.getX(), (float) delta.getY(), (float) delta.getZ());
+        float length = direction.length();
+        Quaternionf rotation = new Quaternionf().rotationTo(new Vector3f(0, 0, 1), direction.normalize());
+        Vector3f translation = rotation.transform(new Vector3f(-width / 2, -width / 2, 0));
+        return new Transformation(translation, rotation, new Vector3f(width, width, length), new Quaternionf());
+    }
+
+    private static Quaternionf randomRotation(ThreadLocalRandom random) {
+        return new Quaternionf().rotateXYZ(random.nextFloat() * 6.28f, random.nextFloat() * 6.28f,
+                random.nextFloat() * 6.28f);
+    }
+
+    private static Vector randomUnit(ThreadLocalRandom random) {
+        Vector vector = new Vector(random.nextGaussian(), random.nextGaussian() * 0.6, random.nextGaussian());
+        return vector.lengthSquared() < 1.0E-6 ? new Vector(1, 0, 0) : vector.normalize();
     }
 }

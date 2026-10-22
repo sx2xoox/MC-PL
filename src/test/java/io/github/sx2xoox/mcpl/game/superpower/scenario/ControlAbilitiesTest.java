@@ -11,7 +11,11 @@ import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.block.Block;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Arrow;
@@ -107,6 +111,27 @@ class ControlAbilitiesTest {
     }
 
     @Test
+    void gravityBlackHoleBlastRespectsKnockbackResistance() {
+        try (Scenario s = Scenario.ffa("gravity")) {
+            AttributeInstance resistance = s.enemy.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
+            NamespacedKey immovable = new NamespacedKey("test", "immovable");
+            resistance.addModifier(new AttributeModifier(immovable, 1.0, AttributeModifier.Operation.ADD_NUMBER));
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 1.5, 8.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            Location center = s.enemy.getLocation();
+            s.assertSucceeded(s.ultimate(), "블랙홀");
+            s.ticks(s.paramTicks("ult_duration") + 6);
+            assertEquals(s.param("blast_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the immune enemy is hurt");
+            assertTrue(horizontalDistance(s.enemy.getLocation(), center) < 1.0,
+                    "but not thrown: " + horizontalDistance(s.enemy.getLocation(), center));
+            assertTrue(horizontalDistance(s.enemy2.getLocation(), center) > 2.0, "enemy2 is blasted away");
+            resistance.removeModifier(immovable);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void gravityBlackHoleNeedsAnEnemyInRange() {
         try (Scenario s = Scenario.ffa("gravity")) {
             s.place(s.enemy, 20.5, 0.5, 0);
@@ -131,6 +156,9 @@ class ControlAbilitiesTest {
             s.ticks(4);
             assertTrue(s.world.getEntities().stream().anyMatch(e -> e instanceof BlockDisplay),
                     "the ground erupts (block displays)");
+            assertTrue(s.world.getEntities().stream().filter(e -> e instanceof BlockDisplay)
+                    .allMatch(e -> e.getLocation().getBlock().isPassable()),
+                    "chunks stand in the air above the ground, so clients light them");
             s.ticks(30);
             assertEquals(1, s.hitsBy(s.owner, s.enemy).size(), "hit once");
             assertEquals(s.param("quake_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
@@ -261,6 +289,21 @@ class ControlAbilitiesTest {
     }
 
     @Test
+    void mirrorRefractsDistantAbilityHitsButNotCloseOnes() {
+        try (Scenario s = Scenario.ffa("mirror")) {
+            s.place(s.enemy, 0.5, 0.5 + s.param("ranged_distance") + 2, 180);
+            s.ctx().damage(s.enemy, s.owner, 8);
+            assertEquals(8 * (1 - s.param("projectile_reduction") / 100), s.damageTaken(s.owner), EPSILON,
+                    "an ability fireball, spear or volley from afar is refracted");
+            s.clearHits();
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.ctx().damage(s.enemy, s.owner, 8);
+            assertEquals(8, s.damageTaken(s.owner), EPSILON, "a close ability hit is not");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void mirrorShieldHalvesDamageAndReflectsToTheAttacker() {
         try (Scenario s = Scenario.ffa("mirror")) {
             s.assertSucceeded(s.active(), "반사막");
@@ -315,6 +358,21 @@ class ControlAbilitiesTest {
             s.melee(s.enemy, s.owner, 6);
             s.ticks(2);
             assertNull(s.hitsBy(s.owner, s.enemy).stream().findFirst().orElse(null), "over");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mirrorWorldNeverSwapsTheOwnerIntoAHazard() {
+        try (Scenario s = Scenario.ffa("mirror")) {
+            Location ownerSpot = s.owner.getLocation();
+            Block web = s.enemy.getLocation().getBlock();
+            web.setType(Material.COBWEB);
+            s.aimAt(s.owner, s.enemy);
+            assertFalse(s.ultimate().succeeded(), "the enemy stands in a cobweb");
+            assertEquals(100, s.participant(s.owner).gauge(), EPSILON, "the gauge is kept");
+            assertTrue(horizontalDistance(s.owner.getLocation(), ownerSpot) < 0.01, "the owner stays");
+            web.setType(Material.AIR);
             s.finishClean();
         }
     }
