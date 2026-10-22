@@ -422,7 +422,7 @@ public final class DuelistAbility extends Ability {
         private @Nullable TextDisplay timer;
         private boolean registered;
         private boolean finished;
-        private long lastFlash = Long.MIN_VALUE;
+        private long lastFlash = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
 
         Arena(Player owner, LivingEntity target) {
             this.target = target;

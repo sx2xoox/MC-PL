@@ -97,7 +97,7 @@ public final class VampireAbility extends Ability {
     /** True while the drain deals its own damage: the drain heals by itself, the passive must not add to it. */
     private boolean draining;
     private long feastUntil = -1;
-    private long lastSlurp = Long.MIN_VALUE;
+    private long lastSlurp = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
     private @Nullable Drain drain;
     private @Nullable Feast feast;
 

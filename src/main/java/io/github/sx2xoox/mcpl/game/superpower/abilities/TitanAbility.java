@@ -131,7 +131,7 @@ public final class TitanAbility extends Ability {
 
     private boolean leaping;
     private long fallGuardUntil = -1;
-    private long lastStance = Long.MIN_VALUE;
+    private long lastStance = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
     /**
      * True once the match granted this ability. The Gambler borrows the ultimate on a fresh instance that never
      * gets {@link #onGrant()} nor the suffocation guard of {@link #onTakeDamage}.

@@ -59,5 +59,6 @@ public final class BuiltinAbilities {
         registry.register(MonkAbility.INFO, MonkAbility::new);
         registry.register(DimensionAbility.INFO, DimensionAbility::new);
         registry.register(BuilderAbility.INFO, BuilderAbility::new);
+        registry.register(FighterAbility.INFO, FighterAbility::new);
     }
 }

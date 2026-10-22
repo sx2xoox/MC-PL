@@ -142,7 +142,7 @@ public final class GuardianAbility extends Ability {
     private static final long DOME_SHIMMER_PERIOD = 4;
 
     private boolean bashing;
-    private long lastBlockFeedback = Long.MIN_VALUE;
+    private long lastBlockFeedback = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
     private @Nullable Bulwark bulwark;
 
     private record DomeRing(double elevation, int count, float size, double offset) {
@@ -603,7 +603,7 @@ public final class GuardianAbility extends Ability {
 
         private final List<Plate> plates = new ArrayList<>();
         private float spin;
-        private long lastFlash = Long.MIN_VALUE;
+        private long lastFlash = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
 
         double radius(Player owner) {
             return owner.getWidth() * 0.5 + DOME_GAP;

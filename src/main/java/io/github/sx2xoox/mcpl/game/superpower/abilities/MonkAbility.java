@@ -150,7 +150,7 @@ public final class MonkAbility extends Ability {
     // combo state of the passive
     private @Nullable UUID comboTarget;
     private int comboCount;
-    private long lastComboHit = Long.MIN_VALUE;
+    private long lastComboHit = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
     /** The floating combo counter over the current combo target (only the newest one is kept). */
     private @Nullable TextDisplay comboLabel;
 
