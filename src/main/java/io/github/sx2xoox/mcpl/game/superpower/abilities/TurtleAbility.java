@@ -47,6 +47,8 @@ import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -112,6 +114,8 @@ public final class TurtleAbility extends Ability {
     private static final long BLOCK_FEEDBACK_COOLDOWN = 8;
     private static final long FLASH_TICKS = 3;
     private static final int POSE_TICKS = 3;
+    /** The shell plates are re-turned once the body has turned more than this (degrees). */
+    private static final float YAW_EPSILON = 1.5f;
 
     // ------------------------------------------------------------------ active: shell spin
     /** The turtle pulls in to this share of its size while spinning. */
@@ -299,6 +303,8 @@ public final class TurtleAbility extends Ability {
         private float spinYaw;
         private double poseHeight = -1;
         private double poseScale = -1;
+        /** The yaw the plates' transformations are turned to (the displays themselves keep yaw and pitch 0). */
+        private float poseYaw;
 
         void tick(Player owner) {
             boolean wantHidden = giant != null || concealed(owner);
@@ -322,22 +328,24 @@ public final class TurtleAbility extends Ability {
                 return;
             }
             Location anchor = owner.getLocation();
+            for (BlockDisplay part : parts) {
+                Displays.moveTo(part, anchor);
+            }
+            float yaw;
             if (spinning) {
                 spinYaw = (spinYaw + SPIN_TURN) % 360;
-                anchor.setYaw(spinYaw);
+                yaw = spinYaw;
             } else {
-                anchor.setYaw(owner.getBodyYaw());
-            }
-            anchor.setPitch(0);
-            for (BlockDisplay part : parts) {
-                part.teleport(anchor);
+                yaw = owner.getBodyYaw();
             }
             double height = owner.getHeight();
             double scale = Body.scaleOf(owner);
-            if (Math.abs(height - poseHeight) > 1.0E-3 || Math.abs(scale - poseScale) > 1.0E-3) {
+            boolean reshaped = Math.abs(height - poseHeight) > 1.0E-3 || Math.abs(scale - poseScale) > 1.0E-3;
+            if (reshaped || spinning || Math.abs(angleBetween(yaw, poseYaw)) > YAW_EPSILON) {
                 poseHeight = height;
                 poseScale = scale;
-                pose(owner, POSE_TICKS);
+                poseYaw = yaw;
+                pose(owner, reshaped ? POSE_TICKS : spinning ? 1 : 2);
             }
         }
 
@@ -352,12 +360,9 @@ public final class TurtleAbility extends Ability {
                 if (!fits(1)) {
                     return false;
                 }
-                Location at = owner.getLocation();
-                at.setYaw(owner.getBodyYaw());
-                at.setPitch(0);
-                parts[i] = Displays.block(ctx(), owner, at, materials[i].createBlockData(),
-                        Displays.transform(0, (float) (owner.getHeight() * 0.62), -0.3f, 0.01f, 0.01f, 0.01f, 0, 0, 0),
-                        0);
+                parts[i] = Displays.block(ctx(), owner, owner.getLocation(), materials[i].createBlockData(),
+                        turned(Displays.transform(0, (float) (owner.getHeight() * 0.62), -0.3f, 0.01f, 0.01f, 0.01f,
+                                0, 0, 0), owner.getBodyYaw()), 0);
                 parts[i].setTeleportDuration(2);
                 displays.add(parts[i]);
                 spawned = true;
@@ -366,12 +371,16 @@ public final class TurtleAbility extends Ability {
                 // Grow into place from the next tick (an animation started on the spawn tick would snap).
                 poseHeight = owner.getHeight();
                 poseScale = Body.scaleOf(owner);
+                poseYaw = owner.getBodyYaw();
                 ctx().runLater(owner, 1, () -> pose(owner, POSE_TICKS));
             }
             return true;
         }
 
-        /** Moves the plates to the back (or into the whirling spin shell). */
+        /**
+         * Moves the plates to the back (or into the whirling spin shell), turned to {@link #poseYaw}: poses are laid
+         * out in the body's frame (local +Z = facing, -Z = the back) and turned in the transformation.
+         */
         void pose(Player owner, int ticks) {
             float s = (float) Body.scaleOf(owner);
             Transformation[] poses;
@@ -391,7 +400,7 @@ public final class TurtleAbility extends Ability {
             }
             for (int i = 0; i < parts.length; i++) {
                 if (parts[i] != null && parts[i].isValid()) {
-                    Displays.animate(parts[i], poses[i], ticks);
+                    Displays.animate(parts[i], turned(poses[i], poseYaw), ticks);
                 }
             }
         }
@@ -746,6 +755,10 @@ public final class TurtleAbility extends Ability {
         private double pending;
         private long lastFlash = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
         private double totalReflected;
+        /** The yaw the dome is turned to, in the plates' transformations (the displays keep yaw and pitch 0). */
+        private float shellYaw;
+        /** The dome follows the turtle's turns only once every plate has flown into place. */
+        private final long assembled = 1 + (GIANT_RINGS.length - 1) * 2L + GIANT_ASSEMBLE_TICKS;
 
         void begin() {
             Player owner = player();
@@ -772,7 +785,9 @@ public final class TurtleAbility extends Ability {
 
         /** The plates fly in from around the turtle and lock into the dome, ring by ring. */
         private void assemble(Player owner) {
-            Location anchor = anchor(owner);
+            Location anchor = owner.getLocation();
+            shellYaw = owner.getBodyYaw();
+            float yaw = shellYaw;
             long lifetime = duration + GIANT_ASSEMBLE_TICKS * 3L + 20;
             for (int r = 0; r < GIANT_RINGS.length; r++) {
                 GiantRing ring = GIANT_RINGS[r];
@@ -785,11 +800,13 @@ public final class TurtleAbility extends Ability {
                         return;
                     }
                     BlockDisplay display = Displays.block(ctx(), owner, anchor, ring.material().createBlockData(),
-                            giantPose(azimuth, ring.elevation(), GIANT_RADIUS * 1.8, ring.size() * 0.2f), lifetime);
+                            turned(giantPose(azimuth, ring.elevation(), GIANT_RADIUS * 1.8, ring.size() * 0.2f), yaw),
+                            lifetime);
                     display.setTeleportDuration(2);
                     display.setViewRange(2.0f);
                     displays.add(display);
-                    Transformation pose = giantPose(azimuth, ring.elevation(), GIANT_RADIUS, ring.size());
+                    Transformation pose = turned(giantPose(azimuth, ring.elevation(), GIANT_RADIUS, ring.size()),
+                            yaw);
                     ctx().runLater(owner, 1 + r * 2L, () -> Displays.animate(display, pose, GIANT_ASSEMBLE_TICKS));
                     plates.add(new Plate(display, azimuth, ring.elevation(), ring.size(), ring.material()));
                 }
@@ -799,10 +816,19 @@ public final class TurtleAbility extends Ability {
         @Override
         public boolean test(long tick) {
             Player owner = player();
-            Location anchor = anchor(owner);
+            Location anchor = owner.getLocation();
+            float yaw = owner.getBodyYaw();
+            boolean turn = tick > assembled && Math.abs(angleBetween(yaw, shellYaw)) > YAW_EPSILON;
+            if (turn) {
+                shellYaw = yaw;
+            }
             for (Plate plate : plates) {
                 if (plate.display().isValid()) {
-                    plate.display().teleport(anchor);
+                    Displays.moveTo(plate.display(), anchor);
+                    if (turn) {
+                        Displays.animate(plate.display(), turned(giantPose(plate.azimuth(), plate.elevation(),
+                                GIANT_RADIUS, plate.size()), shellYaw), 2);
+                    }
                 }
             }
             if (tick % THORN_PERIOD == 0 && pending > 0) {
@@ -912,7 +938,7 @@ public final class TurtleAbility extends Ability {
                 return;
             }
             toward.normalize();
-            float yaw = owner.getBodyYaw();
+            float yaw = shellYaw;
             Plate best = null;
             double bestDot = -2;
             for (Plate plate : plates) {
@@ -949,8 +975,8 @@ public final class TurtleAbility extends Ability {
                 if (!display.isValid()) {
                     continue;
                 }
-                Displays.animate(display, giantPose(plate.azimuth(), plate.elevation(), GIANT_RADIUS * 1.6,
-                        plate.size() * 0.1f), 6);
+                Displays.animate(display, turned(giantPose(plate.azimuth(), plate.elevation(), GIANT_RADIUS * 1.6,
+                        plate.size() * 0.1f), shellYaw), 6);
                 ctx().runLater(owner, 6, () -> {
                     if (display.isValid()) {
                         display.remove();
@@ -967,13 +993,25 @@ public final class TurtleAbility extends Ability {
                 giant = null;
             }
         }
+    }
 
-        private Location anchor(Player owner) {
-            Location at = owner.getLocation();
-            at.setYaw(owner.getBodyYaw());
-            at.setPitch(0);
-            return at;
-        }
+    /**
+     * {@code local}, a pose in a frame turned to the Minecraft yaw {@code yawDegrees} (local +Z = that facing, +X = its
+     * left), as the transformation of a display that itself keeps yaw and pitch 0 (same convention as the client's
+     * entity rotation: {@code rotY(-yaw)}).
+     */
+    private static Transformation turned(Transformation local, float yawDegrees) {
+        Quaternionf yaw = new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees));
+        Vector3f translation = yaw.transform(new Vector3f(local.getTranslation()));
+        Quaternionf left = new Quaternionf(yaw).mul(local.getLeftRotation());
+        return new Transformation(translation, left, new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
+    }
+
+    /** The signed difference {@code a - b} of two yaws in degrees, in -180..180. */
+    private static float angleBetween(float a, float b) {
+        float difference = (a - b) % 360;
+        return ((difference + 540) % 360) - 180;
     }
 
     /** The world-space outward normal of a giant-shell plate, with the shell turned to {@code yaw}. */

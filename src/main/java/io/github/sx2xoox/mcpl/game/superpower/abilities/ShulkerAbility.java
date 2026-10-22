@@ -300,11 +300,11 @@ public final class ShulkerAbility extends Ability {
             Location at = anchor(owner);
             if (anchor == null || anchor.distanceSquared(at) > 1.0E-4 || !anchor.getWorld().equals(at.getWorld())) {
                 anchor = at;
-                if (base != null && base.isValid()) {
-                    base.teleport(at);
+                if (base != null) {
+                    Displays.moveTo(base, at);
                 }
-                if (lid != null && lid.isValid()) {
-                    lid.teleport(at);
+                if (lid != null) {
+                    Displays.moveTo(lid, at);
                 }
             }
             if (peekUntil >= 0 && now >= peekUntil) {
@@ -650,13 +650,13 @@ public final class ShulkerAbility extends Ability {
             at.setYaw(0);
             at.setPitch(0);
             if (core != null && core.isValid()) {
-                core.teleport(at);
+                Displays.moveTo(core, at);
                 if (tick % 2 == 0) {
                     Displays.animate(core, cube(CORE_SIZE, spin, spin * 0.6f), 2);
                 }
             }
             if (glass != null && glass.isValid()) {
-                glass.teleport(at);
+                Displays.moveTo(glass, at);
                 if (tick % 2 == 0) {
                     Displays.animate(glass, cube(GLASS_SIZE, -spin * 0.7f, 30 + spin * 0.4f), 2);
                 }

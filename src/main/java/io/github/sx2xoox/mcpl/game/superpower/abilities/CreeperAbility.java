@@ -159,6 +159,7 @@ public final class CreeperAbility extends Ability {
     private long lastBarTick = Long.MIN_VALUE / 2;
     private final ItemDisplay[] powder = new ItemDisplay[POWDER_PIECES];
     private double powderPhase;
+    private long powderTurns;
     private @Nullable Fuse fuse;
     private long chargedUntil = -1;
     private @Nullable BlockDisplay powerShell;
@@ -294,7 +295,13 @@ public final class CreeperAbility extends Ability {
                 Displays.shrinkAway(ctx(), owner, piece, 4);
                 powder[i] = null;
             } else if (piece != null) {
-                piece.teleport(powderSpot(owner, i, scale));
+                Displays.moveTo(piece, powderSpot(owner, i, scale));
+                if (++powderTurns % 2 == 0) {
+                    // The pinch tumbles as it circles: turned in its transformation, the display keeps yaw 0.
+                    float size = (float) (POWDER_SCALE * scale);
+                    float spin = (float) Math.toDegrees(powderPhase + i * TAU / POWDER_PIECES) * 2;
+                    Displays.animate(piece, Displays.centered(0, 0, 0, size, size, size, spin, 0, 0), 2);
+                }
             }
         }
     }
@@ -303,11 +310,8 @@ public final class CreeperAbility extends Ability {
         double angle = powderPhase + index * TAU / POWDER_PIECES;
         double bob = Math.sin(powderPhase * 0.7 + index * 2.1) * 0.08;
         double height = (POWDER_HEIGHT + bob) * scale * (owner.isSneaking() ? 0.85 : 1.0);
-        Location at = owner.getLocation().add(Math.cos(angle) * POWDER_ORBIT * scale, height,
+        return owner.getLocation().add(Math.cos(angle) * POWDER_ORBIT * scale, height,
                 Math.sin(angle) * POWDER_ORBIT * scale);
-        at.setYaw((float) Math.toDegrees(angle) * 2);
-        at.setPitch(0);
-        return at;
     }
 
     // ------------------------------------------------------------------ active: self-destruct
@@ -381,7 +385,7 @@ public final class CreeperAbility extends Ability {
                 Location at = chest.clone();
                 at.setYaw(0);
                 at.setPitch(0);
-                bubble.teleport(at);
+                Displays.moveTo(bubble, at);
                 if (flash != flashing) {
                     bubble.setBlock((flash ? BUBBLE_FLASH : BUBBLE).createBlockData());
                 }
@@ -666,14 +670,14 @@ public final class CreeperAbility extends Ability {
             land.setPitch(0);
             ctx().runLater(owner, 1, () -> {
                 if (clod.isValid()) {
-                    clod.teleport(apex);
+                    Displays.moveTo(clod, apex);
                     Displays.animate(clod, Displays.transform(0, 0, 0, size, size, size, random.nextFloat() * 180,
                             random.nextFloat() * 180, 0), DEBRIS_FLIGHT_TICKS * 2);
                 }
             });
             ctx().runLater(owner, 1 + DEBRIS_FLIGHT_TICKS, () -> {
                 if (clod.isValid()) {
-                    clod.teleport(land);
+                    Displays.moveTo(clod, land);
                 }
             });
             ctx().runLater(owner, 1 + DEBRIS_FLIGHT_TICKS * 2L, () -> {
@@ -763,7 +767,7 @@ public final class CreeperAbility extends Ability {
             Location at = chest.clone();
             at.setYaw(0);
             at.setPitch(0);
-            shell.teleport(at);
+            Displays.moveTo(shell, at);
             if (run % 2 == 0) {
                 Displays.animate(shell, diamond(hidden ? 0.001f : auraSize(owner), run * 4f), 2);
             }

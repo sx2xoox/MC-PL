@@ -132,6 +132,7 @@ public final class GoatAbility extends Ability {
     private static final double WALL_BOUNCE = 0.25;
     private static final int STUN_AMPLIFIER = 2;
     private static final float HORN_SCALE = 0.55f;
+    private static final float HORN_START = 0.1f;
     private static final long RAM_LANDING_TICKS = 60;
 
     // ------------------------------------------------------------------ landslide
@@ -154,6 +155,12 @@ public final class GoatAbility extends Ability {
     private static final double CARRY_PUSH = 0.55;
     private static final long RUMBLE_PERIOD = 6;
     private static final long HORN_HOLD_TICKS = 24;
+    private static final int HORN_RAISE_TICKS = 5;
+    /** The horn of the landslide in head space: low at first, then raised to the lips, a little to the left. */
+    private static final Transformation HORN_LOWERED = Displays.centered(0.2f, -0.4f, 0.3f, 0.1f, 0.1f, 0.1f, 90, 0,
+            0);
+    private static final Transformation HORN_RAISED = Displays.centered(0.22f, 0.12f, 0.45f, 0.8f, 0.8f, 0.8f, 90, 0,
+            -35);
 
     private final LandingGuard landing = new LandingGuard();
     private boolean ramming;
@@ -285,15 +292,16 @@ public final class GoatAbility extends Ability {
             Fx.sound(head, Sound.ENTITY_GOAT_PREPARE_RAM, 1.2f, 1.0f + Fx.jitter(0.08f));
             Fx.sound(head, Sound.ENTITY_GOAT_SCREAMING_PREPARE_RAM, 0.4f, 1.1f + Fx.jitter(0.08f));
             long lifetime = windup + (long) Math.ceil(params().num("ram_distance") / RAM_SPEED) + MAX_LAG_TICKS + 20;
+            float yaw = yawOf(direction);
             for (int side = 0; side < 2; side++) {
                 if (!fits(1)) {
                     break;
                 }
+                // Upright and tiny at first; every tick of the wind-up lowers and grows them (see followHorns).
                 horns[side] = Displays.item(ctx(), owner, hornAnchor(owner), new ItemStack(Material.GOAT_HORN),
-                        hornPose(side, 0.0, 0.1f), lifetime);
+                        turned(hornPose(side, 0.0, HORN_START), yaw), lifetime);
                 horns[side].setTeleportDuration(1);
                 displays.add(horns[side]);
-                Displays.animateNextTick(ctx(), owner, horns[side], hornPose(side, 1.0, HORN_SCALE), (int) windup);
             }
             Loop.repeat(ctx(), owner, 0, 1, windup, this::scrape, this::charge);
         }
@@ -301,7 +309,7 @@ public final class GoatAbility extends Ability {
         /** Wind-up: the hooves scrape, the horns follow the head and the charge path is marked on the ground. */
         private boolean scrape(long tick) {
             direction = facing(owner);
-            followHorns(0);
+            followHorns(0, Math.min(1.0, (tick + 1.0) / windup));
             Location feet = owner.getLocation();
             if (tick % 2 == 0) {
                 BlockData ground = groundUnder(feet);
@@ -365,7 +373,7 @@ public final class GoatAbility extends Ability {
                 if (!now.getWorld().equals(start.getWorld())) {
                     return false;
                 }
-                followHorns(RAM_SPEED);
+                followHorns(RAM_SPEED, 1.0);
                 Location front = now.clone().add(direction.clone().multiply(0.7)).add(0, owner.getHeight() * 0.5, 0);
                 List<LivingEntity> contact = ctx().enemiesNear(owner, front, CONTACT_RADIUS);
                 if (!contact.isEmpty()) {
@@ -454,11 +462,20 @@ public final class GoatAbility extends Ability {
             Fx.sound(at, Sound.ENTITY_GOAT_AMBIENT, 0.8f, 0.9f + Fx.jitter(0.1f));
         }
 
-        private void followHorns(double lead) {
+        /**
+         * The horns stay on the head, pointing along the charge, {@code lowered} of the way down (0 = upright,
+         * 1 = levelled like a ram's). The orientation lives in the transformation only: the displays keep yaw and
+         * pitch 0.
+         */
+        private void followHorns(double lead, double lowered) {
             Location anchor = hornAnchor(owner).add(direction.clone().multiply(lead));
-            for (ItemDisplay horn : horns) {
+            float yaw = yawOf(direction);
+            float scale = (float) (HORN_START + (HORN_SCALE - HORN_START) * lowered);
+            for (int side = 0; side < horns.length; side++) {
+                ItemDisplay horn = horns[side];
                 if (horn != null && horn.isValid()) {
-                    horn.teleport(anchor);
+                    Displays.moveTo(horn, anchor);
+                    Displays.animate(horn, turned(hornPose(side, lowered, scale), yaw), 1);
                 }
             }
         }
@@ -472,23 +489,32 @@ public final class GoatAbility extends Ability {
         }
     }
 
-    /** Where the horns sit: in front of the head, turned with the body. */
+    /** The point the horns hang from: the eyes (displays are moved there without taking the owner's rotation). */
     private static Location hornAnchor(Player owner) {
-        Location at = owner.getEyeLocation();
-        at.setYaw(owner.getBodyYaw());
-        at.setPitch(0);
-        return at;
+        return owner.getEyeLocation();
     }
 
     /**
-     * One horn in head space (local +Z = facing, +X = the owner's left). {@code lowered} 0 = upright beside the head,
-     * 1 = pointing forward like a ram's.
+     * One horn in head space (local +Z = facing, +X = the owner's left), above the eyes so it never blocks the
+     * owner's view. {@code lowered} 0 = upright beside the head, 1 = pointing forward like a ram's.
      */
     private static Transformation hornPose(int side, double lowered, float scale) {
         float sign = side == 0 ? 1 : -1;
         float pitch = (float) (lowered * 70);
-        return Displays.centered(sign * 0.2f, 0.12f - (float) lowered * 0.1f, 0.15f + (float) lowered * 0.25f, scale,
+        return Displays.centered(sign * 0.22f, 0.26f - (float) lowered * 0.1f, 0.02f + (float) lowered * 0.2f, scale,
                 scale, scale, sign * 90f, 0, sign * (20f + pitch));
+    }
+
+    /**
+     * {@code local}, a pose in a frame turned to the Minecraft yaw {@code yawDegrees} (local +Z = that facing), as
+     * the transformation of a display that itself keeps yaw and pitch 0.
+     */
+    private static Transformation turned(Transformation local, float yawDegrees) {
+        Quaternionf yaw = new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees));
+        Vector3f translation = yaw.transform(new Vector3f(local.getTranslation()));
+        Quaternionf left = new Quaternionf(yaw).mul(local.getLeftRotation());
+        return new Transformation(translation, left, new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /**
@@ -625,6 +651,7 @@ public final class GoatAbility extends Ability {
         private final List<Boulder> boulders = new ArrayList<>();
         private final List<Set<UUID>> swept = new ArrayList<>();
         private @Nullable ItemDisplay horn;
+        private float hornYaw;
 
         Landslide(Location origin, Vector direction, double length) {
             this.origin = origin.clone();
@@ -658,12 +685,13 @@ public final class GoatAbility extends Ability {
                 return;
             }
             Location at = hornAnchor(owner);
+            hornYaw = yawOf(direction);
             ItemDisplay display = Displays.item(ctx(), owner, at, new ItemStack(Material.GOAT_HORN),
-                    Displays.centered(0, -0.4f, 0.3f, 0.1f, 0.1f, 0.1f, 90, 0, 0), HORN_HOLD_TICKS + 10);
+                    turned(HORN_LOWERED, hornYaw), HORN_HOLD_TICKS + 10);
+            display.setTeleportDuration(1);
             displays.add(display);
             horn = display;
-            Displays.animateNextTick(ctx(), owner, display,
-                    Displays.centered(0, 0.05f, 0.55f, 0.8f, 0.8f, 0.8f, 90, 0, -35), 5);
+            Displays.animateNextTick(ctx(), owner, display, turned(HORN_RAISED, hornYaw), HORN_RAISE_TICKS);
             ctx().runLater(owner, HORN_HOLD_TICKS, () -> {
                 if (display.isValid()) {
                     Displays.shrinkAway(ctx(), owner, display, 5);
@@ -675,7 +703,13 @@ public final class GoatAbility extends Ability {
         public boolean test(long tick) {
             Player owner = player();
             if (horn != null && horn.isValid() && tick < HORN_HOLD_TICKS) {
-                horn.teleport(hornAnchor(owner));
+                Displays.moveTo(horn, hornAnchor(owner));
+                float yaw = owner.getLocation().getYaw();
+                if (tick > HORN_RAISE_TICKS && Math.abs(angleBetween(yaw, hornYaw)) > 2) {
+                    // The horn turns with the goat (in its transformation: the display keeps yaw 0).
+                    hornYaw = yaw;
+                    Displays.animate(horn, turned(HORN_RAISED, hornYaw), 2);
+                }
                 if (tick % 4 == 0) {
                     Location bell = owner.getEyeLocation().add(Motion.horizontalFacing(owner.getLocation())
                             .multiply(0.9 + tick * 0.08));
@@ -893,10 +927,7 @@ public final class GoatAbility extends Ability {
                 position = at;
                 rolled += turn;
                 if (display != null && display.isValid()) {
-                    Location to = at.clone();
-                    to.setYaw(0);
-                    to.setPitch(0);
-                    display.teleport(to);
+                    Displays.moveTo(display, at);
                     if (age % 2 == 0) {
                         Vector3f axis = new Vector3f((float) side.getX(), 0, (float) side.getZ());
                         Quaternionf spin = new Quaternionf().rotateAxis((float) -rolled, axis.normalize())
@@ -992,6 +1023,12 @@ public final class GoatAbility extends Ability {
     private static BlockData groundUnder(Location at) {
         BlockData ground = at.clone().subtract(0, 0.2, 0).getBlock().getBlockData();
         return ground.getMaterial().isSolid() ? ground : FALLBACK_GROUND.createBlockData();
+    }
+
+    /** The signed difference {@code a - b} of two yaws in degrees, in -180..180. */
+    private static float angleBetween(float a, float b) {
+        float difference = (a - b) % 360;
+        return ((difference + 540) % 360) - 180;
     }
 
     /** The Minecraft yaw (degrees) of a horizontal direction. */
