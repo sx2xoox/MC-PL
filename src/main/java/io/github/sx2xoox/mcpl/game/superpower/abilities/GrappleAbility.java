@@ -10,6 +10,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -208,7 +209,9 @@ public final class GrappleAbility extends Ability {
             this.anchor = anchor;
             this.anchorBlock = anchorBlock;
             Location hand = hand(player());
-            this.headPosition = hand.toVector();
+            // A hand inside a wall (the owner hugging it) would stop the hook at once: throw it from the eyes then.
+            Location eye = player().getEyeLocation();
+            this.headPosition = Spots.clearPath(eye, hand) ? hand.toVector() : eye.toVector();
             this.head = ctx().track(player(), hand.getWorld().spawn(hand, ItemDisplay.class, display -> {
                 display.setItemStack(ItemStack.of(Material.TRIPWIRE_HOOK));
                 display.setBillboard(Display.Billboard.CENTER);
@@ -245,7 +248,7 @@ public final class GrappleAbility extends Ability {
                 if (!isHookable(victim)) {
                     return false;
                 }
-                target = center(victim);
+                target = aimPoint(victim);
             } else {
                 target = anchor;
             }
@@ -254,6 +257,20 @@ public final class GrappleAbility extends Ability {
             }
             Vector toTarget = target.clone().subtract(headPosition);
             double distance = toTarget.length();
+            if (victim != null && distance > 1.0E-6) {
+                // The victim may duck behind cover while the hook flies: the hook stops at the first block.
+                World world = head.getWorld();
+                RayTraceResult wall = world.rayTraceBlocks(headPosition.toLocation(world),
+                        toTarget.clone().multiply(1 / distance), Math.min(HOOK_SPEED, distance),
+                        FluidCollisionMode.NEVER, true);
+                if (wall != null) {
+                    headPosition = wall.getHitPosition();
+                    moveHead();
+                    drawChain(hand(player()).toVector(), headPosition, CHAIN_DUST);
+                    fizzle(wall.getHitBlock());
+                    return false;
+                }
+            }
             if (distance <= HOOK_SPEED) {
                 headPosition = target.clone();
                 latch();
@@ -365,6 +382,33 @@ public final class GrappleAbility extends Ability {
                 return false;
             }
             return ++stuckTicks >= STUCK_TICKS;
+        }
+
+        /**
+         * Where the hook homes in on the victim: its centre, or its eyes when only those are in the open from the
+         * hook (a victim seen over low cover). With both covered it keeps flying at the centre and hits the cover.
+         */
+        private Vector aimPoint(LivingEntity entity) {
+            World world = head.getWorld();
+            Location from = headPosition.toLocation(world);
+            Vector center = center(entity);
+            if (Spots.clearPath(from, center.toLocation(world))) {
+                return center;
+            }
+            Vector eye = entity.getEyeLocation().toVector();
+            return Spots.clearPath(from, eye.toLocation(world)) ? eye : center;
+        }
+
+        /** The hook clangs off a block that got in its way. */
+        private void fizzle(@Nullable Block block) {
+            World world = head.getWorld();
+            Location at = headPosition.toLocation(world);
+            if (block != null && !block.getType().isAir()) {
+                world.spawnParticle(Particle.BLOCK, at, 10, 0.12, 0.12, 0.12, 0.1, block.getBlockData());
+            }
+            world.spawnParticle(Particle.CRIT, at, 8, 0.12, 0.12, 0.12, 0.25);
+            Fx.sound(at, Sound.ITEM_TRIDENT_HIT_GROUND, 1.0f, 0.8f + Fx.jitter(0.1f));
+            Fx.sound(at, Sound.BLOCK_CHAIN_HIT, 0.8f, 1.3f + Fx.jitter(0.1f));
         }
 
         private boolean isHookable(LivingEntity entity) {

@@ -24,6 +24,7 @@ import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -47,8 +48,8 @@ public final class BlinkAbility extends Ability {
             .color(TextColor.color(0xB57BFF))
             .difficulty(2)
             .passive("위상 회피",
-                    "받는 투사체 공격을 {dodge_chance}% 확률로 흘려보냅니다. 회피하면 점멸 쿨타임이 {dodge_refund}초 "
-                            + "줄어듭니다.")
+                    "투사체와 {dodge_range}블록 이상 떨어진 적의 원거리 공격을 {dodge_chance}% 확률로 흘려보냅니다. "
+                            + "회피하면 점멸 쿨타임이 {dodge_refund}초 줄어듭니다.")
             .active("점멸",
                     "바라보는 방향으로 최대 {distance}블록 떨어진 안전한 지점으로 순간이동합니다. 벽은 통과할 수 없습니다.",
                     6)
@@ -58,6 +59,7 @@ public final class BlinkAbility extends Ability {
             .ultimateNotStandalone()
             .param("dodge_chance", 20)
             .param("dodge_refund", 1)
+            .param("dodge_range", 5)
             .param("distance", 10)
             .param("ult_range", 30)
             .param("empower_duration", 5)
@@ -105,7 +107,7 @@ public final class BlinkAbility extends Ability {
         if (landing.absorb(event, ctx().currentTick())) {
             return;
         }
-        if (event.getDamage() <= 0 || !isProjectileHit(event)) {
+        if (event.getDamage() <= 0 || !isRangedHit(event)) {
             return;
         }
         if (ThreadLocalRandom.current().nextDouble() * 100.0 >= params().num("dodge_chance")) {
@@ -127,6 +129,28 @@ public final class BlinkAbility extends Ability {
             suffix = " <gray>점멸 -" + AbilityInfo.formatNumber(Math.ceil(refund * 10) / 10.0) + "초</gray>";
         }
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">✦ 위상 회피!</" + COLOR_TAG + ">" + suffix));
+    }
+
+    /**
+     * A vanilla projectile, or a hit whose direct damager is an attacker at least {@code dodge_range} blocks away.
+     * Ability "projectiles" (fireballs, ice spears, skill arrows, grenades...) are delivered as ability damage from
+     * the caster, so their distance is what tells them apart from melee.
+     */
+    private boolean isRangedHit(EntityDamageEvent event) {
+        if (isProjectileHit(event)) {
+            return true;
+        }
+        if (!(event instanceof EntityDamageByEntityEvent byEntity)) {
+            return false;
+        }
+        Player owner = player();
+        Entity damager = byEntity.getDamager();
+        Player attacker = ctx().resolveAttacker(damager);
+        if (attacker == null || attacker.equals(owner) || !damager.getWorld().equals(owner.getWorld())) {
+            return false;
+        }
+        double range = params().num("dodge_range");
+        return damager.getLocation().distanceSquared(owner.getLocation()) >= range * range;
     }
 
     private static boolean isProjectileHit(EntityDamageEvent event) {

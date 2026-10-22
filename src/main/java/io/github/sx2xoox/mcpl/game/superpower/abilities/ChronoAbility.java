@@ -4,11 +4,13 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
@@ -22,6 +24,7 @@ import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
@@ -308,10 +311,14 @@ public final class ChronoAbility extends Ability {
     private Frozen freeze(LivingEntity enemy, long duration) {
         Player owner = player();
         // Timed modifiers: they expire on their own even if the owner dies mid-stop.
-        stop(owner, enemy, Attribute.MOVEMENT_SPEED, -1, AttributeModifier.Operation.MULTIPLY_SCALAR_1, duration);
-        stop(owner, enemy, Attribute.JUMP_STRENGTH, -1, AttributeModifier.Operation.MULTIPLY_SCALAR_1, duration);
-        stop(owner, enemy, Attribute.GRAVITY, -1, AttributeModifier.Operation.MULTIPLY_SCALAR_1, duration);
-        stop(owner, enemy, Attribute.KNOCKBACK_RESISTANCE, 1, AttributeModifier.Operation.ADD_NUMBER, duration);
+        List<NamespacedKey> modifiers = new ArrayList<>();
+        stop(owner, enemy, Attribute.MOVEMENT_SPEED, -1, AttributeModifier.Operation.MULTIPLY_SCALAR_1, duration,
+                modifiers);
+        stop(owner, enemy, Attribute.JUMP_STRENGTH, -1, AttributeModifier.Operation.MULTIPLY_SCALAR_1, duration,
+                modifiers);
+        stop(owner, enemy, Attribute.GRAVITY, -1, AttributeModifier.Operation.MULTIPLY_SCALAR_1, duration, modifiers);
+        stop(owner, enemy, Attribute.KNOCKBACK_RESISTANCE, 1, AttributeModifier.Operation.ADD_NUMBER, duration,
+                modifiers);
         enemy.setVelocity(new Vector());
 
         Location pin = enemy.getLocation();
@@ -333,17 +340,17 @@ public final class ChronoAbility extends Ability {
             ctx().silence(victim, duration);
             victim.playSound(victim, Sound.BLOCK_BEACON_DEACTIVATE, SoundCategory.PLAYERS, 0.8f, 0.6f);
         }
-        return new Frozen(enemy, pin, label);
+        return new Frozen(enemy, pin, label, modifiers);
     }
 
     private void stop(Player owner, LivingEntity enemy, Attribute attribute, double amount,
-                      AttributeModifier.Operation operation, long duration) {
+                      AttributeModifier.Operation operation, long duration, List<NamespacedKey> keys) {
         if (enemy.getAttribute(attribute) != null) {
-            ctx().addModifier(owner, enemy, attribute, amount, operation, duration);
+            keys.add(ctx().addModifier(owner, enemy, attribute, amount, operation, duration));
         }
     }
 
-    private record Frozen(LivingEntity entity, Location pin, TextDisplay label) {
+    private record Frozen(LivingEntity entity, Location pin, TextDisplay label, List<NamespacedKey> modifiers) {
     }
 
     /** Holds every frozen enemy in place, draws the wave and countdowns, and resumes time at the end. */
@@ -367,12 +374,15 @@ public final class ChronoAbility extends Ability {
                 drawWave(tick);
             }
             long left = duration - tick;
-            for (Frozen f : frozen) {
+            Iterator<Frozen> it = frozen.iterator();
+            while (it.hasNext()) {
+                Frozen f = it.next();
                 LivingEntity entity = f.entity();
-                if (!entity.isValid() || entity.isDead()) {
-                    if (f.label().isValid()) {
-                        f.label().remove();
-                    }
+                if (!Combat.isTargetable(ctx(), player(), entity)) {
+                    // Killed (and maybe already back as a spectator), or no longer an enemy: let go for good, so the
+                    // pin, the ring and the messages never touch it again.
+                    release(f);
+                    it.remove();
                     continue;
                 }
                 if (tick % 2 == 0) {
@@ -437,13 +447,23 @@ public final class ChronoAbility extends Ability {
             Fx.ring(Fx.body(entity), r, FROZEN_RING_POINTS, tick * 0.05, Particle.DUST, FROZEN_DUST);
         }
 
+        /** Removes the label and the freeze of an entity that dropped out of the stop early. */
+        private void release(Frozen f) {
+            if (f.label().isValid()) {
+                f.label().remove();
+            }
+            for (NamespacedKey key : f.modifiers()) {
+                ctx().removeModifier(f.entity(), key);
+            }
+        }
+
         private void resume() {
             for (Frozen f : frozen) {
                 if (f.label().isValid()) {
                     f.label().remove();
                 }
                 LivingEntity entity = f.entity();
-                if (!entity.isValid() || entity.isDead()) {
+                if (!Combat.isTargetable(ctx(), player(), entity)) {
                     continue;
                 }
                 Location body = entity.getLocation().add(0, entity.getHeight() * 0.5, 0);

@@ -12,8 +12,8 @@ import java.util.function.LongPredicate;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
-import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Stealth;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
@@ -81,11 +81,12 @@ public final class ShadowAbility extends Ability {
     private static final double DANCE_LEASH = 2.0;
     /** Repeated strikes on the same target come from a different side each time. */
     private static final double REPEAT_ANGLE_STEP = 120;
+    /** The fall after a dance step or the return home is harmless for at most this long. */
     private static final long LANDING_GRACE_TICKS = 100;
 
     private final Stealth stealth = new Stealth();
-    /** Cancels the fall damage of the landing after a dance step that ended in mid-air. */
-    private final LandingGuard landing = new LandingGuard();
+    /** Generation of the running landing protection; a newer one retires the older loop. */
+    private int fallGuardToken;
 
     private enum Reveal { ATTACK, HIT, EXPIRED, REVOKE }
 
@@ -173,10 +174,6 @@ public final class ShadowAbility extends Ability {
         if (event.isCancelled()) {
             return;
         }
-        // The dance may end next to an airborne enemy; that drop is not the owner's fault.
-        if (landing.absorb(event, ctx().currentTick())) {
-            return;
-        }
         if (stealth.isActive() && event.getDamage() > 0 && event instanceof EntityDamageByEntityEvent) {
             reveal(Reveal.HIT);
         }
@@ -184,9 +181,6 @@ public final class ShadowAbility extends Ability {
 
     @Override
     public void onTick(long tick) {
-        if (tick % 2 == 0) {
-            landing.update(player(), tick);
-        }
         if (!stealth.isActive()) {
             return;
         }
@@ -333,12 +327,13 @@ public final class ShadowAbility extends Ability {
             Location spot = Spots.around(ctx(), owner, target, repeat * REPEAT_ANGLE_STEP);
             if (spot != null && owner.teleport(spot, TeleportCause.PLUGIN)) {
                 owner.setFallDistance(0);
-                landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
                 shadowStep(owner, before, spot);
             } else {
                 // No room next to the target: the shadow lashes out from where the owner stands instead.
                 shadowStep(owner, before, target.getLocation());
             }
+            // The step may end next to an airborne enemy; that drop is not the owner's fault.
+            guardLanding(owner);
 
             Combat.hit(ctx(), owner, target, damage);
 
@@ -357,17 +352,35 @@ public final class ShadowAbility extends Ability {
             if (!owner.isValid() || !owner.getWorld().equals(origin.getWorld())) {
                 return;
             }
+            // Even when home is blocked, the owner may be left in mid-air next to the last target.
+            guardLanding(owner);
             if (!Spots.isSafe(ctx(), origin, Body.standing(owner))) {
                 return;
             }
             Location before = owner.getLocation();
             if (owner.teleport(origin, TeleportCause.PLUGIN)) {
                 owner.setFallDistance(0);
-                landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
                 shadowStep(owner, before, origin);
                 Fx.sound(origin, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 0.85f + Fx.jitter(0.05f));
             }
         }
+    }
+
+    /**
+     * Keeps the owner's fall distance at zero until it stands on the ground or swims (at most
+     * {@link #LANDING_GRACE_TICKS}), so a dance step that ends in mid-air never turns into fall damage. It is a loop
+     * of its own rather than a {@code LandingGuard}: it needs no tick or damage hooks, so it also protects a Gambler
+     * that borrowed the dance.
+     */
+    private void guardLanding(Player owner) {
+        int token = ++fallGuardToken;
+        Loop.repeat(ctx(), owner, 0, 1, LANDING_GRACE_TICKS, run -> {
+            if (token != fallGuardToken) {
+                return false;
+            }
+            owner.setFallDistance(0);
+            return !Motion.isGrounded(owner) && !owner.isInWater();
+        });
     }
 
     /** Dark streaks from the old position to the new one plus a puff of smoke where the owner left. */
