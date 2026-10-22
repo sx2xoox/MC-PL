@@ -60,7 +60,8 @@ public final class DruidAbility extends Ability {
             .color(TextColor.color(0x5BBF4A))
             .difficulty(2)
             .passive("광합성",
-                    "풀·이끼·잎·흙 같은 자연 위에 서 있으면 {regen_interval}초마다 체력을 {regen_amount} 회복합니다.")
+                    "풀·이끼·잎·흙 같은 자연 위에 있는 동안(뛰어올라도 유지) {regen_interval}초마다 체력을 "
+                            + "{regen_amount} 회복합니다.")
             .active("덩굴 속박",
                     "조준한 적({snare_range}블록 이내)의 발밑에서 {snare_delay}초 뒤 덩굴이 솟아올라 반경 "
                             + "{snare_radius}블록의 적을 {root_duration}초간 묶습니다. 묶인 적은 움직이거나 점프할 수 없고, "
