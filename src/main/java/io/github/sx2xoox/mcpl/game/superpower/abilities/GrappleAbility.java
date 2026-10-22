@@ -1,6 +1,8 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -106,6 +108,11 @@ public final class GrappleAbility extends Ability {
     private static final double PULL_GOAL_DISTANCE = 1.8;
     private static final double PULL_STOP_DISTANCE = 2.3;
     private static final long PULL_TIMEOUT_TICKS = 30;
+    /** The least lift the drag gives a victim on the ground, so ground friction and small steps do not stop it. */
+    private static final double PULL_LIFT = 0.12;
+    /** The drag predicts a player's client at most this many ticks ahead (a 400 ms round trip). */
+    private static final int MAX_LAG_TICKS = 8;
+    private static final double MILLIS_PER_TICK = 50.0;
 
     /** The landing after a reel is protected from fall damage for at most this long. */
     private static final long FALL_GRACE_CAP_TICKS = 200;
@@ -248,6 +255,21 @@ public final class GrappleAbility extends Ability {
         private float spin;
         /** The velocity the drag last gave the victim. */
         private Vector lastPull = new Vector();
+        /**
+         * Where the dragged victim is horizontally once it has followed every drag sent so far. A player victim is
+         * steered by this (dead reckoning), not by its position on the server: that trails the player's client by its
+         * ping, and steering by it kept dragging a victim that was already there, past the drop point into the owner.
+         * Any other entity is moved by the server itself, so its own position is exact.
+         */
+        private double pullX;
+        private double pullZ;
+        /**
+         * The vertical speeds of the drags most recently sent, newest first. Vertically the ground and gravity have the
+         * last word, so a player victim is where the server last heard of it, raised or lowered by the drags of one
+         * round trip since: steered by the server's height alone, a player dragged up from below kept getting lifted
+         * off a ground it had long left and shot far above the owner.
+         */
+        private final Deque<Double> rises = new ArrayDeque<>();
 
         Hook(@Nullable LivingEntity victim, @Nullable Vector anchor, @Nullable BlockData anchorBlock) {
             this.victim = victim;
@@ -342,6 +364,9 @@ public final class GrappleAbility extends Ability {
                 if (victim instanceof Player caught) {
                     caught.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛓ 갈고리에 걸렸습니다!</" + COLOR_TAG + ">"));
                 }
+                Location caughtAt = victim.getLocation();
+                pullX = caughtAt.getX();
+                pullZ = caughtAt.getZ();
                 phase = Phase.PULL;
             } else {
                 if (anchorBlock != null && !anchorBlock.getMaterial().isAir()) {
@@ -393,10 +418,17 @@ public final class GrappleAbility extends Ability {
             }
             Location ownerFeet = owner.getLocation();
             Location victimFeet = victim.getLocation();
-            if (victimFeet.distance(ownerFeet) <= PULL_STOP_DISTANCE || phaseTicks > PULL_TIMEOUT_TICKS) {
-                // Stop the drag but keep a fall going. A player's server-side velocity is stale (only its client
-                // knows the real one), so the drag's own last command stands in for it.
-                victim.setVelocity(new Vector(0, Math.min(0, lastPull.getY()), 0));
+            if (!(victim instanceof Player)) {
+                pullX = victimFeet.getX();
+                pullZ = victimFeet.getZ();
+            }
+            // On the ground as the server sees it: then no lower than that, and still on it only while the drags on
+            // their way to the client have not lifted it off.
+            boolean standing = Motion.isGrounded(victim);
+            double rise = standing ? Math.max(0, risen(victim)) : risen(victim);
+            Vector victimAt = new Vector(pullX, victimFeet.getY() + rise, pullZ);
+            if (victimAt.distance(ownerFeet.toVector()) <= PULL_STOP_DISTANCE || phaseTicks > PULL_TIMEOUT_TICKS) {
+                halt(victim);
                 return false;
             }
             Vector forward = ownerFeet.getDirection().setY(0);
@@ -405,17 +437,23 @@ public final class GrappleAbility extends Ability {
             } else {
                 forward.normalize().multiply(PULL_GOAL_DISTANCE);
             }
-            Vector toGoal = ownerFeet.toVector().add(forward).subtract(victimFeet.toVector());
+            Vector toGoal = ownerFeet.toVector().add(forward).subtract(victimAt);
             double distance = toGoal.length();
             if (distance < 0.6 || isStuck(distance)) {
+                halt(victim);
                 return false;
             }
             Vector velocity = toGoal.multiply(Math.min(PULL_MAX_SPEED, distance * 0.5 + 0.3) / distance);
-            if (Motion.isGrounded(victim)) {
-                // A little lift so ground friction and small steps do not stop the drag.
-                velocity.setY(Math.max(velocity.getY(), 0.12));
+            if (standing && rise < 1.0E-3) {
+                velocity.setY(Math.max(velocity.getY(), PULL_LIFT));
             }
             lastPull = Motion.clamp(velocity, MAX_VELOCITY);
+            pullX += lastPull.getX();
+            pullZ += lastPull.getZ();
+            rises.addFirst(lastPull.getY());
+            if (rises.size() > MAX_LAG_TICKS) {
+                rises.removeLast();
+            }
             victim.setVelocity(lastPull);
             victim.setFallDistance(0);
             headPosition = center(victim);
@@ -429,6 +467,30 @@ public final class GrappleAbility extends Ability {
                 Vfx.trail(headPosition.toLocation(world), hand.toLocation(world), PALETTE.core(), 4, false);
             }
             return true;
+        }
+
+        /**
+         * How far the drags sent during the last round trip have raised (or lowered) a player's client beyond where
+         * the server last heard of it; 0 for any other entity.
+         */
+        private double risen(LivingEntity dragged) {
+            int lag = dragged instanceof Player player
+                    ? Math.clamp(Math.round(player.getPing() / MILLIS_PER_TICK), 0, MAX_LAG_TICKS)
+                    : 0;
+            double sum = 0;
+            Iterator<Double> newest = rises.iterator();
+            for (int i = 0; i < lag && newest.hasNext(); i++) {
+                sum += newest.next();
+            }
+            return sum;
+        }
+
+        /**
+         * Ends the drag where the victim is, but keeps a fall going. A player's server-side velocity is stale (only its
+         * client knows the real one), so the drag's own last command stands in for it.
+         */
+        private void halt(LivingEntity dragged) {
+            dragged.setVelocity(new Vector(0, Math.min(0, lastPull.getY()), 0));
         }
 
         /** True after several ticks without progress. The first ticks are ignored: player motion lags by ping. */

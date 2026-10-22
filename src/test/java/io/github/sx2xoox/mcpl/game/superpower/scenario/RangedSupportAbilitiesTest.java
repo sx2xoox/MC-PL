@@ -43,6 +43,10 @@ import org.junit.jupiter.api.Test;
 class RangedSupportAbilitiesTest {
 
     private static final double EPSILON = 1.0E-6;
+    /** {@code ArcherAbility.RAIN_WINDUP}: ticks between the arrow rain's cast and its first arrows. */
+    private static final int RAIN_WINDUP_TICKS = 8;
+    /** {@code ArcherAbility.ARROW_LIFETIME}: ticks after which an ability arrow that never landed is removed. */
+    private static final int ARROW_LIFETIME_TICKS = 100;
 
     private static <T extends Entity> List<T> entities(Scenario s, Class<T> type) {
         return s.world.getEntities().stream().filter(type::isInstance).map(type::cast).toList();
@@ -160,9 +164,14 @@ class RangedSupportAbilitiesTest {
         }
     }
 
+    /**
+     * The archer stands inside the zone it rains on. Where the arrows fall is random, so this rain has 90 arrows
+     * instead of 30: an enemy in the zone is struck by roughly one arrow in six, and with 30 arrows one of the two
+     * still went unhit now and then (once in 1000 rains); three times the arrows cube that chance.
+     */
     @Test
     void archerArrowRainPeppersTheZoneButSparesTheArcher() {
-        try (Scenario s = Scenario.ffa("archer")) {
+        try (Scenario s = Scenario.builder("archer").param("rain_arrows", 90).start()) {
             s.place(s.enemy2, 2.5, 6.5, 180);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "화살비");
@@ -176,10 +185,39 @@ class RangedSupportAbilitiesTest {
                         + s.param("rain_hit_interval") + " s");
             }
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "the archer stands in the zone unharmed");
-            s.ticks(60);
+            // An arrow that lands is removed shortly after, but one that fell onto the archer passes through it (its
+            // hit is cancelled) and may never land: only its lifetime ends it. Waiting a fixed 60 ticks more failed
+            // whenever one of the last arrows happened to fall onto the archer.
+            s.ticks(lastRainArrowGoneTicks(s) - 100);
             assertTrue(entities(s, Arrow.class).isEmpty(), "rain arrows are cleaned up");
             s.finishClean();
         }
+    }
+
+    /** Every arrow of a rain falling on the archer's own spot passes through it, and is still cleaned up. */
+    @Test
+    void archerRainArrowsThatFallThroughTheArcherAreCleanedUpToo() {
+        try (Scenario s = Scenario.builder("archer").param("rain_radius", 0.5).start()) {
+            s.place(s.enemy, 10.5, 10.5, 0);
+            s.place(s.enemy2, -10.5, 10.5, 0);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, 90); // looking straight down at its own feet
+            s.assertSucceeded(s.ultimate(), "화살비");
+            s.ticks(RAIN_WINDUP_TICKS + 10);
+            assertFalse(entities(s, Arrow.class).isEmpty(), "the rain falls on the archer");
+            s.ticks(lastRainArrowGoneTicks(s) - RAIN_WINDUP_TICKS - 10);
+            assertTrue(entities(s, Arrow.class).isEmpty(), "no arrow is left, landed or not");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "the archer is never hurt by its own rain");
+            assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * Ticks after the cast by which every rain arrow is gone: the last arrows fall {@link #RAIN_WINDUP_TICKS} plus the
+     * rain's duration after the cast, and an arrow that never lands is removed after {@link #ARROW_LIFETIME_TICKS}.
+     */
+    private static int lastRainArrowGoneTicks(Scenario s) {
+        return RAIN_WINDUP_TICKS + s.paramTicks("rain_duration") + ARROW_LIFETIME_TICKS + 2;
     }
 
     @Test

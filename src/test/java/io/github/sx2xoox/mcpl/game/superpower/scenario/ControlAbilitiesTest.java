@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -58,6 +61,177 @@ class ControlAbilitiesTest {
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the pull itself does not hurt");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
+        }
+    }
+
+    /**
+     * The owner stands three blocks up (on a ledge: physics is off, so it stays where it is put) and pulls a 150 ms
+     * player up from the floor. Steered by the height the server last heard of, the player kept being lifted (and
+     * hopped off a floor it had long left) for a round trip too long and shot more than a block above the owner.
+     */
+    @Test
+    void gravityPullLiftsALaggingPlayerNoHigherThanTheOwner() {
+        for (int ping : new int[] {0, 150}) {
+            try (Scenario s = Scenario.ffa("gravity")) {
+                double ownerY = FlatWorld.SURFACE + 3;
+                s.place(s.enemy2, 12.5, -6.5, 0);
+                s.world.physics().setEnabled(false);
+                s.place(s.owner, 0.5, ownerY, 0.5, 0, 0);
+                s.place(s.enemy, 0.5, 8.5, 180);
+                s.enemy.setPing(ping);
+                RealClient client = new RealClient(s, s.enemy, ping / 50);
+                s.aimAt(s.owner, s.enemy);
+                s.assertSucceeded(s.active(), "끌어당기기");
+                double peak = Double.NEGATIVE_INFINITY;
+                boolean slowed = false;
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                    peak = Math.max(peak, client.at().getY());
+                    slowed |= s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS);
+                }
+                s.world.physics().setEnabled(true);
+                assertTrue(peak < ownerY + 0.3, ping + " ms: lifted no higher than the owner: " + (peak - ownerY));
+                assertTrue(peak > ownerY - 1.5, ping + " ms: but up to it: " + (peak - ownerY));
+                double ahead = client.at().getZ() - s.owner.getLocation().getZ();
+                assertTrue(ahead > 1.0 && ahead < 4.0, ping + " ms: dropped in front of the owner: " + ahead);
+                assertTrue(slowed, ping + " ms: and slowed there");
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.place(s.enemy, 0.5, 4.5, 180);
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * A target almost straight below the drop point, four blocks down (the owner on a ledge again). The pull's speed
+     * follows the whole distance, mostly height here: put into the small sideways gap, it flung the target about a
+     * block and a half past the drop point every tick, back and forth, while it was lifted.
+     */
+    @Test
+    void gravityPullLiftsATargetBelowStraightUpWithoutSwingingItAcross() {
+        for (int ping : new int[] {0, 150}) {
+            try (Scenario s = Scenario.ffa("gravity")) {
+                s.place(s.enemy2, 12.5, -6.5, 0);
+                s.world.physics().setEnabled(false);
+                s.place(s.owner, 0.5, FlatWorld.SURFACE + 4, 0.5, 0, 0);
+                double drop = 0.5 + 1.8; // the drop point: 1.8 blocks in front of the owner
+                s.place(s.enemy, 0.5, drop + 0.2, 180);
+                s.enemy.setPing(ping);
+                RealClient client = new RealClient(s, s.enemy, ping / 50);
+                s.aimAt(s.owner, s.enemy);
+                s.assertSucceeded(s.active(), "끌어당기기");
+                double highest = FlatWorld.SURFACE;
+                boolean slowed = false;
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                    double off = Math.abs(client.at().getZ() - drop);
+                    assertTrue(off < 0.2 + 1.0E-6, ping + " ms: never swung past the drop point: " + off + " off");
+                    highest = Math.max(highest, client.at().getY());
+                    slowed |= s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS);
+                }
+                s.world.physics().setEnabled(true);
+                assertTrue(highest > FlatWorld.SURFACE + 2, ping + " ms: lifted towards the owner: " + highest);
+                assertTrue(slowed, ping + " ms: and dropped, slowed");
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.place(s.enemy, 0.5, 4.5, 180);
+                s.finishClean();
+            }
+        }
+    }
+
+    @Test
+    void gravityPullDropsALaggingPlayerInFrontOfTheOwner() {
+        try (Scenario s = Scenario.ffa("gravity")) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 12.5, -6.5, 0);
+            s.world.physics().setEnabled(false);
+            // The server sees the pulled player three ticks late (a round trip of about 150 ms): steering by that
+            // position kept pulling a player that had long arrived, through the owner and out behind it.
+            s.enemy.setPing(150);
+            RealClient client = new RealClient(s, s.enemy, 3);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "끌어당기기");
+            boolean slowed = false;
+            for (int i = 0; i < 30; i++) {
+                client.tick();
+                slowed |= s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS);
+            }
+            s.world.physics().setEnabled(true);
+            double ahead = client.at().getZ() - s.owner.getLocation().getZ();
+            assertTrue(ahead > 1.0, "the player is dropped in front of the owner, not in or behind it: " + ahead);
+            assertTrue(ahead < 4.0, "but it was pulled in: " + ahead);
+            assertTrue(slowed, "and slowed where it was dropped");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON);
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A player's real client against what the server knows of it, for the real-client bugs a plain world simulation
+     * hides. A real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server
+     * last sent it): the client keeps its own velocity (gravity, drag, ground friction) until the server sends a new
+     * one, and the server sees the client's position {@code lag} ticks late. World physics must be off: this moves the
+     * player.
+     */
+    private static final class RealClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final Deque<Location> late = new ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector marked = new Vector();
+
+        RealClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+            mark(new Vector());
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /**
+         * One server tick, then one client tick with the velocity the server last set during it (a server sends a
+         * player's velocity once per tick, after the plugins ran).
+         */
+        void tick() {
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                velocity.copy(now);
+                mark(now);
+            }
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+            player.setVelocity(marked);
+        }
+
+        private void mark(Vector sent) {
+            marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
         }
     }
 

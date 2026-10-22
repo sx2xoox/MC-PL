@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +16,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
+import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -463,6 +466,221 @@ class MeleeAbilitiesTest {
             }
             s.ticks(40);
             s.finishClean();
+        }
+    }
+
+    /**
+     * A 150 ms connection (three ticks): the server hears where the charging guardian is three ticks late. Measured
+     * on that position, the charge kept sending its velocity until the lagging position reached the end, so the client
+     * ran about a block further for every tick of the round trip.
+     */
+    @Test
+    void guardianChargeEndsAtItsLengthEvenWhenTheServerSeesTheGuardianLate() {
+        try (Scenario s = Scenario.ffa("guardian")) {
+            s.place(s.enemy, 10.5, 10.5, 0);
+            s.place(s.enemy2, -10.5, 10.5, 0);
+            s.owner.setPing(150);
+            Location start = s.owner.getLocation();
+            s.world.physics().setEnabled(false);
+            RealClient client = new RealClient(s, s.owner, 3);
+            s.assertSucceeded(s.active(), "방패 돌격");
+            for (int i = 0; i < 30; i++) {
+                client.tick();
+            }
+            s.world.physics().setEnabled(true);
+            double travelled = horizontalDistance(start, client.at());
+            double length = s.param("bash_distance");
+            assertTrue(travelled < length + 0.3, "the charge did not run on past its end: " + travelled);
+            assertTrue(travelled > length - 0.5, "but ran its whole length: " + travelled);
+            assertEquals(start.getX(), client.at().getX(), EPSILON, "straight ahead");
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The bash goes off where the guardian stops, whatever its ping. It went off where the server last heard of the
+     * guardian, about a block short for every tick of the round trip: on every screen the wall of force burst behind
+     * the guardian, which then slid on to its stop and past enemies standing there untouched. And an enemy in the
+     * way stopped the charge only once the server saw the guardian reach it, long after its client ran through it.
+     */
+    @Test
+    void guardianBashLandsWhereALaggingGuardianStops() {
+        for (int ping : new int[] {0, 150, 250}) {
+            for (double ahead : new double[] {2.5, 4.5, 5.0, 6.5}) {
+                try (Scenario s = Scenario.ffa("guardian")) {
+                    String run = ping + " ms, the enemy " + ahead + " blocks ahead";
+                    s.place(s.enemy, 0.5, 0.5 + ahead, 180);
+                    s.place(s.enemy2, -10.5, 10.5, 0);
+                    s.owner.setPing(ping);
+                    s.world.physics().setEnabled(false);
+                    RealClient client = new RealClient(s, s.owner, ping / 50);
+                    s.assertSucceeded(s.active(), "방패 돌격");
+                    double wallZ = Double.NaN;
+                    double guardianZ = Double.NaN;
+                    for (int i = 0; i < 30; i++) {
+                        client.tick();
+                        List<BlockDisplay> walls = blockDisplaysOf(s, Material.LIGHT_BLUE_STAINED_GLASS);
+                        if (Double.isNaN(wallZ) && !walls.isEmpty()) {
+                            wallZ = walls.getFirst().getLocation().getZ();
+                            guardianZ = client.at().getZ();
+                        }
+                    }
+                    s.world.physics().setEnabled(true);
+                    assertEquals(s.param("bash_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "bashed: " + run);
+                    assertTrue(client.at().getZ() < s.enemy.getLocation().getZ() - 0.6,
+                            "the guardian stops at the enemy, not in or past it: " + run + ", " + client.at());
+                    assertEquals(guardianZ + 1.0, wallZ, 0.3,
+                            "the wall of force bursts right in front of the guardian: " + run);
+                    s.place(s.owner, 0.5, 0.5, 0);
+                    s.place(s.enemy, 0.5, 4.5, 180);
+                    s.ticks(20);
+                    assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                    s.finishClean();
+                }
+            }
+        }
+    }
+
+    @Test
+    void guardianChargeNeverCarriesALaggingGuardianPastTheBorder() {
+        try (Scenario s = Scenario.ffa("guardian")) {
+            Location center = s.session.arena().center();
+            double x = center.getX();
+            double z = center.getZ();
+            for (double step : new double[] {1, 0.1, 0.01}) {
+                while (z < center.getZ() + 500 && s.ctx().isInsideArena(new Location(s.world, x, FlatWorld.SURFACE,
+                        z + step))) {
+                    z += step;
+                }
+            }
+            double edge = z; // the last point inside, to a hundredth of a block
+            // Under 4 blocks from the border: the charge is cut short to a point 0.1 block inside it.
+            s.place(s.owner, x, edge - 2.6, 0);
+            s.place(s.enemy, x + 12, edge - 20, 0);
+            s.place(s.enemy2, x - 12, edge - 20, 0);
+            s.owner.setPing(150);
+            s.world.physics().setEnabled(false);
+            RealClient client = new RealClient(s, s.owner, 3);
+            s.assertSucceeded(s.active(), "방패 돌격");
+            for (int i = 0; i < 30; i++) {
+                client.tick();
+            }
+            s.world.physics().setEnabled(true);
+            assertTrue(s.ctx().isInsideArena(client.at()), "the guardian stops inside the border: " + client.at());
+            assertTrue(client.at().getZ() > edge - 0.6, "after running up to it: " + client.at());
+            s.place(s.owner, x, edge - 2.6, 0);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void guardianChargePullsUpAtTheEdgeOfALavaPit() {
+        try (Scenario s = Scenario.ffa("guardian")) {
+            s.place(s.enemy, 10.5, 10.5, 0);
+            s.place(s.enemy2, -10.5, 10.5, 0);
+            lavaPit(s, 4, Material.LAVA); // the pit starts 3.5 blocks ahead of the guardian (at z = 0.5)
+            s.assertSucceeded(s.active(), "방패 돌격");
+            s.ticks(20);
+            assertTrue(s.owner.getLocation().getZ() + s.owner.getWidth() / 2 < 4,
+                    "the guardian stops before the pit: " + s.owner.getLocation());
+            assertTrue(s.owner.getLocation().getZ() > 1.5, "but still charges up to it: " + s.owner.getLocation());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+
+            s.place(s.owner, 0.5, 2.5, 0); // right at the edge, facing the pit
+            ActivationResult result = s.active();
+            assertFalse(result.succeeded(), "no charge straight into the pit");
+            assertNotNull(result.reason());
+            lavaPit(s, 4, Material.STONE);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.finishClean();
+        }
+    }
+
+    /** A strip of {@code type} in the floor across the guardian's path, from z to z + 2. */
+    private static void lavaPit(Scenario s, int z, Material type) {
+        for (int x = -3; x <= 3; x++) {
+            for (int dz = 0; dz < 3; dz++) {
+                s.world.setBlock(x, FlatWorld.FLOOR_Y, z + dz, type);
+            }
+        }
+    }
+
+    private static double horizontalDistance(Location a, Location b) {
+        return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    /**
+     * A player's real client against what the server knows of it, for the real-client bugs a plain world simulation
+     * hides. A real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server
+     * last sent it): the client keeps its own velocity (gravity, drag, ground friction) until the server sends a new
+     * one, and the server sees the client's position {@code lag} ticks late. World physics must be off: this moves the
+     * player.
+     */
+    private static final class RealClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final Deque<Location> late = new ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector marked = new Vector();
+
+        /** Create it before the skill is cast: a velocity the cast sets must count as new. */
+        RealClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+            mark(new Vector());
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /**
+         * One server tick, then one client tick with the velocity the server last set during it (a server sends a
+         * player's velocity once per tick, after the plugins ran: one set between two ticks goes out with the next
+         * one, unless the plugins replace it first).
+         */
+        void tick() {
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                velocity.copy(now);
+                mark(now);
+            }
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+            player.setVelocity(marked);
+        }
+
+        private void mark(Vector sent) {
+            marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
         }
     }
 

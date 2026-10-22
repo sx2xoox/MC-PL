@@ -1,6 +1,9 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -99,6 +102,11 @@ public final class GravityAbility extends Ability {
     private static final double PULL_ARRIVE_DISTANCE = 1.4;
     /** Where in front of the owner the pulled enemy is dropped. */
     private static final double PULL_STOP_DISTANCE = 1.8;
+    /** The small hop that keeps a pulled target off the ground (no ground friction) without launching it. */
+    private static final double PULL_HOP = 0.22;
+    /** The pull predicts a player's client at most this many ticks ahead (a 400 ms round trip). */
+    private static final int MAX_LAG_TICKS = 8;
+    private static final double MILLIS_PER_TICK = 50.0;
     private static final BlockData TETHER_BLOCK = Material.AMETHYST_BLOCK.createBlockData();
     private static final float TETHER_WIDTH = 0.07f;
     private static final int TETHER_POINTS = 14;
@@ -326,6 +334,14 @@ public final class GravityAbility extends Ability {
     /**
      * The gravity pull: a thin amethyst tether wound with a violet double helix drags the target to the owner, who
      * then lands with a small shockwave and a sinking pressure ring for the duration of the slow.
+     *
+     * <p>A player target is steered by where it will be once it has followed every pull sent so far (dead reckoning),
+     * not by its position on the server: that trails the player's client by its ping, and steering by it kept pulling
+     * a target that was already there, yanking it past the drop point into (or through) the owner. Any other entity
+     * is moved by the server itself, so its own position is exact. Horizontally the pulls add up from the cast;
+     * vertically the ground and gravity have the last word, so a player is where the server last heard of it, raised
+     * or lowered by the pulls of one round trip since: steered by the server's height alone, a player pulled up from
+     * below kept getting lifted (and hopped off a ground it had long left) and shot far above the owner.
      */
     private final class Pull implements LongPredicate {
 
@@ -335,10 +351,18 @@ public final class GravityAbility extends Ability {
         private boolean arrived;
         /** The velocity the pull last gave the target. */
         private Vector lastVelocity = new Vector();
+        /** Where the target is horizontally once it has followed every pull sent so far. */
+        private double x;
+        private double z;
+        /** The vertical speeds of the pulls most recently sent, newest first. */
+        private final Deque<Double> rises = new ArrayDeque<>();
 
         Pull(LivingEntity target, long slowTicks) {
             this.target = target;
             this.slowTicks = slowTicks;
+            Location at = target.getLocation();
+            this.x = at.getX();
+            this.z = at.getZ();
         }
 
         void cast() {
@@ -375,22 +399,55 @@ public final class GravityAbility extends Ability {
             if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
                 return false;
             }
-            Vector to = pullDestination(owner).toVector().subtract(target.getLocation().toVector());
+            Location at = target.getLocation();
+            if (!(target instanceof Player)) {
+                x = at.getX();
+                z = at.getZ();
+            }
+            // On the ground as the server sees it: then no lower than that, and still on it only while the pulls on
+            // their way to the client have not lifted it off (one more hop would lift it again).
+            boolean standing = Motion.isGrounded(target) || target.isInWater();
+            double rise = standing ? Math.max(0, risen()) : risen();
+            Vector to = pullDestination(owner).toVector().subtract(new Vector(x, at.getY() + rise, z));
             double distance = to.length();
             if (distance <= PULL_ARRIVE_DISTANCE || tick >= PULL_MAX_TICKS - 1) {
                 arrive();
                 return false;
             }
-            double speed = Math.min(PULL_SPEED, Math.max(0.3, distance * 0.45));
+            // Never further sideways than the gap: the speed follows the whole distance, and with the height gap the
+            // larger part it flung the target back and forth across the drop point.
+            double flat = Math.hypot(to.getX(), to.getZ());
+            double speed = Math.min(flat, Math.min(PULL_SPEED, Math.max(0.3, distance * 0.45)));
             Vector velocity = Motion.horizontal(to).multiply(speed);
-            // Small hops keep the target off the ground (no ground friction) without launching it.
-            boolean grounded = Motion.isGrounded(target) || target.isInWater();
-            velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.22 : 0.0));
+            boolean grounded = standing && rise < 1.0E-3;
+            velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? PULL_HOP : 0.0));
             lastVelocity = Motion.clamp(velocity, MAX_SPEED);
+            x += lastVelocity.getX();
+            z += lastVelocity.getZ();
+            rises.addFirst(lastVelocity.getY());
+            if (rises.size() > MAX_LAG_TICKS) {
+                rises.removeLast();
+            }
             target.setVelocity(lastVelocity);
             target.setFallDistance(0);
             drawTether(tick);
             return true;
+        }
+
+        /**
+         * How far the pulls sent during the last round trip have raised (or lowered) a player's client beyond where
+         * the server last heard of it; 0 for any other entity.
+         */
+        private double risen() {
+            int lag = target instanceof Player player
+                    ? Math.clamp(Math.round(player.getPing() / MILLIS_PER_TICK), 0, MAX_LAG_TICKS)
+                    : 0;
+            double sum = 0;
+            Iterator<Double> newest = rises.iterator();
+            for (int i = 0; i < lag && newest.hasNext(); i++) {
+                sum += newest.next();
+            }
+            return sum;
         }
 
         private void drawTether(long tick) {
