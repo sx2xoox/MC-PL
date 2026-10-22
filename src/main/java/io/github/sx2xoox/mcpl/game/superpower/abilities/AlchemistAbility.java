@@ -192,7 +192,7 @@ public final class AlchemistAbility extends Ability {
 
     /**
      * Rescales every freshly applied (or refreshed) timed effect once: beneficial ones last longer, harmful ones
-     * shorter. An effect counts as fresh when it is new, its level changed or its duration went up since last tick.
+     * shorter. An effect counts as fresh when it is new, its level went up or its duration went up since last tick.
      */
     @Override
     public void onTick(long tick) {
@@ -209,8 +209,9 @@ public final class AlchemistAbility extends Ability {
                 continue;
             }
             Seen last = seen.get(type);
-            boolean fresh = last == null || last.amplifier() != effect.getAmplifier()
-                    || effect.getDuration() > last.duration();
+            // A lower level showing up is a weaker effect resurfacing after a stronger one ran out, not a new one.
+            boolean fresh = last == null || effect.getAmplifier() > last.amplifier()
+                    || effect.getAmplifier() == last.amplifier() && effect.getDuration() > last.duration();
             seen.put(type, new Seen(fresh ? rescale(owner, effect) : effect.getDuration(), effect.getAmplifier()));
         }
         seen.keySet().retainAll(present);

@@ -782,7 +782,7 @@ public final class EngineerAbility extends Ability {
             if (target != null) {
                 Vector desired = Fx.body(target).toVector().subtract(lensAt.toVector());
                 if (desired.lengthSquared() > 1.0E-6) {
-                    beamDirection = turn(beamDirection, desired.normalize(), BEAM_TURN);
+                    beamDirection = turn(beamDirection, desired, BEAM_TURN);
                 }
             } else {
                 // Nothing to shoot: the head pans slowly around, looking for a target.
@@ -1000,17 +1000,18 @@ public final class EngineerAbility extends Ability {
         return wrapped;
     }
 
-    /** Rotates {@code current} towards {@code desired} (both unit vectors) by at most {@code maxAngle} radians. */
+    /**
+     * Turns a unit direction towards {@code desired} like a turret head: yaw and pitch each by at most
+     * {@code maxAngle} radians, so a target behind it is reached by swinging round, never by pitching over the top or
+     * down through the floor.
+     */
     private static Vector turn(Vector current, Vector desired, double maxAngle) {
-        double angle = current.angle(desired);
-        if (!(angle > maxAngle)) {
-            return desired.clone();
-        }
-        Vector axis = current.getCrossProduct(desired);
-        if (axis.lengthSquared() < 1.0E-9) {
-            axis = Math.abs(current.getY()) > 0.95 ? new Vector(1, 0, 0) : new Vector(0, 1, 0);
-        }
-        return current.clone().rotateAroundAxis(axis.normalize(), maxAngle).normalize();
+        double step = Math.toDegrees(maxAngle);
+        double yaw = yawOf(current);
+        double pitch = pitchOf(current);
+        double newYaw = yaw + Math.clamp(wrap(yawOf(desired) - yaw), -step, step);
+        double newPitch = pitch + Math.clamp(pitchOf(desired) - pitch, -step, step);
+        return facingVector(newYaw, newPitch);
     }
 
     /**
