@@ -290,8 +290,9 @@ public final class DuelistAbility extends Ability {
         Player owner = player();
         double range = Math.max(1, params().num("challenge_range"));
         LivingEntity target = ctx().findTarget(owner, range);
-        // An enemy hidden by stealth cannot be challenged: the golden mark would give it away to everyone.
-        if (target == null || !seen(owner, target)) {
+        // An enemy hidden by stealth cannot be challenged (the golden mark would give it away to everyone), nor
+        // someone's summon (a wolf is no duellist, and marking one would only buy protection from the players).
+        if (target == null || !duelable(owner, target)) {
             return ActivationResult.fail("시야에 결투할 적이 없습니다");
         }
         long duration = Math.max(1, params().ticks("challenge_duration"));
@@ -404,11 +405,12 @@ public final class DuelistAbility extends Ability {
         }
         double range = Math.max(1, params().num("ult_range"));
         LivingEntity target = ctx().findTarget(owner, range);
-        if (target == null || !seen(owner, target)) {
-            // The nearest enemy the duellist can see: nobody is dragged into a duel out of stealth.
+        if (target == null || !duelable(owner, target)) {
+            // Else the nearest enemy fighter the duellist can see: nobody is dragged into a duel out of stealth, and
+            // a ring around the duellist and a summoned wolf would only shut the players out.
             target = null;
             for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), range)) {
-                if (seen(owner, enemy)) {
+                if (duelable(owner, enemy)) {
                     target = enemy;
                     break;
                 }
@@ -796,6 +798,18 @@ public final class DuelistAbility extends Ability {
     /** False for an enemy player hidden from the owner by stealth. */
     private static boolean seen(Player owner, LivingEntity entity) {
         return !(entity instanceof Player player) || player.equals(owner) || owner.canSee(player);
+    }
+
+    /**
+     * An enemy one can duel: in sight, and a fighter in its own right (a participant, or a practice dummy), never
+     * another participant's summon.
+     */
+    private boolean duelable(Player owner, LivingEntity enemy) {
+        if (!seen(owner, enemy)) {
+            return false;
+        }
+        Player master = ctx().resolveAttacker(enemy);
+        return master == null || master.equals(enemy);
     }
 
     private static Component timerText(long ticks) {

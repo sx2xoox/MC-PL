@@ -30,6 +30,7 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
@@ -366,6 +367,26 @@ class WeaponNewAbilitiesTest {
             assertFalse(s.active().succeeded(), "on cooldown");
             s.ticks(30);
             assertEquals(0, blockDisplays(s), "the cut lines faded");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bladeSlashAndWaveNeverCutAnEnemyAtTheMastersBack() {
+        try (Scenario s = Scenario.builder("blade").param("wave_chance", 100).start()) {
+            s.owner.getInventory().setItemInMainHand(ItemStack.of(Material.IRON_SWORD));
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -0.4, 0); // pressed against the master's back
+            s.melee(s.owner, s.enemy, 4);
+            s.ticks(8);
+            assertEquals(4 + s.param("wave_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the wave goes forward");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "not backwards");
+
+            s.clearHits();
+            s.assertSucceeded(s.active(), "질풍참");
+            s.ticks(8);
+            assertEquals(s.param("dash_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the slash cuts ahead");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "and leaves the one behind alone");
             s.finishClean();
         }
     }
@@ -928,6 +949,23 @@ class WeaponNewAbilitiesTest {
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(4);
             assertEquals("⚔", Scenario.plain(emblem.text()), "back in sight, back over its head");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void duelistNeverDuelsASummon() {
+        try (Scenario s = Scenario.ffa("duelist")) {
+            Wolf wolf = s.world.spawn(new Location(s.world, 0.5, FlatWorld.SURFACE, 2.5), Wolf.class);
+            s.ctx().summon(s.enemy, wolf);
+            s.aimAt(s.owner, wolf);
+            assertFalse(s.active().succeeded(), "a summoned wolf is no duellist to challenge");
+            s.assertSucceeded(s.ultimate(), "결투장 with the wolf in the crosshair");
+            s.ticks(2);
+            s.melee(s.owner, s.enemy, 10);
+            assertEquals(10 * (1 + s.param("duel_offense") / 100), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the duel is with the wolf's master, the nearest real fighter");
+            s.ticks(s.paramTicks("ult_duration") + 10);
             s.finishClean();
         }
     }

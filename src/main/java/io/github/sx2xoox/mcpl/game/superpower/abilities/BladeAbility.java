@@ -93,6 +93,9 @@ public final class BladeAbility extends Ability {
     private static final double WAVE_ARC_RADIUS = 1.0;
     private static final double WAVE_ARC_DEGREES = 120;
 
+    /** How far behind the start of a wave or a dash (along its direction) an enemy's body may be and still be cut. */
+    private static final double BEHIND_TOLERANCE = 0.5;
+
     // Active: gale slash
     private static final double MIN_DASH = 1.0;
     private static final double DASH_STEP = 0.5;
@@ -226,7 +229,7 @@ public final class BladeAbility extends Ability {
             for (double d = 0; d <= advance + 1.0E-6; d += 0.5) {
                 Location sample = from.clone().add(direction.clone().multiply(Math.min(d, advance)));
                 for (LivingEntity enemy : ctx().enemiesNear(owner, sample, WAVE_REACH)) {
-                    if (struck.add(enemy.getUniqueId())) {
+                    if (ahead(start, direction, enemy) && struck.add(enemy.getUniqueId())) {
                         Combat.hit(ctx(), owner, enemy, damage);
                         waveHit(enemy);
                     }
@@ -361,7 +364,10 @@ public final class BladeAbility extends Ability {
         return null;
     }
 
-    /** Enemies within {@code width} of the segment {@code from} to {@code to}, in the order the dash meets them. */
+    /**
+     * Enemies within {@code width} of the segment {@code from} to {@code to}, in the order the dash meets them. Those
+     * behind the starting point (pressed against the master's back) are not on the path.
+     */
     private List<LivingEntity> enemiesAlong(Player owner, Location from, Location to, double width) {
         Map<UUID, LivingEntity> found = new LinkedHashMap<>();
         Vector delta = to.toVector().subtract(from.toVector());
@@ -370,10 +376,22 @@ public final class BladeAbility extends Ability {
         for (int i = 0; i <= samples; i++) {
             Location sample = from.clone().add(delta.clone().multiply((double) i / samples));
             for (LivingEntity enemy : ctx().enemiesNear(owner, sample, width)) {
-                found.putIfAbsent(enemy.getUniqueId(), enemy);
+                if (ahead(from, delta, enemy)) {
+                    found.putIfAbsent(enemy.getUniqueId(), enemy);
+                }
             }
         }
         return new ArrayList<>(found.values());
+    }
+
+    /** False for an enemy whose body is more than half a block behind {@code from} along {@code direction}. */
+    private static boolean ahead(Location from, Vector direction, LivingEntity enemy) {
+        Vector flat = Motion.horizontal(direction);
+        if (flat.lengthSquared() < 1.0E-6) {
+            return true;
+        }
+        Vector offset = Fx.body(enemy).toVector().subtract(from.toVector()).setY(0);
+        return offset.dot(flat) >= -BEHIND_TOLERANCE;
     }
 
     /**
