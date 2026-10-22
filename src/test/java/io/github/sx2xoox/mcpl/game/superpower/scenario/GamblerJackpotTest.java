@@ -237,7 +237,11 @@ class GamblerJackpotTest {
     void jackpotOnlyBorrowsEnabledAbilities() {
         try (Scenario s = Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 0)
                 .configure(h -> {
-                    for (AbilityRegistry.Entry entry : h.game.registry().all()) {
+                    // Disable every built-in ability except 뇌신 (and the gambler itself); test-only abilities
+                    // such as the enemies' dummy stay enabled.
+                    AbilityRegistry builtins = new AbilityRegistry();
+                    BuiltinAbilities.registerAll(builtins);
+                    for (AbilityRegistry.Entry entry : builtins.all()) {
                         String id = entry.info().id();
                         if (!id.equals("thunder") && !id.equals("gambler")) {
                             h.game.abilities().setEnabled(h.game.registry(), id, false);
