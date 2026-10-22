@@ -11,15 +11,16 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -33,6 +34,8 @@ import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -68,14 +71,24 @@ public final class EarthAbility extends Ability {
             .build();
 
     private static final String COLOR_TAG = "#B0703C";
-    private static final Particle.DustOptions EARTH_DUST = new Particle.DustOptions(Color.fromRGB(0x8A, 0x63, 0x3B), 1.4f);
+    /** Sand highlight, clay body, dark loam. */
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xD7B98E, 0xB0703C, 0x4E342E);
+    private static final Particle.DustOptions SOIL = PALETTE.dust(1.3f);
+    private static final Particle.DustTransition SETTLE = PALETTE.fade(1.1f);
+    private static final Particle.DustTransition SAND = PALETTE.glow(1.0f);
     private static final BlockData FALLBACK_GROUND = Material.DRIPSTONE_BLOCK.createBlockData();
+    /** An upward pointed dripstone tip (the block's default state): the spikes of the quake and the cage. */
+    private static final BlockData SPIKE = Material.POINTED_DRIPSTONE.createBlockData();
     private static final BlockData CAGE_WALL = Material.COBBLESTONE.createBlockData();
     private static final BlockData CAGE_WALL_MOSSY = Material.MOSSY_COBBLESTONE.createBlockData();
     private static final BlockData CAGE_PILLAR = Material.DRIPSTONE_BLOCK.createBlockData();
     private static final BlockData CAGE_ROOF = Material.TUFF.createBlockData();
+    private static final BlockData[] RUBBLE = {CAGE_WALL, CAGE_WALL_MOSSY, CAGE_PILLAR, CAGE_ROOF};
 
     private static final double MAX_SPEED = 2.5;
+
+    // passive: bedrock stance
+    private static final long STANCE_FX_COOLDOWN = 10;
 
     // active: earthquake
     /** Blocks the wave front advances per tick. */
@@ -95,9 +108,20 @@ public final class EarthAbility extends Ability {
     private static final int SINK_TICKS = 5;
     private static final int REMOVE_AT = 13;
     private static final float BURIED_CENTER = 0.15f;
+    /** Spikes only erupt from this many blocks out, at most this many per quake, on this share of the cells. */
+    private static final int SPIKE_FROM_STEP = 3;
+    private static final int MAX_QUAKE_SPIKES = 8;
+    private static final float SPIKE_CHANCE = 0.3f;
 
     // ultimate: stone cage
     private static final int SHOCKWAVE_TICKS = 8;
+    /** Cages that get the four erupting corner spikes (the rest only get particles), to cap display entities. */
+    private static final int MAX_SPIKED_CAGES = 5;
+    private static final int RUBBLE_PER_CAGE = 3;
+    private static final int MAX_RUBBLE = 12;
+    private static final long TRICKLE_PERIOD = 6;
+
+    private long nextStanceFx;
 
     @Override
     public AbilityInfo info() {
@@ -115,6 +139,22 @@ public final class EarthAbility extends Ability {
         }
     }
 
+    /** Feedback for the stance: struck by someone, the owner's feet dig into the ground in a puff of soil. */
+    @Override
+    public void onTakeDamage(EntityDamageEvent event) {
+        long now = ctx().currentTick();
+        if (event.isCancelled() || !(event instanceof EntityDamageByEntityEvent) || now < nextStanceFx) {
+            return;
+        }
+        nextStanceFx = now + STANCE_FX_COOLDOWN;
+        Location feet = player().getLocation().add(0, 0.05, 0);
+        Block below = feet.clone().subtract(0, 0.3, 0).getBlock();
+        BlockData ground = below.isPassable() ? FALLBACK_GROUND : displayData(below);
+        Vfx.ring(ctx(), feet, 0.55, 10, ThreadLocalRandom.current().nextDouble(Math.PI * 2), Particle.DUST, SOIL,
+                false);
+        feet.getWorld().spawnParticle(Particle.BLOCK, feet, Vfx.n(ctx(), 6), 0.3, 0.02, 0.3, 0.05, ground);
+    }
+
     // ------------------------------------------------------------------ active: earthquake
 
     @Override
@@ -129,13 +169,20 @@ public final class EarthAbility extends Ability {
         Vector forward = new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
         Quake quake = new Quake(feet, ground.getY(), forward);
 
+        // The stomp: a burst of the ground under the owner and the fan outlined in front, so the wave reads at once.
         Location stomp = feet.clone();
         stomp.setY(ground.getY() + 1.05);
         World world = owner.getWorld();
-        world.spawnParticle(Particle.BLOCK, stomp, 24, 0.6, 0.1, 0.6, 0.15, displayData(ground));
-        world.spawnParticle(Particle.DUST_PLUME, stomp, 10, 0.5, 0.05, 0.5, 0.02);
+        BlockData data = displayData(ground);
+        world.spawnParticle(Particle.BLOCK, stomp, Vfx.n(ctx(), 24), 0.6, 0.1, 0.6, 0.15, data);
+        world.spawnParticle(Particle.DUST_PLUME, stomp, Vfx.n(ctx(), 10), 0.5, 0.05, 0.5, 0.02);
+        Vfx.ring(ctx(), stomp, 0.9, 14, 0, Particle.DUST_COLOR_TRANSITION, SETTLE, false);
+        double fan = Math.clamp(params().num("quake_angle"), 10.0, 360.0);
+        Vfx.arc(ctx(), stomp, 1.4, feet.getYaw(), fan, 9, Particle.DUST, SOIL, false);
+        Vfx.arc(ctx(), stomp, 2.3, feet.getYaw(), fan, 13, Particle.DUST_COLOR_TRANSITION, SAND, false);
         Fx.sound(stomp, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.0f, 0.8f + Fx.jitter(0.05f));
-        Fx.sound(stomp, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.6f);
+        Fx.sound(stomp, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(stomp, Sound.BLOCK_ROOTED_DIRT_BREAK, 1.0f, 0.5f);
         Loop.repeat(ctx(), player(), 0, 1, quake.totalTicks(), quake);
         return ActivationResult.success();
     }
@@ -154,8 +201,19 @@ public final class EarthAbility extends Ability {
         return null;
     }
 
-    /** One ground chunk thrown up by the wave. */
-    private record Chunk(BlockDisplay display, float size, Quaternionf tilt, float peak) {
+    /**
+     * One rock thrown up by the wave: a tilted chunk of the ground block, or a pointed dripstone spike. Its poses are
+     * in the frame of the air block above the ground (see {@link #chunkPose} and {@link #spikePose}).
+     */
+    private record Chunk(BlockDisplay display, float size, Quaternionf tilt, float peak, boolean spike) {
+
+        Transformation raised() {
+            return spike ? spikePose(size, peak, tilt, -0.15f) : chunkPose(size, tilt, peak);
+        }
+
+        Transformation sunk() {
+            return spike ? spikePose(size, 0.05f, tilt, -0.5f) : chunkPose(size, tilt, BURIED_CENTER - 0.1f);
+        }
     }
 
     /** A ring of chunks raised by the wave front in the same tick. */
@@ -165,7 +223,7 @@ public final class EarthAbility extends Ability {
     /**
      * The earthquake wave: rays fanned around the facing direction advance one block per tick, following the terrain
      * (one block up, a few blocks down) and stopping at walls. Every ground block they cross pops up as a block
-     * display, and enemies standing on it are struck once.
+     * display (the far cells sometimes as dripstone spikes), and enemies standing on it are struck once.
      */
     private final class Quake implements LongPredicate {
 
@@ -181,6 +239,7 @@ public final class EarthAbility extends Ability {
         private final Set<Long> raised = new HashSet<>();
         private final Set<UUID> struck = new HashSet<>();
         private final List<Ring> rings = new ArrayList<>();
+        private int spikes;
 
         Quake(Location feet, int groundY, Vector forward) {
             this.world = feet.getWorld();
@@ -230,6 +289,7 @@ public final class EarthAbility extends Ability {
             double soundX = 0;
             double soundY = 0;
             double soundZ = 0;
+            boolean spiked = false;
             for (int i = 0; i < rays.length; i++) {
                 if (!rayAlive[i]) {
                     continue;
@@ -250,18 +310,25 @@ public final class EarthAbility extends Ability {
                 if (!raised.add(blockKey(x, ground.getY(), z))) {
                     continue;
                 }
-                chunks.add(raise(ground));
+                Chunk chunk = raise(ground, tick, rays[i]);
+                chunks.add(chunk);
+                spiked |= chunk.spike();
                 soundX = x + 0.5;
                 soundY = ground.getY() + 1;
                 soundZ = z + 0.5;
-                strikeAround(new Location(world, x + 0.5, ground.getY() + 1.0, z + 0.5), rays[i]);
+                strikeAround(new Location(world, x + 0.5, ground.getY() + 1.0, z + 0.5), rays[i], displayData(ground));
             }
             if (!chunks.isEmpty()) {
                 rings.add(new Ring(tick, chunks));
                 Location at = new Location(world, soundX, soundY, soundZ);
-                Fx.sound(at, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 0.8f, 0.6f + Fx.jitter(0.1f));
+                // The rumble rises in pitch as the wave rolls on.
+                float rise = 0.06f * tick;
+                Fx.sound(at, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 0.8f, 0.6f + rise + Fx.jitter(0.08f));
                 if (tick % 2 == 0) {
-                    Fx.sound(at, Sound.BLOCK_ROOTED_DIRT_BREAK, 0.7f, 0.7f + Fx.jitter(0.1f));
+                    Fx.sound(at, Sound.BLOCK_ROOTED_DIRT_BREAK, 0.7f, 0.7f + rise + Fx.jitter(0.1f));
+                }
+                if (spiked) {
+                    Fx.sound(at, Sound.BLOCK_POINTED_DRIPSTONE_LAND, 0.8f, 0.8f + Fx.jitter(0.1f));
                 }
             }
         }
@@ -279,26 +346,48 @@ public final class EarthAbility extends Ability {
             return null;
         }
 
-        private Chunk raise(Block ground) {
+        private Chunk raise(Block ground, long tick, Vector ray) {
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            BlockData data = displayData(ground);
-            float size = 0.82f + random.nextFloat() * 0.12f;
-            Quaternionf tilt = new Quaternionf().rotateXYZ(
-                    (random.nextFloat() - 0.5f) * 0.5f,
-                    (random.nextFloat() - 0.5f) * 1.2f,
-                    (random.nextFloat() - 0.5f) * 0.5f);
-            float peak = 1.1f + random.nextFloat() * 0.3f;
-            // Spawned in the air block above the ground (the pose lowers the cube back into place): clients light a
-            // display from the block at its position, and inside the solid ground block that is pitch black.
+            boolean spike = tick >= SPIKE_FROM_STEP && spikes < MAX_QUAKE_SPIKES && random.nextFloat() < SPIKE_CHANCE;
+            BlockData data = spike ? SPIKE : displayData(ground);
+            float size;
+            float peak;
+            Quaternionf tilt;
+            if (spike) {
+                spikes++;
+                size = 0.9f + random.nextFloat() * 0.25f;
+                peak = 1.3f + random.nextFloat() * 0.6f;
+                // Spikes lean forward along the wave.
+                tilt = new Quaternionf().rotateAxis(0.25f + random.nextFloat() * 0.2f,
+                        (float) ray.getZ(), 0, (float) -ray.getX()).rotateY(random.nextFloat() * 6.28f);
+            } else {
+                size = 0.82f + random.nextFloat() * 0.12f;
+                peak = 1.1f + random.nextFloat() * 0.3f;
+                tilt = new Quaternionf().rotateXYZ(
+                        (random.nextFloat() - 0.5f) * 0.5f,
+                        (random.nextFloat() - 0.5f) * 1.2f,
+                        (random.nextFloat() - 0.5f) * 0.5f);
+            }
+            // Spawned in the air block above the ground (the poses lower the rock back into place): clients light a
+            // display from the block at its position, and inside the solid ground block that is pitch black. It is
+            // lit like the ground around it, not full bright, so it does not glow at night.
             Location above = ground.getLocation().add(0, 1, 0);
-            BlockDisplay display = ctx().track(player(), world.spawn(above, BlockDisplay.class, d -> {
-                d.setPersistent(false);
+            Transformation buried = spike ? spikePose(size, 0.05f, tilt, -0.2f) : chunkPose(size, tilt, BURIED_CENTER);
+            BlockDisplay display = Displays.spawn(ctx(), player(), above, BlockDisplay.class, REMOVE_AT + 2L, d -> {
                 d.setBlock(data);
-                d.setTransformation(chunkPose(size, tilt, BURIED_CENTER));
-            }));
+                d.setBrightness(null);
+                d.setViewRange(1.0f);
+                d.setTransformation(buried);
+            });
+
             Location top = ground.getLocation().add(0.5, 1.02, 0.5);
-            world.spawnParticle(Particle.BLOCK, top, 4, 0.3, 0.05, 0.3, 0.1, data);
-            return new Chunk(display, size, tilt, peak);
+            BlockData debris = displayData(ground);
+            world.spawnParticle(Particle.BLOCK, top, Vfx.n(ctx(), 3), 0.3, 0.05, 0.3, 0.1, debris);
+            Vfx.dot(top.clone().add(0, 0.2, 0), Particle.DUST, SOIL, false);
+            if ((tick + ground.getX() + ground.getZ()) % 2 == 0) {
+                world.spawnParticle(Particle.DUST_PILLAR, top, Vfx.n(ctx(), 2), 0.2, 0, 0.2, 0.05, debris);
+            }
+            return new Chunk(display, size, tilt, peak, spike);
         }
 
         private void animate(long tick) {
@@ -307,9 +396,12 @@ public final class EarthAbility extends Ability {
                 Ring ring = iterator.next();
                 long age = tick - ring.born();
                 if (age == RISE_AT) {
-                    ring.chunks().forEach(chunk -> pose(chunk, chunk.peak(), RISE_TICKS));
+                    ring.chunks().forEach(chunk -> Displays.animate(chunk.display(), chunk.raised(), RISE_TICKS));
                 } else if (age == SINK_AT) {
-                    ring.chunks().forEach(chunk -> pose(chunk, BURIED_CENTER - 0.1f, SINK_TICKS));
+                    ring.chunks().forEach(chunk -> {
+                        Displays.animate(chunk.display(), chunk.sunk(), SINK_TICKS);
+                        settle(chunk.display().getLocation());
+                    });
                 } else if (age >= REMOVE_AT) {
                     ring.chunks().forEach(chunk -> chunk.display().remove());
                     iterator.remove();
@@ -317,17 +409,13 @@ public final class EarthAbility extends Ability {
             }
         }
 
-        private void pose(Chunk chunk, float center, int duration) {
-            BlockDisplay display = chunk.display();
-            if (!display.isValid()) {
-                return;
-            }
-            display.setInterpolationDelay(0);
-            display.setInterpolationDuration(duration);
-            display.setTransformation(chunkPose(chunk.size(), chunk.tilt(), center));
+        /** Afterglow: a little dust settles where a rock sinks back. */
+        private void settle(Location above) {
+            Location at = above.clone().add(0.5, 0.25, 0.5);
+            Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, SETTLE, false);
         }
 
-        private void strikeAround(Location point, Vector direction) {
+        private void strikeAround(Location point, Vector direction, BlockData ground) {
             for (LivingEntity enemy : ctx().enemiesNear(player(), point, HIT_RADIUS)) {
                 if (!struck.add(enemy.getUniqueId())) {
                     continue;
@@ -337,10 +425,14 @@ public final class EarthAbility extends Ability {
                     continue;
                 }
                 Motion.push(enemy, direction.clone().multiply(LAUNCH_PUSH).setY(launch), MAX_SPEED);
-                Location body = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
-                world.spawnParticle(Particle.CRIT, body, 10, 0.3, 0.4, 0.3, 0.2);
-                world.spawnParticle(Particle.BLOCK, enemy.getLocation(), 12, 0.4, 0.2, 0.4, 0.2, FALLBACK_GROUND);
+                Location body = Fx.body(enemy);
+                Location feet = enemy.getLocation().add(0, 0.1, 0);
+                world.spawnParticle(Particle.BLOCK, feet, Vfx.n(ctx(), 12), 0.4, 0.2, 0.4, 0.2, ground);
+                world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, Vfx.n(ctx(), 8), 0.35, 0.45, 0.35, 0, SAND);
+                Vfx.cloud(ctx(), body, Particle.CRIT, 6, 0.3, 0.2, null, false);
+                Vfx.ring(ctx(), feet, 0.7, 12, 0, Particle.DUST, SOIL, false);
                 Fx.sound(body, Sound.ENTITY_IRON_GOLEM_ATTACK, 0.9f, 0.8f + Fx.jitter(0.1f));
+                Fx.sound(body, Sound.BLOCK_TUFF_BREAK, 0.8f, 0.7f + Fx.jitter(0.1f));
             }
         }
     }
@@ -356,12 +448,27 @@ public final class EarthAbility extends Ability {
         return new Transformation(translation, new Quaternionf(tilt), new Vector3f(size, size, size), new Quaternionf());
     }
 
+    /**
+     * A block of the given width and height standing on its bottom centre at (0.5, {@code baseY}, 0.5) of the
+     * display's block (0 is the top of the ground below), tilted around that point.
+     */
+    private static Transformation spikePose(float width, float height, Quaternionf tilt, float baseY) {
+        Vector3f bottom = new Quaternionf(tilt).transform(new Vector3f(width / 2, 0, width / 2));
+        Vector3f translation = new Vector3f(0.5f, baseY, 0.5f).sub(bottom);
+        return new Transformation(translation, new Quaternionf(tilt), new Vector3f(width, height, width),
+                new Quaternionf());
+    }
+
     /** The block shown for an erupting ground block: the block itself when it is a plain full cube. */
     private static BlockData displayData(Block ground) {
         return ground.getType().isOccluding() ? ground.getBlockData() : FALLBACK_GROUND;
     }
 
     // ------------------------------------------------------------------ ultimate: stone cage
+
+    /** One cage: where it stands and the spikes that burst out of the ground around it. */
+    private record Cage(Location body, Location feet, List<BlockDisplay> spikes) {
+    }
 
     @Override
     public ActivationResult onUltimate() {
@@ -373,24 +480,40 @@ public final class EarthAbility extends Ability {
         }
         long duration = Math.max(1, params().ticks("ult_duration"));
 
+        World world = origin.getWorld();
+        Location stomp = origin.clone().add(0, 0.1, 0);
+        world.spawnParticle(Particle.BLOCK, stomp, Vfx.n(ctx(), 40), 1.0, 0.1, 1.0, 0.2, FALLBACK_GROUND, true);
+        world.spawnParticle(Particle.DUST_PLUME, stomp, Vfx.n(ctx(), 16), 0.8, 0.05, 0.8, 0.03, null, true);
+        Vfx.ring(ctx(), stomp, 1.2, 18, 0, Particle.DUST_COLOR_TRANSITION, SAND, true);
         Fx.sound(origin, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.6f);
-        Fx.sound(origin, Sound.ENTITY_WARDEN_EMERGE, 0.9f, 1.4f);
+        Fx.sound(origin, Sound.ENTITY_WARDEN_EMERGE, 0.9f, 1.4f + Fx.jitter(0.05f));
+        Fx.sound(origin, Sound.ENTITY_RAVAGER_ROAR, 0.6f, 0.7f + Fx.jitter(0.05f));
         Loop.repeat(ctx(), player(), 0, 1, SHOCKWAVE_TICKS, tick -> {
-            drawShockwave(origin, radius * (tick + 1) / SHOCKWAVE_TICKS);
+            drawShockwave(origin, radius * (tick + 1) / SHOCKWAVE_TICKS, tick);
             return true;
         });
 
-        List<Location> cages = new ArrayList<>();
+        List<Cage> cages = new ArrayList<>();
         for (LivingEntity target : List.copyOf(targets)) {
-            cages.add(imprison(target, duration));
+            cages.add(imprison(target, duration, cages.size() < MAX_SPIKED_CAGES));
         }
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">⛰ " + cages.size() + "명 감금!</" + COLOR_TAG + ">"));
-        ctx().runLater(player(), duration, () -> cages.forEach(EarthAbility::crumble));
+        Loop.repeat(ctx(), player(), TRICKLE_PERIOD, TRICKLE_PERIOD, Math.max(1, duration / TRICKLE_PERIOD - 1),
+                run -> {
+                    cages.forEach(EarthAbility::trickle);
+                    return true;
+                });
+        ctx().runLater(player(), duration, () -> {
+            int[] rubble = {0};
+            for (Cage cage : cages) {
+                crumble(cage, rubble);
+            }
+        });
         return ActivationResult.success();
     }
 
-    /** Roots {@code target} and builds a cage of temporary blocks around it. Returns the cage centre. */
-    private Location imprison(LivingEntity target, long ticks) {
+    /** Roots {@code target} and builds a cage of temporary blocks around it. */
+    private Cage imprison(LivingEntity target, long ticks, boolean withSpikes) {
         centerInBlock(target);
         target.setVelocity(new Vector());
         ctx().addModifier(player(), target, Attribute.MOVEMENT_SPEED, -1.0,
@@ -399,13 +522,54 @@ public final class EarthAbility extends Ability {
                 AttributeModifier.Operation.MULTIPLY_SCALAR_1, ticks);
         buildCage(target, ticks);
 
-        Location body = target.getLocation().add(0, target.getHeight() * 0.5, 0);
+        Location feet = target.getLocation();
+        Location body = feet.clone().add(0, target.getHeight() * 0.5, 0);
         World world = target.getWorld();
-        world.spawnParticle(Particle.DUST_PILLAR, target.getLocation(), 24, 0.8, 0.1, 0.8, 0.1, CAGE_PILLAR);
-        world.spawnParticle(Particle.BLOCK, body, 20, 0.7, 0.6, 0.7, 0.1, CAGE_WALL);
+        world.spawnParticle(Particle.DUST_PILLAR, feet, Vfx.n(ctx(), 24), 0.8, 0.1, 0.8, 0.1, CAGE_PILLAR, true);
+        world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 16), 0.7, 0.6, 0.7, 0.1, CAGE_WALL, true);
+        Vfx.helix(ctx(), feet.clone().add(0, 0.1, 0), 1.75, target.getHeight() + 0.9, 1.0, 2, 12,
+                ThreadLocalRandom.current().nextDouble(Math.PI * 2), Particle.DUST_COLOR_TRANSITION, SETTLE, true);
         Fx.sound(body, Sound.BLOCK_DRIPSTONE_BLOCK_PLACE, 1.2f, 0.6f + Fx.jitter(0.05f));
         Fx.sound(body, Sound.BLOCK_POINTED_DRIPSTONE_LAND, 1.0f, 0.8f + Fx.jitter(0.1f));
-        return body;
+        Fx.sound(body, Sound.BLOCK_TUFF_PLACE, 0.9f, 0.6f + Fx.jitter(0.08f));
+
+        List<BlockDisplay> spikes = new ArrayList<>();
+        if (withSpikes) {
+            spikeCorners(feet, ticks, spikes);
+        }
+        return new Cage(body, feet, spikes);
+    }
+
+    /** Four dripstone spikes burst out of the ground at the cage's diagonals, flaring outwards. */
+    private void spikeCorners(Location feet, long ticks, List<BlockDisplay> spikes) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Location base = feet.clone();
+        base.setX(feet.getBlockX() + 0.5);
+        base.setZ(feet.getBlockZ() + 0.5);
+        for (int corner = 0; corner < 4; corner++) {
+            double angle = Math.PI / 4 + corner * Math.PI / 2;
+            double dx = Math.cos(angle);
+            double dz = Math.sin(angle);
+            // The spike's block frame: its (0.5, 0, 0.5) is the spike's foot on the ground.
+            Location at = base.clone().add(dx * 1.9 - 0.5, 0, dz * 1.9 - 0.5);
+            float width = 0.8f + random.nextFloat() * 0.25f;
+            float height = 1.6f + random.nextFloat() * 0.7f;
+            Quaternionf lean = new Quaternionf().rotateAxis(0.3f + random.nextFloat() * 0.15f, (float) dz, 0,
+                    (float) -dx);
+            BlockDisplay spike = Displays.spawn(ctx(), player(), at, BlockDisplay.class, ticks + 8, d -> {
+                d.setBlock(SPIKE);
+                d.setBrightness(null);
+                d.setTransformation(spikePose(width, 0.05f, lean, -0.2f));
+            });
+            Displays.animateNextTick(ctx(), player(), spike, spikePose(width, height, lean, -0.15f), 3);
+            spikes.add(spike);
+        }
+    }
+
+    /** While a cage stands, grit trickles from its roof. */
+    private static void trickle(Cage cage) {
+        Location roof = cage.feet().clone().add(0, 2.0, 0);
+        roof.getWorld().spawnParticle(Particle.FALLING_DUST, roof, 2, 0.35, 0.02, 0.35, 0, CAGE_ROOF);
     }
 
     /**
@@ -475,28 +639,61 @@ public final class EarthAbility extends Ability {
         target.teleport(centered);
     }
 
-    private static void crumble(Location center) {
+    /** The cage breaks apart: a burst of stone, rubble flying out and the spikes sinking back into the ground. */
+    private void crumble(Cage cage, int[] rubbleSpawned) {
+        Location center = cage.body();
         World world = center.getWorld();
-        world.spawnParticle(Particle.BLOCK, center, 40, 0.8, 0.8, 0.8, 0.15, CAGE_PILLAR);
-        world.spawnParticle(Particle.BLOCK, center, 20, 0.8, 0.8, 0.8, 0.15, CAGE_WALL);
-        world.spawnParticle(Particle.DUST_PLUME, center, 8, 0.6, 0.6, 0.6, 0.02);
+        world.spawnParticle(Particle.BLOCK, center, Vfx.n(ctx(), 30), 0.8, 0.8, 0.8, 0.15, CAGE_PILLAR);
+        world.spawnParticle(Particle.BLOCK, center, Vfx.n(ctx(), 16), 0.8, 0.8, 0.8, 0.15, CAGE_WALL);
+        world.spawnParticle(Particle.BLOCK_CRUMBLE, center, Vfx.n(ctx(), 10), 0.8, 0.8, 0.8, 0, CAGE_ROOF);
+        world.spawnParticle(Particle.DUST_PLUME, center, Vfx.n(ctx(), 8), 0.6, 0.6, 0.6, 0.02);
+        Vfx.ring(ctx(), cage.feet().clone().add(0, 0.1, 0), 1.6, 16, 0, Particle.DUST_COLOR_TRANSITION, SETTLE, false);
         Fx.sound(center, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 1.2f, 0.7f + Fx.jitter(0.05f));
         Fx.sound(center, Sound.BLOCK_STONE_BREAK, 1.0f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(center, Sound.BLOCK_TUFF_BREAK, 0.8f, 0.8f + Fx.jitter(0.08f));
+
+        for (BlockDisplay spike : cage.spikes()) {
+            if (spike.isValid()) {
+                Transformation current = spike.getTransformation();
+                Quaternionf lean = new Quaternionf(current.getLeftRotation());
+                Displays.animate(spike, spikePose(current.getScale().x(), 0.05f, lean, -0.6f), 5);
+            }
+        }
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int i = 0; i < RUBBLE_PER_CAGE && rubbleSpawned[0] < MAX_RUBBLE; i++, rubbleSpawned[0]++) {
+            double angle = random.nextDouble(Math.PI * 2);
+            float dx = (float) Math.cos(angle) * (1.4f + random.nextFloat());
+            float dz = (float) Math.sin(angle) * (1.4f + random.nextFloat());
+            float size = 0.28f + random.nextFloat() * 0.15f;
+            BlockDisplay rock = Displays.block(ctx(), player(), center, RUBBLE[random.nextInt(RUBBLE.length)],
+                    Displays.scaled(size), 13);
+            rock.setBrightness(null);
+            // Two straight legs approximate a thrown arc: up and out, then down to the ground.
+            Displays.animateNextTick(ctx(), player(), rock, Displays.transform(dx * 0.5f, 0.6f, dz * 0.5f, size, size,
+                    size, random.nextFloat() * 360, random.nextFloat() * 90, 0), 4);
+            ctx().runLater(player(), 5, () -> Displays.animate(rock, Displays.transform(dx, -0.8f, dz, size * 0.5f,
+                    size * 0.5f, size * 0.5f, random.nextFloat() * 360, random.nextFloat() * 180, 0), 7));
+        }
     }
 
-    private void drawShockwave(Location origin, double radius) {
+    private void drawShockwave(Location origin, double radius, long tick) {
         World world = origin.getWorld();
-        int points = (int) Math.max(12, Math.min(48, radius * 5));
+        int points = Vfx.n(ctx(), (int) Math.max(12, Math.min(48, radius * 5)));
         double y = origin.getY() + 0.2;
+        double phase = tick * 0.2;
         for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
+            double angle = phase + i * (Math.PI * 2 / points);
             double x = origin.getX() + Math.cos(angle) * radius;
             double z = origin.getZ() + Math.sin(angle) * radius;
             if (i % 3 == 0) {
-                world.spawnParticle(Particle.BLOCK, x, y, z, 1, 0.1, 0.05, 0.1, 0, FALLBACK_GROUND);
+                world.spawnParticle(Particle.BLOCK, x, y, z, 1, 0.1, 0.05, 0.1, 0, FALLBACK_GROUND, true);
             } else {
-                world.spawnParticle(Particle.DUST, x, y, z, 1, 0, 0.05, 0, 0, EARTH_DUST);
+                world.spawnParticle(Particle.DUST, x, y, z, 1, 0, 0.05, 0, 0, SOIL, true);
             }
+        }
+        if (radius > 1) {
+            Vfx.ring(ctx(), new Location(world, origin.getX(), y + 0.15, origin.getZ()), radius - 0.6,
+                    Math.max(8, points / 2), -phase, Particle.DUST_COLOR_TRANSITION, SAND, true);
         }
     }
 
