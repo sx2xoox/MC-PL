@@ -75,7 +75,7 @@ public final class GoatAbility extends Ability {
             .ultimate("산사태",
                     "뿔나팔을 불면 {slide_delay}초 뒤 등 뒤의 언덕에서 바위가 쏟아져 앞쪽 {slide_length}블록, 폭 "
                             + "{slide_width}블록을 {slide_waves}차례 휩쓸고 지나갑니다. 휩쓸린 적은 물결마다 "
-                            + "{boulder_damage} 피해를 입고 앞으로 밀려납니다. 바위는 벽에 부딪히면 부서집니다.")
+                            + "{boulder_damage} 피해를 입고 밀려나며, 바위는 벽에 부딪히면 부서집니다.")
             .param("jump_boost", 30)
             .param("fall_reduction", 60)
             .param("ram_windup", 0.5)
@@ -516,7 +516,7 @@ public final class GoatAbility extends Ability {
                     box.getMinZ() + 0.05, box.getMaxX() - 0.05, box.getMaxY() - 0.05, box.getMaxZ() - 0.05)
                     .shift(direction.getX() * WALL_PROBE, 0, direction.getZ() * WALL_PROBE);
             if (!victim.getWorld().hasCollisionsIn(probe)) {
-                if (tick % 2 == 0) {
+                if (tick % 2 == 0 && visible(owner, victim)) {
                     Vfx.dot(Fx.body(victim), Particle.CLOUD, null, false);
                 }
                 return true;
@@ -541,18 +541,21 @@ public final class GoatAbility extends Ability {
                             true, true));
                 }
             }
+            Fx.sound(contact, Sound.ENTITY_GOAT_RAM_IMPACT, 1.2f, 0.6f + Fx.jitter(0.05f));
+            Fx.sound(contact, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 0.9f, 0.7f + Fx.jitter(0.1f));
+            Fx.sound(contact, Sound.BLOCK_ANVIL_LAND, 0.4f, 1.3f + Fx.jitter(0.1f));
+            owner.sendActionBar(Text.mm("<" + TAN + "><b>쾅! 벽에 꽂혔다</b></" + TAN + "> <white>+"
+                    + AbilityInfo.formatNumber(params().num("wall_damage")) + "</white>"));
+            if (!visible(owner, victim)) {
+                return; // the crash is heard, never seen
+            }
             if (!block.getType().isAir()) {
                 world.spawnParticle(Particle.BLOCK_CRUMBLE, contact, Vfx.n(ctx(), 20), 0.35, 0.5, 0.35, 0.1,
                         block.getBlockData());
             }
             crackRing(contact);
             Vfx.burst(ctx(), contact, PALETTE, 0.8, Particle.CRIT, false);
-            Fx.sound(contact, Sound.ENTITY_GOAT_RAM_IMPACT, 1.2f, 0.6f + Fx.jitter(0.05f));
-            Fx.sound(contact, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 0.9f, 0.7f + Fx.jitter(0.1f));
-            Fx.sound(contact, Sound.BLOCK_ANVIL_LAND, 0.4f, 1.3f + Fx.jitter(0.1f));
             pop(owner, contact.clone().subtract(direction.clone().multiply(0.4)).add(0, 0.5, 0));
-            owner.sendActionBar(Text.mm("<" + TAN + "><b>쾅! 벽에 꽂혔다</b></" + TAN + "> <white>+"
-                    + AbilityInfo.formatNumber(params().num("wall_damage")) + "</white>"));
         }
 
         /** Cracks spreading over the wall face: two rings in the wall's plane. */
@@ -577,8 +580,8 @@ public final class GoatAbility extends Ability {
             if (!fits(1)) {
                 return;
             }
-            TextDisplay label = Displays.text(ctx(), owner, at, Text.mm("<b><gradient:#FFFFFF:#D9BE8C>쾅!</gradient></b>"),
-                    0.6f, 18);
+            TextDisplay label = Displays.text(ctx(), owner, at,
+                    Text.mm("<b><gradient:#FFFFFF:#D9BE8C>쾅!</gradient></b>"), 0.6f, 18);
             displays.add(label);
             Displays.animateNextTick(ctx(), owner, label, Displays.centered(0, 0.35f, 0, 1.5f, 1.5f, 1.5f, 0, 0, 0),
                     4);
@@ -914,9 +917,11 @@ public final class GoatAbility extends Ability {
                             enemy.setFallDistance(0);
                         }
                         Location body = Fx.body(enemy);
-                        Vfx.burst(ctx(), body, ROCK, 0.6, Particle.CRIT, false);
-                        body.getWorld().spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 8), 0.3, 0.3, 0.3, 0.1,
-                                material.createBlockData());
+                        if (visible(owner, enemy)) {
+                            Vfx.burst(ctx(), body, ROCK, 0.6, Particle.CRIT, false);
+                            body.getWorld().spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 8), 0.3, 0.3, 0.3, 0.1,
+                                    material.createBlockData());
+                        }
                         Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 0.6f + Fx.jitter(0.1f));
                         Fx.sound(body, Sound.BLOCK_STONE_HIT, 1.0f, 0.6f + Fx.jitter(0.1f));
                     } else if (Combat.isTargetable(ctx(), owner, enemy)) {
@@ -966,6 +971,11 @@ public final class GoatAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** False for players hidden from the owner (stealth): no effect may give their position away. */
+    private static boolean visible(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player hidden) || owner.canSee(hidden);
+    }
 
     private static Vector facing(Player owner) {
         Vector facing = Motion.horizontalFacing(owner.getLocation());

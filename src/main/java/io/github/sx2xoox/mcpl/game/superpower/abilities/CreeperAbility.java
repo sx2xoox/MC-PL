@@ -64,14 +64,13 @@ public final class CreeperAbility extends Ability {
             .color(TextColor.color(0x5DBB4A))
             .difficulty(2)
             .passive("쉬익",
-                    "웅크리고 있으면 몸속에 화약이 차오릅니다({charge_time}초면 가득). 모인 화약만큼 다음 자폭의 피해가 "
-                            + "최대 {charge_damage}%, 범위가 최대 {charge_radius}블록 늘어납니다. 웅크리기를 풀면 "
+                    "웅크리고 있으면 몸속에 화약이 차올라({charge_time}초면 가득) 다음 자폭의 피해가 최대 "
+                            + "{charge_damage}%, 범위가 최대 {charge_radius}블록 늘어납니다. 웅크리기를 풀면 "
                             + "{charge_hold}초 뒤부터 화약이 서서히 흩어집니다.")
             .active("자폭",
-                    "{fuse}초간 부풀어 오르며 쉬익거린 뒤(그동안 이동 속도 -{fuse_slow}%) 폭발합니다. 반경 "
-                            + "{blast_radius}블록의 적에게 가까울수록 큰 {blast_min_damage}~{blast_damage} 피해를 주고 "
-                            + "날려 보내며, 자신도 최대 피해의 {self_damage}%를 입습니다(죽지는 않음). 블록은 부서지지 "
-                            + "않고 벽 뒤의 적은 무사합니다.",
+                    "{fuse}초간 부풀어 오르며 쉬익거리다(이동 속도 -{fuse_slow}%) 폭발해, 반경 {blast_radius}블록의 "
+                            + "적에게 가까울수록 큰 {blast_min_damage}~{blast_damage} 피해를 주고 날려 보냅니다. 자신도 "
+                            + "최대 피해의 {self_damage}%를 입지만 죽지는 않으며, 벽 뒤의 적은 무사합니다.",
                     9)
             .ultimate("충전된 크리퍼",
                     "번개를 맞아 {ult_duration}초간 충전됩니다. 그동안 자폭은 쿨타임 없이 {ult_fuse}초 만에 터지고, "
@@ -303,8 +302,9 @@ public final class CreeperAbility extends Ability {
     private Location powderSpot(Player owner, int index, double scale) {
         double angle = powderPhase + index * TAU / POWDER_PIECES;
         double bob = Math.sin(powderPhase * 0.7 + index * 2.1) * 0.08;
-        Location at = owner.getLocation().add(Math.cos(angle) * POWDER_ORBIT * scale,
-                (POWDER_HEIGHT + bob) * scale * (owner.isSneaking() ? 0.85 : 1.0), Math.sin(angle) * POWDER_ORBIT * scale);
+        double height = (POWDER_HEIGHT + bob) * scale * (owner.isSneaking() ? 0.85 : 1.0);
+        Location at = owner.getLocation().add(Math.cos(angle) * POWDER_ORBIT * scale, height,
+                Math.sin(angle) * POWDER_ORBIT * scale);
         at.setYaw((float) Math.toDegrees(angle) * 2);
         at.setPitch(0);
         return at;
@@ -506,7 +506,9 @@ public final class CreeperAbility extends Ability {
             double speed = KNOCK_MIN + (KNOCK_MAX - KNOCK_MIN) * closeness;
             Motion.push(enemy, away.multiply(speed).setY(KNOCK_UP), MAX_SPEED);
             enemy.setFallDistance(0);
-            Vfx.burst(ctx(), Fx.body(enemy), charged ? POWER : PALETTE, 0.5, Particle.POOF, false);
+            if (visible(owner, enemy)) {
+                Vfx.burst(ctx(), Fx.body(enemy), charged ? POWER : PALETTE, 0.5, Particle.POOF, false);
+            }
         }
 
         blastFx(owner, center, radius, charged, boosted);
@@ -770,8 +772,8 @@ public final class CreeperAbility extends Ability {
             }
         }
         double height = owner.getHeight();
-        Vfx.helix(ctx(), feet, 0.55 * Body.scaleOf(owner), height, 1.0, 2, 5, run * 0.35, Particle.DUST_COLOR_TRANSITION,
-                POWER.glow(0.8f), false);
+        Vfx.helix(ctx(), feet, 0.55 * Body.scaleOf(owner), height, 1.0, 2, 5, run * 0.35,
+                Particle.DUST_COLOR_TRANSITION, POWER.glow(0.8f), false);
         if (run % 2 == 0) {
             Vfx.dot(chest.clone().add(ThreadLocalRandom.current().nextDouble(-0.4, 0.4),
                     ThreadLocalRandom.current().nextDouble(-0.6, 0.7), ThreadLocalRandom.current().nextDouble(-0.4,
@@ -823,6 +825,11 @@ public final class CreeperAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** False for players hidden from the owner (stealth): no effect may give their position away. */
+    private static boolean visible(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player hidden) || owner.canSee(hidden);
+    }
 
     /** True while the owner is invisible: nothing of this ability may give its position away then. */
     private static boolean concealed(Player owner) {

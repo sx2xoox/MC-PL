@@ -69,9 +69,9 @@ public final class TurtleAbility extends Ability {
                     "등 뒤({back_angle}° 범위)에서 날아온 공격의 피해를 {back_reduction}% 덜 받습니다. 근접 공격, "
                             + "투사체, 능력 공격 모두 해당합니다.")
             .active("껍질 회전",
-                    "등껍질 속으로 몸을 움츠리고 바라보는 방향으로 빙글빙글 돌며 {spin_distance}블록 미끄러집니다. "
-                            + "벽에 닿으면 튕겨 나오고(최대 {spin_bounces}번), 부딪힌 적에게 {spin_damage} 피해를 주고 "
-                            + "튕겨 냅니다. 도는 동안 받는 피해가 {spin_reduction}% 줄어듭니다.",
+                    "등껍질 속으로 움츠려 바라보는 방향으로 빙글빙글 돌며 {spin_distance}블록 미끄러집니다(받는 피해 "
+                            + "-{spin_reduction}%). 벽에 닿으면 튕겨 나오고(최대 {spin_bounces}번), 부딪힌 적에게 "
+                            + "{spin_damage} 피해를 주고 튕겨 냅니다.",
                     8)
             .ultimate("거대 등껍질",
                     "{ult_duration}초간 거대한 등껍질을 짊어집니다. 받는 피해가 {ult_reduction}% 줄고 밀려나지 않지만 "
@@ -624,7 +624,9 @@ public final class TurtleAbility extends Ability {
                 hit.add(enemy.getUniqueId());
                 Combat.hit(ctx(), owner, enemy, damage);
                 Location body = Fx.body(enemy);
-                Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.CRIT, false);
+                if (visible(owner, enemy)) {
+                    Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.CRIT, false);
+                }
                 Fx.sound(body, Sound.ENTITY_ARMADILLO_HURT_REDUCED, 1.0f, 1.3f + Fx.jitter(0.1f));
                 Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 1.0f + Fx.jitter(0.1f));
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
@@ -852,8 +854,8 @@ public final class TurtleAbility extends Ability {
                 Combat.hit(ctx(), owner, enemy, amount);
                 struck++;
                 Location body = Fx.body(enemy);
-                Vfx.burst(ctx(), body, PALETTE, 0.4, Particle.CRIT, false);
-                if (!(enemy instanceof Player hidden) || owner.canSee(hidden)) {
+                if (visible(owner, enemy)) {
+                    Vfx.burst(ctx(), body, PALETTE, 0.4, Particle.CRIT, false);
                     Vfx.trail(center, body, PALETTE.body(), 4, false);
                 }
                 Fx.sound(body, Sound.ENCHANT_THORNS_HIT, 1.0f, 1.0f + Fx.jitter(0.1f));
@@ -1002,6 +1004,11 @@ public final class TurtleAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** False for players hidden from the owner (stealth): no effect may give their position away. */
+    private static boolean visible(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player hidden) || owner.canSee(hidden);
+    }
 
     /** True while the owner is invisible: the shell must not give its position away. */
     private static boolean concealed(Player owner) {

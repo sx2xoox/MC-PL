@@ -67,25 +67,25 @@ public final class ShulkerAbility extends Ability {
                     "땅에서 웅크리고 있으면 껍질을 닫아 받는 피해가 {shell_reduction}% 줄고 밀려나지 않지만, 그동안은 "
                             + "움직일 수 없습니다. 껍질 안에서도 유도탄은 쏠 수 있습니다.")
             .active("유도탄",
-                    "셜커 탄 {bullet_count}발을 쏩니다. 탄은 조준한 적(없으면 앞쪽 {bullet_range}블록 안에서 보이는 "
-                            + "가장 가까운 적)을 축을 따라 꺾어 가며 {bullet_life}초간 쫓아가, 맞은 적에게 "
-                            + "{bullet_damage} 피해를 주고 {levitate}초간 공중에 띄웁니다. 벽에 막히면 터집니다.",
+                    "조준한 적(없으면 앞쪽 {bullet_range}블록 안의 가장 가까운 적)을 축을 따라 꺾어 가며 "
+                            + "{bullet_life}초간 쫓는 셜커 탄 {bullet_count}발을 쏩니다. 맞은 적은 {bullet_damage} 피해를 "
+                            + "입고 {levitate}초간 공중에 뜨며, 탄은 벽에 막히면 터집니다.",
                     8)
             .ultimate("셜커 요새",
-                    "주변에 셜커 포대 {turret_count}개를 세웁니다. {ult_duration}초간 각 포대가 {ult_interval}초마다 "
-                            + "반경 {ult_range}블록 안의 가장 가까운 적에게 유도탄을 쏘아 {ult_damage} 피해를 주고 "
-                            + "{ult_levitate}초간 띄웁니다. 적 한 명은 요새에 최대 {ult_max_levitate}초까지만 떠오릅니다.")
+                    "주변에 셜커 포대 {turret_count}개를 세워, {ult_duration}초간 각 포대가 {ult_interval}초마다 반경 "
+                            + "{ult_range}블록 안의 가장 가까운 적에게 유도탄을 쏩니다. 탄은 {ult_damage} 피해를 주고 "
+                            + "{ult_levitate}초간 띄우며, 적 한 명은 최대 {ult_max_levitate}초까지만 떠오릅니다.")
             .param("shell_reduction", 60)
             .param("bullet_count", 2)
             .param("bullet_range", 24)
-            .param("bullet_damage", 3)
+            .param("bullet_damage", 2.5)
             .param("bullet_life", 5)
             .param("levitate", 2)
             .param("turret_count", 3)
             .param("ult_duration", 6)
             .param("ult_interval", 1.5)
             .param("ult_range", 14)
-            .param("ult_damage", 2)
+            .param("ult_damage", 1.5)
             .param("ult_levitate", 1)
             .param("ult_max_levitate", 3)
             .build();
@@ -742,8 +742,10 @@ public final class ShulkerAbility extends Ability {
         }
         enemy.setFallDistance(0);
         Location feet = enemy.getLocation().add(0, 0.1, 0);
-        Vfx.ring(ctx(), feet, 0.7, 12, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), false);
-        Vfx.cloud(ctx(), feet, Particle.REVERSE_PORTAL, 6, 0.25, 0.03, null, false);
+        if (visible(owner, enemy)) {
+            Vfx.ring(ctx(), feet, 0.7, 12, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), false);
+            Vfx.cloud(ctx(), feet, Particle.REVERSE_PORTAL, 6, 0.25, 0.03, null, false);
+        }
         Fx.sound(feet, Sound.ENTITY_SHULKER_TELEPORT, 0.5f, 1.6f + Fx.jitter(0.1f));
         Loop.repeat(ctx(), owner, FLOAT_SPARKLE_PERIOD, FLOAT_SPARKLE_PERIOD, Math.max(1, ticks / FLOAT_SPARKLE_PERIOD),
                 run -> {
