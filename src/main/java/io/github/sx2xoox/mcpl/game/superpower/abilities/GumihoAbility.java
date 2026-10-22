@@ -43,9 +43,11 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * 구미호 — the nine-tailed fox. Every hit it lands grows another tail (up to nine), and each tail makes it a little
- * faster; tails left unused fall away again. The fox fire turns all of its tails into homing fox fires split among the
- * enemies around, and the ultimate sends out the fox bead: it latches onto an enemy like a kiss, drinks its life and
- * its ultimate gauge, then flies back and pours everything into the fox, growing new tails.
+ * faster; tails left unused fall away again. The fox fire turns its tails into homing fox fires split among the
+ * enemies around (never more than a few on one enemy, so a full fan is no one-target burst; the tails no enemy takes
+ * stay), and the ultimate sends out the fox bead: it latches onto an enemy like a kiss, drinks its life and its
+ * ultimate gauge, then flies back and pours everything into the fox, growing new tails. Neither the fires nor the bead
+ * follow an enemy that slips out of the fox's sight.
  *
  * <p>The ultimate needs no passive state (the tails it grows are skipped on a borrowed instance), so the Gambler can
  * borrow it.
@@ -53,9 +55,9 @@ import org.jspecify.annotations.Nullable;
  * <p>Look: white fox fire, pink and violet. The tails are a fan of white tails on the lower back that wag and spread
  * wider the more there are, their tips glinting pink; a fallen tail drops and fades. Fox fires are pale glass flames
  * that leave the tail tips, swirl up and then dive at their targets trailing white-to-violet dust and witch sparks,
- * bursting in pink. The fox bead is a glowing pearlescent core in a pink glass shell; latched onto a victim it hovers
- * at its lips while threads of life stream into it and it swells, then it flies home on a violet ribbon and bursts
- * into the fox in a ring of petals.
+ * bursting in pink. The fox bead is a glowing pearlescent core in a pink glass shell; latched onto a victim it clings
+ * to its chest on the side it came from (below the victim's line of sight) while threads of life stream into it and
+ * it swells, then it flies home on a violet ribbon and bursts into the fox in a ring of petals.
  */
 public final class GumihoAbility extends Ability {
 
@@ -67,8 +69,9 @@ public final class GumihoAbility extends Ability {
                             + "속도가 {tail_speed}% 빨라지고, {tail_keep}초 동안 적을 맞히지 못하면 꼬리가 "
                             + "{tail_shed}초마다 하나씩 빠집니다.")
             .active("여우불",
-                    "꼬리를 모두 거둬 그 수만큼(최소 {fire_min}개) 여우불을 날립니다. 여우불은 {fire_range}블록 안의 "
-                            + "적들을 나눠 쫓아가 하나에 {fire_damage} 피해를 줍니다.",
+                    "꼬리를 거둬 그 수만큼(최소 {fire_min}개) 여우불을 날립니다. 여우불은 {fire_range}블록 안의 적들을 "
+                            + "나눠 쫓아가 하나에 {fire_damage} 피해를 줍니다. 적 하나에는 최대 {fire_per_target}개까지만 "
+                            + "날아가고, 쓰이지 않은 꼬리는 남습니다.",
                     8)
             .ultimate("여우구슬",
                     "조준한 적(없으면 {bead_range}블록 안의 가장 가까운 적)에게 여우구슬을 날립니다. 구슬은 {bead_damage} "
@@ -82,6 +85,7 @@ public final class GumihoAbility extends Ability {
             .param("fire_min", 2)
             .param("fire_range", 16)
             .param("fire_damage", 1.2)
+            .param("fire_per_target", 4)
             .param("bead_range", 20)
             .param("bead_damage", 2)
             .param("bead_drain_time", 2)
@@ -113,6 +117,8 @@ public final class GumihoAbility extends Ability {
 
     /** Display entities one gumiho keeps alive at most at once (extra visuals fall back to particles). */
     private static final int MAX_DISPLAYS = 24;
+    /** Kept for the fox bead (shell and core), so tails and fires never crowd out the ultimate. */
+    private static final int BEAD_DISPLAYS = 2;
     /** "/ 2": now - this must not overflow. */
     private static final long NEVER = Long.MIN_VALUE / 2;
     private static final int HARD_TAIL_CAP = 9;
@@ -156,6 +162,10 @@ public final class GumihoAbility extends Ability {
     private static final long BEAD_RETURN_MAX = 60;
     private static final long BEAD_PULSE = 5;
     private static final double BEAD_HITBOX = 0.45;
+    /** How far below the victim's eyes the bead clings, so it never fills the victim's view. */
+    private static final double BEAD_BELOW_EYES = 0.7;
+    private static final double BEAD_OUT = 0.4;
+    private static final float BEAD_SWELL = 0.35f;
 
     private int tails;
     private boolean granted;
@@ -164,6 +174,7 @@ public final class GumihoAbility extends Ability {
     private @Nullable NamespacedKey speedKey;
     private final List<@Nullable BlockDisplay> tailDisplays = new ArrayList<>();
     private final List<Display> displays = new ArrayList<>();
+    private final List<Display> beadDisplays = new ArrayList<>();
     private float posedYaw = Float.NaN;
     /** The fan is not re-posed before this tick (a new tail needs a tick between spawning and growing). */
     private long poseFrom = NEVER;
@@ -432,14 +443,12 @@ public final class GumihoAbility extends Ability {
         if (targets.isEmpty()) {
             return ActivationResult.fail(AbilityInfo.formatNumber(range) + "블록 안에 보이는 적이 없습니다");
         }
-        int spent = tails;
-        int count = Math.max(Math.max(1, params().integer("fire_min")), spent);
-        List<Location> launches = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            launches.add(i < spent ? tipPoint(owner, i, spent, 0)
-                    : owner.getLocation().add(0, owner.getHeight() * 0.75, 0)
-                    .add(Vfx.scatter(new Location(owner.getWorld(), 0, 0, 0), 0.5).toVector()));
-        }
+        int fan = tails;
+        int perTarget = Math.max(1, params().integer("fire_per_target"));
+        int wanted = Math.max(Math.max(1, params().integer("fire_min")), fan);
+        int count = Math.min(wanted, perTarget * targets.size());
+        // The newest tails turn into fires; tails no enemy can take stay on the fox.
+        int spent = Math.min(fan, count);
         if (spent > 0) {
             loseTails(spent, false);
             lastShed = ctx().currentTick();
@@ -447,9 +456,11 @@ public final class GumihoAbility extends Ability {
         Volley volley = new Volley(count);
         for (int i = 0; i < count; i++) {
             LivingEntity target = targets.get(i % targets.size());
-            Location from = launches.get(i);
             int index = i;
-            ctx().runLater(owner, 1 + i * FIRE_STAGGER, () -> launch(owner, from, target, index, volley));
+            // A fire leaves from where its tail is when it goes (the fox may have run on meanwhile).
+            int tail = i < spent ? fan - spent + i : -1;
+            ctx().runLater(owner, 1 + i * FIRE_STAGGER, () -> launch(owner, launchPoint(owner, tail, fan), target,
+                    index, volley));
         }
         Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
         Vfx.ring(ctx(), chest, 0.9, 16, 0, Particle.DUST_COLOR_TRANSITION, FIRE_GLOW, false);
@@ -457,8 +468,18 @@ public final class GumihoAbility extends Ability {
         Fx.sound(chest, Sound.ENTITY_FOX_SCREECH, 0.7f, 1.4f + Fx.jitter(0.05f));
         Fx.sound(chest, Sound.ENTITY_EVOKER_CAST_SPELL, 0.6f, 1.6f + Fx.jitter(0.05f));
         owner.sendActionBar(Text.mm("<" + PINK + "><b>여우불</b></" + PINK + "> <white>" + count + "발</white>"
-                + (spent > 0 ? " <gray>꼬리 " + spent + "개</gray>" : "")));
+                + (spent > 0 ? " <gray>꼬리 " + spent + "개</gray>" : "")
+                + (tails > 0 ? " <dark_gray>|</dark_gray> <gray>남은 꼬리 " + tails + "개</gray>" : "")));
         return ActivationResult.success();
+    }
+
+    /** Tail {@code tail}'s tip in a fan of {@code fan} where the fox is now, or a spot by its chest ({@code -1}). */
+    private static Location launchPoint(Player owner, int tail, int fan) {
+        if (tail >= 0) {
+            return tipPoint(owner, tail, fan, 0);
+        }
+        return owner.getLocation().add(0, owner.getHeight() * 0.75, 0)
+                .add(Vfx.scatter(new Location(owner.getWorld(), 0, 0, 0), 0.5).toVector());
     }
 
     /** Visible enemies in range with a clear line, the aimed one first, then the nearest. */
@@ -495,6 +516,7 @@ public final class GumihoAbility extends Ability {
 
     private void launch(Player owner, Location from, LivingEntity target, int index, Volley volley) {
         if (!from.getWorld().equals(owner.getWorld())) {
+            volley.done++;
             return;
         }
         // Each fire first swirls up and out from its tail, then dives.
@@ -693,7 +715,8 @@ public final class GumihoAbility extends Ability {
 
     /**
      * The fox bead: flies out to its victim, latches on for the drain (damage in pulses, a slow, the gauge drained
-     * off), then flies back and pours what it drank into the fox.
+     * off), then flies back and pours what it drank into the fox. It lets go (and the slow ends) as soon as the victim
+     * falls or slips out of the fox's sight, so it never marks a hidden enemy.
      */
     private final class Bead implements LongPredicate {
         private final Player owner;
@@ -705,6 +728,9 @@ public final class GumihoAbility extends Ability {
         private final int pulses;
         private @Nullable BlockDisplay shell;
         private @Nullable BlockDisplay core;
+        private @Nullable NamespacedKey slowKey;
+        /** The side of the victim the bead clings to (horizontal, fixed when it latches on). */
+        private @Nullable Vector side;
         private BeadPhase phase = BeadPhase.OUT;
         private long phaseStart;
         private int pulsed;
@@ -726,17 +752,17 @@ public final class GumihoAbility extends Ability {
 
         void start() {
             long life = BEAD_OUT_MAX + drainTicks + BEAD_RETURN_MAX + 10;
-            if (canSpawn(2)) {
+            if (canSpawnBead(2)) {
                 Location at = Displays.unrotated(position);
                 BlockDisplay glass = Displays.block(ctx(), owner, at, BEAD_SHELL.createBlockData(),
                         Displays.scaled(0.05f), life);
                 glass.setTeleportDuration(1);
-                remember(glass);
+                beadDisplays.add(glass);
                 BlockDisplay light = Displays.block(ctx(), owner, at, BEAD_CORE.createBlockData(),
                         Displays.scaled(0.05f), life);
                 light.setTeleportDuration(1);
                 Displays.outline(light, PALETTE.body());
-                remember(light);
+                beadDisplays.add(light);
                 shell = glass;
                 core = light;
             }
@@ -759,7 +785,7 @@ public final class GumihoAbility extends Ability {
         }
 
         private boolean out(long tick) {
-            if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(world)
+            if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(world) || !isVisible(victim)
                     || tick > BEAD_OUT_MAX) {
                 turnBack(tick);
                 return true;
@@ -815,9 +841,14 @@ public final class GumihoAbility extends Ability {
             }
             double slow = Math.clamp(params().num("bead_slow") / 100.0, 0.0, 1.0);
             if (slow > 0) {
-                ctx().addModifier(owner, victim, Attribute.MOVEMENT_SPEED, -slow, Operation.MULTIPLY_SCALAR_1,
-                        drainTicks);
+                slowKey = ctx().addModifier(owner, victim, Attribute.MOVEMENT_SPEED, -slow,
+                        Operation.MULTIPLY_SCALAR_1, drainTicks);
             }
+            Vector toBead = position.toVector().subtract(victim.getLocation().toVector()).setY(0);
+            if (toBead.lengthSquared() < 1.0E-4) {
+                toBead = owner.getLocation().toVector().subtract(victim.getLocation().toVector()).setY(0);
+            }
+            side = toBead.lengthSquared() < 1.0E-4 ? new Vector(0, 0, 1) : toBead.normalize();
             Location lips = lips();
             position.set(lips.getX(), lips.getY(), lips.getZ());
             pose(1f);
@@ -832,13 +863,14 @@ public final class GumihoAbility extends Ability {
         /** Hovering at the victim's lips: every pulse drinks a sip of life and gauge, and the bead swells. */
         private boolean latched(long tick) {
             long held = tick - phaseStart;
-            if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(world)) {
+            if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(world)
+                    || !isVisible(victim)) {
                 turnBack(tick);
                 return true;
             }
             Location lips = lips();
             position.set(lips.getX(), lips.getY(), lips.getZ());
-            float swell = 1f + 0.6f * pulsed / pulses;
+            float swell = 1f + BEAD_SWELL * pulsed / pulses;
             pose(swell);
             if (held > 0 && held % BEAD_PULSE == 0 && pulsed < pulses) {
                 pulse();
@@ -883,6 +915,12 @@ public final class GumihoAbility extends Ability {
             if (phase == BeadPhase.RETURN) {
                 return;
             }
+            NamespacedKey slowed = slowKey;
+            slowKey = null;
+            if (slowed != null) {
+                // The bead lets go: so does its hold on the victim.
+                ctx().removeModifier(victim, slowed);
+            }
             phase = BeadPhase.RETURN;
             phaseStart = tick;
             Fx.sound(position, Sound.ENTITY_FOX_AMBIENT, 0.7f, 1.6f);
@@ -903,7 +941,7 @@ public final class GumihoAbility extends Ability {
             }
             Location from = position.clone();
             position.add(to.multiply(speed / distance));
-            pose(1f + 0.6f * pulsed / pulses);
+            pose(1f + BEAD_SWELL * pulsed / pulses);
             Vfx.line(ctx(), from, position, 3, Particle.DUST_COLOR_TRANSITION, FIRE_FADE, false);
             if (tick % 2 == 0) {
                 Vfx.dot(position, Particle.END_ROD, null, false);
@@ -946,24 +984,26 @@ public final class GumihoAbility extends Ability {
                     + "%</" + VIOLET + ">"));
         }
 
-        /** Where the bead hovers while drinking: in front of the victim's face. */
+        /**
+         * Where the bead clings while drinking: against the victim's chest on the side it came from, well below the
+         * eyes (out of the victim's line of sight) and fixed to that side, so it does not swing as the victim turns.
+         */
         private Location lips() {
-            Location eye = victim.getEyeLocation();
-            Vector facing = eye.getDirection().setY(0);
-            if (facing.lengthSquared() < 1.0E-4) {
-                facing = owner.getLocation().toVector().subtract(victim.getLocation().toVector()).setY(0);
-            }
-            if (facing.lengthSquared() < 1.0E-4) {
-                facing = new Vector(0, 0, 1);
-            }
-            Location lips = eye.clone().add(facing.normalize().multiply(victim.getWidth() * 0.5 + 0.35))
-                    .subtract(0, 0.15, 0);
-            lips.add(0, 0.06 * Math.sin(spin * 0.1), 0);
-            return Displays.unrotated(lips);
+            Vector out = side != null ? side : new Vector(0, 0, 1);
+            Location at = victim.getEyeLocation().add(out.clone().multiply(victim.getWidth() * 0.5 + BEAD_OUT))
+                    .subtract(0, BEAD_BELOW_EYES, 0);
+            at.add(0, 0.06 * Math.sin(spin * 0.1), 0);
+            return Displays.unrotated(at);
         }
 
         private void pose(float swell) {
             spin += 23f;
+            if (shell == null) {
+                // No display to spare: the bead is a pink spark.
+                Vfx.dot(position, Particle.DUST_COLOR_TRANSITION, FIRE_GLOW, false);
+                Vfx.dot(position, Particle.END_ROD, null, false);
+                return;
+            }
             BlockDisplay glass = shell;
             if (glass != null && glass.isValid()) {
                 Displays.moveTo(glass, position);
@@ -985,10 +1025,16 @@ public final class GumihoAbility extends Ability {
 
     // ------------------------------------------------------------------ display budget
 
-    /** True if {@code count} more displays stay within {@link #MAX_DISPLAYS}. */
+    /** True if {@code count} more tail or fire displays fit (the bead's share stays free). */
     private boolean canSpawn(int count) {
         displays.removeIf(display -> !display.isValid());
-        return displays.size() + count <= MAX_DISPLAYS;
+        return displays.size() + count <= MAX_DISPLAYS - BEAD_DISPLAYS;
+    }
+
+    /** True if {@code count} more displays fit in the bead's own share. */
+    private boolean canSpawnBead(int count) {
+        beadDisplays.removeIf(display -> !display.isValid());
+        return beadDisplays.size() + count <= BEAD_DISPLAYS;
     }
 
     private void remember(Display display) {

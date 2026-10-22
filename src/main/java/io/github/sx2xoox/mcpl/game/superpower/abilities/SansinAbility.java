@@ -25,7 +25,6 @@ import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
@@ -48,17 +47,21 @@ import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * 산신령 — the mountain spirit of "the golden axe and the silver axe". It rewards honesty: now and then a blow it
- * takes is answered with a golden blessing (absorption), and the next axe it throws is then sure to come up gold. The
- * active throws a spinning axe; whoever it hits is asked "이 도끼가 네 도끼냐?" and judged by gold (a heavy blow),
- * silver (a slow) or plain iron (a shove), the odds of gold rising the farther and more precisely the axe flew. The
- * ultimate brings the spirit down on its cloud with its tiger, which bounds out where the sansin looks and pins every
- * enemy in its path.
+ * 산신령 — the mountain spirit of "the golden axe and the silver axe". It rewards honesty: the blows it takes from
+ * enemies add up, and once enough have landed the spirit promises gold, so the next axe it throws is sure to come up
+ * gold (no random shield: the reward is a sure verdict, unlike the beekeeper's honey). The active throws a spinning
+ * axe; whoever it hits is asked "이 도끼가 네 도끼냐?" and judged by gold (a heavy blow), silver (a slow) or plain iron
+ * (a shove), the odds of gold rising the farther and more precisely the axe flew. The ultimate brings the spirit down
+ * on its cloud with its tiger, which bounds out where the sansin looks and pins every enemy in its path.
  *
  * <p>The tiger needs no passive state, so the Gambler can borrow the ultimate (the golden promise it also brings is
  * only kept by a real sansin).
  *
- * <p>Look: mountain mist white, gold and pine green. A blessing is a shaft of golden light falling onto the sansin
+ * <p>Displays: the spirit and its tiger have their own share of the budget, so the halo axe, the thrown axe and the
+ * judgement can never crowd them out; within the rest the judgement comes first, then the halo axe (which falls back
+ * to golden sparkles until there is room again), then the sign.
+ *
+ * <p>Look: mountain mist white, gold and pine green. A promise is a shaft of golden light falling onto the sansin
  * with a "정직한 자로구나!" sign, and while the promise of gold stands, a little golden axe hovers over its shoulder. The
  * thrown axe tumbles end over end along its flight trailing mist and gold dust; on a hit it splashes like the pond of
  * the tale, three axes (gold, silver, iron) rise over the victim under the spirit's question and a highlight runs over
@@ -73,9 +76,8 @@ public final class SansinAbility extends Ability {
             .color(TextColor.color(0xFFC940))
             .difficulty(2)
             .passive("정직",
-                    "적에게 공격받으면 {honest_chance}% 확률로 산신령이 정직함을 알아보고 흡수 체력 {honest_absorb}을 "
-                            + "내립니다({honest_duration}초 유지, {honest_gap}초에 한 번). 상을 받으면 다음 금도끼 "
-                            + "은도끼는 반드시 금도끼가 됩니다.")
+                    "적에게 받은 피해가 {honest_need}만큼 쌓이면 산신령이 정직함을 알아보고 금도끼를 약속합니다. 다음 "
+                            + "금도끼 은도끼는 반드시 금도끼가 되며, 약속이 지켜지기 전에는 피해가 더 쌓이지 않습니다.")
             .active("금도끼 은도끼",
                     "도끼를 던져({axe_range}블록) 맞은 적에게 {axe_damage} 피해를 주고 '이 도끼가 네 도끼냐?' 묻습니다. "
                             + "금도끼면 {gold_damage} 추가 피해, 은도끼면 {silver_damage} 추가 피해와 {silver_time}초간 "
@@ -88,10 +90,7 @@ public final class SansinAbility extends Ability {
                             + "방향을 틀며 {tiger_distance}블록을 달려, 폭 {tiger_width}블록 길목의 적을 덮쳐 "
                             + "{tiger_damage} 피해를 주고 {tiger_pin}초간 짓누릅니다(이동·점프 불가). 다음 금도끼 "
                             + "은도끼는 금도끼가 됩니다.")
-            .param("honest_chance", 20)
-            .param("honest_absorb", 3)
-            .param("honest_duration", 8)
-            .param("honest_gap", 4)
+            .param("honest_need", 8)
             .param("axe_range", 18)
             .param("axe_damage", 2)
             .param("gold_damage", 4)
@@ -139,12 +138,11 @@ public final class SansinAbility extends Ability {
     private static final double MAX_SPEED = 1.5;
     /** Display entities one sansin keeps alive at most at once (extra visuals fall back to particles). */
     private static final int MAX_DISPLAYS = 24;
-    /** "/ 2": now - this must not overflow. */
-    private static final long NEVER = Long.MIN_VALUE / 2;
 
     // passive: honesty
     private static final float HALO_AXE_SCALE = 0.5f;
     private static final long SHIMMER_PERIOD = 8;
+    private static final long HALO_SPARKLE_PERIOD = 4;
 
     // active: the thrown axe
     private static final double AXE_SPEED = 1.1;
@@ -218,25 +216,34 @@ public final class SansinAbility extends Ability {
             new Part(Material.ORANGE_CONCRETE, 0f, 0f, 0f, 0.09f, 0.75f, 0.09f, Role.TAIL),
     };
 
-    /** The spirit on its cloud; the staff (last) is posed separately. */
+    /** The spirit on its cloud (cloud, robe, head, beard); the staff (last) is posed separately. */
     private static final Part[] SPIRIT = {
-            new Part(Material.WHITE_WOOL, 0f, 0.15f, 0f, 1.7f, 0.36f, 1.1f, Role.BODY),
-            new Part(Material.WHITE_WOOL, 0.35f, 0.34f, -0.25f, 1.0f, 0.32f, 0.7f, Role.BODY),
+            new Part(Material.WHITE_WOOL, 0f, 0.17f, 0f, 1.8f, 0.42f, 1.15f, Role.BODY),
             new Part(Material.LIGHT_GRAY_CONCRETE, 0f, 0.76f, 0f, 0.5f, 0.8f, 0.32f, Role.BODY),
             new Part(Material.WHITE_TERRACOTTA, 0f, 1.33f, 0f, 0.32f, 0.32f, 0.32f, Role.BODY),
             new Part(Material.WHITE_WOOL, 0f, 1.12f, 0.17f, 0.24f, 0.42f, 0.06f, Role.BODY),
-            new Part(Material.WHITE_WOOL, 0f, 1.53f, -0.02f, 0.18f, 0.12f, 0.18f, Role.BODY),
             new Part(Material.STRIPPED_SPRUCE_LOG, -0.32f, 0.85f, 0.12f, 0.08f, 1.5f, 0.08f, Role.TAIL),
     };
 
+    /**
+     * The ultimate's share of {@link #MAX_DISPLAYS}: the whole spirit and tiger, kept free of everything the passive
+     * and the active show, so casting the ultimate right after an axe hit still brings the full figures.
+     */
+    private static final int ULTIMATE_DISPLAYS = SPIRIT.length + TIGER.length;
+    /** The rest, for the thrown axe or the judgement (which may push out the halo axe and the sign). */
+    private static final int SKILL_DISPLAYS = MAX_DISPLAYS - ULTIMATE_DISPLAYS;
+
     private boolean granted;
-    private long lastBlessing = NEVER;
-    private long blessUntil = NEVER;
-    private @Nullable NamespacedKey absorbKey;
+    /** Damage taken from enemies towards the next golden promise. */
+    private double honesty;
     private boolean goldPending;
     private @Nullable ItemDisplay haloAxe;
+    private @Nullable TextDisplay sign;
     private boolean throwing;
-    private final List<Display> displays = new ArrayList<>();
+    /** Displays of the passive and the active (at most {@link #SKILL_DISPLAYS}). */
+    private final List<Display> skillDisplays = new ArrayList<>();
+    /** Displays of the ultimate (at most {@link #ULTIMATE_DISPLAYS}). */
+    private final List<Display> ultimateDisplays = new ArrayList<>();
 
     @Override
     public AbilityInfo info() {
@@ -250,19 +257,23 @@ public final class SansinAbility extends Ability {
 
     @Override
     public void onRevoke() {
-        // The context removes the displays and the absorption modifier; only forget them here.
+        // The context removes the displays; only forget them here.
         granted = false;
-        absorbKey = null;
+        honesty = 0;
         goldPending = false;
         haloAxe = null;
+        sign = null;
     }
 
     // ------------------------------------------------------------------ passive: honesty
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (!granted || event.isCancelled() || event.getDamage() <= 0
-                || !(event instanceof EntityDamageByEntityEvent byEntity)) {
+        if (!granted || goldPending || event.isCancelled() || !(event instanceof EntityDamageByEntityEvent byEntity)) {
+            return;
+        }
+        double damage = event.getFinalDamage();
+        if (!(damage > 0)) {
             return;
         }
         Player owner = player();
@@ -270,30 +281,31 @@ public final class SansinAbility extends Ability {
         if (attacker == null || attacker.equals(owner) || !ctx().isEnemy(owner, attacker)) {
             return;
         }
-        long now = ctx().currentTick();
-        if (now - lastBlessing < params().ticks("honest_gap")) {
+        double need = Math.max(0, params().num("honest_need"));
+        honesty += damage;
+        if (honesty >= need - 1.0E-9) {
+            honesty = 0;
+            bless(owner);
             return;
         }
-        double chance = Math.clamp(params().num("honest_chance") / 100.0, 0.0, 1.0);
-        if (chance <= 0 || ThreadLocalRandom.current().nextDouble() >= chance) {
-            return;
-        }
-        lastBlessing = now;
-        bless(owner);
+        // Each blow brings the promise closer: a golden glimmer and the count in the action bar.
+        Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
+        Vfx.cloud(ctx(), chest, Particle.DUST_COLOR_TRANSITION, 2 + (int) (4 * honesty / Math.max(1, need)), 0.3, 0,
+                GOLD_SMALL, false);
+        Fx.sound(chest, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.35f, 0.8f + (float) (0.8 * honesty / Math.max(1, need)));
+        owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">정직</" + GOLD_TAG + "> " + honestyBar(honesty / need)
+                + " <gray>" + AbilityInfo.formatNumber(Math.round(honesty * 10) / 10.0) + " / "
+                + AbilityInfo.formatNumber(need) + "</gray>"));
     }
 
-    /** "정직한 자로구나!": golden light falls on the sansin, the absorption lands and the next axe will be gold. */
+    private static String honestyBar(double progress) {
+        int filled = (int) Math.clamp(Math.floor(progress * 8), 0, 8);
+        return "<" + GOLD_TAG + ">" + "▮".repeat(filled) + "</" + GOLD_TAG + "><dark_gray>" + "▯".repeat(8 - filled)
+                + "</dark_gray>";
+    }
+
+    /** "정직한 자로구나!": golden light falls on the sansin and the next axe is promised to be gold. */
     private void bless(Player owner) {
-        double amount = Math.max(0, params().num("honest_absorb"));
-        long duration = params().ticks("honest_duration");
-        if (amount > 0 && duration > 0) {
-            if (absorbKey == null) {
-                absorbKey = ctx().addModifier(owner, owner, Attribute.MAX_ABSORPTION, amount, Operation.ADD_NUMBER,
-                        0);
-            }
-            owner.setAbsorptionAmount(Math.max(owner.getAbsorptionAmount(), amount));
-            blessUntil = ctx().currentTick() + duration;
-        }
         promiseGold(owner);
 
         Location feet = owner.getLocation().add(0, 0.05, 0);
@@ -306,29 +318,41 @@ public final class SansinAbility extends Ability {
         Fx.sound(head, Sound.BLOCK_BEACON_POWER_SELECT, 0.6f, 1.6f);
         Fx.sound(head, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.9f, 1.3f);
         Fx.sound(head, Sound.ITEM_ARMOR_EQUIP_GOLD, 0.8f, 1.2f);
-        if (canSpawn(1)) {
-            TextDisplay sign = Displays.text(ctx(), owner, head.clone().add(0, 0.4, 0),
-                    Text.mm("<b><gradient:#FFFDF0:" + GOLD_TAG + ">정직한 자로구나!</gradient></b>"), 0.3f, 30);
-            remember(sign);
-            Displays.animateNextTick(ctx(), owner, sign, Displays.centered(0, 0.3f, 0, 1.1f, 1.1f, 1.1f, 0, 0, 0), 5);
+        TextDisplay old = sign;
+        if (old != null && old.isValid()) {
+            old.remove();
         }
-        owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">✦ 정직</" + GOLD_TAG + "> <gray>흡수</gray> <white>+"
-                + AbilityInfo.formatNumber(amount) + "</white> <dark_gray>|</dark_gray> <" + GOLD_TAG
-                + ">다음 도끼는 금도끼</" + GOLD_TAG + ">"));
+        sign = null;
+        // The sign is a flourish: it only takes a display that nothing else needs.
+        if (skillRoom() >= 1) {
+            TextDisplay text = Displays.text(ctx(), owner, head.clone().add(0, 0.4, 0),
+                    Text.mm("<b><gradient:#FFFDF0:" + GOLD_TAG + ">정직한 자로구나!</gradient></b>"), 0.3f, 30);
+            remember(text);
+            Displays.animateNextTick(ctx(), owner, text, Displays.centered(0, 0.3f, 0, 1.1f, 1.1f, 1.1f, 0, 0, 0), 5);
+            sign = text;
+        }
+        owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">✦ 정직한 자로구나!</" + GOLD_TAG + "> <gray>다음 도끼는</gray> <"
+                + GOLD_TAG + ">금도끼</" + GOLD_TAG + ">"));
     }
 
     /** From now until it is thrown, the next axe is gold; a little golden axe hovers over the shoulder meanwhile. */
     private void promiseGold(Player owner) {
         goldPending = true;
+        honesty = 0;
         ItemDisplay axe = haloAxe;
-        if ((axe == null || !axe.isValid()) && canSpawn(1)) {
-            axe = Displays.item(ctx(), owner, haloPoint(owner, 0), new ItemStack(GOLD_AXE),
-                    Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), 0);
-            axe.setTeleportDuration(1);
-            remember(axe);
-            Displays.animateNextTick(ctx(), owner, axe, haloPose(0), 4);
-            haloAxe = axe;
+        if ((axe == null || !axe.isValid()) && !throwing && skillRoom() >= 1) {
+            spawnHalo(owner, 0);
         }
+    }
+
+    /** The hovering golden axe; it only takes a display the thrown axe and the judgement leave free. */
+    private void spawnHalo(Player owner, long tick) {
+        ItemDisplay axe = Displays.item(ctx(), owner, haloPoint(owner, tick), new ItemStack(GOLD_AXE),
+                Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), 0);
+        axe.setTeleportDuration(1);
+        remember(axe);
+        Displays.animateNextTick(ctx(), owner, axe, haloPose(tick), 4);
+        haloAxe = axe;
     }
 
     private static Location haloPoint(Player owner, long tick) {
@@ -349,17 +373,27 @@ public final class SansinAbility extends Ability {
             return;
         }
         Player owner = player();
-        long now = ctx().currentTick();
-        if (absorbKey != null && (now >= blessUntil || owner.getAbsorptionAmount() <= 0)) {
-            endBlessing(owner);
-        }
         ItemDisplay axe = haloAxe;
-        if (axe != null && axe.isValid()) {
-            if (!axe.getWorld().equals(owner.getWorld())) {
+        if (axe != null && (!axe.isValid() || !axe.getWorld().equals(owner.getWorld()))) {
+            if (axe.isValid()) {
                 axe.remove();
-                haloAxe = null;
-                return;
             }
+            haloAxe = null;
+            axe = null;
+        }
+        if (goldPending && !throwing && axe == null) {
+            // The promise always shows: the halo axe comes back as soon as a display is free, golden sparkles until.
+            if (skillRoom() >= 1) {
+                spawnHalo(owner, tick);
+            } else if (tick % HALO_SPARKLE_PERIOD == 0) {
+                Location at = haloPoint(owner, tick);
+                Vfx.dot(at, Particle.WAX_OFF, null, false);
+                Vfx.dot(at.clone().add(0, 0.18, 0), Particle.DUST, GOLD_DUST, false);
+                Vfx.dot(at.clone().add(0, -0.18, 0), Particle.DUST_COLOR_TRANSITION, GOLD_SMALL, false);
+            }
+            return;
+        }
+        if (axe != null) {
             Displays.moveTo(axe, haloPoint(owner, tick));
             if (tick % 2 == 0 && !throwing) {
                 Displays.animate(axe, haloPose(tick), 2);
@@ -369,21 +403,6 @@ public final class SansinAbility extends Ability {
                 Vfx.dot(Vfx.scatter(at, 0.2), Particle.WAX_OFF, null, false);
                 Vfx.dot(at.clone().add(0, -0.25, 0), Particle.DUST, GOLD_DUST, false);
             }
-        }
-        if (absorbKey != null && tick % 10 == 0) {
-            // The blessing glimmers on the sansin while it holds.
-            Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
-            Vfx.dot(Vfx.scatter(chest, 0.35), Particle.DUST_COLOR_TRANSITION, GOLD_SMALL, false);
-        }
-    }
-
-    /** The blessing wore off (or was used up): the extra absorption capacity goes away. */
-    private void endBlessing(Player owner) {
-        NamespacedKey key = absorbKey;
-        absorbKey = null;
-        if (key != null) {
-            ctx().removeModifier(owner, key);
-            owner.setAbsorptionAmount(owner.getAbsorptionAmount());
         }
     }
 
@@ -434,7 +453,7 @@ public final class SansinAbility extends Ability {
             this.position = start.clone();
             this.direction = direction.clone();
             this.golden = golden;
-            if (canSpawn(1)) {
+            if (claimSkill(1)) {
                 ItemDisplay display = Displays.item(ctx(), owner, Displays.unrotated(start),
                         new ItemStack(golden ? GOLD_AXE : SILVER_AXE), spinPose(direction, 0, 0.3f),
                         (long) Math.ceil(params().num("axe_range") / AXE_SPEED) + 12);
@@ -649,7 +668,8 @@ public final class SansinAbility extends Ability {
 
         void start() {
             Location over = over();
-            if (canSpawn(axes.length + 1)) {
+            // The judgement is what the throw is about: it may push out the sign and the halo axe for a moment.
+            if (claimSkill(axes.length + 1)) {
                 Verdict[] all = Verdict.values();
                 for (int i = 0; i < all.length; i++) {
                     ItemDisplay axe = Displays.item(ctx(), owner, slot(over, i), new ItemStack(all[i].axe),
@@ -684,7 +704,12 @@ public final class SansinAbility extends Ability {
         @Override
         public boolean test(long tick) {
             if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(owner.getWorld())) {
-                vanish();
+                vanish(false);
+                return false;
+            }
+            if (!isVisible(victim)) {
+                // The victim slipped out of sight: the question must not hover over it and give it away.
+                vanish(true);
                 return false;
             }
             Location over = over();
@@ -764,9 +789,10 @@ public final class SansinAbility extends Ability {
             };
         }
 
-        /** The axe lands: gold hits hard, silver slows, iron shoves. */
+        /** The axe lands: gold hits hard, silver slows, iron shoves (unless the victim fell or slipped out of sight). */
         private void chop() {
-            if (!Combat.isTargetable(ctx(), owner, victim)) {
+            if (!Combat.isTargetable(ctx(), owner, victim) || !isVisible(victim)) {
+                vanish(true);
                 return;
             }
             Location body = Fx.body(victim);
@@ -831,10 +857,15 @@ public final class SansinAbility extends Ability {
             });
         }
 
-        private void vanish() {
+        /** The judgement is called off: the axes sink away ({@code instant}: gone at once, so they mark nothing). */
+        private void vanish(boolean instant) {
             for (ItemDisplay axe : axes) {
                 if (axe != null && axe.isValid()) {
-                    Displays.shrinkAway(ctx(), owner, axe, 3);
+                    if (instant) {
+                        axe.remove();
+                    } else {
+                        Displays.shrinkAway(ctx(), owner, axe, 3);
+                    }
                 }
             }
             TextDisplay text = question;
@@ -905,7 +936,7 @@ public final class SansinAbility extends Ability {
         void start() {
             long runTicks = (long) Math.ceil(distance / TIGER_SPEED) + 2;
             long life = delay + runTicks + TIGER_LEAP_TICKS + SPIRIT_LINGER + 30;
-            if (canSpawn(SPIRIT.length)) {
+            if (canSpawnUltimate(SPIRIT.length)) {
                 for (Part part : SPIRIT) {
                     BlockDisplay display = Displays.block(ctx(), owner, spiritSpot, part.block().createBlockData(),
                             spiritPose(part, spiritYaw, 0.05f, 0f, 0f), life);
@@ -913,11 +944,11 @@ public final class SansinAbility extends Ability {
                     if (part.block() != Material.WHITE_WOOL) {
                         display.setBrightness(null);
                     }
-                    remember(display);
+                    rememberUltimate(display);
                     spirit.add(display);
                 }
             }
-            if (canSpawn(TIGER.length)) {
+            if (canSpawnUltimate(TIGER.length)) {
                 for (Part part : TIGER) {
                     BlockDisplay display = Displays.block(ctx(), owner, position, part.block().createBlockData(),
                             tigerPose(part, yaw, 0.05f, 0, 0, 0), life);
@@ -925,7 +956,7 @@ public final class SansinAbility extends Ability {
                     if (part.role() == Role.EYE) {
                         Displays.outline(display, PALETTE.body());
                     }
-                    remember(display);
+                    rememberUltimate(display);
                     tiger.add(display);
                 }
             }
@@ -1144,6 +1175,10 @@ public final class SansinAbility extends Ability {
         }
 
         private void poseTiger(float grow, double phase, float crouch, float bob) {
+            if (tiger.isEmpty()) {
+                sketchTiger(grow);
+                return;
+            }
             for (int i = 0; i < tiger.size(); i++) {
                 BlockDisplay display = tiger.get(i);
                 if (!display.isValid() || !display.getWorld().equals(world)) {
@@ -1152,6 +1187,18 @@ public final class SansinAbility extends Ability {
                 Displays.moveTo(display, position);
                 Displays.animate(display, tigerPose(TIGER[i], yaw, grow, phase, crouch, bob), 1);
             }
+        }
+
+        /** No displays to spare (a second spirit at once): the tiger is sketched in orange dust instead. */
+        private void sketchTiger(float grow) {
+            Vector dir = direction();
+            Location body = position.clone().add(0, 0.8 * TIGER_SCALE * grow, 0);
+            for (int i = -1; i <= 1; i++) {
+                Vfx.dot(body.clone().add(dir.clone().multiply(i * 0.5 * grow)), Particle.DUST, TIGER_DUST, false);
+            }
+            Location head = body.clone().add(dir.clone().multiply(1.05 * grow)).add(0, 0.3 * grow, 0);
+            Vfx.dot(head, Particle.DUST, TIGER_DUST, false);
+            Vfx.dot(head.clone().add(0, 0.1, 0), Particle.DUST_COLOR_TRANSITION, GOLD_SMALL, false);
         }
 
         private void poseSpirit(float bob, float staff) {
@@ -1183,8 +1230,11 @@ public final class SansinAbility extends Ability {
                 boolean diagonal = part.role() == Role.FRONT_LEFT || part.role() == Role.BACK_RIGHT;
                 float swing = (float) (Math.sin(phase + (diagonal ? 0 : Math.PI)) * Math.toRadians(35));
                 local.rotateX(swing);
+                // The legs bend with the crouch and stretch with the bob, so the paws stay on the ground.
+                float length = Math.max(0.05f, part.sy() + lift);
+                size = new Vector3f(part.sx(), length, part.sz()).mul(s);
                 Vector3f hip = new Vector3f(part.x(), part.y() + lift, part.z());
-                center = new Vector3f(hip).add(local.transform(new Vector3f(0, -part.sy() * 0.5f, 0)));
+                center = new Vector3f(hip).add(local.transform(new Vector3f(0, -length * 0.5f, 0)));
             }
             case TAIL -> {
                 float wag = (float) (Math.sin(phase * 0.8) * 0.5);
@@ -1233,13 +1283,47 @@ public final class SansinAbility extends Ability {
 
     // ------------------------------------------------------------------ display budget
 
-    /** True if {@code count} more displays stay within {@link #MAX_DISPLAYS}. */
-    private boolean canSpawn(int count) {
-        displays.removeIf(display -> !display.isValid());
-        return displays.size() + count <= MAX_DISPLAYS;
+    /** Free displays in the passive's and the active's share. */
+    private int skillRoom() {
+        skillDisplays.removeIf(display -> !display.isValid());
+        return SKILL_DISPLAYS - skillDisplays.size();
+    }
+
+    /**
+     * True if {@code count} more displays fit in the passive's and the active's share, making room if needed by
+     * removing the sign and then the halo axe (which comes back once there is room, sparkling until then).
+     */
+    private boolean claimSkill(int count) {
+        if (skillRoom() >= count) {
+            return true;
+        }
+        TextDisplay text = sign;
+        sign = null;
+        if (text != null && text.isValid()) {
+            text.remove();
+        }
+        if (skillRoom() >= count) {
+            return true;
+        }
+        ItemDisplay halo = haloAxe;
+        haloAxe = null;
+        if (halo != null && halo.isValid()) {
+            halo.remove();
+        }
+        return skillRoom() >= count;
+    }
+
+    /** True if {@code count} more displays fit in the ultimate's own share. */
+    private boolean canSpawnUltimate(int count) {
+        ultimateDisplays.removeIf(display -> !display.isValid());
+        return ultimateDisplays.size() + count <= ULTIMATE_DISPLAYS;
     }
 
     private void remember(Display display) {
-        displays.add(display);
+        skillDisplays.add(display);
+    }
+
+    private void rememberUltimate(Display display) {
+        ultimateDisplays.add(display);
     }
 }

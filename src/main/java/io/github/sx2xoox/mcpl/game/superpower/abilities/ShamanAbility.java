@@ -4,12 +4,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongPredicate;
+import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
@@ -23,6 +22,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
@@ -34,12 +34,22 @@ import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.BlockFace;
+import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityRemoveEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -53,11 +63,16 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * 무당 — the shaman. Its bell rings now and then and shakes one harmful effect off itself and every ally nearby; the
- * active raises jangseung (village guardian totems) that curse enemies around them (weaker, slower) and mend allies;
- * the ultimate holds a gut (a shaman ritual) in a ring of five-coloured flags: inside, enemies take more damage from
- * everything and are cut by the dancing blades every second, while the shaman's side is shielded and healed.
+ * active raises jangseung (village guardian totems) that jolt the enemies around as they burst out of the ground and
+ * then curse them (weaker, slower; one curse however many jangseung reach an enemy) and mend allies; the ultimate holds
+ * a gut (a shaman ritual) in a ring of five-coloured flags: inside, enemies take more damage from everything (every
+ * damage event against them is raised, so the extra belongs to whoever dealt the blow) and are cut by the dancing
+ * blades every second, while the shaman's side is shielded and healed.
  *
  * <p>The gut needs no passive state, so the Gambler can borrow the ultimate.
+ *
+ * <p>Displays: the gut's flags and blades have their own share of the budget and the jangseung theirs, so neither
+ * crowds out the other; the bell borrows whatever is free and gives way; a sinking jangseung gives way to a rising one.
  *
  * <p>Look: the five ritual colours (obangsaek: blue, red, yellow, white, black) with a warm golden glow. The bell
  * swings over the shaman's hand when it rings and a five-coloured ripple runs out over the allies; a cleansed body
@@ -79,11 +94,12 @@ public final class ShamanAbility extends Ability {
                             + "붙은 불을) 씻어냅니다.")
             .active("장승",
                     "조준한 바닥({totem_range}블록 이내)에 {totem_duration}초간 장승을 세웁니다(최대 {totem_max}개). "
-                            + "장승 반경 {totem_radius}블록 안의 적은 공격력이 {totem_weaken}%, 이동 속도가 {totem_slow}% "
-                            + "줄고, 나와 아군은 1초마다 체력을 {totem_heal} 회복합니다.",
+                            + "솟아오르는 장승은 반경 {totem_radius}블록 안의 적에게 {totem_damage} 피해를 줍니다. 그 안의 "
+                            + "적은 공격력이 {totem_weaken}%, 이동 속도가 {totem_slow}% 줄고(장승이 겹쳐도 한 번만), 나와 "
+                            + "아군은 1초마다 체력을 {totem_heal} 회복합니다.",
                     10)
             .ultimate("굿판",
-                    "내 자리에 반경 {gut_radius}블록의 굿판을 {gut_duration}초간 벌입니다. 판 안의 적은 받는 모든 피해가 "
+                    "내 발밑에 반경 {gut_radius}블록의 굿판을 {gut_duration}초간 벌입니다. 판 안의 적은 받는 모든 피해가 "
                             + "{gut_vulnerable}% 늘고 작두날에 1초마다 {gut_damage} 피해를 입으며, 나와 아군은 저항 I과 "
                             + "1초마다 체력 {gut_heal} 회복을 받습니다. 굿이 끝날 때 판 안의 적은 {gut_finale} 피해를 "
                             + "입습니다.")
@@ -93,6 +109,7 @@ public final class ShamanAbility extends Ability {
             .param("totem_duration", 14)
             .param("totem_max", 2)
             .param("totem_radius", 5)
+            .param("totem_damage", 2)
             .param("totem_weaken", 25)
             .param("totem_slow", 25)
             .param("totem_heal", 0.5)
@@ -144,6 +161,8 @@ public final class ShamanAbility extends Ability {
     private static final Material[] FLAG_CLOTH = {Material.BLUE_WOOL, Material.RED_WOOL, Material.YELLOW_WOOL,
             Material.WHITE_WOOL, Material.BLACK_WOOL};
     private static final Material BLADE = Material.IRON_BLOCK;
+    private static final Particle.DustOptions BELL_DUST = new Particle.DustOptions(Color.fromRGB(0xF2C230), 0.5f);
+    private static final Particle.DustOptions POST_DUST = new Particle.DustOptions(Color.fromRGB(0x8E6B43), 1.0f);
 
     /** Display entities one shaman keeps alive at most at once (extra visuals fall back to particles). */
     private static final int MAX_DISPLAYS = 24;
@@ -167,6 +186,7 @@ public final class ShamanAbility extends Ability {
     private static final double TOTEM_FALLBACK = 2.5;
     private static final double TOTEM_SNAP = 4;
     private static final int MAX_TOTEMS = 4;
+    private static final long TOTEM_SKETCH_PERIOD = 5;
 
     /** One block of a jangseung in its own space (origin on the ground, local +Z = the way the face looks). */
     private record TotemPart(Material block, float x, float y, float z, float sx, float sy, float sz,
@@ -194,12 +214,27 @@ public final class ShamanAbility extends Ability {
     private static final long GUT_BEAT = 10;
     private static final long GUT_PULSE = 20;
     private static final int RESISTANCE_TICKS = 30;
+    /** How far below the shaman's feet the gut finds its ground (a cast mid-jump). */
+    private static final double GUT_SNAP = 4;
+
+    /** The gut's share of {@link #MAX_DISPLAYS}: five poles, five cloths and two blades, kept for the ultimate. */
+    private static final int GUT_DISPLAYS = (FLAG_COUNT + 1) * 2 + 2;
+    /** The jangseung's share (two standing jangseung). */
+    private static final int TOTEM_DISPLAYS = MAX_DISPLAYS - GUT_DISPLAYS;
 
     private boolean granted;
     private long nextRing = NEVER;
     private final Deque<Totem> totems = new ArrayDeque<>();
+    /** Jangseung sinking back into the ground (their displays give way to a rising one). */
+    private final List<Totem> sinking = new ArrayList<>();
     private int totemsRaised;
-    private final List<Display> displays = new ArrayList<>();
+    /** The jangseung curse on each enemy: one at a time, whichever jangseung holds it, so it never stacks. */
+    private final Map<UUID, Curse> curses = new HashMap<>();
+    private final List<Gut> guts = new ArrayList<>();
+    private final List<Display> totemDisplays = new ArrayList<>();
+    private final List<Display> gutDisplays = new ArrayList<>();
+    /** The swinging bell (borrows any free display and gives way to the jangseung and the gut). */
+    private @Nullable ItemDisplay bell;
 
     @Override
     public AbilityInfo info() {
@@ -214,9 +249,17 @@ public final class ShamanAbility extends Ability {
 
     @Override
     public void onRevoke() {
-        // Tasks, displays and modifiers are owner-scoped: the context releases them.
+        // Tasks, displays and modifiers are owner-scoped: the context releases them. The gut's damage listener is
+        // not, so it is unregistered here.
         granted = false;
         totems.clear();
+        sinking.clear();
+        curses.clear();
+        for (Gut gut : List.copyOf(guts)) {
+            gut.release();
+        }
+        guts.clear();
+        bell = null;
     }
 
     // ------------------------------------------------------------------ passive: the bell
@@ -325,33 +368,49 @@ public final class ShamanAbility extends Ability {
         ctx().runLater(owner, 3, () -> Fx.sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, volume * 0.8f,
                 1.9f));
         Vfx.dot(hand, Particle.WAX_OFF, null, false);
-        if (!canSpawn(1)) {
-            Vfx.cloud(ctx(), hand, Particle.DUST_COLOR_TRANSITION, 4, 0.1, 0, GLOW_SMALL, false);
+        evictBell();
+        if (displaysAlive() + 1 > MAX_DISPLAYS) {
+            // Two jangseung and the gut hold every display: the bell rings in gold dust instead.
+            Loop.repeat(ctx(), owner, 0, 3, BELL_SWING_TICKS / 3, run -> {
+                sketchBell(bellPoint(owner), run);
+                return true;
+            });
             return;
         }
-        ItemDisplay bell = Displays.item(ctx(), owner, hand, new ItemStack(BELL_ITEM),
+        ItemDisplay swinging = Displays.item(ctx(), owner, hand, new ItemStack(BELL_ITEM),
                 Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), BELL_SWING_TICKS + 6);
-        bell.setTeleportDuration(1);
-        bell.setBillboard(Display.Billboard.VERTICAL);
-        remember(bell);
+        swinging.setTeleportDuration(1);
+        swinging.setBillboard(Display.Billboard.VERTICAL);
+        bell = swinging;
         Loop.repeat(ctx(), owner, 1, 1, BELL_SWING_TICKS, run -> {
-            if (!bell.isValid()) {
+            if (!swinging.isValid()) {
                 return false;
             }
-            Displays.moveTo(bell, bellPoint(owner));
+            Displays.moveTo(swinging, bellPoint(owner));
             float swing = (float) (Math.sin(run * 1.3) * 30 * (1 - run / (double) BELL_SWING_TICKS));
             float size = run < 2 ? 0.45f : 0.42f;
-            Displays.animate(bell, Displays.centered(0, 0, 0, size, size, size, 0, 0, swing), 1);
+            Displays.animate(swinging, Displays.centered(0, 0, 0, size, size, size, 0, 0, swing), 1);
             if (run % 3 == 0) {
                 Vfx.dot(bellPoint(owner).add(0, -0.15, 0), Particle.DUST, OBANG_SMALL[(int) (run / 3) % OBANG.length],
                         false);
             }
             return true;
         }, () -> {
-            if (bell.isValid()) {
-                Displays.shrinkAway(ctx(), owner, bell, 3);
+            if (swinging.isValid()) {
+                Displays.shrinkAway(ctx(), owner, swinging, 3);
             }
         });
+    }
+
+    /** A bell drawn in gold dust (three narrowing rings and a clapper), swaying by {@code run}. */
+    private void sketchBell(Location hand, long run) {
+        double sway = Math.sin(run * 1.3) * 0.06;
+        for (int ring = 0; ring < 3; ring++) {
+            double radius = 0.17 - ring * 0.05;
+            Vfx.ring(ctx(), hand.clone().add(sway * (1 - ring * 0.4), -0.12 + ring * 0.1, 0), radius, 7, ring * 0.45,
+                    Particle.DUST, BELL_DUST, false);
+        }
+        Vfx.dot(hand.clone().add(sway * 1.4, -0.2, 0), Particle.WAX_OFF, null, false);
     }
 
     /** A five-coloured ripple running out from the shaman to the bell's reach. */
@@ -463,7 +522,10 @@ public final class ShamanAbility extends Ability {
         return Spots.isFree(world, feet, 0.5, 2.2) && Spots.hasGroundBelow(world, feet) && ctx().isInsideArena(feet);
     }
 
-    /** One jangseung: rises, curses and mends around it every half second, then sinks back into the ground. */
+    /**
+     * One jangseung: rises (jolting the enemies around), curses and mends around it every half second, then sinks back
+     * into the ground.
+     */
     private final class Totem implements LongPredicate {
         private final Player owner;
         private final Location base;
@@ -472,7 +534,6 @@ public final class ShamanAbility extends Ability {
         private final long duration;
         private final double radius;
         private final List<BlockDisplay> parts = new ArrayList<>();
-        private final Map<UUID, Curse> curses = new HashMap<>();
         private @Nullable TextDisplay title;
         private boolean ended;
         private long age;
@@ -488,7 +549,7 @@ public final class ShamanAbility extends Ability {
 
         void raise() {
             long life = duration + TOTEM_SINK_TICKS + 10;
-            if (canSpawn(GENERAL.length + 1)) {
+            if (claimTotem(GENERAL.length + 1)) {
                 for (TotemPart part : GENERAL) {
                     Material block = part.hat() && !general ? LADY_HAT : part.block();
                     BlockDisplay display = Displays.block(ctx(), owner, base, block.createBlockData(),
@@ -496,7 +557,7 @@ public final class ShamanAbility extends Ability {
                     if (block == TOTEM_POST) {
                         display.setBrightness(null);
                     }
-                    remember(display);
+                    totemDisplays.add(display);
                     parts.add(display);
                 }
                 String name = general ? "천\n하\n대\n장\n군" : "지\n하\n여\n장\n군";
@@ -505,7 +566,7 @@ public final class ShamanAbility extends Ability {
                 TextDisplay text = Displays.text(ctx(), owner, base.clone().add(front.x(), front.y(), front.z()),
                         Text.mm("<b><" + color + ">" + name + "</" + color + "></b>"), 0.05f, life);
                 text.setBillboard(Display.Billboard.VERTICAL);
-                remember(text);
+                totemDisplays.add(text);
                 Displays.animateNextTick(ctx(), owner, text, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, 0, 0, 0),
                         TOTEM_RISE_TICKS);
                 title = text;
@@ -540,6 +601,9 @@ public final class ShamanAbility extends Ability {
                 return false;
             }
             age = tick;
+            if (tick == 0) {
+                slam();
+            }
             if (tick % TOTEM_PULSE == 0) {
                 pulse(tick);
             }
@@ -547,6 +611,9 @@ public final class ShamanAbility extends Ability {
                 Location ring = base.clone().add(0, 0.12, 0);
                 Vfx.ring(ctx(), ring, radius, (int) Math.max(14, radius * 5), tick * 0.04, Particle.DUST,
                         OBANG_SMALL[general ? 1 : 0], false);
+            }
+            if (parts.isEmpty() && tick % TOTEM_SKETCH_PERIOD == 0) {
+                sketch();
             }
             if (tick % 20 == 0) {
                 Location eyes = eyes();
@@ -561,25 +628,57 @@ public final class ShamanAbility extends Ability {
             return base.clone().add(at.x(), at.y(), at.z());
         }
 
-        /** Every half second: curse the enemies in reach (refreshing weakness and slowness), mend the allies. */
+        /** The jangseung bursts fully out of the ground: every enemy in reach (in the open) is jolted. */
+        private void slam() {
+            double damage = params().num("totem_damage");
+            Location center = base.clone().add(0, 1, 0);
+            int jolted = 0;
+            for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
+                if (damage <= 0 || !Spots.clearPath(center, Fx.body(enemy))) {
+                    continue;
+                }
+                Combat.hit(ctx(), owner, enemy, damage);
+                jolted++;
+                if (isVisible(enemy)) {
+                    Location feet = enemy.getLocation().add(0, 0.1, 0);
+                    Vfx.cloud(ctx(), feet, Particle.DUST, 6, 0.3, 0, OBANG_DUST[general ? 1 : 0], false);
+                    Vfx.dot(Fx.body(enemy), Particle.CRIT, null, false);
+                    Vfx.trail(eyes(), Fx.body(enemy), CURSE_THREAD, 8, false);
+                }
+            }
+            Vfx.shockwave(ctx(), owner, base.clone().add(0, 0.15, 0), 0.4, radius, 5, Particle.DUST_COLOR_TRANSITION,
+                    GLOW, false);
+            Fx.sound(base, Sound.BLOCK_NOTE_BLOCK_BASEDRUM, 1.2f, 0.5f);
+            if (jolted > 0) {
+                Fx.sound(base, Sound.ENTITY_EVOKER_CAST_SPELL, 0.6f, 0.7f);
+            }
+        }
+
+        /**
+         * Every half second: curse the enemies in reach (refreshing weakness and slowness; an enemy another jangseung
+         * already curses is left to that one, so two never stack), mend the allies.
+         */
         private void pulse(long tick) {
             Location center = base.clone().add(0, 1, 0);
             Location eyes = eyes();
+            long now = ctx().currentTick();
             double weaken = Math.clamp(params().num("totem_weaken") / 100.0, 0.0, 1.0);
             double slow = Math.clamp(params().num("totem_slow") / 100.0, 0.0, 1.0);
-            Set<UUID> inside = new HashSet<>();
+            curses.values().removeIf(curse -> curse.until <= now);
             for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
-                inside.add(enemy.getUniqueId());
-                Curse old = curses.remove(enemy.getUniqueId());
-                if (old != null) {
-                    old.lift();
+                Curse held = curses.get(enemy.getUniqueId());
+                if (held != null && held.holder != this) {
+                    continue;
+                }
+                if (held != null) {
+                    held.lift();
                 }
                 NamespacedKey[] keys = new NamespacedKey[2];
                 keys[0] = ctx().addModifier(owner, enemy, Attribute.ATTACK_DAMAGE, -weaken,
                         Operation.MULTIPLY_SCALAR_1, TOTEM_CURSE_TICKS);
                 keys[1] = ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow, Operation.MULTIPLY_SCALAR_1,
                         TOTEM_CURSE_TICKS);
-                curses.put(enemy.getUniqueId(), new Curse(enemy, keys));
+                curses.put(enemy.getUniqueId(), new Curse(this, enemy, keys, now + TOTEM_CURSE_TICKS));
                 if (isVisible(enemy)) {
                     Location feet = enemy.getLocation().add(0, 0.15, 0);
                     Vfx.dot(Vfx.scatter(feet, 0.35), Particle.DUST, CURSE_DUST, false);
@@ -589,7 +688,6 @@ public final class ShamanAbility extends Ability {
                     }
                 }
             }
-            curses.keySet().removeIf(id -> !inside.contains(id));
             if (tick % 20 != 0) {
                 return;
             }
@@ -612,6 +710,15 @@ public final class ShamanAbility extends Ability {
             }
         }
 
+        /** No display to spare: the post drawn in dust, with its staring eyes and its hat. */
+        private void sketch() {
+            for (double y = 0.2; y <= 2.2; y += 0.4) {
+                Vfx.dot(base.clone().add(0, y, 0), Particle.DUST, POST_DUST, false);
+            }
+            Vfx.dot(base.clone().add(0, 2.42, 0), Particle.DUST, OBANG_DUST[general ? 4 : 0], false);
+            Vfx.dot(eyes(), Particle.DUST, SMOKE_DUST, false);
+        }
+
         /** Time is up (or a newer jangseung replaced it): it sinks back into the ground. */
         void sink() {
             if (ended) {
@@ -619,10 +726,8 @@ public final class ShamanAbility extends Ability {
             }
             ended = true;
             totems.remove(this);
-            for (Curse curse : curses.values()) {
-                curse.lift();
-            }
-            curses.clear();
+            liftCurses();
+            sinking.add(this);
             for (int i = 0; i < parts.size(); i++) {
                 BlockDisplay display = parts.get(i);
                 if (display.isValid()) {
@@ -634,6 +739,7 @@ public final class ShamanAbility extends Ability {
                     });
                 }
             }
+            ctx().runLater(owner, TOTEM_SINK_TICKS + 1, () -> sinking.remove(this));
             TextDisplay text = title;
             if (text != null && text.isValid()) {
                 Displays.shrinkAway(ctx(), owner, text, TOTEM_SINK_TICKS / 2);
@@ -643,16 +749,48 @@ public final class ShamanAbility extends Ability {
             Fx.sound(base, Sound.BLOCK_WOOD_BREAK, 0.8f, 0.6f);
             Fx.sound(base, Sound.BLOCK_NOTE_BLOCK_BASEDRUM, 0.6f, 0.5f);
         }
+
+        /** Gives way to a rising jangseung: whatever is left of this sinking one goes at once, in a puff of dust. */
+        void dropDisplays() {
+            for (BlockDisplay display : parts) {
+                if (display.isValid()) {
+                    display.remove();
+                }
+            }
+            parts.clear();
+            TextDisplay text = title;
+            title = null;
+            if (text != null && text.isValid()) {
+                text.remove();
+            }
+            sinking.remove(this);
+            base.getWorld().spawnParticle(Particle.DUST, base.clone().add(0, 0.8, 0), Vfx.n(ctx(), 10), 0.2, 0.6,
+                    0.2, 0, POST_DUST);
+        }
+
+        private void liftCurses() {
+            curses.values().removeIf(curse -> {
+                if (curse.holder != this) {
+                    return false;
+                }
+                curse.lift();
+                return true;
+            });
+        }
     }
 
-    /** The weakness and slowness one jangseung keeps on one enemy. */
+    /** The weakness and slowness one jangseung keeps on one enemy, until {@code until} unless refreshed. */
     private final class Curse {
+        private final Totem holder;
         private final LivingEntity enemy;
         private final NamespacedKey[] keys;
+        private final long until;
 
-        Curse(LivingEntity enemy, NamespacedKey[] keys) {
+        Curse(Totem holder, LivingEntity enemy, NamespacedKey[] keys, long until) {
+            this.holder = holder;
             this.enemy = enemy;
             this.keys = keys;
+            this.until = until;
         }
 
         void lift() {
@@ -686,16 +824,20 @@ public final class ShamanAbility extends Ability {
     @Override
     public ActivationResult onUltimate() {
         Player owner = player();
-        new Gut(owner, owner.getLocation(), owner.getLocation().getYaw()).start();
+        Gut gut = new Gut(owner, owner.getLocation(), owner.getLocation().getYaw());
+        guts.add(gut);
+        gut.start();
         return ActivationResult.success();
     }
 
     /**
-     * The gut: five flags rise around the shaman's spot; inside the ring enemies take more damage from everything (the
-     * drop in their health since the last tick is answered with the extra share), the blades cut them every second
-     * and the shaman's side is shielded and healed. It ends in a flare that cuts once more.
+     * The gut: five flags rise around the shaman's spot; inside the ring enemies take more damage from everything (a
+     * listener raises every damage event against them, so the extra is part of the blow and belongs to whoever dealt
+     * it: no extra hit, no stolen kill, and nothing that is not damage, such as fading absorption, is punished), the
+     * blades cut them every second and the shaman's side is shielded and healed. It ends in a flare that cuts once
+     * more.
      */
-    private final class Gut implements LongPredicate {
+    private final class Gut implements LongPredicate, Listener {
         private final Player owner;
         private final Location center;
         private final float yaw;
@@ -708,12 +850,19 @@ public final class ShamanAbility extends Ability {
         /** The obangsaek colour of each flag (index into {@link #OBANG}). */
         private final int[] flagColors = {0, 1, 3, 4, 2};
         private final List<BlockDisplay> blades = new ArrayList<>();
-        private final Map<UUID, Double> lastHealth = new HashMap<>();
         private int cuts;
+        private boolean ritual;
+        private boolean registered;
+        private boolean released;
+        /** The server tick of the last step: a gut whose loop stopped (its owner fell) lets go of its listener. */
+        private long lastStep;
 
         Gut(Player owner, Location at, float yaw) {
             this.owner = owner;
-            this.center = Displays.unrotated(at);
+            // Cast mid-jump, the gut is still held on the ground below.
+            Location ground = at.clone();
+            Spots.snapToGround(at.getWorld(), ground, GUT_SNAP);
+            this.center = Displays.unrotated(ground);
             this.yaw = yaw;
             this.radius = Math.max(1, params().num("gut_radius"));
             this.duration = Math.max(1, params().ticks("gut_duration"));
@@ -723,34 +872,35 @@ public final class ShamanAbility extends Ability {
             long life = GUT_SETUP + duration + 30;
             World world = center.getWorld();
             // Four flags at the cardinal points (blue east, red south, white west, black north) and the yellow one
-            // in the middle, behind the blades.
+            // in the middle, behind the blades (behind as the shaman faces).
             for (int i = 0; i < FLAG_COUNT; i++) {
                 double angle = i * TAU / FLAG_COUNT;
                 Location spot = center.clone().add(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
                 flagSpots.add(flagGround(world, spot));
                 clothYaws.add((float) Math.toDegrees(angle) + 90f);
             }
-            Vector back = Motion.horizontalFacing(center).multiply(-0.9);
+            double radians = Math.toRadians(yaw);
+            Vector back = new Vector(Math.sin(radians), 0, -Math.cos(radians)).multiply(0.9);
             flagSpots.add(center.clone().add(back));
             clothYaws.add(yaw + 90f);
             int[] order = flagColors;
-            if (canSpawn(flagSpots.size() * 2 + 2)) {
+            if (claimGut(flagSpots.size() * 2 + 2)) {
                 for (int i = 0; i < flagSpots.size(); i++) {
                     Location spot = flagSpots.get(i);
                     BlockDisplay pole = Displays.block(ctx(), owner, spot, FLAG_POLE.createBlockData(),
                             polePose(0.02f), life);
                     pole.setBrightness(null);
-                    remember(pole);
+                    gutDisplays.add(pole);
                     poles.add(pole);
                     BlockDisplay cloth = Displays.block(ctx(), owner, spot, FLAG_CLOTH[order[i]].createBlockData(),
                             clothPose(clothYaws.get(i), 0f, 0.02f), life);
-                    remember(cloth);
+                    gutDisplays.add(cloth);
                     cloths.add(cloth);
                 }
                 for (int side = -1; side <= 1; side += 2) {
                     BlockDisplay blade = Displays.block(ctx(), owner, center, BLADE.createBlockData(),
                             bladePose(yaw, side, 0.02f), life);
-                    remember(blade);
+                    gutDisplays.add(blade);
                     blades.add(blade);
                 }
             }
@@ -769,6 +919,9 @@ public final class ShamanAbility extends Ability {
             Fx.sound(center, Sound.ENTITY_EVOKER_PREPARE_WOLOLO, 0.8f, 1.2f);
             owner.sendActionBar(Text.mm("<" + RED_TAG + "><b>굿판</b></" + RED_TAG + "> <gray>"
                     + Fx.seconds(duration) + "초 · 반경 " + AbilityInfo.formatNumber(radius) + "블록</gray>"));
+            lastStep = Bukkit.getCurrentTick();
+            Bukkit.getPluginManager().registerEvents(this, ctx().plugin());
+            registered = true;
             Loop.repeat(ctx(), owner, 1, 1, GUT_SETUP + duration, this, this::finale);
         }
 
@@ -798,6 +951,10 @@ public final class ShamanAbility extends Ability {
 
         @Override
         public boolean test(long tick) {
+            lastStep = Bukkit.getCurrentTick();
+            if (poles.isEmpty() && tick % 4 == 2) {
+                sketchFlags(tick);
+            }
             if (tick < GUT_SETUP) {
                 if (tick % 4 == 0) {
                     obangRing(center.clone().add(0, 0.1, 0), radius * (tick + 1) / GUT_SETUP,
@@ -805,14 +962,14 @@ public final class ShamanAbility extends Ability {
                 }
                 return true;
             }
-            long ritual = tick - GUT_SETUP;
-            amplify();
-            if (ritual % GUT_PULSE == 0) {
+            ritual = true;
+            long beat = tick - GUT_SETUP;
+            if (beat % GUT_PULSE == 0) {
                 cut();
                 bless();
             }
-            if (ritual % GUT_BEAT == 0) {
-                beat(ritual);
+            if (beat % GUT_BEAT == 0) {
+                beat(beat);
             }
             if (tick % 2 == 0) {
                 waveFlags(tick);
@@ -827,25 +984,85 @@ public final class ShamanAbility extends Ability {
             return true;
         }
 
-        /** Everything that hurt an enemy in the ring since the last tick hurts it a share more. */
-        private void amplify() {
-            double share = Math.max(0, params().num("gut_vulnerable")) / 100.0;
-            Set<UUID> inside = new HashSet<>();
-            for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
-                UUID id = enemy.getUniqueId();
-                inside.add(id);
-                double now = health(enemy);
-                Double before = lastHealth.get(id);
-                if (before != null && now < before - 1.0E-9 && share > 0) {
-                    Combat.hit(ctx(), owner, enemy, (before - now) * share);
-                    now = enemy.isDead() ? 0 : health(enemy);
-                    if (isVisible(enemy)) {
-                        Vfx.dot(Fx.body(enemy).add(0, 0.6, 0), Particle.DAMAGE_INDICATOR, null, false);
-                    }
-                }
-                lastHealth.put(id, now);
+        /** True if {@code victim} stands in the ring. */
+        private boolean inRing(LivingEntity victim) {
+            Location at = victim.getLocation();
+            return at.getWorld().equals(center.getWorld()) && at.distanceSquared(center) <= radius * radius;
+        }
+
+        /**
+         * "Takes more from everything": every damage event against an enemy in the ring is raised by the share,
+         * after every hook has had its say. Runs only during the ritual and lets go once the gut is over.
+         */
+        @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+        public void onDamage(EntityDamageEvent event) {
+            if (released) {
+                return;
             }
-            lastHealth.keySet().removeIf(id -> !inside.contains(id));
+            try {
+                amplify(event);
+            } catch (RuntimeException e) {
+                ctx().plugin().getLogger().log(Level.WARNING, "Shaman gut amplification failed", e);
+            }
+        }
+
+        private void amplify(EntityDamageEvent event) {
+            if (!owner.isOnline() || !ctx().isAlive(owner) || Bukkit.getCurrentTick() - lastStep > 2) {
+                // The gut's loop stopped with its owner: nothing amplifies any more.
+                release();
+                return;
+            }
+            DamageType type = event.getDamageSource().getDamageType();
+            if (!ritual || type == DamageType.OUT_OF_WORLD || type == DamageType.GENERIC_KILL
+                    || type == DamageType.OUTSIDE_BORDER || !(event.getEntity() instanceof LivingEntity victim)
+                    || !ctx().isEnemy(owner, victim) || !inRing(victim)) {
+                return;
+            }
+            double share = Math.max(0, params().num("gut_vulnerable")) / 100.0;
+            if (share <= 0 || !(event.getDamage() > 0)) {
+                return;
+            }
+            event.setDamage(event.getDamage() * (1 + share));
+            if (isVisible(victim)) {
+                Vfx.dot(Fx.body(victim).add(0, 0.6, 0), Particle.DAMAGE_INDICATOR, null, false);
+                Vfx.dot(Fx.body(victim), Particle.DUST, OBANG_SMALL[1], false);
+            }
+        }
+
+        /**
+         * The gut's displays are only removed early when the context releases its owner (death, quitting, the match
+         * ending, a revoke): the gut is over then, also for a borrowed one, which never sees a revoke.
+         */
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onRemove(EntityRemoveEvent event) {
+            Entity removed = event.getEntity();
+            if (!released && (poles.contains(removed) || cloths.contains(removed) || blades.contains(removed))) {
+                release();
+            }
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onOwnerDeath(PlayerDeathEvent event) {
+            if (event.getEntity().equals(owner)) {
+                release();
+            }
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onOwnerQuit(PlayerQuitEvent event) {
+            if (event.getPlayer().equals(owner)) {
+                release();
+            }
+        }
+
+        /** Unregisters the gut's listeners (the gut is over, or its owner's ability went away). */
+        void release() {
+            released = true;
+            guts.remove(this);
+            if (registered) {
+                HandlerList.unregisterAll(this);
+                registered = false;
+            }
         }
 
         /** The blades flash across every enemy in the ring. */
@@ -883,7 +1100,8 @@ public final class ShamanAbility extends Ability {
         private void bless() {
             double heal = Math.max(0, params().num("gut_heal"));
             List<Player> blessed = new ArrayList<>();
-            if (ctx().isAlive(owner) && owner.getLocation().distanceSquared(center) <= radius * radius) {
+            if (ctx().isAlive(owner) && owner.getWorld().equals(center.getWorld())
+                    && owner.getLocation().distanceSquared(center) <= radius * radius) {
                 blessed.add(owner);
             }
             blessed.addAll(ctx().alliesNear(owner, center, radius));
@@ -920,6 +1138,16 @@ public final class ShamanAbility extends Ability {
             }
         }
 
+        /** No displays to spare (a second gut at once): the flags are drawn as coloured dust poles. */
+        private void sketchFlags(long tick) {
+            double height = POLE_HEIGHT * Math.min(1.0, (tick + 1.0) / GUT_SETUP);
+            for (int i = 0; i < flagSpots.size(); i++) {
+                Location foot = flagSpots.get(i);
+                Vfx.line(ctx(), foot, foot.clone().add(0, height, 0), 2.5, Particle.DUST,
+                        OBANG_SMALL[flagColors[i]], true);
+            }
+        }
+
         /** Coloured streamers from the flag tops to the yellow pole in the middle. */
         private void streamers() {
             Location top = flagSpots.get(flagSpots.size() - 1).clone().add(0, POLE_HEIGHT, 0);
@@ -947,15 +1175,17 @@ public final class ShamanAbility extends Ability {
             }
         }
 
-        /** The gut ends: the flags flare up in five colours and the blades cut a last time. */
+        /** The gut ends: the flags flare up in five colours and the blades cut a last time (raised like any blow). */
         private void finale() {
-            double damage = params().num("gut_finale") * (1 + Math.max(0, params().num("gut_vulnerable")) / 100.0);
+            ritual = true;
+            double damage = params().num("gut_finale");
             for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
                 Combat.hit(ctx(), owner, enemy, damage);
                 if (isVisible(enemy)) {
                     Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.7, Particle.SWEEP_ATTACK, true);
                 }
             }
+            release();
             for (int i = 0; i < flagSpots.size(); i++) {
                 Location top = flagSpots.get(i).clone().add(0, POLE_HEIGHT * 0.8, 0);
                 Vfx.cloud(ctx(), top, Particle.FLAME, 8, 0.25, 0.02, null, true);
@@ -990,10 +1220,6 @@ public final class ShamanAbility extends Ability {
                         + "번</white>"));
             }
         }
-    }
-
-    private static double health(LivingEntity entity) {
-        return entity.getHealth() + entity.getAbsorptionAmount();
     }
 
     /** A flag pole from the ground, grown to {@code grow} of its height. */
@@ -1031,13 +1257,56 @@ public final class ShamanAbility extends Ability {
 
     // ------------------------------------------------------------------ display budget
 
-    /** True if {@code count} more displays stay within {@link #MAX_DISPLAYS}. */
-    private boolean canSpawn(int count) {
-        displays.removeIf(display -> !display.isValid());
-        return displays.size() + count <= MAX_DISPLAYS;
+    /** Live displays: the jangseung's, the gut's and the bell. */
+    private int displaysAlive() {
+        totemDisplays.removeIf(display -> !display.isValid());
+        gutDisplays.removeIf(display -> !display.isValid());
+        ItemDisplay swinging = bell;
+        if (swinging != null && !swinging.isValid()) {
+            bell = null;
+        }
+        return totemDisplays.size() + gutDisplays.size() + (bell != null ? 1 : 0);
     }
 
-    private void remember(Display display) {
-        displays.add(display);
+    /** The bell borrows a free display; it gives way to anything that needs the room. */
+    private void evictBell() {
+        ItemDisplay swinging = bell;
+        bell = null;
+        if (swinging != null && swinging.isValid()) {
+            swinging.remove();
+        }
+    }
+
+    /**
+     * True if {@code count} more jangseung displays fit in their share; sinking jangseung give way at once, and so
+     * does the bell.
+     */
+    private boolean claimTotem(int count) {
+        displaysAlive();
+        if (totemDisplays.size() + count > TOTEM_DISPLAYS) {
+            for (Totem old : List.copyOf(sinking)) {
+                old.dropDisplays();
+            }
+            displaysAlive();
+        }
+        if (totemDisplays.size() + count > TOTEM_DISPLAYS) {
+            return false;
+        }
+        if (displaysAlive() + count > MAX_DISPLAYS) {
+            evictBell();
+        }
+        return displaysAlive() + count <= MAX_DISPLAYS;
+    }
+
+    /** True if {@code count} more gut displays fit in the gut's own share (the bell gives way if needed). */
+    private boolean claimGut(int count) {
+        displaysAlive();
+        if (gutDisplays.size() + count > GUT_DISPLAYS) {
+            return false;
+        }
+        if (displaysAlive() + count > MAX_DISPLAYS) {
+            evictBell();
+        }
+        return displaysAlive() + count <= MAX_DISPLAYS;
     }
 }

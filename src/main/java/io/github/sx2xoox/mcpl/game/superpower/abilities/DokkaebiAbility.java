@@ -54,8 +54,10 @@ import org.jspecify.annotations.Nullable;
  * invisibility. Two blue wisps circle the dokkaebi and dart at nearby enemies on their own; the club ("뚝딱 방망이")
  * smashes the ground in front, and everything it and the wisps hit raises a comic bump ("혹") on the victim's head.
  * Three bumps burst with a "뚝딱!" and leave the victim seeing stars for a moment. The ultimate is the dokkaebi hat
- * ("감투"): pulled down over the head it makes the dokkaebi vanish, and every melee hit while it is worn plays a prank
- * that bounces the victim off in a random direction.
+ * ("감투"): pulled down over the head it makes the dokkaebi vanish, and a melee hit from hiding plays a prank that
+ * bounces the victim off in a random direction. Every prank (and every swing of the club, and every blow the dokkaebi
+ * takes) knocks the hat askew for a moment: the dokkaebi shows and cannot prank until it is pulled down again, so it
+ * strikes from hiding, is seen, and vanishes again, and the victims get a window to hit back.
  *
  * <p>The hat lives on this instance's hooks (the prank in the damage hooks, the slipping hat in
  * {@link #onTakeDamage}, the stealth undone in {@link #onRevoke}), so the ultimate is not standalone.
@@ -82,9 +84,10 @@ public final class DokkaebiAbility extends Ability {
                             + "{bump_stun}초 기절(이동·점프 불가)을 주고, 그 뒤 {bump_immunity}초간은 혹이 붙지 않습니다.",
                     8)
             .ultimate("도깨비 감투",
-                    "감투를 눌러써 {hat_duration}초간 적의 눈에서 사라집니다(도깨비불도 숨습니다). 그동안 근접 공격이 "
+                    "감투를 눌러써 {hat_duration}초간 적의 눈에서 사라집니다(도깨비불도 숨습니다). 숨은 채 근접 공격이 "
                             + "적중하면 {prank_damage} 추가 피해와 혹을 주고 적을 엉뚱한 방향으로 약 {prank_knock}블록 "
-                            + "튕겨 보내며, 공격받으면 감투가 벗겨져 {hat_slip}초간 모습이 드러납니다.")
+                            + "튕겨 보냅니다. 장난을 치거나 방망이를 휘두르거나 공격받으면 감투가 들썩여 {hat_slip}초간 "
+                            + "모습이 드러나고, 그동안은 장난을 칠 수 없습니다.")
             // The prank lives in the damage hooks and the stealth must be undone in onRevoke.
             .ultimateNotStandalone()
             .param("wisp_count", 2)
@@ -137,6 +140,8 @@ public final class DokkaebiAbility extends Ability {
     private static final double MAX_SPEED = 1.6;
     /** Display entities one dokkaebi keeps alive at most at once (extra visuals fall back to particles). */
     private static final int MAX_DISPLAYS = 24;
+    /** Kept for the hat (cap, crown, band), so wisps, clubs and bumps never crowd out the ultimate. */
+    private static final int HAT_DISPLAYS = 3;
     /** Ticks are counted from here when nothing happened yet ("/ 2": now - this must not overflow). */
     private static final long NEVER = Long.MIN_VALUE / 2;
 
@@ -208,6 +213,7 @@ public final class DokkaebiAbility extends Ability {
     private long lastWispShot = NEVER;
     private final Map<UUID, Bumps> bumps = new HashMap<>();
     private final List<Display> displays = new ArrayList<>();
+    private final List<Display> hatDisplays = new ArrayList<>();
     private final Stealth stealth = new Stealth();
     private @Nullable Hat hat;
 
@@ -692,6 +698,11 @@ public final class DokkaebiAbility extends Ability {
 
     @Override
     public ActivationResult onActive() {
+        Hat worn = hat;
+        if (worn != null && isPranking()) {
+            // A club swung from hiding is no secret: the hat slips.
+            worn.slip();
+        }
         new Club(player()).start();
         return ActivationResult.success();
     }
@@ -706,7 +717,7 @@ public final class DokkaebiAbility extends Ability {
         }
 
         void start() {
-            float yaw = owner.getBodyYaw();
+            float yaw = owner.getLocation().getYaw();
             long life = SWING.length + CLUB_HOLD_TICKS + CLUB_FOLD_TICKS + 4;
             if (canSpawn(CLUB.length)) {
                 Location feet = Displays.unrotated(owner.getLocation());
@@ -729,7 +740,8 @@ public final class DokkaebiAbility extends Ability {
         }
 
         private boolean tick(long t) {
-            float yaw = owner.getBodyYaw();
+            // The club follows the head's yaw, the same yaw the smash and its ground impact use.
+            float yaw = owner.getLocation().getYaw();
             Location feet = Displays.unrotated(owner.getLocation());
             int step = (int) Math.min(t, SWING.length - 1);
             float angle = SWING[step];
@@ -852,10 +864,10 @@ public final class DokkaebiAbility extends Ability {
         }
     }
 
-    /** The owner's right shoulder in the world. */
+    /** The owner's right shoulder in the world (turned with the head, like the club). */
     private static Location shoulder(Player owner) {
         Location at = owner.getLocation();
-        Quaternionf yaw = yawRotation(owner.getBodyYaw());
+        Quaternionf yaw = yawRotation(at.getYaw());
         Vector3f grip = yaw.transform(new Vector3f(GRIP));
         return at.add(grip.x(), grip.y(), grip.z());
     }
@@ -892,16 +904,21 @@ public final class DokkaebiAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** True while the hat hides the dokkaebi (also during a slip, when only the hat is askew). */
+    /** True while the hat is worn (also during a slip, when only the hat is askew): the wisps stay hidden. */
     private boolean isHatHidden() {
         Hat worn = hat;
         return worn != null && worn.worn && !worn.ended;
     }
 
-    /** The prank: a melee hit while the hat is worn hits harder. Only the damage changes here. */
+    /** True while the hat actually hides the dokkaebi (not during a slip): only then does a hit play a prank. */
+    private boolean isPranking() {
+        return isHatHidden() && stealth.isActive();
+    }
+
+    /** The prank: a melee hit from hiding hits harder. Only the damage changes here. */
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (!isHatHidden() || event.isCancelled() || !isOwnMelee(event, victim)) {
+        if (!isPranking() || event.isCancelled() || !isOwnMelee(event, victim)) {
             return;
         }
         double bonus = Math.max(0, params().num("prank_damage"));
@@ -910,11 +927,11 @@ public final class DokkaebiAbility extends Ability {
         }
     }
 
-    /** The prank landed: a bump, a "뚝딱!" and the victim bounces off somewhere silly. */
+    /** The prank landed: a bump, a "뚝딱!", the victim bounces off somewhere silly, and the hat slips. */
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
         Hat worn = hat;
-        if (worn == null || !isHatHidden() || !isOwnMelee(event, victim)) {
+        if (worn == null || !isPranking() || !isOwnMelee(event, victim)) {
             return;
         }
         worn.prank(victim);
@@ -937,8 +954,8 @@ public final class DokkaebiAbility extends Ability {
     }
 
     /**
-     * The dokkaebi hat: it drops onto the head, the dokkaebi vanishes, pranks whoever it hits, can be knocked askew
-     * for a moment, and flies off when the time is up.
+     * The dokkaebi hat: it drops onto the head, the dokkaebi vanishes, pranks whoever it hits from hiding, is knocked
+     * askew for a moment by every prank, club swing or blow taken, and flies off when the time is up.
      */
     private final class Hat {
         private final Player owner;
@@ -959,14 +976,14 @@ public final class DokkaebiAbility extends Ability {
         void start() {
             float yaw = owner.getLocation().getYaw();
             long life = HAT_DROP_TICKS + duration + 30;
-            if (canSpawn(3)) {
+            if (canSpawnHat(HAT_DISPLAYS)) {
                 Location feet = Displays.unrotated(owner.getLocation());
-                for (int part = 0; part < 3; part++) {
+                for (int part = 0; part < HAT_DISPLAYS; part++) {
                     Material block = part == 2 ? HAT_BAND : HAT_BLOCK;
                     BlockDisplay display = Displays.block(ctx(), owner, feet, block.createBlockData(),
                             hatPose(part, owner, yaw, (float) HAT_DROP_HEIGHT, 0.6f, 0), life);
                     display.setTeleportDuration(1);
-                    remember(display);
+                    hatDisplays.add(display);
                     // The hat would block the dokkaebi's view upwards.
                     owner.hideEntity(ctx().plugin(), display);
                     parts.add(display);
@@ -1080,7 +1097,7 @@ public final class DokkaebiAbility extends Ability {
             }
             if (t % 5 == 0) {
                 long left = Math.max(0, endTick - now);
-                String state = now < slipUntil ? "<" + RED + ">감투가 벗겨졌습니다!</" + RED + ">"
+                String state = now < slipUntil ? "<" + RED + ">감투가 들썩였습니다!</" + RED + ">"
                         : "<gray>" + Fx.seconds(left) + "초</gray>";
                 owner.sendActionBar(Text.mm("<" + BLUE + ">◆ 도깨비 감투</" + BLUE + "> " + state
                         + (pranks > 0 ? " <dark_gray>|</dark_gray> <" + GOLD + ">장난 " + pranks + "회</" + GOLD + ">"
@@ -1102,9 +1119,13 @@ public final class DokkaebiAbility extends Ability {
             Vfx.dot(print.clone().add(0, 0.05, 0), Particle.DUST_COLOR_TRANSITION, WISP_SMALL, false);
         }
 
-        /** A melee hit while the hat is worn: a bump, a "뚝딱!" and the victim bounces off somewhere silly. */
+        /**
+         * A melee hit from hiding: a bump, a "뚝딱!" and the victim bounces off somewhere silly; the giggling
+         * dokkaebi's hat slips, so it shows for a moment.
+         */
         void prank(LivingEntity victim) {
             pranks++;
+            slip();
             addBump(victim);
             Location body = Fx.body(victim);
             World world = body.getWorld();
@@ -1129,7 +1150,7 @@ public final class DokkaebiAbility extends Ability {
             });
         }
 
-        /** Hit while hidden: the hat is knocked askew and the dokkaebi shows for a moment. */
+        /** A prank, a club swing or a blow: the hat is knocked askew and the dokkaebi shows for a moment. */
         void slip() {
             if (!stealth.isActive()) {
                 return;
@@ -1231,10 +1252,16 @@ public final class DokkaebiAbility extends Ability {
 
     // ------------------------------------------------------------------ display budget
 
-    /** True if {@code count} more displays stay within {@link #MAX_DISPLAYS}. */
+    /** True if {@code count} more wisp, club, bump or sign displays fit (the hat's share stays free). */
     private boolean canSpawn(int count) {
         displays.removeIf(display -> !display.isValid());
-        return displays.size() + count <= MAX_DISPLAYS;
+        return displays.size() + count <= MAX_DISPLAYS - HAT_DISPLAYS;
+    }
+
+    /** True if {@code count} more displays fit in the hat's own share. */
+    private boolean canSpawnHat(int count) {
+        hatDisplays.removeIf(display -> !display.isValid());
+        return hatDisplays.size() + count <= HAT_DISPLAYS;
     }
 
     private void remember(Display display) {

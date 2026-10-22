@@ -6,27 +6,35 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
@@ -41,6 +49,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 class FolkNewAbilitiesTest {
 
     private static final double EPSILON = 1.0E-6;
+    /** The tiger's orange parts: body, head, four legs and the tail. */
+    private static final int TIGER_ORANGE_PARTS = 7;
 
     static Stream<String> abilities() {
         return Stream.of("dokkaebi", "gumiho", "sansin", "shaman");
@@ -71,18 +81,33 @@ class FolkNewAbilitiesTest {
                 + entities(s, Display.class));
     }
 
-    /** Displays a passive keeps on purpose: wisps, bumps, tails and the hovering golden axe. */
-    private static final Set<Material> PASSIVE_BLOCKS = Set.of(Material.SOUL_FIRE, Material.PINK_TERRACOTTA,
-            Material.WHITE_WOOL);
-
-    private static void assertOnlyPassiveDisplays(Scenario s, String what) {
+    /**
+     * Only the displays the ability's passive keeps on purpose are left, and only where the passive keeps them: the
+     * dokkaebi's wisps (around it) and bumps (on heads), the gumiho's tails (on its back), the sansin's single halo axe
+     * (over its shoulder). The shaman's passive keeps none.
+     */
+    private static void assertOnlyPassiveDisplays(Scenario s, String id) {
+        Location owner = s.owner.getLocation();
+        int halos = 0;
+        int wisps = 0;
+        int tails = 0;
         for (Display display : entities(s, Display.class)) {
-            boolean passive = display instanceof BlockDisplay block
-                    && PASSIVE_BLOCKS.contains(block.getBlock().getMaterial())
-                    || display instanceof ItemDisplay item && item.getItemStack() != null
-                    && item.getItemStack().getType() == Material.GOLDEN_AXE;
-            assertTrue(passive, what + ": a skill display was left behind: " + display);
+            double distance = display.getLocation().distance(owner);
+            boolean passive = switch (id) {
+                case "dokkaebi" -> display instanceof BlockDisplay block
+                        && (block.getBlock().getMaterial() == Material.SOUL_FIRE && distance < 2 && ++wisps > 0
+                        || block.getBlock().getMaterial() == Material.PINK_TERRACOTTA);
+                case "gumiho" -> display instanceof BlockDisplay block
+                        && block.getBlock().getMaterial() == Material.WHITE_WOOL && distance < 0.5 && ++tails > 0;
+                case "sansin" -> display instanceof ItemDisplay item && item.getItemStack() != null
+                        && item.getItemStack().getType() == Material.GOLDEN_AXE && distance < 3 && ++halos > 0;
+                default -> false;
+            };
+            assertTrue(passive, id + ": a skill display was left behind: " + display + " at " + display.getLocation());
         }
+        assertTrue(halos <= 1, id + ": one halo axe at most");
+        assertTrue(wisps <= (id.equals("dokkaebi") ? (int) s.param("wisp_count") : 0), id + ": wisps " + wisps);
+        assertTrue(tails <= (id.equals("gumiho") ? (int) s.param("tail_max") : 0), id + ": tails " + tails);
     }
 
     /** No attribute modifier but the scenario's own max health bonus. */
@@ -160,6 +185,27 @@ class FolkNewAbilitiesTest {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
     }
 
+    /** The shaman gut damage listeners still registered. */
+    private static long gutListeners() {
+        return Arrays.stream(EntityDamageEvent.getHandlerList().getRegisteredListeners())
+                .filter(listener -> listener.getListener().getClass().getName().contains("ShamanAbility$Gut"))
+                .count();
+    }
+
+    /** The lowest point of a block display's (rotated, scaled) box in the world. */
+    private static double lowestPoint(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        Vector3f scale = t.getScale();
+        double lowest = Double.MAX_VALUE;
+        for (int corner = 0; corner < 8; corner++) {
+            Vector3f local = new Vector3f((corner & 1) * scale.x(), ((corner >> 1) & 1) * scale.y(),
+                    ((corner >> 2) & 1) * scale.z());
+            Vector3f world = rotated(display, local).add(t.getTranslation());
+            lowest = Math.min(lowest, display.getLocation().getY() + world.y());
+        }
+        return lowest;
+    }
+
     private static List<Scenario.Hit> magicHitsBy(Scenario s, Player attacker, Player victim) {
         return s.hitsBy(attacker, victim).stream().filter(hit -> hit.cause() == DamageCause.MAGIC).toList();
     }
@@ -182,9 +228,7 @@ class FolkNewAbilitiesTest {
                 assertTrue(hasModifier(s.enemy, Attribute.MOVEMENT_SPEED), "the jangseung curses the enemy");
             }
             s.ticks(100);
-            if (!id.equals("shaman")) {
-                assertTrue(s.damageBy(s.owner, s.enemy) > 0, id + " active hurts the aimed enemy");
-            }
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, id + " active hurts the aimed enemy");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, id + " active never hurts its owner: " + s.hits());
 
             s.ticks(300);
@@ -567,7 +611,8 @@ class FolkNewAbilitiesTest {
             s.clearHits();
             s.melee(s.owner, s.enemy, 3);
             assertEquals(3 + s.param("prank_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the prank hits harder");
-            assertFalse(s.enemy.canSee(s.owner), "attacking does not break the hat");
+            assertTrue(s.enemy.canSee(s.owner), "the prank knocks the hat askew: the dokkaebi shows for a moment");
+            assertTrue(s.enemy2.canSee(s.owner), "to every enemy");
             s.ticks(1);
             Vector bounce = s.enemy.getVelocity();
             double expected = s.param("prank_knock") / 9.5;
@@ -577,6 +622,7 @@ class FolkNewAbilitiesTest {
             assertTrue(horizontalDistance(before, s.enemy.getLocation()) > 2.5,
                     "the victim is bounced off somewhere silly: " + s.enemy.getLocation());
             assertEquals(1, blocks(s, Material.PINK_TERRACOTTA).size(), "and gets a bump");
+            assertFalse(s.enemy.canSee(s.owner), "the hat is pulled down again after the slip");
 
             s.ticks(s.paramTicks("hat_duration") + 20);
             assertTrue(s.enemy.canSee(s.owner), "the hat flew off");
@@ -601,6 +647,78 @@ class FolkNewAbilitiesTest {
             assertFalse(s.enemy.canSee(s.owner), "the hat is pulled down again");
             s.ticks(s.paramTicks("hat_duration"));
             assertTrue(s.enemy.canSee(s.owner));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dokkaebiPranksOnlyFromHidingSoEachPrankLeavesAWindowToHitBack() {
+        try (Scenario s = Scenario.builder("dokkaebi").param("wisp_count", 0).start()) {
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.assertSucceeded(s.ultimate(), "도깨비 감투");
+            s.ticks(8);
+            s.place(s.enemy, 0.5, 2.0, 180);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 3);
+            assertEquals(3 + s.param("prank_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "a prank from hiding");
+            assertTrue(s.enemy.canSee(s.owner), "the prank shows the dokkaebi");
+            s.ticks(2);
+            s.place(s.enemy, 0.5, 2.0, 180);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 3);
+            assertEquals(3, s.damageBy(s.owner, s.enemy), EPSILON, "no prank while it shows");
+            s.ticks(1);
+            assertEquals(1, blocks(s, Material.PINK_TERRACOTTA).size(), "and no second bump");
+            s.melee(s.enemy, s.owner, 2);
+            assertTrue(s.damageBy(s.enemy, s.owner) > 0, "the victim can hit back in the window");
+            s.ticks(s.paramTicks("hat_slip") + 3);
+            assertFalse(s.enemy.canSee(s.owner), "then the hat is pulled down again");
+            s.place(s.enemy, 0.5, 2.0, 180);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 3);
+            assertEquals(3 + s.param("prank_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "and pranks again");
+            s.ticks(s.paramTicks("hat_duration") + 20);
+            assertTrue(s.enemy.canSee(s.owner));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dokkaebiClubSwungFromHidingShowsTheGoblin() {
+        try (Scenario s = Scenario.builder("dokkaebi").param("wisp_count", 0).start()) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.assertSucceeded(s.ultimate(), "도깨비 감투");
+            s.ticks(8);
+            assertFalse(s.enemy.canSee(s.owner), "hidden");
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "뚝딱 방망이 under the hat");
+            assertTrue(s.enemy.canSee(s.owner), "a floating club is no secret: the hat slips");
+            s.ticks(10);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the smash lands");
+            s.ticks(s.paramTicks("hat_slip") + 5);
+            assertFalse(s.enemy.canSee(s.owner), "hidden again afterwards");
+            s.ticks(s.paramTicks("hat_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dokkaebiClubComesDownWhereTheHeadLooksEvenIfTheBodyLags() {
+        try (Scenario s = Scenario.builder("dokkaebi").param("wisp_count", 0).start()) {
+            s.place(s.owner, 0.5, 0.5, 90); // looking west (-x)
+            s.owner.setBodyYaw(140); // the body still turned half way
+            s.place(s.enemy, -2.5, 0.5, 270);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.assertSucceeded(s.active(), "뚝딱 방망이");
+            s.ticks(1 + 5);
+            BlockDisplay head = blocks(s, Material.DARK_OAK_LOG).getFirst();
+            Location down = worldCenter(head);
+            assertTrue(down.getX() < s.owner.getLocation().getX() - 0.8, "the club comes down in front: " + down);
+            assertEquals(s.owner.getLocation().getZ(), down.getZ(), 0.6,
+                    "on the line the smash hits, where the head looks: " + down);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "and the enemy there is smashed");
+            s.ticks(20);
             s.finishClean();
         }
     }
@@ -790,12 +908,117 @@ class FolkNewAbilitiesTest {
         }
     }
 
+    @Test
+    void gumihoFoxFireSendsAtMostAFewFiresAtOneEnemyAndKeepsTheRestOfTheTails() {
+        try (Scenario s = Scenario.builder("gumiho").start()) {
+            s.place(s.enemy2, 40.5, 40.5, 180);
+            for (int i = 0; i < 9; i++) {
+                s.melee(s.owner, s.enemy, 1);
+                s.ticks(1);
+            }
+            assertEquals(9, blocks(s, Material.WHITE_WOOL).size(), "nine tails");
+            s.clearHits();
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "여우불");
+            s.ticks(80);
+            int cap = (int) s.param("fire_per_target");
+            List<Scenario.Hit> hits = magicHitsBy(s, s.owner, s.enemy);
+            assertEquals(cap, hits.size(), "no more than the cap on one enemy: " + hits);
+            assertEquals(cap * s.param("fire_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "an ordinary active's damage, not a nine-fire burst");
+            assertEquals(9 - cap, blocks(s, Material.WHITE_WOOL).size(), "the tails no enemy took stay");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void gumihoFoxFiresLeaveFromTheTailsWhereTheFoxIsNow() {
+        try (Scenario s = Scenario.builder("gumiho").start()) {
+            s.place(s.enemy, 0.5, 14.5, 180);
+            s.place(s.enemy2, 40.5, 40.5, 180);
+            for (int i = 0; i < 4; i++) {
+                s.melee(s.owner, s.enemy, 1);
+                s.ticks(1);
+            }
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "여우불");
+            s.ticks(2);
+            Set<UUID> earlier = new HashSet<>();
+            for (BlockDisplay fire : blocks(s, Material.WHITE_STAINED_GLASS)) {
+                earlier.add(fire.getUniqueId());
+            }
+            s.place(s.owner, 8.5, 0.5, 0); // the fox ran on
+            s.ticks(1);
+            List<BlockDisplay> fresh = blocks(s, Material.WHITE_STAINED_GLASS).stream()
+                    .filter(fire -> !earlier.contains(fire.getUniqueId())).toList();
+            assertFalse(fresh.isEmpty(), "a fire left meanwhile");
+            for (BlockDisplay fire : fresh) {
+                assertTrue(horizontalDistance(fire.getLocation(), s.owner.getLocation()) < 2,
+                        "it leaves from a tail on the fox's back, where the fox is now: " + fire.getLocation());
+            }
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void gumihoBeadLetsGoOfAVictimThatSlipsOutOfSight() {
+        try (Scenario s = noGaugeGain(Scenario.builder("gumiho")).start()) {
+            s.place(s.enemy2, 30.5, 30.5, 180);
+            double speed = attribute(s.enemy, Attribute.MOVEMENT_SPEED);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "여우구슬");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the bead latches on");
+            s.ticks(2);
+            assertTrue(attribute(s.enemy, Attribute.MOVEMENT_SPEED) < speed, "latched: slowed");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            double drunk = s.damageBy(s.owner, s.enemy);
+            s.place(s.enemy, 6.5, 8.5, 180); // and it moves on
+            s.ticks(3);
+            BlockDisplay core = blocks(s, Material.PEARLESCENT_FROGLIGHT).stream().findFirst().orElse(null);
+            if (core != null) {
+                assertTrue(core.getLocation().distance(s.enemy.getEyeLocation()) > 2,
+                        "the glowing bead does not follow the hidden enemy: " + core.getLocation());
+            }
+            assertEquals(speed, attribute(s.enemy, Attribute.MOVEMENT_SPEED), EPSILON, "the bead's hold ends");
+            s.ticks(60);
+            assertEquals(drunk, s.damageBy(s.owner, s.enemy), EPSILON, "no more drinking from a hidden enemy");
+            assertTrue(blocks(s, Material.PINK_STAINED_GLASS).isEmpty(), "the bead went home");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void gumihoBeadClingsBelowTheVictimsEyesAndDoesNotSwingWithItsHead() {
+        try (Scenario s = noGaugeGain(Scenario.builder("gumiho")).start()) {
+            s.place(s.enemy2, 30.5, 30.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "여우구슬");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the bead latches on");
+            s.ticks(2);
+            BlockDisplay core = blocks(s, Material.PEARLESCENT_FROGLIGHT).getFirst();
+            double eyes = s.enemy.getEyeLocation().getY();
+            assertTrue(core.getLocation().getY() < eyes - 0.5, "below the victim's line of sight: "
+                    + core.getLocation().getY() + " vs eyes " + eyes);
+            Location before = core.getLocation();
+            Location turned = s.enemy.getLocation();
+            turned.setYaw(turned.getYaw() + 120);
+            s.enemy.teleport(turned);
+            s.ticks(1);
+            assertTrue(horizontalDistance(before, core.getLocation()) < 0.15,
+                    "turning the head does not swing the bead across the screen: " + core.getLocation());
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 산신령 sansin
 
     @Test
     void sansinAxeTumblesInTheFlightPlaneAndGoldHitsHard() {
         try (Scenario s = Scenario.builder("sansin").param("gold_min", 100).param("gold_max", 100)
-                .param("honest_chance", 0).start()) {
+                .param("honest_need", 1000).start()) {
             s.place(s.enemy, 0.5, 8.5, 180);
             s.place(s.enemy2, 20.5, 20.5, 180);
             s.aimAt(s.owner, s.enemy);
@@ -826,7 +1049,7 @@ class FolkNewAbilitiesTest {
     @Test
     void sansinSilverSlowsAndIronShoves() {
         try (Scenario s = Scenario.builder("sansin").param("gold_min", 0).param("gold_max", 0)
-                .param("honest_chance", 0).start()) {
+                .param("honest_need", 1000).start()) {
             s.place(s.enemy2, 20.5, 20.5, 180);
             double speed = attribute(s.enemy, Attribute.MOVEMENT_SPEED);
             boolean silver = false;
@@ -858,7 +1081,7 @@ class FolkNewAbilitiesTest {
     @Test
     void sansinLongPreciseThrowIsSureToBeGold() {
         try (Scenario s = Scenario.builder("sansin").param("gold_min", 0).param("gold_max", 100)
-                .param("honest_chance", 0).start()) {
+                .param("honest_need", 1000).start()) {
             s.place(s.enemy, 0.5, 17.5, 180);
             s.place(s.enemy2, 20.5, -20.5, 180);
             s.aimAt(s.owner, s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.5, 0));
@@ -873,7 +1096,7 @@ class FolkNewAbilitiesTest {
     @Test
     void sansinJudgementFadesWhenItsVictimFalls() {
         try (Scenario s = Scenario.builder("sansin").param("gold_min", 100).param("gold_max", 100)
-                .param("honest_chance", 0).start()) {
+                .param("honest_need", 1000).start()) {
             s.place(s.enemy2, 20.5, 20.5, 180);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.active(), "금도끼 은도끼");
@@ -910,20 +1133,25 @@ class FolkNewAbilitiesTest {
     }
 
     @Test
-    void sansinHonestyRewardsWithAbsorptionAndAGoldenPromise() {
-        try (Scenario s = Scenario.builder("sansin").param("honest_chance", 100).param("gold_min", 0)
+    void sansinHonestyAddsUpTheBlowsTakenIntoAGoldenPromise() {
+        try (Scenario s = Scenario.builder("sansin").param("honest_need", 5).param("gold_min", 0)
                 .param("gold_max", 0).start()) {
             s.place(s.enemy2, 20.5, 20.5, 180);
-            s.melee(s.enemy, s.owner, 1);
-            assertEquals(s.param("honest_absorb"), s.owner.getAbsorptionAmount(), EPSILON, "a golden blessing");
-            assertTrue(hasModifier(s.owner, Attribute.MAX_ABSORPTION), "room for it");
+            s.melee(s.enemy, s.owner, 3);
+            s.ticks(4);
+            assertTrue(items(s, Material.GOLDEN_AXE).isEmpty(), "3 of 5: no promise yet");
+            s.melee(s.enemy, s.owner, 3);
             s.ticks(6);
             List<ItemDisplay> halo = items(s, Material.GOLDEN_AXE);
-            assertEquals(1, halo.size(), "a little golden axe hovers over the shoulder");
+            assertEquals(1, halo.size(), "6 of 5: a little golden axe hovers over the shoulder");
             assertUnrotated(halo.getFirst(), "halo axe");
-            s.melee(s.enemy, s.owner, 1);
-            assertEquals(s.param("honest_absorb") - 1, s.owner.getAbsorptionAmount(), EPSILON,
-                    "no second blessing within the gap; the shield soaked the blow");
+            assertEquals(0, s.owner.getAbsorptionAmount(), EPSILON, "no shield: the reward is the promise (not honey)");
+            assertFalse(hasModifier(s.owner, Attribute.MAX_ABSORPTION), "nothing to hold a shield");
+            for (int i = 0; i < 3; i++) {
+                s.melee(s.enemy, s.owner, 3);
+                s.ticks(2);
+            }
+            assertEquals(1, items(s, Material.GOLDEN_AXE).size(), "one promise at a time");
 
             s.aimAt(s.owner, s.enemy);
             s.clearHits();
@@ -932,16 +1160,94 @@ class FolkNewAbilitiesTest {
             assertEquals(s.param("axe_damage") + s.param("gold_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "the honest one gets the golden axe even without luck");
             assertTrue(items(s, Material.GOLDEN_AXE).isEmpty(), "the promise was kept");
+            s.melee(s.enemy, s.owner, 3);
+            s.ticks(30);
+            assertTrue(items(s, Material.GOLDEN_AXE).isEmpty(), "blows taken while promised did not count");
+            s.finishClean();
+        }
+    }
 
-            s.ticks(s.paramTicks("honest_duration") + 5);
-            assertFalse(hasModifier(s.owner, Attribute.MAX_ABSORPTION), "the blessing wore off");
+    @Test
+    void sansinPromiseMadeDuringAJudgementShowsOnceTheJudgementIsOver() {
+        try (Scenario s = Scenario.builder("sansin").param("honest_need", 2).param("gold_min", 0)
+                .param("gold_max", 0).start()) {
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "금도끼 은도끼");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the axe hits");
+            s.ticks(1);
+            assertEquals(1, items(s, Material.STONE_AXE).size(), "the judgement's axes are up");
+            s.melee(s.enemy, s.owner, 3);
+            s.ticks(2);
+            assertEquals(1, items(s, Material.STONE_AXE).size(), "the promise does not break up the judgement");
+            Location shoulder = s.owner.getLocation();
+            s.ticks(50);
+            List<ItemDisplay> halo = items(s, Material.GOLDEN_AXE);
+            assertEquals(1, halo.size(), "the halo axe shows once the judgement is over");
+            assertTrue(halo.getFirst().getLocation().distance(shoulder) < 3, "over the sansin's shoulder");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sansinUltimateRightAfterAnAxeHitBringsTheWholeTigerAndTheJudgementKeepsItsAxes() {
+        try (Scenario s = Scenario.builder("sansin").param("gold_min", 100).param("gold_max", 100)
+                .param("honest_need", 1000).param("tiger_delay", 3).start()) {
+            s.place(s.enemy, 0.5, 5.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "금도끼 은도끼");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the axe hits");
+            s.ticks(2);
+            assertEquals(1, items(s, Material.STONE_AXE).size(), "the judgement holds its displays");
+            s.assertSucceeded(s.ultimate(), "산신령 강림 right after the hit");
+            s.ticks(3);
+            assertEquals(TIGER_ORANGE_PARTS, blocks(s, Material.ORANGE_CONCRETE).size(), "the whole tiger");
+            assertEquals(1, blocks(s, Material.LIGHT_GRAY_CONCRETE).size(), "and the spirit");
+            assertEquals(1, blocks(s, Material.WHITE_CONCRETE).size(), "with its white muzzle");
+
+            // A second judgement while the tiger still crouches gets its axes too.
+            s.ticks(40);
+            s.readyActive();
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "a second throw");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the second axe hits");
+            s.ticks(2);
+            assertEquals(1, items(s, Material.STONE_AXE).size(), "the judgement shows beside the tiger");
+            assertEquals(1, entities(s, TextDisplay.class).size(), "\"이 도끼가 네 도끼냐?\"");
+            assertEquals(TIGER_ORANGE_PARTS, blocks(s, Material.ORANGE_CONCRETE).size(), "the tiger stays whole");
+            assertTrue(entities(s, Display.class).size() <= 24, "within the display budget");
+            s.ticks(120);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sansinJudgementVanishesWhenItsVictimSlipsOutOfSight() {
+        try (Scenario s = Scenario.builder("sansin").param("gold_min", 100).param("gold_max", 100)
+                .param("honest_need", 1000).start()) {
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "금도끼 은도끼");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the axe hits");
+            s.ticks(2);
+            assertEquals(1, items(s, Material.STONE_AXE).size(), "the judgement is up");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.clearHits();
+            s.ticks(1);
+            assertTrue(entities(s, ItemDisplay.class).isEmpty(), "no axes hover over the hidden enemy");
+            assertTrue(entities(s, TextDisplay.class).isEmpty(), "nor the spirit's question");
+            s.ticks(30);
+            assertTrue(s.hits().isEmpty(), "and no verdict lands on it: " + s.hits());
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.finishClean();
         }
     }
 
     @Test
     void sansinTigerPouncesOnTheLaneAfterTheTelegraph() {
-        try (Scenario s = Scenario.builder("sansin").param("honest_chance", 0).start()) {
+        try (Scenario s = Scenario.builder("sansin").param("honest_need", 1000).start()) {
             s.place(s.enemy, 0.5, 7.5, 180);
             s.place(s.enemy2, 6.5, 7.5, 180);
             double speed = attribute(s.enemy, Attribute.MOVEMENT_SPEED);
@@ -972,7 +1278,7 @@ class FolkNewAbilitiesTest {
 
     @Test
     void sansinTigerFacesItsRunAndSteersWhereTheSansinLooks() {
-        try (Scenario s = Scenario.builder("sansin").param("honest_chance", 0).start()) {
+        try (Scenario s = Scenario.builder("sansin").param("honest_need", 1000).start()) {
             s.place(s.owner, 0.5, 0.5, 90); // facing west (-x)
             s.place(s.enemy, 12.5, 12.5, 180);
             s.place(s.enemy2, 12.5, -12.5, 180);
@@ -996,7 +1302,7 @@ class FolkNewAbilitiesTest {
 
     @Test
     void sansinTigerStopsAtAWall() {
-        try (Scenario s = Scenario.builder("sansin").param("honest_chance", 0).start()) {
+        try (Scenario s = Scenario.builder("sansin").param("honest_need", 1000).start()) {
             s.world.wallAlongX(-4, 4, 5, 3, Material.STONE);
             s.place(s.enemy, 0.5, 8.5, 180);
             s.assertSucceeded(s.ultimate(), "산신령 강림");
@@ -1005,6 +1311,27 @@ class FolkNewAbilitiesTest {
             s.ticks(40);
             assertTrue(entities(s, BlockDisplay.class).isEmpty(), "everything faded");
             s.world.wallAlongX(-4, 4, 5, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sansinTigerPawsStayOnTheGroundWhileItCrouches() {
+        try (Scenario s = Scenario.builder("sansin").param("honest_need", 1000).param("tiger_delay", 2).start()) {
+            s.place(s.enemy, 0.5, 20.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.assertSucceeded(s.ultimate(), "산신령 강림");
+            boolean sawTiger = false;
+            for (int i = 0; i < s.paramTicks("tiger_delay") + 12; i++) {
+                s.ticks(1);
+                for (BlockDisplay part : blocks(s, Material.ORANGE_CONCRETE)) {
+                    sawTiger = true;
+                    assertTrue(lowestPoint(part) >= FlatWorld.SURFACE - 1.0E-3,
+                            "tick " + i + ": no paw sinks into the ground: " + lowestPoint(part));
+                }
+            }
+            assertTrue(sawTiger, "the tiger was there");
+            s.ticks(80);
             s.finishClean();
         }
     }
@@ -1082,8 +1409,10 @@ class FolkNewAbilitiesTest {
             List<BlockDisplay> posts = blocks(s, Material.STRIPPED_SPRUCE_LOG);
             assertEquals((int) s.param("totem_max"), posts.size(), "the oldest one sank");
             for (BlockDisplay post : posts) {
+                // An eye, not the general's black hat (both are black concrete).
                 BlockDisplay eye = blocks(s, Material.BLACK_CONCRETE).stream()
-                        .filter(e -> e.getLocation().distance(post.getLocation()) < 0.1).findFirst().orElse(null);
+                        .filter(e -> e.getLocation().distance(post.getLocation()) < 0.1)
+                        .filter(e -> e.getTransformation().getScale().x() < 0.2).findFirst().orElse(null);
                 assertNotNull(eye, "the post has eyes");
                 assertTrue(worldCenter(eye).getX() < worldCenter(post).getX() - 0.15,
                         "the face looks west, the way the shaman faced");
@@ -1111,16 +1440,24 @@ class FolkNewAbilitiesTest {
             s.clearHits();
             s.melee(s.enemy2, s.enemy, 4);
             s.ticks(2);
-            assertEquals(4 * s.param("gut_vulnerable") / 100, s.damageBy(s.owner, s.enemy), EPSILON,
-                    "a blow from anyone hurts a share more");
+            List<Scenario.Hit> hits = s.hitsBy(s.enemy2, s.enemy);
+            assertEquals(1, hits.size(), "one blow, no extra hit: " + s.hits());
+            assertEquals(4 * (1 + s.param("gut_vulnerable") / 100), hits.getFirst().damage(), EPSILON,
+                    "a blow from anyone hurts a share more, and the share is the attacker's");
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "the shaman steals nothing");
             s.place(s.enemy, 0.5, 15.5, 180);
             s.ticks(2);
             s.clearHits();
             s.melee(s.enemy2, s.enemy, 4);
             s.ticks(2);
-            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "outside the ring nothing more");
+            assertEquals(4, s.damageBy(s.enemy2, s.enemy), EPSILON, "outside the ring nothing more");
             s.ticks(s.paramTicks("gut_duration") + 20);
             assertNoDisplays(s, "the gut");
+            assertEquals(0, gutListeners(), "the gut's damage listener is gone with it");
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.clearHits();
+            s.melee(s.enemy2, s.enemy, 4);
+            assertEquals(4, s.damageBy(s.enemy2, s.enemy), EPSILON, "and amplifies nothing any more");
             s.finishClean();
         }
     }
@@ -1146,6 +1483,167 @@ class FolkNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "outside the ring");
             assertEquals(0, s.damageTaken(s.ally()), EPSILON);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanGutRaisesOnlyDamageNeverFadingShieldsOrHealth() {
+        try (Scenario s = Scenario.builder("shaman").param("gut_damage", 0).param("gut_finale", 0).start()) {
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.place(s.enemy2, 0.5, -3.5, 0);
+            NamespacedKey apple = new NamespacedKey("test", "apple");
+            s.enemy.getAttribute(Attribute.MAX_ABSORPTION).addModifier(new AttributeModifier(apple, 8,
+                    Operation.ADD_NUMBER, EquipmentSlotGroup.ANY));
+            s.enemy.setAbsorptionAmount(8);
+            s.assertSucceeded(s.ultimate(), "굿판");
+            s.ticks(20);
+            s.clearHits();
+            s.enemy.setAbsorptionAmount(0); // the golden apple wore off inside the ring
+            s.ticks(3);
+            NamespacedKey bonus = new NamespacedKey("test", "bonus");
+            s.enemy.getAttribute(Attribute.MAX_HEALTH).addModifier(new AttributeModifier(bonus, -6,
+                    Operation.ADD_NUMBER, EquipmentSlotGroup.ANY));
+            s.enemy.setHealth(Math.min(s.enemy.getHealth(), s.maxHealth(s.enemy)));
+            s.ticks(3);
+            assertTrue(s.hits().isEmpty(), "losing a shield or max health is not damage: " + s.hits());
+            s.enemy.getAttribute(Attribute.MAX_ABSORPTION).removeModifier(apple);
+            s.enemy.getAttribute(Attribute.MAX_HEALTH).removeModifier(bonus);
+            s.ticks(s.paramTicks("gut_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanGutKeepsItsFlagsBesideTwoJangseungAndTheBell() {
+        try (Scenario s = Scenario.builder("shaman").param("bell_period", 1).start()) {
+            s.place(s.enemy, 0.5, 20.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 4.5);
+            s.assertSucceeded(s.active(), "장승 1");
+            s.readyActive();
+            s.aimAtFloor(s.owner, -3.5, 3.5);
+            s.assertSucceeded(s.active(), "장승 2");
+            s.ticks(8);
+            assertEquals(2, blocks(s, Material.STRIPPED_SPRUCE_LOG).size(), "two jangseung");
+            s.h.tickUntil(() -> !items(s, Material.BELL).isEmpty(), 40, "the bell swinging");
+            s.assertSucceeded(s.ultimate(), "굿판");
+            s.ticks(18);
+            assertEquals(5, blocks(s, Material.DARK_OAK_LOG).size(), "all five flag poles");
+            assertEquals(2, blocks(s, Material.IRON_BLOCK).size(), "and both blades");
+            assertEquals(2, blocks(s, Material.STRIPPED_SPRUCE_LOG).size(), "beside both jangseung");
+            assertTrue(entities(s, Display.class).size() <= 24, "within the display budget");
+            s.readyActive();
+            s.aimAtFloor(s.owner, 3.5, 3.5);
+            s.assertSucceeded(s.active(), "a third jangseung replaces the first");
+            s.ticks(3);
+            assertEquals(2, blocks(s, Material.STRIPPED_SPRUCE_LOG).size(), "the oldest gave way at once");
+            assertEquals(5, blocks(s, Material.DARK_OAK_LOG).size(), "the flags stand");
+            s.ticks(s.paramTicks("totem_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanTwoJangseungCurseAnEnemyOnlyOnce() {
+        try (Scenario s = Scenario.builder("shaman").start()) {
+            s.place(s.enemy, 0.5, 5.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            double attack = attribute(s.enemy, Attribute.ATTACK_DAMAGE);
+            double speed = attribute(s.enemy, Attribute.MOVEMENT_SPEED);
+            s.aimAtFloor(s.owner, -1.5, 4.5);
+            s.assertSucceeded(s.active(), "장승 1");
+            s.readyActive();
+            s.aimAtFloor(s.owner, 2.5, 4.5);
+            s.assertSucceeded(s.active(), "장승 2");
+            for (int i = 0; i < 30; i++) {
+                s.ticks(1);
+                if (i > 10) {
+                    assertEquals(attack * (1 - s.param("totem_weaken") / 100),
+                            attribute(s.enemy, Attribute.ATTACK_DAMAGE), EPSILON, "weaker once, never twice");
+                    assertEquals(speed * (1 - s.param("totem_slow") / 100),
+                            attribute(s.enemy, Attribute.MOVEMENT_SPEED), EPSILON, "slower once, never twice");
+                }
+            }
+            s.place(s.enemy, 5.5, 5.5, 180); // only in the second jangseung's reach now
+            s.ticks(30);
+            assertEquals(speed * (1 - s.param("totem_slow") / 100), attribute(s.enemy, Attribute.MOVEMENT_SPEED),
+                    EPSILON, "the other jangseung takes over the curse");
+            s.ticks(s.paramTicks("totem_duration") + 20);
+            assertModifierFree(s.enemy, "the curse ends with the jangseung");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanJangseungJoltsTheEnemiesAroundAsItRises() {
+        try (Scenario s = Scenario.builder("shaman").teams().start()) {
+            s.crossfireAlly();
+            s.place(s.enemy, 0.5, 5.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 4.5);
+            s.assertSucceeded(s.active(), "장승");
+            s.ticks(20);
+            List<Scenario.Hit> hits = magicHitsBy(s, s.owner, s.enemy);
+            assertEquals(1, hits.size(), "one jolt as it bursts out: " + hits);
+            assertEquals(s.param("totem_damage"), hits.getFirst().damage(), EPSILON);
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "out of reach");
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "never the ally");
+            s.ticks(s.paramTicks("totem_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanYellowFlagStandsBehindTheBladesAsTheShamanFaces() {
+        try (Scenario s = Scenario.builder("shaman").start()) {
+            s.place(s.owner, 0.5, 0.5, -90); // facing east (+x)
+            s.place(s.enemy, 0.5, 20.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.assertSucceeded(s.ultimate(), "굿판");
+            s.ticks(18);
+            BlockDisplay yellow = blocks(s, Material.YELLOW_WOOL).getFirst();
+            assertTrue(yellow.getLocation().getX() < 0.5 - 0.6, "behind the shaman, to the west: " + yellow.getLocation());
+            assertEquals(0.5, yellow.getLocation().getZ(), 0.05, "straight behind: " + yellow.getLocation());
+            s.ticks(s.paramTicks("gut_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanGutCastMidJumpStandsOnTheGround() {
+        try (Scenario s = Scenario.builder("shaman").start()) {
+            s.place(s.enemy, 0.5, 20.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1.2, 0.5, 0, 0);
+            s.assertSucceeded(s.ultimate(), "굿판 mid-jump");
+            s.ticks(18);
+            for (BlockDisplay pole : blocks(s, Material.DARK_OAK_LOG)) {
+                assertEquals(FlatWorld.SURFACE, pole.getLocation().getY(), 1.0E-6, "every flag on the ground");
+            }
+            for (BlockDisplay blade : blocks(s, Material.IRON_BLOCK)) {
+                assertEquals(FlatWorld.SURFACE, blade.getLocation().getY(), 1.0E-6, "the blades too");
+            }
+            assertEquals(5, blocks(s, Material.DARK_OAK_LOG).size());
+            s.ticks(s.paramTicks("gut_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shamanGutListenerGoesWithItsDeadOwner() {
+        try (Scenario s = Scenario.builder("shaman").start()) {
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.place(s.enemy2, 0.5, -3.5, 0);
+            s.assertSucceeded(s.ultimate(), "굿판");
+            s.ticks(25);
+            assertEquals(1, gutListeners(), "the gut listens while it runs");
+            s.killOwner(s.enemy);
+            s.ticks(2);
+            s.clearHits();
+            s.melee(s.enemy2, s.enemy, 4);
+            assertEquals(4, s.damageBy(s.enemy2, s.enemy), EPSILON, "a dead shaman's gut raises nothing");
+            assertEquals(0, gutListeners(), "and lets go of its listener");
             s.finishClean();
         }
     }
