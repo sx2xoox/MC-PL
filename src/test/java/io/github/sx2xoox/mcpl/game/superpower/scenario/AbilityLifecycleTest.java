@@ -71,7 +71,12 @@ class AbilityLifecycleTest {
     /** A scenario for {@code id}; the illusionist's copies are allowed to spawn (see the class comment). */
     static Scenario start(String id, boolean teams) {
         Scenario.Builder builder = Scenario.builder(id);
-        Scenario s = teams ? builder.teams().start() : builder.start();
+        return start(teams ? builder.teams() : builder, id);
+    }
+
+    /** Starts {@code builder} (for ability {@code id}), letting the illusionist's copies spawn. */
+    static Scenario start(Scenario.Builder builder, String id) {
+        Scenario s = builder.start();
         MockEntities.TestMannequin.ignoreDropChances = id.equals("illusionist");
         return s;
     }
@@ -245,7 +250,7 @@ class AbilityLifecycleTest {
     }
 
     /** Runs {@code ticks} ticks checking every tick that nothing bad happened to the ally. */
-    private static void watchAlly(Scenario s, Location start, int ticks) {
+    static void watchAlly(Scenario s, Location start, int ticks) {
         String id = s.abilityId;
         TestPlayer ally = s.ally();
         for (int i = 0; i < ticks; i++) {
