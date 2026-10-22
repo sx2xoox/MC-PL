@@ -3,10 +3,13 @@ package io.github.sx2xoox.mcpl.game.superpower.support;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.destroystokyo.paper.ClientOption;
+
 import io.github.sx2xoox.mcpl.game.superpower.support.world.DamageSimulation;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.Hurtable;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.RayTracing;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.TestSkinParts;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.VanillaAttributes;
 import net.kyori.adventure.key.Key;
 import org.bukkit.Location;
@@ -33,7 +36,8 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
  *     <li>a body whose size follows the {@link Attribute#SCALE} attribute (hitbox, height, eye height), like a real
  *     player's;</li>
  *     <li>line of sight through block ray tracing ({@link RayTracing#hasLineOfSight}), body yaw and
- *     {@link #isInLava()} in a {@link FlatWorld}.</li>
+ *     {@link #isInLava()} in a {@link FlatWorld};</li>
+ *     <li>the client options a default client reports ({@link #getClientOption}).</li>
  * </ul>
  */
 public final class TestPlayer extends PlayerMock implements Hurtable {
@@ -48,6 +52,7 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
     private @Nullable WorldBorder worldBorder;
     private @Nullable Float bodyYaw;
     private double lastHurt;
+    private int skinParts = TestSkinParts.ALL;
 
     public TestPlayer(ServerMock server, String name) {
         super(server, name);
@@ -118,6 +123,37 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
             double max = getAttribute(Attribute.MAX_HEALTH).getValue();
             setHealth(Math.min(max, getHealth() + amount));
         }
+    }
+
+    // ------------------------------------------------------------------ client
+
+    /** Sets the skin layers the client reports (raw bits, see {@link TestSkinParts}). */
+    public void setClientSkinParts(int raw) {
+        this.skinParts = raw;
+    }
+
+    /** The options of a default Korean client: right-handed, full chat, the skin layers set here (all by default). */
+    @Override
+    public <T> T getClientOption(ClientOption<T> option) {
+        Object value;
+        if (option == ClientOption.SKIN_PARTS) {
+            value = new TestSkinParts(skinParts);
+        } else if (option == ClientOption.MAIN_HAND) {
+            value = getMainHand();
+        } else if (option == ClientOption.LOCALE) {
+            value = "ko_kr";
+        } else if (option == ClientOption.VIEW_DISTANCE) {
+            value = 10;
+        } else if (option == ClientOption.CHAT_VISIBILITY) {
+            value = ClientOption.ChatVisibility.FULL;
+        } else if (option == ClientOption.PARTICLE_VISIBILITY) {
+            value = ClientOption.ParticleVisibility.ALL;
+        } else if (option == ClientOption.TEXT_FILTERING_ENABLED) {
+            value = false;
+        } else {
+            value = true; // chat colours, server listings
+        }
+        return option.getType().cast(value);
     }
 
     // ------------------------------------------------------------------ body

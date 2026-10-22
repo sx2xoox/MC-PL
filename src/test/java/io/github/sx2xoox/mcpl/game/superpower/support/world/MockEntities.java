@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import com.destroystokyo.paper.SkinParts;
 import com.destroystokyo.paper.entity.Pathfinder;
 import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import io.papermc.paper.entity.LookAnchor;
@@ -244,8 +245,8 @@ public final class MockEntities {
     }
 
     /**
-     * A mannequin (the illusionist's copy) that can take damage, turn its body, look at things and wear a profile
-     * (MockBukkit's {@code setProfile} throws). Its equipment rejects drop chances exactly like Paper's
+     * A mannequin (the illusionist's copy) that can take damage, turn its body, look at things, wear a profile and
+     * skin parts (MockBukkit's setters throw). Its equipment rejects drop chances exactly like Paper's
      * {@code CraftEntityEquipment} does for every entity that is not a {@code Mob}, unless {@link #ignoreDropChances}
      * is set.
      */
@@ -258,6 +259,7 @@ public final class MockEntities {
 
         private final EntityEquipmentMock equipment = new MannequinEquipment(this);
         private @Nullable ResolvableProfile profile;
+        private SkinParts skinParts = new TestSkinParts(TestSkinParts.ALL);
         private double lastHurt;
         private float bodyYaw;
 
@@ -313,6 +315,16 @@ public final class MockEntities {
         @Override
         public ResolvableProfile getProfile() {
             return profile != null ? profile : super.getProfile();
+        }
+
+        @Override
+        public SkinParts.Mutable getSkinParts() {
+            return skinParts.mutableCopy();
+        }
+
+        @Override
+        public void setSkinParts(SkinParts parts) {
+            skinParts = new TestSkinParts(parts.getRaw());
         }
 
         @Override
