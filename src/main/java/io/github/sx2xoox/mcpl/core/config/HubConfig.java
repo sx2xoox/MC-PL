@@ -1,0 +1,313 @@
+package io.github.sx2xoox.mcpl.core.config;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.function.Consumer;
+import java.util.logging.Level;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.configuration.Configuration;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.MemoryConfiguration;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Typed, cached view of {@code config.yml}. Values are read once per {@link #load()} (startup and
+ * {@code /게임 리로드}); setters write through to the file immediately.
+ *
+ * <p>Mini-games keep their own settings under {@code games.<id>.*}: declare defaults with
+ * {@link io.github.sx2xoox.mcpl.core.game.MiniGame#configDefaults(ConfigurationSection)} and read them with
+ * {@link #gameSection(String)}. Do not cache the returned section across reloads; call it again instead.
+ */
+public final class HubConfig {
+
+    /** Version of the config layout written by this build. Bump it and add a step to {@link #migrate} on change. */
+    public static final int CURRENT_VERSION = 1;
+
+    public static final int MIN_RADIUS = 8;
+    public static final int MAX_RADIUS = 1000;
+    public static final int MAX_TEAM_SIZE = 32;
+
+    private final JavaPlugin plugin;
+
+    private int countdownSeconds = 5;
+    private int endingSeconds = 10;
+    private int teamSize;
+    private boolean fireworks = true;
+    private boolean rotationEnabled;
+    private List<String> rotationGames = List.of();
+    private int intermissionSeconds = 30;
+    private String arenaWorld = "";
+    private double arenaX;
+    private double arenaY = 64;
+    private double arenaZ;
+    private int arenaRadius = 60;
+    private ProtectionSettings protection = ProtectionSettings.ALL;
+
+    public HubConfig(JavaPlugin plugin) {
+        this.plugin = plugin;
+    }
+
+    /** (Re)loads {@code config.yml}, writing the default file on first run, migrating and adding missing keys. */
+    public void load() {
+        plugin.saveDefaultConfig();
+        plugin.reloadConfig();
+        FileConfiguration config = plugin.getConfig();
+        boolean dirty = migrate(config);
+        dirty |= addMissingDefaults(config);
+        read(config);
+        if (dirty) {
+            save();
+        }
+    }
+
+    private boolean migrate(FileConfiguration config) {
+        int version = config.getInt("config-version", 0);
+        if (version > CURRENT_VERSION) {
+            plugin.getLogger().warning("config.yml is from a newer MCPL version (" + version + "); using it as is.");
+            return false;
+        }
+        if (version == CURRENT_VERSION) {
+            return false;
+        }
+        // Future layout changes go here, e.g. if (version < 2) { rename keys; }
+        config.set("config-version", CURRENT_VERSION);
+        return true;
+    }
+
+    private static boolean addMissingDefaults(FileConfiguration config) {
+        Configuration defaults = config.getDefaults();
+        if (defaults == null) {
+            return false;
+        }
+        boolean changed = false;
+        for (String key : defaults.getKeys(true)) {
+            if (config.isSet(key)) {
+                continue;
+            }
+            if (defaults.isConfigurationSection(key)) {
+                if (!config.isConfigurationSection(key)) {
+                    config.createSection(key);
+                    config.setComments(key, defaults.getComments(key));
+                    changed = true;
+                }
+                continue;
+            }
+            config.set(key, defaults.get(key));
+            config.setComments(key, defaults.getComments(key));
+            changed = true;
+        }
+        return changed;
+    }
+
+    private void read(FileConfiguration config) {
+        countdownSeconds = clamp(config.getInt("match.countdown-seconds", 5), 0, 60);
+        endingSeconds = clamp(config.getInt("match.ending-seconds", 10), 0, 120);
+        teamSize = clamp(config.getInt("match.team-size", 0), 0, MAX_TEAM_SIZE);
+        fireworks = config.getBoolean("match.fireworks", true);
+
+        rotationEnabled = config.getBoolean("rotation.enabled", false);
+        List<String> games = new ArrayList<>();
+        for (String id : config.getStringList("rotation.games")) {
+            String trimmed = id.trim().toLowerCase(Locale.ROOT);
+            if (!trimmed.isEmpty()) {
+                games.add(trimmed);
+            }
+        }
+        rotationGames = List.copyOf(games);
+        intermissionSeconds = clamp(config.getInt("rotation.intermission-seconds", 30), 3, 3600);
+
+        arenaWorld = config.getString("arena.world", "");
+        arenaX = config.getDouble("arena.x");
+        arenaY = config.getDouble("arena.y", 64);
+        arenaZ = config.getDouble("arena.z");
+        arenaRadius = clamp(config.getInt("arena.radius", 60), MIN_RADIUS, MAX_RADIUS);
+
+        ConfigurationSection protectionSection = config.getConfigurationSection("protection");
+        protection = protectionSection == null ? ProtectionSettings.ALL : ProtectionSettings.read(protectionSection);
+    }
+
+    /** Writes the current in-memory configuration to disk. */
+    public void save() {
+        try {
+            plugin.saveConfig();
+        } catch (RuntimeException e) {
+            plugin.getLogger().log(Level.SEVERE, "Could not save config.yml", e);
+        }
+    }
+
+    private FileConfiguration raw() {
+        return plugin.getConfig();
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    // ------------------------------------------------------------------ match
+
+    /** Countdown before a match starts, in seconds (0..60). */
+    public int countdownSeconds() {
+        return countdownSeconds;
+    }
+
+    /** How long results are shown before everyone is restored, in seconds (0..120). */
+    public int endingSeconds() {
+        return endingSeconds;
+    }
+
+    /** Players per team, 0 = free-for-all. */
+    public int teamSize() {
+        return teamSize;
+    }
+
+    public void setTeamSize(int size) {
+        teamSize = clamp(size, 0, MAX_TEAM_SIZE);
+        raw().set("match.team-size", teamSize);
+        save();
+    }
+
+    /** Whether celebration fireworks are launched at the winners. */
+    public boolean fireworks() {
+        return fireworks;
+    }
+
+    // ------------------------------------------------------------------ rotation
+
+    public boolean rotationEnabled() {
+        return rotationEnabled;
+    }
+
+    public void setRotationEnabled(boolean enabled) {
+        rotationEnabled = enabled;
+        raw().set("rotation.enabled", enabled);
+        save();
+    }
+
+    /** Lower-case game ids to rotate through, in order. */
+    public List<String> rotationGames() {
+        return rotationGames;
+    }
+
+    public void setRotationGames(List<String> ids) {
+        rotationGames = ids.stream().map(id -> id.toLowerCase(Locale.ROOT)).toList();
+        raw().set("rotation.games", new ArrayList<>(rotationGames));
+        save();
+    }
+
+    public int intermissionSeconds() {
+        return intermissionSeconds;
+    }
+
+    // ------------------------------------------------------------------ arena
+
+    /** The configured arena world name, empty when the arena follows the starter. */
+    public String arenaWorldName() {
+        return arenaWorld;
+    }
+
+    /** True if an arena center was saved (even if its world is not loaded right now). */
+    public boolean hasArena() {
+        return !arenaWorld.isBlank();
+    }
+
+    /** The configured arena center, or null if none is set or its world is not loaded. */
+    public @Nullable Location arenaCenter() {
+        if (arenaWorld.isBlank()) {
+            return null;
+        }
+        World world = Bukkit.getWorld(arenaWorld);
+        return world == null ? null : new Location(world, arenaX, arenaY, arenaZ);
+    }
+
+    /** Arena radius in blocks, used both for a configured arena and for one centered on the starter. */
+    public int arenaRadius() {
+        return arenaRadius;
+    }
+
+    public void setArena(Location center, int radius) {
+        World world = center.getWorld();
+        if (world == null) {
+            throw new IllegalArgumentException("center has no world");
+        }
+        arenaWorld = world.getName();
+        arenaX = Math.floor(center.getX()) + 0.5;
+        arenaY = Math.floor(center.getY());
+        arenaZ = Math.floor(center.getZ()) + 0.5;
+        arenaRadius = clamp(radius, MIN_RADIUS, MAX_RADIUS);
+        FileConfiguration config = raw();
+        config.set("arena.world", arenaWorld);
+        config.set("arena.x", arenaX);
+        config.set("arena.y", arenaY);
+        config.set("arena.z", arenaZ);
+        config.set("arena.radius", arenaRadius);
+        save();
+    }
+
+    /** Forgets the arena center; matches are then centered on whoever starts them. The radius is kept. */
+    public void clearArena() {
+        arenaWorld = "";
+        raw().set("arena.world", "");
+        save();
+    }
+
+    // ------------------------------------------------------------------ protection
+
+    public ProtectionSettings protection() {
+        return protection;
+    }
+
+    // ------------------------------------------------------------------ games
+
+    /**
+     * The live {@code games.<id>} section of {@code config.yml}, created if missing. Read values each time you need
+     * them (the section object is replaced on reload).
+     */
+    public ConfigurationSection gameSection(String gameId) {
+        FileConfiguration config = raw();
+        ConfigurationSection games = config.getConfigurationSection("games");
+        if (games == null) {
+            games = config.createSection("games");
+        }
+        ConfigurationSection section = games.getConfigurationSection(gameId);
+        return section != null ? section : games.createSection(gameId);
+    }
+
+    /**
+     * Adds the defaults a game declares to {@code games.<id>} without overwriting values the server owner set, then
+     * saves if anything was added. Comments set on the declared keys are copied too.
+     *
+     * @return true if the file changed
+     */
+    public boolean applyGameDefaults(String gameId, Consumer<ConfigurationSection> declarer) {
+        MemoryConfiguration scratch = new MemoryConfiguration();
+        ConfigurationSection defaults = scratch.createSection("defaults");
+        declarer.accept(defaults);
+        ConfigurationSection target = gameSection(gameId);
+        boolean changed = false;
+        for (String key : defaults.getKeys(true)) {
+            if (defaults.isConfigurationSection(key)) {
+                if (!target.isConfigurationSection(key)) {
+                    target.createSection(key);
+                    target.setComments(key, defaults.getComments(key));
+                    changed = true;
+                }
+                continue;
+            }
+            if (!target.isSet(key)) {
+                target.set(key, defaults.get(key));
+                target.setComments(key, defaults.getComments(key));
+                changed = true;
+            }
+        }
+        if (changed) {
+            save();
+        }
+        return changed;
+    }
+}
