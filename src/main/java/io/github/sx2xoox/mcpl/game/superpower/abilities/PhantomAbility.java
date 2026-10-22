@@ -72,10 +72,11 @@ public final class PhantomAbility extends Ability {
                             + "이 비행으로는 낙하 피해를 받지 않습니다.",
                     9)
             .ultimate("불면의 밤",
-                    "{night_duration}초간 머리 위로 팬텀 떼를 부릅니다. 주변 {night_radius}블록 안의 적에게 "
-                            + "{swoop_interval}초마다 팬텀이 날카로운 울음과 함께 내리꽂혀 {swoop_damage} 피해를 주고 "
-                            + "{swoop_slow}초간 구속을 겁니다(울음을 듣고 피할 수 있습니다). 그동안은 낮에도 야행이 "
-                            + "적용됩니다.")
+                    "{night_duration}초간 머리 위로 팬텀 " + PhantomAbility.SWARM_SIZE + "마리를 부릅니다. "
+                            + "{swoop_interval}초마다 주변 {night_radius}블록 안의 가까운 적 최대 "
+                            + PhantomAbility.SWARM_SIZE + "명에게 팬텀이 한 마리씩 날카로운 울음과 함께 내리꽂혀 "
+                            + "{swoop_damage} 피해를 주고 {swoop_slow}초간 구속을 겁니다(울음을 듣고 피할 수 있습니다). "
+                            + "그동안은 낮에도 야행이 적용됩니다.")
             .param("night_reduction", 20)
             .param("air_height", 1.5)
             .param("soar_height", 5)
@@ -124,8 +125,12 @@ public final class PhantomAbility extends Ability {
     private static final double MIN_DIVE_PITCH = 20;
     private static final double DIVE_SPEED = 1.6;
     private static final double MIN_DIVE = 1.0;
-    /** Extra ticks after the last push during which hits are still checked (client latency). */
-    private static final int DIVE_LATENCY_TICKS = 4;
+    /**
+     * After the last push the dive waits at most this long for the server to see the phantom land, still sweeping
+     * the path. Its client flies the dive at once, but the server sees it move a round trip (its ping) later: a short
+     * fixed wait struck in mid-air, short of the prey, for a player with a high ping (300 ms is 6 ticks).
+     */
+    private static final int DIVE_LANDING_WAIT_TICKS = 12;
     private static final int MIN_DIVE_TICKS_BEFORE_GROUND = 2;
     private static final double DIVE_KNOCK_SIDE = 0.55;
     private static final double DIVE_KNOCK_UP = 0.5;
@@ -339,9 +344,9 @@ public final class PhantomAbility extends Ability {
             this.previous = owner.getLocation();
         }
 
-        /** The longest dive (every push plus the latency allowance). */
+        /** The longest dive (every push plus the wait for the landing). */
         long maxDiveTicks() {
-            return (long) Math.ceil(range / DIVE_SPEED) + DIVE_LATENCY_TICKS + 2;
+            return (long) Math.ceil(range / DIVE_SPEED) + DIVE_LANDING_WAIT_TICKS + 2;
         }
 
         @Override
@@ -457,7 +462,7 @@ public final class PhantomAbility extends Ability {
             trail(previous, now);
             previous = now;
             boolean grounded = Motion.isGrounded(owner) || owner.isInWater();
-            if (grounded && diveTicks > MIN_DIVE_TICKS_BEFORE_GROUND || diveTicks >= pushes + DIVE_LATENCY_TICKS) {
+            if (grounded && diveTicks > MIN_DIVE_TICKS_BEFORE_GROUND || diveTicks >= pushes + DIVE_LANDING_WAIT_TICKS) {
                 impact(now);
                 return false;
             }
@@ -499,7 +504,9 @@ public final class PhantomAbility extends Ability {
             Vector knock = side.multiply(DIVE_KNOCK_SIDE).add(flat.multiply(0.3)).setY(DIVE_KNOCK_UP);
             Motion.push(enemy, knock, MAX_SPEED);
             Location at = Fx.body(enemy);
-            Vfx.burst(ctx(), at, PALETTE, 0.6, Particle.SQUID_INK, false);
+            if (isSeen(owner, enemy)) {
+                Vfx.burst(ctx(), at, PALETTE, 0.6, Particle.SQUID_INK, false);
+            }
             Fx.sound(at, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.8f + Fx.jitter(0.1f));
             Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.7f, 0.8f + Fx.jitter(0.08f));
         }
@@ -608,8 +615,16 @@ public final class PhantomAbility extends Ability {
     /** Enemies around the owner it can see (a stealthed enemy is never hunted, which would reveal it). */
     private List<LivingEntity> preys(Player owner, double radius) {
         List<LivingEntity> found = ctx().enemiesNear(owner, owner.getLocation(), radius);
-        found.removeIf(enemy -> enemy instanceof Player hidden && !owner.canSee(hidden));
+        found.removeIf(enemy -> !isSeen(owner, enemy));
         return found;
+    }
+
+    /**
+     * False for an enemy player hidden from the owner by stealth: a strike that catches it still lands, but nothing
+     * is drawn on it that would give its position away.
+     */
+    private static boolean isSeen(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player hidden) || owner.canSee(hidden);
     }
 
     private enum Flight { ORBIT, SWOOP, RETURN }
@@ -835,7 +850,9 @@ public final class PhantomAbility extends Ability {
                     enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, slow, 0, false, true, true));
                 }
                 Location body = Fx.body(enemy);
-                Vfx.burst(ctx(), body, PALETTE, 0.5, Particle.SQUID_INK, true);
+                if (isSeen(owner, enemy)) {
+                    Vfx.burst(ctx(), body, PALETTE, 0.5, Particle.SQUID_INK, true);
+                }
                 Fx.sound(body, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.9f + Fx.jitter(0.1f));
             }
             if (any) {
@@ -889,7 +906,7 @@ public final class PhantomAbility extends Ability {
             Fx.sound(center, Sound.ENTITY_PHANTOM_FLAP, 1.0f, 0.6f);
             Fx.sound(center, Sound.ENTITY_PHANTOM_DEATH, 0.4f, 1.4f);
             if (owner.isOnline()) {
-                owner.sendActionBar(Text.mm("<" + TEAL + ">☾ 불면의 밤</" + TEAL + "> <gray>이 끝났습니다</gray>"
+                owner.sendActionBar(Text.mm("<" + TEAL + ">☾ 불면의 밤</" + TEAL + "><gray>이 끝났습니다</gray>"
                         + (strikes > 0 ? " <white>급습 " + strikes + "회</white>" : "")));
             }
         }

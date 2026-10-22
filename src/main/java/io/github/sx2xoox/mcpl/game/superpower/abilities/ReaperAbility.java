@@ -30,6 +30,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -131,6 +132,14 @@ public final class ReaperAbility extends Ability {
 
     // ------------------------------------------------------------------ passive: execution
 
+    /**
+     * False for an enemy player hidden from the reaper by stealth: it is still hit, executed and drained, but nothing
+     * is drawn on it that would give its position away.
+     */
+    private boolean isSeen(LivingEntity entity) {
+        return !(entity instanceof Player hidden) || player().canSee(hidden);
+    }
+
     /** True when {@code victim} is at or below the execution threshold of its maximum health. */
     private boolean isDoomed(LivingEntity victim) {
         double threshold = Math.clamp(params().num("execute_threshold") / 100.0, 0.0, 1.0);
@@ -152,7 +161,8 @@ public final class ReaperAbility extends Ability {
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
         long now = ctx().currentTick();
-        if (!isDoomed(victim) || now - lastExecuteFx < EXECUTE_FX_COOLDOWN) {
+        // A stealthed victim is executed all the same, but no slash may give its position away.
+        if (!isDoomed(victim) || !isSeen(victim) || now - lastExecuteFx < EXECUTE_FX_COOLDOWN) {
             return;
         }
         lastExecuteFx = now;
@@ -181,7 +191,7 @@ public final class ReaperAbility extends Ability {
         }
         Player owner = player();
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), SENSE_RANGE)) {
-            if (!isDoomed(enemy) || enemy instanceof Player hidden && !owner.canSee(hidden)) {
+            if (!isDoomed(enemy) || !isSeen(enemy)) {
                 continue;
             }
             Location head = enemy.getLocation().add(0, enemy.getHeight() + 0.45, 0);
@@ -292,16 +302,26 @@ public final class ReaperAbility extends Ability {
                     continue;
                 }
                 hit.add(enemy.getUniqueId());
+                // A stealthed enemy is cut and drained all the same, but nothing drawn on it gives it away.
+                boolean seen = isSeen(enemy);
                 double before = enemy.getHealth() + enemy.getAbsorptionAmount();
                 Combat.hit(ctx(), owner, enemy, damage);
                 double after = enemy.isDead() ? 0 : enemy.getHealth() + enemy.getAbsorptionAmount();
                 double dealt = Math.max(0, before - after);
                 if (dealt > 0 && lifesteal > 0 && owner.isValid() && !owner.isDead()) {
+                    double health = owner.getHealth();
                     ctx().heal(owner, dealt * lifesteal);
-                    healed += dealt * lifesteal;
-                    drain(body);
+                    // What it really healed (nothing at full health), for the summary.
+                    healed += Math.max(0, owner.getHealth() - health);
+                    if (seen) {
+                        drain(body);
+                    }
                 }
-                cutFx(body);
+                if (seen) {
+                    cutFx(body);
+                } else {
+                    Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.8f, 0.7f + Fx.jitter(0.08f));
+                }
                 if (Combat.isTargetable(ctx(), owner, enemy) && to.length() > PULL_MIN_DISTANCE) {
                     Vector pull = Motion.horizontal(to).multiply(-PULL_SPEED).setY(PULL_LIFT);
                     Motion.push(enemy, pull, MAX_SPEED);
@@ -362,9 +382,10 @@ public final class ReaperAbility extends Ability {
                 return true;
             });
             if (!hit.isEmpty()) {
+                double shown = Math.round(healed * 10) / 10.0;
                 owner.sendActionBar(Text.mm("<" + SOUL_TAG + ">☠ 낫 회전</" + SOUL_TAG + "> <white>" + hit.size()
-                        + "명</white><dark_gray> · </dark_gray><gray>회복</gray> <white>+"
-                        + AbilityInfo.formatNumber(Math.round(healed * 10) / 10.0) + "</white>"));
+                        + "명</white>" + (shown > 0 ? "<dark_gray> · </dark_gray><gray>회복</gray> <white>+"
+                        + AbilityInfo.formatNumber(shown) + "</white>" : "")));
             }
         }
     }
@@ -396,9 +417,9 @@ public final class ReaperAbility extends Ability {
     }
 
     /**
-     * The mark of death: for its duration it adds up every drop in the victim's health (and absorption) from any
-     * source, then deals {@code mark_base + mark_ratio% × that}, capped. If the victim falls first, the reaper reaps
-     * its soul instead.
+     * The mark of death: for its duration it adds up the damage the victim takes from any source (every drop in its
+     * health and absorption that came with a damage event), then deals {@code mark_base + mark_ratio% × that},
+     * capped. If the victim falls first, the reaper reaps its soul instead; if it leaves the match, the mark fades.
      */
     private final class Mark implements LongPredicate {
 
@@ -406,6 +427,12 @@ public final class ReaperAbility extends Ability {
         private final LivingEntity target;
         private final long duration;
         private double lastHealth;
+        /**
+         * The victim's last damage event as of the previous tick. The server records every damage event that went
+         * through as a new object, so a drop in health that comes without a new one was no damage: absorption
+         * wearing off (a shield running out), a max health modifier going away, health paid as a price.
+         */
+        private @Nullable EntityDamageEvent lastCause;
         private double suffered;
         private @Nullable ItemDisplay scythe;
         private @Nullable TextDisplay label;
@@ -417,6 +444,7 @@ public final class ReaperAbility extends Ability {
             this.target = target;
             this.duration = Math.max(1, params().ticks("mark_duration"));
             this.lastHealth = target.getHealth() + target.getAbsorptionAmount();
+            this.lastCause = target.getLastDamageCause();
         }
 
         void start() {
@@ -454,7 +482,10 @@ public final class ReaperAbility extends Ability {
         @Override
         public boolean test(long tick) {
             if (!Combat.isTargetable(ctx(), owner, target)) {
-                if (target.isDead() || !target.isValid() || target.getHealth() <= 0
+                if (target instanceof Player victim && !victim.isOnline()) {
+                    // It left the match: nothing fell, so there is no soul to reap.
+                    fizzle();
+                } else if (target.isDead() || !target.isValid() || target.getHealth() <= 0
                         || target instanceof Player victim && !ctx().isAlive(victim)) {
                     reap();
                 } else {
@@ -463,11 +494,13 @@ public final class ReaperAbility extends Ability {
                 return false;
             }
             double now = target.getHealth() + target.getAbsorptionAmount();
-            if (now < lastHealth - 1.0E-9) {
+            EntityDamageEvent cause = target.getLastDamageCause();
+            if (now < lastHealth - 1.0E-9 && cause != null && cause != lastCause) {
                 suffered += lastHealth - now;
                 feed();
             }
             lastHealth = now;
+            lastCause = cause;
             follow(tick);
             if (tick % KNELL_PERIOD == KNELL_PERIOD - 1) {
                 knell(tick);
@@ -561,8 +594,12 @@ public final class ReaperAbility extends Ability {
             }
             double blow = blow();
             Location body = Fx.body(target);
+            // A victim in stealth still pays in full, but the blow draws nothing that would give its position away.
+            boolean seen = isSeen(target);
             ItemDisplay display = scythe;
-            if (display != null && display.isValid()) {
+            if (display != null && display.isValid() && !seen) {
+                display.remove();
+            } else if (display != null && display.isValid()) {
                 Displays.moveTo(display, body);
                 Displays.animate(display, Displays.centered(0, 0, 0, MARK_SCYTHE_SCALE * 1.4f,
                         MARK_SCYTHE_SCALE * 1.4f, MARK_SCYTHE_SCALE * 1.4f, spin, 0, -35), SWING_TICKS);
@@ -579,15 +616,17 @@ public final class ReaperAbility extends Ability {
             Combat.hit(ctx(), owner, target, blow);
             boolean killed = target.isDead() || target.getHealth() <= 0;
 
-            Vector toVictim = body.toVector().subtract(owner.getEyeLocation().toVector());
-            slash(body, toVictim, SLASH_LENGTH, 40, 0);
-            slash(body, toVictim, SLASH_LENGTH, -40, 1);
-            Vfx.dot(body, Particle.FLASH, PALETTE.core(), true);
-            Vfx.sphere(ctx(), body, 1.0, 30, Particle.DUST_COLOR_TRANSITION, SOUL_GLOW, true);
-            Vfx.cloud(ctx(), body, Particle.SOUL, 16, 0.4, 0.06, null, true);
-            Vfx.cloud(ctx(), body, Particle.SCULK_SOUL, 8, 0.3, 0.05, null, true);
-            Vfx.shockwave(ctx(), owner, target.getLocation().add(0, 0.1, 0), 0.4, 2.6, 5, Particle.DUST, ROBE_DUST,
-                    true);
+            if (seen) {
+                Vector toVictim = body.toVector().subtract(owner.getEyeLocation().toVector());
+                slash(body, toVictim, SLASH_LENGTH, 40, 0);
+                slash(body, toVictim, SLASH_LENGTH, -40, 1);
+                Vfx.dot(body, Particle.FLASH, PALETTE.core(), true);
+                Vfx.sphere(ctx(), body, 1.0, 30, Particle.DUST_COLOR_TRANSITION, SOUL_GLOW, true);
+                Vfx.cloud(ctx(), body, Particle.SOUL, 16, 0.4, 0.06, null, true);
+                Vfx.cloud(ctx(), body, Particle.SCULK_SOUL, 8, 0.3, 0.05, null, true);
+                Vfx.shockwave(ctx(), owner, target.getLocation().add(0, 0.1, 0), 0.4, 2.6, 5, Particle.DUST,
+                        ROBE_DUST, true);
+            }
             Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.2f, 0.5f);
             Fx.sound(body, Sound.BLOCK_BELL_USE, 1.4f, 1.0f);
             Fx.sound(body, Sound.ITEM_TRIDENT_THUNDER, 0.5f, 1.6f + Fx.jitter(0.05f));

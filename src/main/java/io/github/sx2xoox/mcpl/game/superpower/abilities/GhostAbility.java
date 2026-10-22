@@ -382,7 +382,8 @@ public final class GhostAbility extends Ability {
             Vfx.dot(Fx.body(enemy).add(random.nextDouble(-0.3, 0.3), random.nextDouble(-0.3, 0.3),
                     random.nextDouble(-0.3, 0.3)), Particle.DUST_COLOR_TRANSITION, CHILL, false);
         }
-        if (run % 8 == 4) {
+        // The rattle of its bones follows it around: never for a stealthed enemy, whose hiding place it would betray.
+        if (shown && run % 8 == 4) {
             Fx.sound(enemy.getLocation(), Sound.ENTITY_SKELETON_STEP, 0.3f, 1.9f + Fx.jitter(0.1f));
         }
         return true;
@@ -560,9 +561,12 @@ public final class GhostAbility extends Ability {
                 enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, slowTicks, BURST_SLOW_AMPLIFIER,
                         false, true, true));
             }
-            Location at = Fx.body(enemy);
-            Vfx.burst(ctx(), at, PALETTE, 0.6, Particle.SNOWFLAKE, true);
-            Vfx.trail(body, at, PALETTE.core(), 4, true);
+            // A stealthed enemy is hit and slowed all the same, but nothing drawn on it gives it away.
+            if (!(enemy instanceof Player hidden) || owner.canSee(hidden)) {
+                Location at = Fx.body(enemy);
+                Vfx.burst(ctx(), at, PALETTE, 0.6, Particle.SNOWFLAKE, true);
+                Vfx.trail(body, at, PALETTE.core(), 4, true);
+            }
         }
         Vector facing = Motion.horizontalFacing(owner.getLocation());
         Specter specter = new Specter(owner, body.clone().add(0, 0.6, 0), facing, 0.6f, 20);

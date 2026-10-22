@@ -69,9 +69,10 @@ public final class DemonAbility extends Ability {
                             + "밀어냅니다. 벽 너머로는 닿지 않고, 체력이 {hellfire_cost} 이하일 때는 쓸 수 없습니다.",
                     8)
             .ultimate("지옥문",
-                    "조준한 곳({gate_range}블록 이내)에 {gate_duration}초간 지옥문을 엽니다. 문 주변 {gate_radius}블록 "
-                            + "안의 적들 발밑에 {pillar_interval}초마다 붉은 인장이 새겨지고, {pillar_delay}초 뒤 그 자리에서 "
-                            + "영혼불 기둥이 솟아 {pillar_damage} 피해를 주고 문 바깥쪽으로 날려 보냅니다.")
+                    "조준한 곳({gate_range}블록 이내)에 {gate_duration}초간 지옥문을 엽니다. {pillar_interval}초마다 문 "
+                            + "주변 {gate_radius}블록 안의 가까운 적 최대 " + DemonAbility.MAX_PILLARS_PER_WAVE + "명의 발밑에 붉은 "
+                            + "인장이 새겨지고, {pillar_delay}초 뒤 그 자리에서 영혼불 기둥이 솟아 {pillar_damage} 피해를 주고 "
+                            + "문 바깥쪽으로 날려 보냅니다.")
             .param("pact_max", 50)
             .param("pact_floor", 25)
             .param("hellfire_cost", 2)
@@ -135,6 +136,7 @@ public final class DemonAbility extends Ability {
     private static final int GROUND_SNAP = 8;
     private static final int RISE_TICKS = 12;
     private static final int CLOSE_TICKS = 10;
+    /** Each wave marks at most this many enemies, the nearest to the gate (a constant: it is in the description). */
     private static final int MAX_PILLARS_PER_WAVE = 3;
     private static final float PILLAR_HEIGHT = 4.2f;
     private static final int PILLAR_GROW_TICKS = 3;
@@ -202,7 +204,8 @@ public final class DemonAbility extends Ability {
 
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (!isOwnAbilityHit(event)) {
+        // A stealthed victim is hit all the same, but no sigil may give its position away.
+        if (!isOwnAbilityHit(event) || !isSeen(victim)) {
             return;
         }
         double pact = pact();
@@ -391,8 +394,10 @@ public final class DemonAbility extends Ability {
                 Vector push = Motion.horizontal(direction).multiply(WAVE_PUSH).setY(WAVE_LIFT);
                 Motion.push(enemy, push, MAX_SPEED);
                 Location body = Fx.body(enemy);
-                Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.SOUL_FIRE_FLAME, false);
-                Vfx.cloud(ctx(), body, Particle.FLAME, 5, 0.25, 0.03, null, false);
+                if (isSeen(enemy)) {
+                    Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.SOUL_FIRE_FLAME, false);
+                    Vfx.cloud(ctx(), body, Particle.FLAME, 5, 0.25, 0.03, null, false);
+                }
                 Fx.sound(body, Sound.ENTITY_BLAZE_HURT, 0.6f, 0.7f + Fx.jitter(0.1f));
                 Fx.sound(body, Sound.ITEM_FIRECHARGE_USE, 0.5f, 1.4f + Fx.jitter(0.1f));
             }
@@ -566,8 +571,16 @@ public final class DemonAbility extends Ability {
     /** Enemies around {@code center} the demon can see (a stealthed enemy is never marked, which would reveal it). */
     private List<LivingEntity> visibleEnemies(Location center, double radius) {
         List<LivingEntity> found = ctx().enemiesNear(player(), center, radius);
-        found.removeIf(enemy -> enemy instanceof Player hidden && !player().canSee(hidden));
+        found.removeIf(enemy -> !isSeen(enemy));
         return found;
+    }
+
+    /**
+     * False for an enemy player hidden from the demon by stealth: area hits still reach it, but no effect is drawn on
+     * it that would give its position away.
+     */
+    private boolean isSeen(LivingEntity entity) {
+        return !(entity instanceof Player hidden) || player().canSee(hidden);
     }
 
     /** One pillar waiting to erupt: its sigil on the ground and the tick it erupts at. */
@@ -806,7 +819,9 @@ public final class DemonAbility extends Ability {
                 }
                 Motion.push(enemy, away.multiply(PILLAR_PUSH).setY(PILLAR_LIFT), MAX_SPEED);
                 Location body = Fx.body(enemy);
-                Vfx.burst(ctx(), body, PALETTE, 0.7, Particle.SOUL_FIRE_FLAME, true);
+                if (isSeen(enemy)) {
+                    Vfx.burst(ctx(), body, PALETTE, 0.7, Particle.SOUL_FIRE_FLAME, true);
+                }
                 Fx.sound(body, Sound.ENTITY_BLAZE_HURT, 0.6f, 0.6f + Fx.jitter(0.1f));
             }
         }
