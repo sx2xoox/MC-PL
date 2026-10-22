@@ -384,7 +384,8 @@ public final class AlchemistAbility extends Ability {
             double t = (double) (tick + 1) / flightTicks;
             Location position = start.clone().add(path.clone().multiply(t)).add(0, 4 * arc * t * (1 - t), 0);
             if (visual.isValid()) {
-                visual.teleport(position);
+                // Not the alchemist's rotation (the arc starts at its eyes): the flask tumbles by its pose alone.
+                Displays.moveTo(visual, position);
                 Displays.animate(visual, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, tick * 30f, tick * 45f, 0), 1);
             }
             Vfx.dot(position, Particle.WITCH, null, false);
@@ -595,16 +596,15 @@ public final class AlchemistAbility extends Ability {
             double progress = (double) (tick + 1) / castTicks;
             for (int i = 0; i < symbols.size(); i++) {
                 TextDisplay symbol = symbols.get(i);
-                if (symbol.isValid()) {
-                    symbol.teleport(symbolPoint(feet, i, tick * 0.18));
-                }
+                Displays.moveTo(symbol, symbolPoint(feet, i, tick * 0.18));
             }
             Location gemAt = feet.clone().add(0, GEM_HEIGHT, 0);
             float size = GEM_SIZE * (float) Math.min(1.0, progress * 1.2);
             Quaternionf spin = new Quaternionf().rotateAxis(tick * 0.35f, GEM_AXIS).mul(GEM_TILT);
             for (BlockDisplay part : new BlockDisplay[] {shell, core}) {
                 if (part != null && part.isValid()) {
-                    part.teleport(gemAt);
+                    // The gem spins by its pose alone, not with the alchemist's head.
+                    Displays.moveTo(part, gemAt);
                     Displays.animate(part, cube(part == core ? size * 0.5f : size, spin), 1);
                 }
             }
@@ -645,7 +645,7 @@ public final class AlchemistAbility extends Ability {
             Location chest = Fx.body(owner);
             for (BlockDisplay part : new BlockDisplay[] {shell, core}) {
                 if (part != null && part.isValid()) {
-                    part.teleport(chest);
+                    Displays.moveTo(part, chest);
                     Displays.shrinkAway(ctx(), owner, part, SINK_TICKS);
                 }
             }
@@ -742,10 +742,8 @@ public final class AlchemistAbility extends Ability {
         }
         Loop.repeat(ctx(), owner, 1, 1, ticks, run -> {
             for (int i = 0; i < pieces.size(); i++) {
-                BlockDisplay piece = pieces.get(i);
-                if (piece.isValid()) {
-                    piece.teleport(shardPoint(owner, start, i, run));
-                }
+                // The shards keep their own tilt, not the alchemist's rotation.
+                Displays.moveTo(pieces.get(i), shardPoint(owner, start, i, run));
             }
             if (run % 2 == 0) {
                 Location at = Vfx.scatter(owner.getLocation(), 0.5).add(0, 0.2, 0);

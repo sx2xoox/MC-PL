@@ -57,6 +57,34 @@ class TechNewAbilitiesTest {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
     }
 
+    private static <T extends Display> java.util.List<T> displaysOf(Scenario s, Class<T> type) {
+        return s.world.getEntities().stream().filter(type::isInstance).map(type::cast).toList();
+    }
+
+    /**
+     * A display must carry no rotation of its own: its model is turned by its transformation, and a yaw or pitch of
+     * the entity would turn it a second time on a real client.
+     */
+    private static void assertUnturned(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": the display's own yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": the display's own pitch");
+    }
+
+    /**
+     * Where the model's local +z points in the world (with the display itself unturned). MockBukkit 4.118 hands the
+     * left rotation back conjugated (in the right rotation's slot too); a faithful test double returns it as it was
+     * set, with no right rotation (none of these poses has one).
+     */
+    private static org.bukkit.util.Vector modelForward(Display display) {
+        org.bukkit.util.Transformation pose = display.getTransformation();
+        org.joml.Quaternionf rotation = pose.getLeftRotation();
+        if (Math.abs(pose.getRightRotation().w()) < 1 - 1.0E-6) {
+            rotation.conjugate();
+        }
+        org.joml.Vector3f z = rotation.transform(new org.joml.Vector3f(0, 0, 1));
+        return new org.bukkit.util.Vector(z.x(), z.y(), z.z());
+    }
+
     /** Aims each skill the way a player would: the engineer at the floor in front, the others at the enemy. */
     private static void aim(Scenario s) {
         if (s.abilityId.equals("engineer")) {
@@ -323,6 +351,50 @@ class TechNewAbilitiesTest {
             double dot = beam.x() * expected.getX() + beam.y() * expected.getY() + beam.z() * expected.getZ();
             assertTrue(dot > 0.98, "the laser points at the aimed enemy (cos=" + dot + ")");
             s.ticks(s.paramTicks("aim_time") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sniperTracerRunsAlongTheShot() {
+        try (Scenario s = Scenario.ffa("sniper")) {
+            s.place(s.enemy, 3.5, 6.5, 180); // off to the side: the sniper's yaw and pitch are far from 0
+            s.place(s.enemy2, -8.5, -8.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "정조준 사격");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, s.paramTicks("aim_time") + 5, "the shot");
+            BlockDisplay tracer = displaysOf(s, BlockDisplay.class).stream()
+                    .max(java.util.Comparator.comparingDouble(d -> d.getTransformation().getScale().z()))
+                    .orElseThrow(() -> new AssertionError("the tracer"));
+            assertUnturned(tracer, "tracer");
+            org.bukkit.util.Vector expected = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.6, 0).toVector()
+                    .subtract(tracer.getLocation().toVector()).normalize();
+            double cos = modelForward(tracer).dot(expected);
+            assertTrue(cos > 0.98, "the tracer runs to the struck enemy (cos=" + cos + ")");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sniperRecoilAndShotPushNeverReplayAStaleVelocity() {
+        try (Scenario s = Scenario.ffa("sniper")) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "정조준 사격");
+            // On a real server a player's velocity is only the last one sent to it (its client moves it). With the
+            // physics off it stays put like that here: an old knockback on both, long over on their clients.
+            s.world.physics().setEnabled(false);
+            s.owner.setVelocity(new org.bukkit.util.Vector(1.5, 0, 0));
+            s.enemy.setVelocity(new org.bukkit.util.Vector(-1.5, 0.4, 0));
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, s.paramTicks("aim_time") + 5, "the shot");
+            org.bukkit.util.Vector recoil = s.owner.getVelocity();
+            assertEquals(0.18, Math.hypot(recoil.getX(), recoil.getZ()), EPSILON, "the recoil alone: " + recoil);
+            assertTrue(recoil.getZ() < 0, "kicking the sniper back");
+            org.bukkit.util.Vector push = s.enemy.getVelocity();
+            assertEquals(0.35, Math.hypot(push.getX(), push.getZ()), EPSILON, "the bullet's push alone: " + push);
+            assertTrue(push.getZ() > 0, "along the shot");
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
             s.finishClean();
         }
     }
@@ -650,6 +722,71 @@ class TechNewAbilitiesTest {
         }
     }
 
+    @Test
+    void engineerKitTumblesByItsOwnPoseAlone() {
+        try (Scenario s = Scenario.ffa("engineer")) {
+            s.aimAtFloor(s.owner, -2.5, 5.0); // looking down to the left: yaw and pitch far from 0
+            s.assertSucceeded(s.active(), "포탑 설치");
+            for (int tick = 0; tick < 3; tick++) {
+                s.ticks(1);
+                java.util.List<org.bukkit.entity.ItemDisplay> kits = displaysOf(s, org.bukkit.entity.ItemDisplay.class);
+                assertEquals(1, kits.size(), "the kit in the air");
+                assertUnturned(kits.getFirst(), "kit");
+            }
+            s.ticks(s.paramTicks("turret_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void engineerTurretShotsNeverPileUpOnAStaleVelocity() {
+        try (Scenario s = Scenario.ffa("engineer")) {
+            s.place(s.enemy2, 30.5, 30.5, 0);
+            s.aimAtFloor(s.owner, 0.5, 2.5);
+            s.assertSucceeded(s.active(), "포탑 설치");
+            s.ticks(12);
+            // On a real server a player's velocity is only the last one sent to it (its client moves it): with the
+            // physics off it stays put like that here, and every shot would add its nudge to the last one.
+            s.world.physics().setEnabled(false);
+            s.clearHits();
+            double fastest = 0;
+            for (int tick = 0; tick < 70; tick++) {
+                s.ticks(1);
+                org.bukkit.util.Vector velocity = s.enemy.getVelocity();
+                fastest = Math.max(fastest, Math.hypot(velocity.getX(), velocity.getZ()));
+            }
+            s.world.physics().setEnabled(true);
+            assertTrue(s.hitsBy(s.owner, s.enemy).size() >= 3, "the turret kept shooting");
+            assertTrue(fastest > 0, "each shot nudges the enemy");
+            assertTrue(fastest < 0.12 + EPSILON, "but the nudges never pile up: " + fastest);
+            s.ticks(s.paramTicks("turret_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void engineerLaserBeamPointsAtItsTarget() {
+        try (Scenario s = Scenario.ffa("engineer")) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 30.5, 30.5, 0);
+            s.aimAtFloor(s.owner, 0.5, 2.5);
+            s.assertSucceeded(s.ultimate(), "레이저 포탑");
+            s.ticks(s.paramTicks("laser_charge") + 20);
+            java.util.List<BlockDisplay> beams = displaysOf(s, BlockDisplay.class).stream()
+                    .filter(display -> display.getTransformation().getScale().z() > 2).toList();
+            assertEquals(2, beams.size(), "the beam: a core in a sheath");
+            for (BlockDisplay beam : beams) {
+                assertUnturned(beam, "beam");
+                org.bukkit.util.Vector expected = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.5, 0)
+                        .toVector().subtract(beam.getLocation().toVector()).normalize();
+                double cos = modelForward(beam).dot(expected);
+                assertTrue(cos > 0.98, "the beam is on its target (cos=" + cos + ")");
+            }
+            s.ticks(s.paramTicks("laser_duration") + 20);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 연금술사 alchemist
 
     @Test
@@ -772,6 +909,42 @@ class TechNewAbilitiesTest {
             assertTrue(s.owner.hasPotionEffect(PotionEffectType.STRENGTH));
             s.ticks(50);
             assertTrue(entities(s, Display.class).isEmpty(), "the shards fade with the buffs");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void alchemistFlaskAndStoneTurnOnlyByTheirOwnPose() {
+        try (Scenario s = Scenario.ffa("alchemist")) {
+            s.place(s.enemy, 3.5, 7.5, 180); // off to the side: the alchemist's yaw and pitch are far from 0
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "실험 물약");
+            for (int tick = 0; tick < 3; tick++) {
+                s.ticks(1);
+                java.util.List<org.bukkit.entity.ItemDisplay> flasks =
+                        displaysOf(s, org.bukkit.entity.ItemDisplay.class);
+                assertEquals(1, flasks.size(), "the flask in the air");
+                assertUnturned(flasks.getFirst(), "flask");
+            }
+            s.ticks(40);
+
+            s.place(s.owner, 0.5, s.owner.getLocation().getY(), 0.5, 120, 35); // turned and looking down
+            s.assertSucceeded(s.ultimate(), "현자의 돌");
+            for (int tick = 0; tick < 4; tick++) {
+                s.ticks(1);
+                java.util.List<BlockDisplay> gem = displaysOf(s, BlockDisplay.class);
+                assertEquals(2, gem.size(), "the gem");
+                for (BlockDisplay part : gem) {
+                    assertUnturned(part, "gem");
+                }
+            }
+            s.ticks(s.paramTicks("stone_cast") + 6);
+            java.util.List<BlockDisplay> shards = displaysOf(s, BlockDisplay.class);
+            assertEquals(3, shards.size(), "the shards orbit");
+            for (BlockDisplay shard : shards) {
+                assertUnturned(shard, "shard");
+            }
+            s.ticks((int) Math.round(s.paramTicks("stone_duration") * (1 + s.param("boon_extend") / 100)) + 30);
             s.finishClean();
         }
     }

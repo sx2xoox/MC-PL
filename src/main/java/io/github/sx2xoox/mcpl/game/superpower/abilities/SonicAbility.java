@@ -253,8 +253,15 @@ public final class SonicAbility extends Ability {
                 return;
             }
             for (int i = 0; i < shards.length; i++) {
-                shards[i] = Displays.item(ctx(), owner, shardPoint(i, 0), ECHO_SHARD,
-                        Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), ticks + SHARD_FLIGHT_LIFE);
+                Location at = shardPoint(i, 0);
+                // The shards are turned by their own rotation (their pose only scales them), which the teleports
+                // along the spiral keep up to date: they spawn turned already, not facing south for a tick.
+                shards[i] = Displays.spawn(ctx(), owner, at, ItemDisplay.class, ticks + SHARD_FLIGHT_LIFE, shard -> {
+                    shard.setItemStack(ECHO_SHARD);
+                    shard.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
+                    shard.setTransformation(Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0));
+                    shard.setRotation(at.getYaw(), at.getPitch());
+                });
                 shards[i].setTeleportDuration(1);
                 Displays.animateNextTick(ctx(), owner, shards[i],
                         Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, 0, 0, 0), 3);
@@ -468,6 +475,9 @@ public final class SonicAbility extends Ability {
         private final World world;
         private final double radius;
         private final long waveTicks;
+        /** The top of the ground under the listener (its feet when it shrieks in mid-air over nothing near). */
+        private final double floor;
+        private final boolean grounded;
         private final Set<UUID> struck = new HashSet<>();
         private final List<BlockDisplay> patches = new ArrayList<>();
         private final List<BlockDisplay> shriekers = new ArrayList<>();
@@ -480,6 +490,11 @@ public final class SonicAbility extends Ability {
             this.world = at.getWorld();
             this.radius = radius;
             this.waveTicks = Math.max(2, (long) Math.ceil(radius / WAVE_SPEED));
+            // The ray starts above the feet: one starting on the ground would report a hit inside it.
+            RayTraceResult ground = world.rayTraceBlocks(center.clone().add(0, 0.2, 0), new Vector(0, -1, 0), 3,
+                    FluidCollisionMode.NEVER, true);
+            this.grounded = ground != null;
+            this.floor = ground == null ? center.getY() : ground.getHitPosition().getY();
         }
 
         void begin() {
@@ -496,12 +511,9 @@ public final class SonicAbility extends Ability {
 
         /** Sculk shriekers push up out of the ground around the listener (when it stands on something). */
         private void raiseShriekers(Player owner) {
-            RayTraceResult ground = world.rayTraceBlocks(center.clone().add(0, 0.2, 0), new Vector(0, -1, 0), 3,
-                    FluidCollisionMode.NEVER, true);
-            if (ground == null) {
+            if (!grounded) {
                 return;
             }
-            double floor = ground.getHitPosition().getY();
             double phase = Math.toRadians(center.getYaw()) + Math.PI / 4;
             for (int i = 0; i < SHRIEKERS; i++) {
                 double angle = phase + i * Math.PI * 2 / SHRIEKERS;
@@ -590,16 +602,18 @@ public final class SonicAbility extends Ability {
             for (int i = 0; i < SCULK_PATCHES; i++) {
                 double angle = phase + i * Math.PI * 2 / SCULK_PATCHES;
                 Vector out = new Vector(Math.cos(angle), 0, Math.sin(angle));
-                Location start = center.clone().add(out.clone().multiply(0.8)).add(0, 0.03, 0);
+                // On the ground, also when the listener shrieked in mid-jump.
+                Location start = center.clone().add(out.clone().multiply(0.8));
+                start.setY(floor + 0.03);
                 float yaw = (float) Math.toDegrees(angle);
                 BlockDisplay patch = Displays.block(ctx(), owner, start, SCULK, patchPose(0.3f, yaw), life);
                 patch.setBrightness(SCULK_LIGHT);
                 patch.setTeleportDuration((int) Math.min(59, waveTicks));
                 patches.add(patch);
-                Location end = center.clone().add(out.multiply(radius * 0.92)).add(0, 0.03, 0);
+                Location end = start.clone().add(out.multiply(radius * 0.92 - 0.8));
                 ctx().runLater(owner, 1, () -> {
                     if (patch.isValid()) {
-                        patch.teleport(end);
+                        Displays.moveTo(patch, end);
                         Displays.animate(patch, patchPose(1.1f, yaw + 40), (int) waveTicks);
                     }
                 });

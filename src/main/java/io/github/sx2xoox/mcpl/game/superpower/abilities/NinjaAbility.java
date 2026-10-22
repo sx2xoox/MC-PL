@@ -195,8 +195,9 @@ public final class NinjaAbility extends Ability {
             if (speed <= 0) {
                 return;
             }
-            Vector velocity = owner.getVelocity();
-            owner.setVelocity(Motion.clamp(new Vector(velocity.getX() * 0.6, speed, velocity.getZ() * 0.6), MAX_CLIMB));
+            // Straight up the wall. Not the owner's velocity slowed down: on the server a player's velocity is only the
+            // last one sent to it (its client moves it), so that would hand back a stale push, sideways.
+            owner.setVelocity(Motion.clamp(new Vector(0, speed, 0), MAX_CLIMB));
             owner.setFallDistance(0);
             if (!climbing) {
                 climbing = true;
@@ -832,15 +833,15 @@ public final class NinjaAbility extends Ability {
         if (toward.lengthSquared() < 1.0E-6) {
             toward = Motion.horizontalFacing(owner.getLocation());
         }
-        Location at = body.clone();
-        at.setDirection(toward);
+        // The X stands across the blow: its facing is part of its pose, the displays themselves are unturned.
+        float yaw = (float) Math.toDegrees(Math.atan2(-toward.getX(), toward.getZ()));
         for (float roll : new float[] {40, -40}) {
-            BlockDisplay cut = Displays.block(ctx(), owner, at, RED_CORE.createBlockData(),
-                    Displays.transform(0, 0, 0, 0.3f, 0.04f, 0.06f, 0, 0, roll), 12);
-            Displays.animateNextTick(ctx(), owner, cut, Displays.transform(0, 0, 0, 2.2f, 0.05f, 0.06f, 0, 0, roll),
+            BlockDisplay cut = Displays.block(ctx(), owner, body, RED_CORE.createBlockData(),
+                    Displays.transform(0, 0, 0, 0.3f, 0.04f, 0.06f, yaw, 0, roll), 12);
+            Displays.animateNextTick(ctx(), owner, cut, Displays.transform(0, 0, 0, 2.2f, 0.05f, 0.06f, yaw, 0, roll),
                     2);
             ctx().runLater(owner, 5, () -> Displays.animate(cut,
-                    Displays.transform(0, 0, 0, 2.5f, 0.001f, 0.001f, 0, 0, roll), 5));
+                    Displays.transform(0, 0, 0, 2.5f, 0.001f, 0.001f, yaw, 0, roll), 5));
         }
         TextDisplay mark = Displays.text(ctx(), owner, body.clone().add(0, victim.getHeight() * 0.6 + 0.4, 0),
                 Component.text("斬", TextColor.color(0xD7263D), TextDecoration.BOLD), 0.5f, 18);

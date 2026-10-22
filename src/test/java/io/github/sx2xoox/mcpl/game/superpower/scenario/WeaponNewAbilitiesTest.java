@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -14,6 +15,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.BladeAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.DuelistAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.LancerAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.NinjaAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.DummyAbility;
@@ -27,6 +29,7 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
@@ -35,6 +38,10 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -102,6 +109,35 @@ class WeaponNewAbilitiesTest {
 
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    private static List<BlockDisplay> blockDisplayList(Scenario s) {
+        return s.world.getEntities().stream().filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                .toList();
+    }
+
+    /**
+     * A display must carry no rotation of its own: its model is turned by its transformation, and a yaw or pitch of
+     * the entity would turn it a second time on a real client.
+     */
+    private static void assertUnturned(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": the display's own yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": the display's own pitch");
+    }
+
+    /**
+     * Where the model's local +z points in the world (with the display itself unturned). MockBukkit 4.118 hands the
+     * left rotation back conjugated (in the right rotation's slot too); a faithful test double returns it as it was
+     * set, with no right rotation (none of these poses has one).
+     */
+    private static Vector modelForward(Display display) {
+        Transformation pose = display.getTransformation();
+        Quaternionf rotation = pose.getLeftRotation();
+        if (Math.abs(pose.getRightRotation().w()) < 1 - 1.0E-6) {
+            rotation.conjugate();
+        }
+        Vector3f z = rotation.transform(new Vector3f(0, 0, 1));
+        return new Vector(z.x(), z.y(), z.z());
     }
 
     // ------------------------------------------------------------------ every ability
@@ -546,6 +582,85 @@ class WeaponNewAbilitiesTest {
     }
 
     @Test
+    void bladeGaleSlashLandsOnTheFloorAndItsCutsLieAlongThePath() {
+        try (Scenario s = Scenario.ffa("blade")) {
+            // Facing east: a cut left in the display's own default facing (south) would be caught.
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.place(s.enemy, 4.5, 0.5, 90);
+            s.place(s.enemy2, -6.5, 6.5, 0);
+            Vector east = new Vector(1, 0, 0);
+            s.assertSucceeded(s.active(), "질풍참");
+            Location feet = s.owner.getLocation();
+            assertEquals(0.5 + s.param("dash_distance"), feet.getX(), EPSILON, "dashed the whole way east");
+            assertEquals(FlatWorld.SURFACE, feet.getY(), EPSILON, "standing exactly on the floor, not sunk into it");
+            assertTrue(Spots.isFree(s.world, feet, 0.6, 1.8), "the body is clear of the floor");
+            List<BlockDisplay> line = blockDisplayList(s);
+            assertEquals(2, line.size(), "a cut of light along the path");
+            for (BlockDisplay part : line) {
+                assertUnturned(part, "cut line");
+                assertEquals(1, modelForward(part).dot(east), 1.0E-4, "the cut runs along the dash");
+            }
+            s.ticks(6);
+            assertEquals(1, s.hitsBy(s.owner, s.enemy).size(), "the cut opened on the enemy");
+            List<BlockDisplay> parts = blockDisplayList(s);
+            assertEquals(6, parts.size(), "the cut line and two crossing blades (with their cores)");
+            for (BlockDisplay part : parts) {
+                assertUnturned(part, "cut");
+                assertEquals(1, Math.abs(modelForward(part).dot(east)), 1.0E-4,
+                        "the cuts lie along the dash, the crossing blades stand across it");
+            }
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bladeWaveBladeRidesTheWaveEdgeFirst() {
+        try (Scenario s = Scenario.builder("blade").param("wave_chance", 100).start()) {
+            s.owner.getInventory().setItemInMainHand(ItemStack.of(Material.IRON_SWORD));
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.place(s.enemy, 2.5, 0.5, 90);
+            s.place(s.enemy2, -6.5, 6.5, 0);
+            Vector east = new Vector(1, 0, 0);
+            s.melee(s.owner, s.enemy, 4);
+            for (int tick = 0; tick < 3; tick++) {
+                s.ticks(1);
+                List<BlockDisplay> blade = blockDisplayList(s);
+                assertEquals(2, blade.size(), "the blade of light rides the wave");
+                for (BlockDisplay part : blade) {
+                    assertUnturned(part, "wave blade");
+                    assertEquals(1, modelForward(part).dot(east), 1.0E-4, "it flies out along the wave");
+                }
+            }
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bladeSwordsPointWhereTheyGo() {
+        try (Scenario s = Scenario.ffa("blade")) {
+            s.place(s.owner, 0.5, 0.5, 70);
+            s.assertSucceeded(s.ultimate(), "천검");
+            s.ticks(8);
+            List<BlockDisplay> parts = blockDisplayList(s);
+            assertEquals(s.param("ult_swords") * 3, parts.size(), "the swords hover");
+            for (BlockDisplay part : parts) {
+                assertUnturned(part, "hovering sword");
+                assertTrue(modelForward(part).getY() < -0.9, "points down over the master's head: "
+                        + modelForward(part));
+            }
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) + s.damageTaken(s.enemy2) > 0, 100, "the first sword lands");
+            for (BlockDisplay part : blockDisplayList(s)) {
+                assertUnturned(part, "sword");
+            }
+            s.ticks(150);
+            assertEquals(0, blockDisplays(s));
+            s.finishClean();
+        }
+    }
+
+    @Test
     void bladeHeavenlySwordsNeedAnEnemyInRange() {
         try (Scenario s = Scenario.ffa("blade")) {
             s.place(s.enemy, 0.5, 30.5, 180);
@@ -714,6 +829,91 @@ class WeaponNewAbilitiesTest {
         }
     }
 
+    @Test
+    void lancerSpearFliesPointFirst() {
+        try (Scenario s = Scenario.ffa("lancer")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, -90, -15); // east, a little upwards
+            s.place(s.enemy, -6.5, 6.5, 0);
+            s.place(s.enemy2, -6.5, -6.5, 0);
+            Vector heading = s.owner.getEyeLocation().getDirection();
+            s.assertSucceeded(s.active(), "창 투척");
+            for (int tick = 0; tick < 4; tick++) {
+                List<BlockDisplay> spear = blockDisplayList(s);
+                assertEquals(3, spear.size(), "a spear of three parts");
+                for (BlockDisplay part : spear) {
+                    assertUnturned(part, "spear");
+                    assertEquals(1, modelForward(part).dot(heading), 1.0E-4, "it flies point first");
+                }
+                s.ticks(1);
+            }
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void lancerChargeSpearPointsAlongTheCharge() {
+        try (Scenario s = Scenario.ffa("lancer")) {
+            s.place(s.owner, 0.5, 0.5, -90); // charging east
+            s.place(s.enemy, 6.5, -6.5, 0);
+            s.place(s.enemy2, -6.5, -6.5, 0);
+            Vector east = new Vector(1, 0, 0);
+            s.assertSucceeded(s.ultimate(), "일섬 돌격");
+            for (int tick = 0; tick < 12; tick++) {
+                List<BlockDisplay> spear = blockDisplayList(s);
+                assertEquals(3, spear.size(), "the charge spear");
+                for (BlockDisplay part : spear) {
+                    assertUnturned(part, "charge spear");
+                    assertEquals(1, modelForward(part).dot(east), 1.0E-4, "it points along the charge");
+                }
+                s.ticks(1);
+            }
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void lancerChargeEndsAtItsLengthEvenWhenTheServerSeesTheLancerLate() {
+        try (Scenario s = Scenario.ffa("lancer")) {
+            s.place(s.enemy, 6.5, -6.5, 0);
+            s.place(s.enemy2, -6.5, -6.5, 0);
+            Location start = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "일섬 돌격");
+            s.ticks(7); // the wind-up
+            // From the launch on, a laggy client: it moves by exactly the velocities it is sent (and slides to a halt
+            // like on the ground), and the server hears where it is only two ticks later.
+            int lag = 2;
+            s.world.physics().setEnabled(false);
+            List<Location> client = new ArrayList<>();
+            Location at = start.clone();
+            Vector motion = new Vector();
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                Vector sent = s.owner.getVelocity();
+                if (sent.lengthSquared() > 0) {
+                    motion = sent.clone();
+                    s.owner.setVelocity(new Vector());
+                }
+                at = at.clone().add(motion.getX(), 0, motion.getZ());
+                motion.multiply(0.546);
+                client.add(at);
+                if (client.size() > lag) {
+                    s.owner.teleport(client.get(client.size() - 1 - lag));
+                }
+            }
+            s.world.physics().setEnabled(true);
+            double travelled = horizontalDistance(start, at);
+            double length = s.param("ult_distance");
+            assertTrue(travelled < length + 0.6, "the charge did not run on past its end: " + travelled);
+            assertTrue(travelled > length - 0.5, "but ran its whole length: " + travelled);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 닌자 ninja
 
     @Test
@@ -877,6 +1077,52 @@ class WeaponNewAbilitiesTest {
             assertFalse(s.enemy.canSee(s.owner), "hidden again once the smoke closes over");
             s.ticks(s.paramTicks("smoke_duration"));
             assertTrue(s.enemy.canSee(s.owner));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ninjaClimbNeverReplaysAStalePush() {
+        try (Scenario s = Scenario.ffa("ninja")) {
+            s.place(s.enemy, 6.5, -4.5, 0);
+            s.place(s.enemy2, -6.5, -4.5, 0);
+            ledge(s, Material.STONE);
+            s.place(s.owner, 0.5, 0.69, 0);
+            s.owner.setSneaking(true);
+            // On a real server a player's velocity is only the last one sent to it (its client moves it). With the
+            // physics off it stays put like that here: an old knockback, long over on the client.
+            s.world.physics().setEnabled(false);
+            s.owner.setVelocity(new Vector(1.5, 0, 0));
+            s.ticks(1);
+            Vector climb = s.owner.getVelocity();
+            assertEquals(0, Math.hypot(climb.getX(), climb.getZ()), EPSILON, "straight up the wall: " + climb);
+            assertEquals(s.param("climb_speed") / 20, climb.getY(), EPSILON);
+            s.world.physics().setEnabled(true);
+            s.ticks(40);
+            s.owner.setSneaking(false);
+            s.place(s.owner, 0.5, 0.5, 0);
+            ledge(s, Material.AIR);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ninjaAmbushCutStandsAcrossTheBlow() {
+        try (Scenario s = Scenario.ffa("ninja")) {
+            s.place(s.enemy, 2.5, 0.5, 90); // east of the ninja
+            s.place(s.enemy2, -6.5, 6.5, 0);
+            s.assertSucceeded(s.ultimate(), "연막 습격");
+            s.ticks(1);
+            s.melee(s.owner, s.enemy, 4);
+            List<BlockDisplay> cuts = blockDisplayList(s);
+            assertEquals(2, cuts.size(), "a red X");
+            for (BlockDisplay cut : cuts) {
+                assertUnturned(cut, "ambush cut");
+                assertEquals(1, Math.abs(modelForward(cut).dot(new Vector(1, 0, 0))), 1.0E-4,
+                        "the X stands across the blow");
+            }
+            s.ticks(s.paramTicks("smoke_duration") + 10);
             s.finishClean();
         }
     }
@@ -1065,6 +1311,52 @@ class WeaponNewAbilitiesTest {
                     "the win is announced");
             s.ticks(20);
             assertEquals(0, blockDisplays(s) + textDisplays(s), "the ring burst");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void duelistWallPushNeverPilesUpOnAStaleVelocity() {
+        try (Scenario s = Scenario.ffa("duelist")) {
+            s.place(s.enemy2, 30.5, 30.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "결투장");
+            s.ticks(2);
+            // The ring is centered between the duellists (0.5, 2.5). The opponent leans on the wall, and the server
+            // keeps seeing it there with the velocity it last sent (physics off, like a real server that hears of
+            // the push's effect only a round trip later).
+            s.place(s.enemy, 0.5, 2.5 + s.param("ult_radius") - 0.4, 180);
+            s.world.physics().setEnabled(false);
+            double fastest = 0;
+            for (int i = 0; i < 5; i++) {
+                s.ticks(1);
+                Vector velocity = s.enemy.getVelocity();
+                fastest = Math.max(fastest, Math.hypot(velocity.getX(), velocity.getZ()));
+                assertTrue(velocity.getY() < 0.2, "no rising push: " + velocity);
+            }
+            s.world.physics().setEnabled(true);
+            assertTrue(fastest > 0.3, "pushed off the wall: " + fastest);
+            assertTrue(fastest < 0.55 + EPSILON, "never harder than one push: " + fastest);
+            s.ticks(s.paramTicks("ult_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void duelistBringsAnEscapedOpponentBackOntoTheFloor() {
+        try (Scenario s = Scenario.ffa("duelist")) {
+            s.place(s.enemy2, 30.5, 30.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "결투장");
+            s.ticks(2);
+            s.place(s.enemy, 0.5, 20.5, 180);
+            s.ticks(1);
+            Location back = s.enemy.getLocation();
+            assertTrue(horizontalDistance(back, new Location(s.world, 0.5, FlatWorld.SURFACE, 2.5))
+                    < s.param("ult_radius"), "brought back into the ring: " + back);
+            assertEquals(FlatWorld.SURFACE, back.getY(), EPSILON, "standing exactly on the floor");
+            assertTrue(Spots.isFree(s.world, back, 0.6, 1.8), "never inside a block");
+            s.ticks(s.paramTicks("ult_duration") + 10);
             s.finishClean();
         }
     }

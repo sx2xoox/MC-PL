@@ -392,8 +392,9 @@ public final class SniperAbility extends Ability {
             Fx.sound(eye, Sound.ENTITY_GENERIC_EXPLODE, 0.35f, 1.9f + Fx.jitter(0.05f));
             Fx.sound(eye, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 3.0f, 0.8f);
 
-            Vector recoil = Motion.horizontal(direction).multiply(-RECOIL).setY(0.05);
-            owner.setVelocity(Motion.clamp(owner.getVelocity().add(recoil), MAX_SPEED));
+            // The recoil alone: on the server a player's velocity is only the last one sent to it (its client moves
+            // it), so adding to it would replay a stale push.
+            owner.setVelocity(Motion.horizontal(direction).multiply(-RECOIL).setY(0.05));
 
             LivingEntity target = trace.target();
             if (target != null) {
@@ -408,7 +409,9 @@ public final class SniperAbility extends Ability {
                     }
                     if (Combat.isTargetable(ctx(), owner, target)) {
                         Vector push = Motion.horizontal(direction).multiply(SHOT_PUSH).setY(0.12);
-                        Motion.push(target, target.getVelocity().add(push), MAX_SPEED);
+                        // A player's server-side velocity is stale (the last one sent to it): it gets the push alone.
+                        Motion.push(target, target instanceof Player ? push : target.getVelocity().add(push),
+                                MAX_SPEED);
                     }
                 } else {
                     // Dodged or blocked: the bullet just sparks past.
@@ -739,8 +742,8 @@ public final class SniperAbility extends Ability {
                 }
                 return;
             }
-            if (label != null && label.isValid()) {
-                label.teleport(labelPoint());
+            if (label != null) {
+                Displays.moveTo(label, labelPoint());
             }
             if (run % 4 == 0) {
                 Location crown = target.getLocation().add(0, target.getHeight() + 0.25, 0);

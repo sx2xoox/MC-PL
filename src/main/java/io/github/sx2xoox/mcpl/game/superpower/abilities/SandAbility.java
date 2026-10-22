@@ -269,12 +269,14 @@ public final class SandAbility extends Ability {
             return;
         }
         Location feet = owner.getLocation();
-        feet.setPitch(0);
+        // The silhouette faces where the owner faces: its turn is part of its pose, the display itself is unturned.
+        float yaw = feet.getYaw();
         float width = (float) owner.getWidth();
         float height = (float) owner.getHeight();
-        BlockDisplay ghost = Displays.block(ctx(), owner, feet, SAND, standingBox(width, height, 0.4f),
+        BlockDisplay ghost = Displays.block(ctx(), owner, feet, SAND, standingBox(width, height, 0.4f, yaw),
                 CRUMBLE_TICKS + 2);
-        Displays.animateNextTick(ctx(), owner, ghost, standingBox(width * 1.3f, 0.05f, 0.5f), (int) CRUMBLE_TICKS);
+        Displays.animateNextTick(ctx(), owner, ghost, standingBox(width * 1.3f, 0.05f, 0.5f, yaw),
+                (int) CRUMBLE_TICKS);
     }
 
     // ------------------------------------------------------------------ active: sandstorm
@@ -336,9 +338,11 @@ public final class SandAbility extends Ability {
                 Vector ray = forward.clone().rotateAroundY(Math.toRadians(-spread * 0.85));
                 ray.setY(0.05 + random.nextDouble() * 0.12);
                 Location start = flat(origin).add(0, 0.6 + random.nextDouble() * 1.1, 0);
-                start.setDirection(ray);
+                // The streak flies point first: its facing is part of its pose, the display itself is unturned.
+                Location facing = start.clone().setDirection(ray);
                 BlockDisplay streak = Displays.block(ctx(), owner, start, i % 2 == 0 ? SAND : SANDSTONE,
-                        Displays.transform(0, 0, 0, 0.08f, 0.08f, 1.2f, 0, 0, 45), lifetime);
+                        Displays.transform(0, 0, 0, 0.08f, 0.08f, 1.2f, facing.getYaw(), facing.getPitch(), 45),
+                        lifetime);
                 streak.setTeleportDuration(1);
                 streaks.add(streak);
                 streakRays.add(ray.normalize());
@@ -397,8 +401,7 @@ public final class SandAbility extends Ability {
                 Vector ray = streakRays.get(i);
                 Location target = streakStarts.get(i).clone()
                         .add(ray.getX() * radius, ray.getY() * radius, ray.getZ() * radius);
-                target.setDirection(ray);
-                streak.teleport(target);
+                Displays.moveTo(streak, target);
             }
         }
 
@@ -719,7 +722,7 @@ public final class SandAbility extends Ability {
                 }
                 BlockDisplay collar = victim.collar;
                 if (collar != null && collar.isValid()) {
-                    collar.teleport(flat(at));
+                    Displays.moveTo(collar, at);
                     float sunk = Math.min(SINK_MAX, 0.15f + (tick - victim.since) * SINK_RATE);
                     if (tick % 2 == 0) {
                         Displays.animate(collar, collarPose(entity, sunk), 2);
@@ -851,10 +854,10 @@ public final class SandAbility extends Ability {
                 new Vector3f(width, Math.max(0.02f, height), width), new Quaternionf());
     }
 
-    /** A box standing on the display's origin, {@code depth} deep along its facing. */
-    private static Transformation standingBox(float width, float height, float depth) {
-        return new Transformation(new Vector3f(-width / 2, 0, -depth / 2), new Quaternionf(),
-                new Vector3f(width, Math.max(0.02f, height), depth), new Quaternionf());
+    /** A box standing on the display's origin, {@code depth} deep along the facing {@code yaw} (degrees). */
+    private static Transformation standingBox(float width, float height, float depth, float yaw) {
+        float tall = Math.max(0.02f, height);
+        return Displays.transform(0, tall / 2, 0, width, tall, depth, yaw, 0, 0);
     }
 
     // ------------------------------------------------------------------ helpers

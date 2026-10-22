@@ -279,8 +279,8 @@ public final class HexerAbility extends Ability {
                 continue;
             }
             markMotes(curse, tick);
-            if (curse.sigil != null && curse.sigil.isValid()) {
-                curse.sigil.teleport(sigilPoint(victim));
+            if (curse.sigil != null) {
+                Displays.moveTo(curse.sigil, sigilPoint(victim));
             }
         }
     }
