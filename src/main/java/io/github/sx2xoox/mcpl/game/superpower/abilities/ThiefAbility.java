@@ -20,6 +20,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -261,8 +262,9 @@ public final class ThiefAbility extends Ability {
                 emptyPockets(victim, silence);
             }
             owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">소매치기</" + COLOR_TAG + "> <" + GOLD_TAG + ">+"
-                    + AbilityInfo.formatNumber(taken) + "%</" + GOLD_TAG + "> <gray>· " + victim.getName() + " "
-                    + AbilityInfo.formatNumber(params().num("dash_silence")) + "초 봉인</gray>"));
+                    + AbilityInfo.formatNumber(taken) + "%</" + GOLD_TAG + "> <gray>· <victim> "
+                    + AbilityInfo.formatNumber(params().num("dash_silence")) + "초 봉인</gray>",
+                    Placeholder.component("victim", victim.name())));
         }
         return ActivationResult.success();
     }

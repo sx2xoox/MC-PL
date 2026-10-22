@@ -249,4 +249,16 @@ public final class FlatWorld extends WorldMock {
         }
         return (T) super.spawn(location, substitute, (Consumer) function, reason, randomizeData, callSpawnEvent);
     }
+
+    /** Like Paper, refuses particles with missing or mistyped data (MockBukkit accepts anything). */
+    @Override
+    public <T> void spawnParticle(org.bukkit.Particle particle, @Nullable List<org.bukkit.entity.Player> receivers,
+                                 org.bukkit.entity.@Nullable Player source, double x, double y, double z, int count,
+                                 double offsetX, double offsetY, double offsetZ, double speedX, double speedY,
+                                 double speedZ, @Nullable T data, boolean force,
+                                 org.bukkit.Particle.RandomizationType randomizationType) {
+        PaperRules.checkParticle(particle, data);
+        super.spawnParticle(particle, receivers, source, x, y, z, count, offsetX, offsetY, offsetZ, speedX, speedY,
+                speedZ, data, force, randomizationType);
+    }
 }

@@ -21,6 +21,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -212,8 +213,8 @@ public final class SonicAbility extends Ability {
         if (skill) {
             owner.playSound(feet, Sound.BLOCK_SCULK_CATALYST_BLOOM, SoundCategory.PLAYERS, 0.8f, 1.2f);
         }
-        owner.sendActionBar(Text.mm("<" + TEAL + ">◎ 진동 감지</" + TEAL + "> <white>" + enemy.getName()
-                + "</white> <gray>" + (skill ? "스킬 사용" : "달리는 중") + "</gray>"));
+        owner.sendActionBar(Text.mm("<" + TEAL + ">◎ 진동 감지</" + TEAL + "> <white><enemy></white> <gray>"
+                + (skill ? "스킬 사용" : "달리는 중") + "</gray>", Placeholder.component("enemy", enemy.name())));
     }
 
     // ------------------------------------------------------------------ active: sonic boom

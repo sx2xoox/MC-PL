@@ -21,6 +21,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.math.Angle;
 import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -200,8 +201,8 @@ public final class PsychicAbility extends Ability {
             Displays.animateNextTick(ctx(), owner, glyph, glyphPose(0.75f, 0), 4);
             disruption.glyph = glyph;
         }
-        owner.sendActionBar(Text.mm("<" + MAGENTA + ">✺ 정신 교란</" + MAGENTA + "> <white>" + attacker.getName()
-                + "</white>"));
+        owner.sendActionBar(Text.mm("<" + MAGENTA + ">✺ 정신 교란</" + MAGENTA + "> <white><attacker></white>",
+                Placeholder.component("attacker", attacker.name())));
     }
 
     @Override

@@ -227,4 +227,53 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
     public boolean isInLava() {
         return getWorld() instanceof FlatWorld && FlatWorld.isIn(this, Material.LAVA);
     }
+
+    // Not final: getAttribute runs from the PlayerMock constructor, before field initializers.
+    private @Nullable Map<Attribute, AttributeInstance> strictAttributes;
+
+    /** Like vanilla, adding a modifier whose key is already applied throws (MockBukkit silently replaces it). */
+    @Override
+    public @Nullable AttributeInstance getAttribute(Attribute attribute) {
+        AttributeInstance real = super.getAttribute(attribute);
+        if (real == null || real instanceof io.github.sx2xoox.mcpl.game.superpower.support.world.StrictAttributeInstance) {
+            return real;
+        }
+        if (strictAttributes == null) {
+            strictAttributes = new HashMap<>();
+        }
+        return strictAttributes.computeIfAbsent(attribute,
+                ignored -> new io.github.sx2xoox.mcpl.game.superpower.support.world.StrictAttributeInstance(real));
+    }
+
+    /** Like Paper, refuses particles with missing or mistyped data (MockBukkit accepts anything). */
+    @Override
+    public <T> void spawnParticle(org.bukkit.Particle particle, double x, double y, double z, int count,
+                                  double offsetX, double offsetY, double offsetZ, double speedX, double speedY,
+                                  double speedZ, @Nullable T data, boolean force,
+                                  org.bukkit.Particle.RandomizationType randomizationType) {
+        io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.checkParticle(particle, data);
+        super.spawnParticle(particle, x, y, z, count, offsetX, offsetY, offsetZ, speedX, speedY, speedZ, data, force,
+                randomizationType);
+    }
+
+    /** Like Paper, a non-finite velocity throws (MockBukkit stores it). */
+    @Override
+    public void setVelocity(Vector velocity) {
+        io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.checkVelocity(velocity);
+        super.setVelocity(velocity);
+    }
+
+    /** Like Paper, health outside 0..max (or NaN) throws (MockBukkit clamps it). */
+    @Override
+    public void setHealth(double health) {
+        io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.checkHealth(health, getMaxHealth());
+        super.setHealth(health);
+    }
+
+    /** Like Paper, non-finite yaw or pitch throws. */
+    @Override
+    public void setRotation(float yaw, float pitch) {
+        io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.checkRotation(yaw, pitch);
+        super.setRotation(yaw, pitch);
+    }
 }

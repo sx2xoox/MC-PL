@@ -21,6 +21,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.GameMode;
@@ -618,8 +619,9 @@ public final class SpiderAbility extends Ability {
         if (target instanceof Player victim) {
             victim.sendActionBar(Text.mm("<gray>거미줄에 묶였습니다!</gray>"));
         }
-        owner.sendActionBar(Text.mm("<" + RED + ">명중!</" + RED + "> <gray>" + target.getName() + " 속박 "
-                + AbilityInfo.formatNumber(params().num("root_duration")) + "초</gray>"));
+        owner.sendActionBar(Text.mm("<" + RED + ">명중!</" + RED + "> <gray><target> 속박 "
+                + AbilityInfo.formatNumber(params().num("root_duration")) + "초</gray>",
+                Placeholder.component("target", target.name())));
 
         BlockDisplay web = reserveDisplays(1, ticks + 4) ? Displays.block(ctx(), owner, flat(Fx.body(target)), COBWEB,
                 Displays.scaled(0.2f), ticks + 4) : null;

@@ -24,6 +24,7 @@ import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -411,8 +412,8 @@ public final class HexerAbility extends Ability {
                 curse(target, params().integer("doll_stacks"));
             }
             link.reset();
-            owner.sendActionBar(Text.mm("<" + PURPLE + ">✠ 부두 인형</" + PURPLE + "> <white>"
-                    + nameOf(target) + "</white>"));
+            owner.sendActionBar(Text.mm("<" + PURPLE + ">✠ 부두 인형</" + PURPLE + "> <white><target></white>",
+                    Placeholder.component("target", target.name())));
             Loop.repeat(ctx(), owner, 1, 1, duration, this, this::crumble);
         }
 
@@ -620,9 +621,6 @@ public final class HexerAbility extends Ability {
         return head;
     }
 
-    private static String nameOf(LivingEntity entity) {
-        return entity instanceof Player player ? player.getName() : entity.getName();
-    }
 
     // ------------------------------------------------------------------ ultimate: soul chains
 

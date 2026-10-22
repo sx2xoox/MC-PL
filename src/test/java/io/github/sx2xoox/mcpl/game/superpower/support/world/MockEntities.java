@@ -78,6 +78,37 @@ public final class MockEntities {
 
     /** A wolf that can take {@link DamageSource} damage and has the mob flags the summoner sets. */
     public static class TestWolf extends WolfMock implements Hurtable {
+
+        /** Like the server: the custom name when set ({@code getName} in legacy section format). */
+        @Override
+        public String getName() {
+            return PaperRules.legacyName(customName(), super.getName());
+        }
+
+        @Override
+        public net.kyori.adventure.text.Component name() {
+            net.kyori.adventure.text.Component custom = customName();
+            return custom == null ? super.name() : custom;
+        }
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
+        @Override
+        public void setHealth(double health) {
+            PaperRules.checkHealth(health, getMaxHealth());
+            super.setHealth(health);
+        }
+
         private double lastHurt;
         private final RecordingPathfinder pathfinder = new RecordingPathfinder(this);
         private boolean removeWhenFarAway = true;
@@ -162,6 +193,37 @@ public final class MockEntities {
 
     /** An iron golem that can take {@link DamageSource} damage and has the mob flags the summoner sets. */
     public static class TestIronGolem extends IronGolemMock implements Hurtable {
+
+        /** Like the server: the custom name when set ({@code getName} in legacy section format). */
+        @Override
+        public String getName() {
+            return PaperRules.legacyName(customName(), super.getName());
+        }
+
+        @Override
+        public net.kyori.adventure.text.Component name() {
+            net.kyori.adventure.text.Component custom = customName();
+            return custom == null ? super.name() : custom;
+        }
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
+        @Override
+        public void setHealth(double health) {
+            PaperRules.checkHealth(health, getMaxHealth());
+            super.setHealth(health);
+        }
+
         private double lastHurt;
         private final RecordingPathfinder pathfinder = new RecordingPathfinder(this);
         private boolean removeWhenFarAway = true;
@@ -251,6 +313,37 @@ public final class MockEntities {
      * is set.
      */
     public static class TestMannequin extends MannequinMock implements Hurtable {
+
+        /** Like the server: the custom name when set ({@code getName} in legacy section format). */
+        @Override
+        public String getName() {
+            return PaperRules.legacyName(customName(), super.getName());
+        }
+
+        @Override
+        public net.kyori.adventure.text.Component name() {
+            net.kyori.adventure.text.Component custom = customName();
+            return custom == null ? super.name() : custom;
+        }
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
+        @Override
+        public void setHealth(double health) {
+            PaperRules.checkHealth(health, getMaxHealth());
+            super.setHealth(health);
+        }
+
         /**
          * When true, a drop chance is silently ignored instead of failing like on Paper. Only for tests that exercise
          * the illusionist's copies as if its drop-chance bug were fixed; every harness resets it.
@@ -312,9 +405,13 @@ public final class MockEntities {
                     at.getY() + getHeight(), at.getZ() + half);
         }
 
+        /** Like the server, a mannequin always has a profile (an empty one until set; MockBukkit throws). */
         @Override
         public ResolvableProfile getProfile() {
-            return profile != null ? profile : super.getProfile();
+            if (profile == null) {
+                profile = ResolvableProfile.resolvableProfile().build();
+            }
+            return profile;
         }
 
         @Override
@@ -403,6 +500,39 @@ public final class MockEntities {
 
     /** An item display with a billboard. */
     public static class TestItemDisplay extends ItemDisplayMock {
+
+        private org.bukkit.util.@Nullable Transformation transformation;
+
+        /** Kept as set, like the server (MockBukkit round-trips it through a matrix and conjugates the rotation). */
+        @Override
+        public org.bukkit.util.Transformation getTransformation() {
+            return transformation == null ? super.getTransformation() : PaperRules.copy(transformation);
+        }
+
+        @Override
+        public void setTransformation(org.bukkit.util.Transformation transformation) {
+            super.setTransformation(transformation);
+            this.transformation = PaperRules.copy(transformation);
+        }
+
+        @Override
+        public void setTransformationMatrix(org.joml.Matrix4f transformationMatrix) {
+            super.setTransformationMatrix(transformationMatrix);
+            this.transformation = null;
+        }
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
         private Display.Billboard billboard = Display.Billboard.FIXED;
 
         public TestItemDisplay(ServerMock server, UUID uuid) {
@@ -422,6 +552,39 @@ public final class MockEntities {
 
     /** A block display with a billboard. */
     public static class TestBlockDisplay extends BlockDisplayMock {
+
+        private org.bukkit.util.@Nullable Transformation transformation;
+
+        /** Kept as set, like the server (MockBukkit round-trips it through a matrix and conjugates the rotation). */
+        @Override
+        public org.bukkit.util.Transformation getTransformation() {
+            return transformation == null ? super.getTransformation() : PaperRules.copy(transformation);
+        }
+
+        @Override
+        public void setTransformation(org.bukkit.util.Transformation transformation) {
+            super.setTransformation(transformation);
+            this.transformation = PaperRules.copy(transformation);
+        }
+
+        @Override
+        public void setTransformationMatrix(org.joml.Matrix4f transformationMatrix) {
+            super.setTransformationMatrix(transformationMatrix);
+            this.transformation = null;
+        }
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
         private Display.Billboard billboard = Display.Billboard.FIXED;
 
         public TestBlockDisplay(ServerMock server, UUID uuid) {
@@ -441,6 +604,39 @@ public final class MockEntities {
 
     /** A text display with a billboard. */
     public static class TestTextDisplay extends TextDisplayMock {
+
+        private org.bukkit.util.@Nullable Transformation transformation;
+
+        /** Kept as set, like the server (MockBukkit round-trips it through a matrix and conjugates the rotation). */
+        @Override
+        public org.bukkit.util.Transformation getTransformation() {
+            return transformation == null ? super.getTransformation() : PaperRules.copy(transformation);
+        }
+
+        @Override
+        public void setTransformation(org.bukkit.util.Transformation transformation) {
+            super.setTransformation(transformation);
+            this.transformation = PaperRules.copy(transformation);
+        }
+
+        @Override
+        public void setTransformationMatrix(org.joml.Matrix4f transformationMatrix) {
+            super.setTransformationMatrix(transformationMatrix);
+            this.transformation = null;
+        }
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
         private Display.Billboard billboard = Display.Billboard.FIXED;
 
         public TestTextDisplay(ServerMock server, UUID uuid) {
@@ -460,6 +656,19 @@ public final class MockEntities {
 
     /** An arrow with a colour and the in-ground state {@link WorldPhysics} maintains. */
     public static class TestArrow extends ArrowMock {
+
+        @Override
+        public void setRotation(float yaw, float pitch) {
+            PaperRules.checkRotation(yaw, pitch);
+            super.setRotation(yaw, pitch);
+        }
+
+        @Override
+        public void setVelocity(org.bukkit.util.Vector velocity) {
+            PaperRules.checkVelocity(velocity);
+            super.setVelocity(velocity);
+        }
+
         private @Nullable Color color;
         private @Nullable Block attachedBlock;
         boolean leftShooter;
