@@ -132,6 +132,14 @@ public interface AbilityContext {
     /** Sends a prefixed message to everyone watching the match (participants and spectators). */
     void announce(Component message);
 
+    /**
+     * Multiplier for particle counts and densities (config {@code effects.particle-scale}, clamped to 0.25..2.0).
+     * Visual helpers in {@code abilities.kit} apply it; display entity counts are not scaled.
+     */
+    default double effectScale() {
+        return 1.0;
+    }
+
     // ------------------------------------------------------------------ owner-scoped resources
 
     /** Runs once after {@code delayTicks}; cancelled automatically when the owner's ability is revoked. */
