@@ -70,7 +70,8 @@ public final class DruidAbility extends Ability {
                     "{ult_duration}초간 내 주변 반경 {ult_radius}블록에 꽃과 나무가 피어나는 숲을 펼칩니다. 숲 안의 나와 "
                             + "아군은 {ult_interval}초마다 체력을 {ult_heal} 회복하고, 적은 이동 속도가 {ult_slow}% 느려지며 "
                             + "가시에 찔려 {ult_interval}초마다 {ult_thorns} 피해를 입습니다.")
-            .param("regen_interval", 2)
+            // 3 s: photosynthesis works on any grass (most arenas), so it matches the healer's always-on 1 per 3 s.
+            .param("regen_interval", 3)
             .param("regen_amount", 1)
             .param("snare_range", 18)
             .param("snare_delay", 0.25)
@@ -110,6 +111,8 @@ public final class DruidAbility extends Ability {
 
     // passive
     private static final long PASSIVE_PERIOD = 5;
+    /** How far below the feet the ground still feeds the druid, so a jump never interrupts photosynthesis. */
+    private static final int NATURE_REACH = 2;
 
     // active: vine snare
     /** At most this many enemies are bound by one snare (the aimed one first). */
@@ -175,10 +178,31 @@ public final class DruidAbility extends Ability {
         }
     }
 
-    /** True if the owner stands on (or in) something green and growing. */
+    /**
+     * True if the owner stands in something green and growing (grass, flowers, carpets) or above green ground: the
+     * first solid block at most {@link #NATURE_REACH} blocks below its feet. Looking down that far keeps the timer
+     * running through jumps and crit hops, which a check of the block right under the feet would reset every time.
+     */
     private static boolean isOnNature(Player owner) {
         Location feet = owner.getLocation();
-        return isNature(feet.getBlock().getType()) || isNature(feet.clone().subtract(0, 0.2, 0).getBlock().getType());
+        if (isNature(feet.getBlock().getType())) {
+            return true;
+        }
+        World world = feet.getWorld();
+        int x = feet.getBlockX();
+        int z = feet.getBlockZ();
+        int top = Math.min((int) Math.floor(feet.getY() - 0.2), world.getMaxHeight() - 1);
+        int bottom = Math.max(world.getMinHeight(), top - NATURE_REACH);
+        for (int y = top; y >= bottom; y--) {
+            Block block = world.getBlockAt(x, y, z);
+            if (isNature(block.getType())) {
+                return true;
+            }
+            if (block.isLiquid() || !block.isPassable()) {
+                return false;
+            }
+        }
+        return false;
     }
 
     private static boolean isNature(Material type) {
@@ -238,7 +262,13 @@ public final class DruidAbility extends Ability {
 
         Snare(LivingEntity aimed) {
             this.aimed = aimed;
-            this.spot = flat(aimed.getLocation());
+            // The roots break out of the ground under the enemy, also when it was aimed at mid-jump.
+            Location under = flat(aimed.getLocation());
+            Double groundY = groundBelow(under.clone().add(0, 0.2, 0), 4);
+            if (groundY != null) {
+                under.setY(groundY);
+            }
+            this.spot = under;
             this.start = flat(player().getLocation());
             this.delay = Math.max(1, params().ticks("snare_delay"));
             this.radius = Math.max(0.5, params().num("snare_radius"));

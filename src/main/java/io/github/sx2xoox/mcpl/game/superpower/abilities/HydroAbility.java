@@ -124,7 +124,8 @@ public final class HydroAbility extends Ability {
     private static final float SHEATH_WIDTH = 0.34f;
     private static final float CORE_WIDTH = 0.14f;
     private static final float JET_ROLL = 37f;
-    private static final int HELIX_MAX_POINTS = 16;
+    /** Spray points per helix strand at most: keeps a full-range jet within the sustained particle budget. */
+    private static final int HELIX_MAX_POINTS = 12;
     private static final long JET_FADE_TICKS = 4;
     private static final long JET_AFTERGLOW_TICKS = 12;
 
@@ -155,7 +156,8 @@ public final class HydroAbility extends Ability {
     private static final long PUDDLE_TICKS = 20;
     /**
      * The wave stops this far short of the arena border, so its riders (carried ahead of the front, then shoved on
-     * the crash) are never washed out of the arena.
+     * the crash) are never washed out of the arena. Every column checks its own front too: a flank of a wave rolling
+     * along or diagonally towards the border breaks there even when the middle of the wave still has room.
      */
     private static final double BORDER_MARGIN = 2.5;
 
@@ -704,9 +706,12 @@ public final class HydroAbility extends Ability {
             return any && travelled < distance;
         }
 
-        /** Moves a column's ground along the terrain; false when a wall or a drop stops it. */
+        /** Moves a column's ground along the terrain; false when a wall, a drop or the arena border stops it. */
         private boolean advance(Column column) {
             Location front = frontAt(column.offset, column.groundY);
+            if (!ctx().isInsideArena(front.clone().add(forward.clone().multiply(BORDER_MARGIN)))) {
+                return false;
+            }
             int x = front.getBlockX();
             int z = front.getBlockZ();
             int previous = column.groundY;
