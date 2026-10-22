@@ -3,6 +3,8 @@ package io.github.sx2xoox.mcpl.game.superpower.support;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -14,27 +16,58 @@ import io.github.sx2xoox.mcpl.core.game.GameStartException;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchPhase;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.MockEntities;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 import org.mockbukkit.mockbukkit.MockBukkit;
 
-/** Sets up MockBukkit with the plugin and drives superpower matches quickly (1 s reveal, 1 s prep). */
+/**
+ * Sets up MockBukkit with the plugin and drives superpower matches quickly (1 s reveal, 1 s prep).
+ *
+ * <p>{@link #MatchHarness()} uses MockBukkit's simple world (no block shapes, no physics). {@link #flat()} uses a
+ * {@link FlatWorld} instead: real ray tracing, collisions and line of sight, and a {@link
+ * io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics} step after every server tick.
+ */
 public final class MatchHarness implements AutoCloseable {
 
     public final TestServer server;
     public final Hub hub;
     public final SuperpowerGame game;
+    private final @Nullable FlatWorld flatWorld;
 
     public MatchHarness() {
+        this(false);
+    }
+
+    private MatchHarness(boolean flat) {
+        MockEntities.TestMannequin.ignoreDropChances = false;
         server = MockBukkit.mock(new TestServer());
-        server.addSimpleWorld("world");
+        if (flat) {
+            flatWorld = new FlatWorld("world");
+            server.addWorld(flatWorld);
+        } else {
+            flatWorld = null;
+            server.addSimpleWorld("world");
+        }
         hub = MockBukkit.load(MCPLPlugin.class).hub();
         game = (SuperpowerGame) hub.games().game(SuperpowerGame.ID);
         settings().set("selection.reveal-seconds", 1);
         settings().set("prep-seconds", 1);
         ProbeAbility.reset();
+    }
+
+    /** A harness on a {@link FlatWorld} with world physics. */
+    public static MatchHarness flat() {
+        return new MatchHarness(true);
+    }
+
+    /** The flat world, or null for the simple world. */
+    public @Nullable FlatWorld flatWorld() {
+        return flatWorld;
     }
 
     /** The live {@code games.superpower} section (read by the next match). */
@@ -63,6 +96,27 @@ public final class MatchHarness implements AutoCloseable {
         game.abilities().load(game.registry());
     }
 
+    /** Adds {@link DummyAbility} (a neutral ability for targets) to the registry and reloads {@code abilities.yml}. */
+    public void registerDummy() {
+        if (game.registry().get(DummyAbility.INFO.id()) == null) {
+            game.registry().register(DummyAbility.INFO, DummyAbility::new);
+        }
+        game.abilities().load(game.registry());
+    }
+
+    /** Overrides one ability param in {@code abilities.yml} (read by the next match). */
+    public void setParam(String abilityId, String key, double value) {
+        File file = game.abilities().file();
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
+        yaml.set("abilities." + abilityId + ".params." + key, value);
+        try {
+            yaml.save(file);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        game.abilities().load(game.registry());
+    }
+
     /**
      * Full health for everyone (after {@code replaceAbility} in tests: a passive that lowered max health, like the
      * pixie's, clamps the health, and removing it later does not give the health back).
@@ -85,8 +139,18 @@ public final class MatchHarness implements AutoCloseable {
         return game.currentMatch();
     }
 
+    /** Runs server ticks (in a flat world each tick is followed by the physics step). */
     public void ticks(int count) {
-        server.getScheduler().performTicks(count);
+        for (int i = 0; i < count; i++) {
+            tick();
+        }
+    }
+
+    private void tick() {
+        server.getScheduler().performOneTick();
+        if (flatWorld != null) {
+            flatWorld.physics().tick();
+        }
     }
 
     public void tickUntil(BooleanSupplier condition, int maxTicks, String what) {
@@ -94,7 +158,7 @@ public final class MatchHarness implements AutoCloseable {
             if (condition.getAsBoolean()) {
                 return;
             }
-            server.getScheduler().performTicks(1);
+            tick();
         }
         if (!condition.getAsBoolean()) {
             fail("timed out waiting for " + what);
