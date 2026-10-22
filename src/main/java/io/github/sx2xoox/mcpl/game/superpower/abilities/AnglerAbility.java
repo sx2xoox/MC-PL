@@ -199,8 +199,9 @@ public final class AnglerAbility extends Ability {
         if (now != lucky) {
             lucky = now;
             if (now) {
-                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⚓ 바다의 행운</" + COLOR_TAG
-                        + "> <gray>궁극기 게이지가 더 빨리 찹니다</gray>"));
+                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⚓ 바다의 행운</" + COLOR_TAG + "> <gray>"
+                        + (ctx().isGaugeLocked(owner) ? "궁극기 재충전 대기가 끝나면 게이지가 더 빨리 찹니다"
+                        : "궁극기 게이지가 더 빨리 찹니다") + "</gray>"));
                 Fx.sound(owner.getLocation(), Sound.ENTITY_FISH_SWIM, 0.6f, 1.3f + Fx.jitter(0.1f));
             }
         }

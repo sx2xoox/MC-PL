@@ -64,8 +64,8 @@ public final class AstronomerAbility extends Ability {
             .difficulty(2)
             .passive("별자리",
                     "밤에는 액티브 쿨타임이 {night_cooldown}% 줄어듭니다. 유성으로 적을 맞힐 때마다 머리 위 별자리에 별이 "
-                            + "하나씩 켜지고, {constellation_stars}개가 모두 켜지면 별자리가 완성되어 궁극기 게이지를 "
-                            + "{constellation_gauge}% 얻습니다.")
+                            + "하나씩 켜지고(궁극기를 쓴 직후 재충전 대기 중에는 켜지지 않음), {constellation_stars}개가 "
+                            + "모두 켜지면 별자리가 완성되어 궁극기 게이지를 {constellation_gauge}% 얻습니다.")
             .active("유성",
                     "조준한 곳({meteor_range}블록 이내)에 낙하 지점을 표시하고, {meteor_delay}초 뒤부터 작은 유성 "
                             + "{meteor_count}개를 차례로 떨어뜨립니다. 유성은 떨어진 곳 반경 {meteor_radius}블록의 적에게 "

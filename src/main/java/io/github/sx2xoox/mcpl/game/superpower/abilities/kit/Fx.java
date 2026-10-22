@@ -59,8 +59,9 @@ public final class Fx {
      * {@code ticks}. The vanilla client only builds the nausea screen warp while the effect has MORE than 60 ticks
      * left; once 60 or fewer remain it fades the warp out within a second. So the effect is applied 60 ticks longer
      * than {@code ticks}: always use this instead of a bare {@link PotionEffectType#NAUSEA} effect, which never shows
-     * at all when it is 3 s or shorter. A longer nausea the entity already has is kept. Does nothing when
-     * {@code ticks <= 0}.
+     * at all when it is 3 s or shorter. The client also ramps the warp in slowly (about 7.5 s to full strength), so
+     * a few seconds of nausea is a mild wobble, not a full spin. A longer nausea the entity already has is kept.
+     * Does nothing when {@code ticks <= 0}.
      */
     public static void nausea(LivingEntity entity, long ticks) {
         if (ticks <= 0) {
