@@ -479,7 +479,8 @@ public final class TurtleAbility extends Ability {
         private int bounced;
         private int stalls;
         private boolean moved;
-        private long sinceBounce;
+        /** Ticks since the last bounce; starts high, so a wall right in front bounces the shell at once. */
+        private long sinceBounce = 100;
 
         Spin(Player owner, Vector direction) {
             this.owner = owner;

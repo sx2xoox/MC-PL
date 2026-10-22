@@ -122,6 +122,8 @@ public final class ShulkerAbility extends Ability {
     private static final long AXIS_MAX_TICKS = 11;
     /** A lost bullet looks for a new target this close to itself. */
     private static final double REACQUIRE_RADIUS = 7;
+    /** The first ticks a bullet flies straight along its launch axis, so a volley fans out visibly. */
+    private static final long LAUNCH_TICKS = 4;
     private static final float CORE_SIZE = 0.2f;
     private static final float GLASS_SIZE = 0.36f;
     private static final double MUZZLE_SIDE = 0.45;
@@ -512,7 +514,7 @@ public final class ShulkerAbility extends Ability {
                     Displays.animateNextTick(ctx(), owner, glass, cube(GLASS_SIZE, 45, 30), 2);
                 }
             }
-            axisUntil = AXIS_MIN_TICKS + delay;
+            axisUntil = LAUNCH_TICKS;
             Loop.repeat(ctx(), owner, 1 + delay, 1, life, this, this::expire);
         }
 
@@ -525,7 +527,9 @@ public final class ShulkerAbility extends Ability {
                 target = locked;
             }
             Vector move;
-            if (locked != null) {
+            if (tick < LAUNCH_TICKS) {
+                move = axis.clone();
+            } else if (locked != null) {
                 Vector delta = Fx.body(locked).toVector().subtract(position.toVector());
                 double distance = delta.length();
                 if (distance < FINAL_HOMING) {
