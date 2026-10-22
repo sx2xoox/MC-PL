@@ -235,7 +235,13 @@ public final class WorldPhysics {
                 if (!canArrowHit(arrow, shooter, candidate)) {
                     continue;
                 }
-                RayTraceResult hit = candidate.getBoundingBox().expand(0.3).rayTrace(start, velocity, travel);
+                BoundingBox box = candidate.getBoundingBox().expand(0.3);
+                if (box.contains(start)) {
+                    // Like vanilla AABB#clip: a box the arrow starts inside is not hit (Bukkit's rayTrace would
+                    // return its exit point, so an arrow passing through someone would re-hit them every tick).
+                    continue;
+                }
+                RayTraceResult hit = box.rayTrace(start, velocity, travel);
                 if (hit != null && start.distanceSquared(hit.getHitPosition()) < nearest) {
                     nearest = start.distanceSquared(hit.getHitPosition());
                     hitEntity = candidate;
