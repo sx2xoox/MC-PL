@@ -526,10 +526,10 @@ public final class LancerAbility extends Ability {
     private final class Charge implements LongPredicate {
 
         private final Vector direction;
-        private final double distance;
+        /** The charge's length, measured again from where it actually starts (the lancer may walk while aiming). */
+        private double distance;
         private final double damage = params().num("ult_damage");
         private final double flingDamage = params().num("ult_fling_damage");
-        private final Location laneStart;
         private final List<LivingEntity> skewered = new ArrayList<>();
         private final Set<UUID> struck = new HashSet<>();
         private final BlockDisplay[] spear = new BlockDisplay[SPEAR_PARTS.length];
@@ -541,13 +541,14 @@ public final class LancerAbility extends Ability {
         private boolean ended;
         /** The charge pulled up at the edge of the void. */
         private boolean edge;
+        /** The arena border cut the charge short: it ends dead still at the border, without a glide. */
+        private boolean bordered;
 
         Charge(Vector direction, double distance) {
             this.direction = direction;
             this.distance = distance;
             Player owner = player();
-            this.laneStart = owner.getLocation();
-            this.last = laneStart;
+            this.last = owner.getLocation();
             long lifetime = WINDUP_TICKS + (long) Math.ceil(distance / CHARGE_SPEED) + MAX_LAG_TICKS + 30;
             Location at = oriented(spearSpot(owner, -0.6), direction);
             for (int i = 0; i < SPEAR_PARTS.length; i++) {
@@ -572,10 +573,13 @@ public final class LancerAbility extends Ability {
             return charge(owner, tick - WINDUP_TICKS);
         }
 
-        /** The lane lights up from the lancer's feet to the end of the charge; the spear is drawn back. */
+        /**
+         * The lane lights up from the lancer's feet (wherever it stands now) to the end of the charge; the spear is
+         * drawn back.
+         */
         private void windup(Player owner, long tick) {
             double progress = Math.min(1.0, (tick + 1) / (double) (WINDUP_TICKS - 2));
-            Location from = laneStart.clone().add(0, 0.1, 0);
+            Location from = owner.getLocation().add(0, 0.1, 0);
             Location to = from.clone().add(direction.clone().multiply(distance * progress));
             Vfx.line(ctx(), from, to, 2.5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), true);
             Vector side = new Vector(-direction.getZ(), 0, direction.getX()).multiply(0.6);
@@ -598,7 +602,10 @@ public final class LancerAbility extends Ability {
         private void launch(Player owner) {
             start = owner.getLocation();
             last = start;
-            owner.setVelocity(direction.clone().multiply(CHARGE_SPEED).setY(CHARGE_SINK));
+            // Still never past the arena border, from where the charge really begins.
+            distance = Spots.arenaReach(ctx(), start, direction, distance);
+            bordered = distance < Math.max(1, params().num("ult_distance")) - 1.0E-6;
+            owner.setVelocity(direction.clone().multiply(Math.min(CHARGE_SPEED, distance)).setY(CHARGE_SINK));
             owner.setFallDistance(0);
             Location chest = start.clone().add(0, owner.getHeight() * 0.55, 0);
             World world = chest.getWorld();
@@ -613,8 +620,11 @@ public final class LancerAbility extends Ability {
         private boolean charge(Player owner, long tick) {
             Location begin = start;
             Location now = owner.getLocation();
-            if (begin == null || !now.getWorld().equals(begin.getWorld())
-                    || horizontalDistance(begin, now) >= distance - 0.2) {
+            if (begin == null || !now.getWorld().equals(begin.getWorld())) {
+                return false;
+            }
+            double travelled = horizontalDistance(begin, now);
+            if (travelled >= distance - 0.2) {
                 return false;
             }
             if (!moved && horizontalDistance(begin, now) >= STALL_EPSILON) {
@@ -632,7 +642,9 @@ public final class LancerAbility extends Ability {
                 edge = true;
                 return false;
             }
-            owner.setVelocity(direction.clone().multiply(CHARGE_SPEED).setY(CHARGE_SINK));
+            // The last step is only as long as what is left, so the charge ends exactly at its end.
+            double step = Math.min(CHARGE_SPEED, distance - travelled);
+            owner.setVelocity(direction.clone().multiply(step).setY(CHARGE_SINK));
             owner.setFallDistance(0);
 
             double height = owner.getHeight();
@@ -689,7 +701,8 @@ public final class LancerAbility extends Ability {
             charging = false;
             Player owner = player();
             Location at = owner.getLocation();
-            owner.setVelocity(edge ? new Vector(0, CHARGE_SINK, 0) : direction.clone().multiply(0.2).setY(CHARGE_SINK));
+            owner.setVelocity(edge || bordered ? new Vector(0, CHARGE_SINK, 0)
+                    : direction.clone().multiply(0.2).setY(CHARGE_SINK));
             guardLanding(owner);
             wake(owner, at);
             int flung = 0;

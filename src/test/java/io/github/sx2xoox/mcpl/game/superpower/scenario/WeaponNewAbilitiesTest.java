@@ -602,6 +602,32 @@ class WeaponNewAbilitiesTest {
     }
 
     @Test
+    void lancerChargeMeasuresTheBorderFromWhereItReallyStarts() {
+        try (Scenario s = Scenario.ffa("lancer")) {
+            Location center = s.session.arena().center();
+            double z = center.getZ();
+            while (z < center.getZ() + 200 && s.ctx().isInsideArena(new Location(s.world, center.getX(),
+                    FlatWorld.SURFACE, z + 0.5))) {
+                z += 0.5;
+            }
+            double edge = z;
+            double x = center.getX();
+            s.place(s.owner, x, edge - 20, 0);
+            s.place(s.enemy, x + 12, edge - 25, 0);
+            s.place(s.enemy2, x - 12, edge - 25, 0);
+            s.assertSucceeded(s.ultimate(), "일섬 돌격, far from the border");
+            s.ticks(3);
+            s.place(s.owner, x, edge - 5, 0); // walked up to the border while aiming
+            s.ticks(40);
+            assertTrue(s.ctx().isInsideArena(s.owner.getLocation()),
+                    "the charge stops at the border, measured from where it began: " + s.owner.getLocation());
+            assertTrue(s.owner.getLocation().getZ() > edge - 1.5, "and still runs all the way up to it");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void lancerDodgedSpearsNeitherDragNorSkewer() {
         try (Scenario s = Scenario.builder("lancer").enemyAbility("gambler")
                 .configure(h -> h.setParam("gambler", "dodge_chance", 100)).start()) {
