@@ -23,6 +23,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.BlockCommandSender;
 import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -45,6 +46,8 @@ public final class GameManager {
     private @Nullable String lastGameId;
     private @Nullable Arena lastArena;
     private boolean shuttingDown;
+    private boolean rotationStarted;
+    private boolean preferencesBroken;
 
     public GameManager(Hub hub) {
         this.hub = hub;
@@ -52,10 +55,18 @@ public final class GameManager {
         this.rotation = new Rotation(hub, this);
     }
 
-    /** Loads preferences and, if rotation is enabled, schedules the first match. */
+    /** Loads preferences. The rotation starts with {@link #startRotation()} once every built-in mode is registered. */
     public void enable() {
         loadPreferences();
-        if (rotation.isEnabled() && !games.isEmpty()) {
+    }
+
+    /**
+     * Starts the rotation (schedules the first match if it is enabled). Call once after all built-in modes are
+     * registered, so the first match follows the configured order; modes registered later join a running rotation.
+     */
+    public void startRotation() {
+        rotationStarted = true;
+        if (!shuttingDown && rotation.isEnabled() && session == null && !rotation.isWaiting() && !games.isEmpty()) {
             rotation.schedule();
         }
     }
@@ -83,7 +94,8 @@ public final class GameManager {
             hub.plugin().getLogger().log(Level.WARNING, "Could not apply config defaults of " + id, e);
         }
         hub.plugin().getLogger().info("Registered mini-game " + id + " (" + game.displayName() + ")");
-        if (rotation.isEnabled() && session == null && !rotation.isWaiting() && hub.isEnabled()) {
+        if (rotationStarted && !shuttingDown && rotation.isEnabled() && session == null && !rotation.isWaiting()
+                && hub.isEnabled()) {
             rotation.schedule();
         }
     }
@@ -171,6 +183,7 @@ public final class GameManager {
         rotation.cancel();
         GameSession created = new GameSession(hub, this, game, arena, eligible);
         session = created;
+        rotation.onMatchStarted(game);
         lastGameId = game.id();
         lastArena = arena;
         try {
@@ -268,10 +281,20 @@ public final class GameManager {
 
     private void loadPreferences() {
         spectatorPreference.clear();
+        preferencesBroken = false;
         if (!preferencesFile.exists()) {
             return;
         }
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(preferencesFile);
+        YamlConfiguration yaml = new YamlConfiguration();
+        try {
+            yaml.load(preferencesFile);
+        } catch (IOException | InvalidConfigurationException e) {
+            // never save over a file we could not read: the owner may want to fix it by hand
+            preferencesBroken = true;
+            hub.plugin().getLogger().severe("Could not read " + preferencesFile.getName() + " (" + e.getMessage()
+                    + "); spectator preferences are kept in memory only until it is fixed.");
+            return;
+        }
         for (String id : yaml.getStringList("spectators")) {
             try {
                 spectatorPreference.add(UUID.fromString(id));
@@ -282,6 +305,10 @@ public final class GameManager {
     }
 
     private void savePreferences() {
+        if (preferencesBroken) {
+            hub.plugin().getLogger().warning(preferencesFile.getName() + " could not be read at startup; not overwriting it.");
+            return;
+        }
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("spectators", spectatorPreference.stream().map(UUID::toString).toList());
         try {

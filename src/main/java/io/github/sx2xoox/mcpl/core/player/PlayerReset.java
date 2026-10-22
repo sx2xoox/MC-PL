@@ -35,6 +35,7 @@ public final class PlayerReset {
 
         heal(player);
         player.clearActivePotionEffects();
+        player.setAbsorptionAmount(0);
         player.setLevel(0);
         player.setExp(0f);
         player.setTotalExperience(0);

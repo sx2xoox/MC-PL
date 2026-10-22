@@ -12,10 +12,16 @@ import org.bukkit.Material;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.damage.DamageSource;
+import org.bukkit.entity.AbstractArrow;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Hanging;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Tameable;
+import org.bukkit.entity.Vehicle;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -30,9 +36,13 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.block.EntityBlockFormEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.EntityPlaceEvent;
+import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.hanging.HangingBreakEvent;
 import org.bukkit.event.hanging.HangingPlaceEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
@@ -41,8 +51,10 @@ import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerTakeLecternBookEvent;
 import org.bukkit.event.vehicle.VehicleDestroyEvent;
+import org.bukkit.event.vehicle.VehicleEnterEvent;
 import org.bukkit.inventory.InventoryHolder;
 import org.jspecify.annotations.Nullable;
 
@@ -55,6 +67,8 @@ import org.jspecify.annotations.Nullable;
  * Decorations: paintings, item frames and armor stands cannot be broken, damaged or manipulated.
  * Interaction: participants and spectators cannot use doors, trapdoors, gates, buttons, levers, containers, beds and
  * similar blocks, nor trample farmland or press plates. Participants cannot drop items.
+ * Entities: bystanders (villagers, animals, pets, vehicles: anything the match did not create) cannot be hurt or used
+ * by players of the match, real pets stay out of the fight and participants cannot pick up world items.
  */
 public final class ProtectionListener implements Listener {
 
@@ -304,6 +318,117 @@ public final class ProtectionListener implements Listener {
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onDrop(PlayerDropItemEvent event) {
         if (settings.itemDrop() && session.state() != GameState.COUNTDOWN && session.isParticipant(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    // ------------------------------------------------------------------ entities
+
+    /** A tamed animal the match did not create (someone's real pet). */
+    private boolean realPet(@Nullable Entity entity) {
+        return entity instanceof Tameable tameable && tameable.isTamed() && !session.isMatchEntity(entity);
+    }
+
+    /**
+     * Bystanders (villagers, animals, pets...: living entities the match did not create) cannot be hurt by players of
+     * the match or by anything the match created; hostile mobs stay fair game. Real pets never hurt players of the
+     * match either, so they cannot join the fight.
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onEntityDamage(EntityDamageEvent event) {
+        Entity victim = event.getEntity();
+        if (!settings.entities() || !inArena(victim.getWorld())) {
+            return;
+        }
+        DamageSource source = event.getDamageSource();
+        Entity causing = source.getCausingEntity();
+        Entity direct = source.getDirectEntity();
+        if (victim instanceof Player player) {
+            if (involved(player) && (realPet(causing) || realPet(direct)
+                    || event instanceof EntityDamageByEntityEvent byEntity && realPet(byEntity.getDamager()))) {
+                event.setCancelled(true);
+            }
+            return;
+        }
+        if (!(victim instanceof LivingEntity) || victim instanceof ArmorStand || victim instanceof Enemy
+                || session.isMatchEntity(victim)) {
+            return;
+        }
+        if ((causing != null && session.isMatchEntity(causing)) || (direct != null && session.isMatchEntity(direct))) {
+            event.setCancelled(true);
+            return;
+        }
+        Player attacker = session.combat().resolveAttacker(event);
+        if (attacker != null && involved(attacker)) {
+            event.setCancelled(true);
+        }
+    }
+
+    /** Real pets do not go after players of the match (e.g. because their owner fights them). */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPetTarget(EntityTargetLivingEntityEvent event) {
+        if (settings.entities() && event.getTarget() instanceof Player target && involved(target)
+                && realPet(event.getEntity())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /** No riding horses, boats or minecarts the match did not create. */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onVehicleEnter(VehicleEnterEvent event) {
+        Vehicle vehicle = event.getVehicle();
+        if (settings.entities() && event.getEntered() instanceof Player player && inArena(vehicle.getWorld())
+                && involved(player) && !session.isMatchEntity(vehicle)) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * No using entities the match did not create: trading, feeding, taming, shearing, leashing, naming, mounting,
+     * opening chest boats, chest minecarts or donkey inventories (kit items could leave the match that way).
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onUseEntity(PlayerInteractEntityEvent event) {
+        Entity clicked = event.getRightClicked();
+        if (settings.entities() && !(clicked instanceof Player) && involvedInArena(event.getPlayer())
+                && !session.isMatchEntity(clicked)) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Items participants drop and arrows they shoot during the match belong to the match: they may be picked up again
+     * and are removed when it ends, so kit items never stay in the world.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDropTracked(PlayerDropItemEvent event) {
+        if (settings.entities() && session.state() != GameState.COUNTDOWN && session.isParticipant(event.getPlayer())) {
+            session.track(event.getItemDrop());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onShootTracked(ProjectileLaunchEvent event) {
+        if (settings.entities() && session.state() != GameState.COUNTDOWN
+                && event.getEntity() instanceof AbstractArrow arrow && arrow.getShooter() instanceof Player shooter
+                && session.isParticipant(shooter)) {
+            session.track(arrow);
+        }
+    }
+
+    /** Participants cannot pick up world items: they would be wiped when their inventory is restored. */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPickup(EntityPickupItemEvent event) {
+        if (settings.entities() && session.state() != GameState.COUNTDOWN && event.getEntity() instanceof Player player
+                && session.isParticipant(player) && !session.isMatchEntity(event.getItem())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPickupArrow(PlayerPickupArrowEvent event) {
+        if (settings.entities() && session.state() != GameState.COUNTDOWN && session.isParticipant(event.getPlayer())
+                && !session.isMatchEntity(event.getArrow())) {
             event.setCancelled(true);
         }
     }

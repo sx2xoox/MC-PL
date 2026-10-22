@@ -9,14 +9,17 @@ import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.Nullable;
 
@@ -29,6 +32,9 @@ import org.jspecify.annotations.Nullable;
  * snapshot, so the state from <em>before</em> the first match always wins.
  */
 public final class SnapshotStore {
+
+    /** When to retry a failed teleport home, in ticks after the restore. */
+    private static final long[] TELEPORT_RETRY_TICKS = {20, 100};
 
     private final Plugin plugin;
     private final Path directory;
@@ -105,7 +111,11 @@ public final class SnapshotStore {
 
     /**
      * Captures and persists the player's state, unless a snapshot is already pending (then that one is returned and
-     * nothing is overwritten).
+     * nothing is overwritten). The cursor stack and crafting-grid/menu inputs are taken into the snapshot and the open
+     * menu is closed first, so a later reset cannot wipe items that were not in the inventory.
+     *
+     * @throws SnapshotWriteException if the new snapshot could not be written to disk; nothing is kept and the player
+     *                                is left as they were (loose items go back into their inventory)
      */
     public PlayerSnapshot capture(Player player, String gameId) {
         UUID id = player.getUniqueId();
@@ -113,15 +123,27 @@ public final class SnapshotStore {
         if (existing != null) {
             return existing;
         }
-        PlayerSnapshot snapshot = PlayerSnapshot.capture(player, gameId);
+        List<ItemStack> extras = PlayerSnapshot.takeLooseItems(player);
+        player.closeInventory();
+        PlayerSnapshot snapshot = PlayerSnapshot.capture(player, gameId, extras);
+        try {
+            write(snapshot);
+        } catch (IOException e) {
+            PlayerSnapshot.giveBack(player, extras);
+            plugin.getLogger().log(Level.SEVERE, "Could not save the snapshot of " + player.getName()
+                    + " to disk; they are left out of the match and not reset", e);
+            throw new SnapshotWriteException("Could not write the snapshot of " + player.getName(), e);
+        }
         loaded.put(id, snapshot);
         pending.add(id);
-        write(snapshot);
         return snapshot;
     }
 
     /**
-     * Restores and deletes the pending snapshot of an online player.
+     * Restores and deletes the pending snapshot of an online player. The player data is saved before the snapshot file
+     * is deleted, so a crash right after cannot bring back the match state without a snapshot to undo it. If the
+     * teleport home fails (cancelled by another plugin, world not loaded), it is logged and retried a few times; the
+     * rest of the state is not applied again.
      *
      * @return true if a snapshot was restored; false if there was none, the player is dead (retry after respawn) or
      * restoring failed (the snapshot is kept)
@@ -132,14 +154,54 @@ public final class SnapshotStore {
         if (snapshot == null || player.isDead() || !player.isOnline()) {
             return false;
         }
+        boolean home;
         try {
-            snapshot.restore(player, namespace);
+            home = snapshot.restore(player, namespace);
         } catch (RuntimeException e) {
             plugin.getLogger().log(Level.SEVERE, "Could not restore " + player.getName() + "; the snapshot is kept", e);
             return false;
         }
+        if (!home) {
+            plugin.getLogger().warning("Could not send " + player.getName() + " back to " + snapshot.describeLocation()
+                    + (snapshot.savedLocation() == null ? " (world not loaded)" : " (teleport cancelled)")
+                    + "; their items and stats were restored. Retrying the teleport shortly.");
+            retryTeleport(id, snapshot, 0);
+        }
+        try {
+            player.saveData();
+        } catch (RuntimeException e) {
+            // Paper logs its own I/O errors and never throws here; only a server without the method gets here. The data
+            // is still saved on quit or autosave, so this is not worth a warning.
+            plugin.getLogger().info("Could not save the player data of " + player.getName() + " right after restoring ("
+                    + e + "); it is saved on quit or autosave.");
+        }
         discard(id);
         return true;
+    }
+
+    private void retryTeleport(UUID playerId, PlayerSnapshot snapshot, int attempt) {
+        if (attempt >= TELEPORT_RETRY_TICKS.length || !plugin.isEnabled()) {
+            return;
+        }
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            Player online = Bukkit.getPlayer(playerId);
+            if (online == null || pending.contains(playerId)) {
+                // offline, or already captured by a new match: leave them where they are
+                plugin.getLogger().warning("Gave up sending " + snapshot.playerName() + " back to "
+                        + snapshot.describeLocation());
+                return;
+            }
+            if (!online.isDead() && snapshot.teleportBack(online)) {
+                plugin.getLogger().info("Sent " + online.getName() + " back to " + snapshot.describeLocation());
+                return;
+            }
+            if (attempt + 1 >= TELEPORT_RETRY_TICKS.length) {
+                plugin.getLogger().warning("Gave up sending " + online.getName() + " back to "
+                        + snapshot.describeLocation());
+                return;
+            }
+            retryTeleport(playerId, snapshot, attempt + 1);
+        }, TELEPORT_RETRY_TICKS[attempt] - (attempt == 0 ? 0 : TELEPORT_RETRY_TICKS[attempt - 1]));
     }
 
     /** Drops a pending snapshot without restoring it. */
@@ -158,7 +220,7 @@ public final class SnapshotStore {
         return namespace;
     }
 
-    private void write(PlayerSnapshot snapshot) {
+    private void write(PlayerSnapshot snapshot) throws IOException {
         YamlConfiguration yaml = new YamlConfiguration();
         snapshot.save(yaml);
         Path target = file(snapshot.playerId());
@@ -172,8 +234,12 @@ public final class SnapshotStore {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
-            plugin.getLogger().log(Level.SEVERE, "Could not save the snapshot of " + snapshot.playerName()
-                    + " to disk; it is kept in memory only", e);
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException ignored) {
+                // best effort
+            }
+            throw e;
         }
     }
 

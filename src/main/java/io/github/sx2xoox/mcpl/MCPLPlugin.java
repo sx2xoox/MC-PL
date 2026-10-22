@@ -23,6 +23,8 @@ public class MCPLPlugin extends JavaPlugin {
         hub = new Hub(this);
         hub.enable();
         registerGames(hub.games());
+        // only now: the first rotation match must follow rotation.games, not the registration order
+        hub.games().startRotation();
     }
 
     /** Registers the built-in mini-games. Add new modes here. */

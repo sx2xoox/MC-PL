@@ -61,7 +61,8 @@ public final class Hub {
 
     /**
      * Loads files, repairs anything left over from an unclean shutdown (temporary blocks, game rules, snapshots of
-     * online players), registers listeners and the {@code /게임} command. Register mini-games right after this.
+     * online players), registers listeners and the {@code /게임} command. Register mini-games right after this, then
+     * call {@link GameManager#startRotation()}.
      */
     public void enable() {
         if (!plugin.getDataFolder().exists() && !plugin.getDataFolder().mkdirs()) {

@@ -2,12 +2,16 @@ package io.github.sx2xoox.mcpl.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import io.github.sx2xoox.mcpl.MCPLPlugin;
 import io.github.sx2xoox.mcpl.core.game.GameResult;
@@ -21,12 +25,18 @@ import org.bukkit.scoreboard.Team;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.entity.Cow;
+import org.bukkit.entity.Item;
+import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockbukkit.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.entity.LivingEntityMock;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import org.mockbukkit.mockbukkit.world.WorldMock;
 
@@ -256,5 +266,106 @@ class MatchLifecycleTest {
     @Test
     void gameConfigDefaultsAreMerged() {
         assertEquals(300, hub.config().gameSection("fake").getInt("round-seconds"));
+    }
+
+    /** MockBukkit's {@code Player.Spigot} cannot respawn; route it to {@link PlayerMock#respawn()} as Paper does. */
+    private static final class RespawningPlayer extends PlayerMock {
+        RespawningPlayer(ServerMock server, String name) {
+            super(server, name);
+        }
+
+        @Override
+        public Player.Spigot spigot() {
+            return new Player.Spigot() {
+                @Override
+                public void respawn() {
+                    if (isDead()) {
+                        RespawningPlayer.this.respawn();
+                    }
+                }
+            };
+        }
+    }
+
+    @Test
+    void deadPlayersAreRespawnedBeforeTheirSnapshot() throws GameStartException {
+        server.addPlayer("Alice");
+        RespawningPlayer bob = new RespawningPlayer(server, "Bob");
+        server.addPlayer(bob);
+        WorldMock world = server.getWorld("world") instanceof WorldMock mock ? mock : null;
+        assertNotNull(world);
+        bob.teleport(new Location(world, 300.5, 3, 300.5)); // e.g. a lava pit
+        bob.setHealth(0);
+        assertTrue(bob.isDead(), "on the death screen when the match starts");
+
+        GameSession session = hub.games().start(game, null);
+        server.getScheduler().performTicks(countdownTicks());
+        assertEquals(GameState.RUNNING, session.state());
+        assertFalse(bob.isDead(), "respawned, not healed on the death screen");
+        assertTrue(session.alivePlayers().contains(bob), "really in play");
+
+        hub.games().stop(Component.text("test"));
+        assertFalse(bob.isDead());
+        assertNotEquals(300.5, bob.getLocation().getX(), 0.001, "restored to the respawn point, not the death spot");
+    }
+
+    @Test
+    void playerWhoseSnapshotCannotBeSavedIsLeftOutUntouched() throws Exception {
+        PlayerMock alice = server.addPlayer("Alice");
+        PlayerMock bob = server.addPlayer("Bob");
+        PlayerMock carol = server.addPlayer("Carol");
+        carol.setGameMode(GameMode.SURVIVAL);
+        carol.getInventory().setItem(0, new ItemStack(Material.EMERALD, 3));
+        // a folder where Carol's snapshot must be written makes her write fail (like a full or read-only disk)
+        Path blocker = hub.plugin().getDataFolder().toPath().resolve("snapshots")
+                .resolve(carol.getUniqueId() + ".yml.tmp").resolve("blocker");
+        Files.createDirectories(blocker);
+
+        GameSession session = hub.games().start(game, null);
+        server.getScheduler().performTicks(countdownTicks());
+
+        assertEquals(GameState.RUNNING, session.state());
+        assertFalse(session.isParticipant(carol));
+        assertFalse(session.isMember(carol), "not even a spectator: her state is not on disk");
+        assertFalse(hub.snapshots().has(carol.getUniqueId()));
+        assertEquals(GameMode.SURVIVAL, carol.getGameMode(), "never reset");
+        ItemStack emeralds = carol.getInventory().getItem(0);
+        assertNotNull(emeralds);
+        assertEquals(Material.EMERALD, emeralds.getType());
+        assertTrue(session.isAlive(alice) && session.isAlive(bob));
+        hub.games().stop(Component.text("test"));
+    }
+
+    @Test
+    void bystanderEntitiesAreProtected() throws GameStartException {
+        PlayerMock alice = server.addPlayer("Alice");
+        server.addPlayer("Bob");
+        GameSession session = hub.games().start(game, null);
+        server.getScheduler().performTicks(countdownTicks());
+        assertEquals(GameState.RUNNING, session.state());
+        Location near = alice.getLocation();
+
+        Cow cow = near.getWorld().spawn(near, Cow.class);
+        double full = cow.getHealth();
+        ((LivingEntityMock) cow).simulateDamage(4, alice);
+        assertEquals(full, cow.getHealth(), 0.001, "a participant cannot hurt a bystander animal");
+        PlayerInteractEntityEvent use = new PlayerInteractEntityEvent(alice, cow);
+        server.getPluginManager().callEvent(use);
+        assertTrue(use.isCancelled(), "nor use it");
+
+        Cow summoned = session.track(near.getWorld().spawn(near, Cow.class));
+        ((LivingEntityMock) summoned).simulateDamage(4, alice);
+        assertTrue(summoned.getHealth() < full, "entities of the match can be hurt");
+
+        Item worldItem = near.getWorld().dropItem(near, new ItemStack(Material.DIAMOND));
+        EntityPickupItemEvent pickup = new EntityPickupItemEvent(alice, worldItem, 0);
+        server.getPluginManager().callEvent(pickup);
+        assertTrue(pickup.isCancelled(), "world items would be wiped by the restore");
+        Item matchItem = session.track(near.getWorld().dropItem(near, new ItemStack(Material.STICK)));
+        EntityPickupItemEvent ownPickup = new EntityPickupItemEvent(alice, matchItem, 0);
+        server.getPluginManager().callEvent(ownPickup);
+        assertFalse(ownPickup.isCancelled());
+
+        hub.games().stop(Component.text("test"));
     }
 }

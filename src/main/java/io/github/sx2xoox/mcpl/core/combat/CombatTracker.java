@@ -12,7 +12,6 @@ import org.bukkit.entity.EvokerFangs;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.entity.TNTPrimed;
-import org.bukkit.entity.Tameable;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.projectiles.ProjectileSource;
@@ -24,8 +23,9 @@ import org.jspecify.annotations.Nullable;
  * {@link #DEFAULT_WINDOW_TICKS}) is credited to the last attacker.
  *
  * <p>Attackers are resolved from players, projectile shooters (arrows, fireballs, tridents, potions...), primed TNT
- * sources, area effect cloud sources, evoker fang owners, tamed animals' owners and any entity registered with
- * {@link #registerOwner(Entity, Player)} (summons, custom projectiles, display-based hitboxes...).
+ * sources, area effect cloud sources, evoker fang owners and any entity registered with
+ * {@link #registerOwner(Entity, Player)} (summons, custom projectiles, display-based hitboxes...). Tamed animals are
+ * not resolved to their owner unless registered: a real pet is not part of the match.
  *
  * <p>All state is cleared when a match ends.
  */
@@ -62,7 +62,7 @@ public final class CombatTracker {
 
     /**
      * The player responsible for {@code damager}: the player itself, a projectile's shooter, a TNT source, a cloud's
-     * source, a fang owner, a tamed animal's owner or a registered owner. Null if no online player is responsible.
+     * source, a fang owner or a registered owner. Null if no online player is responsible.
      */
     public @Nullable Player resolveAttacker(@Nullable Entity damager) {
         return resolve(damager, 0);
@@ -109,10 +109,8 @@ public final class CombatTracker {
         if (entity instanceof EvokerFangs fangs) {
             return resolve(fangs.getOwner(), depth + 1);
         }
-        if (entity instanceof Tameable tameable && tameable.isTamed()) {
-            UUID tamer = tameable.getOwnerUniqueId();
-            return tamer == null ? null : Bukkit.getPlayer(tamer);
-        }
+        // Tamed animals count only when registered above (summons): a real pet that followed its owner into the arena
+        // is not part of the match and must not earn its owner hits or kills.
         return null;
     }
 

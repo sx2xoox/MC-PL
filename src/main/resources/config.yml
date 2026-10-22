@@ -57,6 +57,8 @@ protection:
   interact: true
   # 참가자의 아이템 버리기
   item-drop: true
+  # 경기와 무관한 개체 보호: 주민·동물·펫 공격, 탈것·상자 보트 등 사용, 진짜 펫의 싸움 참여, 바닥 아이템 줍기
+  entities: true
 
 # 게임별 설정. 각 게임이 처음 등록될 때 기본값을 이곳에 추가합니다.
 # 예) games.superpower.* = 초능력전쟁 설정
