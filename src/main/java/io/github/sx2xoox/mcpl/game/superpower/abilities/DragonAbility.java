@@ -48,10 +48,12 @@ import org.jspecify.annotations.Nullable;
  * dragon fire, and as the ultimate it spreads huge wings, takes to the sky and drops breath bombs on whoever is
  * below.
  *
- * <p>Look: magenta and deep purple with a pale pink core. The breath is a roaring stream of dragon-breath particles
- * and violet embers; the bombs are spinning purple crystal orbs whose landing spot glows beneath the dragon, bursting
- * into a ring of violet fire that smoulders for a moment. The wings are two great membranes of stained glass on
- * dark bone, beating slowly with the ender dragon's flap.
+ * <p>Look: magenta and deep purple with a pale pink core. Violet embers drift off the dragon's back now and then; an
+ * arrow that strikes it flares up three overlapping glass scales on that side. The breath begins with an inhale (motes
+ * rushing into the maw, a tightening ring) and becomes a roaring stream of dragon-breath particles and violet embers.
+ * The bombs are spinning purple crystal orbs whose landing spot glows beneath the dragon, bursting into a ring of
+ * violet fire that smoulders for a moment over a glowing pool. The wings are two great membranes of stained glass on
+ * dark bone, beating slowly with the ender dragon's flap and shedding embers from their tips.
  */
 public final class DragonAbility extends Ability {
 
@@ -66,10 +68,10 @@ public final class DragonAbility extends Ability {
                             + "닿지 않습니다.",
                     10)
             .ultimate("용의 비상",
-                    "거대한 날개를 펼쳐 {flight_duration}초간 날아오릅니다. 나는 동안 {bomb_interval}초마다 발밑으로 "
-                            + "브레스 폭탄을 떨어뜨려 반경 {bomb_radius}블록의 적에게 {bomb_damage} 피해를 주고, 떨어진 "
-                            + "자리에 {pool_duration}초간 용의 불꽃이 남아 {pool_interval}초마다 {pool_damage} 피해를 "
-                            + "줍니다. 날개가 접히면 천천히 내려옵니다.")
+                    "거대한 날개로 {flight_duration}초간 날며 {bomb_interval}초마다 발밑에 브레스 폭탄을 떨어뜨려 "
+                            + "반경 {bomb_radius}블록의 적에게 {bomb_damage} 피해를 줍니다. 떨어진 자리에는 "
+                            + "{pool_duration}초간 용의 불꽃이 남아 {pool_interval}초마다 {pool_damage} 피해를 주며, 날개가 "
+                            + "접히면 천천히 내려옵니다.")
             // Flight must be taken away again by this instance (timer + onRevoke), so it cannot be borrowed.
             .ultimateNotStandalone()
             .param("scale_reduction", 25)
@@ -576,7 +578,7 @@ public final class DragonAbility extends Ability {
             }
         }
         if (tick % 5 == 0) {
-            owner.sendActionBar(Text.mm("<" + VIOLET + ">🐉 용의 비상</" + VIOLET + "> <gray>" + Fx.seconds(left)
+            owner.sendActionBar(Text.mm("<" + VIOLET + ">✦ 용의 비상</" + VIOLET + "> <gray>" + Fx.seconds(left)
                     + "초</gray>"));
         }
         if (left <= 60 && left % 20 == 0) {

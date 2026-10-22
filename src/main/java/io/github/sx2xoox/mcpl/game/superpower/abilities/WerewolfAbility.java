@@ -53,10 +53,12 @@ import org.jspecify.annotations.Nullable;
  * prey with a claw leap that makes it bleed, and as the ultimate turns into a towering beast whose every claw
  * strike bleeds and feeds it, howling its enemies into a fearful crawl.
  *
- * <p>Look: brown fur and molten-gold eyes. The pounce leaves a streak of fur and two gold glints where the eyes
- * passed; the claw lands as three white slashes torn across each victim with a spray of blood, and bleeding enemies
- * drip blood. The beast form bursts out of a spiral of fur under a pale full moon that follows it; the howl rolls out
- * as golden rings and the frightened enemies shiver in a cold, dark swirl.
+ * <p>Look: brown fur and molten-gold eyes. Melee hits flash a gold claw glint (under the moon also two torn slashes);
+ * nightfall wakes the werewolf with a growl and rising gold. The pounce marks its landing spot in gold and leaves a
+ * streak of fur and two gold glints where the eyes passed; the claw rakes three white blades across in front of the
+ * werewolf and tears three slashes across each victim with a spray of blood, and bleeding enemies drip blood. The
+ * beast form bursts out of a spiral of fur, shedding tufts that tumble away, under a pale full moon that follows it;
+ * the howl rolls out as golden rings and the frightened enemies shiver in a cold, dark swirl.
  */
 public final class WerewolfAbility extends Ability {
 
@@ -67,15 +69,15 @@ public final class WerewolfAbility extends Ability {
                     "밤에는 공격력이 {night_damage}%, 이동 속도가 {night_speed}% 오릅니다. 낮에는 그 절반만 "
                             + "오릅니다.")
             .active("할퀴기 도약",
-                    "조준한 적(없으면 바라보는 방향)으로 최대 {leap_distance}블록 덮쳐 들어가, 부딪히거나 착지한 곳 "
-                            + "반경 {claw_radius}블록의 적에게 {claw_damage} 피해를 주고 {bleed_duration}초간 "
-                            + "출혈({bleed_interval}초마다 {bleed_damage} 피해)을 일으킵니다. 낙하 피해를 받지 않습니다.",
+                    "조준한 적(없으면 바라보는 방향)으로 최대 {leap_distance}블록 덮쳐, 부딪히거나 착지한 곳 반경 "
+                            + "{claw_radius}블록의 적에게 {claw_damage} 피해와 {bleed_duration}초간 출혈({bleed_interval}초마다 "
+                            + "{bleed_damage} 피해)을 입힙니다. 이 도약으로는 낙하 피해를 받지 않습니다.",
                     8)
             .ultimate("야수화",
-                    "{ult_duration}초간 {ult_scale}배 크기의 야수가 되어 이동 속도가 {ult_speed}% 오르고 야성이 "
-                            + "최대로 깨어납니다. 근접 공격마다 출혈을 일으키고 입힌 피해의 {ult_lifesteal}%를 "
-                            + "회복합니다. 변신하며 울부짖어 반경 {howl_radius}블록의 적을 {howl_duration}초간 공포에 "
-                            + "빠뜨립니다(이동 속도 -{howl_slow}%).")
+                    "{ult_duration}초간 {ult_scale}배 크기의 야수가 되어 이동 속도 +{ult_speed}%와 최대치의 야성을 "
+                            + "얻고, 근접 공격마다 출혈을 일으키며 입힌 피해의 {ult_lifesteal}%를 회복합니다. 변신하며 "
+                            + "울부짖어 반경 {howl_radius}블록의 적을 {howl_duration}초간 공포에 빠뜨립니다(이동 속도 "
+                            + "-{howl_slow}%).")
             // Bleeding and lifesteal on every claw strike come from this instance's damage hooks and ticks.
             .ultimateNotStandalone()
             .param("night_damage", 20)

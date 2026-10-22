@@ -34,10 +34,10 @@ import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Frog;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Frog;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
@@ -52,10 +52,16 @@ import org.jspecify.annotations.Nullable;
  * that hop after enemies and burst into sticky goo, and as the ultimate swells into a crowned King Slime whose every
  * landing sends out a shockwave.
  *
- * <p>Look: lime jelly. Bounces splash rings of slime; the split squeezes a wobbling cube of jelly out of the owner
- * and flings goo to each little slime; a burst leaves a puddle of goo that seeps away. The King Slime wears a jiggling
- * shell of slime that stretches as it rises and squashes as it lands, a golden crown turning above its head, and every
- * slam flings jelly cubes out over a lime shockwave.
+ * <p>The little slimes are real summons: an invisible, silent carrier mob (a small hitbox enemies can hit and kill)
+ * wearing a jelly body of display entities, hopped by this ability's controller (no vanilla AI, so they behave the same
+ * on every difficulty).
+ *
+ * <p>Look: lime jelly. Hits make the body jiggle; a bounce springs off a pad of jelly that squashes and shoots up. The
+ * split squeezes a wobbling cube of jelly out of the owner and flings goo to each little slime: a translucent slime
+ * cube with two dark eyes that stretches when it hops and squashes when it lands; a burst leaves a puddle of goo that
+ * seeps away. The King Slime wears a jiggling shell of slime that stretches as it rises and squashes as it lands, a
+ * golden crown turning above its head, its landing spot glows lime while it falls, and every slam flings jelly cubes
+ * out over a lime shockwave.
  */
 public final class SlimeAbility extends Ability {
 
@@ -64,17 +70,18 @@ public final class SlimeAbility extends Ability {
             .difficulty(1)
             .passive("탄력",
                     "낙하 피해를 받지 않고, 높은 곳에서 떨어지면 떨어진 높이의 {bounce_ratio}%만큼(최대 "
-                            + "{bounce_max_height}블록) 다시 튀어 오릅니다. 웅크리면 튀지 않습니다. 넉백을 "
+                            + "{bounce_max_height}블록) 다시 튀어 오릅니다(웅크리면 튀지 않음). 넉백을 "
                             + "{knockback_resistance}% 덜 받습니다.")
             .active("분열",
                     "작은 슬라임 {slime_count}마리(체력 {slime_health})로 분열해 {slime_duration}초간 적에게 튀어 "
                             + "달려들게 합니다. 슬라임은 적에게 닿으면 터져 반경 {burst_radius}블록의 적에게 "
-                            + "{burst_damage} 피해를 주고 {sticky_duration}초간 이동 속도를 {sticky_slow}% 늦춥니다.",
+                            + "{burst_damage} 피해를 주고 {sticky_duration}초간 이동 속도를 {sticky_slow}% 늦춥니다"
+                            + "(적에게 공격받아 쓰러진 슬라임은 터지지 않음).",
                     12)
             .ultimate("킹 슬라임",
                     "{ult_duration}초간 {ult_scale}배 크기의 킹 슬라임이 되어 약 {ult_jump_height}블록 높이로 뛸 수 "
                             + "있습니다. 공중에서 내려와 착지할 때마다 반경 {slam_radius}블록의 적에게 {slam_damage} "
-                            + "피해를 주고 튕겨 올립니다. 같은 적은 {slam_rehit}초에 한 번만 맞습니다.")
+                            + "피해를 주고 튕겨 올립니다(같은 적은 {slam_rehit}초에 한 번).")
             .param("bounce_ratio", 60)
             .param("bounce_max_height", 6)
             .param("knockback_resistance", 35)

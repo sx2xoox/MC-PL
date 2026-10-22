@@ -69,14 +69,14 @@ public final class SpiderAbility extends Ability {
                     "벽을 마주 보고 붙으면 초당 {climb_speed}블록 속도로 기어오르고, 웅크리면 거미줄을 걸고 벽에 "
                             + "매달립니다. 거미줄이나 둥지에 걸린 적에게 주는 피해가 {web_bonus}% 늘어납니다.")
             .active("거미줄 발사",
-                    "끈적한 거미줄 뭉치를 쏩니다(최대 {web_range}블록). 맞은 적은 {web_damage} 피해를 입고 "
-                            + "{root_duration}초간 거미줄에 묶여 움직이거나 뛸 수 없습니다. 빗나가면 닿은 자리에 "
+                    "끈적한 거미줄 뭉치를 쏴(최대 {web_range}블록) 맞은 적에게 {web_damage} 피해를 주고 "
+                            + "{root_duration}초간 거미줄로 묶어 움직이거나 뛸 수 없게 합니다. 빗나가면 닿은 자리에 "
                             + "{trap_duration}초간 거미줄 덫이 남습니다.",
                     8)
             .ultimate("거미 둥지",
                     "발밑에 반경 {nest_radius}블록의 거미 둥지를 {nest_duration}초간 칩니다. 둥지 안의 적은 이동 "
                             + "속도가 {nest_slow}%, 점프력이 {nest_jump}% 줄고 {nest_interval}초마다 {nest_damage} 피해를 "
-                            + "입습니다. 나는 둥지 위에서 이동 속도가 {nest_speed}% 오릅니다.")
+                            + "입으며, 나는 둥지 위에서 이동 속도가 {nest_speed}% 오릅니다.")
             .param("climb_speed", 4)
             .param("web_bonus", 30)
             .param("web_range", 24)
