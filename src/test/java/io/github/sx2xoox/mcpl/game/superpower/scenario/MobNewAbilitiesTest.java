@@ -31,12 +31,15 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** 마크 몹 계열 (새 능력): 크리퍼, 셜커, 염소, 거북이. */
 class MobNewAbilitiesTest {
@@ -44,6 +47,8 @@ class MobNewAbilitiesTest {
     private static final double EPSILON = 1.0E-6;
     private static final double BASE_SPEED = 0.1;
     private static final double BASE_JUMP = 0.42;
+    /** The turtle's shell bounces off a wall from at most this far in front of it (its wall probe). */
+    private static final double WALL_GAP = 0.3;
 
     private static long displays(Scenario s) {
         return s.world.getEntities().stream().filter(entity -> entity instanceof Display).count();
@@ -149,8 +154,9 @@ class MobNewAbilitiesTest {
     /**
      * A player's real client against what the server knows of it. A real server never reads a player's motion back
      * ({@code Player#getVelocity} only returns what the server last sent): the client moves by exactly the velocities
-     * it is sent, one per client tick, keeps its own motion in between (sliding to a halt like on the ground), and the
-     * server sees where it is {@code lag} ticks late. World physics must be off: this moves the player.
+     * it is sent, one per client tick, keeps its own motion in between (sliding to a halt like on the ground), is
+     * stopped by blocks like a real one, and the server sees where it is {@code lag} ticks late. World physics must be
+     * off: this moves the player.
      */
     private static final class LaggyClient {
         /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
@@ -200,7 +206,7 @@ class MobNewAbilitiesTest {
 
         /** One client tick with what it was sent so far, then one server tick, which may send something new. */
         void tick() {
-            at.add(velocity);
+            at.add(blockedStep(velocity));
             boolean grounded = at.getY() <= FlatWorld.SURFACE;
             if (grounded) {
                 at.setY(FlatWorld.SURFACE);
@@ -231,6 +237,47 @@ class MobNewAbilitiesTest {
                 }
             }
             ticks++;
+        }
+
+        /**
+         * How far the client really moves with {@code motion}: like vanilla, axis by axis (y, then x, then z), each up
+         * to the first block in the way (the player's own body, scaled as it is now).
+         */
+        private Vector blockedStep(Vector motion) {
+            double half = player.getWidth() / 2;
+            BoundingBox box = new BoundingBox(at.getX() - half, at.getY(), at.getZ() - half, at.getX() + half,
+                    at.getY() + player.getHeight(), at.getZ() + half);
+            double dy = free(box, 0, motion.getY(), 0);
+            box.shift(0, dy, 0);
+            double dx = free(box, motion.getX(), 0, 0);
+            box.shift(dx, 0, 0);
+            double dz = free(box, 0, 0, motion.getZ());
+            if (dx != motion.getX()) {
+                velocity.setX(0);
+            }
+            if (dz != motion.getZ()) {
+                velocity.setZ(0);
+            }
+            return new Vector(dx, dy, dz);
+        }
+
+        /** The part of a move along one axis that is free of blocks, to a thousandth of a block. */
+        private double free(BoundingBox box, double x, double y, double z) {
+            double length = Math.abs(x + y + z);
+            if (length < 1.0E-9 || !s.world.hasCollisionsIn(box.clone().shift(x, y, z).expand(-1.0E-4))) {
+                return x + y + z;
+            }
+            double lo = 0;
+            double hi = 1;
+            while ((hi - lo) * length > 1.0E-3) {
+                double mid = (lo + hi) / 2;
+                if (s.world.hasCollisionsIn(box.clone().shift(x * mid, y * mid, z * mid).expand(-1.0E-4))) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            return (x + y + z) * lo;
         }
     }
 
@@ -1222,6 +1269,92 @@ class MobNewAbilitiesTest {
             assertEquals(0, displays(s), "the giant shell went with the turtle");
             assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "a dead turtle has no thorns");
             s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The shell meets a wall where its client really is. Judged on the server's view, a lagging turtle sat against
+     * the wall for a round trip (four ticks at 150 ms, six at 250 ms) before it bounced off.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void turtleSpinBouncesOffAWallTheMomentItsClientHitsIt(int ping) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.world.wallAlongX(-3, 3, 6, 3, Material.STONE);
+            s.place(s.enemy, 8.5, -6.5, 0);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            s.owner.setPing(ping);
+            Location start = s.owner.getLocation();
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            double face = 6 - s.owner.getWidth() / 2; // where the shrunk turtle touches the wall
+            LaggyClient client = new LaggyClient(s, s.owner, ping / 50);
+            List<Double> path = new ArrayList<>();
+            double length = 0;
+            Location before = client.at();
+            for (int i = 0; i < 50; i++) {
+                client.tick();
+                length += horizontalDistance(before, client.at());
+                before = client.at();
+                path.add(before.getZ());
+            }
+            double deepest = path.stream().mapToDouble(Double::doubleValue).max().orElseThrow();
+            assertTrue(deepest <= face + 1.0E-3, ping + " ms: never into the wall: " + deepest);
+            assertTrue(deepest > face - WALL_GAP, ping + " ms: but right up to it: " + deepest);
+            long pinned = path.stream().filter(z -> z > deepest - 0.05).count();
+            assertTrue(pinned <= 1, ping + " ms: it bounces off at once, not after " + pinned + " ticks: " + path);
+            assertTrue(client.at().getZ() < start.getZ(), ping + " ms: it came back: " + client.at());
+            assertEquals(s.param("spin_distance"), length, 0.6, ping + " ms: there and back, its whole length");
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(1.0, scale(s.owner), EPSILON, ping + " ms: back out of the shell");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.world.wallAlongX(-3, 3, 6, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * Enemies are met where the shell really is. Judged on the server's view, a lagging turtle bowled enemies over a
+     * round trip after it had rolled through them: one that stepped aside right after the shell went through it on the
+     * turtle's screen got away, one that stepped into the trail the shell had long left was bowled over.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void turtleSpinBowlsOverWhoeverItsClientRollsThrough(int ping) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.place(s.enemy, 0.5, 4.5, 180); // in the way
+            s.place(s.enemy2, 8.5, -6.5, 0); // out of the way, for now
+            s.owner.setPing(ping);
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            LaggyClient client = new LaggyClient(s, s.owner, ping / 50);
+            boolean dodged = false;
+            boolean steppedIn = false;
+            for (int i = 0; i < 50; i++) {
+                client.tick();
+                double z = client.at().getZ();
+                if (!dodged && z > 4.5 + 0.6) {
+                    // The shell has rolled right through it: it steps aside.
+                    s.place(s.enemy, 6.5, 4.5, 180);
+                    dodged = true;
+                }
+                if (!steppedIn && z > 10) {
+                    // Into the trail the shell left behind it, out of its reach.
+                    s.place(s.enemy2, 0.5, z - 1.8, 180);
+                    steppedIn = true;
+                }
+            }
+            assertTrue(dodged && steppedIn, ping + " ms: the shell slid on past both spots");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON,
+                    ping + " ms: the one that stepped in behind the shell is not");
+            assertEquals(s.param("spin_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    ping + " ms: the enemy it rolled through is bowled over, even though it stepped aside right after");
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(1.0, scale(s.owner), EPSILON, ping + " ms: back out of the shell");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
         }
     }

@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -33,7 +36,10 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * 격투가 (fighter): the counter of its fighting spirit, the grab-and-suplex active (with its whiff, its fallbacks when
@@ -877,6 +883,233 @@ class FighterAbilityTest {
             s.ticks(10);
             assertOwnerDeathCleansUp(s);
             assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "the dropped enemy floats down: " + s.hits());
+        }
+    }
+
+    /**
+     * Players whose real position is their client's: every client tick each moves by the last velocity the server
+     * sent it (then gravity, slow falling and drag, vanilla style, over a flat floor), and the server sees where it is
+     * {@code lag} ticks late. The harness's own physics is off while they run.
+     */
+    private static final class LaggyClients {
+
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final List<Client> clients = new ArrayList<>();
+
+        LaggyClients(Scenario s, int lag, TestPlayer... players) {
+            this.s = s;
+            s.world.physics().setEnabled(false);
+            for (TestPlayer player : players) {
+                clients.add(new Client(player, lag));
+            }
+        }
+
+        /** One server tick, then one client tick of every player with whatever the server sent it. */
+        void tick() {
+            for (Client client : clients) {
+                client.mark();
+            }
+            s.ticks(1);
+            for (Client client : clients) {
+                client.step();
+            }
+        }
+
+        /** Where {@code player} really is (its client). */
+        Location at(TestPlayer player) {
+            for (Client client : clients) {
+                if (client.player.equals(player)) {
+                    return client.at.clone();
+                }
+            }
+            throw new IllegalArgumentException(player.getName());
+        }
+
+        /** Back to the harness's physics, every player where its client really is. */
+        void close() {
+            for (Client client : clients) {
+                Location real = client.at.clone();
+                Location look = client.player.getLocation();
+                real.setYaw(look.getYaw());
+                real.setPitch(look.getPitch());
+                client.player.teleport(real);
+                client.player.setVelocity(new Vector());
+            }
+            s.world.physics().setEnabled(true);
+        }
+
+        private static final class Client {
+            private final TestPlayer player;
+            private final Deque<Location> late = new ArrayDeque<>();
+            private final Location at;
+            private final Vector velocity = new Vector();
+            private Vector sent;
+            private Vector marked = new Vector();
+
+            Client(TestPlayer player, int lag) {
+                this.player = player;
+                this.at = player.getLocation();
+                this.sent = player.getVelocity().clone();
+                this.velocity.copy(sent);
+                for (int i = 0; i < lag; i++) {
+                    late.addLast(at.clone());
+                }
+            }
+
+            void mark() {
+                marked = sent.clone().setX(sent.getX() + MARK);
+                player.setVelocity(marked);
+            }
+
+            void step() {
+                Vector now = player.getVelocity();
+                if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                        || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                    sent = now.clone();
+                    velocity.copy(now);
+                }
+                at.add(velocity);
+                boolean grounded = at.getY() <= FlatWorld.SURFACE;
+                if (grounded) {
+                    at.setY(FlatWorld.SURFACE);
+                }
+                double gravity = player.hasPotionEffect(PotionEffectType.SLOW_FALLING) && velocity.getY() <= 0
+                        ? 0.01 : 0.08;
+                double vy = (velocity.getY() - gravity) * 0.98;
+                double friction = grounded ? 0.546 : 0.91;
+                velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                        .setZ(velocity.getZ() * friction);
+                late.addLast(at.clone());
+                Location seen = late.removeFirst();
+                Location look = player.getLocation();
+                seen.setYaw(look.getYaw());
+                seen.setPitch(look.getPitch());
+                player.teleport(seen);
+            }
+        }
+    }
+
+    /**
+     * The fighter and the held enemy play on clients the server hears from a round trip late. Steering them by those
+     * lagging positions (the path's own step plus half the error the server saw) was a delayed correction: from
+     * 150 ms on it flung the enemy blocks over and past the swing (3.7 blocks up, 4.3 behind instead of 1.0 at 150 ms;
+     * 4.4 up and 7.4 behind at 250 ms), broke the throw and never slammed it.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void suplexSwingsALaggingEnemyAlongTheArcAndSlamsItWhereItLands(int ping) {
+        try (Scenario s = Scenario.ffa("fighter")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 10.5, 10.5, 180);
+            s.owner.setPing(ping);
+            s.enemy.setPing(ping);
+            s.aimAt(s.owner, s.enemy);
+            Location owner = s.owner.getLocation();
+            s.assertSucceeded(s.active(), "잡기 메치기");
+            LaggyClients clients = new LaggyClients(s, ping / 50, s.owner, s.enemy);
+            double highest = FlatWorld.SURFACE;
+            double farthestBack = owner.getZ();
+            int landed = -1;
+            int slammed = -1;
+            boolean stunned = false;
+            for (int i = 0; i < 30; i++) {
+                clients.tick();
+                Location enemy = clients.at(s.enemy);
+                highest = Math.max(highest, enemy.getY());
+                farthestBack = Math.min(farthestBack, enemy.getZ());
+                if (landed < 0 && i > 4 && enemy.getY() <= FlatWorld.SURFACE + 1.0E-6) {
+                    landed = i;
+                }
+                if (slammed < 0 && s.damageBy(s.owner, s.enemy) > 0) {
+                    slammed = i;
+                    stunned = rooted(s.enemy);
+                }
+            }
+            Location down = clients.at(s.enemy);
+            clients.close();
+            double lifted = highest - FlatWorld.SURFACE;
+            assertTrue(lifted >= s.owner.getHeight(), ping + " ms: swung over the owner's head: " + lifted);
+            assertTrue(lifted < s.owner.getHeight() + 0.3, ping + " ms: but no higher: " + lifted);
+            double behind = owner.getZ() - down.getZ();
+            assertTrue(behind > 1.0 && behind < 2.0, ping + " ms: slammed down right behind the owner: " + behind);
+            assertEquals(0.5, down.getX(), 0.1, ping + " ms: in line with the throw");
+            assertTrue(owner.getZ() - farthestBack < behind + 0.1, ping + " ms: never flung past where it lands: "
+                    + (owner.getZ() - farthestBack));
+            assertEquals(s.param("suplex_damage"), s.damageBy(s.owner, s.enemy), EPSILON, ping + " ms: slammed once");
+            assertTrue(landed >= 0 && slammed >= 0 && slammed <= landed + 1,
+                    ping + " ms: the slam hits as the body hits the floor (landed " + landed + ", hit " + slammed
+                            + ")");
+            assertTrue(stunned, ping + " ms: stunned on the mat");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(40);
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), ping + " ms: no fall damage: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The piledriver with both bodies on lagging clients. Steered by where the server last heard of them, the owner
+     * shot up to 11.6 blocks instead of 6 at 150 ms (16.6 at 250 ms, where the enemy was carried off to 18 blocks and
+     * let go), the enemy swung around it and was driven into the floor 3.5 blocks off the spot, four ticks after it
+     * hit the floor.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void piledriverCarriesLaggingPlayersExactlyAlongItsPath(int ping) {
+        try (Scenario s = Scenario.ffa("fighter")) {
+            s.place(s.enemy, 0.5, 2.5, 180); // close enough to grab without a dash
+            s.place(s.enemy2, 12.5, 0.5, 270);
+            s.owner.setPing(ping);
+            s.enemy.setPing(ping);
+            s.aimAt(s.owner, s.enemy);
+            Location takeoff = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "파일드라이버");
+            LaggyClients clients = new LaggyClients(s, ping / 50, s.owner, s.enemy);
+            double ownerTop = FlatWorld.SURFACE;
+            double ownerDrift = 0;
+            boolean overhead = false;
+            int landed = -1;
+            int driven = -1;
+            for (int i = 0; i < 40; i++) {
+                clients.tick();
+                Location owner = clients.at(s.owner);
+                Location enemy = clients.at(s.enemy);
+                ownerTop = Math.max(ownerTop, owner.getY());
+                if (driven < 0 && s.damageBy(s.owner, s.enemy) > 0) {
+                    driven = i; // the owner rebounds off the body from here on
+                }
+                if (driven < 0) {
+                    ownerDrift = Math.max(ownerDrift, horizontalDistance(owner, takeoff));
+                }
+                overhead |= enemy.getY() - owner.getY() >= s.owner.getHeight() - 0.1
+                        && horizontalDistance(owner, enemy) < 0.5;
+                if (landed < 0 && i > 8 && enemy.getY() <= FlatWorld.SURFACE + 1.0E-6) {
+                    landed = i;
+                }
+            }
+            Location down = clients.at(s.enemy);
+            clients.close();
+            double leap = ownerTop - FlatWorld.SURFACE;
+            assertTrue(leap > s.param("ult_height") - 0.3 && leap < s.param("ult_height") + 0.3,
+                    ping + " ms: the leap is " + s.param("ult_height") + " blocks high: " + leap);
+            assertTrue(ownerDrift < 0.1, ping + " ms: straight up and down: " + ownerDrift);
+            assertTrue(overhead, ping + " ms: the enemy rides over the owner's head");
+            assertEquals(s.param("ult_damage"), s.damageBy(s.owner, s.enemy), EPSILON, ping + " ms: driven in once");
+            assertEquals(1, s.hitsBy(s.owner, s.enemy).size());
+            assertTrue(landed >= 0 && driven >= 0 && driven <= landed + 1,
+                    ping + " ms: the drive hits as the body hits the floor (landed " + landed + ", hit " + driven
+                            + ")");
+            double ahead = down.getZ() - takeoff.getZ();
+            assertTrue(ahead > 0.5 && ahead < 1.1, ping + " ms: driven into the floor right in front: " + ahead);
+            assertEquals(0.5, down.getX(), 0.1, ping + " ms: in line with the owner");
+            assertTrue(s.hitsOf(s.owner, DamageCause.FALL).isEmpty(), ping + " ms: no fall damage: " + s.hits());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(s.paramTicks("crater_duration") + 40);
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), ping + " ms: the drive replaces the fall");
+            s.assertNoProblems();
+            s.finishClean();
         }
     }
 }

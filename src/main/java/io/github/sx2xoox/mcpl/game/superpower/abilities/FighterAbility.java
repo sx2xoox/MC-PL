@@ -1,5 +1,6 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -34,6 +35,7 @@ import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
@@ -122,8 +124,6 @@ public final class FighterAbility extends Ability {
     private static final double TAU = Math.PI * 2;
     /** Hard cap for every velocity this ability applies. */
     private static final double MAX_SPEED = 2.5;
-    /** Share of a held body's distance from its path corrected per tick (see {@link #steer}). */
-    private static final double STEER_GAIN = 0.5;
 
     // passive: fighting spirit
     /** The stumble of a staggered enemy, added once vanilla knockback has been applied. */
@@ -150,7 +150,7 @@ public final class FighterAbility extends Ability {
     private static final double LANDING_GAP = 0.45;
     /** A thrown body may land this far below the owner's feet (steps and slopes, not off cliffs). */
     private static final double LANDING_DROP = 3.0;
-    /** The throw breaks when the held body ends up this far (horizontally) from where it should be. */
+    /** The throw breaks when the held body is seen this far from everywhere it was steered through lately. */
     private static final double SUPLEX_LEASH = 3.0;
     private static final double SLAM_BOUNCE = 0.25;
     private static final double SPLASH_PUSH = 0.6;
@@ -187,8 +187,9 @@ public final class FighterAbility extends Ability {
     private static final double TURN_HEIGHT = 0.3;
     /** While carried overhead the body sits this little bit forward, so the two hitboxes are never stacked exactly. */
     private static final double OVERHEAD_FORWARD = 0.1;
+    /** The piledriver lets go when the held body is seen this far from everywhere it was steered through lately. */
     private static final double ESCAPE_LEASH = 3.5;
-    /** The grab also breaks when either body is this far from its path (pushed or teleported away). */
+    /** It also lets go when the owner is seen this far off its own path (pushed or teleported away). */
     private static final double DRIFT_LIMIT = 7.0;
     /** Slow falling given to a held body as a safety net beyond the planned hold, so a lost grip never hurts it. */
     private static final long SAFETY_FALL_TICKS = 60;
@@ -515,8 +516,9 @@ public final class FighterAbility extends Ability {
 
     /**
      * 잡기 메치기: the owner braces (rooted), grips the enemy, swings it over its head around the shoulders and slams it
-     * down behind (or, with no room behind, back down in front). The held body is steered by velocity, so walls stop it
-     * like any movement and it can never end up inside a block.
+     * down behind (or, with no room behind, back down in front). The held body is steered by velocity from where it is
+     * reckoned to be (see {@link Reckoning}), so walls stop it like any movement, it can never end up inside a block
+     * and a lagging player follows the swing instead of being flung past it.
      */
     private final class Suplex implements LongPredicate {
 
@@ -529,8 +531,8 @@ public final class FighterAbility extends Ability {
         private final Location start;
         private final double halfHeight;
         private final NamespacedKey[] brace;
+        private final Reckoning held;
         private Location lastCenter;
-        private @Nullable Location expected;
 
         Suplex(Player owner, LivingEntity target, Vector forward, double radius, Landing landing) {
             this.owner = owner;
@@ -542,12 +544,13 @@ public final class FighterAbility extends Ability {
             this.start = Fx.body(target);
             this.halfHeight = target.getHeight() / 2;
             this.brace = root(owner, SUPLEX_TICKS + 4);
+            this.held = new Reckoning(target);
             this.lastCenter = start.clone();
         }
 
         void begin() {
             grappling = true;
-            target.setVelocity(new Vector());
+            held.send(new Vector());
             target.setFallDistance(0);
             holdSafely(target, SUPLEX_TICKS + 2);
             telegraph();
@@ -565,20 +568,18 @@ public final class FighterAbility extends Ability {
                 letGo(false);
                 return false;
             }
-            Location was = expected;
-            if (was != null && horizontalDistance(target.getLocation(), was) > SUPLEX_LEASH) {
+            if (held.observe(SUPLEX_LEASH) > SUPLEX_LEASH) {
                 letGo(true);
                 return false;
             }
+            // The slam lands once the body is down where it really is (a lagging player's client is there already).
             long slam = GRIP_TICKS + ARC_TICKS;
-            if (tick >= SUPLEX_TICKS || (tick > slam && Motion.isGrounded(target))) {
+            if (tick >= SUPLEX_TICKS || (tick > slam && held.grounded())) {
                 impact();
                 return false;
             }
             Location center = centerAt(tick);
-            Location feet = center.clone().subtract(0, halfHeight, 0);
-            steer(target, was, feet);
-            expected = feet;
+            held.steer(center.clone().subtract(0, halfHeight, 0));
             swing(center, tick);
             lastCenter = center;
             return true;
@@ -636,7 +637,7 @@ public final class FighterAbility extends Ability {
 
         private void impact() {
             unroot(owner, brace);
-            Location feet = target.getLocation();
+            Location feet = held.location();
             target.setFallDistance(0);
             clearSafety(target);
             Combat.hit(ctx(), owner, target, Math.max(0, params().num("suplex_damage")));
@@ -753,9 +754,10 @@ public final class FighterAbility extends Ability {
 
     /**
      * 파일드라이버: the owner hoists the enemy over its head, leaps straight up with it, tips it over in front at the
-     * apex and drives both down, the enemy first. Both bodies are steered by velocity along a planned path, so walls
-     * and ceilings stop them like any movement. The leap is lowered under a ceiling, the drive spot avoids walls,
-     * hazards, the void and the arena border, and the takeoff itself is always above ground.
+     * apex and drives both down, the enemy first. Both bodies are steered by velocity along a planned path from where
+     * they are reckoned to be (see {@link Reckoning}), so walls and ceilings stop them like any movement and lagging
+     * players neither overshoot the leap nor swing off the path. The leap is lowered under a ceiling, the drive spot
+     * avoids walls, hazards, the void and the arena border, and the takeoff itself is always above ground.
      *
      * <p>The held enemy is silenced while held and gets slow falling as a safety net, removed at the impact: if the
      * grip is lost in the air (the enemy dies or is carried off, the owner dies or is pushed away), it floats down
@@ -774,8 +776,8 @@ public final class FighterAbility extends Ability {
         private final @Nullable Drive drive;
         private final Location targetStart;
         private final double liftReach;
-        private @Nullable Location expectedOwner;
-        private @Nullable Location expectedTarget;
+        private final Reckoning ownerBody;
+        private final Reckoning heldBody;
         private Location lastBody;
 
         Piledriver(Player owner, LivingEntity target) {
@@ -792,6 +794,8 @@ public final class FighterAbility extends Ability {
             this.targetStart = target.getLocation();
             double gap = owner.getWidth() / 2 + target.getWidth() / 2 + DRIVE_GAP;
             this.liftReach = Math.clamp(horizontalDistance(takeoff, targetStart), gap, 1.6);
+            this.ownerBody = new Reckoning(owner);
+            this.heldBody = new Reckoning(target);
             this.lastBody = Fx.body(target);
         }
 
@@ -801,7 +805,7 @@ public final class FighterAbility extends Ability {
                 ctx().silence(held, PILEDRIVER_TICKS);
             }
             holdSafely(target, PILEDRIVER_TICKS);
-            target.setVelocity(new Vector());
+            heldBody.send(new Vector());
             target.setFallDistance(0);
             guardLanding(owner);
             if (dashedFrom != null) {
@@ -885,21 +889,21 @@ public final class FighterAbility extends Ability {
                 release(false);
                 return false;
             }
-            if (escaped()) {
+            // Carried off, teleported or pushed away: seen far from everywhere either body was steered through lately.
+            if (heldBody.observe(ESCAPE_LEASH) > ESCAPE_LEASH || ownerBody.observe(DRIFT_LIMIT) > DRIFT_LIMIT) {
                 release(true);
                 return false;
             }
-            boolean down = drive == null ? Motion.isGrounded(owner) : Motion.isGrounded(target) || target.isInWater();
+            // The drive lands once the body hits the ground where it really is (a lagging client is there already).
+            boolean down = drive == null ? ownerBody.grounded() : heldBody.grounded() || heldBody.inWater();
             if ((tick > DRIVE_START && down) || tick >= PILEDRIVER_TICKS - 1) {
                 impact();
                 return false;
             }
             Location ownerFeet = ownerAt(tick);
             Location targetFeet = targetAt(tick, ownerFeet);
-            steer(owner, expectedOwner, ownerFeet);
-            steer(target, expectedTarget, targetFeet);
-            expectedOwner = ownerFeet;
-            expectedTarget = targetFeet;
+            ownerBody.steer(ownerFeet);
+            heldBody.steer(targetFeet);
             phaseFx(tick);
             return true;
         }
@@ -945,22 +949,11 @@ public final class FighterAbility extends Ability {
             return front;
         }
 
-        /** True when the held body (or the owner) is far from its path: carried off, teleported or pushed away. */
-        private boolean escaped() {
-            Location targetWas = expectedTarget;
-            Location ownerWas = expectedOwner;
-            if (targetWas == null || ownerWas == null) {
-                return false;
-            }
-            Location at = target.getLocation();
-            return horizontalDistance(at, targetWas) > ESCAPE_LEASH || at.distance(targetWas) > DRIFT_LIMIT
-                    || owner.getLocation().distance(ownerWas) > DRIFT_LIMIT;
-        }
-
         // -------------------------------------------------------------- outcomes
 
+        /** The drive lands where the bodies really are (a lagging player's server position still trails them). */
         private void impact() {
-            Location point = drive == null ? owner.getLocation() : target.getLocation();
+            Location point = drive == null ? ownerBody.location() : heldBody.location();
             clearSafety(target);
             target.setFallDistance(0);
             owner.setFallDistance(0);
@@ -993,7 +986,7 @@ public final class FighterAbility extends Ability {
          * behind is not safe ground inside the arena (a ledge, the void, a wall, the border).
          */
         private Vector rebound() {
-            Location feet = owner.getLocation();
+            Location feet = ownerBody.location();
             Vector back = forward.clone().multiply(-1);
             Location landing = feet.clone().add(back.clone().multiply(REBOUND_REACH));
             Location ground = groundBelow(landing.clone().add(0, 1.0, 0), REBOUND_DROP + 1.0);
@@ -1010,8 +1003,8 @@ public final class FighterAbility extends Ability {
             Vfx.cloud(ctx(), at, Particle.CLOUD, 8, 0.35, 0.03, null, true);
             Vfx.cloud(ctx(), at, Particle.DUST_COLOR_TRANSITION, 8, 0.45, 0, FADE, true);
             Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_NODAMAGE, 1.0f, 0.6f);
-            Vector velocity = owner.getVelocity();
-            owner.setVelocity(new Vector(0, Math.min(0, velocity.getY()), 0));
+            // Only the fall of the last step sent goes on (a player's velocity on the server is never read back).
+            owner.setVelocity(new Vector(0, Math.min(0, ownerBody.lastSent().getY()), 0));
             owner.setFallDistance(0);
             if (escaped) {
                 owner.sendActionBar(Text.mm("<gray>상대가 빠져나갔습니다</gray>"));
@@ -1443,18 +1436,152 @@ public final class FighterAbility extends Ability {
     // ------------------------------------------------------------------ shared mechanics
 
     /**
-     * Steers {@code entity} along a planned path to {@code next} this tick: the path's own step from where it was
-     * planned last tick ({@code planned}), plus a damped correction of how far it is off. A player's position on the
-     * server trails its client by the ping, so correcting the whole error at once would overshoot. Fall distance never
-     * builds up while held.
+     * Where a held body is. Any entity but a player is moved by the server itself, so its own position is exact. A
+     * player moves on its own client, which the server hears from only a round trip later: steering by that lagging
+     * position is a delayed correction that swings the body off its path and overshoots by blocks once the ping
+     * reaches a few ticks. A player is therefore tracked by dead reckoning (like the puppeteer's and the alien's
+     * holds): where it was grabbed plus every velocity sent to it since, each step cut short where a block would stop
+     * the client.
      */
-    private static void steer(LivingEntity entity, @Nullable Location planned, Location next) {
-        Vector current = entity.getLocation().toVector();
-        Vector velocity = planned == null ? next.toVector().subtract(current)
-                : next.toVector().subtract(planned.toVector())
-                        .add(planned.toVector().subtract(current).multiply(STEER_GAIN));
-        entity.setVelocity(Motion.clamp(velocity, MAX_SPEED));
-        entity.setFallDistance(0);
+    private static final class Reckoning {
+        /** Reckoned positions kept to compare the lagging server position with: a second of round trip. */
+        private static final int TRAIL = 20;
+        /**
+         * Share of the drift seen on the server that is taken into the reckoning per tick. The server shows the effect
+         * of a nudge only a round trip later, so it must stay small: a correction delayed by d ticks settles while its
+         * gain is below about pi / (2d + 1), and 0.05 settles up to a ping of about 1.5 s.
+         */
+        private static final double DRIFT_GAIN = 0.05;
+        private static final double MAX_NUDGE = 0.1;
+        /** Halvings that find where a step meets a block: to a few thousandths of a block. */
+        private static final int SWEEP_HALVINGS = 10;
+        private final LivingEntity body;
+        private final Vector at;
+        private final ArrayDeque<Vector> trail = new ArrayDeque<>();
+        private Vector sent = new Vector();
+
+        Reckoning(LivingEntity body) {
+            this.body = body;
+            this.at = body.getLocation().toVector();
+            trail.addLast(at.clone());
+        }
+
+        /** The velocity sent last (zero before the first). */
+        Vector lastSent() {
+            return sent.clone();
+        }
+
+        /** Where the body is: for a player, where it will be once it has followed every velocity sent so far. */
+        Vector position() {
+            if (!(body instanceof Player)) {
+                at.copy(body.getLocation().toVector());
+            }
+            return at.clone();
+        }
+
+        Location location() {
+            return position().toLocation(body.getWorld());
+        }
+
+        /** Steers the body onto {@code feet} this tick (as fast as allowed); fall distance never builds up held. */
+        void steer(Location feet) {
+            send(Motion.clamp(feet.toVector().subtract(position()), MAX_SPEED));
+            body.setFallDistance(0);
+        }
+
+        /** Sends {@code velocity} to the body; a player's reckoning moves with it, up to the first block in the way. */
+        void send(Vector velocity) {
+            body.setVelocity(velocity);
+            sent = velocity.clone();
+            if (body instanceof Player) {
+                at.add(blockedStep(velocity));
+            } else {
+                at.copy(body.getLocation().toVector()).add(velocity);
+            }
+            trail.addLast(at.clone());
+            while (trail.size() > TRAIL) {
+                trail.removeFirst();
+            }
+        }
+
+        /**
+         * How far the body (as the server sees it) is from where it should be. Anything but a player is compared with
+         * where the last velocity should have taken it. A player's server position is one of the places it was
+         * reckoned to be lately, a round trip late, so it is compared with the nearest of those; what is left within
+         * {@code trusted} blocks is real drift (a knockback, its own air control), which nudges the reckoning slowly
+         * towards it.
+         */
+        double observe(double trusted) {
+            Vector seen = body.getLocation().toVector();
+            if (!(body instanceof Player)) {
+                return seen.distance(trail.getLast());
+            }
+            Vector nearest = trail.getLast();
+            double best = Double.MAX_VALUE;
+            for (Vector place : trail) {
+                double distance = seen.distance(place);
+                if (distance < best) {
+                    best = distance;
+                    nearest = place;
+                }
+            }
+            if (best < trusted) {
+                at.add(Motion.clamp(seen.subtract(nearest).multiply(DRIFT_GAIN), MAX_NUDGE));
+            }
+            return best;
+        }
+
+        /** Whether the body stands on something where it is (a player: where it is reckoned to be). */
+        boolean grounded() {
+            if (!(body instanceof Player)) {
+                return Motion.isGrounded(body);
+            }
+            double half = body.getWidth() / 2;
+            return body.getWorld().hasCollisionsIn(new BoundingBox(at.getX() - half + 0.05, at.getY() - 0.15,
+                    at.getZ() - half + 0.05, at.getX() + half - 0.05, at.getY() - 0.01, at.getZ() + half - 0.05));
+        }
+
+        /** Whether the body is in water where it is (a player: where it is reckoned to be). */
+        boolean inWater() {
+            if (!(body instanceof Player)) {
+                return body.isInWater();
+            }
+            Block feet = body.getWorld().getBlockAt(at.getBlockX(), at.getBlockY(), at.getBlockZ());
+            return feet.getType() == Material.WATER
+                    || feet.getBlockData() instanceof Waterlogged waterlogged && waterlogged.isWaterlogged();
+        }
+
+        /** The step a client takes with {@code velocity}: like vanilla, axis by axis (y first), up to any block. */
+        private Vector blockedStep(Vector velocity) {
+            double half = body.getWidth() / 2 - 1.0E-3;
+            BoundingBox box = new BoundingBox(at.getX() - half, at.getY() + 1.0E-3, at.getZ() - half,
+                    at.getX() + half, at.getY() + body.getHeight() - 1.0E-3, at.getZ() + half);
+            double dy = sweep(box, 0, velocity.getY(), 0);
+            box.shift(0, dy, 0);
+            double dx = sweep(box, velocity.getX(), 0, 0);
+            box.shift(dx, 0, 0);
+            double dz = sweep(box, 0, 0, velocity.getZ());
+            return new Vector(dx, dy, dz);
+        }
+
+        /** How much of a move along one axis is free of blocks: the moved length along that axis. */
+        private double sweep(BoundingBox box, double x, double y, double z) {
+            World world = body.getWorld();
+            if (!world.hasCollisionsIn(box.clone().shift(x, y, z))) {
+                return x + y + z;
+            }
+            double free = 0;
+            double blocked = 1;
+            for (int i = 0; i < SWEEP_HALVINGS; i++) {
+                double half = (free + blocked) / 2;
+                if (world.hasCollisionsIn(box.clone().shift(x * half, y * half, z * half))) {
+                    blocked = half;
+                } else {
+                    free = half;
+                }
+            }
+            return (x + y + z) * free;
+        }
     }
 
     /** Slow falling as a safety net for a held body (removed with {@link #clearSafety} at the impact). */
