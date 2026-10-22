@@ -55,6 +55,12 @@ class AbilityDocsTest {
         CATEGORIES.put("기계 · 우주", List.of("mech", "astronomer", "hacker"));
         CATEGORIES.put("버섯 · 수정 · 예술", List.of("mycologist", "crystal", "painter"));
         CATEGORIES.put("사냥 · 모험", List.of("hunter", "pirate", "speedster"));
+        CATEGORIES.put("한국 설화", List.of("dokkaebi", "gumiho", "sansin", "shaman"));
+        CATEGORIES.put("신화", List.of("medusa", "cupid", "minotaur", "hydra"));
+        CATEGORIES.put("직업 2", List.of("police", "miner", "blacksmith", "gunslinger"));
+        CATEGORIES.put("야생 동물", List.of("octopus", "bear", "eagle", "hedgehog"));
+        CATEGORIES.put("정신 · 기묘", List.of("hypnotist", "puppeteer", "alien", "zombie"));
+        CATEGORIES.put("겨울 · 축제", List.of("snowman", "santa", "dj", "skater"));
     }
 
     private MatchHarness h;

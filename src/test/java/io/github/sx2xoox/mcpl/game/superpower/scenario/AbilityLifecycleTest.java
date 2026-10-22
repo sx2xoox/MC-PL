@@ -10,10 +10,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
-import io.github.sx2xoox.mcpl.game.superpower.abilities.BuiltinAbilities;
-import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
-import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
+import io.github.sx2xoox.mcpl.game.superpower.support.BuiltinIds;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.MockEntities;
@@ -69,23 +67,9 @@ class AbilityLifecycleTest {
             Map.entry("illusionist", new Expect(false, false)),
             Map.entry("gambler", new Expect(false, false)));
 
-    /** Every built-in ability (read from the registry, so new abilities are swept automatically). */
+    /** Every implemented built-in ability (read from the registry, so new abilities are swept automatically). */
     static Stream<String> abilities() {
-        return BUILTIN_IDS.stream();
-    }
-
-    private static final List<String> BUILTIN_IDS = builtinIds();
-
-    private static List<String> builtinIds() {
-        // Ability classes build block data while they initialize, which needs a (mock) server.
-        MatchHarness h = MatchHarness.flat();
-        try {
-            AbilityRegistry registry = new AbilityRegistry();
-            BuiltinAbilities.registerAll(registry);
-            return registry.all().stream().map(entry -> entry.info().id()).sorted().toList();
-        } finally {
-            h.close();
-        }
+        return BuiltinIds.implemented().stream();
     }
 
     /** A scenario for {@code id}; the illusionist's copies are allowed to spawn (see the class comment). */

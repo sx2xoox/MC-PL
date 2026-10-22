@@ -85,5 +85,29 @@ public final class BuiltinAbilities {
         registry.register(HunterAbility.INFO, HunterAbility::new);
         registry.register(PirateAbility.INFO, PirateAbility::new);
         registry.register(SpeedsterAbility.INFO, SpeedsterAbility::new);
+        registry.register(DokkaebiAbility.INFO, DokkaebiAbility::new);
+        registry.register(GumihoAbility.INFO, GumihoAbility::new);
+        registry.register(SansinAbility.INFO, SansinAbility::new);
+        registry.register(ShamanAbility.INFO, ShamanAbility::new);
+        registry.register(MedusaAbility.INFO, MedusaAbility::new);
+        registry.register(CupidAbility.INFO, CupidAbility::new);
+        registry.register(MinotaurAbility.INFO, MinotaurAbility::new);
+        registry.register(HydraAbility.INFO, HydraAbility::new);
+        registry.register(PoliceAbility.INFO, PoliceAbility::new);
+        registry.register(MinerAbility.INFO, MinerAbility::new);
+        registry.register(BlacksmithAbility.INFO, BlacksmithAbility::new);
+        registry.register(GunslingerAbility.INFO, GunslingerAbility::new);
+        registry.register(OctopusAbility.INFO, OctopusAbility::new);
+        registry.register(BearAbility.INFO, BearAbility::new);
+        registry.register(EagleAbility.INFO, EagleAbility::new);
+        registry.register(HedgehogAbility.INFO, HedgehogAbility::new);
+        registry.register(HypnotistAbility.INFO, HypnotistAbility::new);
+        registry.register(PuppeteerAbility.INFO, PuppeteerAbility::new);
+        registry.register(AlienAbility.INFO, AlienAbility::new);
+        registry.register(ZombieAbility.INFO, ZombieAbility::new);
+        registry.register(SnowmanAbility.INFO, SnowmanAbility::new);
+        registry.register(SantaAbility.INFO, SantaAbility::new);
+        registry.register(DjAbility.INFO, DjAbility::new);
+        registry.register(SkaterAbility.INFO, SkaterAbility::new);
     }
 }

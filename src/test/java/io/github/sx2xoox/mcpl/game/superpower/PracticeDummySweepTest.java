@@ -13,10 +13,9 @@ import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 
-import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
-import io.github.sx2xoox.mcpl.game.superpower.abilities.BuiltinAbilities;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchPhase;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
+import io.github.sx2xoox.mcpl.game.superpower.support.BuiltinIds;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -37,15 +36,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 class PracticeDummySweepTest {
 
     static Stream<String> abilities() {
-        // Ability classes build block data while they initialize, which needs a (mock) server.
-        MatchHarness h = MatchHarness.flat();
-        try {
-            AbilityRegistry registry = new AbilityRegistry();
-            BuiltinAbilities.registerAll(registry);
-            return registry.all().stream().map(entry -> entry.info().id()).sorted().toList().stream();
-        } finally {
-            h.close();
-        }
+        return BuiltinIds.implemented().stream();
     }
 
     @ParameterizedTest(name = "{0}")
