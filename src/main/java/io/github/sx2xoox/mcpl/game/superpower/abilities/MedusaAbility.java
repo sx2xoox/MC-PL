@@ -2,8 +2,11 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
@@ -66,15 +69,15 @@ public final class MedusaAbility extends Ability {
                             + "(같은 적은 {snake_cooldown}초마다). 독에 걸린 적은 석화가 {venom_petrify}초 더 오래갑니다.")
             .active("석화의 시선",
                     "{gaze_windup}초간 눈을 빛낸 뒤 앞쪽 {gaze_range}블록 부채꼴({gaze_angle}°)을 노려봅니다. 그 순간 나를 "
-                            + "바라보고 있던 적은 {petrify_duration}초간 돌로 굳어 움직이거나 공격하거나 능력을 쓸 수 없고, "
+                            + "바라보고 있던 적은 {petrify_duration}초간 돌로 굳어 움직이거나 근접 공격하거나 능력을 쓸 수 없고, "
                             + "석화가 풀릴 때 {petrify_damage} 피해를 입습니다. 고개를 돌린 적은 다리만 굳어 "
                             + "{glance_slow}초간 구속 II에 걸립니다.",
                     11)
             .ultimate("고르곤의 눈",
                     "{ult_duration}초간 머리 위에 고르곤의 눈을 뜹니다. 반경 {ult_radius}블록 안에서 나를 바라보는 적은 "
                             + "발끝부터 돌로 굳어 가고, 합쳐서 {stare_time}초 동안 바라본 적은 {ult_petrify}초간 석화되며 "
-                            + "풀릴 때 {ult_damage} 피해를 입습니다(적마다 한 번). 시선을 돌리면 굳어 가던 돌이 서서히 "
-                            + "풀립니다.")
+                            + "풀릴 때 {ult_damage} 피해를 입습니다(적마다 한 번). 시선을 돌리거나 눈에서 멀어지면 굳어 가던 "
+                            + "돌이 서서히 풀립니다.")
             .param("snake_damage", 1)
             .param("snake_poison", 3)
             .param("snake_cooldown", 3)
@@ -621,6 +624,12 @@ public final class MedusaAbility extends Ability {
         return true;
     }
 
+    /** True while {@code entity} is encased in one of Medusa's statues. */
+    private boolean isStatue(LivingEntity entity) {
+        Statue statue = statues.get(entity.getUniqueId());
+        return statue != null && !statue.done;
+    }
+
     /** A stone statue around a petrified enemy, from the cast until it bursts. */
     private final class Statue implements LongPredicate {
 
@@ -634,7 +643,8 @@ public final class MedusaAbility extends Ability {
             this.victim = victim;
             this.duration = duration;
             this.damage = damage;
-            this.shell = creeping != null ? creeping : new Shell(victim, duration + 16);
+            // A creeping stone the display budget could not show is replaced: the statue itself must be seen.
+            this.shell = creeping != null && creeping.shown ? creeping : new Shell(victim, duration + 16);
         }
 
         void begin() {
@@ -643,6 +653,8 @@ public final class MedusaAbility extends Ability {
             long lease = duration + 1;
             ctx().addModifier(owner, victim, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1, lease);
             ctx().addModifier(owner, victim, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1, lease);
+            // Bees, vexes and phantoms fly by their flying speed: a statue does not fly on.
+            ctx().addModifier(owner, victim, Attribute.FLYING_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1, lease);
             ctx().addModifier(owner, victim, Attribute.ATTACK_DAMAGE, -1.0, Operation.MULTIPLY_SCALAR_1, lease);
             ctx().addModifier(owner, victim, Attribute.KNOCKBACK_RESISTANCE, 1.0, Operation.ADD_NUMBER, lease);
             if (victim instanceof Player petrified) {
@@ -676,6 +688,10 @@ public final class MedusaAbility extends Ability {
             if (!Combat.isTargetable(ctx(), player(), victim)) {
                 crumble();
                 return false;
+            }
+            if (!(victim instanceof Player)) {
+                // A mob's velocity is its own (a player's server velocity is stale and left alone): the stone holds it.
+                victim.setVelocity(new Vector(0, Math.min(0, victim.getVelocity().getY()), 0));
             }
             long left = duration - tick;
             float shiver = left <= SHIVER_TICKS ? 0.03f * (1f - (float) left / SHIVER_TICKS) + 0.01f : 0f;
@@ -846,10 +862,23 @@ public final class MedusaAbility extends Ability {
 
     /** How long one viewer has stared at the gorgon, and the stone creeping up its body. */
     private static final class Stare {
+        final LivingEntity viewer;
         double amount;
         boolean stoned;
         @Nullable Shell shell;
         long lastWarning = Long.MIN_VALUE / 2;
+
+        Stare(LivingEntity viewer) {
+            this.viewer = viewer;
+        }
+
+        /** The creeping stone thaws away at once (the viewer is gone, hidden or already a statue). */
+        void dropShell() {
+            if (shell != null) {
+                shell.thawAway();
+                shell = null;
+            }
+        }
     }
 
     /**
@@ -935,16 +964,26 @@ public final class MedusaAbility extends Ability {
             return true;
         }
 
-        /** Every viewer's stare grows while it looks at Medusa and thaws while it looks away. */
+        /**
+         * Every viewer's stare grows while it looks at Medusa and thaws while it looks away. A viewer that is already a
+         * statue (her gaze) stares on only once that statue has burst, so the two never chain into one long stun.
+         */
         private void watch(Location spot, long tick) {
             Location gorgonEyes = owner.getEyeLocation();
             double step = 1.0 / stareTicks;
+            Set<UUID> watched = new HashSet<>();
             for (LivingEntity enemy : ctx().enemiesNear(owner, gorgonEyes, radius)) {
                 if (!seen(owner, enemy)) {
                     continue;
                 }
-                Stare stare = stares.computeIfAbsent(enemy.getUniqueId(), id -> new Stare());
+                watched.add(enemy.getUniqueId());
+                Stare stare = stares.computeIfAbsent(enemy.getUniqueId(), id -> new Stare(enemy));
                 if (stare.stoned) {
+                    continue;
+                }
+                if (isStatue(enemy)) {
+                    // Stone already: its creeping stone gives way to the statue, and the stare waits.
+                    stare.dropShell();
                     continue;
                 }
                 Location eyes = enemy.getEyeLocation();
@@ -957,11 +996,11 @@ public final class MedusaAbility extends Ability {
                     }
                     warn(enemy, stare, tick);
                 }
-                creep(enemy, stare);
+                creep(enemy, stare, tick);
                 if (stare.amount >= 1 - 1.0E-9) {
-                    stare.stoned = true;
                     Shell shell = stare.shell;
                     stare.shell = null;
+                    stare.stoned = true;
                     if (petrify(enemy, params().ticks("ult_petrify"), params().num("ult_damage"), shell)) {
                         stoned++;
                         Vfx.line(ctx(), spot, Fx.body(enemy), 3, Particle.DUST_COLOR_TRANSITION, GOLD_GLOW, true);
@@ -973,18 +1012,53 @@ public final class MedusaAbility extends Ability {
                     }
                 }
             }
+            unwatched(watched, step, tick);
         }
 
-        /** The stone creeping up a staring viewer, shown as a statue forming from the feet. */
-        private void creep(LivingEntity enemy, Stare stare) {
-            if (stare.amount <= 0) {
-                if (stare.shell != null) {
-                    stare.shell.thawAway();
-                    stare.shell = null;
+        /**
+         * The viewers the eye no longer watches: out of its reach the stone thaws as it walks away (and goes with it);
+         * a viewer that died, left or became hidden loses its stone at once, so nothing is left floating where it
+         * stood or marks where it vanished.
+         */
+        private void unwatched(Set<UUID> watched, double step, long tick) {
+            for (Iterator<Stare> it = stares.values().iterator(); it.hasNext(); ) {
+                Stare stare = it.next();
+                LivingEntity viewer = stare.viewer;
+                if (stare.stoned || watched.contains(viewer.getUniqueId())) {
+                    continue;
                 }
+                boolean gone = !Combat.isTargetable(ctx(), owner, viewer)
+                        || !viewer.getWorld().equals(owner.getWorld());
+                if (gone) {
+                    stare.dropShell();
+                    it.remove();
+                    continue;
+                }
+                if (isStatue(viewer)) {
+                    stare.dropShell();
+                    continue;
+                }
+                stare.amount = Math.max(0, stare.amount - step * THAW_RATE);
+                if (!seen(owner, viewer)) {
+                    stare.dropShell();
+                    continue;
+                }
+                creep(viewer, stare, tick);
+            }
+        }
+
+        /**
+         * The stone creeping up a staring viewer, shown as a statue forming from the feet. When the display budget was
+         * spent, the stone is shown as soon as there is room again, and until then as a ring of grit rising up the
+         * body, so every viewer sees its warning.
+         */
+        private void creep(LivingEntity enemy, Stare stare, long tick) {
+            if (stare.amount <= 0) {
+                stare.dropShell();
                 return;
             }
-            if (stare.shell == null) {
+            if (stare.shell == null || !stare.shell.shown && reserve(STATUE.length)) {
+                stare.dropShell();
                 // Long enough to become the statue of a stare completed at the very end of the eye.
                 stare.shell = new Shell(enemy, life + 2 * params().ticks("ult_petrify")
                         + params().ticks("venom_petrify") + 30);
@@ -993,9 +1067,15 @@ public final class MedusaAbility extends Ability {
             // Stops short of the head: the last part forms only when the statue is complete.
             shell.progress = (float) (stare.amount * 0.82);
             shell.follow(0);
-            if (shell.shown && ThreadLocalRandom.current().nextInt(5) == 0) {
-                enemy.getWorld().spawnParticle(Particle.FALLING_DUST, enemy.getLocation().add(0, enemy.getHeight()
-                        * stare.amount, 0), 1, 0.2, 0.05, 0.2, 0, STONE.createBlockData());
+            Location rising = enemy.getLocation().add(0, enemy.getHeight() * stare.amount * 0.82, 0);
+            if (shell.shown) {
+                if (ThreadLocalRandom.current().nextInt(5) == 0) {
+                    enemy.getWorld().spawnParticle(Particle.FALLING_DUST, rising, 1, 0.2, 0.05, 0.2, 0,
+                            STONE.createBlockData());
+                }
+            } else if (tick % 3 == 0) {
+                Vfx.ring(ctx(), rising, Math.max(0.3, enemy.getWidth() * 0.7), 8, tick * 0.4, Particle.DUST,
+                        STONE_DUST, false);
             }
         }
 
@@ -1027,10 +1107,7 @@ public final class MedusaAbility extends Ability {
                 }
             }
             for (Stare stare : stares.values()) {
-                if (stare.shell != null) {
-                    stare.shell.thawAway();
-                    stare.shell = null;
-                }
+                stare.dropShell();
             }
             stares.clear();
             Location spot = eyeSpot(life);

@@ -67,19 +67,20 @@ public final class CupidAbility extends Ability {
             .color(TextColor.color(0xFF7EB6))
             .difficulty(2)
             .passive("사랑의 날개",
-                    "공중에 잠시 떠 있으면 날개를 펴고 천천히 내려오며 낙하 피해를 받지 않습니다. 공중에서 웅크리면 "
-                            + "날갯짓으로 {flap_height}블록 더 날아오릅니다({flap_cooldown}초마다). 공중에서 쏜 사랑의 화살은 "
-                            + "피해가 {air_bonus}% 늘고 매혹이 {air_charm}초 길어집니다.")
+                    "점프보다 높은 곳에서 떨어지면 날개를 펴고 천천히 내려오며 낙하 피해를 받지 않습니다. 공중에서 "
+                            + "웅크리면 날갯짓으로 {flap_height}블록 더 날아올라 날개를 폅니다({flap_cooldown}초마다). 날개를 "
+                            + "편 채 쏜 사랑의 화살은 피해가 {air_bonus}% 늘고 매혹이 {air_charm}초 길어집니다.")
             .active("사랑의 화살",
                     "하트 화살을 쏩니다({arrow_range}블록). 처음 맞은 적은 {arrow_damage} 피해를 입고 {charm_duration}초간 "
                             + "매혹되어 나에게 천천히 걸어오며, 그동안 나를 공격해도 피해를 주지 못합니다.",
                     9)
             .ultimate("붉은 실",
-                    "조준한 적({thread_range}블록 이내)과 그 적에게서 가장 가까운 다른 적({thread_link}블록 이내)을 "
-                            + "붉은 실로 묶습니다. {thread_delay}초 뒤 실이 당겨져 두 적이 서로에게 끌려가 부딪히고, 하트가 "
-                            + "터지며 둘 다 {ult_damage} 피해를 입고 반경 {burst_radius}블록의 다른 적은 {burst_damage} 피해를 "
-                            + "입습니다. 휘말린 적은 모두 {ult_slow}초간 구속 II에 걸립니다. 묶을 다른 적이 없으면 실이 나와 "
-                            + "이어져 그 적이 내 앞으로 끌려옵니다.")
+                    "조준한 적({thread_range}블록 이내)과 그 적에게서 가장 가까운 다른 적({thread_link}블록 이내, 벽 너머 "
+                            + "제외)을 붉은 실로 묶습니다. {thread_delay}초 뒤 실이 당겨져 두 적이 서로에게 끌려가 부딪히고, "
+                            + "하트가 터지며 둘 다 {ult_damage} 피해를 입고 반경 {burst_radius}블록의 다른 적은 "
+                            + "{burst_damage} 피해를 입습니다. 휘말린 적은 모두 {ult_slow}초간 구속 II에 걸리고 튕겨 나갑니다. "
+                            + "묶을 다른 적이 없으면 실이 나와 이어져, 그 적이 내 앞으로 끌려와 똑같이 부딪힙니다. 벽에 막혀 "
+                            + "만나지 못하면 실이 끊어집니다.")
             .param("flap_height", 3)
             .param("flap_cooldown", 5)
             .param("air_bonus", 40)
@@ -127,8 +128,11 @@ public final class CupidAbility extends Ability {
     private static final double REST_FALL = -Motion.GRAVITY * Motion.DRAG;
 
     // passive: wings
-    /** Ticks in the air before the wings open and the glide begins (a plain jump stays a plain jump). */
-    private static final int GLIDE_DELAY = 6;
+    /**
+     * The wings open once Cupid has fallen this far below the top of her flight: further than a plain jump ever
+     * drops (1.25 blocks), so a hop stays a hop (and keeps its critical hit), well short of a damaging fall.
+     */
+    private static final double GLIDE_DROP = 1.6;
     private static final int SLOW_FALL_TICKS = 10;
     /** Elevation (degrees above outwards) of the three feathers of a wing, relative to its pose. */
     private static final float[] FEATHER_TILT = {28f, 4f, -20f};
@@ -149,6 +153,7 @@ public final class CupidAbility extends Ability {
     /** A charmed enemy stops this far from Cupid, gazing at her. */
     private static final double CHARM_STOP = 1.8;
     private static final double CHARM_SPEED = 0.2;
+    private static final long MAX_LAG_TICKS = 8;
 
     // ultimate: red string
     private static final int PULL_MAX_TICKS = 24;
@@ -157,6 +162,8 @@ public final class CupidAbility extends Ability {
     private static final double COLLIDE_DISTANCE = 1.3;
     /** A lone enemy tied to Cupid is reeled to this spot in front of her. */
     private static final double SOLO_STOP = 2.2;
+    /** A lone enemy's reckoned stride counts as arrived this close to its spot in front of Cupid. */
+    private static final double SOLO_ARRIVE = 0.4;
     private static final double BOUNCE_SPEED = 0.55;
     private static final double BOUNCE_LIFT = 0.35;
     private static final float CORD_WIDTH = 0.05f;
@@ -168,20 +175,32 @@ public final class CupidAbility extends Ability {
     private final LandingGuard landing = new LandingGuard();
     private final Map<UUID, Charm> charmed = new HashMap<>();
     private int airTicks;
+    /** The wings are open: after a flap, or once a fall has gone deeper than a jump. */
+    private boolean gliding;
+    /** The highest point of the current time in the air. */
+    private double peakY;
     private boolean wasSneaking;
     private long flapReady = Long.MIN_VALUE / 2;
     private long flapStart = Long.MIN_VALUE / 2;
     private double flutter;
 
-    /** One charmed enemy: until when, and the heart over its head. */
+    /**
+     * One charmed enemy: until when, the heart over its head, and where its stroll has taken it by the steps sent so
+     * far (dead reckoning, see {@code MagnetAbility}: the server sees a player a round trip late).
+     */
     private static final class Charm {
         final LivingEntity victim;
         long until;
         @Nullable TextDisplay heart;
         boolean hidden;
+        double x;
+        double z;
 
         Charm(LivingEntity victim) {
             this.victim = victim;
+            Location at = victim.getLocation();
+            this.x = at.getX();
+            this.z = at.getZ();
         }
     }
 
@@ -226,11 +245,21 @@ public final class CupidAbility extends Ability {
         long now = ctx().currentTick();
         landing.update(owner, now);
         boolean grounded = Motion.isGrounded(owner) || owner.isInWater() || owner.isFlying();
-        airTicks = grounded ? 0 : airTicks + 1;
-        boolean gliding = airTicks >= GLIDE_DELAY;
+        double y = owner.getLocation().getY();
+        if (grounded) {
+            airTicks = 0;
+            gliding = false;
+        } else {
+            peakY = airTicks == 0 ? y : Math.max(peakY, y);
+            airTicks++;
+            if (peakY - y >= GLIDE_DROP) {
+                gliding = true;
+            }
+        }
 
         boolean sneaking = owner.isSneaking();
-        if (sneaking && !wasSneaking && airTicks >= 2 && now >= flapReady) {
+        // A silenced (petrified, stunned...) Cupid cannot beat her wings.
+        if (sneaking && !wasSneaking && airTicks >= 2 && now >= flapReady && !ctx().isSilenced(owner)) {
             flap(owner, now);
         }
         wasSneaking = sneaking;
@@ -345,7 +374,7 @@ public final class CupidAbility extends Ability {
         owner.setFallDistance(0);
         removeOwnSlowFalling(owner);
         landing.arm(now, FLAP_GUARD_TICKS);
-        airTicks = GLIDE_DELAY; // the wings stay open after the beat
+        gliding = true; // the wings stay open after the beat
 
         Location back = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
         World world = back.getWorld();
@@ -370,7 +399,7 @@ public final class CupidAbility extends Ability {
         if (landing.absorb(event, now)) {
             return;
         }
-        if (Combat.isFall(event) && airTicks >= GLIDE_DELAY) {
+        if (Combat.isFall(event) && gliding) {
             // Gliding wings never land hard.
             event.setCancelled(true);
             return;
@@ -412,8 +441,14 @@ public final class CupidAbility extends Ability {
         }
     }
 
-    private boolean airborne(Player owner) {
-        return !(Motion.isGrounded(owner) || owner.isInWater());
+    /** The wings are open (a flap, or a fall deeper than a jump): the shot is an air shot. */
+    private boolean winged(Player owner) {
+        return gliding && !(Motion.isGrounded(owner) || owner.isInWater());
+    }
+
+    /** Ticks the server sees a player's movement late: one round trip, capped. */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / 50.0));
     }
 
     // ------------------------------------------------------------------ active: love arrow
@@ -421,7 +456,7 @@ public final class CupidAbility extends Ability {
     @Override
     public ActivationResult onActive() {
         Player owner = player();
-        boolean aloft = airborne(owner);
+        boolean aloft = winged(owner);
         new Arrow(owner, aloft).loose();
         return ActivationResult.success();
     }
@@ -680,7 +715,7 @@ public final class CupidAbility extends Ability {
                 it.remove();
                 continue;
             }
-            stroll(owner, victim);
+            stroll(owner, charm);
             boolean hidden = !seen(owner, victim);
             TextDisplay heart = charm.heart;
             if (heart != null && heart.isValid()) {
@@ -706,20 +741,37 @@ public final class CupidAbility extends Ability {
 
     /**
      * One step of the charmed stroll towards Cupid: a fresh walking velocity, only while the victim is on the ground (a
-     * player's server velocity is stale, so its jumps and falls are left alone), slowing down as it arrives.
+     * player's server velocity is stale, so its jumps and falls are left alone), slowing down as it arrives. Steered by
+     * where the steps sent so far have taken it, not by its late server position, so a lagging player stops beside
+     * Cupid instead of walking on into her.
      */
-    private void stroll(Player owner, LivingEntity victim) {
+    private void stroll(Player owner, Charm charm) {
+        LivingEntity victim = charm.victim;
+        Location actual = victim.getLocation();
+        double lag = victim instanceof Player lover ? lagTicks(lover) : 0;
+        // Beyond a round trip of steps the reckoning has lost it (a wall stopped it, it was knocked away).
+        double slack = CHARM_SPEED * (lag + 2) + 0.5;
+        if (Math.hypot(actual.getX() - charm.x, actual.getZ() - charm.z) > slack) {
+            charm.x = actual.getX();
+            charm.z = actual.getZ();
+        }
         if (!(Motion.isGrounded(victim) || victim.isInWater())) {
+            charm.x = actual.getX();
+            charm.z = actual.getZ();
             return;
         }
-        Vector to = owner.getLocation().toVector().subtract(victim.getLocation().toVector()).setY(0);
+        Location feet = owner.getLocation();
+        Vector to = new Vector(feet.getX() - charm.x, 0, feet.getZ() - charm.z);
         double distance = to.length();
         if (distance <= CHARM_STOP) {
             return;
         }
         double speed = Math.min(CHARM_SPEED, (distance - CHARM_STOP) * 0.5);
         Vector velocity = Motion.horizontal(to).multiply(speed).setY(victim instanceof Player ? REST_FALL : 0);
-        victim.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+        Vector sent = Motion.clamp(velocity, MAX_SPEED);
+        charm.x += sent.getX();
+        charm.z += sent.getZ();
+        victim.setVelocity(sent);
     }
 
     /** The charm wears off: the heart cracks and drifts away. */
@@ -750,9 +802,10 @@ public final class CupidAbility extends Ability {
         if (first == null || !seen(owner, first)) {
             return ActivationResult.fail("조준한 곳에 적이 없습니다");
         }
+        // The nearest other enemy the string can reach: never one behind a wall.
         LivingEntity second = null;
         for (LivingEntity enemy : ctx().enemiesNear(owner, first.getLocation(), params().num("thread_link"))) {
-            if (!enemy.equals(first) && seen(owner, enemy)) {
+            if (!enemy.equals(first) && seen(owner, enemy) && inSight(first, enemy)) {
                 second = enemy;
                 break;
             }
@@ -761,14 +814,22 @@ public final class CupidAbility extends Ability {
         return ActivationResult.success();
     }
 
+    /** True if nothing solid stands between the two bodies (chest to chest or eye to eye). */
+    private static boolean inSight(LivingEntity a, LivingEntity b) {
+        return Spots.clearPath(Fx.body(a), Fx.body(b)) || Spots.clearPath(a.getEyeLocation(), b.getEyeLocation());
+    }
+
     /** Dead-reckoned pull of one tied enemy (see {@code MagnetAbility}): where it will be after the pulls sent. */
     private static final class Reel {
         final LivingEntity body;
+        /** Ticks the server sees this body late (its ping for a player). */
+        final long lag;
         double x;
         double z;
 
         Reel(LivingEntity body) {
             this.body = body;
+            this.lag = body instanceof Player player ? lagTicks(player) : 0;
             Location at = body.getLocation();
             this.x = at.getX();
             this.z = at.getZ();
@@ -780,11 +841,26 @@ public final class CupidAbility extends Ability {
             at.setZ(z);
             return at;
         }
+
+        /** Beyond a round trip of pulls the reckoning has lost the body (a wall stopped it): start over from it. */
+        void reconcile() {
+            Location actual = body.getLocation();
+            if (Math.hypot(actual.getX() - x, actual.getZ() - z) > PULL_SPEED * (lag + 2) + 0.5) {
+                x = actual.getX();
+                z = actual.getZ();
+            }
+        }
+
+        /** How far the server may still see this body behind where the pulls have taken it. */
+        double contactSlack() {
+            return PULL_SPEED * lag + 0.4;
+        }
     }
 
     /**
      * The red string: tied, trembling for {@code thread_delay}, then reeling both ends in until they collide (or, for
-     * a lone enemy, until it stands in front of Cupid), where hearts burst.
+     * a lone enemy, until it stands in front of Cupid), where hearts burst. They collide only when the server sees
+     * them meet with nothing between them; a pair a wall keeps apart never meets, and the string snaps.
      */
     private final class Fate implements LongPredicate {
 
@@ -824,7 +900,8 @@ public final class CupidAbility extends Ability {
             Fx.sound(a, Sound.BLOCK_NOTE_BLOCK_HARP, 1.0f, 0.8f);
             owner.sendActionBar(Text.mm("<" + RED_TAG + "><b>❤ 붉은 실</b></" + RED_TAG + "> <gray>"
                     + (second != null ? "운명의 두 사람을 묶었습니다" : "그 적과 나를 이었습니다") + "</gray>"));
-            Loop.repeat(ctx(), owner, 1, 1, delay + PULL_MAX_TICKS, this, this::collide);
+            long lag = Math.max(first.lag, second != null ? second.lag : lagTicks(owner));
+            Loop.repeat(ctx(), owner, 1, 1, delay + PULL_MAX_TICKS + lag, this, this::snap);
         }
 
         /** The end the first enemy is tied to: the second enemy, or Cupid herself. */
@@ -855,28 +932,51 @@ public final class CupidAbility extends Ability {
             return Combat.isTargetable(ctx(), owner, entity) && entity.getWorld().equals(owner.getWorld());
         }
 
-        /** Pulls both ends towards their middle (or the lone end towards Cupid). False once they meet. */
+        /**
+         * Pulls both ends towards their middle (or the lone end towards Cupid). Once the pulls sent have brought them
+         * together it waits for the server to see them meet, then they collide (false: done).
+         */
         private boolean reel(long run) {
+            first.reconcile();
             if (second == null) {
                 Location spot = soloSpot();
                 Vector to = spot.toVector().subtract(first.predicted().toVector()).setY(0);
-                if (to.length() <= 0.4 || run >= PULL_MAX_TICKS - 1) {
+                if (to.length() > SOLO_ARRIVE && run < PULL_MAX_TICKS) {
+                    steer(first, to);
+                    return true;
+                }
+                Location actual = first.body.getLocation();
+                if (Math.hypot(actual.getX() - spot.getX(), actual.getZ() - spot.getZ())
+                        <= SOLO_ARRIVE + first.contactSlack() && inSight(owner, first.body)) {
+                    collide();
                     return false;
                 }
-                steer(first, to);
                 return true;
             }
+            second.reconcile();
             Location a = first.predicted();
             Location b = second.predicted();
             Vector between = b.toVector().subtract(a.toVector()).setY(0);
-            if (between.length() <= COLLIDE_DISTANCE || run >= PULL_MAX_TICKS - 1) {
+            if (between.length() > COLLIDE_DISTANCE) {
+                if (run < PULL_MAX_TICKS) {
+                    // Each is drawn to the middle, so they meet halfway.
+                    Vector half = between.multiply(0.5);
+                    steer(first, half.clone().add(Motion.horizontal(half).multiply(COLLIDE_DISTANCE * -0.45)));
+                    Vector back = half.clone().multiply(-1);
+                    steer(second, back.clone().add(Motion.horizontal(back).multiply(COLLIDE_DISTANCE * -0.45)));
+                }
+                return true;
+            }
+            Location actualA = first.body.getLocation();
+            Location actualB = second.body.getLocation();
+            boolean met = Math.hypot(actualA.getX() - actualB.getX(), actualA.getZ() - actualB.getZ())
+                    <= COLLIDE_DISTANCE + first.contactSlack() + second.contactSlack()
+                    && Math.abs(actualA.getY() - actualB.getY()) <= 1.5
+                    && inSight(first.body, second.body);
+            if (met) {
+                collide();
                 return false;
             }
-            // Each is drawn to the middle, so they meet halfway.
-            Vector half = between.multiply(0.5);
-            steer(first, half.clone().add(Motion.horizontal(half).multiply(COLLIDE_DISTANCE * -0.45)));
-            Vector back = half.clone().multiply(-1);
-            steer(second, back.clone().add(Motion.horizontal(back).multiply(COLLIDE_DISTANCE * -0.45)));
             return true;
         }
 
@@ -889,7 +989,10 @@ public final class CupidAbility extends Ability {
             double speed = Math.min(PULL_SPEED, Math.max(0.25, distance * 0.5));
             Vector velocity = Motion.horizontal(to).multiply(Math.min(speed, distance));
             boolean grounded = Motion.isGrounded(reel.body) || reel.body.isInWater();
-            velocity.setY(grounded ? 0.18 : 0.0);
+            // A hop over bumps on the ground; in the air a player falls on (its server velocity is stale, so its fall
+            // speed is not read back), a mob keeps its own.
+            double fall = reel.body instanceof Player ? REST_FALL : Math.min(0, reel.body.getVelocity().getY());
+            velocity.setY(grounded ? 0.18 : fall);
             Vector sent = Motion.clamp(velocity, MAX_SPEED);
             reel.x += sent.getX();
             reel.z += sent.getZ();
@@ -974,7 +1077,7 @@ public final class CupidAbility extends Ability {
                 Combat.hit(ctx(), owner, tied, damage);
             }
             for (LivingEntity enemy : ctx().enemiesNear(owner, middle, radius)) {
-                if (!struck.contains(enemy)) {
+                if (!struck.contains(enemy) && Spots.clearPath(middle, Fx.body(enemy))) {
                     Combat.hit(ctx(), owner, enemy, splash);
                     struck.add(enemy);
                 }
@@ -1007,12 +1110,13 @@ public final class CupidAbility extends Ability {
                     + struck.size() + "명</white>"));
         }
 
-        /** The string snaps when an end is gone. */
+        /** The string snaps when an end is gone or the two never met (a wall kept them apart). */
         private void snap() {
             if (finished) {
                 return;
             }
             finished = true;
+            owner.sendActionBar(Text.mm("<" + RED_TAG + ">❤ 붉은 실</" + RED_TAG + "> <gray>실이 끊어졌습니다</gray>"));
             BlockDisplay line = cord;
             if (line != null && line.isValid()) {
                 Vfx.cloud(ctx(), line.getLocation(), Particle.DUST, 6, 0.2, 0, RED_DUST, false);

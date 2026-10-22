@@ -73,8 +73,8 @@ public final class MinotaurAbility extends Ability {
                             + "약 {gore_knockback}블록 날려 보냅니다.")
             .active("붉은 천",
                     "조준한 적({cloth_range}블록 이내)에게 붉은 천을 흔들어 도발합니다. 그 적은 최대 {taunt_duration}초간 "
-                            + "투우처럼 나에게 돌진하고, 나와 부딪히거나 나를 공격하는 순간 뿔에 받혀 {counter_damage} 피해를 "
-                            + "입고 높이 떠올라 날아갑니다. 도발 중 그 적에게 받는 피해는 {counter_block}% 줄어듭니다.",
+                            + "투우처럼 나에게 돌진하고, 나와 부딪히거나 나를 근접 공격하는 순간 뿔에 받혀 {counter_damage} "
+                            + "피해를 입고 높이 떠올라 날아갑니다. 도발 중 그 적에게 받는 피해는 {counter_block}% 줄어듭니다.",
                     10)
             .ultimate("미궁",
                     "주위 반경 {maze_radius}블록에 {maze_duration}초간 돌벽 미궁이 솟아 적을 갈라놓습니다(미궁에는 늘 "
@@ -129,9 +129,12 @@ public final class MinotaurAbility extends Ability {
     // passive: bull
     private static final long SNORT_PERIOD = 12;
     private static final long HOOF_PERIOD = 4;
-    /** Horizontal speed of the gore's throw per block of {@code gore_knockback}. */
-    private static final double GORE_SPEED_PER_BLOCK = 0.2;
     private static final double GORE_LIFT = 0.42;
+    /** Ticks a gored enemy flies before it lands (vanilla air drag 0.91, see {@code GoatAbility}). */
+    private static final int GORE_AIR_TICKS = 11;
+    private static final double AIR_DRAG = 0.91;
+    /** The heated horn tips while the charge is up (a lit block, never an outline: that shows through walls). */
+    private static final Material HOT_TIP = Material.REDSTONE_BLOCK;
 
     // active: red cloth
     private static final double TAUNT_SPEED = 0.6;
@@ -139,6 +142,8 @@ public final class MinotaurAbility extends Ability {
     private static final double CONTACT_DISTANCE = 1.7;
     private static final double TOSS_HEIGHT = 2.5;
     private static final double TOSS_PUSH = 0.6;
+    /** A provoked blow is countered only from this close (horizontally, plus the attacker's ping): melee reach. */
+    private static final double COUNTER_REACH = 4.0;
     private static final int CLOTH_FADE_TICKS = 5;
 
     // ultimate: labyrinth
@@ -156,6 +161,10 @@ public final class MinotaurAbility extends Ability {
     private static final double STALL_EPSILON = 0.12;
     private static final int STALL_LIMIT = 3;
     private static final long MAX_LAG_TICKS = 8;
+    /** Bodies keep this much room from a rising wall, plus what their client may be ahead of the server. */
+    private static final double BODY_MARGIN = 0.05;
+    private static final double LAG_MARGIN_PER_TICK = 0.3;
+    private static final double MAX_LAG_MARGIN = 1.2;
     /** Walls closer than this to the rush's path (horizontally) are smashed. */
     private static final double SMASH_REACH = 1.25;
     private static final double GORE_AHEAD = 1.2;
@@ -169,7 +178,7 @@ public final class MinotaurAbility extends Ability {
     private final LandingGuard landing = new LandingGuard();
     private int sprintTicks;
     private long chargedUntil = Long.MIN_VALUE / 2;
-    private boolean glowing;
+    private boolean heated;
     private @Nullable Taunt taunt;
     private @Nullable Labyrinth maze;
     private boolean rushing;
@@ -231,17 +240,18 @@ public final class MinotaurAbility extends Ability {
         if (charged && !was) {
             chargeUp(owner);
         }
-        if (charged != glowing) {
-            glowing = charged;
-            for (BlockDisplay horn : horns) {
-                if (horn != null && horn.isValid()) {
-                    if (charged) {
-                        Displays.outline(horn, BLOOD);
-                    } else {
-                        horn.setGlowing(false);
-                    }
+        if (charged != heated) {
+            heated = charged;
+            // The tips heat up red (no outline: it would show the minotaur through walls).
+            for (int i = 1; i < horns.length; i += 2) {
+                BlockDisplay tip = horns[i];
+                if (tip != null && tip.isValid()) {
+                    tip.setBlock((charged ? HOT_TIP : HORN_TIP).createBlockData());
                 }
             }
+        }
+        if (charged && tick % 4 == 0) {
+            hornEmbers(owner);
         }
         poseHorns(owner, tick, charged);
         if (charged && tick % SNORT_PERIOD == 0) {
@@ -290,6 +300,16 @@ public final class MinotaurAbility extends Ability {
         Vector3f from = head.transform(new Vector3f(start).mul(grow));
         Vector3f to = head.transform(new Vector3f(along).mul(grow));
         return beam(from, to, (tip ? 0.07f : 0.1f) * Math.max(0.05f, grow));
+    }
+
+    /** Embers off the heated horn tips (seen by the others: the horns are hidden from the minotaur itself). */
+    private void hornEmbers(Player owner) {
+        Location eye = owner.getEyeLocation();
+        Vector forward = Motion.horizontalFacing(eye);
+        Vector side = new Vector(-forward.getZ(), 0, forward.getX()).multiply(0.5);
+        Location top = eye.clone().add(0, 0.38, 0).add(forward.multiply(0.1));
+        int which = ThreadLocalRandom.current().nextBoolean() ? 1 : -1;
+        Vfx.dot(top.clone().add(side.multiply(which)), Particle.DUST_COLOR_TRANSITION, EMBER, false);
     }
 
     /** The charge is up: a snort, a stamp and the horns flare red. */
@@ -353,7 +373,9 @@ public final class MinotaurAbility extends Ability {
         if (away.lengthSquared() < 1.0E-6) {
             away = Motion.horizontalFacing(owner.getLocation());
         }
-        double speed = Math.max(0, params().num("gore_knockback")) * GORE_SPEED_PER_BLOCK;
+        // The speed that carries it gore_knockback blocks through the air (drag 0.91 a tick) before it lands.
+        double distance = Math.max(0, params().num("gore_knockback"));
+        double speed = distance * (1 - AIR_DRAG) / (1 - Math.pow(AIR_DRAG, GORE_AIR_TICKS));
         Vector throwing = away.multiply(speed).setY(GORE_LIFT);
         // Vanilla knockback is applied after this event; throw on the next tick so it is not overwritten.
         ctx().runLater(owner, 1, () -> {
@@ -421,10 +443,13 @@ public final class MinotaurAbility extends Ability {
         if (!damager.getUniqueId().equals(id) && (attacker == null || !attacker.getUniqueId().equals(id))) {
             return;
         }
-        // The provoked bull walked right onto the horns: the blow is blunted and the counter comes at once.
+        // Every blow of the provoked bull is blunted...
         double block = Math.clamp(params().num("counter_block") / 100.0, 0.0, 1.0);
         event.setDamage(event.getDamage() * (1 - block));
-        ctx().runLater(player(), 1, () -> current.counter());
+        // ...and one struck at arm's length walks it right onto the horns: the counter comes at once.
+        if (current.inReach(damager, event.getCause())) {
+            ctx().runLater(player(), 1, () -> current.counter());
+        }
     }
 
     // ------------------------------------------------------------------ active: red cloth / labyrinth rush
@@ -571,6 +596,17 @@ public final class MinotaurAbility extends Ability {
                 }
             }
             return true;
+        }
+
+        /** A melee blow of the provoked enemy itself, struck within reach and with nothing in between. */
+        boolean inReach(Entity damager, DamageCause cause) {
+            if (!damager.equals(target)
+                    || cause != DamageCause.ENTITY_ATTACK && cause != DamageCause.ENTITY_SWEEP_ATTACK) {
+                return false;
+            }
+            double lag = target instanceof Player lagging ? lagTicks(lagging) : 0;
+            return horizontal(owner.getLocation(), target.getLocation()) <= COUNTER_REACH + TAUNT_SPEED * lag
+                    && Spots.clearPath(Fx.body(owner), Fx.body(target));
         }
 
         private void waveCloth(long tick) {
@@ -1019,6 +1055,9 @@ public final class MinotaurAbility extends Ability {
             if (tick == TRACE_TICKS + duration - CRUMBLE_LEAD) {
                 crumble();
             }
+            if (tick >= TRACE_TICKS) {
+                freeTrapped();
+            }
             return true;
         }
 
@@ -1038,12 +1077,7 @@ public final class MinotaurAbility extends Ability {
             World world = center.getWorld();
             long expire = Math.max(1, endTick - ctx().currentTick());
             double reach = ring * RING_SPACING + 3;
-            List<BoundingBox> bodies = new ArrayList<>();
-            for (Entity entity : world.getNearbyEntities(center, reach, reach, reach)) {
-                if (entity instanceof LivingEntity living && living.isValid() && !living.isDead()) {
-                    bodies.add(living.getBoundingBox());
-                }
-            }
+            List<BoundingBox> bodies = bodiesNear(reach);
             int placed = 0;
             for (Cell cell : plan) {
                 if (cell.ring() != ring) {
@@ -1075,9 +1109,54 @@ public final class MinotaurAbility extends Ability {
             }
         }
 
+        /**
+         * The bodies around: a player's grown by how far its client may already be ahead of the server (its ping's
+         * worth of running), so no wall rises where a player really stands.
+         */
+        private List<BoundingBox> bodiesNear(double reach) {
+            List<BoundingBox> bodies = new ArrayList<>();
+            for (Entity entity : center.getWorld().getNearbyEntities(center, reach, reach, reach)) {
+                if (entity instanceof LivingEntity living && living.isValid() && !living.isDead()) {
+                    double margin = BODY_MARGIN + (living instanceof Player player
+                            ? Math.min(MAX_LAG_MARGIN, LAG_MARGIN_PER_TICK * lagTicks(player)) : 0);
+                    BoundingBox box = living.getBoundingBox();
+                    bodies.add(box.clone().expand(margin, 0, margin));
+                }
+            }
+            return bodies;
+        }
+
+        /**
+         * Opens every wall block someone stands in (a client that was ahead of the server when the ring rose):
+         * nobody is ever stuck in a wall to suffocate.
+         */
+        private void freeTrapped() {
+            if (walls.isEmpty()) {
+                return;
+            }
+            double reach = rings * RING_SPACING + 3;
+            for (Entity entity : center.getWorld().getNearbyEntities(center, reach, reach, reach)) {
+                if (!(entity instanceof LivingEntity living) || !living.isValid() || living.isDead()) {
+                    continue;
+                }
+                BoundingBox box = living.getBoundingBox();
+                for (int x = (int) Math.floor(box.getMinX()); x <= (int) Math.floor(box.getMaxX() - 1.0E-7); x++) {
+                    for (int y = (int) Math.floor(box.getMinY()); y <= (int) Math.floor(box.getMaxY() - 1.0E-7); y++) {
+                        for (int z = (int) Math.floor(box.getMinZ()); z <= (int) Math.floor(box.getMaxZ() - 1.0E-7);
+                             z++) {
+                            Placed wall = walls.remove(key(x, y, z));
+                            if (wall != null) {
+                                open(wall, new Vector(), false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         /** True if any body overlaps the block's cell (a little margin, so nobody is walled in to the hair). */
         private boolean occupied(Block block, List<BoundingBox> bodies) {
-            BoundingBox cell = BoundingBox.of(block).expand(0.05);
+            BoundingBox cell = BoundingBox.of(block);
             for (BoundingBox body : bodies) {
                 if (body.overlaps(cell)) {
                     return true;
@@ -1134,23 +1213,9 @@ public final class MinotaurAbility extends Ability {
             if (broken.isEmpty()) {
                 return;
             }
-            World world = from.getWorld();
             Location sound = null;
             for (Long key : broken) {
-                Placed wall = walls.remove(key);
-                Block block = wall.block();
-                BlockData shown = block.getBlockData();
-                // Still ours (nothing else replaced it): put back what it replaced; the temporary block service
-                // restores the same data again when the labyrinth expires.
-                if (shown.getMaterial() == WALL || shown.getMaterial() == MOSSY_WALL
-                        || shown.getMaterial() == CRACKED_WALL || shown.getMaterial() == GATE_POST) {
-                    block.setBlockData(wall.original(), false);
-                }
-                Location middle = block.getLocation().add(0.5, 0.5, 0.5);
-                world.spawnParticle(Particle.BLOCK, middle, Vfx.n(ctx(), 8), 0.3, 0.3, 0.3, 0, shown);
-                world.spawnParticle(Particle.BLOCK_CRUMBLE, middle, Vfx.n(ctx(), 3), 0.3, 0.3, 0.3, 0, shown);
-                sound = middle;
-                rubble(middle, direction, shown);
+                sound = open(walls.remove(key), direction, true);
             }
             if (sound != null) {
                 Vfx.dot(sound, Particle.EXPLOSION, null, false);
@@ -1158,6 +1223,30 @@ public final class MinotaurAbility extends Ability {
                 Fx.sound(sound, Sound.BLOCK_STONE_BREAK, 1.2f, 0.7f + Fx.jitter(0.05f));
                 Fx.sound(sound, Sound.BLOCK_DEEPSLATE_BREAK, 1.0f, 0.6f + Fx.jitter(0.05f));
             }
+        }
+
+        /**
+         * Opens one wall block: it is put back to what it replaced (only if it is still ours: nothing else replaced
+         * it; the temporary block service restores the same data again when the labyrinth expires), with a burst of
+         * grit and, when {@code smashed} by the rush, a chunk of rubble flying on along {@code direction}.
+         */
+        private Location open(Placed wall, Vector direction, boolean smashed) {
+            Block block = wall.block();
+            BlockData shown = block.getBlockData();
+            if (shown.getMaterial() == WALL || shown.getMaterial() == MOSSY_WALL
+                    || shown.getMaterial() == CRACKED_WALL || shown.getMaterial() == GATE_POST) {
+                block.setBlockData(wall.original(), false);
+            }
+            Location middle = block.getLocation().add(0.5, 0.5, 0.5);
+            World world = block.getWorld();
+            world.spawnParticle(Particle.BLOCK, middle, Vfx.n(ctx(), smashed ? 8 : 5), 0.3, 0.3, 0.3, 0, shown);
+            world.spawnParticle(Particle.BLOCK_CRUMBLE, middle, Vfx.n(ctx(), 3), 0.3, 0.3, 0.3, 0, shown);
+            if (smashed) {
+                rubble(middle, direction, shown);
+            } else {
+                Fx.sound(middle, Sound.BLOCK_STONE_BREAK, 0.8f, 0.9f + Fx.jitter(0.1f));
+            }
+            return middle;
         }
 
         /** A chunk of the smashed wall flies on ahead of the rush, tumbling, and is gone. */

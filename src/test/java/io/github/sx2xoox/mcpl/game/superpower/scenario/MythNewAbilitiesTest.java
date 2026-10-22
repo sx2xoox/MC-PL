@@ -486,19 +486,40 @@ class MythNewAbilitiesTest {
     }
 
     @Test
-    void medusaGazeFollowsWhereSheTurnsDuringTheWindupAndStopsAtWalls() {
+    void medusaGazeFollowsWhereSheTurnsDuringTheWindup() {
         try (Scenario s = Scenario.ffa("medusa")) {
             s.place(s.enemy2, -4.5, 0.5, 270); // to her right side, looking at her
-            s.world.wallAlongX(-3, 3, 3, 3, Material.STONE);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.active(), "석화의 시선");
             s.ticks(2);
             face(s.owner, 90); // turns to enemy2 (west)
             s.ticks(s.paramTicks("gaze_windup") + 2);
             assertTrue(rooted(s.enemy2), "the gaze goes where she looks when it fires");
-            assertFalse(rooted(s.enemy), "behind her now, and behind a wall anyway");
+            assertFalse(rooted(s.enemy), "the enemy she turned away from is behind her now");
             s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void medusaGazeStopsAtWalls() {
+        try (Scenario s = Scenario.ffa("medusa")) {
+            // In the middle of the cone and staring right at her, but behind a wall.
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.world.wallAlongX(-3, 3, 3, 3, Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "석화의 시선");
+            s.ticks(s.paramTicks("gaze_windup") + 2);
+            assertFalse(rooted(s.enemy), "the wall breaks the gaze");
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS), "not even the legs stiffen");
             s.world.wallAlongX(-3, 3, 3, 3, Material.AIR);
+            s.ticks(2);
+            s.readyActive();
+            s.assertSucceeded(s.active(), "석화의 시선 without the wall");
+            s.ticks(s.paramTicks("gaze_windup") + 2);
+            assertTrue(rooted(s.enemy), "the same spot is caught once the wall is gone");
+            s.ticks(60);
             s.finishClean();
         }
     }
@@ -678,11 +699,47 @@ class MythNewAbilitiesTest {
     }
 
     @Test
-    void cupidPlainJumpIsNoGlide() {
+    void cupidPlainJumpIsNoGlideAndNoAirShot() {
         try (Scenario s = Scenario.ffa("cupid")) {
-            s.owner.setVelocity(new Vector(0, 0.42, 0));
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.ticks(2);
+            // Aimed low from the ground, so the shot from the top of the hop still meets the enemy's chest.
+            s.aimAt(s.owner, s.enemy.getLocation().add(0, 0.2, 0));
+            s.owner.setVelocity(new Vector(0, 0.42, 0)); // a vanilla jump
+            int airborne = 0;
+            for (int i = 0; i < 30; i++) {
+                s.ticks(1);
+                assertFalse(s.owner.hasPotionEffect(PotionEffectType.SLOW_FALLING),
+                        "a hop never opens the wings (tick " + i + ")");
+                if (i == 4) {
+                    s.assertSucceeded(s.active(), "사랑의 화살 at the top of a hop");
+                }
+                if (s.owner.getLocation().getY() > FlatWorld.SURFACE + EPSILON) {
+                    airborne++;
+                }
+            }
+            assertTrue(airborne <= 13, "a hop lasts as long as a hop: " + airborne + " ticks in the air");
+            assertEquals(s.param("arrow_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "a hop is no air shot: the bonus is for the wings");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cupidSilencedCannotBeatHerWings() {
+        try (Scenario s = Scenario.ffa("cupid")) {
+            s.place(s.owner, 0.5, 70, 0.5, 0, 0);
             s.ticks(4);
-            assertFalse(s.owner.hasPotionEffect(PotionEffectType.SLOW_FALLING), "a hop does not open the wings");
+            s.ctx().silence(s.owner, 40); // e.g. turned to stone by a gorgon
+            s.world.physics().setEnabled(false);
+            s.owner.setVelocity(new Vector(0, -0.3, 0));
+            s.owner.setSneaking(true);
+            s.ticks(1);
+            assertTrue(s.owner.getVelocity().getY() < 0, "no wing beat while silenced: " + s.owner.getVelocity());
+            s.world.physics().setEnabled(true);
+            s.owner.setSneaking(false);
+            s.tickUntilGrounded(s.owner, 2000);
             s.finishClean();
         }
     }
@@ -790,8 +847,9 @@ class MythNewAbilitiesTest {
     void cupidArrowShotInTheAirHitsHarderAndCharmsLonger() {
         try (Scenario s = Scenario.ffa("cupid")) {
             s.place(s.enemy2, 9.5, -6.5, 0);
-            s.place(s.owner, 0.5, 67, 0.5, 0, 0);
-            s.ticks(2);
+            s.place(s.owner, 0.5, 78, 0.5, 0, 0);
+            s.ticks(12);
+            assertTrue(s.owner.hasPotionEffect(PotionEffectType.SLOW_FALLING), "the wings are open");
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.active(), "사랑의 화살 in the air");
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the arrow lands");
@@ -917,10 +975,21 @@ class MythNewAbilitiesTest {
 
     // ================================================================== 미노타우로스 minotaur
 
+    /**
+     * Charged: both horn tips are heated red. Never an outline: that would show the minotaur through walls, so no
+     * horn ever glows.
+     */
     private static boolean hornsGlow(Scenario s) {
-        return entities(s, BlockDisplay.class).stream()
-                .filter(d -> d.getBlock().getMaterial() == Material.BONE_BLOCK)
-                .allMatch(Entity::isGlowing);
+        List<BlockDisplay> horns = entities(s, BlockDisplay.class).stream()
+                .filter(d -> d.getBlock().getMaterial() == Material.BONE_BLOCK
+                        || d.getBlock().getMaterial() == Material.POLISHED_BLACKSTONE
+                        || d.getBlock().getMaterial() == Material.REDSTONE_BLOCK)
+                .toList();
+        assertEquals(4, horns.size(), "two horns of two parts");
+        for (BlockDisplay horn : horns) {
+            assertFalse(horn.isGlowing(), "the horns never glow through walls");
+        }
+        return horns.stream().filter(d -> d.getBlock().getMaterial() == Material.REDSTONE_BLOCK).count() == 2;
     }
 
     @Test
@@ -965,10 +1034,14 @@ class MythNewAbilitiesTest {
             Location before = s.enemy.getLocation();
             s.melee(s.owner, s.enemy, 4);
             assertEquals(4 * (1 + s.param("gore_bonus") / 100), s.damageBy(s.owner, s.enemy), EPSILON, "a gore");
-            s.ticks(6);
-            double thrown = s.enemy.getLocation().distance(before);
-            assertTrue(thrown > 2, "the gore throws the enemy: " + thrown);
             s.owner.setSprinting(false);
+            s.ticks(3);
+            assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + 0.2, "thrown into the air");
+            s.tickUntilGrounded(s.enemy, 100);
+            s.ticks(15); // and the short slide on the ground
+            Location after = s.enemy.getLocation();
+            double thrown = Math.hypot(after.getX() - before.getX(), after.getZ() - before.getZ());
+            assertEquals(s.param("gore_knockback"), thrown, 1.0, "thrown about the described distance");
             s.ticks(2);
             assertFalse(hornsGlow(s), "the charge is spent");
             s.place(s.enemy, 0.5, 2.0, 180);
@@ -1028,7 +1101,7 @@ class MythNewAbilitiesTest {
     @Test
     void minotaurRedClothCountersAProvokedBlowAndBluntsIt() {
         try (Scenario s = Scenario.ffa("minotaur")) {
-            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy, 0.5, 3.5, 180); // within arm's reach once it swings
             s.place(s.enemy2, 9.5, -6.5, 0);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.active(), "붉은 천");
@@ -1281,7 +1354,6 @@ class MythNewAbilitiesTest {
             for (Scenario.Hit hit : hits) {
                 assertEquals(s.param("spit_damage"), hit.damage(), EPSILON);
             }
-            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.POISON) || hits.size() >= 1, "venom");
             assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "out of range");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
@@ -1518,6 +1590,328 @@ class MythNewAbilitiesTest {
                 s.ticks(14);
                 s.finishClean();
             }
+        }
+    }
+
+    // ================================================================== review fixes
+
+    /** Statue materials of Medusa's stone (legs, torso, arms, head). */
+    private static List<BlockDisplay> statueStones(Scenario s) {
+        return entities(s, BlockDisplay.class).stream()
+                .filter(d -> d.getBlock().getMaterial() == Material.COBBLESTONE
+                        || d.getBlock().getMaterial() == Material.STONE
+                        || d.getBlock().getMaterial() == Material.ANDESITE
+                        || d.getBlock().getMaterial() == Material.POLISHED_ANDESITE)
+                .toList();
+    }
+
+    @Test
+    void medusaGorgonEyeStillCatchesAnEnemyHerGazeTurnedToStone() {
+        try (Scenario s = noGaugeGain(Scenario.builder("medusa")).start()) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "석화의 시선");
+            s.ticks(s.paramTicks("gaze_windup") + 1);
+            assertTrue(rooted(s.enemy), "the gaze turned it to stone");
+            s.assertSucceeded(s.ultimate(), "고르곤의 눈 right after the gaze");
+            s.ticks(s.paramTicks("petrify_duration") + 2);
+            assertEquals(s.param("petrify_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the gaze statue burst");
+            assertFalse(rooted(s.enemy), "a moment to look away: the stone does not chain straight into the next");
+            // It keeps staring at her: the eye catches it after a full stare.
+            s.ticks(s.paramTicks("stare_time") + 2);
+            assertTrue(rooted(s.enemy), "the gorgon eye still turns it to stone");
+            s.ticks(s.paramTicks("ult_petrify") + 2);
+            assertEquals(s.param("petrify_damage") + s.param("ult_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "both statues burst");
+            s.ticks(s.paramTicks("ult_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void medusaCreepingStoneGoesWithAViewerThatLeavesTheEye() {
+        try (Scenario s = Scenario.ffa("medusa")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.assertSucceeded(s.ultimate(), "고르곤의 눈");
+            s.ticks(14);
+            assertFalse(blocks(s, Material.COBBLESTONE).isEmpty(), "the stone creeps up its legs");
+            s.place(s.enemy, 0.5, 30.5, 0); // out of the eye's reach, its back turned
+            s.ticks(20);
+            for (BlockDisplay stone : statueStones(s)) {
+                Location at = stone.getLocation();
+                assertTrue(Math.hypot(at.getX() - s.enemy.getLocation().getX(),
+                                at.getZ() - s.enemy.getLocation().getZ()) < 0.5,
+                        "the stone stays on its viewer, never floating where it stood: " + at.toVector());
+            }
+            s.ticks(40);
+            assertTrue(statueStones(s).isEmpty(), "out of the eye's reach the stone thaws away");
+            assertFalse(rooted(s.enemy));
+            s.ticks(s.paramTicks("ult_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void medusaCreepingStoneOfAViewerThatVanishesIsGoneAtOnce() {
+        try (Scenario s = Scenario.ffa("medusa")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.assertSucceeded(s.ultimate(), "고르곤의 눈");
+            s.ticks(14);
+            assertFalse(statueStones(s).isEmpty(), "the stone creeps up its legs");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy); // stealth
+            s.ticks(8);
+            assertTrue(statueStones(s).isEmpty(), "no half-formed statue marks where a hidden viewer stands");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(s.paramTicks("ult_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cupidRedStringNeverTiesAPartnerBehindAWall() {
+        try (Scenario s = noGaugeGain(Scenario.builder("cupid")).start()) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 0.5, 14.5, 180);
+            s.world.wallAlongX(-6, 6, 10, 4, Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "붉은 실");
+            s.ticks(80);
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "the one behind the wall is not tied");
+            assertEquals(14.5, s.enemy2.getLocation().getZ(), 0.05, "nor pulled into the wall");
+            assertEquals(s.param("ult_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the aimed enemy is tied to Cupid instead");
+            s.world.wallAlongX(-6, 6, 10, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cupidRedStringSnapsWhenAWallKeepsThePairApart() {
+        try (Scenario s = noGaugeGain(Scenario.builder("cupid")).start()) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 7.5, 6.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "붉은 실");
+            s.ticks(2);
+            for (int z = 3; z <= 10; z++) {
+                s.world.wallAlongX(4, 4, z, 4, Material.STONE); // rises between them while the string is taut
+            }
+            s.ticks(80);
+            assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON,
+                    "they never met: no collision, no hearts");
+            assertTrue(blocks(s, Material.RED_WOOL).isEmpty(), "the string snapped");
+            for (int z = 3; z <= 10; z++) {
+                s.world.wallAlongX(4, 4, z, 4, Material.AIR);
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cupidCharmedPlayerOnALaggingClientStopsBesideHer() {
+        try (Scenario s = Scenario.ffa("cupid")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 12.5, -6.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "사랑의 화살");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the arrow lands");
+            s.world.physics().setEnabled(false);
+            // The server sees the charmed player four ticks late: steering by that position kept it walking after
+            // it had arrived, right into Cupid.
+            RealClient client = new RealClient(s, s.enemy, 4);
+            double closest = Double.MAX_VALUE;
+            for (int i = 0; i < 40; i++) {
+                client.tick();
+                closest = Math.min(closest, Math.hypot(client.at().getX() - s.owner.getLocation().getX(),
+                        client.at().getZ() - s.owner.getLocation().getZ()));
+            }
+            assertTrue(closest > 1.4, "the charmed player stops beside her, not on her: " + closest);
+            assertTrue(closest < 3.0, "but it did walk to her: " + closest);
+            s.world.physics().setEnabled(true);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minotaurRedClothCountersOnlyBlowsWithinReach() {
+        try (Scenario s = Scenario.ffa("minotaur")) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 12.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "붉은 천");
+            shoot(s, s.enemy, s.owner, 6); // an arrow from across the field
+            assertEquals(6 * (1 - s.param("counter_block") / 100), s.damageTaken(s.owner), EPSILON,
+                    "the provoked enemy's blows are blunted wherever they come from");
+            s.ticks(2);
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "but the horns do not reach across the field");
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minotaurLabyrinthOpensAroundSomeoneCaughtInsideAWall() {
+        try (Scenario s = noGaugeGain(Scenario.builder("minotaur")).start()) {
+            s.place(s.enemy, 9.5, -9.5, 0);
+            s.place(s.enemy2, -9.5, -9.5, 0);
+            s.assertSucceeded(s.ultimate(), "미궁");
+            s.ticks(25);
+            int y = (int) FlatWorld.SURFACE;
+            int[] wall = null;
+            for (int x = -4; x <= 4 && wall == null; x++) {
+                for (int z = -4; z <= 4 && wall == null; z++) {
+                    if (s.world.getBlockAt(x, y, z).getType() != Material.AIR
+                            && s.world.getBlockAt(x, y + 1, z).getType() != Material.AIR) {
+                        wall = new int[] {x, z};
+                    }
+                }
+            }
+            assertTrue(wall != null, "the first ring stands");
+            // A client a ping ahead of the server: by the time the server sees it, it is in a wall cell.
+            s.place(s.enemy, wall[0] + 0.5, wall[1] + 0.5, 0);
+            s.ticks(2);
+            assertTrue(io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots.isFree(s.world,
+                    s.enemy.getLocation(), s.enemy.getWidth(), s.enemy.getHeight()),
+                    "the wall crumbles open around it instead of suffocating it");
+            s.ticks(s.paramTicks("maze_duration"));
+            assertEquals(0, s.h.hub.tempBlocks().size(), "the labyrinth sank back");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hydraGlobsNeverReachUnderARoofBehindAWall() {
+        try (Scenario s = noGaugeGain(Scenario.builder("hydra").param("spit_interval", 1000)).start()) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            for (int x = -4; x <= 4; x++) {
+                for (int z = 5; z <= 12; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 4, z, Material.STONE);
+                }
+            }
+            s.world.wallAlongX(-4, 4, 5, 3, Material.STONE);
+            s.assertSucceeded(s.ultimate(), "아홉 머리");
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "roof and wall shield it from the globs");
+            assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "the enemy in the open is spat at");
+            for (int x = -4; x <= 4; x++) {
+                for (int z = 5; z <= 12; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 4, z, Material.AIR);
+                }
+            }
+            s.world.wallAlongX(-4, 4, 5, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hydraGlobsAreVenomBlobsArcingDownToTheMarkedSpot() {
+        try (Scenario s = noGaugeGain(Scenario.builder("hydra").param("spit_interval", 1000)).start()) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 30.5, 30.5, 0);
+            s.assertSucceeded(s.ultimate(), "아홉 머리");
+            Location lowest = null;
+            double highest = 0;
+            for (int i = 0; i < 60; i++) {
+                s.ticks(1);
+                for (BlockDisplay glob : blocks(s, Material.SLIME_BLOCK)) {
+                    assertUnrotated(glob, "glob");
+                    Location at = glob.getLocation();
+                    highest = Math.max(highest, at.getY() - FlatWorld.SURFACE);
+                    if (lowest == null || at.getY() < lowest.getY()) {
+                        lowest = at;
+                    }
+                }
+            }
+            assertTrue(lowest != null, "every glob is a blob of venom flying through the air");
+            assertTrue(highest > 3.5, "lobbed high over the field: " + highest);
+            assertTrue(lowest.getY() < FlatWorld.SURFACE + 1.0, "it comes down: " + lowest.toVector());
+            assertTrue(Math.hypot(lowest.getX() - 0.5, lowest.getZ() - 8.5) < 1.5,
+                    "onto the marked spot where the target stood: " + lowest.toVector());
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "standing still on the mark, it is hit");
+            s.ticks(s.paramTicks("ult_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hydraSpareHeadsBiteTheLoneEnemyOnlyOnceMore() {
+        try (Scenario s = quietHydra()) {
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 0);
+            s.owner.setHealth(5);
+            s.ticks(20);
+            assertEquals(3, necks(s).size());
+            s.clearHits();
+            s.assertSucceeded(s.active(), "머리 물기");
+            s.ticks(12);
+            assertEquals(s.param("bite_damage") + s.param("extra_bite_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "one bite and one more, not one per spare head");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hydraDartsPoisonTheirTarget() {
+        try (Scenario s = Scenario.ffa("hydra")) {
+            s.place(s.enemy2, 0.5, 15.5, 180);
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, s.paramTicks("spit_interval") * 2 + 20, "a dart");
+            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.POISON), "the dart carries venom");
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A player whose server position trails its client by {@code lag} ticks: each tick the server's velocity is
+     * applied to the client, which the server sees {@code lag} ticks later (see TechNewAbilitiesTest).
+     */
+    private static final class RealClient {
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final java.util.Deque<Location> late = new java.util.ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector sent = new Vector();
+
+        RealClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+        }
+
+        Location at() {
+            return at.clone();
+        }
+
+        void tick() {
+            Vector marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                sent = now.clone();
+                velocity.copy(now);
+            }
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
         }
     }
 }

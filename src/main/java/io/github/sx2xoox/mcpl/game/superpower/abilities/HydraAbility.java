@@ -66,13 +66,14 @@ public final class HydraAbility extends Ability {
                             + "겁니다.")
             .active("머리 물기",
                     "머리 수만큼 반경 {bite_range}블록 안의 서로 다른 적을 한꺼번에 물어 {bite_damage} 피해와 "
-                            + "{bite_poison}초간 독을 겁니다. 물 적이 머리보다 적으면 남은 머리가 가장 가까운 적을 한 번 더 물어 "
-                            + "{extra_bite_damage} 피해를 줍니다.",
+                            + "{bite_poison}초간 독을 겁니다. 물 적이 머리보다 적으면 남은 머리들이 가장 가까운 적에게 함께 "
+                            + "달려들어 한 번 더 물어 {extra_bite_damage} 피해를 줍니다.",
                     8)
             .ultimate("아홉 머리",
-                    "{ult_duration}초간 내 주위 땅에서 거대한 머리 9개가 솟아올라, 반경 {ult_radius}블록 안의 적에게 차례로 "
-                            + "독액을 뱉습니다. 독액이 떨어질 곳은 미리 표시되고, 반경 {glob_radius}블록 안의 적에게 "
-                            + "{glob_damage} 피해와 {glob_poison}초간 독을 줍니다(적마다 최대 {glob_max_hits}회).")
+                    "내 머리들이 땅속으로 파고들어 {ult_duration}초간 주위 땅에서 거대한 머리 9개로 솟아오르고, 반경 "
+                            + "{ult_radius}블록 안에 보이는 적에게 차례로 독액을 뱉습니다. 독액이 떨어질 곳은 미리 표시되고, "
+                            + "반경 {glob_radius}블록 안의 적에게 {glob_damage} 피해와 {glob_poison}초간 독을 줍니다(적마다 최대 "
+                            + "{glob_max_hits}회). 독액은 벽과 지붕에 막힙니다.")
             .param("head_threshold_1", 70)
             .param("head_threshold_2", 40)
             .param("spit_interval", 5)
@@ -109,6 +110,7 @@ public final class HydraAbility extends Ability {
     private static final Material NECK = Material.MOSS_BLOCK;
     private static final Material HEAD = Material.GREEN_TERRACOTTA;
     private static final Material MUD = Material.MUD;
+    private static final Material GLOB = Material.SLIME_BLOCK;
 
     private static final int MAX_DISPLAYS = 24;
 
@@ -146,12 +148,17 @@ public final class HydraAbility extends Ability {
     private static final int GLOB_FLIGHT = 12;
     private static final double GLOB_ARC = 3.0;
     private static final int SINK_TICKS = 8;
+    private static final float GLOB_SIZE = 0.42f;
+    /** Room a glob keeps below a ceiling. */
+    private static final double CEILING_GAP = 0.4;
 
     // ------------------------------------------------------------------ state
 
     private final List<Display> live = new ArrayList<>();
     private final Head[] heads = new Head[MAX_HEADS];
     private int count;
+    /** The nine heads standing: the hydra's own heads have dived into the ground to become them. */
+    private @Nullable Brood brood;
 
     /** One head on the hydra's body: its displays, when it next spits and where it looks. */
     private final class Head {
@@ -199,6 +206,7 @@ public final class HydraAbility extends Ability {
             heads[i] = null;
         }
         count = 0;
+        brood = null;
         live.clear();
     }
 
@@ -231,18 +239,12 @@ public final class HydraAbility extends Ability {
             Head head = new Head(count);
             head.bornTick = now;
             head.nextSpit = now + interval / 2 + count * interval / 3;
-            if (reserve(2)) {
-                Location feet = owner.getLocation();
-                head.neck = keep(Displays.block(ctx(), owner, feet, NECK.createBlockData(),
-                        neckPose(head, owner, 0.02f), 0));
-                head.skull = keep(Displays.block(ctx(), owner, feet, HEAD.createBlockData(),
-                        headPose(head, owner, 0.02f), 0));
-                head.neck.setTeleportDuration(1);
-                head.skull.setTeleportDuration(1);
+            if (brood == null) {
+                dress(owner, head); // under the ground while the nine heads stand: it surfaces with the others
             }
             heads[count] = head;
             count++;
-            if (!silent) {
+            if (!silent && brood == null) {
                 sprout(owner, head);
             }
         }
@@ -265,6 +267,52 @@ public final class HydraAbility extends Ability {
         }
     }
 
+    /** The neck and head displays of {@code head}, grown from nothing (if the display budget allows). */
+    private void dress(Player owner, Head head) {
+        if (!reserve(2)) {
+            return;
+        }
+        Location feet = owner.getLocation();
+        head.neck = keep(Displays.block(ctx(), owner, feet, NECK.createBlockData(), neckPose(head, owner, 0.02f), 0));
+        head.skull = keep(Displays.block(ctx(), owner, feet, HEAD.createBlockData(), headPose(head, owner, 0.02f),
+                0));
+        head.neck.setTeleportDuration(1);
+        head.skull.setTeleportDuration(1);
+    }
+
+    /** The hydra's heads dive into the ground (they rise again as the nine): mud spurts from its shoulders. */
+    private void submerge(Player owner) {
+        for (int i = 0; i < count; i++) {
+            Head head = heads[i];
+            if (head == null) {
+                continue;
+            }
+            head.remove(true);
+            Location shoulder = bodyPoint(owner, NECK_TOP[head.slot]);
+            owner.getWorld().spawnParticle(Particle.BLOCK, shoulder, Vfx.n(ctx(), 6), 0.2, 0.2, 0.2, 0,
+                    MUD.createBlockData());
+        }
+        Fx.sound(owner.getLocation(), Sound.BLOCK_MUD_PLACE, 1.0f, 0.6f);
+    }
+
+    /** The nine heads sank: the hydra's own heads grow back out of its shoulders and spit again. */
+    private void resurface(Player owner) {
+        long now = ctx().currentTick();
+        long interval = Math.max(10, params().ticks("spit_interval"));
+        for (int i = 0; i < count; i++) {
+            Head head = heads[i];
+            if (head == null) {
+                continue;
+            }
+            head.bornTick = now;
+            head.nextSpit = Math.max(head.nextSpit, now + interval / 2 + i * interval / 3);
+            if (head.neck == null) {
+                dress(owner, head);
+            }
+            sprout(owner, head);
+        }
+    }
+
     /** A new head bursts out of the shoulder. */
     private void sprout(Player owner, Head head) {
         Location shoulder = bodyPoint(owner, NECK_BASE[head.slot]);
@@ -284,6 +332,9 @@ public final class HydraAbility extends Ability {
             updateHeads(tick == 0);
         }
         long now = ctx().currentTick();
+        if (brood != null) {
+            return; // the heads are under the ground, risen as the nine
+        }
         for (int i = 0; i < count; i++) {
             Head head = heads[i];
             if (head == null) {
@@ -501,25 +552,26 @@ public final class HydraAbility extends Ability {
             return ActivationResult.fail("물 수 있는 적이 없습니다");
         }
         int mouths = Math.max(1, count);
-        int bitten = 0;
+        boolean spare = mouths > targets.size();
         for (int i = 0; i < mouths; i++) {
             boolean extra = i >= targets.size();
             LivingEntity victim = extra ? targets.getFirst() : targets.get(i);
-            Head head = i < count ? heads[i] : null;
-            lash(owner, head, i, victim, extra);
-            bitten++;
+            // Heads gone under the ground with the nine strike as venom lashes from the shoulders.
+            Head head = i < count && brood == null ? heads[i] : null;
+            // The spare heads lunge at the nearest enemy together: one more bite between them.
+            lash(owner, head, i, victim, extra, i <= targets.size());
         }
         Fx.sound(chest, Sound.ENTITY_CAT_HISS, 1.0f, 0.5f + Fx.jitter(0.05f));
         Fx.sound(chest, Sound.ENTITY_EVOKER_PREPARE_ATTACK, 0.5f, 1.6f + Fx.jitter(0.05f));
         owner.sendActionBar(Text.mm("<" + SWAMP_TAG + ">🐍 머리 물기</" + SWAMP_TAG + "> <white>"
                 + Math.min(targets.size(), mouths) + "명</white>"
-                + (bitten > targets.size() ? " <" + VENOM_TAG + ">+" + (bitten - targets.size()) + " 추가</"
-                + VENOM_TAG + ">" : "")));
+                + (spare ? " <" + VENOM_TAG + ">+1 추가</" + VENOM_TAG + ">" : "")));
         return ActivationResult.success();
     }
 
     /** One head lashes out at {@code victim}: its neck stretches to it, bites, and snaps back. */
-    private void lash(Player owner, @Nullable Head head, int index, LivingEntity victim, boolean extra) {
+    private void lash(Player owner, @Nullable Head head, int index, LivingEntity victim, boolean extra,
+                      boolean deal) {
         if (head != null) {
             head.biting = true;
         }
@@ -536,7 +588,7 @@ public final class HydraAbility extends Ability {
                 reach = (run + 1f) / LASH_TICKS;
             } else if (run < LASH_TICKS + HOLD_TICKS) {
                 reach = 1f;
-                if (run == LASH_TICKS && reachable) {
+                if (run == LASH_TICKS && reachable && deal) {
                     bite(owner, victim, extra);
                 }
             } else {
@@ -601,7 +653,10 @@ public final class HydraAbility extends Ability {
         if (!anyone) {
             return ActivationResult.fail("반경 " + AbilityInfo.formatNumber(radius) + "블록 안에 적이 없습니다");
         }
-        new Brood(owner).rise();
+        Brood nine = new Brood(owner);
+        brood = nine;
+        submerge(owner);
+        nine.rise();
         return ActivationResult.success();
     }
 
@@ -650,7 +705,8 @@ public final class HydraAbility extends Ability {
                 double angle = phase + i * Math.PI * 2 / ULT_HEADS;
                 Location spot = center.clone().add(Math.cos(angle) * RING_RADIUS, 1.5, Math.sin(angle) * RING_RADIUS);
                 Spots.snapToGround(world, spot, 4);
-                if (!Spots.isFree(world, spot, 0.4, 2.0) || !Spots.hasGroundBelow(world, spot)) {
+                // Room for the whole neck: a head never rises into a ceiling.
+                if (!Spots.isFree(world, spot, 0.4, ULT_NECK_HEIGHT + 0.6) || !Spots.hasGroundBelow(world, spot)) {
                     continue;
                 }
                 float outward = (float) Math.toDegrees(Math.atan2(-Math.cos(angle), Math.sin(angle)));
@@ -738,14 +794,19 @@ public final class HydraAbility extends Ability {
             }
         }
 
-        /** The enemy in range hit least so far (nearest to the head among equals), not yet at the cap. */
+        /**
+         * The enemy in range hit least so far (nearest to the head among equals), not yet at the cap, that the head
+         * can see: nobody is lobbed at behind a wall or under a roof.
+         */
         private @Nullable LivingEntity pickTarget(Giant giant) {
             int cap = Math.max(1, params().integer("glob_max_hits"));
             LivingEntity best = null;
             int bestHits = Integer.MAX_VALUE;
             double bestDistance = Double.MAX_VALUE;
+            Location crown = giant.ground.clone().add(0, ULT_NECK_HEIGHT + 0.1, 0);
             for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
-                if (!seen(owner, enemy)) {
+                if (!seen(owner, enemy) || !Spots.clearPath(crown, Fx.body(enemy))
+                        && !Spots.clearPath(crown, enemy.getEyeLocation())) {
                     continue;
                 }
                 int taken = hits.getOrDefault(enemy.getUniqueId(), 0);
@@ -786,25 +847,58 @@ public final class HydraAbility extends Ability {
             });
         }
 
-        /** A lobbed glob of venom with its landing spot ringed on the ground. */
+        /**
+         * A lobbed glob of venom: a spinning blob of slime arcing to its landing spot, which is ringed on the ground
+         * in advance. The arc stays under ceilings, and a glob that meets a wall or a roof on the way bursts there.
+         */
         private final class Glob implements LongPredicate {
 
             private final Location from;
             private final Location to;
+            private final double lift;
+            private @Nullable BlockDisplay blob;
+            /** Where it burst against a block on the way (null: it reached its spot). */
+            private @Nullable Location impact;
+            private boolean landed;
 
             Glob(Location from, Location to) {
                 this.from = from;
                 this.to = to;
+                this.lift = arcLift(from, to);
+                if (reserve(1)) {
+                    blob = keep(Displays.block(ctx(), owner, from, GLOB.createBlockData(), Displays.scaled(0.05f),
+                            GLOB_FLIGHT + 6));
+                    blob.setTeleportDuration(1);
+                    Displays.animateNextTick(ctx(), owner, blob, globPose(1), 2);
+                }
             }
 
             @Override
             public boolean test(long tick) {
                 double t = (tick + 1.0) / GLOB_FLIGHT;
-                double previous = tick / (double) GLOB_FLIGHT;
+                Location before = arc(tick / (double) GLOB_FLIGHT);
                 Location at = arc(t);
-                Location before = arc(previous);
+                Vector step = at.toVector().subtract(before.toVector());
+                double length = step.length();
+                World world = before.getWorld();
+                if (length > 1.0E-6) {
+                    // The last stretch stops short of the floor it lands on.
+                    double probe = t >= 1 ? Math.max(0, length - 0.05) : length;
+                    RayTraceResult block = probe <= 1.0E-6 ? null : world.rayTraceBlocks(before,
+                            step.clone().multiply(1 / length), probe, FluidCollisionMode.NEVER, true);
+                    if (block != null) {
+                        impact = block.getHitPosition().toLocation(world)
+                                .subtract(step.clone().multiply(0.25 / length));
+                        at = impact;
+                    }
+                }
+                BlockDisplay body = blob;
+                if (body != null && body.isValid()) {
+                    Displays.moveTo(body, at);
+                    Displays.animate(body, globPose(tick + 2), 1);
+                }
                 Vfx.line(ctx(), before, at, 3, Particle.DUST, SWAMP_DUST, true);
-                Vfx.sphere(ctx(), at, 0.22, 6, Particle.DUST_COLOR_TRANSITION, VENOM_GLOW, true);
+                Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, VENOM_GLOW, true);
                 if (tick % 3 == 0) {
                     Vfx.dot(at, Particle.FALLING_SPORE_BLOSSOM, null, false);
                 }
@@ -812,21 +906,39 @@ public final class HydraAbility extends Ability {
                 double glob = Math.max(0.3, params().num("glob_radius"));
                 Vfx.ring(ctx(), to.clone().add(0, 0.1, 0), glob * (0.75 + 0.25 * (tick % 4) / 3.0),
                         (int) Math.max(10, glob * 9), tick * 0.2, Particle.DUST_COLOR_TRANSITION, VENOM_GLOW, true);
-                return true;
+                return impact == null;
             }
 
+            /** The point of the flight at {@code t} (0..1): the straight line, lifted by a parabola. */
             private Location arc(double t) {
                 Vector delta = to.toVector().subtract(from.toVector());
-                double lift = GLOB_ARC * 4 * t * (1 - t);
-                return from.clone().add(delta.multiply(t)).add(0, lift, 0);
+                return from.clone().add(delta.multiply(t)).add(0, lift * 4 * t * (1 - t), 0);
             }
 
+            /** The blob spinning as it flies, a little squashed. */
+            private Transformation globPose(long tick) {
+                return Displays.transform(0, 0, 0, GLOB_SIZE, GLOB_SIZE * 0.85f, GLOB_SIZE, tick * 37f, tick * 23f,
+                        0);
+            }
+
+            /** It lands (or burst against a block on the way): venom splashes whoever is in reach and in sight. */
             void land() {
+                if (landed) {
+                    return;
+                }
+                landed = true;
+                Location point = impact != null ? impact : to;
+                // The splash reaches out from just above the floor it landed on (or right where it burst), and only
+                // to bodies in sight of it: never through the block it hit.
+                Location splash = impact != null ? impact : to.clone().add(0, 0.5, 0);
                 double globRadius = Math.max(0.3, params().num("glob_radius"));
                 int cap = Math.max(1, params().integer("glob_max_hits"));
                 double damage = params().num("glob_damage");
                 long poisonTicks = params().ticks("glob_poison");
-                for (LivingEntity enemy : ctx().enemiesNear(owner, to.clone().add(0, 0.5, 0), globRadius)) {
+                for (LivingEntity enemy : ctx().enemiesNear(owner, splash, globRadius)) {
+                    if (!Spots.clearPath(splash, Fx.body(enemy)) && !Spots.clearPath(splash, enemy.getEyeLocation())) {
+                        continue;
+                    }
                     int taken = hits.getOrDefault(enemy.getUniqueId(), 0);
                     if (taken >= cap) {
                         continue;
@@ -835,15 +947,22 @@ public final class HydraAbility extends Ability {
                     Combat.hit(ctx(), owner, enemy, damage);
                     poison(enemy, poisonTicks);
                 }
-                World world = to.getWorld();
-                Vfx.burst(ctx(), to.clone().add(0, 0.3, 0), PALETTE, 0.7, Particle.ITEM_SLIME, true);
-                world.spawnParticle(Particle.SPLASH, to.clone().add(0, 0.2, 0), Vfx.n(ctx(), 12), globRadius * 0.4, 0.1,
-                        globRadius * 0.4, 0.1, null, true);
+                BlockDisplay body = blob;
+                if (body != null && body.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, body, 2);
+                }
+                World world = point.getWorld();
+                Vfx.burst(ctx(), point.clone().add(0, 0.3, 0), PALETTE, 0.7, Particle.ITEM_SLIME, true);
+                world.spawnParticle(Particle.SPLASH, point.clone().add(0, 0.2, 0), Vfx.n(ctx(), 12),
+                        globRadius * 0.4, 0.1, globRadius * 0.4, 0.1, null, true);
+                Fx.sound(point, Sound.ENTITY_SLIME_SQUISH, 1.0f, 0.7f + Fx.jitter(0.1f));
+                Fx.sound(point, Sound.BLOCK_BUBBLE_COLUMN_BUBBLE_POP, 1.0f, 0.8f + Fx.jitter(0.1f));
+                Fx.sound(point, Sound.ENTITY_GENERIC_SPLASH, 0.6f, 1.2f + Fx.jitter(0.1f));
+                if (impact != null) {
+                    return; // splattered on a wall or a roof: no puddle on the marked spot
+                }
                 Vfx.shockwave(ctx(), owner, to.clone().add(0, 0.1, 0), 0.2, globRadius, 4, Particle.DUST, SWAMP_DUST,
                         true);
-                Fx.sound(to, Sound.ENTITY_SLIME_SQUISH, 1.0f, 0.7f + Fx.jitter(0.1f));
-                Fx.sound(to, Sound.BLOCK_BUBBLE_COLUMN_BUBBLE_POP, 1.0f, 0.8f + Fx.jitter(0.1f));
-                Fx.sound(to, Sound.ENTITY_GENERIC_SPLASH, 0.6f, 1.2f + Fx.jitter(0.1f));
                 // A puddle bubbles for a moment.
                 Location puddle = to.clone().add(0, 0.12, 0);
                 Loop.repeat(ctx(), owner, 2, 3, 5, run -> {
@@ -854,12 +973,36 @@ public final class HydraAbility extends Ability {
             }
         }
 
+        /**
+         * How high a glob may arc between {@code from} and {@code to}: {@link #GLOB_ARC}, lowered so the arc passes
+         * under any ceiling above its path (see {@code ArcherAbility}'s rain).
+         */
+        private double arcLift(Location from, Location to) {
+            World world = from.getWorld();
+            Vector delta = to.toVector().subtract(from.toVector());
+            double lift = GLOB_ARC;
+            for (double t : new double[] {0.25, 0.5, 0.75}) {
+                Location point = from.clone().add(delta.clone().multiply(t));
+                RayTraceResult ceiling = world.rayTraceBlocks(point, new Vector(0, 1, 0), GLOB_ARC + CEILING_GAP,
+                        FluidCollisionMode.NEVER, true);
+                if (ceiling != null) {
+                    double room = ceiling.getHitPosition().getY() - point.getY() - CEILING_GAP;
+                    lift = Math.min(lift, Math.max(0, room) / (4 * t * (1 - t)));
+                }
+            }
+            return lift;
+        }
+
         private Location giantMouth(Giant giant) {
             return giant.ground.clone().add(0, ULT_NECK_HEIGHT + 0.1, 0).add(giant.look.clone().multiply(0.7));
         }
 
-        /** The heads sink back into the mud. */
+        /** The heads sink back into the mud, and the hydra's own heads grow back. */
         void sink() {
+            if (brood == this) {
+                brood = null;
+                resurface(owner);
+            }
             for (Giant giant : giants) {
                 for (BlockDisplay part : new BlockDisplay[] {giant.neck, giant.skull}) {
                     if (part != null && part.isValid()) {
