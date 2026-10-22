@@ -78,8 +78,9 @@ public final class MycologistAbility extends Ability {
             .ultimate("거대 버섯",
                     "조준한 지점({ult_range}블록 이내)에 거대 버섯이 솟아 반경 {erupt_radius}블록의 적에게 {erupt_damage} 피해를 "
                             + "주고 띄웁니다. {ult_duration}초간 반경 {ult_radius}블록의 포자 구름 속 적은 {ult_interval}초마다 "
-                            + "{ult_damage} 피해(머물수록 {ult_ramp}씩 증가, 최대 {ult_damage_max})를 입고 {ult_slow}% 느려지며, "
-                            + "나와 아군은 {ult_heal} 회복합니다. 마지막에 버섯이 터지며 구름 속 적에게 {burst_damage} 피해를 줍니다.")
+                            + "{ult_damage} 피해(머물수록 {ult_ramp}씩 증가, 최대 {ult_damage_max})를 입고 멀미에 걸리며 "
+                            + "{ult_slow}% 느려지고, 나와 아군은 {ult_heal} 회복합니다. 마지막에 버섯이 터지며 구름 속 적에게 "
+                            + "{burst_damage} 피해를 줍니다.")
             .param("spore_nausea", 3)
             .param("spore_cooldown", 4)
             .param("spore_bonus", 50)
@@ -138,8 +139,12 @@ public final class MycologistAbility extends Ability {
     private static final long FOOTPRINT_PERIOD = 8;
     private static final double FOOTPRINT_MIN_MOVE = 0.25;
     private static final long CLEANUP_PERIOD = 200;
-    /** Nausea needs a moment to start swirling; it is given this much longer than the spore itself. */
-    private static final int NAUSEA_LEAD = 20;
+    /**
+     * The client only warps the view while more than this many ticks of nausea are left (it fades the warp out over
+     * the last 3 s, and fades it in slowly), so nausea is given this much longer than the dizziness it stands for: a
+     * nausea of 3 s or less never shows at all.
+     */
+    private static final int NAUSEA_LEAD = 60;
 
     // active: mushroom mines
     /** Steps the planting ray takes down from an aimed point to find the floor. */
@@ -179,7 +184,8 @@ public final class MycologistAbility extends Ability {
     private static final long SLOW_CHECK_PERIOD = 2;
     /** Each slow modifier lasts this long and is renewed halfway while the enemy stays in the cloud. */
     private static final long SLOW_LEASE = 20;
-    private static final int ULT_NAUSEA_TICKS = 70;
+    /** The cloud's nausea outlasts the time to the next pulse by this much, so the view keeps warping inside. */
+    private static final long ULT_NAUSEA_LINGER = 10;
     private static final double ERUPT_PUSH = 0.35;
 
     // passive state
@@ -292,7 +298,9 @@ public final class MycologistAbility extends Ability {
 
     /**
      * A tiny toadstool sprouts on the spored enemy's head and wobbles there, shedding spores, until the spore wears
-     * off (a refreshed spore keeps it longer). Only a few enemies wear one at once; the others just shed spores.
+     * off (a refreshed spore keeps it longer). Only a few enemies wear one at once; the others just shed spores. An
+     * enemy that slips into stealth sheds its toadstool where it vanished: a mushroom floating along over an invisible
+     * head would give it away.
      */
     private void growToadstool(LivingEntity victim, Spore spore) {
         Player owner = player();
@@ -312,7 +320,8 @@ public final class MycologistAbility extends Ability {
         spore.cap = cap;
         BlockDisplay worn = cap;
         Loop.repeat(ctx(), owner, SPORE_FOLLOW_PERIOD, SPORE_FOLLOW_PERIOD, Long.MAX_VALUE, run -> {
-            if (!Combat.isTargetable(ctx(), owner, victim) || ctx().currentTick() >= spore.until) {
+            if (!Combat.isTargetable(ctx(), owner, victim) || ctx().currentTick() >= spore.until
+                    || !seen(owner, victim)) {
                 return false;
             }
             if (worn != null && worn.isValid()) {
@@ -494,21 +503,28 @@ public final class MycologistAbility extends Ability {
             return state == MineState.DONE;
         }
 
-        /** A mycelium patch spreads and a small mushroom pushes out of it. */
+        /**
+         * A mycelium patch spreads and a small mushroom pushes out of it. The mushroom is the trap's only warning, so
+         * it always grows, even past the display budget (re-planting while the giant mushroom stands, with the old
+         * mines still wilting, would otherwise leave armed mines nobody can see); only the patch is an extra.
+         */
         void sprout() {
             Player owner = player();
             long lifetime = maxRuns() + WILT_TICKS + 4;
             if (roomFor(3)) {
                 patch = keep(Displays.block(ctx(), owner, spot, data(MYCELIUM), plate(0.1f, yaw, 0.012f), lifetime));
-                stem = keep(Displays.block(ctx(), owner, spot, data(STEM), stemPose(0.1f), lifetime));
-                cap = keep(Displays.block(ctx(), owner, spot, data(CAP), capPose(0.1f, 0.1f, 1f, 0), lifetime));
                 parts.add(patch);
-                parts.add(stem);
-                parts.add(cap);
                 Displays.animateNextTick(ctx(), owner, patch, plate(PATCH_SIZE, yaw, 0.012f), (int) SPROUT_TICKS);
-                Displays.animateNextTick(ctx(), owner, stem, stemPose(0.75f), (int) SPROUT_TICKS);
-                Displays.animateNextTick(ctx(), owner, cap, capPose(0.75f, 0.75f, 1f, 0), (int) SPROUT_TICKS);
             }
+            BlockDisplay grownStem = keep(Displays.block(ctx(), owner, spot, data(STEM), stemPose(0.1f), lifetime));
+            BlockDisplay grownCap = keep(Displays.block(ctx(), owner, spot, data(CAP), capPose(0.1f, 0.1f, 1f, 0),
+                    lifetime));
+            stem = grownStem;
+            cap = grownCap;
+            parts.add(grownStem);
+            parts.add(grownCap);
+            Displays.animateNextTick(ctx(), owner, grownStem, stemPose(0.75f), (int) SPROUT_TICKS);
+            Displays.animateNextTick(ctx(), owner, grownCap, capPose(0.75f, 0.75f, 1f, 0), (int) SPROUT_TICKS);
             Location at = spot.clone().add(0, 0.1, 0);
             world.spawnParticle(Particle.BLOCK, at, Vfx.n(ctx(), 8), 0.3, 0.05, 0.3, 0.05, data(MYCELIUM));
             world.spawnParticle(Particle.MYCELIUM, at, Vfx.n(ctx(), 8), 0.4, 0.05, 0.4, 0);
@@ -666,6 +682,10 @@ public final class MycologistAbility extends Ability {
                 dizzy(enemy, confuse);
                 Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(spot.toVector()));
                 Motion.push(enemy, away.multiply(POP_PUSH).setY(POP_LIFT), MAX_SPEED);
+                if (!seen(owner, enemy)) {
+                    // Caught in the puff while in stealth: it is hurt, but nothing is drawn on it.
+                    continue;
+                }
                 Location body = Fx.body(enemy);
                 Vfx.trail(center, body, spored ? VIOLET : PALETTE.body(), 6, false);
                 if (spored) {
@@ -720,7 +740,10 @@ public final class MycologistAbility extends Ability {
         }
     }
 
-    /** Leaves {@code enemy} dizzy: nausea and slowness, spores swirling around its head meanwhile. */
+    /**
+     * Leaves {@code enemy} dizzy: nausea and slowness, spores swirling around its head meanwhile (not while it is
+     * hidden by stealth, which they would give away).
+     */
     private void dizzy(LivingEntity enemy, long ticks) {
         enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, clampTicks(ticks + NAUSEA_LEAD), 0, false,
                 true, true));
@@ -730,6 +753,9 @@ public final class MycologistAbility extends Ability {
         Loop.repeat(ctx(), owner, DIZZY_FX_PERIOD, DIZZY_FX_PERIOD, Math.max(1, ticks / DIZZY_FX_PERIOD), run -> {
             if (!Combat.isTargetable(ctx(), owner, enemy)) {
                 return false;
+            }
+            if (!seen(owner, enemy)) {
+                return true;
             }
             // Spores circling the head like little stars.
             Location head = enemy.getEyeLocation().add(0, 0.35, 0);
@@ -808,6 +834,8 @@ public final class MycologistAbility extends Ability {
         private final double radius;
         private final long life;
         private final long interval;
+        /** Nausea of a sting: it lasts past the next pulse with enough left that the view keeps warping. */
+        private final int nausea;
         private final float yaw;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private final Map<UUID, Slowed> slowed = new LinkedHashMap<>();
@@ -826,6 +854,7 @@ public final class MycologistAbility extends Ability {
             this.radius = Math.max(1, params().num("ult_radius"));
             this.life = Math.max(1, params().ticks("ult_duration"));
             this.interval = Math.max(1, params().ticks("ult_interval"));
+            this.nausea = clampTicks(interval + NAUSEA_LEAD + ULT_NAUSEA_LINGER);
             this.yaw = ThreadLocalRandom.current().nextFloat() * 90f;
         }
 
@@ -955,6 +984,9 @@ public final class MycologistAbility extends Ability {
                 launched++;
                 Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(base.toVector()));
                 Motion.push(enemy, away.multiply(ERUPT_PUSH).setY(lift), MAX_SPEED);
+                if (!seen(owner, enemy)) {
+                    continue;
+                }
                 Location body = Fx.body(enemy);
                 Vfx.dot(body, Particle.FLASH, PALETTE.body(), false);
                 world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 8), 0.3, 0.4, 0.3, 0.1, data(CAP));
@@ -1006,6 +1038,9 @@ public final class MycologistAbility extends Ability {
                 NamespacedKey key = ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow,
                         AttributeModifier.Operation.MULTIPLY_SCALAR_1, SLOW_LEASE);
                 slowed.put(enemy.getUniqueId(), new Slowed(enemy, key, tick + SLOW_LEASE / 2));
+                if (!seen(owner, enemy)) {
+                    continue;
+                }
                 Location feet = enemy.getLocation().add(0, 0.1, 0);
                 Vfx.ring(ctx(), feet, 0.6, 10, 0, Particle.DUST, VIOLET_DUST, false);
                 world.spawnParticle(Particle.MYCELIUM, feet, Vfx.n(ctx(), 6), 0.3, 0.05, 0.3, 0);
@@ -1053,8 +1088,10 @@ public final class MycologistAbility extends Ability {
                     continue;
                 }
                 stung++;
-                enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, ULT_NAUSEA_TICKS, 0, false, true,
-                        true));
+                enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
+                if (!seen(owner, enemy)) {
+                    continue;
+                }
                 Location body = Fx.body(enemy);
                 world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, Vfx.n(ctx(), 4 + 2 * Math.min(4, stacks)),
                         0.3, 0.45, 0.3, 0, SPORE_FADE, true);
@@ -1145,9 +1182,10 @@ public final class MycologistAbility extends Ability {
                     Combat.hit(ctx(), owner, enemy, damage);
                     if (Combat.isTargetable(ctx(), owner, enemy)) {
                         stung++;
-                        enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, ULT_NAUSEA_TICKS, 0, false,
-                                true, true));
-                        Vfx.trail(top, Fx.body(enemy), PALETTE.body(), 8, true);
+                        enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
+                        if (seen(owner, enemy)) {
+                            Vfx.trail(top, Fx.body(enemy), PALETTE.body(), 8, true);
+                        }
                     }
                 }
                 sink();

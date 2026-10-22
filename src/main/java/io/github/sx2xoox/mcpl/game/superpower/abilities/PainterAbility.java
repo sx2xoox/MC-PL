@@ -229,10 +229,12 @@ public final class PainterAbility extends Ability {
         }
         long now = ctx().currentTick();
         areas.removeIf(area -> area.until() <= now);
-        if (onPaint(owner)) {
+        boolean onPaint = onPaint(owner);
+        if (onPaint) {
             inspiredUntil = now + Math.max(0, params().ticks("inspire_linger"));
         }
-        boolean inspired = now < inspiredUntil;
+        // On the paint the painter is inspired even without any linger (inspire_linger 0).
+        boolean inspired = onPaint || now < inspiredUntil;
         if (inspired && inspireKey == null) {
             double speed = Math.max(0, params().num("inspire_speed")) / 100.0;
             inspireKey = ctx().addModifier(owner, owner, Attribute.MOVEMENT_SPEED, speed,
@@ -475,9 +477,12 @@ public final class PainterAbility extends Ability {
             Combat.hit(ctx(), owner, enemy, damage);
             if (Combat.isTargetable(ctx(), owner, enemy)) {
                 hits++;
-                Location body = Fx.body(enemy);
-                world.spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 8), 0.3, 0.45, 0.3, 0, paint.dust);
-                Vfx.trail(burst, body, paint.color, 4, false);
+                // Paint never marks an enemy hidden by stealth: it is hurt, but nothing is drawn on it.
+                if (seen(owner, enemy)) {
+                    Location body = Fx.body(enemy);
+                    world.spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 8), 0.3, 0.45, 0.3, 0, paint.dust);
+                    Vfx.trail(burst, body, paint.color, 4, false);
+                }
             }
         }
         if (hits > 0 && owner.isOnline()) {
@@ -541,6 +546,9 @@ public final class PainterAbility extends Ability {
                 NamespacedKey key = ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow,
                         AttributeModifier.Operation.MULTIPLY_SCALAR_1, SLOW_LEASE);
                 slowed.put(enemy.getUniqueId(), new Slowed(enemy, key, tick + SLOW_LEASE / 2));
+                if (!seen(owner, enemy)) {
+                    continue;
+                }
                 Location feet = enemy.getLocation().add(0, 0.1, 0);
                 Vfx.ring(ctx(), feet, 0.55, 10, 0, Particle.DUST, mark, false);
                 Fx.sound(feet, Sound.BLOCK_HONEY_BLOCK_SLIDE, 0.8f, 0.9f + Fx.jitter(0.1f));
@@ -677,7 +685,7 @@ public final class PainterAbility extends Ability {
                         continue;
                     }
                     Combat.hit(ctx(), owner, enemy, damage);
-                    if (Combat.isTargetable(ctx(), owner, enemy)) {
+                    if (Combat.isTargetable(ctx(), owner, enemy) && seen(owner, enemy)) {
                         effects++;
                         Location feet = enemy.getLocation().add(0, 0.2, 0);
                         world.spawnParticle(Particle.DUST, feet, Vfx.n(ctx(), 6), 0.3, 0.2, 0.3, 0, paint.dust);
@@ -1101,6 +1109,9 @@ public final class PainterAbility extends Ability {
                 Combat.hit(ctx(), owner, enemy, damage);
                 if (Combat.isTargetable(ctx(), owner, enemy)) {
                     hits++;
+                    if (!seen(owner, enemy)) {
+                        continue;
+                    }
                     Location body = Fx.body(enemy);
                     for (Paint paint : paints) {
                         world.spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 4), 0.3, 0.45, 0.3, 0, paint.dust, true);
@@ -1120,6 +1131,9 @@ public final class PainterAbility extends Ability {
                 Combat.hit(ctx(), owner, enemy, damage);
                 if (Combat.isTargetable(ctx(), owner, enemy)) {
                     hits++;
+                    if (!seen(owner, enemy)) {
+                        continue;
+                    }
                     Location feet = enemy.getLocation().add(0, 0.2, 0);
                     world.spawnParticle(Particle.DUST, feet, Vfx.n(ctx(), 4), 0.3, 0.2, 0.3, 0, Paint.RED.dust, true);
                     world.spawnParticle(Particle.DUST, feet, Vfx.n(ctx(), 2), 0.3, 0.2, 0.3, 0, Paint.BLUE.dust, true);

@@ -17,6 +17,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Particle;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -27,14 +28,18 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.sound.AudioExperience;
+import org.mockbukkit.mockbukkit.util.SpawnedParticle;
 
 /** 자연·예술 계열 신규 능력: 버섯술사, 크리스탈술사, 화가. */
 class ArtNewAbilitiesTest {
@@ -45,6 +50,17 @@ class ArtNewAbilitiesTest {
 
     static Stream<String> abilities() {
         return Stream.of("mycologist", "crystal", "painter");
+    }
+
+    /**
+     * {@link AbilityLifecycleTest} lists the abilities in a static initializer that mocks a server of its own. This
+     * class calls into it from inside running scenarios, where that initializer would fail ("Already mocking") and
+     * take every test using it down when this class runs on its own, so it is loaded here first, while no server is
+     * mocked.
+     */
+    @BeforeAll
+    static void loadTheSweepsOutsideAScenario() {
+        assertFalse(AbilityLifecycleTest.abilities().toList().isEmpty(), "the built-in abilities are listed");
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1015,6 +1031,350 @@ class ArtNewAbilitiesTest {
                 assertModifierFree(target, "after the masterpiece");
             }
             assertModifierFree(s.owner, "after the masterpiece");
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== audit regressions
+
+    /** How close to a stealthed enemy a burst, flash, trail or sound counts as marking it. */
+    private static final double MARK_REACH = 0.7;
+
+    private static boolean near(Location at, List<Location> spots, double reach) {
+        for (Location spot : spots) {
+            if (at.getWorld().equals(spot.getWorld()) && at.distance(spot) <= reach) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Runs {@code ticks} ticks and fails if anything is drawn on or played at {@code hidden}, an enemy hidden from the
+     * owner by stealth (as it stood when the tick began: effects are drawn before anything moves): a particle burst
+     * (one spawn of several particles) or a flash at its feet, body or eyes, a trail drawn to it, a sound the owner
+     * hears there, with {@code crown} particles circling over its head, and with {@code noDisplays} a display entity
+     * on it. Area effects that merely pass by (the single particles of rings and drifting motes) do not count.
+     */
+    private static void assertNothingMarks(Scenario s, Player hidden, int ticks, boolean crown, boolean noDisplays,
+                                           String what) {
+        for (int i = 0; i < ticks; i++) {
+            Location feet = hidden.getLocation();
+            List<Location> spots = List.of(feet.clone().add(0, 0.2, 0),
+                    feet.clone().add(0, hidden.getHeight() * 0.5, 0), hidden.getEyeLocation());
+            Location head = hidden.getEyeLocation().add(0, 0.35, 0);
+            s.world.clearSpawnedParticles();
+            s.owner.clearSounds();
+            s.ticks(1);
+            for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
+                Location at = new Location(s.world, particle.x(), particle.y(), particle.z());
+                boolean burst = particle.count() > 1 || particle.particle() == Particle.FLASH;
+                assertFalse(burst && near(at, spots, MARK_REACH),
+                        what + ": " + particle.count() + " " + particle.particle() + " drawn on the stealthed enemy");
+                assertFalse(particle.data() instanceof Particle.Trail trail && near(trail.getTarget(), spots,
+                        MARK_REACH), what + ": a trail drawn to the stealthed enemy");
+                assertFalse(crown && Math.abs(at.getY() - head.getY()) < 0.1
+                                && Math.hypot(at.getX() - head.getX(), at.getZ() - head.getZ()) < 0.6,
+                        what + ": " + particle.particle() + " circling over the stealthed enemy's head");
+            }
+            for (AudioExperience sound : s.owner.getHeardSounds()) {
+                assertFalse(near(sound.getLocation(), spots, MARK_REACH),
+                        what + ": " + sound.getSound() + " heard where the stealthed enemy hides");
+            }
+            if (noDisplays) {
+                for (Entity entity : s.world.getEntities()) {
+                    assertFalse(entity instanceof Display && near(entity.getLocation(), spots, 1.0),
+                            what + ": a " + entity.getType() + " shows where the stealthed enemy is");
+                }
+            }
+        }
+    }
+
+    /** Hides {@code enemy} from the owner, as a stealth ability does. */
+    private static void stealth(Scenario s, Player enemy) {
+        s.owner.hidePlayer(s.h.hub.plugin(), enemy);
+    }
+
+    @Test
+    void mycologistToadstoolFallsOffAnEnemySlippingIntoStealth() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy2, FAR, FAR, 180);
+            s.melee(s.owner, s.enemy, 1);
+            s.ticks(4);
+            assertEquals(1, displays(s), "a toadstool sprouts on the spored enemy's head");
+            stealth(s, s.enemy);
+            s.place(s.enemy, -6.5, 6.5, 180);
+            assertNothingMarks(s, s.enemy, s.paramTicks("spore_nausea"), true, true, "포자 버섯");
+            assertVisualsGone(s, "the toadstool fell off where the enemy vanished");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mycologistMineBurstDrawsNothingOnAStealthedEnemyItCatches() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy, FAR, FAR, 180);
+            s.place(s.enemy2, -FAR, FAR, 180);
+            s.aimAtFloor(s.owner, 0.5, 6.5);
+            s.assertSucceeded(s.active(), "버섯 지뢰");
+            s.ticks(50);
+            // A spored enemy slips into stealth two blocks from the right-hand mine, within its burst.
+            s.melee(s.owner, s.enemy2, 1);
+            stealth(s, s.enemy2);
+            s.place(s.enemy2, 0.5 - s.param("mine_spread"), 8.5, 180);
+            s.ticks(8);
+            s.clearHits();
+            // A visible enemy steps on that mine.
+            s.place(s.enemy, 0.5 - s.param("mine_spread"), 6.5, 180);
+            assertNothingMarks(s, s.enemy2, FUSE_AND_DIZZY, true, false, "포자 폭발");
+            assertEquals(s.param("mine_damage"), magicDamage(s, s.enemy), EPSILON, "the visible enemy is caught");
+            assertEquals(s.param("mine_damage") * (1 + s.param("spore_bonus") / 100), magicDamage(s, s.enemy2),
+                    EPSILON, "the stealthed one is hurt all the same");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy2);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mycologistMinesReplantedUnderTheGiantMushroomAreNeverInvisible() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy, FAR, FAR, 180);
+            s.place(s.enemy2, -FAR, FAR, 180);
+            s.aimAtFloor(s.owner, 0.5, 6.5);
+            s.assertSucceeded(s.active(), "버섯 지뢰");
+            s.ticks(30);
+            s.aimAtFloor(s.owner, -6.5, 0.5);
+            s.assertSucceeded(s.ultimate(), "거대 버섯");
+            s.ticks(14);
+            // Re-planted while the giant mushroom stands and the old row is still wilting.
+            s.readyActive();
+            s.aimAtFloor(s.owner, 0.5, -6.5);
+            s.assertSucceeded(s.active(), "버섯 지뢰");
+            s.ticks(14);
+            long grown = blockDisplays(s, Material.MUSHROOM_STEM).stream()
+                    .filter(stem -> stem.getLocation().getZ() < -3).count();
+            assertEquals(Math.round(s.param("mine_count")), grown,
+                    "every mine of the new row can be seen: " + displays(s) + " displays");
+            s.ticks(s.paramTicks("mine_duration") + 40);
+            assertVisualsGone(s, "after the mines withered");
+            s.finishClean();
+        }
+    }
+
+    /** A mine's fuse plus the dizziness of its burst, with some slack. */
+    private static final int FUSE_AND_DIZZY = 60;
+
+    @Test
+    void mycologistGiantMushroomDrawsNothingOnAStealthedEnemyInItsCloud() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy2, 2.5, 5.5, 180);
+            stealth(s, s.enemy2);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "거대 버섯");
+            assertNothingMarks(s, s.enemy2, 13 + s.paramTicks("ult_duration") + 12, false, false, "거대 버섯");
+            assertTrue(magicDamage(s, s.enemy2) >= s.param("erupt_damage") + s.param("burst_damage"),
+                    "the stealthed enemy is hurt all the same: " + magicHits(s, s.enemy2));
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy2);
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A real client only warps the view while more than this many ticks of nausea are left, and fades the warp out
+     * over them: nausea of 3 seconds or less shows nothing at all.
+     */
+    private static final int CLIENT_NAUSEA_FADE = 60;
+
+    private static int nauseaTicks(Player player) {
+        PotionEffect nausea = player.getPotionEffect(PotionEffectType.NAUSEA);
+        return nausea == null ? 0 : nausea.getDuration();
+    }
+
+    @Test
+    void mycologistNauseaLastsLongEnoughForTheClientToShowIt() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy2, FAR, FAR, 180);
+            s.melee(s.owner, s.enemy, 1);
+            assertTrue(nauseaTicks(s.enemy) - CLIENT_NAUSEA_FADE >= s.paramTicks("spore_nausea"),
+                    "the spores warp the view for spore_nausea: " + nauseaTicks(s.enemy));
+
+            s.enemy.removePotionEffect(PotionEffectType.NAUSEA);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "버섯 지뢰");
+            for (int i = 0; i < 80 && magicDamage(s, s.enemy) == 0; i++) {
+                s.ticks(1);
+            }
+            assertTrue(magicDamage(s, s.enemy) > 0, "the mine burst under the enemy");
+            assertTrue(nauseaTicks(s.enemy) - CLIENT_NAUSEA_FADE >= s.paramTicks("mine_confuse") - 1,
+                    "the burst warps the view for mine_confuse: " + nauseaTicks(s.enemy));
+
+            s.ticks(120);
+            s.enemy.removePotionEffect(PotionEffectType.NAUSEA);
+            s.healAll();
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "거대 버섯");
+            int longest = 0;
+            for (int i = 0; i < 13 + s.paramTicks("ult_duration"); i++) {
+                s.ticks(1);
+                longest = Math.max(longest, nauseaTicks(s.enemy));
+            }
+            assertTrue(longest > s.paramTicks("ult_interval") + CLIENT_NAUSEA_FADE,
+                    "a sting's nausea still warps the view when the next one comes: " + longest);
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalSpikesDrawNothingOnAStealthedEnemyTheyCatch() {
+        try (Scenario s = Scenario.ffa("crystal")) {
+            // One block beside the line, where the spikes still reach.
+            s.place(s.enemy2, 1.5, 8.5, 180);
+            stealth(s, s.enemy2);
+            s.assertSucceeded(s.active(), "크리스탈 가시");
+            assertNothingMarks(s, s.enemy2, 30, false, false, "크리스탈 가시");
+            assertEquals(s.param("spike_damage"), magicDamage(s, s.enemy), EPSILON, "the visible enemy is struck");
+            assertEquals(s.param("spike_damage"), magicDamage(s, s.enemy2), EPSILON,
+                    "the stealthed one is struck all the same");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy2);
+            s.ticks(s.paramTicks("shard_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalShatterDrawsNothingOnAStealthedEnemyItHits() {
+        try (Scenario s = Scenario.ffa("crystal")) {
+            stealth(s, s.enemy2);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "크리스탈 감옥");
+            assertNothingMarks(s, s.enemy2, s.paramTicks("prison_duration") + 10, false, false, "크리스탈 감옥");
+            assertEquals(s.param("splash_damage"), magicDamage(s, s.enemy2), EPSILON,
+                    "the stealthed enemy beside the cage is hit all the same");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy2);
+            s.ticks(s.paramTicks("shard_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalPrisonBorrowedByAGamblerLetsGoWhenTheGamblerDies() {
+        try (Scenario s = gambler().start()) {
+            prepare(s);
+            double base = baseSpeed(s.enemy);
+            s.assertSucceeded(borrow(s, "crystal"), "borrowed 크리스탈 감옥");
+            s.ticks(6);
+            assertEquals(0, speed(s.enemy), 1.0E-9, "caged");
+            s.killOwner(s.enemy2);
+            s.ticks(1);
+            assertEquals(0, displays(s), "the cage went with the gambler");
+            assertEquals(base, speed(s.enemy), 1.0E-9, "so the prisoner walks free at once");
+            assertModifierFree(s.enemy, "no root is left without a cage");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void crystalFadingShardNeverGrowsBackFromAResonancePulse() {
+        // A long cooldown keeps the resonance (and so the pulse of the nearest shard) going until the shard fades.
+        try (Scenario s = Scenario.builder("crystal").param("cooldown", 40).start()) {
+            s.place(s.enemy, FAR, FAR, 180);
+            s.place(s.enemy2, -FAR, FAR, 180);
+            // The pulse runs every half second: cast at every phase, so the fade falls on each tick of it once.
+            for (int phase = 0; phase < 10; phase++) {
+                while (s.ctx().currentTick() % 10 != phase) {
+                    s.ticks(1);
+                }
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.readyActive();
+                s.assertSucceeded(s.active(), "크리스탈 가시");
+                s.ticks(16);
+                // The fourth spike (1.3 + 3 blocks ahead) stays as a shard; stand next to it.
+                BlockDisplay shard = blockDisplays(s, Material.AMETHYST_CLUSTER).stream()
+                        .filter(display -> Math.abs(display.getLocation().getX() - 0.5) < 1.0E-6
+                                && Math.abs(display.getLocation().getZ() - 4.8) < 1.0E-6)
+                        .findFirst().orElseThrow();
+                s.place(s.owner, 0.5, 3.0, 0);
+                boolean fading = false;
+                for (int i = 0; i < 200 && shard.isValid(); i++) {
+                    s.ticks(1);
+                    if (!shard.isValid()) {
+                        break;
+                    }
+                    float size = model(shard).getScale(new Vector3f()).y;
+                    if (size < 0.05f) {
+                        fading = true;
+                    } else {
+                        assertFalse(fading, "phase " + phase + ": the fading shard grew back to " + size);
+                    }
+                }
+                assertTrue(fading, "phase " + phase + ": the shard faded");
+                s.ticks(20);
+                assertEquals(0, displays(s), "phase " + phase + ": every crystal is gone");
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void painterPaintDrawsNothingOnAStealthedEnemyInIt() {
+        try (Scenario s = Scenario.ffa("painter")) {
+            // Inside the puddle that will spread under the aimed enemy, but not where the glob flies.
+            s.place(s.enemy2, 2.0, 5.5, 180);
+            stealth(s, s.enemy2);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "물감 투척 (빨강)");
+            assertNothingMarks(s, s.enemy2, 20 + s.paramTicks("puddle_duration"), false, false, "빨강 물감");
+            assertTrue(magicDamage(s, s.enemy2) > s.param("splash_damage"),
+                    "the stealthed enemy is splashed and burns all the same: " + magicHits(s, s.enemy2));
+
+            s.readyActive();
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "물감 투척 (파랑)");
+            assertNothingMarks(s, s.enemy2, 14, false, false, "파랑 물감");
+            assertTrue(speed(s.enemy2) < baseSpeed(s.enemy2), "the stealthed enemy is slowed all the same");
+            assertNothingMarks(s, s.enemy2, s.paramTicks("puddle_duration"), false, false, "파랑 물감");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy2);
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void painterIsInspiredOnItsPaintEvenWithoutALinger() {
+        try (Scenario s = Scenario.builder("painter").param("inspire_linger", 0).start()) {
+            s.place(s.enemy, FAR, FAR, 180);
+            s.place(s.enemy2, -FAR, FAR, 180);
+            double base = speed(s.owner);
+            s.aimAtFloor(s.owner, 0.5, 3.5);
+            s.assertSucceeded(s.active(), "물감 투척");
+            s.ticks(12);
+            s.place(s.owner, 0.5, 3.5, 0);
+            s.ticks(8);
+            assertEquals(base * (1 + s.param("inspire_speed") / 100), speed(s.owner), 1.0E-9,
+                    "inspired while standing on its paint");
+            s.place(s.owner, -6.5, -6.5, 0);
+            s.ticks(8);
+            assertEquals(base, speed(s.owner), 1.0E-9, "and no longer once off it");
+            s.ticks(s.paramTicks("puddle_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void painterMasterpieceDrawsNothingOnAStealthedEnemyInIt() {
+        try (Scenario s = Scenario.ffa("painter")) {
+            s.place(s.enemy2, 3.5, 6.5, 180);
+            stealth(s, s.enemy2);
+            s.assertSucceeded(s.ultimate(), "걸작");
+            assertNothingMarks(s, s.enemy2, 30 + s.paramTicks("ult_duration") + 10, false, false, "걸작");
+            assertTrue(magicDamage(s, s.enemy2) > s.param("ult_splash"),
+                    "the stealthed enemy is splashed and burns all the same: " + magicHits(s, s.enemy2));
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy2);
+            s.ticks(20);
             s.finishClean();
         }
     }
