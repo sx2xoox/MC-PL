@@ -60,5 +60,30 @@ public final class BuiltinAbilities {
         registry.register(DimensionAbility.INFO, DimensionAbility::new);
         registry.register(BuilderAbility.INFO, BuilderAbility::new);
         registry.register(FighterAbility.INFO, FighterAbility::new);
+        registry.register(BeekeeperAbility.INFO, BeekeeperAbility::new);
+        registry.register(AnglerAbility.INFO, AnglerAbility::new);
+        registry.register(FarmerAbility.INFO, FarmerAbility::new);
+        registry.register(ChefAbility.INFO, ChefAbility::new);
+        registry.register(MagicianAbility.INFO, MagicianAbility::new);
+        registry.register(ClownAbility.INFO, ClownAbility::new);
+        registry.register(SoccerAbility.INFO, SoccerAbility::new);
+        registry.register(BatterAbility.INFO, BatterAbility::new);
+        registry.register(DemonAbility.INFO, DemonAbility::new);
+        registry.register(ReaperAbility.INFO, ReaperAbility::new);
+        registry.register(GhostAbility.INFO, GhostAbility::new);
+        registry.register(PhantomAbility.INFO, PhantomAbility::new);
+        registry.register(CreeperAbility.INFO, CreeperAbility::new);
+        registry.register(ShulkerAbility.INFO, ShulkerAbility::new);
+        registry.register(GoatAbility.INFO, GoatAbility::new);
+        registry.register(TurtleAbility.INFO, TurtleAbility::new);
+        registry.register(MechAbility.INFO, MechAbility::new);
+        registry.register(AstronomerAbility.INFO, AstronomerAbility::new);
+        registry.register(HackerAbility.INFO, HackerAbility::new);
+        registry.register(MycologistAbility.INFO, MycologistAbility::new);
+        registry.register(CrystalAbility.INFO, CrystalAbility::new);
+        registry.register(PainterAbility.INFO, PainterAbility::new);
+        registry.register(HunterAbility.INFO, HunterAbility::new);
+        registry.register(PirateAbility.INFO, PirateAbility::new);
+        registry.register(SpeedsterAbility.INFO, SpeedsterAbility::new);
     }
 }
