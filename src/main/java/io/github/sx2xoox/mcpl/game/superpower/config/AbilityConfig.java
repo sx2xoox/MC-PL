@@ -34,7 +34,8 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>On every {@link #load} missing entries and params are added with their defaults (and the file is saved), comments
  * are refreshed, and unknown abilities or params are kept in the file but ignored. Invalid numbers fall back to the
- * default with a warning. Readers get an immutable {@link Snapshot}; a match keeps the snapshot it started with.
+ * default with a warning. A file that cannot be parsed at all (a YAML syntax error) is left untouched and the previous
+ * settings stay in effect. Readers get an immutable {@link Snapshot}; a match keeps the snapshot it started with.
  */
 public final class AbilityConfig {
 
@@ -55,6 +56,8 @@ public final class AbilityConfig {
     private final File file;
     private final Logger logger;
     private Snapshot snapshot = new Snapshot(Map.of(), Map.of());
+    /** True once the file was read successfully (a later broken file then keeps the last good settings). */
+    private boolean loaded;
 
     public AbilityConfig(File file, Logger logger) {
         this.file = file;
@@ -72,9 +75,12 @@ public final class AbilityConfig {
 
     /**
      * (Re)reads the file, adds missing entries/params with defaults, refreshes the comments and saves the file if
-     * anything changed. Never throws for a broken file: the defaults are used instead and the error is logged.
+     * anything changed. Never throws for a broken file: the error is logged, the file is left untouched and the
+     * previous settings stay in effect (the defaults if it was never read successfully).
+     *
+     * @return false if the file could not be parsed
      */
-    public void load(AbilityRegistry registry) {
+    public boolean load(AbilityRegistry registry) {
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.options().parseComments(true);
         boolean changed = !file.exists();
@@ -82,12 +88,13 @@ public final class AbilityConfig {
             try {
                 yaml.load(file);
             } catch (Exception e) {
-                logger.log(Level.SEVERE, "Could not read " + file.getName() + "; using default ability settings "
-                        + "(the file is left untouched)", e);
-                snapshot = defaults(registry);
-                return;
+                logger.log(Level.SEVERE, "Could not read " + file.getName() + "; keeping the "
+                        + (loaded ? "previous" : "default") + " ability settings (the file is left untouched)", e);
+                snapshot = loaded ? withDefaultsFor(snapshot, registry) : defaults(registry);
+                return false;
             }
         }
+        Snapshot previous = loaded ? snapshot : null;
         if (!sameLines(HEADER, yaml.options().getHeader())) {
             yaml.options().setHeader(HEADER);
             changed = true;
@@ -113,14 +120,19 @@ public final class AbilityConfig {
                 root.setComments(id, comments);
                 changed = true;
             }
-            if (!section.isBoolean(ENABLED)) {
-                if (section.isSet(ENABLED)) {
-                    logger.warning(FILE_NAME + ": " + id + ".enabled is not true/false; treating it as true");
-                }
+            Boolean on = bool(section.get(ENABLED));
+            if (!section.isSet(ENABLED)) {
                 section.set(ENABLED, true);
                 changed = true;
+                on = true;
+            } else if (on == null) {
+                // Keep the server owner's value in the file; only this load falls back.
+                boolean fallback = previous == null || !previous.enabled().containsKey(id) || previous.isEnabled(id);
+                logger.warning(FILE_NAME + ": " + id + ".enabled is not true/false ('" + section.get(ENABLED)
+                        + "'); treating it as " + fallback);
+                on = fallback;
             }
-            enabled.put(id, section.getBoolean(ENABLED, true));
+            enabled.put(id, on);
 
             ConfigurationSection values = section.getConfigurationSection(PARAMS);
             if (values == null) {
@@ -152,9 +164,11 @@ public final class AbilityConfig {
             params.put(id, new AbilityParams(info, overrides));
         }
         snapshot = new Snapshot(enabled, params);
+        loaded = true;
         if (changed) {
             save(yaml);
         }
+        return true;
     }
 
     private void save(YamlConfiguration yaml) {
@@ -175,6 +189,20 @@ public final class AbilityConfig {
         yaml.set(ROOT + "." + id + "." + ENABLED, value);
         save(yaml);
         load(registry);
+    }
+
+    /** {@code kept}, plus defaults for abilities registered since it was read. */
+    private static Snapshot withDefaultsFor(Snapshot kept, AbilityRegistry registry) {
+        Map<String, Boolean> enabled = new LinkedHashMap<>(kept.enabled());
+        Map<String, AbilityParams> params = new LinkedHashMap<>(kept.params());
+        for (AbilityRegistry.Entry entry : registry.all()) {
+            String id = entry.info().id();
+            if (!enabled.containsKey(id) || params.get(id) == null || params.get(id).info() != entry.info()) {
+                enabled.putIfAbsent(id, true);
+                params.put(id, AbilityParams.defaults(entry.info()));
+            }
+        }
+        return new Snapshot(enabled, params);
     }
 
     private static Snapshot defaults(AbilityRegistry registry) {
@@ -200,6 +228,23 @@ public final class AbilityConfig {
             }
         }
         return true;
+    }
+
+    /** {@code true}/{@code false}, also written as a string ({@code "false"}); null for anything else. */
+    private static @Nullable Boolean bool(@Nullable Object raw) {
+        if (raw instanceof Boolean value) {
+            return value;
+        }
+        if (raw instanceof String text) {
+            String value = text.strip();
+            if (value.equalsIgnoreCase("true")) {
+                return true;
+            }
+            if (value.equalsIgnoreCase("false")) {
+                return false;
+            }
+        }
+        return null;
     }
 
     private static @Nullable Double number(@Nullable Object raw) {

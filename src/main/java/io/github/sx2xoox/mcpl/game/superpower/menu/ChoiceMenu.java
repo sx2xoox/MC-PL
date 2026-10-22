@@ -23,7 +23,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The CHOICE-mode menu of one player: a 3-row chest with up to three candidate abilities (icon, colored name,
  * difficulty stars and the rendered skill descriptions). Clicks are handled by the match listener; the menu itself
- * only maps slots to abilities. Identified by inventory identity (no {@code getHolder} snapshots needed).
+ * only maps slots to abilities. The listener recognises any open choice menu by its holder
+ * ({@code getHolder(false)}, no snapshot), so even a menu that was just picked from stays locked until it closes.
  */
 public final class ChoiceMenu implements InventoryHolder {
 

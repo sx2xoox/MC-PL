@@ -4,11 +4,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
@@ -35,6 +38,8 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
@@ -66,6 +71,10 @@ public final class MatchContext implements AbilityContext {
     private final Map<UUID, Tagged> projectiles = new HashMap<>();
     private final Map<NamespacedKey, ModifierRecord> modifiers = new LinkedHashMap<>();
     private final Map<UUID, Integer> knockbackSuppressed = new HashMap<>();
+    /** Owners whose ultimate code is running right now (nesting depth): {@link #asUltimate}. */
+    private final Map<UUID, Integer> ultimateDepth = new HashMap<>();
+    /** Entities created by ultimate code (tracked, summoned or tagged), by entity id. */
+    private final Set<UUID> ultimateEntities = new HashSet<>();
     private int abilityDamageDepth;
     private long modifierSequence;
     private boolean closed;
@@ -331,13 +340,15 @@ public final class MatchContext implements AbilityContext {
     }
 
     /**
-     * Deals damage that ignores the target's invulnerability frames (and leaves them as they were, so ability hits
-     * never swallow a following melee hit) and applies no vanilla knockback. Re-entrant: nested deliveries (a hook
-     * dealing damage) keep {@link #isAbilityDamage()} true.
+     * Deals damage that ignores the target's invulnerability frames (and leaves them as they were, including the
+     * damage the next melee hit is compared with, so ability hits never swallow or weaken a following melee hit) and
+     * applies no vanilla knockback. Re-entrant: nested deliveries (a hook dealing damage) keep
+     * {@link #isAbilityDamage()} true.
      */
     void deliver(LivingEntity target, double amount, DamageSource damageSource) {
         UUID id = target.getUniqueId();
         int previousNoDamageTicks = target.getNoDamageTicks();
+        double previousLastDamage = target.getLastDamage();
         target.setNoDamageTicks(0);
         abilityDamageDepth++;
         knockbackSuppressed.merge(id, 1, Integer::sum);
@@ -348,6 +359,7 @@ public final class MatchContext implements AbilityContext {
             knockbackSuppressed.computeIfPresent(id, (key, count) -> count <= 1 ? null : count - 1);
             if (!target.isDead()) {
                 target.setNoDamageTicks(previousNoDamageTicks);
+                target.setLastDamage(previousLastDamage);
             }
         }
     }
@@ -358,10 +370,12 @@ public final class MatchContext implements AbilityContext {
             return;
         }
         int previous = player.getNoDamageTicks();
+        double previousLastDamage = player.getLastDamage();
         player.setNoDamageTicks(0);
         player.damage(amount, DamageSource.builder(DamageType.OUTSIDE_BORDER).build());
         if (!player.isDead()) {
             player.setNoDamageTicks(previous);
+            player.setLastDamage(previousLastDamage);
         }
     }
 
@@ -429,21 +443,32 @@ public final class MatchContext implements AbilityContext {
         session.broadcast(match.messages().prefix().append(message));
     }
 
+    @Override
+    public double effectScale() {
+        return match.settings().particleScale();
+    }
+
     // =================================================================== owner-scoped resources
 
     @Override
     public BukkitTask runLater(Player owner, long delayTicks, Runnable task) {
-        String abilityId = match.abilityIdOf(owner.getUniqueId());
-        BukkitTask scheduled = session.runLater(delayTicks, () -> guard.run(abilityId, "task", task));
-        scope(owner.getUniqueId()).addTask(scheduled);
+        UUID ownerId = owner.getUniqueId();
+        String abilityId = match.abilityIdOf(ownerId);
+        boolean fromUltimate = isUltimateOrigin(ownerId);
+        BukkitTask scheduled = session.runLater(delayTicks,
+                () -> runAs(ownerId, fromUltimate, () -> guard.run(abilityId, "task", task)));
+        scope(ownerId).addTask(scheduled);
         return scheduled;
     }
 
     @Override
     public BukkitTask runTimer(Player owner, long delayTicks, long periodTicks, Runnable task) {
-        String abilityId = match.abilityIdOf(owner.getUniqueId());
-        BukkitTask scheduled = session.runTimer(delayTicks, periodTicks, () -> guard.run(abilityId, "timer", task));
-        scope(owner.getUniqueId()).addTask(scheduled);
+        UUID ownerId = owner.getUniqueId();
+        String abilityId = match.abilityIdOf(ownerId);
+        boolean fromUltimate = isUltimateOrigin(ownerId);
+        BukkitTask scheduled = session.runTimer(delayTicks, periodTicks,
+                () -> runAs(ownerId, fromUltimate, () -> guard.run(abilityId, "timer", task)));
+        scope(ownerId).addTask(scheduled);
         return scheduled;
     }
 
@@ -455,6 +480,9 @@ public final class MatchContext implements AbilityContext {
         session.track(entity);
         hub.combat().registerOwner(entity, owner);
         managed.put(entity.getUniqueId(), entity);
+        if (isUltimateOrigin(owner.getUniqueId())) {
+            ultimateEntities.add(entity.getUniqueId());
+        }
         if (!scope(owner.getUniqueId()).addEntity(entity)) {
             release(entity);
         }
@@ -600,6 +628,7 @@ public final class MatchContext implements AbilityContext {
         managed.remove(id);
         summons.remove(id);
         projectiles.remove(id);
+        ultimateEntities.remove(id);
         hub.combat().unregisterOwner(entity);
         session.untrack(entity);
         if (!(entity instanceof Player)) {
@@ -626,6 +655,7 @@ public final class MatchContext implements AbilityContext {
             removeModifier(key);
         }
         knockbackSuppressed.clear();
+        ultimateEntities.clear();
     }
 
     /** Forgets entries of entities that died or were removed. */
@@ -639,6 +669,7 @@ public final class MatchContext implements AbilityContext {
             hub.combat().unregisterOwner(entity);
             return true;
         });
+        ultimateEntities.retainAll(managed.keySet());
         for (ModifierRecord record : List.copyOf(modifiers.values())) {
             if (!(record.target instanceof Player) && record.target.isDead()) {
                 if (record.expiry != null) {
@@ -647,6 +678,59 @@ public final class MatchContext implements AbilityContext {
                 modifiers.remove(record.key);
             }
         }
+    }
+
+    // =================================================================== ultimate origin
+
+    /**
+     * Runs {@code action} as ultimate code of {@code owner}: damage the owner deals meanwhile, tasks it schedules
+     * through the context (and their tasks, transitively) and entities it tracks, summons or tags all count as part of
+     * the ultimate, so they never charge the owner's gauge.
+     */
+    <T> T asUltimate(UUID owner, Supplier<T> action) {
+        ultimateDepth.merge(owner, 1, Integer::sum);
+        try {
+            return action.get();
+        } finally {
+            ultimateDepth.computeIfPresent(owner, (key, depth) -> depth <= 1 ? null : depth - 1);
+        }
+    }
+
+    /** Runs {@code action}, as ultimate code of {@code owner} when {@code ultimate} is true. */
+    void runAs(UUID owner, boolean ultimate, Runnable action) {
+        if (!ultimate) {
+            action.run();
+            return;
+        }
+        asUltimate(owner, () -> {
+            action.run();
+            return null;
+        });
+    }
+
+    /** True while ultimate code of {@code owner} is running (see {@link #asUltimate}). */
+    boolean isUltimateOrigin(UUID owner) {
+        return ultimateDepth.containsKey(owner);
+    }
+
+    /** True for an entity created by ultimate code (a summon, a tagged projectile or a tracked entity). */
+    boolean isUltimateEntity(@Nullable Entity entity) {
+        return entity != null && ultimateEntities.contains(entity.getUniqueId());
+    }
+
+    /**
+     * True if a hit credited to {@code attacker} belongs to the attacker's ultimate: dealt while its ultimate code
+     * runs, or by an entity the ultimate created (direct or causing entity).
+     */
+    boolean isUltimateHit(EntityDamageEvent event, UUID attacker) {
+        if (isUltimateOrigin(attacker)) {
+            return true;
+        }
+        if (event instanceof EntityDamageByEntityEvent byEntity && isUltimateEntity(byEntity.getDamager())) {
+            return true;
+        }
+        return isUltimateEntity(event.getDamageSource().getCausingEntity())
+                || isUltimateEntity(event.getDamageSource().getDirectEntity());
     }
 
     /** The owner of a summon, or null. */

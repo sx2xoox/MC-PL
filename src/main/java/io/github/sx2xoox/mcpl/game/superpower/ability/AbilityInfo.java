@@ -1,8 +1,9 @@
 package io.github.sx2xoox.mcpl.game.superpower.ability;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -77,7 +78,7 @@ public record AbilityInfo(
 
     /**
      * Replaces {@code {key}} placeholders with the configured values from {@code params}. Unknown placeholders are
-     * left untouched. Whole numbers are printed without decimals ({@code 3}), others with up to one ({@code 1.5}).
+     * left untouched. Numbers are printed by {@link #formatNumber(double)}.
      */
     public static String render(String text, AbilityParams params) {
         Matcher matcher = PLACEHOLDER.matcher(text);
@@ -91,11 +92,18 @@ public record AbilityInfo(
         return out.toString();
     }
 
+    /**
+     * A param value for players: whole numbers without decimals ({@code 3}), others with up to two decimals and no
+     * trailing zeros ({@code 1.5}, {@code 0.25}).
+     */
     public static String formatNumber(double value) {
         if (Math.abs(value - Math.rint(value)) < 1.0E-9) {
             return Long.toString(Math.round(value));
         }
-        return String.format(Locale.ROOT, "%.1f", value);
+        if (!Double.isFinite(value)) {
+            return Double.toString(value);
+        }
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
     }
 
     public static Builder builder(String id, String name, Material icon) {

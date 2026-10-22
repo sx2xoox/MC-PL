@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
+import io.github.sx2xoox.mcpl.core.command.Permissions;
 import io.github.sx2xoox.mcpl.core.game.GameInstance;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.MiniGame;
@@ -23,8 +24,10 @@ import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
 import net.kyori.adventure.text.Component;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -123,7 +126,15 @@ public final class SuperpowerGame implements MiniGame {
     @Override
     public void onReload() {
         messages.load();
-        abilities.load(registry);
+        if (!abilities.load(registry)) {
+            // The hub's reload message would say "reloaded": tell the admins the ability settings were not.
+            Component warning = messages.prefixed("config.abilities-broken");
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                if (player.hasPermission(Permissions.ADMIN)) {
+                    player.sendMessage(warning);
+                }
+            }
+        }
     }
 
     @Override

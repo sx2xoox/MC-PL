@@ -94,6 +94,7 @@ public interface AbilityContext {
     /**
      * Deals ability damage credited to {@code source} (kill feed, stats, ultimate gauge, kill credit) using
      * {@link DamageType#MAGIC} (ignores armor). Does nothing if {@code target} is not an enemy of {@code source}.
+     * Damage that is part of the source's ultimate never charges the source's gauge (see {@link Ability#onUltimate}).
      *
      * <p>Ability damage ignores the target's invulnerability frames (rapid multi-hits all land) and applies
      * <b>no vanilla knockback</b>: abilities push targets themselves with velocities when they want to.
@@ -112,7 +113,10 @@ public interface AbilityContext {
     /** Heals up to max health. */
     void heal(LivingEntity target, double amount);
 
-    /** Adds to a participant's ultimate gauge (0..100, clamped). */
+    /**
+     * Adds to a participant's ultimate gauge (0..100, clamped). An explicit grant: unlike gauge earned from damage
+     * and time, it is never blocked after an ultimate (see {@link Ability#onUltimate()}).
+     */
     void addGauge(Player player, double amount);
 
     /** A participant's ultimate gauge in 0..100. */
@@ -162,7 +166,10 @@ public interface AbilityContext {
     /**
      * Registers a summoned mob for {@code owner}: tracked like {@link #track}, treated as an ally of the owner
      * (and an enemy of the owner's enemies), never targets the owner's allies, its damage is credited to the
-     * owner and it drops nothing on death.
+     * owner and it drops nothing on death. Its melee hits deal exactly its {@link Attribute#ATTACK_DAMAGE} value
+     * (no vanilla randomness or difficulty scaling; on Peaceful difficulty mobs cannot hurt players at all) and
+     * are routed to the owner's {@link Ability#onDealDamage} / {@link Ability#onDamageDealt} with the summon as
+     * {@code event.getDamager()}.
      */
     <T extends LivingEntity> T summon(Player owner, T mob);
 
