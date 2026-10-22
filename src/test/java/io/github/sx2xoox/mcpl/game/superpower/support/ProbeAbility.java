@@ -35,6 +35,8 @@ public final class ProbeAbility extends Ability {
     public int actives;
     public int ultimates;
     public int dealt;
+    /** Hits that landed ({@link Ability#onDamageDealt}). */
+    public int landed;
     public int taken;
     public int kills;
     public int projectileHits;
@@ -89,6 +91,11 @@ public final class ProbeAbility extends Ability {
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
         dealt++;
+    }
+
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        landed++;
     }
 
     @Override

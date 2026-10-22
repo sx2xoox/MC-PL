@@ -25,12 +25,16 @@ import org.jspecify.annotations.Nullable;
  * @param gaugePerDamageTaken    ultimate gauge % per health point taken
  * @param gaugePerSecond         ultimate gauge % per second alive in the fight
  * @param announceUltimates      announce every ultimate to all viewers
+ * @param ultimateLockTicks      after a successful ultimate, the caster's gauge earns nothing (damage dealt or taken,
+ *                               time) for this long
  * @param borderDelayTicks       fight time before the border starts shrinking
  * @param borderShrinkTicks      how long the border takes to reach its final size
  * @param borderFinalSize        final border side length in blocks
  * @param borderDamagePerSecond  damage per second outside the border (health points)
  * @param showAbilityInKillFeed  show {@code Name(능력)} in the kill feed
  * @param abilityItemMaterial    base item of the ability item (rendered with the ability icon model)
+ * @param particleScale          multiplier for ability particle counts ({@code AbilityContext#effectScale()}),
+ *                               {@value #MIN_PARTICLE_SCALE}..{@value #MAX_PARTICLE_SCALE}
  */
 public record SuperpowerSettings(
         SelectionMode selectionMode,
@@ -44,12 +48,14 @@ public record SuperpowerSettings(
         double gaugePerDamageTaken,
         double gaugePerSecond,
         boolean announceUltimates,
+        long ultimateLockTicks,
         long borderDelayTicks,
         long borderShrinkTicks,
         double borderFinalSize,
         double borderDamagePerSecond,
         boolean showAbilityInKillFeed,
-        Material abilityItemMaterial
+        Material abilityItemMaterial,
+        double particleScale
 ) {
 
     public static final String MODE = "selection.mode";
@@ -63,12 +69,17 @@ public record SuperpowerSettings(
     public static final String GAUGE_TAKEN = "ultimate.per-damage-taken";
     public static final String GAUGE_SECOND = "ultimate.per-second";
     public static final String ANNOUNCE_ULTIMATES = "ultimate.announce";
+    public static final String ULTIMATE_LOCK = "ultimate.recharge-delay-seconds";
     public static final String BORDER_DELAY = "border.start-delay-seconds";
     public static final String BORDER_SHRINK = "border.shrink-seconds";
     public static final String BORDER_FINAL = "border.final-diameter";
     public static final String BORDER_DAMAGE = "border.damage-per-second";
     public static final String KILL_FEED_ABILITY = "show-ability-in-kill-feed";
     public static final String ABILITY_ITEM = "ability-item";
+    public static final String PARTICLE_SCALE = "effects.particle-scale";
+
+    public static final double MIN_PARTICLE_SCALE = 0.25;
+    public static final double MAX_PARTICLE_SCALE = 2.0;
 
     public static final List<String> DEFAULT_KIT = List.of(
             "IRON_HELMET", "IRON_CHESTPLATE", "IRON_LEGGINGS", "IRON_BOOTS", "IRON_SWORD",
@@ -113,8 +124,9 @@ public record SuperpowerSettings(
                 "시작할 때 지급하는 아이템. \"재료 [개수]\" 형식 (예: COOKED_BEEF 16)",
                 "갑옷은 자동으로 착용합니다. 9번 칸(능력 아이템 자리)은 비워 둡니다."));
 
-        d.setComments("ultimate", List.of("궁극기 게이지 (0~100%, 경험치 바에 표시)"));
+        // A section comment only sticks once the section exists, i.e. after its first value was set.
         d.set(GAUGE_DEALT, 4.0);
+        d.setComments("ultimate", List.of("궁극기 게이지 (0~100%, 경험치 바에 표시)"));
         d.setComments(GAUGE_DEALT, List.of("적 플레이어에게 준 피해 1(하트 반 칸)당 충전량(%)"));
         d.set(GAUGE_TAKEN, 2.0);
         d.setComments(GAUGE_TAKEN, List.of("받은 피해 1당 충전량(%)"));
@@ -122,9 +134,13 @@ public record SuperpowerSettings(
         d.setComments(GAUGE_SECOND, List.of("전투 중 1초마다 충전량(%)"));
         d.set(ANNOUNCE_ULTIMATES, true);
         d.setComments(ANNOUNCE_ULTIMATES, List.of("궁극기를 쓰면 모두에게 알립니다 (채팅 + 효과음)"));
+        d.set(ULTIMATE_LOCK, 10);
+        d.setComments(ULTIMATE_LOCK, List.of(
+                "궁극기를 쓴 뒤 게이지가 다시 차기 시작할 때까지(초). 그동안 피해·시간으로 게이지가 차지 않습니다.",
+                "(궁극기 자체의 피해, 소환수, 투사체로는 이 시간이 지나도 게이지가 차지 않습니다)"));
 
-        d.setComments("border", List.of("자기장 (경기장 크기에서 시작해 점점 줄어드는 가상 월드보더)"));
         d.set(BORDER_DELAY, 120);
+        d.setComments("border", List.of("자기장 (경기장 크기에서 시작해 점점 줄어드는 가상 월드보더)"));
         d.setComments(BORDER_DELAY, List.of("전투 시작 후 자기장이 줄어들기 시작할 때까지(초)"));
         d.set(BORDER_SHRINK, 180);
         d.setComments(BORDER_SHRINK, List.of("최종 크기까지 줄어드는 데 걸리는 시간(초)"));
@@ -138,6 +154,10 @@ public record SuperpowerSettings(
         d.set(ABILITY_ITEM, Material.IRON_INGOT.name());
         d.setComments(ABILITY_ITEM, List.of(
                 "능력 아이템의 기본 재료 (옛 \"능력자\" 플러그인의 철괴). 모양은 능력 아이콘으로 보입니다."));
+
+        d.set(PARTICLE_SCALE, 1.0);
+        d.setComments("effects", List.of("연출"));
+        d.setComments(PARTICLE_SCALE, List.of("파티클 양 배율 (0.25~2.0, 서버가 버거우면 낮추세요)"));
     }
 
     /** Reads the live section; invalid values fall back to the defaults (with a console warning). */
@@ -174,12 +194,15 @@ public record SuperpowerSettings(
                 nonNegative(s.getDouble(GAUGE_TAKEN, 2.0)),
                 nonNegative(s.getDouble(GAUGE_SECOND, 0.5)),
                 s.getBoolean(ANNOUNCE_ULTIMATES, true),
+                seconds(s.getDouble(ULTIMATE_LOCK, 10), 0, 120),
                 seconds(s.getDouble(BORDER_DELAY, 120), 0, 7200),
                 seconds(s.getDouble(BORDER_SHRINK, 180), 0, 7200),
                 Math.max(1.0, finite(s.getDouble(BORDER_FINAL, 20), 20)),
                 nonNegative(s.getDouble(BORDER_DAMAGE, 2.0)),
                 s.getBoolean(KILL_FEED_ABILITY, true),
-                item);
+                item,
+                Math.max(MIN_PARTICLE_SCALE,
+                        Math.min(MAX_PARTICLE_SCALE, finite(s.getDouble(PARTICLE_SCALE, 1.0), 1.0))));
     }
 
     /**
