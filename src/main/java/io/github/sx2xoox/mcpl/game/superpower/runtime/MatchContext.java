@@ -284,6 +284,10 @@ public final class MatchContext implements AbilityContext {
             if (!world.equals(candidate.getWorld()) || !isEnemy(owner, candidate)) {
                 continue;
             }
+            // Aiming never locks onto (and so never reveals) a player hidden from the owner by stealth.
+            if (candidate instanceof Player hidden && !owner.canSee(hidden)) {
+                continue;
+            }
             BoundingBox box = candidate.getBoundingBox().expand(AIM_ASSIST);
             double distance;
             if (box.contains(start)) {
