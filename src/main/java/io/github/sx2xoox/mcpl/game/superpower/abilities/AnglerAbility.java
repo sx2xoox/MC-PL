@@ -140,7 +140,6 @@ public final class AnglerAbility extends Ability {
     /** Height of the fish's middle above the ground when it lies flat (half its scaled body height). */
     private static final double FISH_REST_HEIGHT = 0.6 * FISH_SCALE;
     private static final double ERUPT_LIFT = 2.0;
-    private static final double ERUPT_PUSH = 0.25;
     private static final double SLAM_PUSH = 1.1;
     private static final double SLAM_LIFT = 0.45;
     private static final long FLOP_1 = 5;
@@ -364,7 +363,7 @@ public final class AnglerAbility extends Ability {
             double best = limit;
             Location middle = bobber.clone().add(step.clone().multiply(0.5));
             for (LivingEntity enemy : ctx().enemiesNear(owner, middle, length * 0.5 + 2)) {
-                if (enemy instanceof Player hidden && !owner.canSee(hidden)) {
+                if (!visible(owner, enemy)) {
                     // A stealthed enemy is not hooked: the line would give its position away.
                     continue;
                 }
@@ -431,11 +430,30 @@ public final class AnglerAbility extends Ability {
             }
         }
 
+        /**
+         * The catch is still on the line: a live enemy in this world that the angler can see. One that slips into
+         * stealth is let go, so the line, the bobber and the slam never give its position away.
+         */
+        private boolean holds(@Nullable LivingEntity target) {
+            return target != null && Combat.isTargetable(ctx(), owner, target) && target.getWorld().equals(world)
+                    && visible(owner, target);
+        }
+
+        /** Where the bobber is drawn right now (it rides on the catch while hooked). */
+        private Location drawnBobber() {
+            for (BlockDisplay display : floats) {
+                if (display.isValid()) {
+                    return display.getLocation();
+                }
+            }
+            return bobber;
+        }
+
         /** The line goes taut; then the reel begins from wherever the target stands. */
         private boolean tug() {
             LivingEntity target = hooked;
-            if (target == null || !Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(world)) {
-                startRetract(bobber);
+            if (target == null || !holds(target)) {
+                startRetract(drawnBobber());
                 return true;
             }
             Location body = Fx.body(target);
@@ -488,8 +506,8 @@ public final class AnglerAbility extends Ability {
          */
         private boolean reel() {
             LivingEntity target = hooked;
-            if (target == null || !Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(world)) {
-                startRetract(bobber);
+            if (target == null || !holds(target)) {
+                startRetract(drawnBobber());
                 return true;
             }
             long t = stageTick;
@@ -650,7 +668,7 @@ public final class AnglerAbility extends Ability {
     private @Nullable Location aimGround(Player owner, double range) {
         LivingEntity aimed = ctx().findTarget(owner, range);
         Location point;
-        if (aimed != null && (!(aimed instanceof Player hidden) || owner.canSee(hidden))) {
+        if (aimed != null && visible(owner, aimed)) {
             point = aimed.getLocation().add(0, 0.2, 0);
         } else {
             Location eye = owner.getEyeLocation();
@@ -872,11 +890,13 @@ public final class AnglerAbility extends Ability {
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
-                Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(center.toVector()));
-                // Tossed up by the burst: the crowd control of the ultimate, so the fish can come down on them.
-                Motion.push(enemy, away.multiply(ERUPT_PUSH).setY(Motion.launchSpeed(ERUPT_LIFT)), MAX_SPEED);
+                // Tossed straight up by the burst, the crowd control of the ultimate: they come down where they were,
+                // under the fish. (Thrown outwards they would land outside the belly-flop they are meant to eat.)
+                Motion.push(enemy, new Vector(0, Motion.launchSpeed(ERUPT_LIFT), 0), MAX_SPEED);
                 enemy.setFallDistance(0);
-                Vfx.cloud(ctx(), Fx.body(enemy), Particle.SPLASH, 12, 0.3, 0.1, null, false);
+                if (visible(owner, enemy)) {
+                    Vfx.cloud(ctx(), Fx.body(enemy), Particle.SPLASH, 12, 0.3, 0.1, null, false);
+                }
             }
         }
 
@@ -961,7 +981,10 @@ public final class AnglerAbility extends Ability {
                     enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,
                             (int) Math.min(Integer.MAX_VALUE, slow), 1, false, true, true));
                 }
-                Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.5, Particle.SPLASH, false);
+                if (visible(owner, enemy)) {
+                    // A stealthed enemy is hit all the same, but nothing is drawn on it to give it away.
+                    Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.5, Particle.SPLASH, false);
+                }
             }
             if (hits > 0 && owner.isOnline()) {
                 owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>⚓ 대어!</b></" + COLOR_TAG + "> <white>" + hits
@@ -1200,5 +1223,10 @@ public final class AnglerAbility extends Ability {
 
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    /** False for players hidden from the owner (stealth): they are never hooked, followed or marked. */
+    private static boolean visible(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player player) || owner.canSee(player);
     }
 }

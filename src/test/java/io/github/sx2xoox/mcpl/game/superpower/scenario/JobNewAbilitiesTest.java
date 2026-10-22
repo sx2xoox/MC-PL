@@ -25,6 +25,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -40,15 +41,18 @@ import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.util.SpawnedParticle;
 
 /** 직업 계열 신규 능력: 양봉가, 낚시꾼, 농부, 요리사. */
 class JobNewAbilitiesTest {
@@ -58,6 +62,16 @@ class JobNewAbilitiesTest {
 
     static Stream<String> abilities() {
         return Stream.of("beekeeper", "angler", "farmer", "chef");
+    }
+
+    /**
+     * {@link AbilityLifecycleTest} lists the abilities in a static initializer that mocks a server of its own. This
+     * class calls into it from inside running scenarios, where that initializer would fail ("Already mocking") and
+     * take every test using it down, so it is loaded here first, while no server is mocked.
+     */
+    @BeforeAll
+    static void loadTheSweepsOutsideAScenario() {
+        assertFalse(AbilityLifecycleTest.abilities().toList().isEmpty(), "the built-in abilities are listed");
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1232,6 +1246,165 @@ class JobNewAbilitiesTest {
             assertEquals(s.param("pan_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the swing still lands");
             s.ticks(2);
             assertTrue(entities(s, TextDisplay.class).isEmpty(), "no sign or star over the hidden enemy");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(20);
+            assertVisualsGone(s, "after the swing");
+            s.finishClean();
+        }
+    }
+
+    /** The middle of an entity's hitbox, where hit effects are centered. */
+    private static Location body(Entity entity) {
+        return entity.getLocation().add(0, entity.getHeight() * 0.5, 0);
+    }
+
+    /**
+     * Runs {@code ticks} ticks and fails if a particle is spawned within {@code reach} of {@code hidden}'s body (as it
+     * stood when the tick began: effects are drawn before the entity moves).
+     */
+    private static void assertNothingDrawnOn(Scenario s, Entity hidden, double reach, int ticks, String what) {
+        for (int i = 0; i < ticks; i++) {
+            Location at = body(hidden);
+            s.world.clearSpawnedParticles();
+            s.ticks(1);
+            for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
+                double distance = Math.sqrt(Math.pow(particle.x() - at.getX(), 2)
+                        + Math.pow(particle.y() - at.getY(), 2) + Math.pow(particle.z() - at.getZ(), 2));
+                assertTrue(distance > reach, what + ": " + particle.particle() + " drawn on the stealthed enemy");
+            }
+        }
+    }
+
+    // ================================================================== audit regressions
+
+    /**
+     * Vanilla Poison I hurts on the ticks its remaining duration is a multiple of 25 (the duration seen by the entity
+     * tick, which runs after the plugin tasks; MockBukkit counts durations down by server tick the same way).
+     */
+    private static boolean poisonHurtsNow(Player player) {
+        PotionEffect poison = player.getPotionEffect(PotionEffectType.POISON);
+        return poison != null && poison.getAmplifier() == 0 && poison.getDuration() > 0
+                && poison.getDuration() % 25 == 0;
+    }
+
+    @Test
+    void beekeeperStingsRefreshThePoisonWithoutSpeedingItUp() {
+        try (Scenario s = Scenario.ffa("beekeeper")) {
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "벌떼");
+            int poisonTicks = 0;
+            for (int i = 0; i < 200; i++) {
+                s.ticks(1);
+                if (poisonHurtsNow(s.enemy)) {
+                    poisonTicks++;
+                }
+            }
+            assertEquals(Math.round(s.param("sting_duration") / s.param("sting_interval")), magicHits(s, s.enemy),
+                    "every sting landed");
+            // Re-poisoning every sting used to restart Poison I's 1.25 s clock, so it hurt on every sting.
+            double poisoned = s.param("sting_duration") + s.param("sting_poison");
+            assertTrue(poisonTicks <= Math.ceil(poisoned / 1.25),
+                    "the poison hurts at its own pace (every 1.25 s), not on every sting: " + poisonTicks);
+            assertTrue(poisonTicks >= 2, "the stings keep the poison going: " + poisonTicks);
+            s.ticks(40);
+            assertVisualsGone(s, "after the swarm");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void beekeeperHoneyKeepsDrippingWhileItLasts() {
+        try (Scenario s = Scenario.builder("beekeeper").param("honey_chance", 100).start()) {
+            s.melee(s.enemy, s.owner, 1);
+            s.ticks(8);
+            assertTrue(s.owner.getAbsorptionAmount() > 0, "a honey drop landed");
+            s.world.clearSpawnedParticles();
+            s.ticks(90);
+            long drips = s.world.getSpawnedParticles().stream()
+                    .filter(particle -> particle.particle() == Particle.DRIPPING_HONEY).count();
+            assertTrue(drips >= 9, "honey drips off the keeper about every 9 ticks: " + drips + " in 90 ticks");
+            s.ticks(s.paramTicks("honey_duration"));
+            s.world.clearSpawnedParticles();
+            s.ticks(30);
+            assertTrue(s.world.getSpawnedParticles().stream()
+                    .noneMatch(particle -> particle.particle() == Particle.DRIPPING_HONEY), "dry once it wore off");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerLetsGoOfACatchThatTurnsInvisible() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 7.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낚아채기");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the bobber hooks the enemy");
+            // The catch slips into stealth while the line is still taut.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(1);
+            double peak = s.enemy.getLocation().getY();
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                peak = Math.max(peak, s.enemy.getLocation().getY());
+            }
+            assertEquals(s.param("reel_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "no slam on a catch the angler cannot see");
+            assertTrue(peak < FlatWorld.SURFACE + 0.5, "the line went slack, nobody was reeled up: " + peak);
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS), "nor slowed");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            assertVisualsGone(s, "after the line was wound in");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerBreachTossesItsCatchStraightUpUnderTheFish() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            // 3.5 blocks from the breach: well inside the circle of both the breach and the belly-flop.
+            s.place(s.enemy2, 4.0, 6.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "대어");
+            s.ticks(s.paramTicks("ult_warning") + 40);
+            for (TestPlayer target : s.enemies()) {
+                assertEquals(s.param("ult_burst_damage") + s.param("ult_slam_damage"), s.damageBy(s.owner, target),
+                        EPSILON, target.getName() + " was tossed up by the breach and flattened by the belly-flop");
+            }
+            s.ticks(60);
+            assertVisualsGone(s, "after the salmon sank");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerBigCatchDrawsNothingOnAStealthedEnemy() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.ultimate(), "대어");
+            assertNothingDrawnOn(s, s.enemy2, 0.05, s.paramTicks("ult_warning") + 40, "대어");
+            assertEquals(s.param("ult_burst_damage") + s.param("ult_slam_damage"), s.damageBy(s.owner, s.enemy2),
+                    EPSILON, "the stealthed enemy is hit all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void farmerScytheReapsAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("farmer")) {
+            s.place(s.enemy, 0.5, 2.0, 180);
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "낫질");
+            assertNothingDrawnOn(s, s.enemy, 0.35, s.paramTicks("bleed_duration") + 20, "낫질");
+            double bleeds = Math.floor(s.param("bleed_duration") / s.param("bleed_interval"));
+            assertEquals(s.param("sweep_damage") + bleeds * s.param("bleed_damage"), s.damageBy(s.owner, s.enemy),
+                    EPSILON, "reaped and bleeding all the same");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(20);
             assertVisualsGone(s, "after the swing");

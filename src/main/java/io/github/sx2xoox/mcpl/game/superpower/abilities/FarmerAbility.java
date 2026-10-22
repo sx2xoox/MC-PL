@@ -406,7 +406,10 @@ public final class FarmerAbility extends Ability {
                 Motion.push(enemy, swing.multiply(REAP_PUSH).add(away.multiply(REAP_PUSH * 0.5)).setY(REAP_LIFT),
                         MAX_SPEED);
                 bleed(enemy);
-                impact(enemy, tip);
+                if (visible(owner, enemy)) {
+                    // A stealthed enemy is reaped all the same, but nothing is drawn on it to give it away.
+                    impact(enemy, tip);
+                }
             }
         }
 
@@ -472,6 +475,10 @@ public final class FarmerAbility extends Ability {
                     return false;
                 }
                 Combat.hit(ctx(), owner, target, Math.max(0, params().num("bleed_damage")));
+                if (!visible(owner, target)) {
+                    // Bleeding on in stealth, without a trail of blood that would show where it goes.
+                    return true;
+                }
                 Location body = Fx.body(target);
                 body.getWorld().spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 4), 0.2, 0.3, 0.2, 0,
                         BLOOD_BLOCK.createBlockData());
