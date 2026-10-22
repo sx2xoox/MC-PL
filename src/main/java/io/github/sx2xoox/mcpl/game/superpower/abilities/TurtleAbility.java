@@ -674,7 +674,7 @@ public final class TurtleAbility extends Ability {
             if (spin == this) {
                 spin = null;
             }
-            owner.setVelocity(direction.clone().multiply(0.1).setY(Math.min(0, owner.getVelocity().getY())));
+            owner.setVelocity(direction.clone().multiply(0.1).setY(SPIN_SINK));
             shell.endSpin();
             growBack(0);
             Location feet = owner.getLocation();
@@ -786,7 +786,7 @@ public final class TurtleAbility extends Ability {
         /** The plates fly in from around the turtle and lock into the dome, ring by ring. */
         private void assemble(Player owner) {
             Location anchor = owner.getLocation();
-            shellYaw = owner.getBodyYaw();
+            shellYaw = owner.getLocation().getYaw(); // the open front follows the eyes
             float yaw = shellYaw;
             long lifetime = duration + GIANT_ASSEMBLE_TICKS * 3L + 20;
             for (int r = 0; r < GIANT_RINGS.length; r++) {
@@ -817,7 +817,7 @@ public final class TurtleAbility extends Ability {
         public boolean test(long tick) {
             Player owner = player();
             Location anchor = owner.getLocation();
-            float yaw = owner.getBodyYaw();
+            float yaw = owner.getLocation().getYaw();
             boolean turn = tick > assembled && Math.abs(angleBetween(yaw, shellYaw)) > YAW_EPSILON;
             if (turn) {
                 shellYaw = yaw;

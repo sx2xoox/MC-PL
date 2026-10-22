@@ -153,6 +153,7 @@ public final class GoatAbility extends Ability {
     private static final double SWEEP_PUSH = 0.95;
     private static final double SWEEP_LIFT = 0.42;
     private static final double CARRY_PUSH = 0.55;
+    private static final double CARRY_LIFT = 0.12;
     private static final long RUMBLE_PERIOD = 6;
     private static final long HORN_HOLD_TICKS = 24;
     private static final int HORN_RAISE_TICKS = 5;
@@ -928,12 +929,12 @@ public final class GoatAbility extends Ability {
                 rolled += turn;
                 if (display != null && display.isValid()) {
                     Displays.moveTo(display, at);
-                    if (age % 2 == 0) {
-                        Vector3f axis = new Vector3f((float) side.getX(), 0, (float) side.getZ());
-                        Quaternionf spin = new Quaternionf().rotateAxis((float) -rolled, axis.normalize())
-                                .rotateY(wave * 0.7f);
-                        Displays.animate(display, rock((float) size, spin), 2);
-                    }
+                    // Every tick: a rolling boulder turns up to ~90° per tick, and the client interpolates the
+                    // shortest way, so bigger steps could make it appear to roll backwards.
+                    Vector3f axis = new Vector3f((float) side.getX(), 0, (float) side.getZ());
+                    Quaternionf spin = new Quaternionf().rotateAxis((float) -rolled, axis.normalize())
+                            .rotateY(wave * 0.7f);
+                    Displays.animate(display, rock((float) size, spin), 1);
                 }
             }
 
@@ -957,7 +958,7 @@ public final class GoatAbility extends Ability {
                         Fx.sound(body, Sound.BLOCK_STONE_HIT, 1.0f, 0.6f + Fx.jitter(0.1f));
                     } else if (Combat.isTargetable(ctx(), owner, enemy)) {
                         Vector carry = direction.clone().multiply(CARRY_PUSH);
-                        carry.setY(Math.max(enemy.getVelocity().getY(), 0.1));
+                        carry.setY(CARRY_LIFT); // a constant: a player's server-side velocity is stale
                         Motion.push(enemy, carry, MAX_SPEED);
                         enemy.setFallDistance(0);
                     }
