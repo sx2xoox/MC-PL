@@ -8,6 +8,8 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 
 - Java 25, Paper API 26.3 (`compileOnly`), Gradle wrapper (`./gradlew build`). Tests: JUnit 6 + MockBukkit v26.3.
 - `./gradlew runServer` starts a local Paper 26.3 test server (needs internet access to PaperMC).
+- `docs/abilities.md` is generated from every `AbilityInfo`; after changing ability names, descriptions or params run
+  `./gradlew updateAbilityDocs` (`AbilityDocsTest` fails while it is stale). New abilities need a docs section there.
 - Sandboxed cloud sessions cannot reach `repo.papermc.io`; a locally built Paper API is published to `~/.m2` and
   `~/.gradle/gradle.properties` + `~/.gradle/init.d/` redirect the build to it. Do not commit those overrides.
 - Paper API sources for reference (when available): `/home/user/papermc/paper/paper-api/src/main/java`. Check a
@@ -27,7 +29,7 @@ src/main/java/io/github/sx2xoox/mcpl/
     runtime/                   the match: phases, AbilityContext impl, listener, assignment, gauge, cooldown, HUD
     ui/ menu/ command/         ability item/texts/reveal, CHOICE menu, /게임 능력 commands
   util/                        small shared helpers (Text = MiniMessage)
-docs/                          game design docs (Korean), the source of truth for game rules
+docs/                          game design docs (Korean), the source of truth for game rules; abilities.md is generated
 ```
 
 ## Conventions

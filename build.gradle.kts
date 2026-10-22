@@ -51,3 +51,16 @@ tasks.runServer {
     // ./gradlew runServer 로 테스트 서버를 바로 띄울 수 있습니다.
     minecraftVersion("26.3")
 }
+
+tasks.register<Test>("updateAbilityDocs") {
+    description = "Regenerates docs/abilities.md from the ability definitions (AbilityInfo)."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*AbilityDocsTest")
+    }
+    systemProperty("mcpl.updateDocs", "true")
+    outputs.upToDateWhen { false }
+}
