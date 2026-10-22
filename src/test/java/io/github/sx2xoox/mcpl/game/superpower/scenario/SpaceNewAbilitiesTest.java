@@ -777,8 +777,8 @@ class SpaceNewAbilitiesTest {
             for (TestPlayer target : s.enemies()) {
                 assertFalse(s.ctx().isSilenced(target), target.getName() + " rebooted");
             }
-            s.ticks(260);
-            assertNoDisplays(s, "bars, rain and readouts");
+            s.ticks(30);
+            assertNoDisplays(s, "bars and rain are gone, and the crash planted no new backdoor");
             s.finishClean();
         }
     }

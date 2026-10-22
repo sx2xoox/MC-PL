@@ -165,6 +165,8 @@ public final class HackerAbility extends Ability {
 
     private final Map<UUID, Backdoor> backdoors = new HashMap<>();
     private int liveDisplays;
+    /** True while the system down deals its damage: a crash plants no new backdoor (it already silences). */
+    private boolean crashing;
 
     @Override
     public AbilityInfo info() {
@@ -182,7 +184,8 @@ public final class HackerAbility extends Ability {
     /** Any landed hit of the hacker (melee, projectile or ability) plants a backdoor on an enemy player. */
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (!(victim instanceof Player target) || !ctx().isAlive(target) || !ctx().isEnemy(player(), target)) {
+        if (crashing || !(victim instanceof Player target) || !ctx().isAlive(target)
+                || !ctx().isEnemy(player(), target)) {
             return;
         }
         long now = ctx().currentTick();
@@ -850,7 +853,12 @@ public final class HackerAbility extends Ability {
                 crashed++;
                 boolean backdoored = exploit(target);
                 double drain = Math.max(0, params().num(backdoored ? "exploit_drain" : "ult_drain"));
-                Combat.hit(ctx(), owner, target, damage);
+                crashing = true;
+                try {
+                    Combat.hit(ctx(), owner, target, damage);
+                } finally {
+                    crashing = false;
+                }
                 if (!Combat.isTargetable(ctx(), owner, target)) {
                     disconnect(bar);
                     continue;

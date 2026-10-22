@@ -159,6 +159,8 @@ public final class MechAbility extends Ability {
     /** Proximity fuse: a missile this close to an enemy's hitbox detonates. */
     private static final double MISSILE_FUSE = 0.45;
     private static final double MISSILE_SAMPLE = 0.35;
+    /** A missile without a locked target bursts this close to its goal (aimed at open air, it never hits a block). */
+    private static final double AIRBURST = 0.7;
     /** Missiles aimed at the ground land around the aim point, this far apart. */
     private static final double MISSILE_SCATTER = 1.0;
     /** Missiles fly a little past their range before self-destructing. */
@@ -219,7 +221,6 @@ public final class MechAbility extends Ability {
     private @Nullable Suit suit;
     private int liveDisplays;
     private long lastArmorFx = Long.MIN_VALUE / 2;
-    private @Nullable NamespacedKey armorKey;
 
     @Override
     public AbilityInfo info() {
@@ -232,15 +233,13 @@ public final class MechAbility extends Ability {
     public void onGrant() {
         double resistance = Math.clamp(params().num("armor_knockback") / 100.0, 0.0, 1.0);
         if (resistance > 0) {
-            armorKey = ctx().addModifier(player(), player(), Attribute.KNOCKBACK_RESISTANCE, resistance,
-                    Operation.ADD_NUMBER, 0);
+            ctx().addModifier(player(), player(), Attribute.KNOCKBACK_RESISTANCE, resistance, Operation.ADD_NUMBER, 0);
         }
     }
 
     @Override
     public void onRevoke() {
         // The context removes the modifiers and displays; only forget them here.
-        armorKey = null;
         Suit worn = suit;
         suit = null;
         if (worn != null) {
@@ -290,7 +289,7 @@ public final class MechAbility extends Ability {
         if (reduction > 0) {
             event.setDamage(event.getDamage() * (1 - reduction));
         }
-        if (projectile || worn != null || event instanceof EntityDamageByEntityEvent) {
+        if (projectile || event instanceof EntityDamageByEntityEvent) {
             armorFx(event, projectile);
         }
     }
@@ -641,6 +640,11 @@ public final class MechAbility extends Ability {
                 detonate();
                 return false;
             }
+            if (target == null && tick >= MISSILE_BOOST_TICKS && position.distanceSquared(goal) < AIRBURST * AIRBURST) {
+                // Aimed at open air: the missile bursts where it was sent.
+                detonate();
+                return false;
+            }
             if (remaining <= 1.0E-3) {
                 selfDestruct();
                 return false;
@@ -781,10 +785,9 @@ public final class MechAbility extends Ability {
         world.spawnParticle(Particle.LARGE_SMOKE, at, Vfx.n(ctx(), 6), 0.25, 0.2, 0.25, 0.03);
         world.spawnParticle(Particle.LAVA, at, Vfx.n(ctx(), 2), 0.15, 0.1, 0.15, 0);
         Vfx.cloud(ctx(), at, Particle.ELECTRIC_SPARK, 6, 0.2, 0.3, null, false);
-        Location ground = at.clone();
         RayTraceResult floor = world.rayTraceBlocks(at, new Vector(0, -1, 0), 2.5, FluidCollisionMode.NEVER, true);
         if (floor != null) {
-            ground = floor.getHitPosition().toLocation(world).add(0, 0.1, 0);
+            Location ground = floor.getHitPosition().toLocation(world).add(0, 0.1, 0);
             Vfx.shockwave(ctx(), player(), ground, 0.3, radius, 4, Particle.DUST_COLOR_TRANSITION, SOOT, false);
         }
         Location glow = at.clone();
