@@ -54,10 +54,11 @@ import org.jspecify.annotations.Nullable;
  * (temporary cobwebs where it hits) and spins a huge nest on the ground that drags enemies down while the spider
  * runs across it. Whatever is caught in a web takes extra damage from the spider.
  *
- * <p>Look: silk white, ash gray and a dark spider-eye red. The web shot is a spinning cobweb trailing a silk strand
- * back to the spider's hand; a bound enemy is wrapped by a white spiral and hangs inside a web. The nest spins
- * out from the spider's feet as six silk spokes and two hexagonal rings, rimmed by a red warning circle; sticky motes
- * cling to everyone caught in it.
+ * <p>Look: silk white, ash gray and a dark spider-eye red. Climbing leaves silk at the hands; a hanging spider dangles
+ * from a silk thread spun to the wall above it. The web shot is a spinning cobweb still tied to the spider's hand by a
+ * silk strand for its first meters; a bound enemy is wrapped by a white spiral and hangs inside a web. The nest spins
+ * out from the spider's feet as six silk spokes and two hexagonal rings around a turning cobweb hub, rimmed by a red
+ * warning circle; silk pulses run outwards and sticky motes cling to everyone caught in it.
  */
 public final class SpiderAbility extends Ability {
 
@@ -104,12 +105,12 @@ public final class SpiderAbility extends Ability {
     /** Speed pressing the climber against the wall, so the client keeps touching it. */
     private static final double WALL_PRESS = 0.06;
     private static final double LEDGE_HOP_UP = 0.36;
+    private static final double LEDGE_HOP_FORWARD = 0.18;
     /** The cling thread is fixed this far above the spider's head, and spun anew if it would get longer than that. */
     private static final double ANCHOR_HEIGHT = 0.9;
     private static final double ANCHOR_MAX_LENGTH = 3.0;
     private static final float ANCHOR_WIDTH = 0.035f;
     private static final float TETHER_WIDTH = 0.045f;
-    private static final double LEDGE_HOP_FORWARD = 0.18;
 
     // Web shot
     private static final double WEB_SPEED = 1.4;

@@ -601,6 +601,215 @@ class CreatureNewAbilitiesTest {
         }
     }
 
+    // ================================================================== edges: walls, ceilings, border, void
+
+    /** The farthest z (in half blocks) straight ahead of the arena center that is still inside the arena. */
+    private static double arenaEdgeZ(Scenario s) {
+        org.bukkit.Location center = s.session.arena().center();
+        double z = 0;
+        while (z < 200 && s.ctx().isInsideArena(new org.bukkit.Location(s.world, center.getX(), FlatWorld.SURFACE,
+                center.getZ() + z + 0.5))) {
+            z += 0.5;
+        }
+        return center.getZ() + z;
+    }
+
+    @Test
+    void werewolfLeapStopsShortOfTheArenaBorder() {
+        try (Scenario s = Scenario.ffa("werewolf")) {
+            double edge = arenaEdgeZ(s);
+            double x = s.session.arena().center().getX();
+            s.place(s.owner, x, edge - 2, 0);
+            s.place(s.enemy, x + 12, edge - 12, 0);
+            s.place(s.enemy2, x - 12, edge - 12, 0);
+            s.assertSucceeded(s.active(), "할퀴기 도약 towards the border");
+            s.ticks(40);
+            assertTrue(s.ctx().isInsideArena(s.owner.getLocation()), "the pounce lands inside the arena");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void werewolfClawsDoNotReachThroughWalls() {
+        try (Scenario s = Scenario.ffa("werewolf")) {
+            s.place(s.enemy, 0.5, 2.6, 180);
+            s.place(s.enemy2, 0.5, -12.5, 0);
+            s.world.wallAlongX(-2, 2, 1, 4, Material.STONE);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.assertSucceeded(s.active(), "할퀴기 도약 into a wall");
+            s.ticks(40);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the enemy behind the wall is safe");
+            assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().expand(-0.01)), "not stuck in the wall");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.world.wallAlongX(-2, 2, 1, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void werewolfBeastUnderALowCeilingGrowsOnlyAsFarAsItFitsButStillHunts() {
+        try (Scenario s = Scenario.ffa("werewolf")) {
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 3, z, Material.STONE);
+                }
+            }
+            s.assertSucceeded(s.ultimate(), "야수화 under a 2 block ceiling");
+            s.ticks(12);
+            double grown = scale(s.owner);
+            assertTrue(grown < s.param("ult_scale") && 1.8 * grown <= 2.0 + 1.0E-6,
+                    "grew only as far as the ceiling allows: " + grown);
+            assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().expand(-0.01)));
+            s.owner.setHealth(10);
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(10 + 4 * s.param("ult_lifesteal") / 100, s.owner.getHealth(), EPSILON, "but still feeds");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "never suffocates");
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 3, z, Material.AIR);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void spiderOnlyClimbsTheWallItFaces() {
+        try (Scenario s = Scenario.ffa("spider")) {
+            s.world.wallAlongX(-2, 2, 2, 6, Material.STONE);
+            s.place(s.owner, 0.5, 1.7, 180);
+            s.ticks(6);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), 1.0E-6, "back to the wall: no climbing");
+            s.place(s.owner, 0.5, 1.7, 0);
+            s.aimAtFloor(s.owner, 0.5, 2.0);
+            s.ticks(6);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), 1.0E-6, "looking at the floor: no climbing");
+            s.world.wallAlongX(-2, 2, 2, 6, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void spiderWebAgainstAWallLeavesTheTrapOnTheWallFace() {
+        try (Scenario s = Scenario.ffa("spider")) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.world.wallAlongX(-2, 2, 3, 4, Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "거미줄 발사 at a wall");
+            s.ticks(10);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the wall stops the web");
+            assertEquals(1, s.h.hub.tempBlocks().size(), "a trap clings to the wall");
+            boolean found = false;
+            for (int x = -1; x <= 1; x++) {
+                for (int y = FlatWorld.FLOOR_Y + 1; y <= FlatWorld.FLOOR_Y + 3; y++) {
+                    found |= s.world.getBlockAt(x, y, 2).getType() == Material.COBWEB;
+                }
+            }
+            assertTrue(found, "the cobweb sits right in front of the wall");
+            s.ticks(s.paramTicks("trap_duration") + 5);
+            s.world.wallAlongX(-2, 2, 3, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void spiderNestNeedsGroundUnderTheSpider() {
+        try (Scenario s = Scenario.ffa("spider")) {
+            s.world.physics().setEnabled(false);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 10, 0.5, 0, 0);
+            assertFalse(s.ultimate().succeeded(), "no nest in mid-air");
+            assertEquals(100, s.ctx().gauge(s.owner), EPSILON, "the gauge is kept");
+            assertEquals(0, displays(s));
+            s.world.physics().setEnabled(true);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void slimeLittleSlimesKilledByEnemiesSplatterHarmlessly() {
+        try (Scenario s = Scenario.ffa("slime")) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 0.5, -14.5, 0);
+            s.assertSucceeded(s.active(), "분열");
+            s.ticks(2);
+            assertEquals(s.param("slime_count"), slimes(s), EPSILON);
+            for (org.bukkit.entity.Entity entity : s.world.getEntities()) {
+                if (entity instanceof Frog carrier) {
+                    assertTrue(s.ctx().isEnemy(s.enemy, carrier), "the little slimes are fair game for enemies");
+                    assertFalse(s.ctx().isEnemy(s.owner, carrier), "but never for their owner");
+                    carrier.setHealth(0);
+                }
+            }
+            s.ticks(10);
+            assertEquals(0, slimes(s), "all splattered");
+            s.ticks(s.paramTicks("slime_duration"));
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "dead slimes do not burst");
+            assertEquals(0, displays(s), "their jelly bodies are gone");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void slimeKingUnderALowCeilingGrowsOnlyAsFarAsItFits() {
+        try (Scenario s = Scenario.ffa("slime")) {
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 4, z, Material.STONE);
+                }
+            }
+            s.assertSucceeded(s.ultimate(), "킹 슬라임 under a 3 block ceiling");
+            s.ticks(12);
+            double grown = scale(s.owner);
+            assertTrue(grown > 1.0 && 1.8 * grown <= 3.0 + 1.0E-6, "grew, but never into the ceiling: " + grown);
+            assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().expand(-0.01)));
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            assertEquals(1.0, scale(s.owner), EPSILON);
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 4, z, Material.AIR);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dragonBombsOverTheVoidFizzleOut() {
+        try (Scenario s = Scenario.ffa("dragon")) {
+            s.place(s.enemy, 30.5, 30.5, 180);
+            s.place(s.enemy2, -30.5, 30.5, 180);
+            s.assertSucceeded(s.ultimate(), "용의 비상");
+            // High above the ground: farther than a bomb can fall.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 60, 0.5, 0, 0);
+            s.owner.setFlying(true);
+            s.ticks(s.paramTicks("bomb_interval") * 2 + 10);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON);
+            assertEquals(0, s.h.hub.tempBlocks().size());
+            s.ticks(s.paramTicks("flight_duration"));
+            assertFalse(s.owner.isFlying());
+            s.tickUntilGrounded(s.owner, 2000);
+            s.ticks(40);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "a long, soft glide down");
+            assertEquals(0, displays(s), "the fizzled bombs left nothing behind");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void onlyTheSpiderAndSlimeUltimatesCanBeBorrowed() {
+        try (Scenario s = gambler()) {
+            assertFalse(s.ctx().registry().create("werewolf").info().ultimateStandalone(),
+                    "the beast form lives in the werewolf's own hooks");
+            assertFalse(s.ctx().registry().create("dragon").info().ultimateStandalone(),
+                    "flight must be taken back by the dragon itself");
+            assertTrue(s.ctx().registry().create("spider").info().ultimateStandalone());
+            assertTrue(s.ctx().registry().create("slime").info().ultimateStandalone());
+            s.finishClean();
+        }
+    }
+
     // ================================================================== shared
 
     @Test

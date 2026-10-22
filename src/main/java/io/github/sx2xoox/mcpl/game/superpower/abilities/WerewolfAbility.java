@@ -109,6 +109,8 @@ public final class WerewolfAbility extends Ability {
     private static final double AIM_SLACK = 2;
     /** Gap between the hitboxes that counts as crashing into an enemy mid-leap. */
     private static final double CONTACT_GAP = 0.45;
+    /** A pounce shortened by the arena border stops this far before it. */
+    private static final double BORDER_MARGIN = 1.0;
     private static final long MAX_LEAP_TICKS = 40;
     /** Ticks after which a leap that never left the ground (blocked, laggy client) claws where it stands. */
     private static final long STUCK_TICKS = 6;
@@ -223,7 +225,8 @@ public final class WerewolfAbility extends Ability {
         if (level == feral) {
             return;
         }
-        boolean nightfall = !granting && level == 2 && feral == 1 && beast == null;
+        // The moon rises when night falls mid-match, or right away for a werewolf whose fight starts at night.
+        boolean nightfall = level == 2 && beast == null && (granting || feral == 1);
         Player owner = player();
         for (NamespacedKey key : feralKeys) {
             ctx().removeModifier(owner, key);
@@ -445,7 +448,11 @@ public final class WerewolfAbility extends Ability {
             flat = Motion.horizontalFacing(start);
             distance = maxDistance;
         }
-        distance = Spots.arenaReach(ctx(), start, flat, distance);
+        double reach = Spots.arenaReach(ctx(), start, flat, distance);
+        if (reach < distance) {
+            // Shortened by the border: keep a margin, the landing still slides a little.
+            distance = Math.max(0, reach - BORDER_MARGIN);
+        }
 
         double up = Motion.launchSpeed(Math.max(0.3, params().num("leap_height")));
         long air = airTicks(up);
@@ -576,6 +583,10 @@ public final class WerewolfAbility extends Ability {
         double damage = params().num("claw_damage");
         int struck = 0;
         for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
+            // Claws do not reach through walls.
+            if (!Spots.clearPath(center, Fx.body(enemy))) {
+                continue;
+            }
             Combat.hit(ctx(), owner, enemy, damage);
             if (!Combat.isTargetable(ctx(), owner, enemy)) {
                 continue;
