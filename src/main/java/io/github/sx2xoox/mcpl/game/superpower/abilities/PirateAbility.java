@@ -155,7 +155,11 @@ public final class PirateAbility extends Ability {
     private static final long CANNON_TICKS = 16;
     private static final long MAX_ROLL_TICKS = 80;
     private static final double CANNON_FORWARD = 1.0;
+    /** How far in front of the cannon's base the ball leaves the barrel. */
+    private static final double MUZZLE_REACH = 0.75;
     private static final double MUZZLE_HEIGHT = 0.45;
+    /** Displays one shot needs (the cannon's three parts and the ball's cubes). */
+    private static final int SHOT_DISPLAYS = 3 + BALL_CUBES.length;
 
     // ultimate: ghost ship
     private static final double SHIP_BEHIND = 4.5;
@@ -207,6 +211,8 @@ public final class PirateAbility extends Ability {
     /** Every display this ability currently has alive, for the budget. */
     private final List<Display> displays = new ArrayList<>();
     private int shipToken;
+    /** The ghost ship sailing now, if any. */
+    private @Nullable GhostShip ship;
 
     @Override
     public AbilityInfo info() {
@@ -218,6 +224,7 @@ public final class PirateAbility extends Ability {
         lastHits.clear();
         displays.clear();
         shipToken++;
+        ship = null;
     }
 
     // ------------------------------------------------------------------ passive: plunder
@@ -253,7 +260,8 @@ public final class PirateAbility extends Ability {
             return;
         }
         Long previous = lastHits.put(target.getUniqueId(), ctx().currentTick());
-        if (previous == null) {
+        // A stealthed enemy caught by the ball or a shell is marked all the same, but nothing glints over it.
+        if (previous == null && seen(player(), target)) {
             Location head = target.getLocation().add(0, target.getHeight() + 0.2, 0);
             Vfx.dot(head, Particle.WAX_ON, null, false);
             Vfx.cloud(ctx(), head, Particle.DUST, 3, 0.15, 0, GOLD_DUST, false);
@@ -276,10 +284,11 @@ public final class PirateAbility extends Ability {
         if (kill) {
             ctx().reduceCooldown(owner, Math.max(0, ctx().cooldownRemaining(owner)) + 1);
         }
-        coinFountain(owner, victim.getLocation(), kill);
         String sign = kill ? "<b><gradient:#FFE9A8:#E0B040>☠ 약탈! +" + AbilityInfo.formatNumber(gauge)
                 + "%</gradient></b>" : "<gradient:#FFE9A8:#E0B040>몫 +" + AbilityInfo.formatNumber(gauge) + "%</gradient>";
+        // The sign first: when displays are short, a few coins less is the smaller loss.
         sign(owner, sign, kill);
+        coinFountain(owner, victim.getLocation(), kill);
         if (owner.isOnline()) {
             owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">" + (kill ? "☠ 약탈! 대포 재장전" : "⚓ 약탈 몫") + " <white>+"
                     + AbilityInfo.formatNumber(gauge) + "%</white></" + COLOR_TAG + ">"));
@@ -304,7 +313,8 @@ public final class PirateAbility extends Ability {
         }
         int coins = kill ? COINS : COINS / 2;
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        for (int i = 0; i < coins && roomFor(1); i++) {
+        // The coins are an extra: they always leave room for the shot the kill has just reloaded.
+        for (int i = 0; i < coins && roomFor(1 + SHOT_DISPLAYS); i++) {
             double angle = i * TAU / coins + random.nextDouble(0.4);
             double reach = 0.6 + random.nextDouble(0.5);
             double height = 1.2 + random.nextDouble(0.8);
@@ -345,7 +355,7 @@ public final class PirateAbility extends Ability {
 
     /** A gold sign over the pirate's head. */
     private void sign(Player owner, String miniMessage, boolean big) {
-        if (!roomFor(1)) {
+        if (!roomFor(1 + SHOT_DISPLAYS)) {
             return;
         }
         Location above = owner.getLocation().add(0, owner.getHeight() + 0.7, 0);
@@ -367,14 +377,17 @@ public final class PirateAbility extends Ability {
         Player owner = player();
         Location feet = owner.getLocation();
         Vector forward = Motion.horizontalFacing(feet);
-        Location muzzle = feet.clone().add(forward.clone().multiply(CANNON_FORWARD)).add(0, MUZZLE_HEIGHT, 0);
-        if (!muzzle.getBlock().isPassable() || !Spots.clearPath(Fx.body(owner), muzzle)) {
+        Location base = Displays.unrotated(feet.clone().add(forward.clone().multiply(CANNON_FORWARD - 0.25)));
+        // The ball leaves the barrel in front of the cannon: the whole way there (and the ball's own front) must be
+        // open, or the ball would start inside a wall, or behind a door or a trapdoor the pirate stands against.
+        Location ballStart = muzzle(base, forward);
+        if (!ballStart.getBlock().isPassable()
+                || !Spots.clearPath(Fx.body(owner), ballStart.clone().add(forward.clone().multiply(BALL_RADIUS)))) {
             return ActivationResult.fail("앞이 막혀 대포를 놓을 수 없습니다");
         }
-        if (!roomFor(BALL_CUBES.length + 3)) {
+        if (!roomFor(SHOT_DISPLAYS)) {
             return ActivationResult.fail("대포를 준비하는 중입니다");
         }
-        Location base = Displays.unrotated(feet.clone().add(forward.clone().multiply(CANNON_FORWARD - 0.25)));
         // The cannon is aimed through its transformations; the display entities themselves never rotate.
         Quaternionf heading = headingFrame(feet.getYaw(), 0);
         List<BlockDisplay> cannon = cannon(owner, base, heading);
@@ -408,9 +421,14 @@ public final class PirateAbility extends Ability {
         return parts;
     }
 
+    /** Where the ball leaves the cannon standing at {@code base}: in front of the barrel's mouth. */
+    private static Location muzzle(Location base, Vector forward) {
+        return base.clone().add(forward.clone().multiply(MUZZLE_REACH)).add(0, MUZZLE_HEIGHT + 0.05, 0);
+    }
+
     /** Fire: a flash, smoke and a boom at the muzzle, the barrel kicks back and the ball rolls out. */
     private void fire(Player owner, List<BlockDisplay> cannon, Location base, Vector forward, Quaternionf heading) {
-        Location muzzle = base.clone().add(forward.clone().multiply(0.75)).add(0, MUZZLE_HEIGHT + 0.05, 0);
+        Location muzzle = muzzle(base, forward);
         World world = muzzle.getWorld();
         Vfx.dot(muzzle, Particle.FLASH, PALETTE.core(), false);
         world.spawnParticle(Particle.EXPLOSION, muzzle, 1, 0, 0, 0, 0);
@@ -573,6 +591,10 @@ public final class PirateAbility extends Ability {
                 if (Combat.isTargetable(ctx(), owner, enemy) && knockback > 0) {
                     Motion.push(enemy, direction.clone().multiply(knockback).setY(BALL_LIFT), MAX_SPEED);
                 }
+                if (!seen(owner, enemy)) {
+                    // Bowled over in stealth: hurt and shoved, but no flash or clang gives its spot away.
+                    continue;
+                }
                 Location body = Fx.body(enemy);
                 World w = body.getWorld();
                 Vfx.dot(body, Particle.FLASH, PALETTE.core(), false);
@@ -676,10 +698,18 @@ public final class PirateAbility extends Ability {
     @Override
     public ActivationResult onUltimate() {
         Player owner = player();
-        if (!roomFor(SHIP.length + LANTERNS.length)) {
+        GhostShip previous = ship;
+        int freed = previous == null ? 0 : previous.budgeted();
+        if (!roomFor(SHIP.length + LANTERNS.length - freed)) {
             return ActivationResult.fail("유령선을 부를 수 없습니다");
         }
-        new GhostShip(owner, ++shipToken).sail();
+        if (previous != null) {
+            // A refilled gauge calls a new ship: the old one sinks (and leaves the display budget) right away.
+            previous.depart();
+        }
+        GhostShip next = new GhostShip(owner, ++shipToken);
+        ship = next;
+        next.sail();
         return ActivationResult.success();
     }
 
@@ -710,6 +740,7 @@ public final class PirateAbility extends Ability {
         private int fired;
         private int nextCannon;
         private int totalHits;
+        private boolean departed;
 
         GhostShip(Player owner, int token) {
             this.owner = owner;
@@ -757,7 +788,7 @@ public final class PirateAbility extends Ability {
         }
 
         private boolean step(long tick) {
-            if (token != shipToken) {
+            if (departed || token != shipToken) {
                 return false;
             }
             if (tick % SHIP_STEP == 0) {
@@ -982,15 +1013,36 @@ public final class PirateAbility extends Ability {
                 }
                 Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(at.toVector()));
                 Motion.push(enemy, away.multiply(SHELL_PUSH).setY(SHELL_LIFT), MAX_SPEED);
-                Vfx.cloud(ctx(), Fx.body(enemy), Particle.SOUL, 3, 0.25, 0.02, null, false);
+                if (seen(owner, enemy)) {
+                    Vfx.cloud(ctx(), Fx.body(enemy), Particle.SOUL, 3, 0.25, 0.02, null, false);
+                }
             }
         }
 
-        /** Time is up: the ship sinks back into the mist with a last toll of the bell. */
-        private void depart() {
-            if (token != shipToken) {
+        /** How many of the display budget's entries are this ship's (its parts and the shells in flight). */
+        int budgeted() {
+            int count = 0;
+            for (Display display : displays) {
+                if (parts.contains(display) || shells.stream().anyMatch(shell -> display.equals(shell.body))) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        /**
+         * Time is up (or a new ship was called): the ship sinks back into the mist with a last toll of the bell. Its
+         * parts leave the display budget at once, while they sink.
+         */
+        void depart() {
+            if (departed) {
                 return;
             }
+            departed = true;
+            if (ship == this) {
+                ship = null;
+            }
+            displays.removeAll(parts);
             for (Shell shell : shells) {
                 shell.discard();
             }

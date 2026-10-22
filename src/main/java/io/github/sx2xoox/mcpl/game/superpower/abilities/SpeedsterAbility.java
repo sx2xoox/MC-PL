@@ -175,6 +175,11 @@ public final class SpeedsterAbility extends Ability {
     private double nextCooldownFactor = 1.0;
     private int dashToken;
 
+    /** The light speed running now, if any. */
+    private @Nullable LightSpeed light;
+    /** Light speed's buffs on the owner (speed, step height, fall damage) until their time is up. */
+    private final List<NamespacedKey> boosts = new ArrayList<>();
+
     @Override
     public AbilityInfo info() {
         return INFO;
@@ -193,6 +198,20 @@ public final class SpeedsterAbility extends Ability {
         displays.clear();
         landing.disarm();
         dashToken++;
+        LightSpeed current = light;
+        light = null;
+        if (current != null) {
+            current.stop();
+        }
+        // Light speed's buffs end with the ability (the context's release of the owner's modifiers would, too).
+        clearBoosts();
+    }
+
+    private void clearBoosts() {
+        for (NamespacedKey key : boosts) {
+            ctx().removeModifier(player(), key);
+        }
+        boosts.clear();
     }
 
     @Override
@@ -479,6 +498,10 @@ public final class SpeedsterAbility extends Ability {
                 Motion.push(enemy, side.multiply(SHOVE_SIDE).add(direction.clone().multiply(0.15)).setY(SHOVE_UP),
                         MAX_SPEED);
             }
+            if (!seen(owner, enemy)) {
+                // Struck in stealth: hurt and flung all the same, but no flash or crack gives its spot away.
+                return;
+            }
             World world = body.getWorld();
             Vfx.dot(body, Particle.FLASH, PALETTE.core(), false);
             world.spawnParticle(Particle.ELECTRIC_SPARK, body, Vfx.n(ctx(), 12), 0.25, 0.35, 0.25, 0.2);
@@ -550,7 +573,15 @@ public final class SpeedsterAbility extends Ability {
     @Override
     public ActivationResult onUltimate() {
         Player owner = player();
-        new LightSpeed(owner).begin();
+        LightSpeed previous = light;
+        if (previous != null) {
+            // A refilled gauge starts light speed afresh: the old run's buffs never stack on the new ones.
+            previous.stop();
+        }
+        clearBoosts();
+        LightSpeed next = new LightSpeed(owner);
+        light = next;
+        next.begin();
         return ActivationResult.success();
     }
 
@@ -577,6 +608,7 @@ public final class SpeedsterAbility extends Ability {
         private final double radius;
         private final int maxHits;
         private int totalHits;
+        private boolean stopped;
 
         LightSpeed(Player owner) {
             this.owner = owner;
@@ -591,12 +623,10 @@ public final class SpeedsterAbility extends Ability {
         void begin() {
             double speed = Math.max(0, params().num("ult_speed")) / 100.0;
             if (speed > 0) {
-                ctx().addModifier(owner, owner, Attribute.MOVEMENT_SPEED, speed, Operation.MULTIPLY_SCALAR_1,
-                        duration);
+                boost(Attribute.MOVEMENT_SPEED, speed, Operation.MULTIPLY_SCALAR_1, duration);
             }
-            ctx().addModifier(owner, owner, Attribute.STEP_HEIGHT, STEP_BONUS, Operation.ADD_NUMBER, duration);
-            ctx().addModifier(owner, owner, Attribute.FALL_DAMAGE_MULTIPLIER, -1.0, Operation.MULTIPLY_SCALAR_1,
-                    duration + FALL_GRACE);
+            boost(Attribute.STEP_HEIGHT, STEP_BONUS, Operation.ADD_NUMBER, duration);
+            boost(Attribute.FALL_DAMAGE_MULTIPLIER, -1.0, Operation.MULTIPLY_SCALAR_1, duration + FALL_GRACE);
             Location feet = owner.getLocation();
             record(feet, false);
             ItemStack head = headOf(owner);
@@ -610,7 +640,24 @@ public final class SpeedsterAbility extends Ability {
             Loop.repeat(ctx(), owner, 1, 1, duration + MERGE_TICKS, this::step);
         }
 
+        /**
+         * A buff on the runner for {@code ticks}. It is owner-scoped and taken off by a task, not timed by the context:
+         * a timed modifier would outlive the ability that gave it (switched in practice, or the Gambler that borrowed
+         * light speed), since the context only removes it when the time is up.
+         */
+        private void boost(Attribute attribute, double amount, Operation operation, long ticks) {
+            NamespacedKey key = ctx().addModifier(owner, owner, attribute, amount, operation, 0);
+            boosts.add(key);
+            ctx().runLater(owner, Math.max(1, ticks), () -> {
+                boosts.remove(key);
+                ctx().removeModifier(owner, key);
+            });
+        }
+
         private boolean step(long tick) {
+            if (stopped) {
+                return false;
+            }
             if (!owner.getWorld().equals(world)) {
                 end();
                 return false;
@@ -675,6 +722,9 @@ public final class SpeedsterAbility extends Ability {
                 lastStruck.put(id, now);
                 Combat.hit(ctx(), owner, enemy, damage);
                 totalHits++;
+                if (!seen(owner, enemy)) {
+                    continue;
+                }
                 Location body = Fx.body(enemy);
                 World w = body.getWorld();
                 Vfx.dot(body, Particle.FLASH, color, false);
@@ -746,7 +796,23 @@ public final class SpeedsterAbility extends Ability {
             return true;
         }
 
+        /** Cut short (a new light speed, the ability revoked): the afterimages fade where they are. */
+        void stop() {
+            stopped = true;
+            for (Echo echo : echoes) {
+                echo.vanish();
+            }
+            echoes.clear();
+            if (light == this) {
+                light = null;
+            }
+        }
+
         private void end() {
+            stopped = true;
+            if (light == this) {
+                light = null;
+            }
             for (Echo echo : echoes) {
                 echo.vanish();
             }
@@ -947,5 +1013,10 @@ public final class SpeedsterAbility extends Ability {
     private boolean roomFor(int count) {
         displays.removeIf(display -> !display.isValid());
         return displays.size() + count <= MAX_DISPLAYS;
+    }
+
+    /** False for an enemy player hidden from the owner by stealth: it may be struck, but nothing is drawn on it. */
+    private static boolean seen(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player player) || player.equals(owner) || owner.canSee(player);
     }
 }

@@ -82,11 +82,12 @@ public final class HunterAbility extends Ability {
                     "내가 공격한 적은 {track_duration}초간 발광하며, 그동안 그 적이 남긴 발자국이 나에게만 보입니다.")
             .active("곰덫",
                     "조준한 적의 발밑이나 바닥({trap_range}블록 이내)에 곰덫을 던져 설치합니다(최대 {trap_max}개, "
-                            + "{trap_life}초 유지). 덫은 {trap_arm}초 뒤 작동하며, 밟은 적은 {trap_damage} 피해를 입고 "
-                            + "{trap_root}초간 묶여 움직일 수 없습니다.",
+                            + "{trap_life}초 유지, 덫끼리 겹치게 던지면 먼저 놓은 덫을 거둠). 덫은 {trap_arm}초 뒤 "
+                            + "작동하며, 밟은 적은 {trap_damage} 피해를 입고 {trap_root}초간 묶여 움직일 수 없습니다.",
                     7)
             .ultimate("사냥 개시",
-                    "{hunt_range}블록 안에서 체력이 가장 낮은 적을 사냥감으로 지정합니다. {hunt_duration}초간 내 이동 속도가 "
+                    "{hunt_range}블록 안에서 체력이 가장 낮은 적(플레이어 우선)을 사냥감으로 지정합니다. "
+                            + "{hunt_duration}초간 내 이동 속도가 "
                             + "{hunt_speed}% 빨라지고 사냥감에게 주는 피해가 {hunt_bonus}% 늘며, 사냥감은 발광하고 이동 속도가 "
                             + "{hunt_slow}% 느려집니다. 사냥감이 쓰러지면 남은 시간 동안 다음 사냥감을 쫓고, 내가 쓰러뜨렸다면 "
                             + "체력을 {hunt_heal} 회복합니다.")
@@ -148,6 +149,13 @@ public final class HunterAbility extends Ability {
     private static final double FLOOR_SEARCH = 6;
     /** Space the trap needs on the floor. */
     private static final double TRAP_FOOTPRINT = 0.7;
+    /**
+     * How far beyond the catch radius a body standing in a trap may reach (half the diagonal of a player's hitbox).
+     * Two traps closer than twice that plus twice the radius could bite the same legs at once.
+     */
+    private static final double BODY_REACH = 0.45;
+    /** Time a freed victim has to step off before another of the hunter's traps may bite it. */
+    private static final long RELEASE_GRACE = 20;
     private static final float JAW_LENGTH = 0.64f;
     private static final float JAW_WIDTH = 0.3f;
     private static final float JAW_THICKNESS = 0.045f;
@@ -181,6 +189,14 @@ public final class HunterAbility extends Ability {
     private final Map<UUID, Track> tracks = new HashMap<>();
     /** Armed or arming traps, oldest first (sprung traps leave this list). */
     private final List<Trap> traps = new ArrayList<>();
+    /**
+     * Enemies a sprung trap holds (until {@link Long#MAX_VALUE}) or has just let go, with the tick until which no other
+     * trap of this hunter bites them: a victim shoved onto a second trap, or big enough to stand in two, is not held
+     * again the moment it is freed.
+     */
+    private final Map<UUID, Long> spared = new HashMap<>();
+    /** The roots of sprung traps that still hold someone, by modifier key: they end with the hunter's ability. */
+    private final Map<NamespacedKey, LivingEntity> grips = new HashMap<>();
     /** Every display this ability currently has alive, for the budget. */
     private final List<Display> displays = new ArrayList<>();
     private @Nullable Hunt hunt;
@@ -199,6 +215,10 @@ public final class HunterAbility extends Ability {
         }
         tracks.clear();
         traps.clear();
+        spared.clear();
+        // The traps vanish with the hunter (they are tracked displays): nobody stays held by a trap that is gone.
+        grips.forEach((key, victim) -> ctx().removeModifier(victim, key));
+        grips.clear();
         displays.clear();
         Hunt current = hunt;
         hunt = null;
@@ -242,6 +262,11 @@ public final class HunterAbility extends Ability {
         Hunt current = hunt;
         if (current != null && victim.equals(current.prey)) {
             current.bite(victim);
+            // A summon or a training dummy brings no kill credit (onKill is for players): the hunter's lethal hit
+            // is the kill. The hit has landed, so nothing can save it any more.
+            if (!(victim instanceof Player) && event.getFinalDamage() >= victim.getHealth()) {
+                current.success(victim);
+            }
         }
     }
 
@@ -390,6 +415,15 @@ public final class HunterAbility extends Ability {
         if (landing == null) {
             return ActivationResult.fail("덫을 놓을 바닥이 없습니다");
         }
+        // Traps never overlap: two jaws on the same legs would bite twice and hold twice as long. A trap thrown onto
+        // one of the hunter's own traps takes that one back and sets itself in its place.
+        double spacing = 2 * (Math.max(0, params().num("trap_radius")) + BODY_REACH);
+        for (Trap old : List.copyOf(traps)) {
+            if (old.near(landing, spacing)) {
+                traps.remove(old);
+                old.dismantle();
+            }
+        }
         int max = Math.max(1, params().integer("trap_max"));
         while (traps.size() >= max) {
             traps.removeFirst().dismantle();
@@ -457,6 +491,9 @@ public final class HunterAbility extends Ability {
     private void updateTraps(long now) {
         Player owner = player();
         double radius = Math.max(0, params().num("trap_radius"));
+        if (!spared.isEmpty()) {
+            spared.values().removeIf(until -> until < now);
+        }
         for (Trap trap : List.copyOf(traps)) {
             switch (trap.state) {
                 case ARMING -> {
@@ -470,10 +507,10 @@ public final class HunterAbility extends Ability {
                         trap.expire();
                         continue;
                     }
-                    List<LivingEntity> caught = ctx().enemiesNear(owner, trap.center.clone().add(0, 0.25, 0), radius);
-                    if (!caught.isEmpty()) {
+                    LivingEntity caught = firstCaught(owner, trap, radius);
+                    if (caught != null) {
                         traps.remove(trap);
-                        trap.spring(caught.getFirst());
+                        trap.spring(caught);
                         continue;
                     }
                     trap.idle(owner, now);
@@ -482,6 +519,21 @@ public final class HunterAbility extends Ability {
                 }
             }
         }
+    }
+
+    /**
+     * The nearest enemy standing in {@code trap}, null if none. An enemy hidden from the hunter (stealth) walks over it
+     * unharmed, like it slips past the engineer's turrets: the snapping jaws, the trap clamped to its leg and the
+     * hunter's "덫에 걸렸다!" would give it away. An enemy another trap holds (or has only just freed) is spared.
+     */
+    private @Nullable LivingEntity firstCaught(Player owner, Trap trap, double radius) {
+        long now = ctx().currentTick();
+        for (LivingEntity enemy : ctx().enemiesNear(owner, trap.center.clone().add(0, 0.25, 0), radius)) {
+            if (seen(owner, enemy) && spared.getOrDefault(enemy.getUniqueId(), Long.MIN_VALUE / 2) < now) {
+                return enemy;
+            }
+        }
+        return null;
     }
 
     private enum TrapState { FLYING, ARMING, ARMED, SPRUNG, GONE }
@@ -512,6 +564,8 @@ public final class HunterAbility extends Ability {
         private TrapState state = TrapState.FLYING;
         private long armAt;
         private long expireAt;
+        private @Nullable UUID holding;
+        private final List<NamespacedKey> held = new ArrayList<>(2);
 
         Trap(Location landing) {
             this.center = Displays.unrotated(landing);
@@ -519,11 +573,17 @@ public final class HunterAbility extends Ability {
             this.spinYaw = yaw;
         }
 
+        /** True if this trap lies (or is about to land) within {@code distance} of {@code at}. */
+        boolean near(Location at, double distance) {
+            return center.getWorld().equals(at.getWorld()) && center.distanceSquared(at) < distance * distance;
+        }
+
         /** Spawns the folded trap at the hand and throws it, tumbling, onto its spot. */
         void launch(Location from) {
             Player owner = player();
             Location start = Displays.unrotated(from);
-            long lifetime = Math.max(1, params().ticks("trap_life")) + MAX_FLIGHT + 20;
+            // Long enough for a trap that springs at the last moment of its life to hold, creak open and fall apart.
+            long lifetime = Math.max(1, params().ticks("trap_life")) + MAX_FLIGHT + params().ticks("trap_root") + 40;
             base = display(start, TRAP_BASE, basePose(), lifetime);
             plate = display(start, TRAP_PLATE, platePose(), lifetime);
             jawA = display(start, TRAP_JAW, jawPose(false), lifetime);
@@ -646,6 +706,8 @@ public final class HunterAbility extends Ability {
          */
         void spring(LivingEntity victim) {
             state = TrapState.SPRUNG;
+            holding = victim.getUniqueId();
+            spared.put(holding, Long.MAX_VALUE);
             Player owner = player();
             Location feet = victim.getLocation();
             Location clamp = center.clone();
@@ -663,16 +725,19 @@ public final class HunterAbility extends Ability {
             Combat.hit(ctx(), owner, victim, params().num("trap_damage"));
             long rootTicks = params().ticks("trap_root");
             if (Combat.isTargetable(ctx(), owner, victim) && rootTicks > 0) {
-                ctx().addModifier(owner, victim, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1,
-                        rootTicks);
-                ctx().addModifier(owner, victim, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1,
-                        rootTicks);
+                grip(ctx().addModifier(owner, victim, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1,
+                        rootTicks), victim);
+                grip(ctx().addModifier(owner, victim, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1,
+                        rootTicks), victim);
                 // A player's server-side velocity is stale: stop it outright, gravity does the rest.
                 victim.setVelocity(new Vector());
             }
             long hold = Math.max(HOLD_PERIOD, rootTicks);
             Loop.repeat(ctx(), owner, HOLD_PERIOD, HOLD_PERIOD, Math.max(1, hold / HOLD_PERIOD), run -> {
-                if (!victim.isValid() || victim.isDead() || !victim.getWorld().equals(center.getWorld())) {
+                // An eliminated victim (now a spectator) or one that slipped into stealth is let go where it was: a
+                // trap following it around would show where an invisible player is.
+                if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(center.getWorld())
+                        || !seen(owner, victim)) {
                     return false;
                 }
                 // The trap stays clamped to the leg, wherever a shove takes it.
@@ -687,6 +752,12 @@ public final class HunterAbility extends Ability {
                 }
                 return true;
             }, this::release);
+        }
+
+        /** A root this trap holds {@code victim} with (it lasts the hold, and no longer than the hunter's ability). */
+        private void grip(NamespacedKey key, LivingEntity victim) {
+            held.add(key);
+            grips.put(key, victim);
         }
 
         private void snapFx(LivingEntity victim, Location at) {
@@ -719,6 +790,12 @@ public final class HunterAbility extends Ability {
             }
             state = TrapState.GONE;
             displays.removeAll(parts);
+            if (holding != null) {
+                spared.put(holding, ctx().currentTick() + RELEASE_GRACE);
+                holding = null;
+            }
+            held.forEach(grips::remove);
+            held.clear();
             Player owner = player();
             setJaws(JAW_LOOSE, 5);
             Fx.sound(center, Sound.BLOCK_IRON_TRAPDOOR_OPEN, 0.8f, 0.5f + Fx.jitter(0.05f));
@@ -1005,7 +1082,7 @@ public final class HunterAbility extends Ability {
         }
 
         /** The hunter brought the prey down: golden "사냥 성공!", healing motes flowing back, the next prey. */
-        void success(Player victim) {
+        void success(LivingEntity victim) {
             Player owner = player();
             caught++;
             double heal = Math.max(0, params().num("hunt_heal"));
