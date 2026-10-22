@@ -4,13 +4,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
+import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -133,6 +140,98 @@ class MobNewAbilitiesTest {
     private static Scenario gambler() {
         // No lucky dodge / double damage: the borrowed ultimate alone decides what happens.
         return Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 0).start();
+    }
+
+    private static double horizontalDistance(Location a, Location b) {
+        return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    /**
+     * A player's real client against what the server knows of it. A real server never reads a player's motion back
+     * ({@code Player#getVelocity} only returns what the server last sent): the client moves by exactly the velocities
+     * it is sent, one per client tick, keeps its own motion in between (sliding to a halt like on the ground), and the
+     * server sees where it is {@code lag} ticks late. World physics must be off: this moves the player.
+     */
+    private static final class LaggyClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final Deque<Location> late = new ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity;
+        private final Map<Integer, Function<Vector, @Nullable Vector>> interference = new HashMap<>();
+        private final List<Vector> log = new ArrayList<>();
+        private Vector sent;
+        private int ticks;
+
+        /** Starts with whatever velocity was already sent (by a skill used just now, outside a tick). */
+        LaggyClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+            this.sent = player.getVelocity().clone();
+            this.velocity = sent.clone();
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /**
+         * What reaches the client of the velocity the server sends during server tick {@code tick} (0-based, counted
+         * from this client's first tick): {@code what} maps it to the velocity the client really takes, or to null
+         * when the packet is lost (two velocity packets in one client tick: the first is overwritten, so the client
+         * keeps sliding on its own motion).
+         */
+        LaggyClient interfere(int tick, Function<Vector, @Nullable Vector> what) {
+            interference.put(tick, what);
+            return this;
+        }
+
+        /** Every velocity the server sent during this client's ticks, in order. */
+        List<Vector> sentVelocities() {
+            return List.copyOf(log);
+        }
+
+        /** One client tick with what it was sent so far, then one server tick, which may send something new. */
+        void tick() {
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+
+            Vector marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                sent = now.clone();
+                log.add(now.clone());
+                Function<Vector, @Nullable Vector> what = interference.get(ticks);
+                Vector taken = what == null ? now.clone() : what.apply(now.clone());
+                if (taken != null) {
+                    velocity.copy(taken);
+                }
+            }
+            ticks++;
+        }
     }
 
     // ================================================================== 크리퍼 creeper
@@ -311,6 +410,51 @@ class MobNewAbilitiesTest {
         }
     }
 
+    @Test
+    void creeperFuseLitWhileChargedGoesOffChargedAfterTheChargeRunsOut() {
+        try (Scenario s = Scenario.ffa("creeper")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -9.5, 0);
+            s.assertSucceeded(s.ultimate(), "충전된 크리퍼");
+            s.ticks(s.paramTicks("ult_duration") - 5);
+            s.assertSucceeded(s.active(), "자폭, in the last moments of the charge");
+            assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "a charged fuse: no slow");
+            // The short charged fuse outlasts the charge: it used to go off as a plain blast that hurt the creeper.
+            s.ticks(s.paramTicks("ult_fuse") + 5);
+            double radius = s.param("blast_radius") + s.param("ult_radius");
+            double multiplier = 1 + s.param("ult_damage") / 100;
+            assertEquals(creeperBlast(s, 1.7, radius, multiplier), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "a fuse lit while charged goes off charged");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "and never hurts the charged creeper");
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void creeperGunpowderIsLockedInWhenTheFuseIsLit() {
+        try (Scenario s = Scenario.ffa("creeper")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -9.5, 0);
+            s.owner.setSneaking(true);
+            s.ticks(s.paramTicks("charge_time") + 2);
+            s.owner.setSneaking(false);
+            // Lit just before the packed gunpowder would start to scatter: it used to scatter while the fuse burned,
+            // so the "full" blast came out a good deal weaker and smaller than shown when it was lit.
+            s.ticks(s.paramTicks("charge_hold") - 2);
+            s.assertSucceeded(s.active(), "자폭");
+            s.ticks(s.paramTicks("fuse") + 5);
+            double radius = s.param("blast_radius") + s.param("charge_radius");
+            double multiplier = 1 + s.param("charge_damage") / 100;
+            assertEquals(creeperBlast(s, 1.7, radius, multiplier), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the blast gets all the gunpowder packed when the fuse was lit");
+            assertEquals(s.param("blast_damage") * multiplier * s.param("self_damage") / 100,
+                    s.damageTaken(s.owner), EPSILON);
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 셜커 shulker
 
     @Test
@@ -345,6 +489,41 @@ class MobNewAbilitiesTest {
             assertEquals(10, s.damageTaken(s.owner), EPSILON, "no reduction out of the shell");
             s.ticks(10);
             assertEquals(0, displays(s), "the shell is put away");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void shulkerMustOpenItsShellToBite() {
+        try (Scenario s = Scenario.ffa("shulker")) {
+            s.place(s.enemy, 0.5, 1.5, 180);
+            double reduced = 1 - s.param("shell_reduction") / 100;
+            s.owner.setSneaking(true);
+            s.ticks(10);
+            assertEquals(0, speed(s.owner), EPSILON, "shut");
+
+            // Trading sword blows from behind the shell's armour used to cost it only 40% of every hit back.
+            s.melee(s.owner, s.enemy, 5);
+            assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "a bite pops the shell open");
+            assertEquals(0, knockbackResistance(s.owner), EPSILON);
+            s.melee(s.enemy, s.owner, 10);
+            assertEquals(10, s.damageTaken(s.owner), EPSILON, "an open shell takes nothing off");
+            s.ticks(s.paramTicks("shell_reopen") - 2);
+            assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "it stays open for a moment, crouching or not");
+            s.ticks(10);
+            assertEquals(0, speed(s.owner), EPSILON, "then it shuts again");
+            s.clearHits();
+            s.melee(s.enemy, s.owner, 10);
+            assertEquals(10 * reduced, s.damageTaken(s.owner), EPSILON);
+
+            // Its bullets are no bite: they fly from the shut shell and land without opening it.
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "유도탄");
+            double bullets = s.param("bullet_count") * s.param("bullet_damage");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) >= bullets - EPSILON, 100, "both bullets hit");
+            assertEquals(0, speed(s.owner), EPSILON, "still shut");
+            s.owner.setSneaking(false);
+            s.ticks(20);
             s.finishClean();
         }
     }
@@ -606,6 +785,77 @@ class MobNewAbilitiesTest {
     }
 
     @Test
+    void goatRamEndsAtItsLengthEvenWhenTheServerSeesTheGoatLate() {
+        try (Scenario s = Scenario.ffa("goat")) {
+            s.place(s.enemy, 8.5, -6.5, 0);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            Location start = s.owner.getLocation();
+            s.world.physics().setEnabled(false);
+            // The server sees the goat three ticks late (a round trip of about 150 ms): measuring the charge on that
+            // view kept sending the goat on for three more blocks after it had long arrived.
+            LaggyClient client = new LaggyClient(s, s.owner, 3);
+            s.assertSucceeded(s.active(), "박치기");
+            for (int i = 0; i < s.paramTicks("ram_windup") + 40; i++) {
+                client.tick();
+            }
+            double travelled = horizontalDistance(start, client.at());
+            double length = s.param("ram_distance");
+            assertTrue(travelled < length + 0.6, "the ram did not run on past its end: " + travelled);
+            assertTrue(travelled > length - 0.5, "but ran its whole length: " + travelled);
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            assertEquals(0, displays(s), "the horns are put away");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void goatRamStillHitsAnEnemyAtTheEndOfTheChargeWhenTheServerSeesTheGoatLate() {
+        try (Scenario s = Scenario.ffa("goat")) {
+            s.place(s.enemy, 0.5, 7.5, 180);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            s.world.physics().setEnabled(false);
+            // The whole charge has been sent before the server sees the goat reach the enemy near its end: the ram
+            // keeps looking for a victim until the server has seen where the goat went.
+            LaggyClient client = new LaggyClient(s, s.owner, 3);
+            s.assertSucceeded(s.active(), "박치기");
+            for (int i = 0; i < s.paramTicks("ram_windup") + 40; i++) {
+                client.tick();
+            }
+            assertEquals(s.param("ram_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "rammed at the very end");
+            s.world.physics().setEnabled(true);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void goatHornsArePutAwayWhenTheRamHasNowhereToGo() {
+        try (Scenario s = Scenario.ffa("goat")) {
+            Location center = s.session.arena().center();
+            double z = center.getZ();
+            while (z < center.getZ() + 200 && s.ctx().isInsideArena(new Location(s.world, center.getX(),
+                    FlatWorld.SURFACE, z + 0.5))) {
+                z += 0.5;
+            }
+            // Right at the border, facing out of the arena.
+            s.place(s.owner, center.getX(), z, 0);
+            s.place(s.enemy, center.getX() + 8, z - 12, 0);
+            s.place(s.enemy2, center.getX() - 8, z - 12, 0);
+            s.assertSucceeded(s.active(), "박치기");
+            s.ticks(s.paramTicks("ram_windup") - 1);
+            assertEquals(2, itemDisplays(s), "the horns are lowered");
+            // The ram cannot start: the horns used to hang frozen in the air for two more seconds.
+            s.ticks(10);
+            assertEquals(0, itemDisplays(s), "the horns are put away");
+            assertTrue(s.ctx().isInsideArena(s.owner.getLocation()), "the goat stayed inside");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void goatLandslideSweepsEnemiesDownTheSlope() {
         try (Scenario s = Scenario.teams("goat")) {
             s.crossfireAlly();
@@ -775,6 +1025,84 @@ class MobNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertEquals(1.0, scale(s.owner), EPSILON);
             s.world.wallAlongX(-3, 3, 4, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void turtleSpinEndsAtItsLengthEvenWhenTheServerSeesTheTurtleLate() {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.place(s.enemy, 8.5, -6.5, 0);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            Location start = s.owner.getLocation();
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            // The server sees the turtle three ticks late (a round trip of about 150 ms): measuring the slide on that
+            // view kept sending the shell on for more than two blocks after it had long arrived.
+            LaggyClient client = new LaggyClient(s, s.owner, 3);
+            for (int i = 0; i < 50; i++) {
+                client.tick();
+            }
+            double travelled = horizontalDistance(start, client.at());
+            double length = s.param("spin_distance");
+            assertTrue(travelled < length + 0.6, "the shell did not slide on past its end: " + travelled);
+            assertTrue(travelled > length - 0.5, "but slid its whole length: " + travelled);
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(1.0, scale(s.owner), EPSILON, "back out of the shell");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A real client often covers less than it was sent: a velocity packet is lost (two arrive in one client tick and
+     * the first is overwritten), or a hit handled after the spin's push in the same tick knocks the turtle back
+     * (vanilla knockback halves the motion and pushes away from the attacker). Once the whole length is sent the shell
+     * must just come to rest short of its end, not take that stop for a wall and bounce back off nothing.
+     */
+    @Test
+    void turtleSpinNeverBouncesOffNothingWhenTheClientFallsShort() {
+        Function<Vector, @Nullable Vector> lost = velocity -> null;
+        assertSpinNeverTurnsBack(0, Map.of(4, lost, 8, lost), "two lost packets");
+        assertSpinNeverTurnsBack(3, Map.of(4, lost, 8, lost), "two lost packets, seen three ticks late");
+        assertSpinNeverTurnsBack(0, Map.of(6, MobNewAbilitiesTest::knockedBackFromTheFront),
+                "a hit from the front right after a push");
+    }
+
+    /** Vanilla {@code LivingEntity#knockback} of strength 0.4 on a grounded player hit by someone in front (+Z). */
+    private static Vector knockedBackFromTheFront(Vector velocity) {
+        return new Vector(velocity.getX() / 2, Math.min(0.4, velocity.getY() / 2 + 0.4), velocity.getZ() / 2 - 0.4);
+    }
+
+    private static void assertSpinNeverTurnsBack(int lag, Map<Integer, Function<Vector, @Nullable Vector>> trouble,
+            String what) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.place(s.enemy, 8.5, -6.5, 0);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            Location start = s.owner.getLocation();
+            Vector ahead = facing(start.getYaw());
+            assertEquals(1, ahead.getZ(), EPSILON, "the turtle spins off to +Z (the front knockback assumes it)");
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            LaggyClient client = new LaggyClient(s, s.owner, lag);
+            trouble.forEach(client::interfere);
+            double farthest = 0;
+            for (int i = 0; i < 50; i++) {
+                client.tick();
+                farthest = Math.max(farthest, client.at().toVector().subtract(start.toVector()).dot(ahead));
+            }
+            for (Vector sent : client.sentVelocities()) {
+                assertTrue(sent.dot(ahead) > -EPSILON, what + ": the shell was never sent back (no wall): "
+                        + client.sentVelocities());
+            }
+            double reached = client.at().toVector().subtract(start.toVector()).dot(ahead);
+            assertEquals(farthest, reached, 0.05, what + ": the shell rests where it got to, it did not slide back");
+            assertTrue(reached > s.param("spin_distance") - 2, what + ": it still slid most of its length: " + reached);
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(1.0, scale(s.owner), EPSILON, what + ": back out of the shell");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, what);
             s.finishClean();
         }
     }

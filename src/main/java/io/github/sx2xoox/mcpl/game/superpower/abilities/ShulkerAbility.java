@@ -36,6 +36,7 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -49,7 +50,8 @@ import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * 셜커 — the End city's sentry. Sneaking shuts its shell (much less damage, but rooted to the spot), the active
+ * 셜커 — the End city's sentry. Sneaking shuts its shell (much less damage, but rooted to the spot, and it has to open
+ * up to bite: a melee hit pops it open for a moment), the active
  * fires homing shulker bullets that zig-zag along the block axes and float whoever they hit, and the ultimate raises a
  * small fortress of shulker turrets that keep firing at everyone around.
  *
@@ -65,7 +67,8 @@ public final class ShulkerAbility extends Ability {
             .difficulty(2)
             .passive("껍질",
                     "땅에서 웅크리고 있으면 껍질을 닫아 받는 피해가 {shell_reduction}% 줄고 밀려나지 않지만, 그동안은 "
-                            + "움직일 수 없습니다. 껍질 안에서도 유도탄은 쏠 수 있습니다.")
+                            + "움직일 수 없습니다. 근접 공격으로 적을 치면 껍질이 열리고 {shell_reopen}초간 닫히지 "
+                            + "않습니다. 껍질 안에서도 유도탄은 쏠 수 있습니다.")
             .active("유도탄",
                     "조준한 적(없으면 앞쪽 {bullet_range}블록 안의 가장 가까운 적)을 축을 따라 꺾어 가며 "
                             + "{bullet_life}초간 쫓는 셜커 탄 {bullet_count}발을 쏩니다. 맞은 적은 {bullet_damage} 피해를 "
@@ -76,6 +79,7 @@ public final class ShulkerAbility extends Ability {
                             + "{ult_range}블록 안의 가장 가까운 적에게 유도탄을 쏩니다. 탄은 {ult_damage} 피해를 주고 "
                             + "{ult_levitate}초간 띄우며, 적 한 명은 최대 {ult_max_levitate}초까지만 떠오릅니다.")
             .param("shell_reduction", 60)
+            .param("shell_reopen", 1)
             .param("bullet_count", 2)
             .param("bullet_range", 24)
             .param("bullet_damage", 2.5)
@@ -180,6 +184,17 @@ public final class ShulkerAbility extends Ability {
     }
 
     /**
+     * A melee hit is the shulker peeking out to bite: the shell opens and stays open for a moment, so it cannot trade
+     * blows from behind its armour (bullets, ability damage, still fly from the shut shell).
+     */
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (event.getDamager().equals(player()) && !ctx().isAbilityDamage()) {
+            shell.lunge(player(), ctx().currentTick() + params().ticks("shell_reopen"));
+        }
+    }
+
+    /**
      * The shell: two purpur halves around the shulker. While shut it takes less damage, cannot move and is not
      * knocked back (attribute modifiers, removed the moment it opens or the ability is revoked).
      */
@@ -193,6 +208,8 @@ public final class ShulkerAbility extends Ability {
         private @Nullable BlockDisplay lid;
         private long peekUntil = -1;
         private long lastFeedback = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
+        /** After a melee hit the shell stays open until this tick. */
+        private long openUntil = -1;
         private @Nullable Location anchor;
 
         boolean isShut(long now) {
@@ -201,7 +218,7 @@ public final class ShulkerAbility extends Ability {
 
         void tick(Player owner, long now) {
             boolean wanted = owner.isSneaking() && !owner.isInsideVehicle() && !owner.isGliding()
-                    && (Motion.isGrounded(owner) || closing);
+                    && (Motion.isGrounded(owner) || closing) && now >= openUntil;
             if (!wanted) {
                 sneakingSince = -1;
                 if (closing) {
@@ -317,6 +334,17 @@ public final class ShulkerAbility extends Ability {
             }
         }
 
+        /** The shulker struck out in melee: the shell pops open and cannot close again until {@code until}. */
+        void lunge(Player owner, long until) {
+            openUntil = Math.max(openUntil, until);
+            sneakingSince = -1;
+            if (closing) {
+                open(owner);
+                owner.sendActionBar(Text.mm("<" + PURPLE + ">껍질 열림</" + PURPLE + "> <gray>공격하는 동안은 "
+                        + "껍질을 닫을 수 없습니다</gray>"));
+            }
+        }
+
         /** The lid lifts a crack, as a shulker does to shoot. */
         void peek(Player owner) {
             if (!closing || lid == null || !lid.isValid()) {
@@ -355,6 +383,7 @@ public final class ShulkerAbility extends Ability {
             closing = false;
             shutAt = -1;
             sneakingSince = -1;
+            openUntil = -1;
             modifiers.clear();
             base = null;
             lid = null;

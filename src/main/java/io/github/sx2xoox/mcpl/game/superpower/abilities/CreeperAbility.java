@@ -208,7 +208,8 @@ public final class CreeperAbility extends Ability {
         if (sneaking) {
             lastSneakTick = now;
             charge = Math.min(1.0, charge + perTick);
-        } else if (charge > 0 && now - lastSneakTick > params().ticks("charge_hold")) {
+        } else if (fuse == null && charge > 0 && now - lastSneakTick > params().ticks("charge_hold")) {
+            // A lit fuse locks the gunpowder in: the blast gets what was packed when it was lit.
             charge = Math.max(0.0, charge - perTick);
         }
         if (charge < 1.0) {
@@ -331,6 +332,8 @@ public final class CreeperAbility extends Ability {
     private final class Fuse implements LongPredicate {
 
         private final long ticks;
+        /** Lit while charged: the blast stays charged even if the charge runs out before it goes off. */
+        private final boolean litCharged;
         private final double swell;
         private @Nullable NamespacedKey swellKey;
         private @Nullable BlockDisplay bubble;
@@ -338,6 +341,7 @@ public final class CreeperAbility extends Ability {
         private float spin;
 
         Fuse(boolean charged) {
+            this.litCharged = charged;
             this.ticks = Math.max(2, params().ticks(charged ? "ult_fuse" : "fuse"));
             this.swell = roomToSwell(player());
             if (!charged) {
@@ -407,17 +411,23 @@ public final class CreeperAbility extends Ability {
                 Vfx.dot(head, Particle.ELECTRIC_SPARK, null, false);
             }
             if (left <= 0) {
+                boolean charged = charged();
                 fuse = null;
                 dispose();
-                detonate(isCharged());
+                detonate(charged);
                 return false;
             }
             return true;
         }
 
+        /** A charged blast: lit while charged, or charged by the ultimate while the fuse was burning. */
+        private boolean charged() {
+            return litCharged || isCharged();
+        }
+
         /** The blast radius on the ground, with a white ring closing in as the fuse runs out. */
         private void telegraph(Player owner, double progress, long run) {
-            double radius = blastRadius(isCharged());
+            double radius = blastRadius(charged());
             Location floor = floorUnder(owner.getLocation());
             int points = (int) Math.max(16, Math.min(36, radius * 7));
             Vfx.ring(ctx(), floor, radius, points, run * 0.05, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.1f),
