@@ -64,6 +64,81 @@ class ControlAbilitiesTest {
         }
     }
 
+    /**
+     * The owner stands three blocks up (on a ledge: physics is off, so it stays where it is put) and pulls a 150 ms
+     * player up from the floor. Steered by the height the server last heard of, the player kept being lifted (and
+     * hopped off a floor it had long left) for a round trip too long and shot more than a block above the owner.
+     */
+    @Test
+    void gravityPullLiftsALaggingPlayerNoHigherThanTheOwner() {
+        for (int ping : new int[] {0, 150}) {
+            try (Scenario s = Scenario.ffa("gravity")) {
+                double ownerY = FlatWorld.SURFACE + 3;
+                s.place(s.enemy2, 12.5, -6.5, 0);
+                s.world.physics().setEnabled(false);
+                s.place(s.owner, 0.5, ownerY, 0.5, 0, 0);
+                s.place(s.enemy, 0.5, 8.5, 180);
+                s.enemy.setPing(ping);
+                RealClient client = new RealClient(s, s.enemy, ping / 50);
+                s.aimAt(s.owner, s.enemy);
+                s.assertSucceeded(s.active(), "끌어당기기");
+                double peak = Double.NEGATIVE_INFINITY;
+                boolean slowed = false;
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                    peak = Math.max(peak, client.at().getY());
+                    slowed |= s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS);
+                }
+                s.world.physics().setEnabled(true);
+                assertTrue(peak < ownerY + 0.3, ping + " ms: lifted no higher than the owner: " + (peak - ownerY));
+                assertTrue(peak > ownerY - 1.5, ping + " ms: but up to it: " + (peak - ownerY));
+                double ahead = client.at().getZ() - s.owner.getLocation().getZ();
+                assertTrue(ahead > 1.0 && ahead < 4.0, ping + " ms: dropped in front of the owner: " + ahead);
+                assertTrue(slowed, ping + " ms: and slowed there");
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.place(s.enemy, 0.5, 4.5, 180);
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * A target almost straight below the drop point, four blocks down (the owner on a ledge again). The pull's speed
+     * follows the whole distance, mostly height here: put into the small sideways gap, it flung the target about a
+     * block and a half past the drop point every tick, back and forth, while it was lifted.
+     */
+    @Test
+    void gravityPullLiftsATargetBelowStraightUpWithoutSwingingItAcross() {
+        for (int ping : new int[] {0, 150}) {
+            try (Scenario s = Scenario.ffa("gravity")) {
+                s.place(s.enemy2, 12.5, -6.5, 0);
+                s.world.physics().setEnabled(false);
+                s.place(s.owner, 0.5, FlatWorld.SURFACE + 4, 0.5, 0, 0);
+                double drop = 0.5 + 1.8; // the drop point: 1.8 blocks in front of the owner
+                s.place(s.enemy, 0.5, drop + 0.2, 180);
+                s.enemy.setPing(ping);
+                RealClient client = new RealClient(s, s.enemy, ping / 50);
+                s.aimAt(s.owner, s.enemy);
+                s.assertSucceeded(s.active(), "끌어당기기");
+                double highest = FlatWorld.SURFACE;
+                boolean slowed = false;
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                    double off = Math.abs(client.at().getZ() - drop);
+                    assertTrue(off < 0.2 + 1.0E-6, ping + " ms: never swung past the drop point: " + off + " off");
+                    highest = Math.max(highest, client.at().getY());
+                    slowed |= s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS);
+                }
+                s.world.physics().setEnabled(true);
+                assertTrue(highest > FlatWorld.SURFACE + 2, ping + " ms: lifted towards the owner: " + highest);
+                assertTrue(slowed, ping + " ms: and dropped, slowed");
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.place(s.enemy, 0.5, 4.5, 180);
+                s.finishClean();
+            }
+        }
+    }
+
     @Test
     void gravityPullDropsALaggingPlayerInFrontOfTheOwner() {
         try (Scenario s = Scenario.ffa("gravity")) {

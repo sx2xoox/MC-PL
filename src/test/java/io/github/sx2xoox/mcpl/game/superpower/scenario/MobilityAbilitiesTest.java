@@ -377,6 +377,45 @@ class MobilityAbilitiesTest {
         }
     }
 
+    /**
+     * The owner stands above (on a ledge: physics is off, so it stays where it is put) and drags a 150 ms player up
+     * from the floor. Steered by the height the server last heard of, the player kept being lifted off a floor it had
+     * long left for a round trip too long and shot up to almost three blocks above the owner.
+     */
+    @Test
+    void grappleDragLiftsALaggingPlayerNoHigherThanTheOwner() {
+        for (int ping : new int[] {0, 150}) {
+            for (double[] spot : new double[][] {{3, 8.5}, {5, 3.0}}) { // {height of the owner, the victim's z}
+                try (Scenario s = Scenario.ffa("grapple")) {
+                    String run = ping + " ms, the owner " + spot[0] + " blocks up";
+                    double ownerY = FlatWorld.SURFACE + spot[0];
+                    s.place(s.enemy2, 12.5, -6.5, 0);
+                    s.world.physics().setEnabled(false);
+                    s.place(s.owner, 0.5, ownerY, 0.5, 0, 0);
+                    s.place(s.enemy, 0.5, spot[1], 180);
+                    s.enemy.setPing(ping);
+                    RealClient client = new RealClient(s, s.enemy, ping / 50);
+                    s.aimAt(s.owner, s.enemy);
+                    s.assertSucceeded(s.active(), "갈고리");
+                    double peak = Double.NEGATIVE_INFINITY;
+                    for (int i = 0; i < 40; i++) {
+                        client.tick();
+                        peak = Math.max(peak, client.at().getY());
+                    }
+                    s.world.physics().setEnabled(true);
+                    assertEquals(s.param("pull_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "hooked: " + run);
+                    assertTrue(peak < ownerY + 0.3, run + ": lifted no higher than the owner: " + (peak - ownerY));
+                    assertTrue(peak > ownerY - 1.5, run + ": but up to it: " + (peak - ownerY));
+                    s.place(s.owner, 0.5, 0.5, 0);
+                    s.place(s.enemy, 0.5, 4.5, 180);
+                    s.ticks(20);
+                    assertNoDisplays(s);
+                    s.finishClean();
+                }
+            }
+        }
+    }
+
     @Test
     void grappleHookDropsALaggingPlayerInFrontOfTheOwner() {
         try (Scenario s = Scenario.ffa("grapple")) {

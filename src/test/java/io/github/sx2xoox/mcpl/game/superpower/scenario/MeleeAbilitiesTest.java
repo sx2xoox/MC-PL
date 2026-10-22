@@ -500,6 +500,50 @@ class MeleeAbilitiesTest {
         }
     }
 
+    /**
+     * The bash goes off where the guardian stops, whatever its ping. It went off where the server last heard of the
+     * guardian, about a block short for every tick of the round trip: on every screen the wall of force burst behind
+     * the guardian, which then slid on to its stop and past enemies standing there untouched. And an enemy in the
+     * way stopped the charge only once the server saw the guardian reach it, long after its client ran through it.
+     */
+    @Test
+    void guardianBashLandsWhereALaggingGuardianStops() {
+        for (int ping : new int[] {0, 150, 250}) {
+            for (double ahead : new double[] {2.5, 4.5, 5.0, 6.5}) {
+                try (Scenario s = Scenario.ffa("guardian")) {
+                    String run = ping + " ms, the enemy " + ahead + " blocks ahead";
+                    s.place(s.enemy, 0.5, 0.5 + ahead, 180);
+                    s.place(s.enemy2, -10.5, 10.5, 0);
+                    s.owner.setPing(ping);
+                    s.world.physics().setEnabled(false);
+                    RealClient client = new RealClient(s, s.owner, ping / 50);
+                    s.assertSucceeded(s.active(), "방패 돌격");
+                    double wallZ = Double.NaN;
+                    double guardianZ = Double.NaN;
+                    for (int i = 0; i < 30; i++) {
+                        client.tick();
+                        List<BlockDisplay> walls = blockDisplaysOf(s, Material.LIGHT_BLUE_STAINED_GLASS);
+                        if (Double.isNaN(wallZ) && !walls.isEmpty()) {
+                            wallZ = walls.getFirst().getLocation().getZ();
+                            guardianZ = client.at().getZ();
+                        }
+                    }
+                    s.world.physics().setEnabled(true);
+                    assertEquals(s.param("bash_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "bashed: " + run);
+                    assertTrue(client.at().getZ() < s.enemy.getLocation().getZ() - 0.6,
+                            "the guardian stops at the enemy, not in or past it: " + run + ", " + client.at());
+                    assertEquals(guardianZ + 1.0, wallZ, 0.3,
+                            "the wall of force bursts right in front of the guardian: " + run);
+                    s.place(s.owner, 0.5, 0.5, 0);
+                    s.place(s.enemy, 0.5, 4.5, 180);
+                    s.ticks(20);
+                    assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                    s.finishClean();
+                }
+            }
+        }
+    }
+
     @Test
     void guardianChargeNeverCarriesALaggingGuardianPastTheBorder() {
         try (Scenario s = Scenario.ffa("guardian")) {
