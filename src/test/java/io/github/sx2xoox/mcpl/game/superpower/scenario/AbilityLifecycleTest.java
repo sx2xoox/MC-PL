@@ -7,9 +7,13 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.BuiltinAbilities;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.MockEntities;
@@ -35,6 +39,9 @@ class AbilityLifecycleTest {
     /** Which skills of an ability hurt the aimed enemy in the default layout. */
     private record Expect(boolean activeHurts, boolean ultimateHurts) {
     }
+
+    /** Abilities added after the original 24 check their damage in their own group's scenario test. */
+    private static final Expect NOT_CHECKED = new Expect(false, false);
 
     private static final Map<String, Expect> EXPECT = Map.ofEntries(
             Map.entry("pyro", new Expect(true, true)),
@@ -62,10 +69,23 @@ class AbilityLifecycleTest {
             Map.entry("illusionist", new Expect(false, false)),
             Map.entry("gambler", new Expect(false, false)));
 
+    /** Every built-in ability (read from the registry, so new abilities are swept automatically). */
     static Stream<String> abilities() {
-        return Stream.of("pyro", "thunder", "frost", "aero", "blink", "shadow", "grapple", "chrono", "berserker",
-                "titan", "guardian", "vampire", "gravity", "earth", "venom", "mirror", "archer", "bomber", "summoner",
-                "healer", "pixie", "phoenix", "illusionist", "gambler");
+        return BUILTIN_IDS.stream();
+    }
+
+    private static final List<String> BUILTIN_IDS = builtinIds();
+
+    private static List<String> builtinIds() {
+        // Ability classes build block data while they initialize, which needs a (mock) server.
+        MatchHarness h = MatchHarness.flat();
+        try {
+            AbilityRegistry registry = new AbilityRegistry();
+            BuiltinAbilities.registerAll(registry);
+            return registry.all().stream().map(entry -> entry.info().id()).sorted().toList();
+        } finally {
+            h.close();
+        }
     }
 
     /** A scenario for {@code id}; the illusionist's copies are allowed to spawn (see the class comment). */
@@ -93,6 +113,8 @@ class AbilityLifecycleTest {
                 s.ticks(2);
             }
             case "healer" -> s.owner.setHealth(s.owner.getHealth() - 8);
+            // The frying pan only reaches 3.5 blocks.
+            case "chef" -> s.place(s.enemy, 0.5, 3.0, 180f);
             default -> {
             }
         }
@@ -102,6 +124,26 @@ class AbilityLifecycleTest {
         } else {
             s.aimAt(s.owner, s.enemy);
         }
+    }
+
+    /** Abilities whose ultimate waits for their running active (a grab, a spin) to end first. */
+    private static final Set<String> ULTIMATE_WAITS_FOR_ACTIVE = Set.of("fighter", "turtle");
+
+    /**
+     * Uses the ultimate right after the active: at once, or for the abilities that refuse it while their active runs,
+     * as soon as the active is over (re-aiming every tick, at most 6 s).
+     */
+    static ActivationResult ultimateDuringActive(Scenario s) {
+        ActivationResult result = s.ultimate();
+        if (!ULTIMATE_WAITS_FOR_ACTIVE.contains(s.abilityId)) {
+            return result;
+        }
+        for (int i = 0; !result.succeeded() && i < 120; i++) {
+            s.ticks(1);
+            s.aimAt(s.owner, s.enemy);
+            result = s.ultimate();
+        }
+        return result;
     }
 
     static void prepareUltimate(Scenario s) {
@@ -132,11 +174,12 @@ class AbilityLifecycleTest {
             ActivationResult active = s.active();
             s.assertSucceeded(active, id + " active");
             s.ticks(100);
-            if (EXPECT.get(id).activeHurts()) {
+            if (EXPECT.getOrDefault(id, NOT_CHECKED).activeHurts()) {
                 assertTrue(s.damageTaken(s.enemy) > 0, id + " active hurts the aimed enemy (health "
                         + enemyBefore + " -> " + s.health(s.enemy) + ")");
             }
-            if (!id.equals("gambler")) {
+            // The gambler's dice can backfire, and the creeper's blast scorches itself too (by design).
+            if (!id.equals("gambler") && !id.equals("creeper")) {
                 assertEquals(0, ownerDamage(s), 1.0E-9, id + " active never hurts its owner: " + s.hits());
             }
 
@@ -145,7 +188,7 @@ class AbilityLifecycleTest {
             s.clearHits();
             s.assertSucceeded(s.ultimate(), id + " ultimate");
             s.ticks(300);
-            if (EXPECT.get(id).ultimateHurts()) {
+            if (EXPECT.getOrDefault(id, NOT_CHECKED).ultimateHurts()) {
                 assertTrue(s.damageTaken(s.enemy) > 0, id + " ultimate hurts the aimed enemy");
             }
             if (!id.equals("gambler")) {

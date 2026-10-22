@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.github.sx2xoox.mcpl.core.game.GameState;
+import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import net.kyori.adventure.text.Component;
@@ -72,7 +73,11 @@ class AbilityInteractionTest {
 
             AbilityLifecycleTest.prepareActive(s);
             s.clearHits();
-            s.assertSucceeded(s.active(), id + " active among enemy summons");
+            ActivationResult active = s.active();
+            // The duelist refuses to challenge a summon (a wolf is no duellist), and the aim meets the pack first.
+            if (!id.equals("duelist")) {
+                s.assertSucceeded(active, id + " active among enemy summons");
+            }
             s.ticks(60);
             AbilityLifecycleTest.prepareUltimate(s);
             s.assertSucceeded(s.ultimate(), id + " ultimate among enemy summons");
@@ -196,7 +201,7 @@ class AbilityInteractionTest {
         s.assertSucceeded(s.active(), s.abilityId + " active");
         s.ticks(3);
         AbilityLifecycleTest.prepareUltimate(s);
-        s.assertSucceeded(s.ultimate(), s.abilityId + " ultimate");
+        s.assertSucceeded(AbilityLifecycleTest.ultimateDuringActive(s), s.abilityId + " ultimate");
         s.ticks(5);
     }
 
@@ -211,7 +216,7 @@ class AbilityInteractionTest {
             s.assertSucceeded(s.active(), id + " active");
             s.ticks(3);
             AbilityLifecycleTest.prepareUltimate(s);
-            s.assertSucceeded(s.ultimate(), id + " ultimate");
+            s.assertSucceeded(AbilityLifecycleTest.ultimateDuringActive(s), id + " ultimate");
             s.ticks(5);
 
             assertTrue(s.owner.disconnect(), "the owner leaves");
