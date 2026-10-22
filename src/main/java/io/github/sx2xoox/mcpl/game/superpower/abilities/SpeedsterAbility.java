@@ -769,38 +769,46 @@ public final class SpeedsterAbility extends Ability {
         private final class Echo {
             private final int delay;
             private final Color color;
+            private final float fullSize;
             private final ItemDisplay head;
             private final BlockDisplay torso;
+            /** Grows from nothing to full size over its first ticks. */
+            private float growth;
+            /** The way the afterimage faces (a Minecraft yaw), carried by its transformations, never the entities. */
+            private float yaw;
 
             Echo(int index, Location feet, ItemStack headItem) {
                 this.delay = (index + 1) * ECHO_SPACING;
                 this.color = ECHO_COLORS[index % ECHO_COLORS.length];
+                this.fullSize = 1f - 0.08f * index;
+                this.yaw = feet.getYaw();
                 long life = duration + MERGE_TICKS + 10;
-                Location at = feet.clone();
-                at.setPitch(0);
-                head = Displays.item(ctx(), owner, at, headItem, Displays.centered(0, 1.55f, 0, 0.01f, 0.01f, 0.01f,
-                        0, 0, 0), life);
+                head = Displays.item(ctx(), owner, feet, headItem, headPose(), life);
                 head.setTeleportDuration(1);
                 displays.add(head);
-                torso = Displays.block(ctx(), owner, at, ECHO_GLASS[index % ECHO_GLASS.length].createBlockData(),
-                        Displays.transform(0, 1.0f, 0, 0.01f, 0.01f, 0.01f, 0, 0, 0), life);
+                torso = Displays.block(ctx(), owner, feet, ECHO_GLASS[index % ECHO_GLASS.length].createBlockData(),
+                        torsoPose(), life);
                 torso.setTeleportDuration(1);
                 displays.add(torso);
-                float shrink = 1f - 0.08f * index;
-                Displays.animateNextTick(ctx(), owner, head, Displays.centered(0, 1.55f, 0, 0.55f * shrink,
-                        0.55f * shrink, 0.55f * shrink, 0, 0, 0), 4);
-                Displays.animateNextTick(ctx(), owner, torso, Displays.transform(0, 1.0f, 0, 0.5f * shrink,
-                        0.72f * shrink, 0.26f * shrink, 0, 0, 0), 4);
+            }
+
+            /** The head on top, turned to {@link #yaw}. */
+            Transformation headPose() {
+                float size = 0.55f * fullSize * Math.max(0.01f, growth);
+                return Displays.centered(0, 1.55f, 0, size, size, size, yaw, 0, 0);
+            }
+
+            /** The glass body under it, turned the same way. */
+            Transformation torsoPose() {
+                float size = fullSize * Math.max(0.01f, growth);
+                return Displays.transform(0, 1.0f, 0, 0.5f * size, 0.72f * size, 0.26f * size, yaw, 0, 0);
             }
 
             void follow(Step step) {
-                Location at = new Location(world, step.x(), step.y(), step.z(), step.yaw(), 0);
-                if (head.isValid()) {
-                    head.teleport(at);
-                }
-                if (torso.isValid()) {
-                    torso.teleport(at);
-                }
+                Location at = new Location(world, step.x(), step.y(), step.z());
+                growth = Math.min(1f, growth + 0.25f);
+                yaw = step.yaw();
+                place(at);
                 if (step.moving()) {
                     Particle.DustOptions dust = new Particle.DustOptions(color, 0.8f);
                     Vfx.dot(at.clone().add(Fx.jitter(0.15f), 0.35, Fx.jitter(0.15f)), Particle.DUST, dust, false);
@@ -811,15 +819,16 @@ public final class SpeedsterAbility extends Ability {
             void rush(Location feet, double t) {
                 Location from = head.isValid() ? head.getLocation() : feet;
                 Location at = from.clone().add(feet.toVector().subtract(from.toVector()).multiply(t));
-                at.setYaw(feet.getYaw());
-                at.setPitch(0);
-                if (head.isValid()) {
-                    head.teleport(at);
-                }
-                if (torso.isValid()) {
-                    torso.teleport(at);
-                }
+                yaw = feet.getYaw();
+                place(at);
                 Vfx.trail(at.clone().add(0, 1.0, 0), feet.clone().add(0, 1.0, 0), color, 4, false);
+            }
+
+            private void place(Location at) {
+                Displays.moveTo(head, at);
+                Displays.moveTo(torso, at);
+                Displays.animate(head, headPose(), 1);
+                Displays.animate(torso, torsoPose(), 1);
             }
 
             void vanish() {

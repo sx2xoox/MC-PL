@@ -488,7 +488,8 @@ public final class HunterAbility extends Ability {
 
     /**
      * One bear trap: a dark round base, a copper trigger plate, two iron jaws hinged on the axis across the trap and a
-     * chain lying out behind it. The parts share the entity location; the trap's yaw turns them all.
+     * chain lying out behind it. The display entities themselves are never rotated: the trap's heading (and its
+     * tumble in flight) is part of every part's transformation, see {@link #framed}.
      */
     private final class Trap {
 
@@ -496,39 +497,47 @@ public final class HunterAbility extends Ability {
 
         private Location center;
         private final List<Display> parts = new ArrayList<>(PARTS);
+        private @Nullable BlockDisplay base;
         private @Nullable BlockDisplay jawA;
         private @Nullable BlockDisplay jawB;
         private @Nullable BlockDisplay plate;
+        private @Nullable ItemDisplay chain;
+        /** The trap's heading (Minecraft yaw: the chain trails behind it towards the thrower). */
+        private final float yaw;
+        /** The tumble in flight; equal to the heading (and level) once the trap has landed. */
+        private float spinYaw;
+        private float spinPitch;
+        private float jawAngle = JAW_FOLDED;
+        private boolean plateDown;
         private TrapState state = TrapState.FLYING;
         private long armAt;
         private long expireAt;
 
         Trap(Location landing) {
-            this.center = landing.clone();
+            this.center = Displays.unrotated(landing);
+            this.yaw = landing.getYaw();
+            this.spinYaw = yaw;
         }
 
-        /** Spawns the folded trap at the hand and throws it, spinning, onto its spot. */
+        /** Spawns the folded trap at the hand and throws it, tumbling, onto its spot. */
         void launch(Location from) {
             Player owner = player();
-            Location start = from.clone();
-            start.setYaw(center.getYaw());
-            start.setPitch(0);
+            Location start = Displays.unrotated(from);
             long lifetime = Math.max(1, params().ticks("trap_life")) + MAX_FLIGHT + 20;
-            BlockDisplay base = display(start, TRAP_BASE,
-                    Displays.transform(0, 0.025f, 0, 0.58f, 0.05f, 0.58f, 45, 0, 0), lifetime);
-            plate = display(start, TRAP_PLATE, Displays.transform(0, 0.105f, 0, 0.2f, 0.03f, 0.2f, 0, 0, 0),
+            base = display(start, TRAP_BASE, basePose(), lifetime);
+            plate = display(start, TRAP_PLATE, platePose(), lifetime);
+            jawA = display(start, TRAP_JAW, jawPose(false), lifetime);
+            jawB = display(start, TRAP_JAW, jawPose(true), lifetime);
+            ItemDisplay links = Displays.item(ctx(), owner, start, ItemStack.of(Material.IRON_CHAIN), chainPose(),
                     lifetime);
-            jawA = display(start, TRAP_JAW, jawPose(false, JAW_FOLDED), lifetime);
-            jawB = display(start, TRAP_JAW, jawPose(true, JAW_FOLDED), lifetime);
-            ItemDisplay chain = Displays.item(ctx(), owner, start, ItemStack.of(Material.IRON_CHAIN),
-                    Displays.centered(0, 0.03f, -0.62f, 0.45f, 0.45f, 0.45f, 0, 90, 0), lifetime);
-            chain.setBrightness(null);
-            displays.add(chain);
+            links.setBrightness(null);
+            chain = links;
+            displays.add(links);
             parts.add(base);
             parts.add(plate);
             parts.add(jawA);
             parts.add(jawB);
-            parts.add(chain);
+            parts.add(links);
             for (Display part : parts) {
                 part.setTeleportDuration(1);
             }
@@ -537,7 +546,6 @@ public final class HunterAbility extends Ability {
             double distance = delta.length();
             long flight = Math.clamp(Math.round(3 + distance * 0.8), MIN_FLIGHT, MAX_FLIGHT);
             double apex = 0.5 + distance * 0.12;
-            float spinStart = start.getYaw();
             Fx.sound(start, Sound.ENTITY_ALLAY_ITEM_THROWN, 0.8f, 0.7f + Fx.jitter(0.05f));
             Fx.sound(start, Sound.BLOCK_CHAIN_STEP, 0.9f, 1.3f + Fx.jitter(0.1f));
             Loop.repeat(ctx(), owner, 1, 1, flight, run -> {
@@ -546,9 +554,10 @@ public final class HunterAbility extends Ability {
                 }
                 double t = (run + 1.0) / flight;
                 Location at = start.clone().add(delta.clone().multiply(t)).add(0, apex * 4 * t * (1 - t), 0);
-                at.setYaw(spinStart + (run + 1) * 47f);
-                at.setPitch((float) (Math.sin(run * 0.9) * 30));
+                spinYaw = yaw + (run + 1) * 47f;
+                spinPitch = (float) (Math.sin(run * 0.9) * 30);
                 move(at);
+                pose(1);
                 Vfx.dot(at, Particle.DUST, LEATHER, false);
                 if (run % 2 == 0) {
                     Vfx.dot(at, Particle.CRIT, null, false);
@@ -564,6 +573,9 @@ public final class HunterAbility extends Ability {
             }
             Player owner = player();
             move(center);
+            spinYaw = yaw;
+            spinPitch = 0;
+            pose(1);
             state = TrapState.ARMING;
             long now = ctx().currentTick();
             armAt = now + Math.max(OPEN_TICKS, params().ticks("trap_arm"));
@@ -644,10 +656,8 @@ public final class HunterAbility extends Ability {
             }
             center = clamp;
             move(clamp);
+            plateDown = true;
             setJaws(JAW_SPRUNG, SNAP_TICKS);
-            if (plate != null) {
-                Displays.animate(plate, Displays.transform(0, 0.03f, 0, 0.2f, 0.005f, 0.2f, 0, 0, 0), SNAP_TICKS);
-            }
             snapFx(victim, clamp);
 
             Combat.hit(ctx(), owner, victim, params().num("trap_damage"));
@@ -657,8 +667,8 @@ public final class HunterAbility extends Ability {
                         rootTicks);
                 ctx().addModifier(owner, victim, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1,
                         rootTicks);
-                Vector velocity = victim.getVelocity();
-                victim.setVelocity(Motion.clamp(new Vector(0, Math.min(0, velocity.getY()), 0), MAX_SPEED));
+                // A player's server-side velocity is stale: stop it outright, gravity does the rest.
+                victim.setVelocity(new Vector());
             }
             long hold = Math.max(HOLD_PERIOD, rootTicks);
             Loop.repeat(ctx(), owner, HOLD_PERIOD, HOLD_PERIOD, Math.max(1, hold / HOLD_PERIOD), run -> {
@@ -666,9 +676,7 @@ public final class HunterAbility extends Ability {
                     return false;
                 }
                 // The trap stays clamped to the leg, wherever a shove takes it.
-                Location at = victim.getLocation();
-                at.setYaw(center.getYaw());
-                at.setPitch(0);
+                Location at = Displays.unrotated(victim.getLocation());
                 center = at;
                 move(at);
                 if (run % 2 == 0) {
@@ -749,22 +757,72 @@ public final class HunterAbility extends Ability {
             }
         }
 
+        /** Moves every part; none of them rotates (the heading lives in their transformations). */
         private void move(Location at) {
             for (Display part : parts) {
-                if (part.isValid()) {
-                    part.teleport(at);
-                }
+                Displays.moveTo(part, at);
             }
         }
 
         private void setJaws(float angle, int ticks) {
-            if (jawA != null) {
-                Displays.animate(jawA, jawPose(false, angle), ticks);
-            }
-            if (jawB != null) {
-                Displays.animate(jawB, jawPose(true, angle), ticks);
+            jawAngle = angle;
+            pose(ticks);
+        }
+
+        /** Animates every part to the trap's current heading, tumble, jaw angle and plate. */
+        private void pose(int ticks) {
+            animate(base, basePose(), ticks);
+            animate(plate, platePose(), ticks);
+            animate(jawA, jawPose(false), ticks);
+            animate(jawB, jawPose(true), ticks);
+            animate(chain, chainPose(), ticks);
+        }
+
+        private static void animate(@Nullable Display part, Transformation pose, int ticks) {
+            if (part != null) {
+                Displays.animate(part, pose, ticks);
             }
         }
+
+        private Quaternionf frame() {
+            return headingFrame(spinYaw, spinPitch);
+        }
+
+        private Transformation basePose() {
+            return framed(frame(), Displays.transform(0, 0.025f, 0, 0.58f, 0.05f, 0.58f, 45, 0, 0));
+        }
+
+        private Transformation platePose() {
+            return framed(frame(), plateDown ? Displays.transform(0, 0.03f, 0, 0.2f, 0.005f, 0.2f, 0, 0, 0)
+                    : Displays.transform(0, 0.105f, 0, 0.2f, 0.03f, 0.2f, 0, 0, 0));
+        }
+
+        private Transformation jawPose(boolean second) {
+            return framed(frame(), HunterAbility.jawPose(second, jawAngle));
+        }
+
+        /** The chain lies flat behind the trap, towards the thrower. */
+        private Transformation chainPose() {
+            return framed(frame(), Displays.centered(0, 0.03f, -0.62f, 0.45f, 0.45f, 0.45f, 0, 90, 0));
+        }
+    }
+
+    /**
+     * The rotation a display entity with this yaw and pitch would give its model (Minecraft's convention: yaw 0 faces
+     * +z, 90 faces -x; positive pitch tips the front down). The displays here stay unrotated and carry it in their
+     * transformations instead, so nothing can add an entity's rotation on top.
+     */
+    private static Quaternionf headingFrame(float yawDegrees, float pitchDegrees) {
+        return new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees))
+                .rotateX((float) Math.toRadians(pitchDegrees));
+    }
+
+    /** {@code local}, a pose in a frame of its own, turned by {@code frame} about the display's origin. */
+    private static Transformation framed(Quaternionf frame, Transformation local) {
+        Vector3f translation = new Quaternionf(frame).transform(new Vector3f(local.getTranslation()));
+        Quaternionf rotation = new Quaternionf(frame).mul(local.getLeftRotation());
+        return new Transformation(translation, rotation, new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /**
@@ -841,6 +899,7 @@ public final class HunterAbility extends Ability {
         private final List<BlockDisplay> reticle = new ArrayList<>(RETICLE_BARS);
         private @Nullable TextDisplay marker;
         private boolean veiled;
+        private float reticleGrowth;
         private boolean ended;
         private int caught;
 
@@ -923,10 +982,7 @@ public final class HunterAbility extends Ability {
             }
             long now = ctx().currentTick();
             boolean hidden = !seen(owner, target);
-            if (hidden != veiled) {
-                veiled = hidden;
-                veil(hidden);
-            }
+            veiled = hidden;
             followReticle(target, run);
             if (!hidden && run % (SCENT_PERIOD / HUNT_STEP) == 0) {
                 scent(owner, target);
@@ -1017,20 +1073,17 @@ public final class HunterAbility extends Ability {
 
         private void spawnReticle(Player owner, LivingEntity target) {
             long life = Math.max(1, endTick - ctx().currentTick()) + 10;
-            Location feet = reticleSpot(target, 0);
+            Location feet = reticleSpot(target);
+            reticleGrowth = 0;
             if (reticle.isEmpty() && roomFor(RETICLE_BARS)) {
                 for (int i = 0; i < RETICLE_BARS; i++) {
-                    BlockDisplay bar = display(feet, Material.RED_STAINED_GLASS, barPose(i, 0.05f), life);
+                    BlockDisplay bar = display(feet, Material.RED_STAINED_GLASS, barPose(i, 0.05f, 0), life);
                     bar.setTeleportDuration((int) HUNT_STEP);
                     reticle.add(bar);
-                    Displays.animateNextTick(ctx(), owner, bar, barPose(i, 1f), 5);
                 }
             } else {
                 for (BlockDisplay bar : reticle) {
-                    bar.teleport(feet);
-                }
-                if (veiled) {
-                    veil(false);
+                    Displays.moveTo(bar, feet);
                 }
             }
             if ((marker == null || !marker.isValid()) && roomFor(1)) {
@@ -1038,47 +1091,41 @@ public final class HunterAbility extends Ability {
                         Text.mm("<b><gradient:#FFE3B0:#E2572B>▼</gradient></b>"), 0.1f, life);
                 marker.setTeleportDuration((int) HUNT_STEP);
                 displays.add(marker);
-                Displays.animateNextTick(ctx(), owner, marker, Displays.centered(0, 0, 0, 1.3f, 1.3f, 1.3f, 0, 0, 0),
-                        5);
             } else if (marker != null) {
-                marker.teleport(markerSpot(target, 0));
+                Displays.moveTo(marker, markerSpot(target, 0));
             }
             veiled = false;
         }
 
+        /**
+         * Keeps the reticle on the prey's feet and turning (the turn is in the bars' transformations, the displays
+         * themselves never rotate), the marker bobbing over its head, both shrunk to nothing while the prey is hidden
+         * from the hunter.
+         */
         private void followReticle(LivingEntity target, long run) {
-            Location feet = reticleSpot(target, run);
-            for (BlockDisplay bar : reticle) {
-                if (bar.isValid()) {
-                    bar.teleport(feet);
-                }
+            reticleGrowth = Math.min(1f, reticleGrowth + 0.34f);
+            float scale = veiled ? 0.001f : reticleGrowth;
+            double spin = Math.toRadians(run * RETICLE_SPIN * HUNT_STEP);
+            Location feet = reticleSpot(target);
+            for (int i = 0; i < reticle.size(); i++) {
+                BlockDisplay bar = reticle.get(i);
+                Displays.moveTo(bar, feet);
+                Displays.animate(bar, barPose(i, scale, spin), (int) HUNT_STEP);
             }
             if (marker != null && marker.isValid()) {
-                marker.teleport(markerSpot(target, run));
+                Displays.moveTo(marker, markerSpot(target, run));
+                float size = 1.3f * scale;
+                Displays.animate(marker, Displays.centered(0, 0, 0, size, size, size, 0, 0, 0), (int) HUNT_STEP);
             }
         }
 
-        /** Hides (or shows again) the marks while the prey is hidden from the hunter, so they never give it away. */
-        private void veil(boolean hidden) {
-            for (int i = 0; i < reticle.size(); i++) {
-                Displays.animate(reticle.get(i), barPose(i, hidden ? 0.001f : 1f), 3);
-            }
-            if (marker != null) {
-                float scale = hidden ? 0.001f : 1.3f;
-                Displays.animate(marker, Displays.centered(0, 0, 0, scale, scale, scale, 0, 0, 0), 3);
-            }
-        }
-
-        private static Location reticleSpot(LivingEntity target, long run) {
-            Location feet = target.getLocation().add(0, 0.08, 0);
-            feet.setYaw(run * RETICLE_SPIN * HUNT_STEP % 360);
-            feet.setPitch(0);
-            return feet;
+        private static Location reticleSpot(LivingEntity target) {
+            return Displays.unrotated(target.getLocation().add(0, 0.08, 0));
         }
 
         private static Location markerSpot(LivingEntity target, long run) {
             double bob = 0.12 * Math.sin(run * 0.5);
-            return target.getLocation().add(0, target.getHeight() + 0.95 + bob, 0);
+            return Displays.unrotated(target.getLocation().add(0, target.getHeight() + 0.95 + bob, 0));
         }
 
         /** The scent trail: amber motes drifting from the hunter towards the prey, for the hunter only. */
@@ -1143,8 +1190,8 @@ public final class HunterAbility extends Ability {
     }
 
     /** One bar of the hunt reticle, {@code index} of four around the feet, scaled for the grow/hide animation. */
-    private static Transformation barPose(int index, float scale) {
-        double angle = index * TAU / RETICLE_BARS;
+    private static Transformation barPose(int index, float scale, double spin) {
+        double angle = spin + index * TAU / RETICLE_BARS;
         float x = (float) (Math.cos(angle) * RETICLE_RADIUS * scale);
         float z = (float) (Math.sin(angle) * RETICLE_RADIUS * scale);
         // Each bar lies along the tangent of the circle, so the four together read as a square sight.

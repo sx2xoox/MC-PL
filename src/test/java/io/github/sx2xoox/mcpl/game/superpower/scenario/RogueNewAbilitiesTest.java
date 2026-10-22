@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.HunterAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.PirateAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.SpeedsterAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -36,6 +37,7 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -1021,6 +1023,252 @@ class RogueNewAbilitiesTest {
             assertEquals(1, slows.size(), "one slow on the prey");
             s.ticks(s.paramTicks("hunt_duration") + 20);
             assertNoDisplays(s, "hunts");
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ real-client regressions
+
+    /** The world direction of a display's local {@code axis} (its transformation only; the entity must be unrotated). */
+    private static Vector3f axisOf(Display display, float x, float y, float z) {
+        return display.getTransformation().getLeftRotation().transform(new Vector3f(x, y, z)).normalize();
+    }
+
+    private static void assertUnrotated(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    private static void assertNotInBlocks(Scenario s, Player player, String what) {
+        assertTrue(Spots.isFree(s.world, player.getLocation(), player.getWidth(), player.getHeight()),
+                what + ": " + player.getName() + " is not inside a block at " + player.getLocation().toVector());
+    }
+
+    @Test
+    void hunterTrapIsOrientedByItsTransformationsNotItsEntities() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy, -8.5, 12.5, 180);
+            s.place(s.enemy2, 8.5, 12.5, 180);
+            // Facing +x (yaw -90) and looking down: a display taking the owner's rotation would be turned twice.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, -90, 35);
+            s.aimAtFloor(s.owner, 4.5, 0.5);
+            s.assertSucceeded(s.active(), "곰덫");
+            for (int i = 0; i < 20; i++) {
+                s.ticks(1);
+                for (Display part : entities(s, Display.class)) {
+                    assertUnrotated(part, "trap part in flight and on the floor");
+                }
+            }
+            ItemDisplay chain = entities(s, ItemDisplay.class).getFirst();
+            Vector3f behind = new Vector3f(chain.getTransformation().getTranslation());
+            assertTrue(behind.x() < -0.5 && Math.abs(behind.z()) < 0.1,
+                    "the chain trails back towards the hunter (-x): " + behind);
+            for (BlockDisplay part : entities(s, BlockDisplay.class)) {
+                assertEquals(FlatWorld.SURFACE, part.getLocation().getY(), 1.0E-6, "the trap lies on the floor");
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hunterReticleTurnsInItsTransformations() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy, 0.5, 4.5, 137);
+            s.assertSucceeded(s.ultimate(), "사냥 개시");
+            for (int i = 0; i < 12; i++) {
+                s.ticks(1);
+                for (Display part : entities(s, Display.class)) {
+                    assertUnrotated(part, "hunt reticle and marker");
+                }
+            }
+            for (BlockDisplay bar : entities(s, BlockDisplay.class)) {
+                Vector3f along = axisOf(bar, 0, 0, 1);
+                Vector3f center = new Vector3f(bar.getTransformation().getTranslation())
+                        .add(bar.getTransformation().getLeftRotation().transform(new Vector3f(bar.getTransformation()
+                                .getScale()).mul(0.5f)));
+                center.y = 0;
+                assertTrue(Math.abs(along.y()) < 1.0E-3, "a reticle bar lies flat");
+                assertTrue(Math.abs(along.dot(new Vector3f(center).normalize())) < 0.05,
+                        "and runs around the prey, not towards it: " + along + " at " + center);
+            }
+            s.ticks(s.paramTicks("hunt_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void pirateCannonPointsWhereThePirateFaces() {
+        try (Scenario s = Scenario.ffa("pirate")) {
+            s.place(s.enemy, 8.5, 0.5, 90);
+            s.place(s.enemy2, -8.5, 12.5, 180);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, -90, 30);
+            s.assertSucceeded(s.active(), "대포알");
+            s.ticks(1);
+            List<BlockDisplay> cannon = entities(s, BlockDisplay.class);
+            assertEquals(3, cannon.size());
+            BlockDisplay barrel = cannon.stream()
+                    .filter(part -> part.getBlock().getMaterial() == Material.POLISHED_BLACKSTONE).findFirst()
+                    .orElseThrow();
+            for (BlockDisplay part : cannon) {
+                assertUnrotated(part, "cannon");
+            }
+            Vector3f bore = axisOf(barrel, 0, 0, 1);
+            assertTrue(bore.x() > 0.98, "the barrel points the way the pirate faces (+x): " + bore);
+            assertTrue(bore.y() > 0, "tipped up a little: " + bore);
+            s.ticks(30);
+            assertEquals(s.param("ball_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "and fires that way");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void pirateGhostShipIsOrientedByItsTransformations() {
+        try (Scenario s = Scenario.ffa("pirate")) {
+            s.place(s.enemy, 14.5, -12.5, 180);
+            s.place(s.enemy2, -14.5, -12.5, 180);
+            // Facing -z (yaw 180): the ship turns its broadside that way and hovers on the +z side.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 180, 0);
+            s.assertSucceeded(s.ultimate(), "유령선 포격");
+            for (int i = 0; i < 24; i++) {
+                s.ticks(1);
+                for (Display part : entities(s, Display.class)) {
+                    assertUnrotated(part, "ghost ship part or shell");
+                }
+            }
+            List<BlockDisplay> ship = shipParts(s);
+            List<BlockDisplay> cannons = ship.stream()
+                    .filter(part -> part.getBlock().getMaterial() == Material.POLISHED_BLACKSTONE).toList();
+            assertEquals(3, cannons.size(), "three cannons on the ship");
+            for (BlockDisplay cannon : cannons) {
+                Vector3f bore = axisOf(cannon, 1, 0, 0);
+                assertTrue(bore.z() < -0.95, "its cannons point where the pirate faces (-z): " + bore);
+            }
+            BlockDisplay hull = ship.stream()
+                    .filter(part -> part.getBlock().getMaterial() == Material.CYAN_STAINED_GLASS)
+                    .max(java.util.Comparator.comparingDouble(part -> part.getTransformation().getScale().z()))
+                    .orElseThrow();
+            Vector3f keel = axisOf(hull, 0, 0, 1);
+            assertTrue(Math.abs(keel.x()) > 0.95, "its length lies across the line of fire: " + keel);
+            for (BlockDisplay part : ship) {
+                assertTrue(part.getLocation().getZ() > s.owner.getLocation().getZ() + 2, "behind the pirate");
+            }
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void speedsterBoltsPointAlongTheDash() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy, -8.5, 12.5, 180);
+            s.place(s.enemy2, 8.5, 12.5, 180);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, -90, 40);
+            s.assertSucceeded(s.active(), "질주");
+            s.ticks(1);
+            List<BlockDisplay> bolt = entities(s, BlockDisplay.class);
+            assertFalse(bolt.isEmpty(), "a lightning bolt along the path");
+            for (BlockDisplay bar : bolt) {
+                assertUnrotated(bar, "bolt");
+                Vector3f along = axisOf(bar, 0, 0, 1);
+                assertTrue(along.x() > 0.85, "the bolt runs along the dash (+x): " + along);
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void speedsterAfterimagesFaceTheirRunInTheirTransformations() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy2, 14.5, 14.5, 180);
+            s.place(s.enemy, -14.5, 14.5, 180);
+            s.place(s.owner, -6.5, -4.5, -90);
+            s.assertSucceeded(s.ultimate(), "광속");
+            s.ticks(2);
+            run(s, s.owner, -6.5, -4.5, 6.5, -4.5, 0.5);
+            for (Display part : entities(s, Display.class)) {
+                assertUnrotated(part, "afterimage");
+            }
+            for (ItemDisplay head : entities(s, ItemDisplay.class)) {
+                Vector3f facing = axisOf(head, 0, 0, 1);
+                assertTrue(facing.x() > 0.95, "an afterimage faces the way it runs (+x): " + facing);
+                assertEquals(FlatWorld.SURFACE, head.getLocation().getY(), 1.0E-6, "on the runner's path");
+            }
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void speedsterDashEndsStandingExactlyOnTheFloor() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "질주");
+            s.ticks(12);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), 1.0E-6, "feet on the floor");
+            assertNotInBlocks(s, s.owner, "after a dash");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void speedsterDashOffALedgeEndsStandingExactlyOnTheFloor() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy, 14.5, 14.5, 180);
+            s.place(s.enemy2, -14.5, 14.5, 180);
+            for (int x = -2; x <= 2; x++) {
+                for (int z = -2; z <= 1; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 1, z, Material.STONE);
+                }
+            }
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1, 0.5, 0, 0);
+            s.assertSucceeded(s.active(), "질주");
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(10);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), 1.0E-6, "down on the floor, not in it");
+            assertNotInBlocks(s, s.owner, "after dropping off");
+            for (int x = -2; x <= 2; x++) {
+                for (int z = -2; z <= 1; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 1, z, Material.AIR);
+                }
+            }
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void enemiesShovedIntoAWallStayOutOfIt() {
+        // The cannonball bowls the enemy into a wall behind it; the dash flings one sideways into another.
+        try (Scenario s = Scenario.ffa("pirate")) {
+            s.place(s.enemy2, -10.5, 12.5, 180);
+            s.place(s.enemy, 0.5, 5.2, 180);
+            s.world.wallAlongX(-3, 3, 6, 3, Material.STONE);
+            s.assertSucceeded(s.active(), "대포알");
+            s.ticks(40);
+            assertEquals(s.param("ball_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
+            assertNotInBlocks(s, s.enemy, "shoved by the ball");
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-6, "standing on the floor");
+            s.world.wallAlongX(-3, 3, 6, 3, Material.AIR);
+            s.finishClean();
+        }
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy2, -10.5, 12.5, 180);
+            s.place(s.enemy, 1.2, 3.5, 180);
+            for (int z = 0; z <= 7; z++) {
+                for (int y = 1; y <= 3; y++) {
+                    s.world.setBlock(2, FlatWorld.FLOOR_Y + y, z, Material.STONE);
+                }
+            }
+            s.assertSucceeded(s.active(), "질주");
+            s.ticks(30);
+            assertEquals(s.param("dash_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
+            assertNotInBlocks(s, s.enemy, "flung aside by the dash");
+            for (int z = 0; z <= 7; z++) {
+                for (int y = 1; y <= 3; y++) {
+                    s.world.setBlock(2, FlatWorld.FLOOR_Y + y, z, Material.AIR);
+                }
+            }
             s.finishClean();
         }
     }

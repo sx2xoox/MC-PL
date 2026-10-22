@@ -165,6 +165,8 @@ public final class PirateAbility extends Ability {
     private static final int SHIP_RISE_TICKS = 10;
     private static final int SHIP_SINK_TICKS = 10;
     private static final float SHIP_SPAWN_SCALE = 0.15f;
+    /** The ship turns at most this many degrees per step, so its parts never cut corners while interpolating. */
+    private static final float MAX_SHIP_TURN = 15f;
     private static final double SHELL_APEX = 2.5;
     private static final long MIN_SHELL_TICKS = 10;
     private static final long MAX_SHELL_TICKS = 20;
@@ -289,7 +291,7 @@ public final class PirateAbility extends Ability {
      * pirate with a jingle.
      */
     private void coinFountain(Player owner, Location from, boolean kill) {
-        Location origin = from.clone().add(0, 0.9, 0);
+        Location origin = Displays.unrotated(from.clone().add(0, 0.9, 0));
         World world = origin.getWorld();
         Vfx.dot(origin, Particle.FLASH, PALETTE.core(), false);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, origin, Vfx.n(ctx(), kill ? 22 : 10), 0.35, 0.4, 0.35,
@@ -330,7 +332,7 @@ public final class PirateAbility extends Ability {
                         Vfx.dot(at, Particle.WAX_ON, null, false);
                     }
                 }
-                coin.teleport(at);
+                Displays.moveTo(coin, at);
                 Displays.animate(coin, Displays.centered(0, 0, 0, 0.4f, 0.4f, 0.4f, run * 37f, 0, run * 11f), 1);
                 if (run == COIN_RISE_TICKS + COIN_FLY_TICKS - 1) {
                     Fx.sound(owner.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.5f,
@@ -372,10 +374,10 @@ public final class PirateAbility extends Ability {
         if (!roomFor(BALL_CUBES.length + 3)) {
             return ActivationResult.fail("대포를 준비하는 중입니다");
         }
-        Location base = feet.clone().add(forward.clone().multiply(CANNON_FORWARD - 0.25));
-        base.setYaw(feet.getYaw());
-        base.setPitch(0);
-        List<BlockDisplay> cannon = cannon(owner, base);
+        Location base = Displays.unrotated(feet.clone().add(forward.clone().multiply(CANNON_FORWARD - 0.25)));
+        // The cannon is aimed through its transformations; the display entities themselves never rotate.
+        Quaternionf heading = headingFrame(feet.getYaw(), 0);
+        List<BlockDisplay> cannon = cannon(owner, base, heading);
         // The fuse burns down, then the cannon fires.
         Loop.repeat(ctx(), owner, 0, 1, FUSE_TICKS, run -> {
             Location fuse = base.clone().add(forward.clone().multiply(-0.45)).add(0, 0.62, 0);
@@ -385,18 +387,20 @@ public final class PirateAbility extends Ability {
                 Fx.sound(fuse, Sound.ENTITY_TNT_PRIMED, 0.7f, 1.6f + Fx.jitter(0.05f));
             }
             return true;
-        }, () -> fire(owner, cannon, base, forward));
+        }, () -> fire(owner, cannon, base, forward, heading));
         return ActivationResult.success();
     }
 
     /** The deck cannon: an oak carriage, a blackened barrel with a gold muzzle band, popping in at the pirate's feet. */
-    private List<BlockDisplay> cannon(Player owner, Location base) {
+    private List<BlockDisplay> cannon(Player owner, Location base, Quaternionf heading) {
         List<BlockDisplay> parts = new ArrayList<>(3);
         long life = FUSE_TICKS + CANNON_TICKS;
-        parts.add(display(base, CARRIAGE, Displays.transform(0, 0.13f, 0, 0.5f, 0.26f, 0.7f, 0, 0, 0), life, false));
-        parts.add(display(base, BARREL, Displays.transform(0, 0.45f, 0.05f, 0.34f, 0.34f, 1.0f, 0, -6, 0), life,
-                false));
-        parts.add(display(base, BAND, Displays.transform(0, 0.5f, 0.52f, 0.4f, 0.4f, 0.09f, 0, -6, 0), life, false));
+        parts.add(display(base, CARRIAGE, framed(heading, Displays.transform(0, 0.13f, 0, 0.5f, 0.26f, 0.7f, 0, 0, 0)),
+                life, false));
+        parts.add(display(base, BARREL, framed(heading, Displays.transform(0, 0.45f, 0.05f, 0.34f, 0.34f, 1.0f, 0, -6,
+                0)), life, false));
+        parts.add(display(base, BAND, framed(heading, Displays.transform(0, 0.5f, 0.52f, 0.4f, 0.4f, 0.09f, 0, -6, 0)),
+                life, false));
         Vfx.cloud(ctx(), base.clone().add(0, 0.4, 0), Particle.POOF, 4, 0.2, 0.02, null, false);
         Vfx.ring(ctx(), base.clone().add(0, 0.08, 0), 0.6, 12, 0, Particle.DUST, NAVY_DUST, false);
         Fx.sound(base, Sound.BLOCK_WOOD_PLACE, 0.8f, 0.7f + Fx.jitter(0.05f));
@@ -405,7 +409,7 @@ public final class PirateAbility extends Ability {
     }
 
     /** Fire: a flash, smoke and a boom at the muzzle, the barrel kicks back and the ball rolls out. */
-    private void fire(Player owner, List<BlockDisplay> cannon, Location base, Vector forward) {
+    private void fire(Player owner, List<BlockDisplay> cannon, Location base, Vector forward, Quaternionf heading) {
         Location muzzle = base.clone().add(forward.clone().multiply(0.75)).add(0, MUZZLE_HEIGHT + 0.05, 0);
         World world = muzzle.getWorld();
         Vfx.dot(muzzle, Particle.FLASH, PALETTE.core(), false);
@@ -419,8 +423,10 @@ public final class PirateAbility extends Ability {
         Fx.sound(muzzle, Sound.ITEM_MACE_SMASH_GROUND, 0.7f, 0.6f + Fx.jitter(0.05f));
         // Recoil: the barrel slides back on its carriage, then the cannon dissolves.
         if (cannon.size() >= 3) {
-            Displays.animate(cannon.get(1), Displays.transform(0, 0.45f, -0.18f, 0.34f, 0.34f, 1.0f, 0, -10, 0), 2);
-            Displays.animate(cannon.get(2), Displays.transform(0, 0.5f, 0.29f, 0.4f, 0.4f, 0.09f, 0, -10, 0), 2);
+            Displays.animate(cannon.get(1), framed(heading, Displays.transform(0, 0.45f, -0.18f, 0.34f, 0.34f, 1.0f, 0,
+                    -10, 0)), 2);
+            Displays.animate(cannon.get(2), framed(heading, Displays.transform(0, 0.5f, 0.29f, 0.4f, 0.4f, 0.09f, 0,
+                    -10, 0)), 2);
         }
         ctx().runLater(owner, CANNON_TICKS - 7, () -> {
             for (BlockDisplay part : cannon) {
@@ -457,7 +463,7 @@ public final class PirateAbility extends Ability {
         private int hits;
 
         Cannonball(Location muzzle, Vector direction) {
-            this.center = muzzle.clone();
+            this.center = Displays.unrotated(muzzle);
             this.world = muzzle.getWorld();
             this.direction = direction.clone();
             // Rolling forward turns the ball about the horizontal axis across its path.
@@ -547,7 +553,7 @@ public final class PirateAbility extends Ability {
             for (int i = 0; i < cubes.length; i++) {
                 BlockDisplay cube = cubes[i];
                 if (cube != null && cube.isValid()) {
-                    cube.teleport(center);
+                    Displays.moveTo(cube, center);
                     Displays.animate(cube, cubePose(BALL_CUBE, new Quaternionf(spin).mul(BALL_ORIENTATIONS[i])), 1);
                 }
             }
@@ -694,7 +700,13 @@ public final class PirateAbility extends Ability {
         private final long interval;
         private final int salvo;
         private Location position;
+        /** The ship's heading as a Minecraft yaw (its bow), its rocking pitch, size and billowing sails. */
         private float yaw;
+        private float rock;
+        private float scale = SHIP_SPAWN_SCALE;
+        private float billow = 1f;
+        /** Ticks each cannon is still drawn recoiled. */
+        private final int[] recoil = new int[CANNON_Z.length];
         private int fired;
         private int nextCannon;
         private int totalHits;
@@ -711,23 +723,21 @@ public final class PirateAbility extends Ability {
         }
 
         void sail() {
-            Location at = shipLocation(position, yaw, 0);
+            Location at = Displays.unrotated(position);
             long lifetime = duration + MAX_SHELL_TICKS + SHIP_SINK_TICKS + 20;
-            for (Part part : SHIP) {
-                BlockDisplay piece = display(at, part.material(), shipPose(part, SHIP_SPAWN_SCALE), lifetime, true);
+            for (int i = 0; i < SHIP.length; i++) {
+                BlockDisplay piece = display(at, SHIP[i].material(), partPose(i), lifetime, true);
                 piece.setTeleportDuration((int) SHIP_STEP);
                 piece.setViewRange(2.0f);
                 parts.add(piece);
             }
-            for (float[] lantern : LANTERNS) {
+            for (int i = 0; i < LANTERNS.length; i++) {
                 ItemDisplay light = Displays.item(ctx(), owner, at, ItemStack.of(Material.SOUL_LANTERN),
-                        Displays.centered(lantern[0] * SHIP_SPAWN_SCALE, lantern[1] * SHIP_SPAWN_SCALE,
-                                lantern[2] * SHIP_SPAWN_SCALE, 0.1f, 0.1f, 0.1f, 0, 0, 0), lifetime);
+                        partPose(SHIP.length + i), lifetime);
                 light.setTeleportDuration((int) SHIP_STEP);
                 displays.add(light);
                 parts.add(light);
             }
-            ctx().runLater(owner, 1, () -> grow(1f, SHIP_RISE_TICKS));
 
             // Telegraph: sea mist swirls up behind the pirate and the ship's bell tolls.
             Location mist = berth(owner).subtract(0, 1.0, 0);
@@ -772,7 +782,7 @@ public final class PirateAbility extends Ability {
         private Location berth(Player pirate) {
             Location feet = pirate.getLocation();
             Vector back = Motion.horizontalFacing(feet).multiply(-SHIP_BEHIND);
-            Location spot = feet.clone().add(back);
+            Location spot = Displays.unrotated(feet.clone().add(back));
             double height = SHIP_HEIGHT;
             RayTraceResult ceiling = world.rayTraceBlocks(spot.clone().add(0, 1, 0), new Vector(0, 1, 0),
                     SHIP_HEIGHT + 2.5, FluidCollisionMode.NEVER, true);
@@ -782,7 +792,10 @@ public final class PirateAbility extends Ability {
             return spot.add(0, height, 0);
         }
 
-        /** Glides after the pirate, rocking on invisible waves. */
+        /**
+         * Glides after the pirate, turning its broadside to the pirate's aim, rising to full size and rocking on
+         * invisible waves. The displays only move; heading, rocking and size are all in their transformations.
+         */
         private void follow(long tick) {
             if (!owner.getWorld().equals(world)) {
                 return;
@@ -790,45 +803,54 @@ public final class PirateAbility extends Ability {
             Location target = berth(owner);
             position.add(target.toVector().subtract(position.toVector()).multiply(SHIP_FOLLOW));
             float wanted = owner.getLocation().getYaw() + 90;
-            float turn = wrap(wanted - yaw);
-            yaw += turn * (float) SHIP_FOLLOW;
-            Location at = shipLocation(position, yaw, tick);
+            float turn = Math.clamp(wrap(wanted - yaw) * (float) SHIP_FOLLOW, -MAX_SHIP_TURN, MAX_SHIP_TURN);
+            yaw = wrap(yaw + turn);
+            rock = (float) (3 * Math.sin(tick * 0.09));
+            scale = Math.min(1f, SHIP_SPAWN_SCALE + (1f - SHIP_SPAWN_SCALE) * (tick + SHIP_STEP) / SHIP_RISE_TICKS);
+            billow = 1f + 0.25f * (float) Math.sin(tick * 0.4);
+            for (int i = 0; i < recoil.length; i++) {
+                recoil[i] = Math.max(0, recoil[i] - (int) SHIP_STEP);
+            }
+            Location at = Displays.unrotated(position.clone().add(0, 0.15 * Math.sin(tick * 0.12), 0));
             for (Display part : parts) {
-                if (part.isValid()) {
-                    part.teleport(at);
-                }
+                Displays.moveTo(part, at);
             }
-            if (tick % 6 == 0 && parts.size() > FORE_SAIL) {
-                // The sails billow.
-                float billow = 1f + 0.25f * (float) Math.sin(tick * 0.4);
-                animatePart(SAIL, 1f, billow);
-                animatePart(FORE_SAIL, 1f, billow * 0.9f);
-            }
+            pose((int) SHIP_STEP);
         }
 
-        private void animatePart(int index, float scale, float billow) {
-            Display display = parts.get(index);
-            Part part = SHIP[index];
-            Transformation pose = Displays.transform(part.x() * scale, part.y() * scale, part.z() * scale,
-                    part.sx() * scale, part.sy() * scale, part.sz() * scale * billow, 0, part.pitch(), 0);
-            Displays.animate(display, pose, (int) SHIP_STEP * 3);
-        }
-
-        private void grow(float scale, int ticks) {
+        /** Animates every part to the ship's current heading, rocking, size, sails and cannon recoil. */
+        private void pose(int ticks) {
             for (int i = 0; i < parts.size(); i++) {
-                Display display = parts.get(i);
-                if (!display.isValid()) {
-                    continue;
-                }
-                if (i < SHIP.length) {
-                    Displays.animate(display, shipPose(SHIP[i], scale), ticks);
-                } else {
-                    float[] lantern = LANTERNS[i - SHIP.length];
-                    float size = 0.55f * scale;
-                    Displays.animate(display, Displays.centered(lantern[0] * scale, lantern[1] * scale,
-                            lantern[2] * scale, size, size, size, 0, 0, 0), ticks);
+                Display part = parts.get(i);
+                if (part.isValid()) {
+                    Displays.animate(part, partPose(i), ticks);
                 }
             }
+        }
+
+        /** Part {@code index} (ship parts first, then the lanterns), turned to the ship's heading. */
+        private Transformation partPose(int index) {
+            Quaternionf frame = headingFrame(yaw, rock);
+            if (index >= SHIP.length) {
+                float[] lantern = LANTERNS[index - SHIP.length];
+                float size = 0.55f * scale;
+                return framed(frame, Displays.centered(lantern[0] * scale, lantern[1] * scale, lantern[2] * scale,
+                        size, size, size, 0, 0, 0));
+            }
+            Part part = SHIP[index];
+            float x = part.x();
+            float depth = part.sz();
+            if (index == SAIL) {
+                depth *= billow;
+            } else if (index == FORE_SAIL) {
+                depth *= 1f + (billow - 1f) * 0.9f;
+            }
+            int cannon = index - FIRST_CANNON;
+            if (cannon >= 0 && cannon < recoil.length && recoil[cannon] > 0) {
+                x -= 0.2f;
+            }
+            return framed(frame, Displays.transform(x * scale, part.y() * scale, part.z() * scale, part.sx() * scale,
+                    part.sy() * scale, depth * scale, 0, part.pitch(), 0));
         }
 
         /** One shell from the next cannon, aimed at the pirate's crosshair (spread around it after the first). */
@@ -844,12 +866,11 @@ public final class PirateAbility extends Ability {
             Location landed = settle(target);
             int cannon = nextCannon++ % CANNON_Z.length;
             Location muzzle = muzzle(cannon);
+            // The barrel kicks back inboard for a moment.
+            recoil[cannon] = 4;
             Display barrel = parts.size() > FIRST_CANNON + cannon ? parts.get(FIRST_CANNON + cannon) : null;
             if (barrel != null && barrel.isValid()) {
-                Part part = SHIP[FIRST_CANNON + cannon];
-                Displays.animate(barrel, Displays.transform(part.x() - 0.2f, part.y(), part.z(), part.sx(), part.sy(),
-                        part.sz(), 0, 0, 0), 2);
-                ctx().runLater(owner, 3, () -> Displays.animate(barrel, shipPose(part, 1f), 5));
+                Displays.animate(barrel, partPose(FIRST_CANNON + cannon), 2);
             }
             Vfx.dot(muzzle, Particle.FLASH, GHOST.core(), true);
             world.spawnParticle(Particle.SOUL_FIRE_FLAME, muzzle, Vfx.n(ctx(), 10), 0.15, 0.15, 0.15, 0.08, null,
@@ -979,11 +1000,12 @@ public final class PirateAbility extends Ability {
             world.spawnParticle(Particle.SOUL, at, Vfx.n(ctx(), 12), 1.5, 0.6, 1.5, 0.02, null, true);
             Fx.sound(at, Sound.BLOCK_BELL_USE, 1.2f, 0.5f);
             Fx.sound(at, Sound.ENTITY_ELDER_GUARDIAN_AMBIENT, 1.0f, 0.5f);
-            grow(0.001f, SHIP_SINK_TICKS);
+            scale = 0.001f;
+            pose(SHIP_SINK_TICKS);
             for (Display part : parts) {
                 if (part.isValid()) {
                     part.setTeleportDuration(SHIP_SINK_TICKS);
-                    part.teleport(part.getLocation().subtract(0, 1.5, 0));
+                    Displays.moveTo(part, part.getLocation().subtract(0, 1.5, 0));
                 }
             }
             ctx().runLater(owner, SHIP_SINK_TICKS + 1, () -> {
@@ -1031,8 +1053,12 @@ public final class PirateAbility extends Ability {
                 Location at = from.clone().add(target.toVector().subtract(from.toVector()).multiply(t))
                         .add(0, apex * 4 * t * (1 - t), 0);
                 if (body != null && body.isValid()) {
-                    body.teleport(at);
-                    Displays.animate(body, cubePose(0.36f, new Quaternionf().rotateXYZ(age * 0.5f, age * 0.3f, 0)), 1);
+                    Displays.moveTo(body, at);
+                    if (age > 1) {
+                        // Tumbles from the tick after it was fired (the client needs a tick to start interpolating).
+                        Displays.animate(body, cubePose(0.36f, new Quaternionf().rotateXYZ(age * 0.5f, age * 0.3f, 0)),
+                                1);
+                    }
                 }
                 Vfx.dot(at, Particle.SOUL_FIRE_FLAME, null, true);
                 Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, GHOST_FADE, true);
@@ -1060,20 +1086,7 @@ public final class PirateAbility extends Ability {
         }
     }
 
-    /** The ship's entity location: its position with a gentle bob and pitch, facing {@code yaw}. */
-    private static Location shipLocation(Location position, float yaw, long tick) {
-        Location at = position.clone().add(0, 0.15 * Math.sin(tick * 0.12), 0);
-        at.setYaw(yaw);
-        at.setPitch((float) (3 * Math.sin(tick * 0.09)));
-        return at;
-    }
-
-    private static Transformation shipPose(Part part, float scale) {
-        return Displays.transform(part.x() * scale, part.y() * scale, part.z() * scale, part.sx() * scale,
-                part.sy() * scale, part.sz() * scale, 0, part.pitch(), 0);
-    }
-
-    /** A vector of the ship's frame turned to world space by the entity yaw (as display entities are). */
+    /** A vector of the ship's frame turned to world space by its heading (the yaw part of {@link #headingFrame}). */
     private static Vector rotate(Vector local, float yaw) {
         return local.clone().rotateAroundY(Math.toRadians(-yaw));
     }
@@ -1089,6 +1102,24 @@ public final class PirateAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ shared helpers
+
+    /**
+     * The rotation a display entity with this yaw and pitch would give its model (Minecraft's convention: yaw 0 faces
+     * +z, 90 faces -x; positive pitch tips the front down). The displays here stay unrotated and carry it in their
+     * transformations instead, so nothing can add an entity's rotation on top.
+     */
+    private static Quaternionf headingFrame(float yawDegrees, float pitchDegrees) {
+        return new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees))
+                .rotateX((float) Math.toRadians(pitchDegrees));
+    }
+
+    /** {@code local}, a pose in a frame of its own, turned by {@code frame} about the display's origin. */
+    private static Transformation framed(Quaternionf frame, Transformation local) {
+        Vector3f translation = new Quaternionf(frame).transform(new Vector3f(local.getTranslation()));
+        Quaternionf rotation = new Quaternionf(frame).mul(local.getLeftRotation());
+        return new Transformation(translation, rotation, new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
+    }
 
     /** A cube of edge {@code size} centered on the block display's origin, rotated around its center. */
     private static Transformation cubePose(float size, Quaternionf rotation) {
