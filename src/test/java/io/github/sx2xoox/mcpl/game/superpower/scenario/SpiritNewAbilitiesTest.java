@@ -7,7 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -19,15 +24,20 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.ReaperAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
@@ -36,15 +46,20 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Zombie;
+import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.sound.AudioExperience;
+import org.mockbukkit.mockbukkit.util.SpawnedParticle;
 
 /** 어둠·영혼 (dark & spirits): 악마, 사신, 유령, 팬텀. */
 class SpiritNewAbilitiesTest {
@@ -56,6 +71,16 @@ class SpiritNewAbilitiesTest {
 
     static Stream<String> abilities() {
         return Stream.of("demon", "reaper", "ghost", "phantom");
+    }
+
+    /**
+     * {@link AbilityLifecycleTest} lists the abilities in a static initializer that mocks a server of its own. This
+     * class calls into it from inside running scenarios, where that initializer would fail ("Already mocking") and
+     * take every test using it down, so it is loaded here first, while no server is mocked.
+     */
+    @BeforeAll
+    static void loadTheSweepsOutsideAScenario() {
+        assertFalse(AbilityLifecycleTest.abilities().toList().isEmpty(), "the built-in abilities are listed");
     }
 
     /** The abilities whose ultimate the gambler may borrow. */
@@ -1039,7 +1064,10 @@ class SpiritNewAbilitiesTest {
             s.place(s.enemy, 0.5, 11.0, 180);
             s.place(s.enemy2, 11.0, 0.5, 90);
             s.assertSucceeded(s.ultimate(), "불면의 밤");
-            s.ticks(14);
+            // After the first swoops (gather 10 ticks, swoop 12, climb back 10) and before the next wave: every
+            // phantom circles again. Checked while two of them swooped, a swooping phantom could pass through the
+            // circle's band pointing down, and the test failed now and then depending on the swarm's random phase.
+            s.ticks(33);
             assertUnrotated(s);
             Location owner = s.owner.getLocation();
             int orbiting = 0;
@@ -1055,8 +1083,10 @@ class SpiritNewAbilitiesTest {
                 assertEquals(0, heading.getY(), 1.0E-3, "an orbiting phantom flies level");
                 assertEquals(0, heading.normalize().dot(radial.normalize()), 0.05, "and along its circle");
             }
-            assertTrue(orbiting >= 3, "the free phantoms circle overhead: " + orbiting);
-            ticksWithinBudget(s, 160);
+            assertEquals(5, orbiting, "all five phantoms circle overhead between the waves");
+            assertEquals(2 * s.param("swoop_damage"), s.damageBy(s.owner, s.enemy) + s.damageBy(s.owner, s.enemy2),
+                    EPSILON, "after the first swoops");
+            ticksWithinBudget(s, 140);
             s.finishClean();
         }
     }
@@ -1080,6 +1110,440 @@ class SpiritNewAbilitiesTest {
                 }
             }
             assertTrue(seen, "a reticle was shown");
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== audit regressions
+
+    /**
+     * Runs {@code ticks} ticks and fails if a particle of one of the {@code marks} types is spawned within
+     * {@code reach} of {@code hidden}'s body (as it stood when the tick began: effects are drawn before anything
+     * moves), a trail is drawn to it, anyone else hears a sound played there (a sound is heard from where it is
+     * played, so it tells where the enemy hides as well as a particle), or (with {@code noGlowingDisplays}) a glowing
+     * display shows up at it.
+     */
+    private static void assertNothingMarks(Scenario s, Entity hidden, double reach, int ticks, String what,
+                                           boolean noGlowingDisplays, Particle... marks) {
+        Set<Particle> types = Set.of(marks);
+        for (int i = 0; i < ticks; i++) {
+            Location at = hidden.getLocation().add(0, hidden.getHeight() * 0.5, 0);
+            s.world.clearSpawnedParticles();
+            List<TestPlayer> listeners = s.all().stream().filter(player -> !player.equals(hidden)).toList();
+            for (TestPlayer listener : listeners) {
+                listener.clearSounds();
+            }
+            s.ticks(1);
+            for (TestPlayer listener : listeners) {
+                for (AudioExperience sound : listener.getHeardSounds()) {
+                    assertFalse(sound.getLocation().distance(at) <= reach, what + ": " + listener.getName()
+                            + " hears " + sound.getSound() + " where the stealthed enemy hides");
+                }
+            }
+            for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
+                double distance = Math.sqrt(Math.pow(particle.x() - at.getX(), 2)
+                        + Math.pow(particle.y() - at.getY(), 2) + Math.pow(particle.z() - at.getZ(), 2));
+                assertFalse(distance <= reach && types.contains(particle.particle()),
+                        what + ": " + particle.particle() + " drawn on the stealthed enemy");
+                assertFalse(particle.data() instanceof Particle.Trail trail
+                                && trail.getTarget().distance(at) <= reach,
+                        what + ": a trail drawn to the stealthed enemy");
+            }
+            if (noGlowingDisplays) {
+                for (Entity entity : s.world.getEntities()) {
+                    assertFalse(entity instanceof Display display && display.isGlowing()
+                                    && display.getLocation().distance(at) <= reach + 1,
+                            what + ": a glowing " + entity.getType() + " marks the stealthed enemy");
+                }
+            }
+        }
+    }
+
+    private static void assertNothingMarks(Scenario s, Entity hidden, double reach, int ticks, String what,
+                                           Particle... marks) {
+        assertNothingMarks(s, hidden, reach, ticks, what, false, marks);
+    }
+
+    /** Every action bar {@code player} was sent since the last call, as plain text. */
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    @Test
+    void demonHellfireBurnsAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("demon")) {
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            // Nearly sealed: every ability hit also flares the contract's sigil on the victim.
+            s.owner.setHealth(8);
+            // Aimed beside it (still well inside the cone): the roar of the wave front along the aim is no giveaway.
+            s.aimAt(s.owner, s.enemy.getLocation().add(1.2, s.enemy.getHeight() * 0.6, 0));
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "지옥불");
+            assertNothingMarks(s, s.enemy, 0.8, 20, "지옥불", Particle.FLASH, Particle.CRIMSON_SPORE);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the stealthed enemy is burned all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void demonHellgatePillarStrikesAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("demon")) {
+            // The stealthed enemy stands right beside the marked one, inside the same pillar.
+            s.place(s.enemy2, 1.5, 4.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.ultimate(), "지옥문");
+            assertNothingMarks(s, s.enemy2, 0.5, 30, "지옥문", Particle.FLASH);
+            assertEquals(s.param("pillar_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "the pillar strikes the stealthed enemy all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(120);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void demonHellgateDescriptionNamesItsTargetCap() {
+        try (Scenario s = Scenario.ffa("demon")) {
+            // Five enemies around the gate: the two players and three summons of one of them.
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 2.5, 6.5, 180);
+            for (int i = 0; i < 3; i++) {
+                s.ctx().summon(s.enemy, s.world.spawn(new Location(s.world, -1.5 - i, FlatWorld.SURFACE, 6.5),
+                        Zombie.class));
+            }
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "지옥문");
+            s.ticks(14);
+            assertEquals(3, blocks(s, Material.RED_STAINED_GLASS).size(), "each wave marks the three nearest");
+            String described = AbilityInfo.render(DemonAbility.INFO.ultimate().description(), s.params());
+            assertTrue(described.contains("최대 3명"), "the description says so: " + described);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void reaperSpinCutsAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            // Doomed, so the cut is also an execution (a glowing slash) besides the cut and the stolen life.
+            s.enemy.setHealth(s.maxHealth(s.enemy) * s.param("execute_threshold") / 100 - 1);
+            s.owner.setHealth(10);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "낫 회전");
+            assertNothingMarks(s, s.enemy, 0.6, 20, "낫 회전", true, Particle.FLASH, Particle.TRAIL, Particle.SOUL);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the stealthed enemy is cut all the same");
+            assertTrue(s.health(s.owner) > 10, "and its life still heals the reaper");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void reaperSpinSummaryShowsOnlyTheLifeItReallyStole() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -2.0, 0);
+            actionBars(s.owner);
+            s.assertSucceeded(s.active(), "낫 회전");
+            s.ticks(12);
+            String summary = actionBars(s.owner).stream().filter(text -> text.contains("낫 회전")).findFirst()
+                    .orElseThrow(() -> new AssertionError("the spin is summed up"));
+            assertTrue(summary.contains("2명"), summary);
+            assertFalse(summary.contains("회복"), "at full health nothing was healed: " + summary);
+
+            s.ticks(200);
+            s.readyActive();
+            s.owner.setHealth(10);
+            actionBars(s.owner);
+            s.assertSucceeded(s.active(), "낫 회전");
+            s.ticks(12);
+            summary = actionBars(s.owner).stream().filter(text -> text.contains("낫 회전")).findFirst()
+                    .orElseThrow(() -> new AssertionError("the spin is summed up"));
+            double heal = 2 * s.param("spin_damage") * s.param("spin_lifesteal") / 100;
+            assertTrue(summary.contains("회복 +" + AbilityInfo.formatNumber(heal)), summary);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void reaperMarkFallsOnAStealthedVictimWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "사신의 표식");
+            s.ticks(10);
+            // The victim slips into stealth before the knell ends.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.enemy.clearSounds();
+            // Nobody else hears the knell or the blow where it hides.
+            assertNothingMarks(s, s.enemy, 0.8, s.paramTicks("mark_duration"), "사신의 표식", true, Particle.FLASH,
+                    Particle.SCULK_SOUL, Particle.SOUL);
+            assertEquals(s.param("mark_base"), s.damageBy(s.owner, s.enemy), EPSILON, "the blow lands all the same");
+            long tolls = s.enemy.getHeardSounds().stream()
+                    .filter(sound -> sound.getSound().toLowerCase(Locale.ROOT).contains("bell")).count();
+            assertTrue(tolls >= 3, "the victim still hears the knell toll for it: " + tolls);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(30);
+            assertEquals(0, displays(s), "the mark is gone");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void reaperMarkCountsOnlyDamageNotAShieldRunningOut() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            // A shield like the guardian's 불굴: extra absorption capacity, filled up.
+            NamespacedKey shield = new NamespacedKey("test", "bulwark");
+            AttributeInstance capacity = s.enemy.getAttribute(Attribute.MAX_ABSORPTION);
+            capacity.addModifier(new AttributeModifier(shield, 10, AttributeModifier.Operation.ADD_NUMBER,
+                    EquipmentSlotGroup.ANY));
+            s.enemy.setAbsorptionAmount(10);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "사신의 표식");
+            s.ticks(10);
+            // The shield runs out mid-mark: its capacity goes and the leftover absorption with it. Nothing hurt.
+            capacity.removeModifier(shield);
+            s.enemy.setAbsorptionAmount(s.enemy.getAbsorptionAmount());
+            assertEquals(0, s.enemy.getAbsorptionAmount(), EPSILON);
+            s.ticks(10);
+            hurt(s.enemy, 4);
+            s.ticks(s.paramTicks("mark_duration"));
+            assertEquals(s.param("mark_base") + 4 * s.param("mark_ratio") / 100, s.damageBy(s.owner, s.enemy),
+                    EPSILON, "only the 4 damage counts, not the shield that wore off");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void reaperMarkFadesWhenItsVictimLeaves() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            s.owner.setHealth(8);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "사신의 표식");
+            s.ticks(10);
+            assertTrue(s.enemy.disconnect(), "the marked enemy leaves");
+            s.ticks(2);
+            assertEquals(8, s.health(s.owner), EPSILON, "a victim that left did not fall: no soul to reap");
+            s.ticks(s.paramTicks("mark_duration") + 10);
+            assertEquals(0, displays(s), "the mark faded");
+            s.assertNoProblems();
+            s.finishMatch();
+            assertTrue(s.enemy.reconnect(), "the enemy comes back");
+            s.assertNoProblems();
+            s.assertCleanWorld();
+        }
+    }
+
+    @Test
+    void ghostScreamHitsAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("ghost")) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 12.5, -12.5, 0);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.ultimate(), "유령화");
+            assertNothingMarks(s, s.enemy, 0.5, s.paramTicks("phase_duration") + 10, "유령화 해제", Particle.FLASH);
+            assertEquals(s.param("burst_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the scream hits the stealthed enemy all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ghostTerrorKeepsAStealthedEnemyQuiet() {
+        try (Scenario s = Scenario.ffa("ghost")) {
+            s.place(s.enemy2, 0.5, -4.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "공포");
+            assertEquals(0, s.enemy.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), EPSILON, "still terrified");
+            s.enemy2.clearSounds();
+            s.ticks(s.paramTicks("fear_duration"));
+            for (AudioExperience sound : s.enemy2.getHeardSounds()) {
+                assertFalse(sound.getSound().toLowerCase(Locale.ROOT).contains("skeleton"),
+                        "the stealthed enemy rattles where it hides: " + sound.getSound() + " at "
+                                + sound.getLocation());
+            }
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(10);
+            s.finishClean();
+        }
+    }
+
+    /** Every text display shown to anyone (a view range of 0 is drawn by no client). */
+    private static List<TextDisplay> shownTexts(Scenario s) {
+        return s.world.getEntities().stream().filter(TextDisplay.class::isInstance).map(TextDisplay.class::cast)
+                .filter(text -> text.getViewRange() > 0).toList();
+    }
+
+    @Test
+    void ghostTerrorMarkHidesWithAnEnemyThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("ghost")) {
+            s.place(s.enemy2, 0.5, -4.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "공포");
+            s.ticks(2);
+            assertEquals(1, shownTexts(s).size(), "a trembling mark over the terrified enemy");
+            // The terrified enemy escapes into stealth, the natural answer to the terror.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.enemy2.hidePlayer(s.ctx().plugin(), s.enemy);
+            for (int i = 0; i < 20; i++) {
+                s.ticks(1);
+                assertEquals(List.of(), shownTexts(s), "a \"!\" shows where the stealthed enemy hides (tick " + i
+                        + ", the enemy at " + s.enemy.getLocation() + ")");
+            }
+            assertEquals(0, s.enemy.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), EPSILON, "still terrified");
+            // Seen again while still terrified: the mark is back over its head.
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.enemy2.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(1);
+            List<TextDisplay> shown = shownTexts(s);
+            assertEquals(1, shown.size(), "the mark is back");
+            Location head = s.enemy.getLocation().add(0, s.enemy.getHeight(), 0);
+            assertTrue(shown.getFirst().getLocation().distance(head) < 1.0,
+                    "over the enemy's head: " + shown.getFirst().getLocation() + " vs " + head);
+            s.ticks(s.paramTicks("fear_duration") + 10);
+            assertEquals(0, displays(s), "the mark is gone");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomSwoopStrikesAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            // The stealthed enemy stands right beside the hunted one, where the phantom strikes.
+            s.place(s.enemy2, 1.3, 4.5, 180);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.ultimate(), "불면의 밤");
+            assertNothingMarks(s, s.enemy2, 0.4, 30, "불면의 밤", Particle.FLASH);
+            assertEquals(s.param("swoop_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "the stealthed enemy is struck all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(s.paramTicks("night_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomSwoopOnAStealthedEnemyAloneSoundsLikeAMiss() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            // The stealthed enemy stands next to the hunted one, inside the point the phantom commits to.
+            s.place(s.enemy2, 1.3, 4.5, 180);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.ultimate(), "불면의 밤");
+            s.ticks(10 + 8);
+            // The hunted enemy steps aside after the screech: only the stealthed one is left to be struck.
+            Location point = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.5, 0);
+            s.place(s.enemy, 3.5, 4.5, 180);
+            s.enemy2.clearSounds();
+            assertNothingMarks(s, s.enemy2, 0.4, 8, "불면의 밤", Particle.FLASH, Particle.SQUID_INK);
+            assertEquals(s.param("swoop_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "the stealthed enemy is struck all the same");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the hunted enemy dodged");
+            assertTrue(s.enemy2.getHeardSounds().stream().anyMatch(sound -> sound.getSound().contains("phantom.flap")
+                            && sound.getLocation().distance(point) < 0.2),
+                    "to everyone around, the phantom snaps at empty air as if it missed");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(s.paramTicks("night_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomDiveStrikesAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            // The stealthed enemy stands right beside the prey, where the phantom lands.
+            s.place(s.enemy2, 1.3, 8.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.active(), "급강하");
+            assertNothingMarks(s, s.enemy2, 0.4, 50, "급강하", Particle.FLASH);
+            assertEquals(s.param("dive_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "the stealthed enemy is struck all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    /** A velocity no ability ever sends: tells whether the ability code sent the player one this tick. */
+    private static final Vector UNSENT = new Vector(0.0123, -0.0456, 0.0789);
+
+    /**
+     * Runs {@code ticks} ticks in which the server sees {@code player} {@code lag} ticks late, like a player with that
+     * round trip: the ability code (the scheduler) runs with the player where the server last heard of it, while its
+     * client flies on at once with every velocity the server sends it. Leaves the player where its client is.
+     */
+    private static void ticksWithLag(Scenario s, Player player, int lag, int ticks) {
+        Deque<Location> heard = new ArrayDeque<>();
+        Location client = player.getLocation();
+        Vector motion = player.getVelocity();
+        for (int i = 0; i <= lag; i++) {
+            heard.addLast(client.clone());
+        }
+        for (int i = 0; i < ticks; i++) {
+            player.teleport(heard.getFirst());
+            player.setVelocity(UNSENT);
+            s.h.server.getScheduler().performOneTick();
+            Vector sent = player.getVelocity();
+            if (!sent.equals(UNSENT)) {
+                motion = sent.clone();
+            }
+            player.teleport(client);
+            player.setVelocity(motion);
+            s.world.physics().tick();
+            client = player.getLocation();
+            motion = player.getVelocity();
+            heard.addLast(client.clone());
+            heard.removeFirst();
+        }
+    }
+
+    @Test
+    void phantomDiveStrikesItsPreyForAPlayerWithAHighPing() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 20.5, 0.5, 90);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "급강하");
+            // 300 ms: the server sees the phantom land 6 ticks after its client did.
+            ticksWithLag(s, s.owner, 6, 60);
+            assertEquals(s.param("dive_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the dive strikes the prey where the phantom landed, not where the server last saw it in mid-air");
+            assertTrue(s.owner.getLocation().getZ() > 5, "dived onto the prey: " + s.owner.getLocation());
+            assertStandingOnFloor(s, s.owner, "the diving phantom");
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage from the dive: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomSwarmDescriptionNamesItsTargetCap() {
+        String described = AbilityInfo.render(PhantomAbility.INFO.ultimate().description(),
+                AbilityParams.defaults(PhantomAbility.INFO));
+        assertTrue(described.contains("최대 5명"), "five phantoms hunt at most five enemies a wave: " + described);
+    }
+
+    @Test
+    void phantomSaysTheNightIsOverInPlainKorean() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            s.assertSucceeded(s.ultimate(), "불면의 밤");
+            s.ticks(s.paramTicks("night_duration") + 40);
+            String end = actionBars(s.owner).stream().filter(text -> text.contains("끝났습니다")).findFirst()
+                    .orElseThrow(() -> new AssertionError("the end of the night is told"));
+            assertTrue(end.contains("불면의 밤이 끝났습니다"), "the particle sticks to the noun: " + end);
             s.finishClean();
         }
     }
