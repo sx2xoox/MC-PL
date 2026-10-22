@@ -66,9 +66,10 @@ public final class PhantomAbility extends Ability {
             .passive("야행",
                     "밤이거나 땅에서 {air_height}블록보다 높이 떠 있을 때 받는 피해가 {night_reduction}% 줄어듭니다.")
             .active("급강하",
-                    "{soar_height}블록 높이로 솟구쳐 {hover_time}초간 먹잇감을 노려본 뒤, 그 순간 바라보는 지점"
-                            + "({dive_range}블록 이내)으로 급강하합니다. 돌진 경로와 내리꽂힌 자리 {dive_radius}블록 안의 적에게 "
-                            + "{dive_damage} 피해를 주고 튕겨 내며, 이 비행으로는 낙하 피해를 받지 않습니다.",
+                    "{soar_height}블록 높이로 솟구쳐 {hover_time}초간 먹잇감을 노려본 뒤, 조준해 둔 적(공중에서 다른 "
+                            + "적을 조준하면 그 적, 없으면 그 순간 바라보는 지점, {dive_range}블록 이내)으로 급강하합니다. "
+                            + "돌진 경로와 내리꽂힌 자리 {dive_radius}블록 안의 적에게 {dive_damage} 피해를 주고 튕겨 내며, "
+                            + "이 비행으로는 낙하 피해를 받지 않습니다.",
                     9)
             .ultimate("불면의 밤",
                     "{night_duration}초간 머리 위로 팬텀 떼를 부릅니다. 주변 {night_radius}블록 안의 적에게 "
@@ -279,8 +280,12 @@ public final class PhantomAbility extends Ability {
         diving = true;
         long hover = Math.max(1, params().ticks("hover_time"));
         landing.arm(ctx().currentTick(), ascent + hover + LANDING_GUARD_TICKS);
+        LivingEntity prey = ctx().findTarget(owner, params().num("dive_range"));
+        if (prey instanceof Player hidden && !owner.canSee(hidden)) {
+            prey = null;
+        }
         takeOff(owner);
-        Dive dive = new Dive(owner, ascent, (int) hover);
+        Dive dive = new Dive(owner, prey, ascent, (int) hover);
         Loop.repeat(ctx(), owner, 1, 1, ascent + hover + dive.maxDiveTicks(), dive, dive::end);
         return ActivationResult.success();
     }
@@ -302,6 +307,8 @@ public final class PhantomAbility extends Ability {
     private final class Dive implements LongPredicate {
 
         private final Player owner;
+        /** The enemy aimed at when the dive began; the dive locks onto it unless another enemy is aimed at. */
+        private final @Nullable LivingEntity prey;
         private final int ascent;
         private final int hover;
         private final double range;
@@ -317,8 +324,9 @@ public final class PhantomAbility extends Ability {
         private int diveTicks;
         private boolean landed;
 
-        Dive(Player owner, int ascent, int hover) {
+        Dive(Player owner, @Nullable LivingEntity prey, int ascent, int hover) {
             this.owner = owner;
+            this.prey = prey;
             this.ascent = ascent;
             this.hover = hover;
             this.range = Math.max(MIN_DIVE, params().num("dive_range"));
@@ -540,15 +548,19 @@ public final class PhantomAbility extends Ability {
         }
 
         /**
-         * Where the phantom would dive now: the aimed (visible) enemy, else where the view ray (never flatter than
+         * Where the phantom would dive now: the enemy aimed at from up here, else the enemy aimed at when the dive
+         * began (while it is still a visible enemy in reach), else where the view ray (never flatter than
          * {@link #MIN_DIVE_PITCH} below the horizon) meets a block, else the end of that ray.
          */
         private Location divePoint() {
             World world = owner.getWorld();
             Location eye = owner.getEyeLocation();
             LivingEntity aimed = ctx().findTarget(owner, range);
-            if (aimed != null && !(aimed instanceof Player hidden && !owner.canSee(hidden))) {
+            if (isVisiblePrey(aimed)) {
                 return aimed.getLocation();
+            }
+            if (isVisiblePrey(prey) && prey.getLocation().distance(owner.getLocation()) <= range) {
+                return prey.getLocation();
             }
             double pitch = Math.toRadians(Math.max(MIN_DIVE_PITCH, eye.getPitch()));
             double yaw = Math.toRadians(eye.getYaw());
@@ -562,6 +574,11 @@ public final class PhantomAbility extends Ability {
                 point.subtract(look.clone().multiply(0.5));
             }
             return point;
+        }
+
+        private boolean isVisiblePrey(@Nullable LivingEntity enemy) {
+            return enemy != null && Combat.isTargetable(ctx(), owner, enemy) && enemy.getWorld().equals(owner.getWorld())
+                    && !(enemy instanceof Player hidden && !owner.canSee(hidden));
         }
     }
 
