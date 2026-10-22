@@ -195,6 +195,8 @@ public final class MycologistAbility extends Ability {
     private static final class Spore {
         long until;
         long next;
+        /** True while the follow-up visuals (toadstool, drifting spores) run for this enemy. */
+        boolean following;
         @Nullable BlockDisplay cap;
     }
 
@@ -265,7 +267,7 @@ public final class MycologistAbility extends Ability {
         victim.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, clampTicks(duration + NAUSEA_LEAD), 0, false,
                 true, true));
         sporeBurst(victim);
-        if (spore.cap == null || !spore.cap.isValid()) {
+        if (!spore.following) {
             growToadstool(victim, spore);
         }
     }
@@ -288,9 +290,13 @@ public final class MycologistAbility extends Ability {
         Fx.sound(head, Sound.ENTITY_PUFFER_FISH_BLOW_OUT, 0.6f, 1.6f + Fx.jitter(0.1f));
     }
 
-    /** A tiny toadstool sprouts on the spored enemy's head and wobbles there until the spore wears off. */
+    /**
+     * A tiny toadstool sprouts on the spored enemy's head and wobbles there, shedding spores, until the spore wears
+     * off (a refreshed spore keeps it longer). Only a few enemies wear one at once; the others just shed spores.
+     */
     private void growToadstool(LivingEntity victim, Spore spore) {
         Player owner = player();
+        spore.following = true;
         int shown = 0;
         for (Spore other : spores.values()) {
             if (other.cap != null && other.cap.isValid()) {
@@ -327,9 +333,8 @@ public final class MycologistAbility extends Ability {
             if (worn != null && worn.isValid()) {
                 Displays.shrinkAway(ctx(), owner, worn, 4);
             }
-            if (spore.cap == worn) {
-                spore.cap = null;
-            }
+            spore.cap = null;
+            spore.following = false;
         });
     }
 
@@ -763,7 +768,14 @@ public final class MycologistAbility extends Ability {
     public ActivationResult onUltimate() {
         Location base = aimGround(params().num("ult_range"));
         if (base == null) {
-            return ActivationResult.fail("버섯이 자랄 땅이 없습니다");
+            // Aimed at the sky: the mushroom bursts out right under the owner instead.
+            Location feet = flat(player().getLocation());
+            Double ground = groundBelow(feet.clone().add(0, 0.2, 0), GROUND_SEARCH);
+            if (ground == null) {
+                return ActivationResult.fail("버섯이 자랄 땅이 없습니다");
+            }
+            feet.setY(ground);
+            base = feet;
         }
         GiantMushroom mushroom = new GiantMushroom(base);
         mushroom.telegraph();
@@ -1025,18 +1037,18 @@ public final class MycologistAbility extends Ability {
             Fx.sound(base, Sound.ENTITY_PUFFER_FISH_BLOW_OUT, 1.0f, 0.55f + Fx.jitter(0.05f));
             Fx.sound(base, Sound.BLOCK_SPORE_BLOSSOM_PLACE, 1.0f, 0.6f + Fx.jitter(0.05f));
 
-            double base1 = params().num("ult_damage");
+            double first = params().num("ult_damage");
             double ramp = Math.max(0, params().num("ult_ramp"));
-            double max = Math.max(base1, params().num("ult_damage_max"));
+            double max = Math.max(first, params().num("ult_damage_max"));
             List<UUID> stayed = new ArrayList<>();
-            for (LivingEntity enemy : ctx().enemiesNear(owner, this.base.clone().add(0, 1, 0), radius + 1)) {
+            for (LivingEntity enemy : ctx().enemiesNear(owner, base.clone().add(0, 1, 0), radius + 1)) {
                 if (!inside(enemy)) {
                     continue;
                 }
                 int stacks = dose.getOrDefault(enemy.getUniqueId(), 0) + 1;
                 dose.put(enemy.getUniqueId(), stacks);
                 stayed.add(enemy.getUniqueId());
-                Combat.hit(ctx(), owner, enemy, Math.min(max, base1 + ramp * (stacks - 1)));
+                Combat.hit(ctx(), owner, enemy, Math.min(max, first + ramp * (stacks - 1)));
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
@@ -1053,7 +1065,7 @@ public final class MycologistAbility extends Ability {
             dose.keySet().retainAll(stayed);
 
             double heal = params().num("ult_heal");
-            List<LivingEntity> friends = new ArrayList<>(ctx().alliesNear(owner, this.base.clone().add(0, 1, 0),
+            List<LivingEntity> friends = new ArrayList<>(ctx().alliesNear(owner, base.clone().add(0, 1, 0),
                     radius + 1));
             friends.addFirst(owner);
             for (LivingEntity friend : friends) {

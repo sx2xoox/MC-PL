@@ -487,6 +487,22 @@ class ArtNewAbilitiesTest {
     }
 
     @Test
+    void mycologistGiantMushroomAimedAtTheSkyGrowsUnderTheOwner() {
+        try (Scenario s = Scenario.ffa("mycologist")) {
+            s.place(s.enemy, 0.5, 2.0, 180);
+            s.place(s.enemy2, FAR, FAR, 180);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, -70);
+            s.assertSucceeded(s.ultimate(), "거대 버섯");
+            s.ticks(14);
+            assertEquals(s.param("erupt_damage"), magicDamage(s, s.enemy), EPSILON, "erupts at the owner's feet");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(150);
+            assertVisualsGone(s, "after the mushroom sank");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void mycologistCloudHealsTheOwnerAndAllies() {
         try (Scenario s = Scenario.teams("mycologist")) {
             prepare(s);

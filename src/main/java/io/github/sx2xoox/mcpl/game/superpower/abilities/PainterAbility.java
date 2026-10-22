@@ -152,6 +152,8 @@ public final class PainterAbility extends Ability {
 
     // passive
     private static final long INSPIRE_PERIOD = 4;
+    /** How often the next paint glistens at the hand while the active is ready (a multiple of the period). */
+    private static final long LOADED_PERIOD = 12;
 
     // active
     private static final int GROUND_SEARCH = 6;
@@ -221,6 +223,10 @@ public final class PainterAbility extends Ability {
             return;
         }
         Player owner = player();
+        if (tick % LOADED_PERIOD == 0 && ctx().cooldownRemaining(owner) <= 0) {
+            // The brush is loaded: a drop of the next paint glistens at the hand.
+            Vfx.dot(hand(owner), Particle.DUST, nextPaint.drop, false);
+        }
         long now = ctx().currentTick();
         areas.removeIf(area -> area.until() <= now);
         if (onPaint(owner)) {
@@ -400,8 +406,11 @@ public final class PainterAbility extends Ability {
             Location previous = position;
             position = next;
             for (LivingEntity enemy : ctx().enemiesNear(player(), next, BLOB_HIT_RADIUS)) {
-                land(enemy.getLocation());
-                return false;
+                // An enemy the owner cannot see (stealth) is not given away by a glob splatting on thin air.
+                if (seen(player(), enemy)) {
+                    land(enemy.getLocation());
+                    return false;
+                }
             }
             drawFlight(previous, next, tick);
             return true;
