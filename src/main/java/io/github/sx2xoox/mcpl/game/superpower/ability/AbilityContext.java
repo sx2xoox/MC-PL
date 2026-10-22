@@ -116,9 +116,28 @@ public interface AbilityContext {
 
     /**
      * Adds to a participant's ultimate gauge (0..100, clamped). An explicit grant: unlike gauge earned from damage
-     * and time, it is never blocked after an ultimate (see {@link Ability#onUltimate()}).
+     * and time, it is never blocked after an ultimate (see {@link Ability#onUltimate()}). Use it for one-off rewards
+     * (a kill, an assist, a refund) and for transfers (a steal, a drain); gauge a passive charges over time or per
+     * hit goes through {@link #addEarnedGauge} instead.
      */
     void addGauge(Player player, double amount);
+
+    /**
+     * Adds gauge a participant earns by playing, on top of the match's own charging from damage and time: a passive
+     * that charges faster over time (per second near water, ...) or a bonus for each hit that lands. Such gains follow
+     * the same rules as the match's charging (see {@link Ability#onUltimate()}): nothing is added while the
+     * participant's post-ultimate recharge delay runs ({@link #isGaugeLocked}), nor from code that is part of the
+     * participant's own ultimate (the ultimate method, the tasks it schedules and the hooks run for hits of the
+     * entities it creates). Non-positive amounts are ignored.
+     */
+    void addEarnedGauge(Player player, double amount);
+
+    /**
+     * True while {@code player}'s gauge earns nothing after a successful ultimate
+     * ({@code ultimate.recharge-delay-seconds}). {@link #addEarnedGauge} already drops gains meanwhile; check this to
+     * skip the visuals of a passive charge, or to hold back per-hit progress that pays out gauge later.
+     */
+    boolean isGaugeLocked(Player player);
 
     /** A participant's ultimate gauge in 0..100. */
     double gauge(Player player);

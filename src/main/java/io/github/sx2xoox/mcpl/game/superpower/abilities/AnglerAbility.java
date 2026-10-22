@@ -205,10 +205,11 @@ public final class AnglerAbility extends Ability {
             }
         }
         double gain = Math.max(0, params().num("luck_gauge"));
-        if (!now || gain <= 0 || ctx().gauge(owner) >= 100) {
+        // Charging gauge over time: it waits out the recharge delay after an ultimate like every other source.
+        if (!now || gain <= 0 || ctx().gauge(owner) >= 100 || ctx().isGaugeLocked(owner)) {
             return;
         }
-        ctx().addGauge(owner, gain);
+        ctx().addEarnedGauge(owner, gain);
         Location feet = owner.getLocation().add(0, 0.1, 0);
         Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
         Vfx.ring(ctx(), feet, 0.6, 10, tick * 0.05, Particle.FISHING, null, false);
@@ -418,7 +419,8 @@ public final class AnglerAbility extends Ability {
             Combat.hit(ctx(), owner, target, Math.max(0, params().num("reel_damage")));
             double gauge = Math.max(0, params().num("catch_gauge"));
             if (gauge > 0) {
-                ctx().addGauge(owner, gauge);
+                // A bonus for a landed hit, earned like the hit's own damage: nothing during the recharge delay.
+                ctx().addEarnedGauge(owner, gauge);
             }
             Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.SPLASH, false);
             Vfx.cloud(ctx(), body, Particle.SPLASH, 18, 0.35, 0.1, null, false);

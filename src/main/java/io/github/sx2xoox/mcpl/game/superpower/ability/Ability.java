@@ -104,8 +104,9 @@ public abstract class Ability {
      * triggered by those hits, and by entities it creates through {@link AbilityContext#track},
      * {@link AbilityContext#summon} or {@link AbilityContext#tagProjectile} (for their whole lifetime). In addition,
      * after a successful ultimate the owner's gauge earns nothing at all (damage dealt or taken, time) for
-     * {@code ultimate.recharge-delay-seconds}. {@link AbilityContext#addGauge} is never blocked. So schedule an
-     * ultimate's delayed parts through the context (never the raw Bukkit scheduler).
+     * {@code ultimate.recharge-delay-seconds}. Gauge an ability adds for time or hits through
+     * {@link AbilityContext#addEarnedGauge} follows both rules; {@link AbilityContext#addGauge} is an explicit grant
+     * and never blocked. So schedule an ultimate's delayed parts through the context (never the raw Bukkit scheduler).
      */
     public abstract ActivationResult onUltimate();
 

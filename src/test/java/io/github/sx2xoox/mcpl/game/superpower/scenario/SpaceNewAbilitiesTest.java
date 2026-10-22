@@ -875,6 +875,56 @@ class SpaceNewAbilitiesTest {
         }
     }
 
+    /** Lit stars of the astronomer's constellation over its head. */
+    private static long litStars(Scenario s) {
+        return entities(s, TextDisplay.class).stream().filter(star -> Scenario.plain(star.text()).contains("✦"))
+                .count();
+    }
+
+    @Test
+    void astronomerConstellationLightsNoStarDuringTheRechargeDelay() {
+        try (Scenario s = noGaugeGain(Scenario.builder("astronomer").param("constellation_stars", 4)
+                .param("meteor_count", 3)).start()) {
+            int shower = s.paramTicks("meteor_delay") + 3 * s.paramTicks("meteor_interval") + 4;
+            long lock = s.match.settings().ultimateLockTicks();
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "유성");
+            s.ticks(shower);
+            long lit = litStars(s);
+            assertTrue(lit >= 2 && lit < 4, "stars lit before the ultimate: " + lit);
+
+            double before = s.damageBy(s.owner, s.enemy);
+            s.aimAt(s.owner, s.enemy2);
+            s.assertSucceeded(s.ultimate(), "대운석");
+            long used = s.match.fightTicks();
+            s.ticks(s.paramTicks("ult_delay") + 5);
+            assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "the great meteor struck far away");
+            assertEquals(before, s.damageBy(s.owner, s.enemy), EPSILON, "and missed the enemy by the stars");
+
+            s.readyActive();
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "유성 during the recharge delay");
+            s.ticks(shower);
+            assertTrue(s.damageBy(s.owner, s.enemy) >= before + 2 * s.param("meteor_damage"), "the meteors struck");
+            assertTrue(s.match.fightTicks() - used < lock, "still within the recharge delay");
+            assertEquals(lit, litStars(s), "hits during the recharge delay light no star; the earlier ones stay");
+            assertEquals(0, gauge(s, s.owner), EPSILON, "no constellation pays out during the recharge delay");
+
+            s.ticks((int) (lock - (s.match.fightTicks() - used)) + 1);
+            s.readyActive();
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "유성 after the recharge delay");
+            s.ticks(shower);
+            assertEquals(s.param("constellation_gauge"), gauge(s, s.owner), EPSILON,
+                    "after the delay the stars light again and complete the constellation");
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
     @Test
     void astronomerGreatMeteorWarnsThenCrushesAndTheShockwaveRollsOut() {
         try (Scenario s = Scenario.ffa("astronomer")) {
