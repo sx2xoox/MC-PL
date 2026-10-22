@@ -17,6 +17,7 @@ import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.Display;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -27,6 +28,12 @@ import org.junit.jupiter.api.Test;
 class ElementalAbilitiesTest {
 
     private static final double EPSILON = 1.0E-6;
+
+    /** Every visual display entity has a bounded lifetime: none is left once the effect is over. */
+    private static void assertVisualsGone(Scenario s, String when) {
+        long displays = s.world.getEntities().stream().filter(entity -> entity instanceof Display).count();
+        assertEquals(0, displays, "no display entity is left " + when);
+    }
 
     // ------------------------------------------------------------------ 화염술사 pyro
 
@@ -41,11 +48,12 @@ class ElementalAbilitiesTest {
                     "every fireball bursts on the aimed enemy: " + hits);
             assertEquals(s.param("shots") * s.param("fireball_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
             assertTrue(s.enemy.getFireTicks() > 0, "the enemy burns");
-            assertTrue(s.enemy.getLocation().getZ() > 4.5 + 0.2, "the bursts nudge the enemy along the flight path");
+            assertTrue(s.enemy.getLocation().getZ() > 4.5 + 0.2, "the last fireball shoves the enemy back");
             assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "the burst radius does not reach enemy2");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(80);
             assertTrue(s.hitsOf(s.enemy, DamageCause.FIRE_TICK).size() >= 2, "the burn keeps hurting");
+            assertVisualsGone(s, "after the volley");
             s.finishClean();
         }
     }
@@ -86,6 +94,8 @@ class ElementalAbilitiesTest {
             s.assertSucceeded(s.ultimate(), "불바다");
             s.ticks(40);
             assertTrue(s.hitsBy(s.owner, s.enemy).size() >= 3, "the enemy 4 blocks away is scorched");
+            assertTrue(s.world.getEntities().stream().anyMatch(entity -> entity instanceof Display),
+                    "the vortex shows its fire comets and magma sigil");
             assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "enemy2 is out of the vortex");
             // The vortex follows the owner to enemy2.
             s.place(s.owner, 0.5, -9.5, 0);
@@ -98,6 +108,7 @@ class ElementalAbilitiesTest {
             assertTrue(s.hitsBy(s.owner, s.enemy).stream().noneMatch(hit -> hit.cause() == DamageCause.MAGIC),
                     "the vortex died down after " + s.param("ult_duration") + " s");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            assertVisualsGone(s, "after the vortex");
             s.finishClean();
         }
     }
@@ -118,6 +129,7 @@ class ElementalAbilitiesTest {
             s.ticks(40);
             assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-3, "and lands again");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            assertVisualsGone(s, "after the bolt");
             s.finishClean();
         }
     }
@@ -167,6 +179,7 @@ class ElementalAbilitiesTest {
                 assertEquals(strikes * s.param("ult_damage"), s.damageBy(s.owner, target), EPSILON);
             }
             assertEquals(strikes * 2, s.world.lightningEffects().size());
+            assertVisualsGone(s, "after the storm");
             s.finishClean();
         }
     }
@@ -212,6 +225,8 @@ class ElementalAbilitiesTest {
             s.ticks(s.paramTicks("freeze_duration") + 2);
             assertEquals(speed, s.enemy.getAttribute(Attribute.MOVEMENT_SPEED).getValue(), 1.0E-9, "thawed");
             assertTrue(s.enemy.getAttribute(Attribute.JUMP_STRENGTH).getModifiers().isEmpty());
+            s.ticks(10);
+            assertVisualsGone(s, "after the thaw");
             s.finishClean();
         }
     }
@@ -238,6 +253,8 @@ class ElementalAbilitiesTest {
                 assertTrue(target.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers().isEmpty());
             }
             assertEquals(0, s.h.hub.tempBlocks().size(), "the ice melted");
+            s.ticks(20);
+            assertVisualsGone(s, "after the prisons shattered");
             s.finishClean();
         }
     }
@@ -332,6 +349,7 @@ class ElementalAbilitiesTest {
             assertTrue(travelled > s.param("distance") * 0.5, "the owner dashed forward (" + travelled + ")");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage");
             s.ticks(10);
+            assertVisualsGone(s, "after the landing");
             s.finishClean();
         }
     }
@@ -381,6 +399,7 @@ class ElementalAbilitiesTest {
                 assertEquals(s.param("slam_damage"), s.damageBy(s.owner, target), EPSILON, "slammed once");
                 assertTrue(s.hitsOf(target, DamageCause.FALL).isEmpty(), "the slam replaces fall damage");
             }
+            assertVisualsGone(s, "after the tornado");
             s.finishClean();
         }
     }

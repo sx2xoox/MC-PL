@@ -109,8 +109,11 @@ public final class AeroAbility extends Ability {
     /** Bars per wind band (a regular polygon). */
     private static final int BAND_SIDES = 6;
     private static final float BAND_THICKNESS = 0.09f;
-    /** Radians a wind band turns per tick; alternate bands turn the other way. */
-    private static final double BAND_SPIN = 0.2;
+    /**
+     * Radians a wind band turns per tick; alternate bands turn the other way. Small enough that each interpolated
+     * step barely cuts the corner (a display's position interpolates in a straight line).
+     */
+    private static final double BAND_SPIN = 0.15;
     private static final long BAND_GROW_TICKS = 10;
     private static final long BAND_STEP_TICKS = 2;
     private static final int DEBRIS = 4;
@@ -475,8 +478,7 @@ public final class AeroAbility extends Ability {
             for (int band = 0; band < BAND_LEVELS.length; band++) {
                 Location at = flat(base).add(0, BAND_LEVELS[band] * top, 0);
                 for (int side = 0; side < BAND_SIDES; side++) {
-                    BlockDisplay bar = Displays.block(ctx(), player(), at, BAND, barShape(band, side, 0, 0.1), lifetime);
-                    bars.add(bar);
+                    bars.add(Displays.block(ctx(), player(), at, BAND, barShape(band, side, 0, 0.1), lifetime));
                 }
             }
         }

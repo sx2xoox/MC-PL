@@ -21,7 +21,6 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
@@ -157,7 +156,7 @@ public final class ThunderAbility extends Ability {
                     random.nextDouble(-half, half));
             Location to = body.clone().add(random.nextDouble(-half, half), random.nextDouble(-0.6, 0.6),
                     random.nextDouble(-half, half));
-            drawArc(zigzag(from, to, 3, 0.15, 1), ARC_DUST, 6);
+            drawArc(zigzag(from, to, 3, 0.15, 1), ARC_DUST, 6, false);
         }
         world.spawnParticle(Particle.ELECTRIC_SPARK, body, Vfx.n(ctx(), 10), 0.3, 0.5, 0.3, 0.15);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, Vfx.n(ctx(), 5), 0.3, 0.5, 0.3, 0,
@@ -257,7 +256,8 @@ public final class ThunderAbility extends Ability {
     private void strike(Location point) {
         World world = point.getWorld();
         world.strikeLightningEffect(point);
-        Location top = point.clone().add(Fx.jitter(1.5f), BOLT_HEIGHT, Fx.jitter(1.5f));
+        // Close to the vanilla bolt, so the two intertwine into one strike.
+        Location top = point.clone().add(Fx.jitter(0.6f), BOLT_HEIGHT, Fx.jitter(0.6f));
         bolt(top, point, false);
         impact(point, params().num("radius"), true, false);
 
@@ -307,7 +307,7 @@ public final class ThunderAbility extends Ability {
             double angle = phase + i * (Math.PI * 2 / arcs) + random.nextDouble(-0.3, 0.3);
             double reach = radius * random.nextDouble(0.7, 1.05);
             Location end = ground.clone().add(Math.cos(angle) * reach, 0, Math.sin(angle) * reach);
-            drawArc(zigzag(ground, end, 4, 0.35, 0), ARC_DUST, 5);
+            drawArc(zigzag(ground, end, 4, 0.35, 0), ARC_DUST, 5, force);
         }
         world.spawnParticle(Particle.LARGE_SMOKE, ground, Vfx.n(ctx(), big ? 6 : 3), 0.4, 0.1, 0.4, 0.02, null,
                 force);
@@ -385,7 +385,7 @@ public final class ThunderAbility extends Ability {
             Location at = enemy.getLocation();
             World world = at.getWorld();
             world.strikeLightningEffect(at);
-            Location top = at.clone().add(Fx.jitter(1.2f), BOLT_HEIGHT - 2, Fx.jitter(1.2f));
+            Location top = at.clone().add(Fx.jitter(0.6f), BOLT_HEIGHT - 2, Fx.jitter(0.6f));
             bolt(top, at, true);
             impact(at, 1.4, false, true);
             world.spawnParticle(Particle.ELECTRIC_SPARK, at.clone().add(0, 1, 0), Vfx.n(ctx(), 16), 0.4, 0.8, 0.4,
@@ -422,7 +422,7 @@ public final class ThunderAbility extends Ability {
                     random.nextDouble(-0.5, 0.5));
             Location to = center.clone().add(random.nextDouble(-0.5, 0.5), random.nextDouble(0.2, 1.8),
                     random.nextDouble(-0.5, 0.5));
-            drawArc(zigzag(from, to, 3, 0.15, 1), ARC_DUST, 5);
+            drawArc(zigzag(from, to, 3, 0.15, 1), ARC_DUST, 5, true);
         }
         if (tick % 6 == 0) {
             Fx.sound(center, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 0.5f, 0.6f + Fx.jitter(0.1f));
@@ -554,7 +554,7 @@ public final class ThunderAbility extends Ability {
             double angle = random.nextDouble(Math.PI * 2);
             Location end = fork.clone().add(Math.cos(angle) * 2.5, -random.nextDouble(2.0, 3.5),
                     Math.sin(angle) * 2.5);
-            drawArc(zigzag(fork, end, 3, 0.4, 0.3), BRANCH_DUST, 4);
+            drawArc(zigzag(fork, end, 3, 0.4, 0.3), BRANCH_DUST, 4, force);
         }
     }
 
@@ -594,11 +594,11 @@ public final class ThunderAbility extends Ability {
     }
 
     /** Particle arc through {@code points}: colored dust along the segments and a spark at each kink. */
-    private void drawArc(List<Location> points, Particle.DustOptions dust, double perBlock) {
+    private void drawArc(List<Location> points, Particle.DustOptions dust, double perBlock, boolean force) {
         for (int i = 0; i + 1 < points.size(); i++) {
-            Vfx.line(ctx(), points.get(i), points.get(i + 1), perBlock, Particle.DUST, dust, false);
+            Vfx.line(ctx(), points.get(i), points.get(i + 1), perBlock, Particle.DUST, dust, force);
             if (i > 0) {
-                Vfx.dot(points.get(i), Particle.ELECTRIC_SPARK, null, false);
+                Vfx.dot(points.get(i), Particle.ELECTRIC_SPARK, null, force);
             }
         }
     }

@@ -8,6 +8,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
@@ -106,6 +107,8 @@ public final class PyroAbility extends Ability {
     private static final long COMET_GROW_TICKS = 6;
     private static final float SIGIL_SIZE = 2.6f;
     private static final long SIGIL_GROW_TICKS = 8;
+    /** How far below a jumping owner the sigil still finds the ground. */
+    private static final double SIGIL_DROP = 4;
     private static final long VORTEX_FADE_TICKS = 10;
 
     /** Last tick the "fire is absorbed" feedback played, to throttle it while standing in fire or lava. */
@@ -464,7 +467,7 @@ public final class PyroAbility extends Ability {
             }
             BlockData magma = Material.MAGMA_BLOCK.createBlockData();
             for (int i = 0; i < sigil.length; i++) {
-                BlockDisplay plate = Displays.block(ctx(), player(), sigilAt(start, i), magma,
+                BlockDisplay plate = Displays.block(ctx(), player(), sigilAt(groundUnder(start), i), magma,
                         sigilShape(0.2f, i * 45f), lifetime);
                 plate.setTeleportDuration(1);
                 Displays.animateNextTick(ctx(), player(), plate, sigilShape(SIGIL_SIZE, i * 45f + 30f),
@@ -535,12 +538,13 @@ public final class PyroAbility extends Ability {
         }
 
         private void moveSigil(Location owner, long tick) {
+            Location ground = groundUnder(owner);
             for (int i = 0; i < sigil.length; i++) {
                 BlockDisplay plate = sigil[i];
                 if (!plate.isValid()) {
                     continue;
                 }
-                plate.teleport(sigilAt(owner, i));
+                plate.teleport(sigilAt(ground, i));
                 if (tick >= SIGIL_GROW_TICKS && tick % 4 == 0) {
                     Displays.animate(plate, sigilShape(SIGIL_SIZE, i * 45f + 30f + tick * 3f), 4);
                 }
@@ -579,9 +583,16 @@ public final class PyroAbility extends Ability {
         }
     }
 
-    /** Where sigil plate {@code index} sits under the owner; the two plates are a hair apart so they never z-fight. */
-    private static Location sigilAt(Location owner, int index) {
-        return flat(owner).add(0, 0.04 + index * 0.015, 0);
+    /** The ground right under {@code owner} (its feet when it is higher up than that), so the sigil stays down. */
+    private static Location groundUnder(Location owner) {
+        Location ground = flat(owner);
+        Spots.snapToGround(ground.getWorld(), ground, SIGIL_DROP);
+        return ground;
+    }
+
+    /** Where sigil plate {@code index} lies on {@code ground}; the two plates are a hair apart so they never z-fight. */
+    private static Location sigilAt(Location ground, int index) {
+        return ground.clone().add(0, 0.04 + index * 0.015, 0);
     }
 
     /** A flat magma plate turned {@code yaw} degrees; two of them, 45 degrees apart, make an eight-pointed sigil. */
