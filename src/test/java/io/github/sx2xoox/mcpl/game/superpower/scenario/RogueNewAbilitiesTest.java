@@ -26,7 +26,6 @@ import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
-import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
@@ -374,8 +373,10 @@ class RogueNewAbilitiesTest {
             s.assertSucceeded(s.active(), "곰덫");
             s.ticks(2);
             assertEquals(5, entities(s, Display.class).size(), "a whole trap is in the air");
+            s.ticks(Math.max(1, s.paramTicks("trap_arm") - 2));
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "not armed yet");
-            s.ticks(30);
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 30, "the trap snapping");
+            s.ticks(1);
             assertEquals(s.param("trap_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "snap!");
             assertEquals(DamageType.MAGIC, s.hitsBy(s.owner, s.enemy).getFirst().type());
             assertTrue(rooted(s.enemy), "held fast");
@@ -698,6 +699,12 @@ class RogueNewAbilitiesTest {
         }
     }
 
+    /** The ghost ship's own parts (the shells it fires are black iron balls). */
+    private static List<BlockDisplay> shipParts(Scenario s) {
+        return entities(s, BlockDisplay.class).stream()
+                .filter(part -> part.getBlock().getMaterial() != Material.BLACK_CONCRETE).toList();
+    }
+
     @Test
     void pirateGhostShipFollowsThePirateAndShellsWhereItAims() {
         try (Scenario s = Scenario.ffa("pirate")) {
@@ -706,14 +713,13 @@ class RogueNewAbilitiesTest {
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "유령선 포격");
             s.ticks(12);
-            List<BlockDisplay> ship = entities(s, BlockDisplay.class);
+            List<BlockDisplay> ship = shipParts(s);
             assertTrue(ship.size() >= 10, "the ghost ship rose: " + ship.size());
             Location owner = s.owner.getLocation();
-            for (BlockDisplay part : entities(s, BlockDisplay.class)) {
-                if (part.getLocation().getY() > owner.getY() + 2) {
-                    assertTrue(part.getLocation().getZ() < owner.getZ(), "behind the pirate: "
-                            + part.getLocation().toVector());
-                }
+            for (BlockDisplay part : ship) {
+                assertTrue(part.getLocation().getY() > owner.getY() + 2, "above: " + part.getLocation().toVector());
+                assertTrue(part.getLocation().getZ() < owner.getZ() - 2, "behind the pirate: "
+                        + part.getLocation().toVector());
             }
             assertEquals(2, entities(s, ItemDisplay.class).size(), "soul lanterns");
             s.ticks(s.paramTicks("ult_duration") + 30);
@@ -739,11 +745,12 @@ class RogueNewAbilitiesTest {
             run(s, s.owner, 0.5, 0.5, 12.5, 0.5, 0.4);
             s.ticks(10);
             Location owner = s.owner.getLocation();
-            for (BlockDisplay part : entities(s, BlockDisplay.class)) {
-                if (part.getLocation().getY() > owner.getY() + 2) {
-                    assertTrue(part.getLocation().distance(owner) < 8, "the ship follows: "
-                            + part.getLocation().toVector() + " vs " + owner.toVector());
-                }
+            List<BlockDisplay> ship = shipParts(s);
+            assertFalse(ship.isEmpty());
+            for (BlockDisplay part : ship) {
+                assertTrue(part.getLocation().distance(owner) < 7, "the ship follows: "
+                        + part.getLocation().toVector() + " vs " + owner.toVector());
+                assertTrue(part.getLocation().getX() < owner.getX() - 2, "and stays behind the pirate");
             }
             s.ticks(s.paramTicks("ult_duration") + 40);
             assertNoDisplays(s, "ship");
@@ -962,18 +969,19 @@ class RogueNewAbilitiesTest {
     }
 
     @Test
-    void speedsterSurvivesFallDamageOnlyWhileFast() {
+    void speedsterTakesNoFallDamageOnlyWhileAtLightSpeed() {
         try (Scenario s = Scenario.ffa("speedster")) {
             s.assertSucceeded(s.ultimate(), "광속");
             s.ticks(5);
-            s.owner.setNoDamageTicks(0);
-            s.owner.damage(6, DamageSource.builder(DamageType.FALL).build());
-            assertEquals(0, s.damageTaken(s.owner), EPSILON, "light speed lands on its feet");
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 8, 0.5, 0, 0);
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(2);
+            assertTrue(s.hitsOf(s.owner, DamageCause.FALL).isEmpty(), "light speed lands on its feet");
             s.ticks(s.paramTicks("ult_duration") + 60);
-            s.clearHits();
-            s.owner.setNoDamageTicks(0);
-            s.owner.damage(6, DamageSource.builder(DamageType.FALL).build());
-            assertTrue(s.damageTaken(s.owner) > 0, "later falls hurt as usual");
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 8, 0.5, 0, 0);
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(2);
+            assertFalse(s.hitsOf(s.owner, DamageCause.FALL).isEmpty(), "later falls hurt as usual");
             s.finishClean();
         }
     }
