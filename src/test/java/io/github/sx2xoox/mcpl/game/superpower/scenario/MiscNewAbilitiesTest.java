@@ -413,6 +413,98 @@ class MiscNewAbilitiesTest {
         }
     }
 
+    @Test
+    void monkHundredFistsStepsInExactlyOntoTheFloor() {
+        try (Scenario s = Scenario.ffa("monk")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 12.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "백열권");
+            // A step-in a few thousandths into the floor makes the client sink into the ground.
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), EPSILON, "on the floor: "
+                    + s.owner.getLocation());
+            assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().shift(0, 1.0E-3, 0)), "nothing in the body");
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A player's real client against what the server knows of it, for the real-client bugs a plain world simulation
+     * hides. A real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server
+     * last sent it): the client keeps its own velocity (gravity, drag) until the server sends a new one. World physics
+     * must be off: this moves the player.
+     */
+    private static final class RealClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector sent = new Vector();
+
+        RealClient(Scenario s, TestPlayer player) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /** One server tick, then one client tick with whatever the server sent during it. */
+        void tick() {
+            Vector marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                sent = now.clone();
+                velocity.copy(now);
+            }
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            Location seen = at.clone();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+        }
+    }
+
+    @Test
+    void monkHundredFistsLetsAPlayerCaughtInTheAirFall() {
+        try (Scenario s = Scenario.ffa("monk")) {
+            s.place(s.enemy2, 12.5, 0.5, 270);
+            s.world.physics().setEnabled(false);
+            // Caught at the top of a jump: every punch used to re-send the stale vertical speed the server remembers
+            // (0), so the client hovered in the air for the whole barrage.
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE + 1.5, 4.5, 180, 0);
+            RealClient client = new RealClient(s, s.enemy);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "백열권");
+            for (int i = 0; i < 14; i++) {
+                client.tick();
+            }
+            assertEquals(FlatWorld.SURFACE, client.at().getY(), EPSILON, "fell back to the ground: " + client.at());
+            assertTrue(s.hitsBy(s.owner, s.enemy).size() >= 4, "while the barrage went on");
+            s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 차원술사 dimension
 
     @Test

@@ -1,9 +1,11 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -123,6 +125,8 @@ public final class MagnetAbility extends Ability {
 
     /** Hard cap for every velocity this ability applies. */
     private static final double MAX_SPEED = 2.5;
+    /** Vanilla's vertical speed of a body resting on the ground: one tick of gravity. */
+    private static final double REST_FALL = -Motion.GRAVITY * Motion.DRAG;
     /** Horizontal launch speed per block of push distance (with {@link #PUSH_LIFT}, about seven blocks per 1.0). */
     private static final double PUSH_SPEED_PER_BLOCK = 0.14;
     private static final double PUSH_LIFT = 0.42;
@@ -383,25 +387,44 @@ public final class MagnetAbility extends Ability {
         });
     }
 
+    /** One target of the pull and where it will be horizontally once it has followed every pull sent so far. */
+    private static final class Pull {
+        private final LivingEntity target;
+        private double x;
+        private double z;
+
+        Pull(LivingEntity target) {
+            this.target = target;
+            Location at = target.getLocation();
+            this.x = at.getX();
+            this.z = at.getZ();
+        }
+    }
+
     /**
      * The pull: the targets are steered to a spot in front of the magnet over a few ticks (crowd control: ignores
      * knockback resistance), each tethered by a blue stream of motes.
+     *
+     * <p>Each target is steered by where it will be once it has followed every pull sent so far (dead reckoning), not
+     * by its position on the server: that trails a player's client by its ping, and steering by it would keep pulling
+     * a target that is already there, yanking it past the magnet.
      */
     private void yank(List<LivingEntity> targets) {
         Player owner = player();
-        Map<UUID, LivingEntity> moving = new LinkedHashMap<>();
+        Map<UUID, Pull> moving = new LinkedHashMap<>();
         for (LivingEntity target : targets) {
-            moving.put(target.getUniqueId(), target);
+            moving.put(target.getUniqueId(), new Pull(target));
         }
         Loop.repeat(ctx(), owner, 0, 1, PULL_MAX_TICKS, run -> {
             Location destination = pullDestination(owner);
             for (var it = moving.values().iterator(); it.hasNext(); ) {
-                LivingEntity target = it.next();
+                Pull pull = it.next();
+                LivingEntity target = pull.target;
                 if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
                     it.remove();
                     continue;
                 }
-                Vector to = destination.toVector().subtract(target.getLocation().toVector());
+                Vector to = destination.toVector().subtract(new Vector(pull.x, target.getLocation().getY(), pull.z));
                 double distance = to.length();
                 if (distance <= PULL_ARRIVE || run >= PULL_MAX_TICKS - 1) {
                     arrive(target);
@@ -412,7 +435,10 @@ public final class MagnetAbility extends Ability {
                 Vector velocity = Motion.horizontal(to).multiply(speed);
                 boolean grounded = Motion.isGrounded(target) || target.isInWater();
                 velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.2 : 0.0));
-                target.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+                Vector sent = Motion.clamp(velocity, MAX_SPEED);
+                pull.x += sent.getX();
+                pull.z += sent.getZ();
+                target.setVelocity(sent);
                 target.setFallDistance(0);
                 Vfx.trail(Fx.body(target), hand(owner), SOUTH.body(), 4, false);
                 if (run % 2 == 0) {
@@ -424,13 +450,24 @@ public final class MagnetAbility extends Ability {
     }
 
     private void arrive(LivingEntity target) {
-        target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+        halt(target);
         target.setFallDistance(0);
         Location body = Fx.body(target);
         Vfx.dot(body, Particle.FLASH, SOUTH.body(), false);
         Vfx.ring(ctx(), target.getLocation().add(0, 0.1, 0), 0.8, 14, 0, Particle.DUST_COLOR_TRANSITION,
                 SOUTH.glow(1.0f), false);
         Fx.sound(body, Sound.BLOCK_ANVIL_LAND, 0.35f, 1.9f + Fx.jitter(0.1f));
+    }
+
+    /**
+     * Stops {@code target}'s horizontal motion. A mob keeps the fall speed the server simulates for it. A player's
+     * server-side velocity is stale (only what the server last sent it), so its fall speed is not read back: it gets
+     * vanilla's resting fall speed instead, which keeps it on the floor and settles a body the ground check already
+     * counts as standing (up to a few hundredths above the floor) instead of freezing it there.
+     */
+    private static void halt(LivingEntity target) {
+        double fall = target instanceof Player ? REST_FALL : Math.min(0, target.getVelocity().getY());
+        target.setVelocity(new Vector(0, fall, 0));
     }
 
     /** The spot in front of the magnet where pulled enemies are dropped (its own spot if a wall is in the way). */
@@ -644,6 +681,8 @@ public final class MagnetAbility extends Ability {
         private final double radius;
         private final long pullTicks;
         private final Map<UUID, LivingEntity> caught = new LinkedHashMap<>();
+        /** The caught enemies already held at the magnet. */
+        private final Set<UUID> held = new HashSet<>();
         private final BlockDisplay[] debris = new BlockDisplay[DEBRIS.length];
         private @Nullable BlockDisplay core;
         private final double phase = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
@@ -710,16 +749,21 @@ public final class MagnetAbility extends Ability {
                 }
                 Vector to = center.toVector().subtract(enemy.getLocation().toVector());
                 double distance = Math.sqrt(to.getX() * to.getX() + to.getZ() * to.getZ());
-                Vector velocity;
                 if (distance <= STORM_HOLD) {
-                    velocity = new Vector(0, Math.min(0, enemy.getVelocity().getY()), 0);
+                    // Held at the magnet: stopped once on arrival, then kept still. A player in the air is left to
+                    // fall: its server-side velocity is stale, and re-sending it every tick would make it hover.
+                    if (held.add(enemy.getUniqueId()) || !(enemy instanceof Player)
+                            || Motion.isGrounded(enemy) || enemy.isInWater()) {
+                        halt(enemy);
+                    }
                 } else {
+                    held.remove(enemy.getUniqueId());
                     double speed = Math.min(STORM_SPEED, Math.max(0.25, (distance - STORM_HOLD) * 0.35));
-                    velocity = Motion.horizontal(to).multiply(speed);
+                    Vector velocity = Motion.horizontal(to).multiply(speed);
                     boolean grounded = Motion.isGrounded(enemy) || enemy.isInWater();
                     velocity.setY(Math.clamp(to.getY() * 0.25, -0.5, 0.4) + (grounded ? 0.15 : 0.0));
+                    enemy.setVelocity(Motion.clamp(velocity, MAX_SPEED));
                 }
-                enemy.setVelocity(Motion.clamp(velocity, MAX_SPEED));
                 enemy.setFallDistance(0);
                 if (tick % 2 == 0) {
                     Vfx.trail(Fx.body(enemy), coreAt(), (tick / 2) % 2 == 0 ? NORTH.body() : SOUTH.body(), 7, true);

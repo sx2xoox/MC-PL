@@ -211,6 +211,10 @@ public final class FighterAbility extends Ability {
     private static final int RIM_PLATES = 7;
     private static final int DEBRIS = 4;
     private static final long DEBRIS_TICKS = 26;
+    /** Shares of its full reach a chunk of debris tries, farthest first, when a wall or a step is in the way. */
+    private static final double[] DEBRIS_REACH_SHARES = {1.0, 0.65, 0.35};
+    /** Half-size of the box that must be free of blocks around a point where a display without own light goes. */
+    private static final double OPEN_PROBE = 0.05;
     private static final int RUBBLE_BLOCKS = 5;
     private static final int RUBBLE_TRIES = 12;
     private static final double RUBBLE_RADIUS = 2.4;
@@ -1233,36 +1237,57 @@ public final class FighterAbility extends Ability {
             });
         }
 
+        // The rubble first: the debris must see those blocks to stay out of them.
+        rubble(point, life);
         for (int i = 0; i < DEBRIS; i++) {
             debris(center, floor, unit(random.nextDouble(TAU)));
         }
-        rubble(point, life);
     }
 
-    /** A chunk of floor thrown out of the crater in an arc, tumbling, then crumbling away where it lands. */
+    /**
+     * A chunk of floor thrown out of the crater in an arc, tumbling, then crumbling away where it lands. It is lit
+     * like the floor (no brightness of its own), so it must never fly into or land inside a block, where it would
+     * render black: a throw that would hit a wall or a step falls shorter, and with no room at all there is no chunk.
+     */
     private void debris(Location center, BlockData floor, Vector dir) {
         Player owner = player();
         ThreadLocalRandom random = ThreadLocalRandom.current();
         float size = (float) random.nextDouble(0.2, 0.32);
         double reach = random.nextDouble(1.8, 3.2);
-        BlockDisplay chunk = Displays.block(ctx(), owner, center.clone().add(0, 0.4, 0), floor,
+        double rise = random.nextDouble(1.2, 2.0);
+        Location start = center.clone().add(0, 0.4, 0);
+        Location peak = null;
+        Location land = null;
+        for (double share : DEBRIS_REACH_SHARES) {
+            Location top = center.clone().add(dir.clone().multiply(reach * share * 0.5)).add(0, rise, 0);
+            Location end = center.clone().add(dir.clone().multiply(reach * share)).add(0, size / 2, 0);
+            if (isOpen(top) && isOpen(end) && Spots.clearPath(start, top) && Spots.clearPath(top, end)) {
+                peak = top;
+                land = end;
+                break;
+            }
+        }
+        if (peak == null || !isOpen(start)) {
+            return;
+        }
+        BlockDisplay chunk = Displays.block(ctx(), owner, start, floor,
                 Displays.transform(0, 0, 0, size, size, size, random.nextFloat() * 90, random.nextFloat() * 90, 0),
                 DEBRIS_TICKS);
         chunk.setBrightness(null);
         chunk.setTeleportDuration(5);
-        Location peak = center.clone().add(dir.clone().multiply(reach * 0.5)).add(0, random.nextDouble(1.2, 2.0), 0);
-        Location land = center.clone().add(dir.clone().multiply(reach)).add(0, size / 2, 0);
         Transformation tumbled = Displays.transform(0, 0, 0, size, size, size, random.nextFloat() * 360,
                 random.nextFloat() * 360, random.nextFloat() * 360);
+        Location top = peak;
+        Location end = land;
         ctx().runLater(owner, 1, () -> {
             if (chunk.isValid()) {
-                chunk.teleport(peak);
+                Displays.moveTo(chunk, top);
                 Displays.animate(chunk, tumbled, 10);
             }
         });
         ctx().runLater(owner, 6, () -> {
             if (chunk.isValid()) {
-                chunk.teleport(land);
+                Displays.moveTo(chunk, end);
             }
         });
         ctx().runLater(owner, DEBRIS_TICKS - 8, () -> {
@@ -1311,6 +1336,11 @@ public final class FighterAbility extends Ability {
                 world.spawnParticle(Particle.BLOCK, at, Vfx.n(ctx(), 6), 0.3, 0.3, 0.3, 0.1, data);
             }
         }
+    }
+
+    /** True if no block collides around {@code at}: a display there takes the light of open air. */
+    private static boolean isOpen(Location at) {
+        return !at.getWorld().hasCollisionsIn(BoundingBox.of(at, OPEN_PROBE, OPEN_PROBE, OPEN_PROBE));
     }
 
     /** A display of the crater that shrinks into the floor once the crater closes. */

@@ -4,12 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.damage.DamageSource;
@@ -20,7 +23,10 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Frog;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 /** 변신 계열 (새 능력): 늑대인간, 거미, 슬라임, 드래곤. */
@@ -857,6 +863,180 @@ class CreatureNewAbilitiesTest {
                     "flight must be taken back by the dragon itself");
             assertTrue(s.ctx().registry().create("spider").info().ultimateStandalone());
             assertTrue(s.ctx().registry().create("slime").info().ultimateStandalone());
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== real client: rotations, stale velocity
+
+    private static List<BlockDisplay> blockDisplays(Scenario s, Material type) {
+        return s.world.getEntities().stream().filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                .filter(display -> display.getBlock().getMaterial() == type).toList();
+    }
+
+    /**
+     * The left rotation a display's transformation was set with. MockBukkit 4.118 hands it back conjugated (inverted),
+     * a faithful test double does not: a probe display tells which, so the check holds with either.
+     */
+    private static Quaternionf leftRotation(Display display) {
+        Quaternionf read = new Quaternionf(display.getTransformation().getLeftRotation());
+        BlockDisplay probe = display.getWorld().spawn(display.getLocation(), BlockDisplay.class);
+        try {
+            probe.setTransformation(new Transformation(new Vector3f(), new Quaternionf().rotateY(1.0f),
+                    new Vector3f(1), new Quaternionf()));
+            Vector3f turned = new Quaternionf(probe.getTransformation().getLeftRotation())
+                    .transform(new Vector3f(0, 0, 1));
+            return turned.x() < 0 ? read.conjugate() : read;
+        } finally {
+            probe.remove();
+        }
+    }
+
+    /** Where a block display's model is centered, relative to the display's location, with its own rotation. */
+    private static Vector modelCenter(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        Vector3f center = new Vector3f(t.getTranslation())
+                .add(leftRotation(display).transform(new Vector3f(t.getScale()).mul(0.5f)));
+        Location at = display.getLocation();
+        new Quaternionf().rotateY((float) Math.toRadians(-at.getYaw())).rotateX((float) Math.toRadians(at.getPitch()))
+                .transform(center);
+        return new Vector(center.x(), center.y(), center.z());
+    }
+
+    /** The horizontal unit vector a Minecraft yaw faces (0 is +Z, 90 is -X). */
+    private static Vector facing(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+    }
+
+    @Test
+    void slimeLittleSlimeSkinFacesTheSlimesWayFromTheStart() {
+        try (Scenario s = Scenario.ffa("slime")) {
+            s.place(s.enemy, -4.5, 0.5, 270);
+            s.place(s.enemy2, 0.5, -14.5, 0);
+            s.aimAt(s.owner, s.enemy); // looks along -X
+            float yaw = s.owner.getLocation().getYaw();
+            s.assertSucceeded(s.active(), "분열");
+            // Displays spawn unrotated now: the skin, whose shapes carry no rotation, must be turned to the slime's
+            // facing right away, or every slime pops out looking south and snaps round a tick later.
+            List<Location> feet = s.world.getEntities().stream().filter(Frog.class::isInstance)
+                    .map(entity -> entity.getLocation()).toList();
+            List<BlockDisplay> eyes = blockDisplays(s, Material.BLACK_CONCRETE);
+            // The jelly bodies (not the cube squeezed out of the owner by the split): on a little slime's feet.
+            List<BlockDisplay> jelly = blockDisplays(s, Material.SLIME_BLOCK).stream()
+                    .filter(part -> feet.stream().anyMatch(at -> at.distanceSquared(part.getLocation()) < 1.0E-6))
+                    .toList();
+            assertEquals(feet.size(), jelly.size(), "a jelly body per little slime");
+            assertFalse(eyes.isEmpty(), "eyes");
+            for (BlockDisplay part : jelly) {
+                assertEquals(yaw, part.getLocation().getYaw(), 1.0E-3, "jelly yaw");
+            }
+            for (BlockDisplay eye : eyes) {
+                assertEquals(yaw, eye.getLocation().getYaw(), 1.0E-3, "eye yaw");
+                assertEquals(0, eye.getLocation().getPitch(), 1.0E-3, "eye pitch");
+                Vector offset = modelCenter(eye).setY(0).normalize();
+                assertTrue(offset.dot(facing(yaw)) > 0.9, "the eye is on the slime's front: " + offset);
+            }
+            s.ticks(s.paramTicks("slime_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void slimeBounceDoesNotReplayAStaleKnockback() {
+        try (Scenario s = Scenario.ffa("slime")) {
+            s.ticks(2);
+            s.world.physics().setEnabled(false);
+            // A real server never reads a player's motion back: its velocity is what it last sent (an old knockback,
+            // here), not how the player moves. The bounce must not throw the slime sideways with it.
+            s.owner.setVelocity(new Vector(1.2, 0, -0.9));
+            s.owner.setNoDamageTicks(0);
+            s.owner.damage(10, DamageSource.builder(DamageType.FALL).build());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "the big fall does not hurt");
+            s.ticks(2);
+            Vector bounce = s.owner.getVelocity();
+            assertTrue(bounce.getY() > 0.5, "bounced up: " + bounce);
+            assertEquals(0, bounce.getX(), EPSILON, "no stale sideways push: " + bounce);
+            assertEquals(0, bounce.getZ(), EPSILON, "no stale sideways push: " + bounce);
+            s.world.physics().setEnabled(true);
+            s.ticks(120);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dragonWingsStayUnrotatedAndSpreadBackFromTheBodyAsItTurns() {
+        try (Scenario s = Scenario.ffa("dragon")) {
+            s.place(s.owner, 0.5, 0.5, 90); // facing -X
+            s.assertSucceeded(s.ultimate(), "용의 비상");
+            for (float yaw : new float[] {90, -90, 30}) {
+                Location turned = s.owner.getLocation();
+                turned.setYaw(yaw);
+                s.owner.teleport(turned);
+                s.ticks(8);
+                // The upper membranes (thin magenta glass; a falling bomb's shell is a cube of it).
+                List<BlockDisplay> membranes = blockDisplays(s, Material.MAGENTA_STAINED_GLASS).stream()
+                        .filter(display -> display.getTransformation().getScale().z() < 0.05f).toList();
+                assertEquals(2, membranes.size(), "two upper membranes");
+                Vector back = facing(yaw).multiply(-1);
+                Vector left = new Vector(-back.getZ(), 0, back.getX());
+                double sides = 1;
+                for (BlockDisplay wing : membranes) {
+                    // The display must not carry the body's rotation: its model would be turned twice.
+                    assertEquals(0, wing.getLocation().getYaw(), 1.0E-3, "wing display yaw");
+                    assertEquals(0, wing.getLocation().getPitch(), 1.0E-3, "wing display pitch");
+                    Vector3f span = leftRotation(wing).transform(new Vector3f(1, 0, 0));
+                    Vector along = new Vector(span.x(), 0, span.z()).normalize();
+                    assertTrue(along.dot(back) > 0.15, "swept back from the body (yaw " + yaw + "): " + along);
+                    assertTrue(Math.abs(along.dot(left)) > 0.3, "spread to a side (yaw " + yaw + "): " + along);
+                    sides *= along.dot(left);
+                }
+                assertTrue(sides < 0, "one wing to each side (yaw " + yaw + ")");
+            }
+            s.ticks(s.paramTicks("flight_duration"));
+            s.tickUntilGrounded(s.owner, 600);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dragonBombDroppedStandingBurstsOnTheFloorNotInIt() {
+        // No lift: the dragon stays on the ground, so its bombs are released right at its feet.
+        try (Scenario s = Scenario.builder("dragon").param("take_off_height", 0).start()) {
+            s.place(s.enemy, 1.5, 1.5, 180);
+            s.place(s.enemy2, 0.5, -14.5, 0);
+            s.assertSucceeded(s.ultimate(), "용의 비상");
+            s.ticks(s.paramTicks("bomb_interval") + 2);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), EPSILON, "still on the ground");
+            assertTrue(s.damageBy(s.owner, s.enemy) >= s.param("bomb_damage"), "the bomb burst");
+            List<BlockDisplay> pools = blockDisplays(s, Material.PURPLE_STAINED_GLASS).stream()
+                    .filter(display -> display.getTransformation().getScale().y() < 0.1f).toList();
+            assertEquals(1, pools.size(), "a glowing pool");
+            Location pool = pools.getFirst().getLocation();
+            assertTrue(pool.getY() >= FlatWorld.SURFACE, "the pool lies on the floor, not inside it: " + pool);
+            s.ticks(s.paramTicks("flight_duration"));
+            s.tickUntilGrounded(s.owner, 600);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dragonTakeOffDoesNotReplayAStaleKnockback() {
+        try (Scenario s = Scenario.ffa("dragon")) {
+            s.ticks(2);
+            s.world.physics().setEnabled(false);
+            // The server's velocity of a player is what it last sent (an old knockback, here), not its motion.
+            s.owner.setVelocity(new Vector(1.2, 0, -0.9));
+            s.assertSucceeded(s.ultimate(), "용의 비상");
+            Vector kick = s.owner.getVelocity();
+            assertEquals(0, kick.getX(), EPSILON, "no stale sideways push: " + kick);
+            assertEquals(0, kick.getZ(), EPSILON, "no stale sideways push: " + kick);
+            assertTrue(kick.getY() > 0, "lifts off: " + kick);
+            s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("flight_duration") + 5);
+            s.tickUntilGrounded(s.owner, 600);
+            s.ticks(40);
             s.finishClean();
         }
     }
