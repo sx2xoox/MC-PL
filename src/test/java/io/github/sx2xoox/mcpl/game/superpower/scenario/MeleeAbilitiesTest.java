@@ -5,14 +5,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
+import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.junit.jupiter.api.Test;
@@ -22,8 +29,33 @@ class MeleeAbilitiesTest {
 
     private static final double EPSILON = 1.0E-6;
 
+    private static final NamespacedKey GOLDEN_APPLE = new NamespacedKey("test", "golden_apple");
+
     private static long displays(Scenario s) {
         return s.world.getEntities().stream().filter(entity -> entity instanceof ItemDisplay).count();
+    }
+
+    private static long blockDisplays(Scenario s) {
+        return s.world.getEntities().stream().filter(entity -> entity instanceof BlockDisplay).count();
+    }
+
+    /** Absorption hearts like a golden apple's (the max absorption is raised so they are not clamped away). */
+    private static void giveAbsorption(Player player, double amount) {
+        player.getAttribute(Attribute.MAX_ABSORPTION).addModifier(new AttributeModifier(GOLDEN_APPLE, amount,
+                AttributeModifier.Operation.ADD_NUMBER, EquipmentSlotGroup.ANY));
+        player.setAbsorptionAmount(amount);
+    }
+
+    private static void takeAbsorption(Player player) {
+        player.getAttribute(Attribute.MAX_ABSORPTION).removeModifier(GOLDEN_APPLE);
+        player.setAbsorptionAmount(0);
+    }
+
+    /** Exactly what {@code GamblerAbility#fireBorrowed} does. */
+    private static ActivationResult borrow(Scenario s, String id) {
+        Ability borrowed = s.ctx().registry().create(id);
+        borrowed.bind(s.owner, s.ctx(), s.ctx().paramsFor(id));
+        return borrowed.onUltimate();
     }
 
     // ------------------------------------------------------------------ 광전사 berserker
@@ -109,6 +141,23 @@ class MeleeAbilitiesTest {
         }
     }
 
+    @Test
+    void berserkerFrenzyLifestealCountsDamageSoakedByAbsorptionHearts() {
+        try (Scenario s = Scenario.ffa("berserker")) {
+            s.assertSucceeded(s.ultimate(), "광폭화");
+            s.owner.setHealth(10);
+            giveAbsorption(s.enemy, 4);
+            s.melee(s.owner, s.enemy, 6);
+            double dealt = s.damageBy(s.owner, s.enemy) + 4; // the recorded final damage leaves out the absorbed 4
+            assertEquals(0, s.enemy.getAbsorptionAmount(), EPSILON, "the hit broke through the absorption");
+            s.ticks(2);
+            assertEquals(10 + dealt * s.param("ult_lifesteal") / 100, s.owner.getHealth(), 1.0E-6,
+                    "the absorbed part heals too");
+            takeAbsorption(s.enemy);
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 거인 titan
 
     @Test
@@ -143,7 +192,9 @@ class MeleeAbilitiesTest {
             assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + 0.2 || s.enemy.getVelocity().getY() > 0,
                     "launched");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage for the titan");
+            assertTrue(blockDisplays(s) > 0, "rocks erupt from the ground");
             s.ticks(40);
+            assertEquals(0, blockDisplays(s), "the rocks sank back and are gone");
             assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty() || s.damageTaken(s.enemy)
                     <= s.param("slam_damage") + 1, "a short hop at most");
             s.finishClean();
@@ -193,6 +244,45 @@ class MeleeAbilitiesTest {
             assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().expand(-0.01)));
             s.ticks(s.paramTicks("ult_duration") + 20);
             ceiling(s, FlatWorld.FLOOR_Y + 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void titanGrowsEvenWhenHuggingAWall() {
+        try (Scenario s = Scenario.ffa("titan")) {
+            // The titan's own passive cancels suffocation, so it may grow with its back against a wall.
+            s.place(s.owner, 0.5, 1 - 0.3 * s.param("scale"), 0);
+            s.world.wallAlongX(-2, 2, 1, 4, Material.STONE);
+            s.assertSucceeded(s.ultimate(), "거대화 against a wall");
+            s.ticks(12);
+            assertEquals(s.param("ult_scale"), s.owner.getAttribute(Attribute.SCALE).getValue(), 1.0E-6, "grown");
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            s.world.wallAlongX(-2, 2, 1, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void titanGiantFormBorrowedByAGamblerNeedsRoomForTheWholeBody() {
+        try (Scenario s = Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 0).start()) {
+            // A borrowed copy has no suffocation guard: growing into the wall next to the gambler must fail, so the
+            // jackpot moves on to another ultimate.
+            s.place(s.owner, 0.5, 0.7, 0);
+            s.world.wallAlongX(-2, 2, 1, 4, Material.STONE);
+            assertFalse(borrow(s, "titan").succeeded(), "no room for a giant beside the wall");
+            assertEquals(1.0, s.owner.getAttribute(Attribute.SCALE).getValue(), EPSILON, "did not grow");
+            assertTrue(s.owner.getAttribute(Attribute.SCALE).getModifiers().isEmpty());
+
+            s.place(s.owner, 0.5, -3.5, 0);
+            s.assertSucceeded(borrow(s, "titan"), "거대화 in the open");
+            s.ticks(12);
+            assertEquals(s.ctx().paramsFor("titan").num("ult_scale"), s.owner.getAttribute(Attribute.SCALE).getValue(),
+                    1.0E-6, "grown in the open");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks((int) s.ctx().paramsFor("titan").ticks("ult_duration") + 20);
+            assertEquals(1.0, s.owner.getAttribute(Attribute.SCALE).getValue(), EPSILON, "shrunk back");
+            s.world.wallAlongX(-2, 2, 1, 4, Material.AIR);
             s.finishClean();
         }
     }
@@ -250,6 +340,7 @@ class MeleeAbilitiesTest {
             assertEquals(0, allyResistance.getAmplifier(), "resistance I");
             assertFalse(s.enemy.hasPotionEffect(PotionEffectType.RESISTANCE), "enemies are not");
             assertEquals(3, displays(s), "three orbiting shields");
+            assertTrue(blockDisplays(s) >= 10, "a glass dome");
             assertFalse(s.ultimate().succeeded(), "already active");
 
             double health = s.owner.getHealth();
@@ -263,6 +354,7 @@ class MeleeAbilitiesTest {
             assertEquals(0, s.owner.getAbsorptionAmount(), EPSILON, "the bonus absorption is gone");
             assertTrue(s.owner.getAttribute(Attribute.MAX_ABSORPTION).getModifiers().isEmpty());
             assertEquals(0, displays(s), "the shields are gone");
+            assertEquals(0, blockDisplays(s), "the dome is gone");
             s.finishClean();
         }
     }
@@ -317,6 +409,7 @@ class MeleeAbilitiesTest {
         try (Scenario s = Scenario.ffa("vampire")) {
             s.assertSucceeded(s.ultimate(), "피의 축제");
             assertTrue(s.owner.hasPotionEffect(PotionEffectType.SPEED));
+            assertTrue(blockDisplays(s) > 0, "bats circle the vampire");
             s.owner.setHealth(6);
             s.melee(s.owner, s.enemy, 6);
             s.ticks(2);
@@ -326,6 +419,23 @@ class MeleeAbilitiesTest {
             s.melee(s.owner, s.enemy, 5);
             s.ticks(2);
             assertEquals(6 + 5 * s.param("lifesteal") / 100, s.owner.getHealth(), EPSILON, "back to the passive");
+            s.ticks(20);
+            assertEquals(0, blockDisplays(s), "the bats flew off");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void vampireLifestealCountsDamageSoakedByAbsorptionHearts() {
+        try (Scenario s = Scenario.ffa("vampire")) {
+            s.owner.setHealth(10);
+            giveAbsorption(s.enemy, 4);
+            s.melee(s.owner, s.enemy, 5);
+            assertEquals(0, s.enemy.getAbsorptionAmount(), EPSILON, "the hit broke through the absorption");
+            s.ticks(2);
+            assertEquals(10 + 5 * s.param("lifesteal") / 100, s.owner.getHealth(), EPSILON,
+                    "all 5 damage heals, also the 4 the absorption hearts soaked up");
+            takeAbsorption(s.enemy);
             s.finishClean();
         }
     }
