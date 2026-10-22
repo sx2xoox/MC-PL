@@ -949,7 +949,7 @@ public final class HunterAbility extends Ability {
             if (first) {
                 ctx().announce(Text.mm("<" + HUNT_TAG + ">➶</" + HUNT_TAG + "> <white><owner></white><gray>이(가) "
                         + "</gray><white><prey></white><gray>을(를) </gray><" + HUNT_TAG + ">사냥감</" + HUNT_TAG
-                        + "><gray>으로 지정했습니다!</gray>", Placeholder.unparsed("owner", owner.getName()),
+                        + "><gray>으로 지정했습니다!</gray>", Placeholder.component("owner", owner.name()),
                         Placeholder.component("prey", target.name())));
             }
         }
