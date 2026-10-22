@@ -300,9 +300,13 @@ public final class CrystalAbility extends Ability {
         for (Shard shard : shards) {
             BlockDisplay display = shard.display;
             if (shard.at.equals(source) && display != null && display.isValid()) {
-                // The resonating shard pulses.
+                // The resonating shard pulses (and does not grow back once it started to fade meanwhile).
                 Displays.animate(display, shardPose(SHARD_SCALE * 1.18f, shard.at.getYaw()), 3);
-                ctx().runLater(owner, 4, () -> Displays.animate(display, shardPose(SHARD_SCALE, shard.at.getYaw()), 5));
+                ctx().runLater(owner, 4, () -> {
+                    if (!shard.faded) {
+                        Displays.animate(display, shardPose(SHARD_SCALE, shard.at.getYaw()), 5);
+                    }
+                });
             }
         }
     }
@@ -515,6 +519,10 @@ public final class CrystalAbility extends Ability {
             hits++;
             double lift = Motion.launchSpeed(Math.max(0, params().num("spike_lift")));
             Motion.push(enemy, direction.clone().multiply(SPIKE_PUSH).setY(lift), MAX_SPEED);
+            if (!seen(owner, enemy)) {
+                // Caught while in stealth: it is hurt and thrown, but nothing is drawn on it.
+                return;
+            }
             Location body = Fx.body(enemy);
             Vfx.dot(body, Particle.FLASH, PINK, false);
             Vfx.sphere(ctx(), body, 0.6, 14, Particle.DUST_COLOR_TRANSITION, BLUSH, false);
@@ -661,14 +669,16 @@ public final class CrystalAbility extends Ability {
 
         void cast() {
             Player owner = player();
-            // Rooted at once: no walking, jumping or falling until the cage breaks.
-            long lease = hold + 2;
+            // Rooted at once: no walking, jumping or falling until the cage breaks. The root lives in the owner's
+            // scope rather than on a timer, so it also ends the moment the owner's ability does: a prison borrowed
+            // by the gambler gets no onRevoke, and a timed root would hold the prisoner on, invisibly, after the
+            // gambler died and the cage vanished.
             keys.add(ctx().addModifier(owner, prisoner, Attribute.MOVEMENT_SPEED, -1.0,
-                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, lease));
+                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, 0));
             keys.add(ctx().addModifier(owner, prisoner, Attribute.JUMP_STRENGTH, -1.0,
-                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, lease));
+                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, 0));
             keys.add(ctx().addModifier(owner, prisoner, Attribute.GRAVITY, -1.0,
-                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, lease));
+                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, 0));
             prisoner.setVelocity(new Vector());
             prisoner.setFallDistance(0);
 
@@ -881,7 +891,9 @@ public final class CrystalAbility extends Ability {
                     away = new Vector(Math.cos(angle), 0, Math.sin(angle));
                 }
                 Motion.push(enemy, away.multiply(SHATTER_PUSH).setY(SHATTER_LIFT), MAX_SPEED);
-                Vfx.trail(center, Fx.body(enemy), PINK, 5, true);
+                if (seen(owner, enemy)) {
+                    Vfx.trail(center, Fx.body(enemy), PINK, 5, true);
+                }
             }
             residue();
             if (hits > 0 && owner.isOnline()) {
@@ -971,7 +983,7 @@ public final class CrystalAbility extends Ability {
             shatter();
         }
 
-        /** Lifts the root (the modifiers would also run out on their own shortly after the prison's time). */
+        /** Lifts the root (the context also lifts it when the owner's ability is revoked). */
         void unroot() {
             for (NamespacedKey key : keys) {
                 ctx().removeModifier(prisoner, key);
