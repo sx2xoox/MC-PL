@@ -17,6 +17,10 @@
  *     {@code hidePlayer} and showing them again.</li>
  *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx} — sounds, pitch jitter, particle rings and
  *     countdown text.</li>
+ *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx} — particle shapes (rings, spheres,
+ *     helices, lines, arcs, bursts, shockwaves, trails) and palettes, scaled by the configured effect scale.</li>
+ *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays} — block/item/text display entities
+ *     with glow, lifetime, interpolated animation and centered transformations.</li>
  * </ul>
  *
  * <p>Everything here runs on the main thread, like the abilities themselves.
