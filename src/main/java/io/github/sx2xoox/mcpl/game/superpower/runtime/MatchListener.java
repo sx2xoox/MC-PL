@@ -7,6 +7,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
+import io.papermc.paper.event.entity.TameableDeathMessageEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -260,6 +261,14 @@ final class MatchListener implements Listener {
         if (!(event.getEntity() instanceof Player) && ctx().isManaged(event.getEntity())) {
             event.getDrops().clear();
             event.setDroppedExp(0);
+        }
+    }
+
+    /** Summoned wolves are tamed by their summoner; their deaths must not spam vanilla pet death messages. */
+    @EventHandler(ignoreCancelled = true)
+    public void onSummonDeathMessage(TameableDeathMessageEvent event) {
+        if (ctx().isManaged(event.getEntity())) {
+            event.setCancelled(true);
         }
     }
 
