@@ -109,7 +109,11 @@ public final class LancerAbility extends Ability {
     private static final double CARRY_AHEAD = 1.9;
     private static final double CARRY_SPACING = 0.55;
     private static final double CARRY_PULL = 0.5;
-    /** A skewered enemy left this far behind its spot on the spear (stopped by a wall) slips off. */
+    /**
+     * A skewered enemy left this far behind its spot on the spear (stopped by a wall) slips off. A player gets one
+     * tick of charge travel more for every tick of its ping: the server only sees it move a round trip after the
+     * spear started pushing it.
+     */
     private static final double CARRY_LEASH = 3.5;
     private static final double FLING_FORWARD = 1.4;
     private static final double FLING_UP = 0.6;
@@ -140,6 +144,9 @@ public final class LancerAbility extends Ability {
     private boolean charging;
     /** Generation of the running landing protection; a newer one retires the older loop. */
     private int fallGuardToken;
+    /** The target of the spear hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     @Override
     public AbilityInfo info() {
@@ -166,6 +173,9 @@ public final class LancerAbility extends Ability {
 
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() && victim.equals(pendingTarget)) {
+            landed = true;
+        }
         if (!isSprintHit(event) || params().num("sprint_bonus") <= 0) {
             return;
         }
@@ -382,9 +392,10 @@ public final class LancerAbility extends Ability {
                     if (!hit.add(enemy.getUniqueId())) {
                         continue;
                     }
-                    Combat.hit(ctx(), owner, enemy, damage);
+                    boolean struck = land(enemy, damage);
                     pierce(enemy, direction, pull);
-                    if (pull && Combat.isTargetable(ctx(), owner, enemy)) {
+                    // A dodged or blocked spear drags nobody along.
+                    if (pull && struck && Combat.isTargetable(ctx(), owner, enemy)) {
                         Vector toOwner = Motion.horizontal(owner.getLocation().toVector()
                                 .subtract(enemy.getLocation().toVector()));
                         Motion.push(enemy, toOwner.multiply(RETURN_PULL).setY(RETURN_LIFT), MAX_VELOCITY);
@@ -638,8 +649,8 @@ public final class LancerAbility extends Ability {
         }
 
         private void skewer(Player owner, LivingEntity enemy) {
-            Combat.hit(ctx(), owner, enemy, damage);
-            if (!Combat.isTargetable(ctx(), owner, enemy)) {
+            // Only a hit that landed puts the enemy on the spear: a dodge or a shield slips past it.
+            if (!land(enemy, damage) || !Combat.isTargetable(ctx(), owner, enemy)) {
                 return;
             }
             skewered.add(enemy);
@@ -657,7 +668,8 @@ public final class LancerAbility extends Ability {
                 }
                 Location spot = now.clone().add(direction.clone().multiply(CARRY_AHEAD + i * CARRY_SPACING));
                 Vector offset = spot.toVector().subtract(enemy.getLocation().toVector());
-                if (offset.length() > CARRY_LEASH) {
+                double leash = CARRY_LEASH + (enemy instanceof Player rider ? CHARGE_SPEED * lagTicks(rider) : 0);
+                if (offset.length() > leash) {
                     skewered.remove(i);
                     continue;
                 }
@@ -835,6 +847,21 @@ public final class LancerAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Deals a spear hit and tells whether it landed (nothing cancelled it). */
+    private boolean land(LivingEntity target, double damage) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target);
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
+    }
 
     /** One spear part at {@code scale}, rolled {@code roll} degrees about the spear's length. */
     private static Transformation pose(Part part, float scale, float roll) {

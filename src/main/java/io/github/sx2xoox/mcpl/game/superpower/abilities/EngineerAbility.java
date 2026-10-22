@@ -82,7 +82,7 @@ public final class EngineerAbility extends Ability {
             .param("turret_range", 12)
             .param("turret_interval", 0.8)
             .param("turret_damage", 1)
-            .param("laser_duration", 10)
+            .param("laser_duration", 8)
             .param("laser_charge", 0.75)
             .param("laser_range", 16)
             .param("laser_interval", 0.25)
@@ -141,8 +141,11 @@ public final class EngineerAbility extends Ability {
     private static final double LASER_PLATE = 0.2;
     private static final double LASER_PYLON = 0.75;
     private static final float LASER_HEAD_SIZE = 0.6f;
-    /** Radians per tick the beam can swing towards its target; a fast enough dodge outruns it up close. */
-    private static final double BEAM_TURN = 0.22;
+    /**
+     * Radians per tick the beam can swing towards its target (about 140° a second): a sprint outruns it within two
+     * blocks of the turret, and a new target is reached in a visible sweep that burns whoever it crosses.
+     */
+    private static final double BEAM_TURN = 0.12;
     private static final float BEAM_CORE_WIDTH = 0.06f;
     private static final float BEAM_SHEATH_WIDTH = 0.17f;
     /** Enemies within this distance of the beam's axis are burned. */

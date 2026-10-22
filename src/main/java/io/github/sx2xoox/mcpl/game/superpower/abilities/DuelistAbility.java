@@ -127,6 +127,7 @@ public final class DuelistAbility extends Ability {
     private static final Material PANEL = Material.YELLOW_STAINED_GLASS;
     private static final Material PANEL_FLASH = Material.WHITE_STAINED_GLASS;
     private static final TextColor GOLD = TextColor.color(0xF2B632);
+    private static final Component EMBLEM = Component.text("⚔", GOLD, TextDecoration.BOLD);
 
     private @Nullable LivingEntity marked;
     private long markUntil = -1;
@@ -289,31 +290,40 @@ public final class DuelistAbility extends Ability {
         Player owner = player();
         double range = Math.max(1, params().num("challenge_range"));
         LivingEntity target = ctx().findTarget(owner, range);
-        if (target == null) {
+        // An enemy hidden by stealth cannot be challenged: the golden mark would give it away to everyone.
+        if (target == null || !seen(owner, target)) {
             return ActivationResult.fail("시야에 결투할 적이 없습니다");
         }
         long duration = Math.max(1, params().ticks("challenge_duration"));
         marked = target;
         markUntil = ctx().currentTick() + duration;
         int token = ++markToken;
-        TextDisplay emblem = Displays.text(ctx(), owner, emblemSpot(target),
-                Component.text("⚔", GOLD, TextDecoration.BOLD), 0.4f, duration + 10);
+        TextDisplay emblem = Displays.text(ctx(), owner, emblemSpot(target), EMBLEM, 0.4f, duration + 10);
         emblem.setTeleportDuration(2);
         Displays.animateNextTick(ctx(), owner, emblem, Displays.centered(0, 0, 0, 1.6f, 1.6f, 1.6f, 0, 0, 0), 4);
         challengeCast(owner, target);
 
+        boolean[] veiled = {false};
         Loop.repeat(ctx(), owner, MARK_FX_PERIOD, MARK_FX_PERIOD, duration / MARK_FX_PERIOD, run -> {
             if (token != markToken || !Combat.isTargetable(ctx(), owner, target)) {
                 return false;
             }
+            // The challenge holds through stealth, but its mark never shows where a stealthed enemy is.
+            boolean hidden = !seen(owner, target);
             if (emblem.isValid()) {
+                if (hidden != veiled[0]) {
+                    veiled[0] = hidden;
+                    emblem.text(hidden ? Component.empty() : EMBLEM);
+                }
                 emblem.teleport(emblemSpot(target));
                 if (run % 10 == 0) {
                     float pulse = run % 20 == 0 ? 1.9f : 1.6f;
                     Displays.animate(emblem, Displays.centered(0, 0, 0, pulse, pulse, pulse, 0, 0, 0), 5);
                 }
             }
-            markAura(owner, target, run);
+            if (!hidden) {
+                markAura(owner, target, run);
+            }
             return true;
         }, () -> {
             if (emblem.isValid()) {
@@ -394,9 +404,15 @@ public final class DuelistAbility extends Ability {
         }
         double range = Math.max(1, params().num("ult_range"));
         LivingEntity target = ctx().findTarget(owner, range);
-        if (target == null) {
-            List<LivingEntity> near = ctx().enemiesNear(owner, owner.getLocation(), range);
-            target = near.isEmpty() ? null : near.getFirst();
+        if (target == null || !seen(owner, target)) {
+            // The nearest enemy the duellist can see: nobody is dragged into a duel out of stealth.
+            target = null;
+            for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), range)) {
+                if (seen(owner, enemy)) {
+                    target = enemy;
+                    break;
+                }
+            }
         }
         if (target == null || !target.getWorld().equals(owner.getWorld())) {
             return ActivationResult.fail("반경 " + AbilityInfo.formatNumber(range) + "블록 안에 결투할 적이 없습니다");
@@ -531,6 +547,9 @@ public final class DuelistAbility extends Ability {
             }
             if (run % 5 == 0) {
                 for (LivingEntity duelist : List.of(owner, target)) {
+                    if (!seen(owner, duelist)) {
+                        continue; // an opponent that slipped into stealth is not pointed out
+                    }
                     Vfx.ring(ctx(), duelist.getLocation().add(0, 0.08, 0), 0.6, 10, run * 0.2,
                             Particle.DUST_COLOR_TRANSITION, duelist == owner ? PALETTE.glow(0.8f) : PALETTE.fade(0.8f),
                             false);
@@ -772,6 +791,11 @@ public final class DuelistAbility extends Ability {
                 registered = false;
             }
         }
+    }
+
+    /** False for an enemy player hidden from the owner by stealth. */
+    private static boolean seen(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player player) || player.equals(owner) || owner.canSee(player);
     }
 
     private static Component timerText(long ticks) {

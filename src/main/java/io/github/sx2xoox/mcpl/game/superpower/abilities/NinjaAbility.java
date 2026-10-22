@@ -143,6 +143,9 @@ public final class NinjaAbility extends Ability {
     private @Nullable Smoke smoke;
     /** The victim of a smoke ambush whose damage was raised, waiting for the hit to land. */
     private @Nullable LivingEntity ambushVictim;
+    /** The target of the star hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     /** One bleeding enemy: the drops left to deal and the ticks until the next one. */
     private static final class Bleed {
@@ -406,8 +409,8 @@ public final class NinjaAbility extends Ability {
             if (previous > 0) {
                 damage *= Math.max(0, params().num("shuriken_overlap")) / 100.0;
             }
-            Combat.hit(ctx(), owner, enemy, damage);
-            if (Combat.isTargetable(ctx(), owner, enemy)) {
+            // A star that was dodged, deflected or blocked opens no wound.
+            if (land(enemy, damage) && Combat.isTargetable(ctx(), owner, enemy)) {
                 bleed(enemy);
             }
             Location body = Fx.body(enemy);
@@ -467,6 +470,21 @@ public final class NinjaAbility extends Ability {
             }
             Vfx.cloud(ctx(), at, Particle.SMOKE, 3, 0.1, 0.01, null, false);
         }
+    }
+
+    /** Deals a star's damage and tells whether it landed (nothing cancelled it). */
+    private boolean land(LivingEntity target, double damage) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target);
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
     }
 
     /** One plate of the star: a thin square lying flat, turned {@code yaw} degrees. */
@@ -570,6 +588,9 @@ public final class NinjaAbility extends Ability {
 
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() && victim.equals(pendingTarget)) {
+            landed = true;
+        }
         Smoke current = smoke;
         if (current == null || ctx().isAbilityDamage() || event.getCause() != DamageCause.ENTITY_ATTACK
                 || !player().equals(event.getDamager())) {
