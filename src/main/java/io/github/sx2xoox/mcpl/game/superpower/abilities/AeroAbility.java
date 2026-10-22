@@ -7,6 +7,11 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -17,19 +22,11 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.damage.DamageType;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -98,15 +95,7 @@ public final class AeroAbility extends Ability {
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled()) {
-            return;
-        }
-        if (event.getCause() == DamageCause.FALL) {
-            event.setCancelled(true);
-            return;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        if (fall != null && fall.isTagged(event.getDamageSource().getDamageType())) {
+        if (!event.isCancelled() && Combat.isFall(event)) {
             event.setCancelled(true);
         }
     }
@@ -124,15 +113,21 @@ public final class AeroAbility extends Ability {
 
         double speed = Math.max(0.3, params().num("distance") / DISTANCE_PER_SPEED);
         Vector velocity = owner.getEyeLocation().getDirection().multiply(speed);
+        // The leap must land inside the arena: shorten its horizontal part when the border is in the way.
+        double travel = Math.hypot(velocity.getX(), velocity.getZ()) * DISTANCE_PER_SPEED;
+        double reach = Spots.arenaReach(ctx(), start, new Vector(velocity.getX(), 0, velocity.getZ()), travel);
+        if (travel > 1.0E-3 && reach < travel) {
+            velocity.setX(velocity.getX() * reach / travel).setZ(velocity.getZ() * reach / travel);
+        }
         velocity.setY(Math.max(velocity.getY(), MIN_LIFT));
-        owner.setVelocity(clamp(velocity, MAX_VELOCITY));
+        owner.setVelocity(Motion.clamp(velocity, MAX_VELOCITY));
         owner.setFallDistance(0);
-        sound(start, Sound.ENTITY_BREEZE_JUMP, 1.0f, 1.0f + jitter(0.1f));
+        Fx.sound(start, Sound.ENTITY_BREEZE_JUMP, 1.0f, 1.0f + Fx.jitter(0.1f));
 
         boolean[] airborne = {false};
-        loop(1, 1, MAX_AIR_TICKS, tick -> {
+        Loop.repeat(ctx(), player(), 1, 1, MAX_AIR_TICKS, tick -> {
             Location now = owner.getLocation();
-            boolean landed = isGrounded(owner) || owner.isInWater() || owner.isClimbing();
+            boolean landed = Motion.isGrounded(owner) || owner.isInWater() || owner.isClimbing();
             if (!landed) {
                 airborne[0] = true;
                 World world = now.getWorld();
@@ -144,7 +139,7 @@ public final class AeroAbility extends Ability {
             }
             if (airborne[0] || tick >= STUCK_LANDING_TICKS) {
                 gust(now);
-                sound(now, Sound.ENTITY_BREEZE_LAND, 1.0f, 0.9f + jitter(0.1f));
+                Fx.sound(now, Sound.ENTITY_BREEZE_LAND, 1.0f, 0.9f + Fx.jitter(0.1f));
                 return false;
             }
             return true;
@@ -158,8 +153,8 @@ public final class AeroAbility extends Ability {
         double radius = params().num("radius");
         double damage = params().num("damage");
         for (LivingEntity enemy : ctx().enemiesNear(player(), center, radius)) {
-            hit(enemy, damage);
-            if (!enemy.isValid() || enemy.isDead() || !ctx().isEnemy(player(), enemy)) {
+            Combat.hit(ctx(), player(), enemy, damage);
+            if (!Combat.isTargetable(ctx(), player(), enemy)) {
                 continue;
             }
             Vector away = enemy.getLocation().toVector().subtract(center.toVector()).setY(0);
@@ -168,7 +163,7 @@ public final class AeroAbility extends Ability {
                 away = new Vector(Math.cos(angle), 0, Math.sin(angle));
             }
             away.normalize().multiply(PUSH_HORIZONTAL).setY(PUSH_VERTICAL);
-            enemy.setVelocity(clamp(away, MAX_VELOCITY));
+            enemy.setVelocity(Motion.clamp(away, MAX_VELOCITY));
         }
 
         Location puff = center.clone().add(0, 0.3, 0);
@@ -180,7 +175,7 @@ public final class AeroAbility extends Ability {
             world.spawnParticle(Particle.CLOUD, puff.getX(), puff.getY(), puff.getZ(), 0,
                     Math.cos(angle), 0.02, Math.sin(angle), Math.max(0.15, radius * 0.08));
         }
-        sound(center, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1.0f, 1.0f + jitter(0.1f));
+        Fx.sound(center, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1.0f, 1.0f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ ultimate: tornado
@@ -190,11 +185,11 @@ public final class AeroAbility extends Ability {
         Location base = player().getLocation();
         long duration = Math.max(1, params().ticks("ult_duration"));
         Tornado tornado = new Tornado(base, duration);
-        sound(base, Sound.ENTITY_BREEZE_WIND_BURST, 1.5f, 0.6f);
-        sound(base, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1.5f, 0.5f);
-        sound(base, Sound.ENTITY_BREEZE_CHARGE, 1.2f, 0.8f);
+        Fx.sound(base, Sound.ENTITY_BREEZE_WIND_BURST, 1.5f, 0.6f);
+        Fx.sound(base, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1.5f, 0.5f);
+        Fx.sound(base, Sound.ENTITY_BREEZE_CHARGE, 1.2f, 0.8f);
         base.getWorld().spawnParticle(Particle.GUST_EMITTER_LARGE, base.clone().add(0, 0.5, 0), 1);
-        loop(0, 1, duration, tornado);
+        Loop.repeat(ctx(), player(), 0, 1, duration, tornado);
         return ActivationResult.success();
     }
 
@@ -227,7 +222,7 @@ public final class AeroAbility extends Ability {
             }
             drawFunnel(tick);
             if (tick % 8 == 0) {
-                sound(base, Sound.ENTITY_BREEZE_WHIRL, 1.4f, 0.7f + jitter(0.1f));
+                Fx.sound(base, Sound.ENTITY_BREEZE_WHIRL, 1.4f, 0.7f + Fx.jitter(0.1f));
             }
             Iterator<Captive> it = captives.values().iterator();
             while (it.hasNext()) {
@@ -241,7 +236,7 @@ public final class AeroAbility extends Ability {
             if (tick >= duration - 1) {
                 captives.values().forEach(Captive::release);
                 captives.clear();
-                sound(base, Sound.ENTITY_BREEZE_SHOOT, 1.4f, 0.6f);
+                Fx.sound(base, Sound.ENTITY_BREEZE_SHOOT, 1.4f, 0.6f);
                 return false;
             }
             return true;
@@ -256,7 +251,7 @@ public final class AeroAbility extends Ability {
                 captives.put(enemy.getUniqueId(), new Captive(enemy, slots++));
                 Location at = enemy.getLocation();
                 world.spawnParticle(Particle.GUST, at.clone().add(0, 1, 0), 1);
-                sound(at, Sound.ENTITY_BREEZE_INHALE, 1.0f, 1.3f + jitter(0.1f));
+                Fx.sound(at, Sound.ENTITY_BREEZE_INHALE, 1.0f, 1.3f + Fx.jitter(0.1f));
             }
             if (captives.size() > before) {
                 player().sendActionBar(Text.mm("<#A6F0D8>≋ 토네이도</#A6F0D8> <gray>" + captives.size()
@@ -322,7 +317,7 @@ public final class AeroAbility extends Ability {
             }
 
             boolean isHeld() {
-                if (!entity.isValid() || entity.isDead() || !ctx().isEnemy(player(), entity)
+                if (!Combat.isTargetable(ctx(), player(), entity)
                         || !world.equals(entity.getWorld())) {
                     return false;
                 }
@@ -345,7 +340,7 @@ public final class AeroAbility extends Ability {
                 Vector position = entity.getLocation().toVector();
                 // Feed-forward along the orbit plus a gentle pull towards where the entity should be.
                 Vector velocity = next.clone().subtract(now).add(next.clone().subtract(position).multiply(STEER_GAIN));
-                entity.setVelocity(clamp(velocity, MAX_STEER));
+                entity.setVelocity(Motion.clamp(velocity, MAX_STEER));
                 entity.setFallDistance(0);
                 if (age % 3 == 0) {
                     world.spawnParticle(Particle.CLOUD, entity.getLocation(), 1, 0.2, 0.1, 0.2, 0.01);
@@ -358,17 +353,17 @@ public final class AeroAbility extends Ability {
                     return;
                 }
                 Vector inward = base.toVector().subtract(entity.getLocation().toVector()).setY(0).multiply(0.12);
-                entity.setVelocity(clamp(inward.setY(-SLAM_SPEED), MAX_VELOCITY));
+                entity.setVelocity(Motion.clamp(inward.setY(-SLAM_SPEED), MAX_VELOCITY));
                 entity.setFallDistance(0);
                 LivingEntity target = entity;
                 boolean[] airborne = {false};
-                loop(1, 1, SLAM_TIMEOUT_TICKS, tick -> {
-                    if (!target.isValid() || target.isDead() || !ctx().isEnemy(player(), target)) {
+                Loop.repeat(ctx(), player(), 1, 1, SLAM_TIMEOUT_TICKS, tick -> {
+                    if (!Combat.isTargetable(ctx(), player(), target)) {
                         return false;
                     }
                     // The slam is the designed damage; vanilla fall damage on top of it would double dip.
                     target.setFallDistance(0);
-                    boolean landed = isGrounded(target) || target.isInWater();
+                    boolean landed = Motion.isGrounded(target) || target.isInWater();
                     if (!landed) {
                         airborne[0] = true;
                     }
@@ -385,61 +380,17 @@ public final class AeroAbility extends Ability {
     private void slam(LivingEntity target) {
         Location at = target.getLocation();
         World world = at.getWorld();
-        hit(target, params().num("slam_damage"));
+        Combat.hit(ctx(), player(), target, params().num("slam_damage"));
         BlockData ground = at.clone().subtract(0, 0.2, 0).getBlock().getBlockData();
         if (!ground.getMaterial().isAir()) {
             world.spawnParticle(Particle.BLOCK, at, 24, 0.5, 0.1, 0.5, 0.15, ground);
         }
         world.spawnParticle(Particle.GUST, at.clone().add(0, 0.3, 0), 1);
         world.spawnParticle(Particle.CLOUD, at, 10, 0.4, 0.1, 0.4, 0.05);
-        sound(at, Sound.ITEM_MACE_SMASH_GROUND, 1.0f, 0.9f + jitter(0.1f));
+        Fx.sound(at, Sound.ITEM_MACE_SMASH_GROUND, 1.0f, 0.9f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ helpers
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(Entity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so follow-up hits are not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static Vector clamp(Vector velocity, double max) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > max ? velocity.multiply(max / length) : velocity;
-    }
 
     private static double smoothstep(double t) {
         return t * t * (3 - 2 * t);
@@ -447,13 +398,5 @@ public final class AeroAbility extends Ability {
 
     private static double square(double value) {
         return value * value;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

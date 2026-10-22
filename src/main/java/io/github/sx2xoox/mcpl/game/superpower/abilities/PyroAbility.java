@@ -1,8 +1,10 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -13,7 +15,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -25,7 +26,6 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
@@ -129,7 +129,7 @@ public final class PyroAbility extends Ability {
         int shots = Math.max(1, params().integer("shots"));
         launchFireball(0);
         if (shots > 1) {
-            loop(SHOT_INTERVAL_TICKS, SHOT_INTERVAL_TICKS, shots - 1, shot -> {
+            Loop.repeat(ctx(), player(), SHOT_INTERVAL_TICKS, SHOT_INTERVAL_TICKS, shots - 1, shot -> {
                 launchFireball((int) shot + 1);
                 return true;
             });
@@ -142,13 +142,13 @@ public final class PyroAbility extends Ability {
         Vector direction = eye.getDirection();
         Fireball fireball = new Fireball(eye, direction);
         long maxTicks = (long) Math.ceil(params().num("fireball_range") / FIREBALL_SPEED) + 2;
-        loop(0, 1, maxTicks, fireball);
+        Loop.repeat(ctx(), player(), 0, 1, maxTicks, fireball);
 
         World world = eye.getWorld();
         Location muzzle = eye.clone().add(direction.clone().multiply(0.8));
         world.spawnParticle(Particle.FLAME, muzzle, 5, 0.08, 0.08, 0.08, 0.03);
         world.spawnParticle(Particle.SMOKE, muzzle, 3, 0.05, 0.05, 0.05, 0.01);
-        sound(eye, Sound.ENTITY_BLAZE_SHOOT, 0.8f, 0.9f + index * 0.15f + jitter(0.05f));
+        Fx.sound(eye, Sound.ENTITY_BLAZE_SHOOT, 0.8f, 0.9f + index * 0.15f + Fx.jitter(0.05f));
     }
 
     /** A simulated fireball: flies straight and bursts on the first enemy, block or fluid it meets. */
@@ -229,22 +229,22 @@ public final class PyroAbility extends Ability {
             double damage = params().num("fireball_damage");
             long burn = params().ticks("fireball_burn");
             for (LivingEntity enemy : ctx().enemiesNear(player(), at, radius)) {
-                hit(enemy, damage);
+                Combat.hit(ctx(), player(), enemy, damage);
                 ignite(enemy, burn);
             }
             world.spawnParticle(Particle.FLAME, at, 22, 0.2, 0.2, 0.2, 0.12);
             world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 12, radius * 0.4, radius * 0.3, radius * 0.4, 0, HEAT);
             world.spawnParticle(Particle.LAVA, at, 4, 0.2, 0.2, 0.2, 0);
             world.spawnParticle(Particle.LARGE_SMOKE, at, 4, 0.2, 0.2, 0.2, 0.03);
-            sound(at, Sound.ENTITY_GENERIC_EXPLODE, 0.55f, 1.6f + jitter(0.15f));
-            sound(at, Sound.ITEM_FIRECHARGE_USE, 0.8f, 0.8f + jitter(0.1f));
+            Fx.sound(at, Sound.ENTITY_GENERIC_EXPLODE, 0.55f, 1.6f + Fx.jitter(0.15f));
+            Fx.sound(at, Sound.ITEM_FIRECHARGE_USE, 0.8f, 0.8f + Fx.jitter(0.1f));
         }
 
         private void fizzle(Location at) {
             visual.remove();
             world.spawnParticle(Particle.CLOUD, at, 8, 0.15, 0.1, 0.15, 0.03);
             world.spawnParticle(Particle.SMOKE, at, 6, 0.15, 0.1, 0.15, 0.02);
-            sound(at, Sound.BLOCK_FIRE_EXTINGUISH, 0.7f, 1.3f + jitter(0.1f));
+            Fx.sound(at, Sound.BLOCK_FIRE_EXTINGUISH, 0.7f, 1.3f + Fx.jitter(0.1f));
         }
     }
 
@@ -258,7 +258,7 @@ public final class PyroAbility extends Ability {
 
         Location start = player().getLocation();
         ignitionBlast(start, radius);
-        loop(0, 1, duration, tick -> {
+        Loop.repeat(ctx(), player(), 0, 1, duration, tick -> {
             Location center = player().getLocation();
             drawVortex(center, radius, tick);
             if (tick % interval == 0) {
@@ -277,12 +277,12 @@ public final class PyroAbility extends Ability {
         long burn = params().ticks("ult_burn");
         World world = center.getWorld();
         for (LivingEntity enemy : ctx().enemiesNear(player(), center, radius)) {
-            hit(enemy, damage);
+            Combat.hit(ctx(), player(), enemy, damage);
             ignite(enemy, burn);
             Location body = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
             world.spawnParticle(Particle.FLAME, body, 6, 0.25, 0.45, 0.25, 0.03);
         }
-        sound(center, Sound.ENTITY_BLAZE_BURN, 1.2f, 0.7f + jitter(0.15f));
+        Fx.sound(center, Sound.ENTITY_BLAZE_BURN, 1.2f, 0.7f + Fx.jitter(0.15f));
     }
 
     private void drawVortex(Location center, double radius, long tick) {
@@ -318,7 +318,7 @@ public final class PyroAbility extends Ability {
         }
         if (tick % 10 == 5) {
             world.spawnParticle(Particle.LAVA, center.clone().add(0, 0.5, 0), 3, radius * 0.4, 0.2, radius * 0.4, 0);
-            sound(center, Sound.BLOCK_FIRE_AMBIENT, 1.4f, 0.8f + jitter(0.2f));
+            Fx.sound(center, Sound.BLOCK_FIRE_AMBIENT, 1.4f, 0.8f + Fx.jitter(0.2f));
         }
     }
 
@@ -333,16 +333,16 @@ public final class PyroAbility extends Ability {
                     Math.cos(angle), 0.05, Math.sin(angle), speed);
         }
         world.spawnParticle(Particle.LAVA, center.clone().add(0, 0.5, 0), 8, 0.6, 0.3, 0.6, 0);
-        sound(center, Sound.ENTITY_BLAZE_SHOOT, 1.4f, 0.55f);
-        sound(center, Sound.ITEM_FIRECHARGE_USE, 1.2f, 0.6f);
-        sound(center, Sound.ENTITY_GHAST_SHOOT, 0.8f, 0.7f);
+        Fx.sound(center, Sound.ENTITY_BLAZE_SHOOT, 1.4f, 0.55f);
+        Fx.sound(center, Sound.ITEM_FIRECHARGE_USE, 1.2f, 0.6f);
+        Fx.sound(center, Sound.ENTITY_GHAST_SHOOT, 0.8f, 0.7f);
     }
 
     private void dieDown(Location center, double radius) {
         World world = center.getWorld();
         world.spawnParticle(Particle.LARGE_SMOKE, center.clone().add(0, 0.6, 0), 20, radius * 0.35, 0.4,
                 radius * 0.35, 0.02);
-        sound(center, Sound.BLOCK_FIRE_EXTINGUISH, 1.0f, 0.7f);
+        Fx.sound(center, Sound.BLOCK_FIRE_EXTINGUISH, 1.0f, 0.7f);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -356,41 +356,5 @@ public final class PyroAbility extends Ability {
         if (target.getFireTicks() < fireTicks) {
             target.setFireTicks(fireTicks);
         }
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so rapid multi-hits all land. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

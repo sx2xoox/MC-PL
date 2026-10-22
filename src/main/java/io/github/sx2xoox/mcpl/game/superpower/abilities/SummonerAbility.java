@@ -2,10 +2,12 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -20,7 +22,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -33,8 +34,6 @@ import org.bukkit.entity.Projectile;
 import org.bukkit.entity.Sittable;
 import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -129,8 +128,8 @@ public final class SummonerAbility extends Ability {
         World world = spot.getWorld();
         world.spawnParticle(Particle.SOUL, spot.clone().add(0, 0.5, 0), 16, 0.4, 0.5, 0.4, 0.04);
         world.spawnParticle(Particle.SCULK_SOUL, spot.clone().add(0, 0.3, 0), 8, 0.3, 0.2, 0.3, 0.03);
-        sound(spot, Sound.ENTITY_WOLF_GROWL, 1.0f, 0.6f + jitter(0.05f));
-        sound(spot, Sound.PARTICLE_SOUL_ESCAPE, 1.5f, 0.8f);
+        Fx.sound(spot, Sound.ENTITY_WOLF_GROWL, 1.0f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(spot, Sound.PARTICLE_SOUL_ESCAPE, 1.5f, 0.8f);
         player().sendActionBar(Text.mm("<#8FE3FF>영혼 늑대가 깨어났습니다</#8FE3FF>"));
     }
 
@@ -185,8 +184,8 @@ public final class SummonerAbility extends Ability {
         }
         drawCircle(origin, 1.4, SUMMON_DUST);
         origin.getWorld().spawnParticle(Particle.ENCHANT, origin.clone().add(0, 1, 0), 30, 0.6, 0.5, 0.6, 0.6);
-        sound(origin, Sound.ENTITY_EVOKER_PREPARE_SUMMON, 1.0f, 1.2f + jitter(0.05f));
-        sound(origin, Sound.ENTITY_WOLF_ANGRY_GROWL, 1.0f, 0.9f + jitter(0.1f));
+        Fx.sound(origin, Sound.ENTITY_EVOKER_PREPARE_SUMMON, 1.0f, 1.2f + Fx.jitter(0.05f));
+        Fx.sound(origin, Sound.ENTITY_WOLF_ANGRY_GROWL, 1.0f, 0.9f + Fx.jitter(0.1f));
         player().sendActionBar(Text.mm("<#B48CFF>늑대 " + summoned + "마리 소환 · 현재 " + wolfCount() + "마리</#B48CFF>"));
         return ActivationResult.success();
     }
@@ -216,7 +215,7 @@ public final class SummonerAbility extends Ability {
             spawned.setCollarColor(spirit ? DyeColor.LIGHT_BLUE : DyeColor.PURPLE);
             setBase(spawned, Attribute.MAX_HEALTH, health);
             setBase(spawned, Attribute.ATTACK_DAMAGE, damage);
-            spawned.setHealth(Math.min(health, maxHealth(spawned)));
+            spawned.setHealth(Math.min(health, Combat.maxHealth(spawned)));
             spawned.setCustomNameVisible(true);
         });
         if (!wolf.isValid()) {
@@ -257,7 +256,7 @@ public final class SummonerAbility extends Ability {
             setBase(spawned, Attribute.ATTACK_DAMAGE, damage);
             setBase(spawned, Attribute.SCALE, GOLEM_SCALE);
             setBase(spawned, Attribute.MOVEMENT_SPEED, GOLEM_SPEED);
-            spawned.setHealth(Math.min(health, maxHealth(spawned)));
+            spawned.setHealth(Math.min(health, Combat.maxHealth(spawned)));
             spawned.setCustomNameVisible(true);
         });
         if (!golem.isValid()) {
@@ -282,15 +281,12 @@ public final class SummonerAbility extends Ability {
         world.spawnParticle(Particle.DUST_PILLAR, spot.clone().add(0, 0.1, 0), 30, radius * 0.5, 0, radius * 0.5, 0.2,
                 Material.IRON_BLOCK.createBlockData());
         drawCircle(spot, radius, IRON_DUST);
-        sound(spot, Sound.BLOCK_ANVIL_LAND, 1.3f, 0.6f + jitter(0.05f));
-        sound(spot, Sound.ENTITY_IRON_GOLEM_REPAIR, 1.3f, 0.8f);
-        sound(spot, Sound.ENTITY_IRON_GOLEM_ATTACK, 1.2f, 0.7f);
+        Fx.sound(spot, Sound.BLOCK_ANVIL_LAND, 1.3f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(spot, Sound.ENTITY_IRON_GOLEM_REPAIR, 1.3f, 0.8f);
+        Fx.sound(spot, Sound.ENTITY_IRON_GOLEM_ATTACK, 1.2f, 0.7f);
 
         for (LivingEntity target : ctx().enemiesNear(player(), spot, radius)) {
-            if (damage > 0) {
-                target.setNoDamageTicks(0);
-                ctx().damage(player(), target, damage);
-            }
+            Combat.hit(ctx(), player(), target, damage);
             if (!target.isValid() || target.isDead()) {
                 continue;
             }
@@ -299,7 +295,8 @@ public final class SummonerAbility extends Ability {
                 away.normalize().multiply(0.4);
             }
             away.setY(0.6);
-            target.setVelocity(clamp(target.getVelocity().add(away.multiply(knockbackFactor(target)))));
+            away.multiply(Motion.knockbackFactor(target));
+            target.setVelocity(Motion.clamp(target.getVelocity().add(away), MAX_SPEED));
         }
     }
 
@@ -327,7 +324,8 @@ public final class SummonerAbility extends Ability {
         void start() {
             updateName(expiresAt - ctx().currentTick());
             long runs = (expiresAt - ctx().currentTick()) / CONTROL_PERIOD + 2;
-            new Repeater(runs, this::control, () -> dismiss(this, true)).start(CONTROL_PERIOD, CONTROL_PERIOD);
+            Loop.repeat(ctx(), player(), CONTROL_PERIOD, CONTROL_PERIOD, runs, this::control,
+                    () -> dismiss(this, true));
         }
 
         private boolean control(long run) {
@@ -383,8 +381,7 @@ public final class SummonerAbility extends Ability {
         }
 
         private boolean isValidTarget(LivingEntity target, double leash) {
-            return target.isValid() && !target.isDead() && target.getWorld().equals(mob.getWorld())
-                    && ctx().isEnemy(player(), target)
+            return Combat.isTargetable(ctx(), player(), target) && target.getWorld().equals(mob.getWorld())
                     && target.getLocation().distanceSquared(mob.getLocation()) <= leash * leash;
         }
 
@@ -435,8 +432,8 @@ public final class SummonerAbility extends Ability {
         if (effects) {
             Location at = mob.getLocation();
             poof(at);
-            sound(at, summon.golem ? Sound.ENTITY_IRON_GOLEM_DEATH : Sound.ENTITY_WOLF_WHINE, 0.8f,
-                    1.0f + jitter(0.1f));
+            Fx.sound(at, summon.golem ? Sound.ENTITY_IRON_GOLEM_DEATH : Sound.ENTITY_WOLF_WHINE, 0.8f,
+                    1.0f + Fx.jitter(0.1f));
         }
         mob.remove();
     }
@@ -452,11 +449,11 @@ public final class SummonerAbility extends Ability {
     /**
      * A free spot for a {@code width} x {@code height} mob around {@code center}: first {@code distance} blocks in
      * the facing direction turned by {@code firstAngle} degrees, then the other directions, then the center itself.
-     * Each candidate must stand on the ground, be free of blocks and be visible from the center (never through a
-     * wall). Null if nothing fits.
+     * Each candidate must stand on the ground, be free of blocks, be inside the arena and be visible from the center
+     * (never through a wall). Null if nothing fits.
      */
-    private static @Nullable Location findSpot(Location center, double distance, double width, double height,
-                                               double firstAngle) {
+    private @Nullable Location findSpot(Location center, double distance, double width, double height,
+                                        double firstAngle) {
         World world = center.getWorld();
         Vector forward = center.getDirection().setY(0);
         if (forward.lengthSquared() < 1.0E-4) {
@@ -474,10 +471,10 @@ public final class SummonerAbility extends Ability {
                 candidate = center.clone().add(forward.clone().rotateAroundY(Math.toRadians(-turn)).multiply(distance));
             }
             Location ground = groundBelow(world, candidate, 3);
-            if (ground == null || !fits(world, ground, width, height)) {
+            if (ground == null || !Spots.isFree(world, ground, width, height) || !ctx().isInsideArena(ground)) {
                 continue;
             }
-            if (i != directions && !clearLine(eye, ground.clone().add(0, Math.min(1.0, height * 0.5), 0))) {
+            if (i != directions && !Spots.clearPath(eye, ground.clone().add(0, Math.min(1.0, height * 0.5), 0))) {
                 continue;
             }
             ground.setYaw(center.getYaw());
@@ -494,122 +491,17 @@ public final class SummonerAbility extends Ability {
         return down == null ? null : down.getHitPosition().toLocation(world).add(0, 0.01, 0);
     }
 
-    private static boolean fits(World world, Location feet, double width, double height) {
-        double half = width / 2;
-        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + 0.02, feet.getZ() - half,
-                feet.getX() + half, feet.getY() + height, feet.getZ() + half);
-        return !world.hasCollisionsIn(box);
-    }
-
-    private static boolean clearLine(Location from, Location to) {
-        Vector between = to.toVector().subtract(from.toVector());
-        double distance = between.length();
-        if (distance < 0.1) {
-            return true;
-        }
-        return from.getWorld().rayTraceBlocks(from, between.multiply(1 / distance), distance,
-                FluidCollisionMode.NEVER, true) == null;
-    }
-
     // ------------------------------------------------------------------ helpers
 
     private static void drawCircle(Location center, double radius, Particle.DustOptions dust) {
-        World world = center.getWorld();
         int count = (int) Math.max(12, Math.min(40, radius * 8));
-        double y = center.getY() + 0.15;
-        for (int i = 0; i < count; i++) {
-            double angle = i * (Math.PI * 2 / count);
-            world.spawnParticle(Particle.DUST, center.getX() + Math.cos(angle) * radius, y,
-                    center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, dust);
-        }
+        Fx.ring(center.clone().add(0, 0.15, 0), radius, count, 0, Particle.DUST, dust);
     }
 
     private static void setBase(LivingEntity entity, Attribute attribute, double value) {
         AttributeInstance instance = entity.getAttribute(attribute);
         if (instance != null) {
             instance.setBaseValue(value);
-        }
-    }
-
-    private static double maxHealth(LivingEntity entity) {
-        AttributeInstance instance = entity.getAttribute(Attribute.MAX_HEALTH);
-        return instance == null ? 20.0 : instance.getValue();
-    }
-
-    /** 1 minus the target's knockback resistance, so tanky abilities keep their identity. */
-    private static double knockbackFactor(LivingEntity target) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        return resistance == null ? 1.0 : Math.max(0.0, 1.0 - resistance.getValue());
-    }
-
-    private static Vector clamp(Vector velocity) {
-        return velocity.lengthSquared() > MAX_SPEED * MAX_SPEED ? velocity.normalize().multiply(MAX_SPEED) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
-    }
-
-    /**
-     * Runs a step with a 0-based index every period until it returns false, has run {@code maxRuns} times or the
-     * owner is no longer alive; {@code onEnd} then runs once. Owner-scoped (cancelled on revoke) and fail-safe: a
-     * step that throws stops the loop instead of failing every tick.
-     */
-    private final class Repeater implements Runnable {
-        private final long maxRuns;
-        private final LongPredicate step;
-        private final @Nullable Runnable onEnd;
-        private @Nullable BukkitTask task;
-        private long runs;
-        private boolean finished;
-
-        Repeater(long maxRuns, LongPredicate step, @Nullable Runnable onEnd) {
-            this.maxRuns = maxRuns;
-            this.step = step;
-            this.onEnd = onEnd;
-        }
-
-        void start(long delay, long period) {
-            if (maxRuns <= 0) {
-                finish();
-                return;
-            }
-            task = ctx().runTimer(player(), delay, period, this);
-            if (finished) {
-                task.cancel();
-            }
-        }
-
-        @Override
-        public void run() {
-            if (finished) {
-                return;
-            }
-            long index = runs++;
-            boolean more;
-            try {
-                more = ctx().isAlive(player()) && step.test(index);
-            } catch (RuntimeException e) {
-                ctx().plugin().getLogger().log(Level.WARNING, "Summoner ability task failed", e);
-                more = false;
-            }
-            if (!more || index + 1 >= maxRuns) {
-                finish();
-            }
-        }
-
-        private void finish() {
-            finished = true;
-            if (task != null) {
-                task.cancel();
-            }
-            if (onEnd != null) {
-                onEnd.run();
-            }
         }
     }
 }

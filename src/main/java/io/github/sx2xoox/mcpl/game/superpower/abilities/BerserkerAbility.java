@@ -3,10 +3,12 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -17,10 +19,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -28,9 +27,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
-import org.jspecify.annotations.Nullable;
 
 /**
  * 광전사 — a melee bruiser that grows stronger the closer it is to death. Missing health boosts melee damage,
@@ -110,7 +107,7 @@ public final class BerserkerAbility extends Ability {
     /** 0..1: how much of the rage bonus is unlocked by missing health. */
     private double rageFraction() {
         Player owner = player();
-        double max = maxHealth(owner);
+        double max = Combat.maxHealth(owner);
         double floor = Math.min(Math.max(0, params().num("rage_health")), max - 1);
         double missing = max - owner.getHealth();
         return clamp01(missing / (max - floor));
@@ -145,7 +142,7 @@ public final class BerserkerAbility extends Ability {
                 world.spawnParticle(Particle.DUST, body, 3 + (int) Math.round(fraction * 7), 0.25, 0.35, 0.25, 0,
                         RAGE_DUST);
                 world.spawnParticle(Particle.CRIT, body, 4 + (int) Math.round(fraction * 6), 0.2, 0.3, 0.2, 0.2);
-                sound(body, Sound.ENTITY_PLAYER_ATTACK_STRONG, 0.6f, 1.15f - (float) fraction * 0.4f);
+                Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_STRONG, 0.6f, 1.15f - (float) fraction * 0.4f);
             }
         }
         if (isFrenzied()) {
@@ -198,22 +195,26 @@ public final class BerserkerAbility extends Ability {
         if (charging) {
             return ActivationResult.fail("이미 돌진 중입니다");
         }
-        double distance = Math.max(1, params().num("charge_distance"));
-        Vector direction = horizontalFacing(owner.getLocation());
+        Vector direction = Motion.horizontalFacing(owner.getLocation());
         Location start = owner.getLocation();
+        // The charge never carries the owner past the arena border.
+        double distance = Spots.arenaReach(ctx(), start, direction, Math.max(1, params().num("charge_distance")));
+        if (distance < 1) {
+            return ActivationResult.fail("자기장 밖으로는 돌진할 수 없습니다");
+        }
         long maxTicks = (long) Math.ceil(distance / CHARGE_SPEED) + 6;
         Set<UUID> struck = new HashSet<>();
         charging = true;
 
-        sound(start, Sound.ENTITY_HOGLIN_ANGRY, 1.0f, 0.9f + jitter(0.1f));
-        sound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 0.6f);
+        Fx.sound(start, Sound.ENTITY_HOGLIN_ANGRY, 1.0f, 0.9f + Fx.jitter(0.1f));
+        Fx.sound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 0.6f);
         start.getWorld().spawnParticle(Particle.CLOUD, start.clone().add(0, 0.2, 0), 8, 0.3, 0.05, 0.3, 0.05);
         owner.setVelocity(direction.clone().multiply(CHARGE_SPEED).setY(CHARGE_SINK));
         owner.setFallDistance(0);
 
         Location[] last = {start};
         int[] stalls = {0};
-        loop(0, 1, maxTicks, tick -> {
+        Loop.repeat(ctx(), player(), 0, 1, maxTicks, tick -> {
             Location now = owner.getLocation();
             if (!now.getWorld().equals(start.getWorld()) || horizontalDistance(start, now) >= distance - 0.2) {
                 return false;
@@ -253,11 +254,11 @@ public final class BerserkerAbility extends Ability {
         double damage = Math.max(0, params().num("charge_damage")) * rageMultiplier();
         chargeImpact = true;
         try {
-            hit(enemy, damage);
+            Combat.hit(ctx(), player(), enemy, damage);
         } finally {
             chargeImpact = false;
         }
-        if (!enemy.isValid() || enemy.isDead() || !ctx().isEnemy(player(), enemy)) {
+        if (!Combat.isTargetable(ctx(), player(), enemy)) {
             return;
         }
         Vector offset = enemy.getLocation().toVector().subtract(chargerAt.toVector()).setY(0);
@@ -267,15 +268,15 @@ public final class BerserkerAbility extends Ability {
             side.multiply(-1);
         }
         Vector knock = direction.clone().multiply(BOWL_FORWARD).add(side.multiply(BOWL_SIDE)).setY(BOWL_UP);
-        push(enemy, knock);
+        Motion.push(enemy, knock, MAX_VELOCITY);
 
         Location body = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
         World world = body.getWorld();
         world.spawnParticle(Particle.SWEEP_ATTACK, body, 1, 0, 0, 0, 0);
         world.spawnParticle(Particle.CRIT, body, 14, 0.3, 0.4, 0.3, 0.35);
         world.spawnParticle(Particle.DUST, body, 8, 0.3, 0.4, 0.3, 0, CHARGE_DUST);
-        sound(body, Sound.ENTITY_GOAT_RAM_IMPACT, 1.0f, 0.85f + jitter(0.1f));
-        sound(body, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 0.8f);
+        Fx.sound(body, Sound.ENTITY_GOAT_RAM_IMPACT, 1.0f, 0.85f + Fx.jitter(0.1f));
+        Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 0.8f);
     }
 
     private void chargeTrail(Location at) {
@@ -296,7 +297,7 @@ public final class BerserkerAbility extends Ability {
             world.spawnParticle(Particle.BLOCK, front, 18, 0.3, 0.4, 0.3, 0.15, wall);
         }
         world.spawnParticle(Particle.CRIT, front, 8, 0.2, 0.3, 0.2, 0.2);
-        sound(front, Sound.ITEM_MACE_SMASH_GROUND, 0.7f, 1.3f + jitter(0.1f));
+        Fx.sound(front, Sound.ITEM_MACE_SMASH_GROUND, 0.7f, 1.3f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ ultimate: frenzy
@@ -318,20 +319,16 @@ public final class BerserkerAbility extends Ability {
 
         Location at = owner.getLocation();
         World world = at.getWorld();
-        sound(at, Sound.ENTITY_RAVAGER_ROAR, 1.3f, 1.1f);
-        sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 1.5f, 1.4f);
+        Fx.sound(at, Sound.ENTITY_RAVAGER_ROAR, 1.3f, 1.1f);
+        Fx.sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 1.5f, 1.4f);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at.clone().add(0, owner.getHeight() * 0.5, 0), 40,
                 0.6, 0.7, 0.6, 0, FRENZY_DUST);
         world.spawnParticle(Particle.ANGRY_VILLAGER, at.clone().add(0, owner.getHeight() + 0.3, 0), 3, 0.4, 0.1,
                 0.4, 0);
-        int points = 28;
-        for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
-            world.spawnParticle(Particle.DUST, at.getX() + Math.cos(angle) * 2.2, at.getY() + 0.15,
-                    at.getZ() + Math.sin(angle) * 2.2, 1, 0, 0, 0, 0, CHARGE_DUST);
-        }
+        Fx.ring(at.clone().add(0, 0.15, 0), 2.2, 28, 0, Particle.DUST, CHARGE_DUST);
 
-        loop(FRENZY_VISUAL_PERIOD, FRENZY_VISUAL_PERIOD, Math.max(1, duration / FRENZY_VISUAL_PERIOD), tick -> {
+        long visualRuns = Math.max(1, duration / FRENZY_VISUAL_PERIOD);
+        Loop.repeat(ctx(), player(), FRENZY_VISUAL_PERIOD, FRENZY_VISUAL_PERIOD, visualRuns, tick -> {
             if (!isFrenzied()) {
                 return false;
             }
@@ -346,7 +343,7 @@ public final class BerserkerAbility extends Ability {
             return true;
         }, () -> {
             if (frenzyUntil >= 0 && ctx().currentTick() + FRENZY_VISUAL_PERIOD >= frenzyUntil) {
-                sound(owner.getLocation(), Sound.ENTITY_PLAYER_BREATH, 1.0f, 0.7f);
+                Fx.sound(owner.getLocation(), Sound.ENTITY_PLAYER_BREATH, 1.0f, 0.7f);
                 owner.sendActionBar(Text.mm("<gray>광폭화가 끝났습니다</gray>"));
             }
         });
@@ -375,7 +372,7 @@ public final class BerserkerAbility extends Ability {
             Player owner = player();
             Location to = owner.getLocation().add(0, owner.getHeight() * 0.55, 0);
             Location from = victim.isValid() ? victim.getLocation().add(0, victim.getHeight() * 0.55, 0)
-                    : to.clone().add(horizontalFacing(owner.getLocation()).multiply(1.5));
+                    : to.clone().add(Motion.horizontalFacing(owner.getLocation()).multiply(1.5));
             if (!from.getWorld().equals(to.getWorld())) {
                 return;
             }
@@ -387,97 +384,11 @@ public final class BerserkerAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Deals credited ability damage. Clears the hurt cooldown first so the hit is not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /** Applies a knockback velocity, reduced by the target's knockback resistance like vanilla knockback. */
-    private static void push(LivingEntity target, Vector velocity) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        double factor = 1.0 - (resistance == null ? 0.0 : clamp01(resistance.getValue()));
-        if (factor <= 0) {
-            return;
-        }
-        target.setVelocity(clamp(velocity.clone().multiply(factor), MAX_VELOCITY));
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false or has run {@code maxRuns} times; then runs {@code finish}. Stops silently (without {@code finish}) when
-     * the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step, @Nullable Runnable finish) {
-        if (maxRuns <= 0) {
-            if (finish != null) {
-                finish.run();
-            }
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        boolean[] done = {false};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            if (done[0]) {
-                return;
-            }
-            boolean alive = ctx().isAlive(player()) && player().isOnline();
-            boolean more = false;
-            if (alive) {
-                long index = runs[0]++;
-                try {
-                    more = step.test(index) && index + 1 < maxRuns;
-                } catch (RuntimeException e) {
-                    ctx().plugin().getLogger().log(Level.WARNING, "광전사 능력 처리 중 오류", e);
-                }
-            }
-            if (!more) {
-                done[0] = true;
-                if (handle[0] != null) {
-                    handle[0].cancel();
-                }
-                if (alive && finish != null) {
-                    finish.run();
-                }
-            }
-        });
-    }
-
-    private static Vector horizontalFacing(Location at) {
-        double yaw = Math.toRadians(at.getYaw());
-        return new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
-    }
-
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
     }
 
-    private static double maxHealth(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.MAX_HEALTH);
-        return attribute == null ? 20.0 : Math.max(1.0, attribute.getValue());
-    }
-
-    private static Vector clamp(Vector velocity, double max) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > max ? velocity.multiply(max / length) : velocity;
-    }
-
     private static double clamp01(double value) {
         return Double.isFinite(value) ? Math.max(0.0, Math.min(1.0, value)) : 0.0;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

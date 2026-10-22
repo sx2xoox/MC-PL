@@ -2,10 +2,12 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -17,11 +19,9 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.damage.DamageType;
@@ -33,7 +33,6 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -139,7 +138,7 @@ public final class GuardianAbility extends Ability {
             Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
             owner.getWorld().spawnParticle(Particle.DUST, chest, 4, 0.3, 0.3, 0.3, 0, STEEL_DUST);
             owner.getWorld().spawnParticle(Particle.ENCHANTED_HIT, chest, 4, 0.25, 0.3, 0.25, 0.1);
-            sound(chest, Sound.ITEM_SHIELD_BLOCK, 0.35f, 1.5f + jitter(0.1f));
+            Fx.sound(chest, Sound.ITEM_SHIELD_BLOCK, 0.35f, 1.5f + Fx.jitter(0.1f));
         }
     }
 
@@ -154,22 +153,26 @@ public final class GuardianAbility extends Ability {
         if (bashing) {
             return ActivationResult.fail("이미 돌격 중입니다");
         }
-        double distance = Math.max(1, params().num("bash_distance"));
-        Vector direction = horizontalFacing(owner.getLocation());
+        Vector direction = Motion.horizontalFacing(owner.getLocation());
         Location start = owner.getLocation();
+        // The charge never carries the owner past the arena border.
+        double distance = Spots.arenaReach(ctx(), start, direction, Math.max(1, params().num("bash_distance")));
+        if (distance < 1) {
+            return ActivationResult.fail("자기장 밖으로는 돌격할 수 없습니다");
+        }
         World world = start.getWorld();
         ItemDisplay shield = spawnShield(shieldSpot(owner, direction, 0), CHARGE_SHIELD_SCALE, 1);
         bashing = true;
 
-        sound(start, Sound.ITEM_ARMOR_EQUIP_IRON, 1.0f, 0.8f);
-        sound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.8f, 0.7f);
+        Fx.sound(start, Sound.ITEM_ARMOR_EQUIP_IRON, 1.0f, 0.8f);
+        Fx.sound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.8f, 0.7f);
         owner.setVelocity(direction.clone().multiply(BASH_SPEED).setY(BASH_SINK));
         owner.setFallDistance(0);
 
         long maxTicks = (long) Math.ceil(distance / BASH_SPEED) + 6;
         Location[] last = {start};
         int[] stalls = {0};
-        loop(0, 1, maxTicks, tick -> {
+        Loop.repeat(ctx(), player(), 0, 1, maxTicks, tick -> {
             Location now = owner.getLocation();
             if (!now.getWorld().equals(world)) {
                 return false;
@@ -219,13 +222,14 @@ public final class GuardianAbility extends Ability {
             if (offset.lengthSquared() > 1.0E-4 && offset.clone().normalize().dot(direction) < -0.3) {
                 continue; // behind the guardian
             }
-            hit(enemy, damage);
+            Combat.hit(ctx(), player(), enemy, damage);
             struck++;
-            if (!enemy.isValid() || enemy.isDead() || !ctx().isEnemy(owner, enemy)) {
+            if (!Combat.isTargetable(ctx(), owner, enemy)) {
                 continue;
             }
             Vector away = offset.lengthSquared() > 1.0E-4 ? offset.normalize() : direction.clone();
-            push(enemy, direction.clone().multiply(KNOCK_FORWARD).add(away.multiply(KNOCK_AWAY)).setY(KNOCK_UP));
+            Vector knock = direction.clone().multiply(KNOCK_FORWARD).add(away.multiply(KNOCK_AWAY)).setY(KNOCK_UP);
+            Motion.push(enemy, knock, MAX_VELOCITY);
             if (slowTicks > 0) {
                 enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, slowTicks, BASH_SLOW_AMPLIFIER,
                         false, true, true));
@@ -241,11 +245,11 @@ public final class GuardianAbility extends Ability {
             world.spawnParticle(Particle.BLOCK, at.clone().add(direction).add(0, 0.1, 0), 14, 0.5, 0.1, 0.5, 0.15,
                     ground);
         }
-        sound(front, Sound.ITEM_SHIELD_BLOCK, 1.2f, 0.75f + jitter(0.05f));
+        Fx.sound(front, Sound.ITEM_SHIELD_BLOCK, 1.2f, 0.75f + Fx.jitter(0.05f));
         if (struck > 0) {
             world.spawnParticle(Particle.FLASH, front, 1, 0, 0, 0, 0, Color.WHITE);
-            sound(front, Sound.ENTITY_ZOMBIE_ATTACK_IRON_DOOR, 0.7f, 1.3f + jitter(0.1f));
-            sound(front, Sound.ENTITY_IRON_GOLEM_ATTACK, 1.0f, 0.9f);
+            Fx.sound(front, Sound.ENTITY_ZOMBIE_ATTACK_IRON_DOOR, 0.7f, 1.3f + Fx.jitter(0.1f));
+            Fx.sound(front, Sound.ENTITY_IRON_GOLEM_ATTACK, 1.0f, 0.9f);
             owner.sendActionBar(Text.mm("<#5B8DEF>방패 돌격!</#5B8DEF> <gray>" + struck + "명 적중</gray>"));
         }
 
@@ -306,15 +310,15 @@ public final class GuardianAbility extends Ability {
 
             Location at = owner.getLocation();
             World world = at.getWorld();
-            sound(at, Sound.BLOCK_BEACON_POWER_SELECT, 1.2f, 0.8f);
-            sound(at, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 1.0f, 0.7f);
-            sound(at, Sound.BLOCK_ANVIL_PLACE, 0.5f, 1.4f);
+            Fx.sound(at, Sound.BLOCK_BEACON_POWER_SELECT, 1.2f, 0.8f);
+            Fx.sound(at, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 1.0f, 0.7f);
+            Fx.sound(at, Sound.BLOCK_ANVIL_PLACE, 0.5f, 1.4f);
             world.spawnParticle(Particle.DUST, at.clone().add(0, owner.getHeight() * 0.5, 0), 30, 0.5,
                     owner.getHeight() * 0.4, 0.5, 0, GOLD_DUST);
             world.spawnParticle(Particle.END_ROD, at.clone().add(0, 0.2, 0), 16, 0.5, 0.1, 0.5, 0.08);
             pulseAllies(owner);
 
-            loop(0, 1, duration, this::tick, this::end);
+            Loop.repeat(ctx(), player(), 0, 1, duration, this::tick, this::end);
         }
 
         private boolean tick(long tick) {
@@ -347,7 +351,7 @@ public final class GuardianAbility extends Ability {
                     Location at = display.getLocation();
                     at.getWorld().spawnParticle(Particle.ITEM, at, 14, 0.15, 0.15, 0.15, 0.08,
                             new ItemStack(Material.SHIELD));
-                    sound(at, Sound.ITEM_SHIELD_BREAK, 1.0f, 0.9f + jitter(0.1f));
+                    Fx.sound(at, Sound.ITEM_SHIELD_BREAK, 1.0f, 0.9f + Fx.jitter(0.1f));
                     display.remove();
                 }
             }
@@ -374,13 +378,8 @@ public final class GuardianAbility extends Ability {
         }
 
         private void drawAuraRing(Location center, long tick) {
-            World world = center.getWorld();
             int points = (int) Math.max(16, Math.min(48, allyRadius * 5));
-            for (int i = 0; i < points; i++) {
-                double angle = i * (Math.PI * 2 / points) + tick * 0.02;
-                world.spawnParticle(Particle.DUST, center.getX() + Math.cos(angle) * allyRadius, center.getY() + 0.2,
-                        center.getZ() + Math.sin(angle) * allyRadius, 1, 0, 0, 0, 0, GOLD_DUST);
-            }
+            Fx.ring(center.clone().add(0, 0.2, 0), allyRadius, points, tick * 0.02, Particle.DUST, GOLD_DUST);
         }
 
         private void end() {
@@ -396,7 +395,7 @@ public final class GuardianAbility extends Ability {
                 fadeOut(orbiter.display(), 0.0f);
             }
             shields.clear();
-            sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 0.9f);
+            Fx.sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 0.9f);
             if (bulwark == this) {
                 bulwark = null;
             }
@@ -452,88 +451,7 @@ public final class GuardianAbility extends Ability {
                 new Quaternionf());
     }
 
-    /** Deals credited ability damage. Clears the hurt cooldown first so the hit is not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /** Applies a knockback velocity, reduced by the target's knockback resistance like vanilla knockback. */
-    private static void push(LivingEntity target, Vector velocity) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        double factor = 1.0 - (resistance == null ? 0.0 : Math.max(0.0, Math.min(1.0, resistance.getValue())));
-        if (factor <= 0) {
-            return;
-        }
-        target.setVelocity(clamp(velocity.clone().multiply(factor), MAX_VELOCITY));
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false or has run {@code maxRuns} times; then runs {@code finish}. Stops silently (without {@code finish}) when
-     * the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step, @Nullable Runnable finish) {
-        if (maxRuns <= 0) {
-            if (finish != null) {
-                finish.run();
-            }
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        boolean[] done = {false};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            if (done[0]) {
-                return;
-            }
-            boolean alive = ctx().isAlive(player()) && player().isOnline();
-            boolean more = false;
-            if (alive) {
-                long index = runs[0]++;
-                try {
-                    more = step.test(index) && index + 1 < maxRuns;
-                } catch (RuntimeException e) {
-                    ctx().plugin().getLogger().log(Level.WARNING, "수호자 능력 처리 중 오류", e);
-                }
-            }
-            if (!more) {
-                done[0] = true;
-                if (handle[0] != null) {
-                    handle[0].cancel();
-                }
-                if (alive && finish != null) {
-                    finish.run();
-                }
-            }
-        });
-    }
-
-    private static Vector horizontalFacing(Location at) {
-        double yaw = Math.toRadians(at.getYaw());
-        return new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
-    }
-
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
-    }
-
-    private static Vector clamp(Vector velocity, double max) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > max ? velocity.multiply(max / length) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

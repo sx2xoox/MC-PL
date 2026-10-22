@@ -5,6 +5,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -19,9 +23,6 @@ import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.block.Block;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -31,7 +32,6 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -78,25 +78,16 @@ public final class BlinkAbility extends Ability {
     private static final double WALL_MARGIN = 0.5;
     /** Upward adjustments tried for each sample (looking down at the floor puts the eye-level point underground). */
     private static final double[] LIFTS = {0, 0.5, 1.0, 1.5, 2.0};
-    /** Destinations hovering at most this high above ground are snapped onto it. */
+    /** Blink destinations hovering at most this high above ground are snapped onto it. */
     private static final double GROUND_SNAP = 1.1;
-
-    // Ultimate search
-    private static final double[] AROUND_ANGLES = {0, 40, -40, 80, -80, 120, -120, 180};
-    private static final double[] AROUND_DISTANCES = {1.2, 2.0};
-    private static final double[] AROUND_HEIGHTS = {0, 0.5, 1.0, -0.5, -1.0};
-
-    private static final double STANDING_WIDTH = 0.6;
-    private static final double STANDING_HEIGHT = 1.8;
-    private static final double STANDING_EYE = 1.62;
     private static final int TRAIL_STREAKS = 12;
     private static final long LANDING_GRACE_TICKS = 100;
 
     /** Generation counter of the empowered strike, so a stale expiry timer never clears a newer one. */
     private int empowerToken;
     private boolean empowered;
-    /** Until this tick the next fall damage is cancelled (-1: none); set when a teleport ends in mid-air. */
-    private long landingGraceUntil = -1;
+    /** Cancels the fall damage of the landing after a teleport that ended in mid-air. */
+    private final LandingGuard landing = new LandingGuard();
 
     @Override
     public AbilityInfo info() {
@@ -110,12 +101,8 @@ public final class BlinkAbility extends Ability {
         if (event.isCancelled()) {
             return;
         }
-        if (landingGraceUntil >= 0 && isFall(event)) {
-            // A blink that ended in mid-air should not be punished by the fall that follows.
-            if (ctx().currentTick() <= landingGraceUntil) {
-                event.setCancelled(true);
-            }
-            landingGraceUntil = -1;
+        // A blink that ended in mid-air should not be punished by the fall that follows.
+        if (landing.absorb(event, ctx().currentTick())) {
             return;
         }
         if (event.getDamage() <= 0 || !isProjectileHit(event)) {
@@ -130,13 +117,14 @@ public final class BlinkAbility extends Ability {
         World world = body.getWorld();
         world.spawnParticle(Particle.REVERSE_PORTAL, body, 24, 0.3, 0.5, 0.3, 0.04);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 8, 0.35, 0.55, 0.35, 0, RIFT_DUST);
-        sound(body, Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.7f + jitter(0.15f));
+        Fx.sound(body, Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.7f + Fx.jitter(0.15f));
 
-        double refund = params().num("dodge_refund");
+        // Only a running blink cooldown can be shortened, and the feedback shows what was actually taken off.
+        double refund = Math.min(params().num("dodge_refund"), ctx().cooldownRemaining(owner));
         String suffix = "";
         if (refund > 0) {
             ctx().reduceCooldown(owner, refund);
-            suffix = " <gray>점멸 -" + AbilityInfo.formatNumber(refund) + "초</gray>";
+            suffix = " <gray>점멸 -" + AbilityInfo.formatNumber(Math.ceil(refund * 10) / 10.0) + "초</gray>";
         }
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">✦ 위상 회피!</" + COLOR_TAG + ">" + suffix));
     }
@@ -150,14 +138,6 @@ public final class BlinkAbility extends Ability {
         }
         Tag<DamageType> projectile = DamageTypeTags.IS_PROJECTILE;
         return projectile != null && projectile.isTagged(event.getDamageSource().getDamageType());
-    }
-
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
     }
 
     // ------------------------------------------------------------------ active: blink
@@ -176,7 +156,7 @@ public final class BlinkAbility extends Ability {
         if (!teleport(owner, from, destination)) {
             return ActivationResult.fail("순간이동이 막혔습니다");
         }
-        protectLanding(owner);
+        landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">✦ 점멸</" + COLOR_TAG + "> <gray>"
                 + AbilityInfo.formatNumber(Math.round(from.distance(destination) * 10) / 10.0) + "블록</gray>"));
         return ActivationResult.success();
@@ -185,9 +165,10 @@ public final class BlinkAbility extends Ability {
     /**
      * The farthest safe standing spot along the view ray, before the first wall. Each sample is tried at eye level
      * first and then slightly higher (so looking down at the floor lands on top of it), snapped onto ground right
-     * below, and must be reachable in a straight line from the owner's eyes.
+     * below, must be reachable in a straight line from the owner's eyes and must pass {@link Spots#isSafe} (no
+     * hazards, no void, inside the arena).
      */
-    private static @Nullable Location findBlinkSpot(Player owner, double maxDistance) {
+    private @Nullable Location findBlinkSpot(Player owner, double maxDistance) {
         World world = owner.getWorld();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection();
@@ -201,24 +182,19 @@ public final class BlinkAbility extends Ability {
             reach = wall.getHitPosition().distance(eye.toVector()) - WALL_MARGIN;
         }
 
-        double scale = scaleOf(owner);
-        double width = STANDING_WIDTH * scale;
-        double height = STANDING_HEIGHT * scale;
-        double eyeHeight = STANDING_EYE * scale;
+        Body body = Body.standing(owner);
         Location start = owner.getLocation();
 
         for (double d = reach; d >= MIN_BLINK - 1.0E-6; d -= SAMPLE_STEP) {
             Location point = eye.clone().add(direction.clone().multiply(d));
             for (double lift : LIFTS) {
-                Location feet = point.clone().subtract(0, eyeHeight - lift, 0);
-                snapToGround(world, feet, GROUND_SNAP);
+                Location feet = point.clone().subtract(0, body.eyeHeight() - lift, 0);
+                Spots.snapToGround(world, feet, GROUND_SNAP);
                 if (feet.distanceSquared(start) < MIN_BLINK * MIN_BLINK) {
                     continue;
                 }
-                if (!fits(world, feet, width, height) || !hasGroundBelow(world, feet)) {
-                    continue;
-                }
-                if (!clearPath(world, eye, feet.clone().add(0, eyeHeight, 0))) {
+                if (!Spots.isSafe(ctx(), feet, body)
+                        || !Spots.clearPath(eye, feet.clone().add(0, body.eyeHeight(), 0))) {
                     continue;
                 }
                 feet.setYaw(start.getYaw());
@@ -256,56 +232,19 @@ public final class BlinkAbility extends Ability {
         }
 
         for (LivingEntity target : candidates) {
-            Location destination = spotBehind(owner, target);
+            Location destination = Spots.around(ctx(), owner, target, 0);
             if (destination == null) {
                 continue;
             }
             if (!teleport(owner, owner.getLocation(), destination)) {
                 return ActivationResult.fail("순간이동이 막혔습니다");
             }
-            protectLanding(owner);
+            landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
             ripple(target);
             empower();
             return ActivationResult.success();
         }
         return ActivationResult.fail("적 주변에 순간이동할 공간이 없습니다");
-    }
-
-    /**
-     * A safe spot next to {@code target}, preferring right behind its back, facing it. Every spot must have a clear
-     * line to the target's eyes, so the owner never ends up on the other side of a wall.
-     */
-    private static @Nullable Location spotBehind(Player owner, LivingEntity target) {
-        World world = target.getWorld();
-        Location base = target.getLocation();
-        Vector back = base.getDirection().setY(0);
-        if (back.lengthSquared() < 1.0E-4) {
-            back = new Vector(0, 0, 1);
-        }
-        back.normalize().multiply(-1);
-
-        double scale = scaleOf(owner);
-        double width = STANDING_WIDTH * scale;
-        double height = STANDING_HEIGHT * scale;
-        double eyeHeight = STANDING_EYE * scale;
-        Location targetEye = target.getEyeLocation();
-        double clearance = target.getWidth() / 2 + width / 2;
-
-        for (double angle : AROUND_ANGLES) {
-            Vector side = back.clone().rotateAroundY(Math.toRadians(angle));
-            for (double distance : AROUND_DISTANCES) {
-                for (double dy : AROUND_HEIGHTS) {
-                    Location feet = base.clone().add(side.clone().multiply(distance + clearance)).add(0, dy, 0);
-                    snapToGround(world, feet, GROUND_SNAP);
-                    if (!fits(world, feet, width, height) || !hasGroundBelow(world, feet)
-                            || !clearPath(world, targetEye, feet.clone().add(0, eyeHeight, 0))) {
-                        continue;
-                    }
-                    return faceTowards(feet, target.getLocation().add(0, target.getHeight() * 0.6, 0), eyeHeight);
-                }
-            }
-        }
-        return null;
     }
 
     /** Arrival cue for the victim: a creepy stare only they hear, and a rift flash around them. */
@@ -333,15 +272,15 @@ public final class BlinkAbility extends Ability {
             empowered = false;
             if (owner.isOnline() && ctx().isAlive(owner)) {
                 owner.sendActionBar(Text.mm("<gray>차원 습격의 힘이 흩어졌습니다</gray>"));
-                sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 0.5f, 1.6f);
+                Fx.sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 0.5f, 1.6f);
             }
         });
     }
 
     @Override
     public void onTick(long tick) {
-        if (landingGraceUntil >= 0 && tick % 2 == 0 && (tick > landingGraceUntil || isGrounded(player()))) {
-            landingGraceUntil = -1;
+        if (tick % 2 == 0) {
+            landing.update(player(), tick);
         }
         if (!empowered || tick % 3 != 0) {
             return;
@@ -369,8 +308,8 @@ public final class BlinkAbility extends Ability {
         world.spawnParticle(Particle.ENCHANTED_HIT, at, 18, 0.3, 0.4, 0.3, 0.3);
         world.spawnParticle(Particle.REVERSE_PORTAL, at, 30, 0.3, 0.4, 0.3, 0.15);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 12, 0.4, 0.5, 0.4, 0, RIFT_DUST);
-        sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.8f + jitter(0.1f));
-        sound(at, Sound.ENTITY_ENDERMAN_TELEPORT, 0.8f, 0.55f + jitter(0.05f));
+        Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.8f + Fx.jitter(0.1f));
+        Fx.sound(at, Sound.ENTITY_ENDERMAN_TELEPORT, 0.8f, 0.55f + Fx.jitter(0.05f));
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">✦ 차원 일격!</" + COLOR_TAG + "> <white>×"
                 + AbilityInfo.formatNumber(multiplier) + "</white>"));
     }
@@ -387,7 +326,7 @@ public final class BlinkAbility extends Ability {
         Location fromBody = from.clone().add(0, owner.getHeight() * 0.5, 0);
         world.spawnParticle(Particle.PORTAL, fromBody, 40, 0.3, 0.6, 0.3, 0.6);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, fromBody, 10, 0.3, 0.6, 0.3, 0, RIFT_DUST);
-        sound(from, Sound.ENTITY_ENDERMAN_TELEPORT, 0.9f, 1.15f + jitter(0.1f));
+        Fx.sound(from, Sound.ENTITY_ENDERMAN_TELEPORT, 0.9f, 1.15f + Fx.jitter(0.1f));
 
         // Streaks flying from the old body to the new one.
         Vector shift = to.toVector().subtract(from.toVector());
@@ -406,98 +345,7 @@ public final class BlinkAbility extends Ability {
         Location toBody = to.clone().add(0, owner.getHeight() * 0.5, 0);
         world.spawnParticle(Particle.REVERSE_PORTAL, toBody, 30, 0.3, 0.6, 0.3, 0.06);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, toBody, 10, 0.3, 0.6, 0.3, 0, RIFT_DUST);
-        sound(to, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 0.9f, 1.3f + jitter(0.1f));
+        Fx.sound(to, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 0.9f, 1.3f + Fx.jitter(0.1f));
         return true;
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    /** After a teleport into mid-air, the landing that follows deals no fall damage. */
-    private void protectLanding(Player owner) {
-        if (!isGrounded(owner)) {
-            landingGraceUntil = ctx().currentTick() + LANDING_GRACE_TICKS;
-        }
-    }
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(LivingEntity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below) || entity.isInWater();
-    }
-
-    /** True if a standing body of the given size fits at {@code feet}: no collisions and no harmful blocks. */
-    private static boolean fits(World world, Location feet, double width, double height) {
-        if (feet.getY() < world.getMinHeight() + 1 || feet.getY() + height > world.getMaxHeight()) {
-            return false;
-        }
-        double half = width / 2 - 0.01;
-        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + 0.01, feet.getZ() - half,
-                feet.getX() + half, feet.getY() + height, feet.getZ() + half);
-        if (world.hasCollisionsIn(box)) {
-            return false;
-        }
-        int x = feet.getBlockX();
-        int z = feet.getBlockZ();
-        for (int y = (int) Math.floor(box.getMinY()); y <= (int) Math.floor(box.getMaxY()); y++) {
-            if (isHazard(world.getBlockAt(x, y, z))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isHazard(Block block) {
-        Material type = block.getType();
-        return type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE
-                || type == Material.POWDER_SNOW || type == Material.COBWEB;
-    }
-
-    /** False above the void: something (block or fluid) must exist somewhere below. */
-    private static boolean hasGroundBelow(World world, Location feet) {
-        double depth = feet.getY() - world.getMinHeight();
-        return depth > 0 && world.rayTraceBlocks(feet, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS,
-                true) != null;
-    }
-
-    /** Lowers {@code feet} onto the ground if it is at most {@code maxDrop} blocks below. */
-    private static void snapToGround(World world, Location feet, double maxDrop) {
-        RayTraceResult ground = world.rayTraceBlocks(feet, new Vector(0, -1, 0), maxDrop, FluidCollisionMode.NEVER,
-                true);
-        if (ground != null) {
-            feet.setY(ground.getHitPosition().getY());
-        }
-    }
-
-    private static boolean clearPath(World world, Location from, Location to) {
-        Vector delta = to.toVector().subtract(from.toVector());
-        double length = delta.length();
-        if (length < 1.0E-3) {
-            return true;
-        }
-        return world.rayTraceBlocks(from, delta.multiply(1 / length), length, FluidCollisionMode.NEVER, true) == null;
-    }
-
-    /** {@code feet} with yaw/pitch set so that eyes at {@code eyeHeight} look at {@code focus}. */
-    private static Location faceTowards(Location feet, Location focus, double eyeHeight) {
-        Vector look = focus.toVector().subtract(feet.toVector().add(new Vector(0, eyeHeight, 0)));
-        if (look.lengthSquared() > 1.0E-6) {
-            feet.setDirection(look);
-        }
-        return feet;
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

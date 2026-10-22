@@ -1,9 +1,11 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -15,7 +17,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
@@ -31,7 +32,6 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
@@ -114,7 +114,7 @@ public final class FrostAbility extends Ability {
         attacker.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, ticks, 0, false, true, true));
         Location body = attacker.getLocation().add(0, attacker.getHeight() * 0.5, 0);
         attacker.getWorld().spawnParticle(Particle.SNOWFLAKE, body, 8, 0.25, 0.45, 0.25, 0.02);
-        sound(body, Sound.BLOCK_POWDER_SNOW_HIT, 0.8f, 1.2f + jitter(0.1f));
+        Fx.sound(body, Sound.BLOCK_POWDER_SNOW_HIT, 0.8f, 1.2f + Fx.jitter(0.1f));
     }
 
     private static boolean isFreezeDamage(EntityDamageEvent event) {
@@ -133,10 +133,10 @@ public final class FrostAbility extends Ability {
         Vector direction = eye.getDirection();
         Spear spear = new Spear(eye, direction);
         long maxTicks = (long) Math.ceil(params().num("spear_range") / SPEAR_SPEED) + 2;
-        loop(0, 1, maxTicks, spear);
+        Loop.repeat(ctx(), player(), 0, 1, maxTicks, spear);
 
-        sound(eye, Sound.ITEM_TRIDENT_THROW, 1.0f, 1.4f + jitter(0.05f));
-        sound(eye, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.6f + jitter(0.1f));
+        Fx.sound(eye, Sound.ITEM_TRIDENT_THROW, 1.0f, 1.4f + Fx.jitter(0.05f));
+        Fx.sound(eye, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.6f + Fx.jitter(0.1f));
         eye.getWorld().spawnParticle(Particle.SNOWFLAKE, eye.clone().add(direction.clone().multiply(0.8)), 6,
                 0.1, 0.1, 0.1, 0.03);
         return ActivationResult.success();
@@ -210,14 +210,14 @@ public final class FrostAbility extends Ability {
             visual.remove();
             world.spawnParticle(Particle.BLOCK, at, 14, 0.2, 0.2, 0.2, 0.1, Material.PACKED_ICE.createBlockData());
             world.spawnParticle(Particle.SNOWFLAKE, at, 10, 0.15, 0.15, 0.15, 0.06);
-            sound(at, Sound.BLOCK_GLASS_BREAK, 0.9f, 1.5f + jitter(0.1f));
+            Fx.sound(at, Sound.BLOCK_GLASS_BREAK, 0.9f, 1.5f + Fx.jitter(0.1f));
             if (target == null) {
                 return;
             }
-            hit(target, params().num("spear_damage"));
-            if (target.isValid() && !target.isDead() && ctx().isEnemy(player(), target)) {
+            Combat.hit(ctx(), player(), target, params().num("spear_damage"));
+            if (Combat.isTargetable(ctx(), player(), target)) {
                 freeze(target, params().ticks("freeze_duration"), params().num("freeze_slow") / 100.0, false);
-                sound(at, Sound.ENTITY_PLAYER_HURT_FREEZE, 1.0f, 1.1f);
+                Fx.sound(at, Sound.ENTITY_PLAYER_HURT_FREEZE, 1.0f, 1.1f);
             }
         }
     }
@@ -246,10 +246,10 @@ public final class FrostAbility extends Ability {
         }
         long duration = Math.max(1, params().ticks("ult_duration"));
 
-        sound(origin, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.5f, 0.5f);
-        sound(origin, Sound.ENTITY_PLAYER_HURT_FREEZE, 1.2f, 0.6f);
-        sound(origin, Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 1.6f);
-        loop(0, 1, SHOCKWAVE_TICKS, tick -> {
+        Fx.sound(origin, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.5f, 0.5f);
+        Fx.sound(origin, Sound.ENTITY_PLAYER_HURT_FREEZE, 1.2f, 0.6f);
+        Fx.sound(origin, Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 1.6f);
+        Loop.repeat(ctx(), player(), 0, 1, SHOCKWAVE_TICKS, tick -> {
             drawShockwave(origin, radius * (tick + 1) / SHOCKWAVE_TICKS);
             return true;
         });
@@ -263,9 +263,9 @@ public final class FrostAbility extends Ability {
         double damage = params().num("ult_damage");
         ctx().runLater(player(), duration, () -> {
             for (LivingEntity target : frozen) {
-                if (target.isValid() && !target.isDead() && ctx().isEnemy(player(), target)) {
+                if (Combat.isTargetable(ctx(), player(), target)) {
                     shatterPrison(target);
-                    hit(target, damage);
+                    Combat.hit(ctx(), player(), target, damage);
                 }
             }
         });
@@ -294,8 +294,8 @@ public final class FrostAbility extends Ability {
         world.spawnParticle(Particle.BLOCK, body, 40, 0.6, target.getHeight() * 0.45, 0.6, 0.15,
                 Material.PACKED_ICE.createBlockData());
         world.spawnParticle(Particle.SNOWFLAKE, body, 20, 0.5, 0.6, 0.5, 0.08);
-        sound(body, Sound.BLOCK_GLASS_BREAK, 1.2f, 0.75f + jitter(0.05f));
-        sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 1.0f, 1.2f + jitter(0.1f));
+        Fx.sound(body, Sound.BLOCK_GLASS_BREAK, 1.2f, 0.75f + Fx.jitter(0.05f));
+        Fx.sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 1.0f, 1.2f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ freezing
@@ -328,11 +328,11 @@ public final class FrostAbility extends Ability {
         BlockDisplay ice = spawnIceShell(target, imprison);
         Location body = target.getLocation().add(0, target.getHeight() * 0.5, 0);
         target.getWorld().spawnParticle(Particle.SNOWFLAKE, body, 16, 0.35, 0.5, 0.35, 0.05);
-        sound(body, Sound.BLOCK_GLASS_PLACE, 1.0f, 0.7f + jitter(0.05f));
+        Fx.sound(body, Sound.BLOCK_GLASS_PLACE, 1.0f, 0.7f + Fx.jitter(0.05f));
 
         long checks = Math.max(1, ticks / 2);
-        loop(2, 2, checks, i -> {
-            if (!target.isValid() || target.isDead() || !ctx().isEnemy(player(), target)
+        Loop.repeat(ctx(), player(), 2, 2, checks, i -> {
+            if (!Combat.isTargetable(ctx(), player(), target)
                     || !target.getWorld().equals(ice.getWorld()) || i == checks - 1) {
                 ice.remove();
                 return false;
@@ -368,8 +368,11 @@ public final class FrostAbility extends Ability {
         }));
     }
 
-    /** Moves the target to the middle of its block column when that space is free, so the prison fits around it. */
-    private static void centerInBlock(LivingEntity target) {
+    /**
+     * Moves the target to the middle of its block column when that space is free (and inside the arena), so the
+     * prison fits around it.
+     */
+    private void centerInBlock(LivingEntity target) {
         Location location = target.getLocation();
         double dx = location.getBlockX() + 0.5 - location.getX();
         double dz = location.getBlockZ() + 0.5 - location.getZ();
@@ -377,10 +380,11 @@ public final class FrostAbility extends Ability {
             return;
         }
         BoundingBox moved = target.getBoundingBox().shift(dx, 0, dz).expand(-0.01);
-        if (target.getWorld().hasCollisionsIn(moved)) {
+        Location centered = location.clone().add(dx, 0, dz);
+        if (target.getWorld().hasCollisionsIn(moved) || !ctx().isInsideArena(centered)) {
             return;
         }
-        target.teleport(location.add(dx, 0, dz));
+        target.teleport(centered);
     }
 
     /**
@@ -422,43 +426,5 @@ public final class FrostAbility extends Ability {
     private static boolean isOccupied(Block block) {
         BoundingBox cell = BoundingBox.of(block);
         return !block.getWorld().getNearbyEntities(cell, entity -> entity instanceof LivingEntity).isEmpty();
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so follow-up hits are not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

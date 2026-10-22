@@ -3,36 +3,31 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Stealth;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
-import org.bukkit.Bukkit;
 import org.bukkit.Color;
-import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.block.Block;
-import org.bukkit.damage.DamageType;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -40,10 +35,6 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
-import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -90,24 +81,11 @@ public final class ShadowAbility extends Ability {
     private static final double DANCE_LEASH = 2.0;
     /** Repeated strikes on the same target come from a different side each time. */
     private static final double REPEAT_ANGLE_STEP = 120;
-    private static final double[] AROUND_ANGLES = {0, 40, -40, 80, -80, 120, -120, 180};
-    private static final double[] AROUND_DISTANCES = {1.2, 2.0};
-    private static final double[] AROUND_HEIGHTS = {0, 0.5, 1.0, -0.5, -1.0};
-    private static final double GROUND_SNAP = 1.1;
-
-    private static final double STANDING_WIDTH = 0.6;
-    private static final double STANDING_HEIGHT = 1.8;
-    private static final double STANDING_EYE = 1.62;
     private static final long LANDING_GRACE_TICKS = 100;
 
-    private boolean stealthed;
-    /** Generation counter so that a stale expiry timer never ends a newer stealth. */
-    private int stealthToken;
-    private long stealthEndTick;
-    /** Players the owner is currently hidden from (must all be shown again). */
-    private final Set<UUID> hiddenFrom = new HashSet<>();
-    /** Until this tick the next fall damage is cancelled (-1: none); set when a teleport ends in mid-air. */
-    private long landingGraceUntil = -1;
+    private final Stealth stealth = new Stealth();
+    /** Cancels the fall damage of the landing after a dance step that ended in mid-air. */
+    private final LandingGuard landing = new LandingGuard();
 
     private enum Reveal { ATTACK, HIT, EXPIRED, REVOKE }
 
@@ -128,7 +106,7 @@ public final class ShadowAbility extends Ability {
         if (event.isCancelled()) {
             return;
         }
-        boolean fromStealth = stealthed;
+        boolean fromStealth = stealth.isActive();
         if (fromStealth) {
             reveal(Reveal.ATTACK);
         }
@@ -147,8 +125,8 @@ public final class ShadowAbility extends Ability {
         world.spawnParticle(Particle.CRIT, at, 12, 0.25, 0.3, 0.25, 0.25);
         world.spawnParticle(Particle.DUST, at, 10, 0.3, 0.35, 0.3, 0, SHADOW_DUST);
         world.spawnParticle(Particle.SQUID_INK, at, 4, 0.15, 0.2, 0.15, 0.02);
-        sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.65f + jitter(0.08f));
-        sound(at, Sound.ENTITY_PHANTOM_BITE, 0.7f, 0.8f + jitter(0.1f));
+        Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.65f + Fx.jitter(0.08f));
+        Fx.sound(at, Sound.ENTITY_PHANTOM_BITE, 0.7f, 0.8f + Fx.jitter(0.1f));
         String label = fromStealth ? "기습 암습!" : "암습!";
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">⚔ " + label + "</" + COLOR_TAG + "> <gray>+"
                 + AbilityInfo.formatNumber(bonus) + "%</gray>"));
@@ -171,53 +149,23 @@ public final class ShadowAbility extends Ability {
     public ActivationResult onActive() {
         Player owner = player();
         long duration = Math.max(1, params().ticks("stealth_duration"));
-        int token = ++stealthToken;
-        stealthed = true;
-        stealthEndTick = ctx().currentTick() + duration;
 
         // Invisibility hides the owner from viewers that are not enemies too (allies, spectators see the vanilla
         // effect); enemies do not receive the player at all, so armor, held items and the name tag vanish as well.
         int effectTicks = (int) Math.min(Integer.MAX_VALUE, duration);
         owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, effectTicks + 5, 0, false, false, true));
         owner.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, effectTicks, 0, false, false, true));
-        hideFromEnemies();
-        dropAggro();
+        stealth.begin(ctx(), owner, duration, () -> reveal(Reveal.EXPIRED));
+        Stealth.dropAggro(ctx(), owner, AGGRO_DROP_RANGE);
 
         Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
         World world = body.getWorld();
         world.spawnParticle(Particle.LARGE_SMOKE, body, 16, 0.3, 0.6, 0.3, 0.02);
         world.spawnParticle(Particle.SQUID_INK, body, 10, 0.3, 0.5, 0.3, 0.05);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 14, 0.4, 0.7, 0.4, 0, SHADOW_FADE);
-        sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 0.6f + jitter(0.05f));
-        sound(body, Sound.ENTITY_PHANTOM_FLAP, 0.8f, 0.6f + jitter(0.1f));
-
-        ctx().runLater(owner, duration, () -> {
-            if (token == stealthToken) {
-                reveal(Reveal.EXPIRED);
-            }
-        });
+        Fx.sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(body, Sound.ENTITY_PHANTOM_FLAP, 0.8f, 0.6f + Fx.jitter(0.1f));
         return ActivationResult.success();
-    }
-
-    private void hideFromEnemies() {
-        Player owner = player();
-        for (Player viewer : ctx().alivePlayers()) {
-            if (viewer.equals(owner) || !ctx().isEnemy(owner, viewer)) {
-                continue;
-            }
-            if (hiddenFrom.add(viewer.getUniqueId())) {
-                viewer.hidePlayer(ctx().plugin(), owner);
-            }
-        }
-    }
-
-    private void dropAggro() {
-        Player owner = player();
-        for (Entity entity : owner.getNearbyEntities(AGGRO_DROP_RANGE, AGGRO_DROP_RANGE / 2, AGGRO_DROP_RANGE)) {
-            if (entity instanceof Mob mob && owner.equals(mob.getTarget()) && ctx().isEnemy(owner, mob)) {
-                mob.setTarget(null);
-            }
-        }
     }
 
     @Override
@@ -225,33 +173,21 @@ public final class ShadowAbility extends Ability {
         if (event.isCancelled()) {
             return;
         }
-        if (landingGraceUntil >= 0 && isFall(event)) {
-            // The dance may end next to an airborne enemy; that drop is not the owner's fault.
-            if (ctx().currentTick() <= landingGraceUntil) {
-                event.setCancelled(true);
-            }
-            landingGraceUntil = -1;
+        // The dance may end next to an airborne enemy; that drop is not the owner's fault.
+        if (landing.absorb(event, ctx().currentTick())) {
             return;
         }
-        if (stealthed && event.getDamage() > 0 && event instanceof EntityDamageByEntityEvent) {
+        if (stealth.isActive() && event.getDamage() > 0 && event instanceof EntityDamageByEntityEvent) {
             reveal(Reveal.HIT);
         }
     }
 
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
-    }
-
     @Override
     public void onTick(long tick) {
-        if (landingGraceUntil >= 0 && tick % 2 == 0 && (tick > landingGraceUntil || isGrounded(player()))) {
-            landingGraceUntil = -1;
+        if (tick % 2 == 0) {
+            landing.update(player(), tick);
         }
-        if (!stealthed) {
+        if (!stealth.isActive()) {
             return;
         }
         Player owner = player();
@@ -263,32 +199,19 @@ public final class ShadowAbility extends Ability {
             world.spawnParticle(Particle.SMOKE, feet, 1, 0.15, 0.01, 0.15, 0.002);
         }
         if (tick % 5 == 0) {
-            double left = Math.max(0, stealthEndTick - ctx().currentTick()) / 20.0;
             owner.sendActionBar(Text.mm("<dark_gray>☾</dark_gray> <" + COLOR_TAG + ">그림자 은신</" + COLOR_TAG
-                    + "> <gray>" + AbilityInfo.formatNumber(Math.ceil(left * 10) / 10.0) + "초</gray>"));
+                    + "> <gray>" + Fx.seconds(stealth.ticksLeft(ctx().currentTick())) + "초</gray>"));
         }
         if (tick % 20 == 0) {
-            hideFromEnemies();
-            dropAggro();
+            stealth.hideFromEnemies(ctx(), owner);
+            Stealth.dropAggro(ctx(), owner, AGGRO_DROP_RANGE);
         }
     }
 
     /** Ends the stealth (if any), showing the owner to everyone it was hidden from. */
     private void reveal(Reveal reason) {
-        if (!stealthed) {
-            return;
-        }
-        stealthed = false;
-        stealthToken++;
         Player owner = player();
-        for (UUID id : hiddenFrom) {
-            Player viewer = Bukkit.getPlayer(id);
-            if (viewer != null) {
-                viewer.showPlayer(ctx().plugin(), owner);
-            }
-        }
-        hiddenFrom.clear();
-        if (!owner.isOnline()) {
+        if (!stealth.end(ctx(), owner) || !owner.isOnline()) {
             return;
         }
         removeOwnEffect(owner, PotionEffectType.INVISIBILITY);
@@ -301,7 +224,7 @@ public final class ShadowAbility extends Ability {
         World world = body.getWorld();
         world.spawnParticle(Particle.LARGE_SMOKE, body, 10, 0.3, 0.6, 0.3, 0.01);
         world.spawnParticle(Particle.DUST, body, 8, 0.35, 0.6, 0.35, 0, SHADOW_DUST);
-        sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.7f, 1.2f + jitter(0.1f));
+        Fx.sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.7f, 1.2f + Fx.jitter(0.1f));
         switch (reason) {
             case HIT -> owner.sendActionBar(Text.mm("<gray>공격받아 은신이 풀렸습니다</gray>"));
             case EXPIRED -> owner.sendActionBar(Text.mm("<gray>그림자 은신이 끝났습니다</gray>"));
@@ -344,10 +267,10 @@ public final class ShadowAbility extends Ability {
         World world = origin.getWorld();
         world.spawnParticle(Particle.LARGE_SMOKE, body, 20, 0.4, 0.7, 0.4, 0.03);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 16, 0.5, 0.8, 0.5, 0, SHADOW_FADE);
-        sound(origin, Sound.ENTITY_PHANTOM_SWOOP, 1.0f, 0.7f);
-        sound(origin, Sound.ENTITY_ILLUSIONER_PREPARE_MIRROR, 1.0f, 0.8f);
+        Fx.sound(origin, Sound.ENTITY_PHANTOM_SWOOP, 1.0f, 0.7f);
+        Fx.sound(origin, Sound.ENTITY_ILLUSIONER_PREPARE_MIRROR, 1.0f, 0.8f);
 
-        loop(0, DANCE_STEP_TICKS, strikes + 1L, new Dance(origin, targets, strikes, radius));
+        Loop.repeat(ctx(), player(), 0, DANCE_STEP_TICKS, strikes + 1L, new Dance(origin, targets, strikes, radius));
         return ActivationResult.success();
     }
 
@@ -398,7 +321,7 @@ public final class ShadowAbility extends Ability {
         }
 
         private boolean isValidTarget(LivingEntity target) {
-            return target.isValid() && !target.isDead() && ctx().isEnemy(player(), target)
+            return Combat.isTargetable(ctx(), player(), target)
                     && target.getWorld().equals(origin.getWorld())
                     && target.getLocation().distanceSquared(origin) <= leash * leash;
         }
@@ -407,18 +330,17 @@ public final class ShadowAbility extends Ability {
             Player owner = player();
             int repeat = hits.merge(target.getUniqueId(), 1, Integer::sum) - 1;
             Location before = owner.getLocation();
-            Location spot = spotAround(owner, target, repeat * REPEAT_ANGLE_STEP);
+            Location spot = Spots.around(ctx(), owner, target, repeat * REPEAT_ANGLE_STEP);
             if (spot != null && owner.teleport(spot, TeleportCause.PLUGIN)) {
                 owner.setFallDistance(0);
-                protectLanding(owner);
+                landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
                 shadowStep(owner, before, spot);
             } else {
                 // No room next to the target: the shadow lashes out from where the owner stands instead.
                 shadowStep(owner, before, target.getLocation());
             }
 
-            target.setNoDamageTicks(0);
-            ctx().damage(owner, target, damage);
+            Combat.hit(ctx(), owner, target, damage);
 
             Location at = target.getLocation().add(0, target.getHeight() * 0.55, 0);
             World world = at.getWorld();
@@ -426,8 +348,8 @@ public final class ShadowAbility extends Ability {
             world.spawnParticle(Particle.DUST, at, 14, 0.35, 0.45, 0.35, 0, SHADOW_DUST);
             world.spawnParticle(Particle.SQUID_INK, at, 6, 0.2, 0.3, 0.2, 0.04);
             world.spawnParticle(Particle.CRIT, at, 8, 0.3, 0.3, 0.3, 0.3);
-            sound(at, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 1.25f + jitter(0.15f));
-            sound(at, Sound.ENTITY_PHANTOM_BITE, 0.8f, 1.1f + jitter(0.15f));
+            Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 1.25f + Fx.jitter(0.15f));
+            Fx.sound(at, Sound.ENTITY_PHANTOM_BITE, 0.8f, 1.1f + Fx.jitter(0.15f));
         }
 
         private void returnHome() {
@@ -435,16 +357,15 @@ public final class ShadowAbility extends Ability {
             if (!owner.isValid() || !owner.getWorld().equals(origin.getWorld())) {
                 return;
             }
-            double scale = scaleOf(owner);
-            if (!fits(origin.getWorld(), origin, STANDING_WIDTH * scale, STANDING_HEIGHT * scale)) {
+            if (!Spots.isSafe(ctx(), origin, Body.standing(owner))) {
                 return;
             }
             Location before = owner.getLocation();
             if (owner.teleport(origin, TeleportCause.PLUGIN)) {
                 owner.setFallDistance(0);
-                protectLanding(owner);
+                landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
                 shadowStep(owner, before, origin);
-                sound(origin, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 0.85f + jitter(0.05f));
+                Fx.sound(origin, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 0.85f + Fx.jitter(0.05f));
             }
         }
     }
@@ -468,145 +389,5 @@ public final class ShadowAbility extends Ability {
             world.spawnParticle(Particle.TRAIL, from.clone().add(ox, oy, oz), 1, 0, 0, 0, 0,
                     new Particle.Trail(to.clone().add(ox, oy, oz), color, duration));
         }
-    }
-
-    /**
-     * A safe spot next to {@code target}, preferring its back rotated by {@code angleOffset} degrees, facing it.
-     * Every spot needs a clear line to the target's eyes so the owner never lands behind a wall. Null if none.
-     */
-    private static @Nullable Location spotAround(Player owner, LivingEntity target, double angleOffset) {
-        World world = target.getWorld();
-        Location base = target.getLocation();
-        Vector back = base.getDirection().setY(0);
-        if (back.lengthSquared() < 1.0E-4) {
-            back = new Vector(0, 0, 1);
-        }
-        back.normalize().multiply(-1).rotateAroundY(Math.toRadians(angleOffset));
-
-        double scale = scaleOf(owner);
-        double width = STANDING_WIDTH * scale;
-        double height = STANDING_HEIGHT * scale;
-        double eyeHeight = STANDING_EYE * scale;
-        Location targetEye = target.getEyeLocation();
-        double clearance = target.getWidth() / 2 + width / 2;
-
-        for (double angle : AROUND_ANGLES) {
-            Vector side = back.clone().rotateAroundY(Math.toRadians(angle));
-            for (double distance : AROUND_DISTANCES) {
-                for (double dy : AROUND_HEIGHTS) {
-                    Location feet = base.clone().add(side.clone().multiply(distance + clearance)).add(0, dy, 0);
-                    snapToGround(world, feet, GROUND_SNAP);
-                    if (!fits(world, feet, width, height) || !hasGroundBelow(world, feet)
-                            || !clearPath(world, targetEye, feet.clone().add(0, eyeHeight, 0))) {
-                        continue;
-                    }
-                    Vector look = target.getLocation().add(0, target.getHeight() * 0.6, 0).toVector()
-                            .subtract(feet.toVector().add(new Vector(0, eyeHeight, 0)));
-                    if (look.lengthSquared() > 1.0E-6) {
-                        feet.setDirection(look);
-                    }
-                    return feet;
-                }
-            }
-        }
-        return null;
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    /** After a teleport into mid-air, the landing that follows deals no fall damage. */
-    private void protectLanding(Player owner) {
-        if (!isGrounded(owner)) {
-            landingGraceUntil = ctx().currentTick() + LANDING_GRACE_TICKS;
-        }
-    }
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(LivingEntity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below) || entity.isInWater();
-    }
-
-    private static boolean fits(World world, Location feet, double width, double height) {
-        if (feet.getY() < world.getMinHeight() + 1 || feet.getY() + height > world.getMaxHeight()) {
-            return false;
-        }
-        double half = width / 2 - 0.01;
-        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + 0.01, feet.getZ() - half,
-                feet.getX() + half, feet.getY() + height, feet.getZ() + half);
-        if (world.hasCollisionsIn(box)) {
-            return false;
-        }
-        int x = feet.getBlockX();
-        int z = feet.getBlockZ();
-        for (int y = (int) Math.floor(box.getMinY()); y <= (int) Math.floor(box.getMaxY()); y++) {
-            if (isHazard(world.getBlockAt(x, y, z))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isHazard(Block block) {
-        Material type = block.getType();
-        return type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE
-                || type == Material.POWDER_SNOW || type == Material.COBWEB;
-    }
-
-    private static boolean hasGroundBelow(World world, Location feet) {
-        double depth = feet.getY() - world.getMinHeight();
-        return depth > 0 && world.rayTraceBlocks(feet, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS,
-                true) != null;
-    }
-
-    private static void snapToGround(World world, Location feet, double maxDrop) {
-        RayTraceResult ground = world.rayTraceBlocks(feet, new Vector(0, -1, 0), maxDrop, FluidCollisionMode.NEVER,
-                true);
-        if (ground != null) {
-            feet.setY(ground.getHitPosition().getY());
-        }
-    }
-
-    private static boolean clearPath(World world, Location from, Location to) {
-        Vector delta = to.toVector().subtract(from.toVector());
-        double length = delta.length();
-        if (length < 1.0E-3) {
-            return true;
-        }
-        return world.rayTraceBlocks(from, delta.multiply(1 / length), length, FluidCollisionMode.NEVER, true) == null;
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

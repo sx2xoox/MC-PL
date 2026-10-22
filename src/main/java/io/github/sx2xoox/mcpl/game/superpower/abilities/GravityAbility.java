@@ -6,6 +6,10 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -17,13 +21,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Display;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -32,8 +32,6 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -82,9 +80,6 @@ public final class GravityAbility extends Ability {
 
     /** Hard cap for every velocity this ability applies, so nobody is flung out of the arena. */
     private static final double MAX_SPEED = 2.5;
-    /** Vanilla entity gravity and vertical drag per tick, used to turn a lift height into a launch speed. */
-    private static final double GRAVITY = 0.08;
-    private static final double DRAG = 0.98;
 
     // passive
     /** Horizontal push that replaces vanilla knockback on a lifted enemy, keeping it in combo range. */
@@ -161,7 +156,7 @@ public final class GravityAbility extends Ability {
         }
         long now = ctx().currentTick();
         Juggle juggle = juggles.computeIfAbsent(victim.getUniqueId(), id -> new Juggle());
-        if (now < juggle.airborneUntil && !isGrounded(victim)) {
+        if (now < juggle.airborneUntil && !(Motion.isGrounded(victim) || victim.isInWater())) {
             double bonus = Math.max(0, params().num("air_bonus")) / 100.0;
             event.setDamage(event.getDamage() * (1 + bonus));
             juggle.combo++;
@@ -178,30 +173,27 @@ public final class GravityAbility extends Ability {
     }
 
     private void lift(LivingEntity victim, double height) {
-        if (!isTargetable(victim) || height <= 0) {
+        if (!Combat.isTargetable(ctx(), player(), victim) || height <= 0) {
             return;
         }
-        double factor = 1 - knockbackResistance(victim);
-        if (factor <= 0.01) {
+        Vector push = Motion.horizontal(victim.getLocation().toVector().subtract(player().getLocation().toVector()));
+        push.multiply(LIFT_PUSH).setY(Motion.launchSpeed(height));
+        if (!Motion.push(victim, push, MAX_SPEED)) {
             return;
         }
-        Vector push = horizontal(victim.getLocation().toVector().subtract(player().getLocation().toVector()));
-        push.multiply(LIFT_PUSH * factor);
-        push.setY(launchSpeed(height) * factor);
-        victim.setVelocity(clamp(push));
         markAirborne(victim);
 
         Location feet = victim.getLocation().add(0, 0.1, 0);
-        ring(feet, 0.6, 10, VIOLET_DUST);
+        Fx.ring(feet, 0.6, 10, 0, Particle.DUST, VIOLET_DUST);
         victim.getWorld().spawnParticle(Particle.REVERSE_PORTAL, feet, 8, 0.25, 0.1, 0.25, 0.04);
-        sound(feet, Sound.ENTITY_SHULKER_BULLET_HIT, 0.7f, 1.4f + jitter(0.15f));
+        Fx.sound(feet, Sound.ENTITY_SHULKER_BULLET_HIT, 0.7f, 1.4f + Fx.jitter(0.15f));
     }
 
     private void comboFeedback(LivingEntity victim, int combo) {
-        Location body = body(victim);
+        Location body = Fx.body(victim);
         victim.getWorld().spawnParticle(Particle.ENCHANTED_HIT, body, 8, 0.3, 0.4, 0.3, 0.15);
         victim.getWorld().spawnParticle(Particle.DUST, body, 4, 0.3, 0.4, 0.3, 0, VIOLET_DUST);
-        sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 1.0f, (float) Math.min(2.0, 0.9 + 0.15 * combo));
+        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 1.0f, (float) Math.min(2.0, 0.9 + 0.15 * combo));
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">공중 콤보 <white>×" + combo + "</white></" + COLOR_TAG + ">"));
     }
 
@@ -220,17 +212,17 @@ public final class GravityAbility extends Ability {
             return ActivationResult.fail("조준한 곳에 적이 없습니다");
         }
         long slowTicks = params().ticks("pull_slow");
-        sound(player().getEyeLocation(), Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 1.6f + jitter(0.1f));
-        sound(body(target), Sound.ENTITY_SHULKER_SHOOT, 1.0f, 0.6f + jitter(0.05f));
-        target.getWorld().spawnParticle(Particle.REVERSE_PORTAL, body(target), 16, 0.3, 0.5, 0.3, 0.05);
-        loop(0, 1, PULL_MAX_TICKS, i -> pullStep(target, i, slowTicks));
+        Fx.sound(player().getEyeLocation(), Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 1.6f + Fx.jitter(0.1f));
+        Fx.sound(Fx.body(target), Sound.ENTITY_SHULKER_SHOOT, 1.0f, 0.6f + Fx.jitter(0.05f));
+        target.getWorld().spawnParticle(Particle.REVERSE_PORTAL, Fx.body(target), 16, 0.3, 0.5, 0.3, 0.05);
+        Loop.repeat(ctx(), player(), 0, 1, PULL_MAX_TICKS, i -> pullStep(target, i, slowTicks));
         return ActivationResult.success();
     }
 
     /** One tick of the pull: steer the target towards the spot in front of the owner. False when finished. */
     private boolean pullStep(LivingEntity target, long tick, long slowTicks) {
         Player owner = player();
-        if (!isTargetable(target) || !target.getWorld().equals(owner.getWorld())) {
+        if (!Combat.isTargetable(ctx(), player(), target) || !target.getWorld().equals(owner.getWorld())) {
             return false;
         }
         Vector to = pullDestination(owner).toVector().subtract(target.getLocation().toVector());
@@ -240,15 +232,16 @@ public final class GravityAbility extends Ability {
             return false;
         }
         double speed = Math.min(PULL_SPEED, Math.max(0.3, distance * 0.45));
-        Vector velocity = horizontal(to).multiply(speed);
+        Vector velocity = Motion.horizontal(to).multiply(speed);
         // Small hops keep the target off the ground (no ground friction) without launching it.
-        velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (isGrounded(target) ? 0.22 : 0.0));
-        target.setVelocity(clamp(velocity));
+        boolean grounded = Motion.isGrounded(target) || target.isInWater();
+        velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.22 : 0.0));
+        target.setVelocity(Motion.clamp(velocity, MAX_SPEED));
         target.setFallDistance(0);
 
-        Location body = body(target);
+        Location body = Fx.body(target);
         World world = target.getWorld();
-        world.spawnParticle(Particle.TRAIL, body, 2, 0.25, 0.4, 0.25, 0, new Particle.Trail(body(owner), VIOLET, 6));
+        world.spawnParticle(Particle.TRAIL, body, 2, 0.25, 0.4, 0.25, 0, new Particle.Trail(Fx.body(owner), VIOLET, 6));
         if (tick % 2 == 0) {
             world.spawnParticle(Particle.REVERSE_PORTAL, body, 3, 0.25, 0.4, 0.25, 0.02);
         }
@@ -258,7 +251,7 @@ public final class GravityAbility extends Ability {
     /** The spot in front of the owner where pulled enemies are dropped (the owner's spot if a wall is in the way). */
     private static Location pullDestination(Player owner) {
         Location feet = owner.getLocation();
-        Vector facing = horizontal(feet.getDirection());
+        Vector facing = Motion.horizontal(feet.getDirection());
         if (facing.lengthSquared() < 1.0E-6) {
             return feet;
         }
@@ -276,11 +269,11 @@ public final class GravityAbility extends Ability {
         }
         markAirborne(target);
 
-        Location body = body(target);
+        Location body = Fx.body(target);
         target.getWorld().spawnParticle(Particle.REVERSE_PORTAL, body, 20, 0.3, 0.5, 0.3, 0.08);
-        ring(target.getLocation().add(0, 0.1, 0), 0.8, 12, VIOLET_DUST);
-        sound(body, Sound.BLOCK_HEAVY_CORE_PLACE, 1.0f, 0.7f + jitter(0.05f));
-        sound(body, Sound.ENTITY_SHULKER_BULLET_HIT, 0.8f, 0.8f);
+        Fx.ring(target.getLocation().add(0, 0.1, 0), 0.8, 12, 0, Particle.DUST, VIOLET_DUST);
+        Fx.sound(body, Sound.BLOCK_HEAVY_CORE_PLACE, 1.0f, 0.7f + Fx.jitter(0.05f));
+        Fx.sound(body, Sound.ENTITY_SHULKER_BULLET_HIT, 0.8f, 0.8f);
     }
 
     // ------------------------------------------------------------------ ultimate: black hole
@@ -363,11 +356,11 @@ public final class GravityAbility extends Ability {
         void open() {
             core = spawnOrb(Material.BLACK_CONCRETE, new Display.Brightness(0, 0), true);
             shell = spawnOrb(Material.PURPLE_STAINED_GLASS, new Display.Brightness(15, 15), false);
-            sound(center, Sound.BLOCK_RESPAWN_ANCHOR_SET_SPAWN, 1.5f, 0.6f);
-            sound(center, Sound.BLOCK_BEACON_ACTIVATE, 1.2f, 0.5f);
-            sound(center, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
+            Fx.sound(center, Sound.BLOCK_RESPAWN_ANCHOR_SET_SPAWN, 1.5f, 0.6f);
+            Fx.sound(center, Sound.BLOCK_BEACON_ACTIVATE, 1.2f, 0.5f);
+            Fx.sound(center, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
             world.spawnParticle(Particle.REVERSE_PORTAL, center, 40, 0.2, 0.2, 0.2, 0.6);
-            loop(0, 1, life + 1, this);
+            Loop.repeat(ctx(), player(), 0, 1, life + 1, this);
         }
 
         private ItemDisplay spawnOrb(Material material, Display.Brightness brightness, boolean glowing) {
@@ -396,12 +389,12 @@ public final class GravityAbility extends Ability {
                 updatePose(tick + POSE_PERIOD);
             }
             if (tick == life - CHARGE_SOUND_LEAD) {
-                sound(center, Sound.ENTITY_WARDEN_SONIC_CHARGE, 1.5f, 1.1f);
+                Fx.sound(center, Sound.ENTITY_WARDEN_SONIC_CHARGE, 1.5f, 1.1f);
             }
             suck();
             drawSwirl(tick);
             if (tick % 20 == 0) {
-                sound(center, Sound.BLOCK_PORTAL_AMBIENT, 0.8f, 0.5f + 0.6f * tick / life);
+                Fx.sound(center, Sound.BLOCK_PORTAL_AMBIENT, 0.8f, 0.5f + 0.6f * tick / life);
             }
             return true;
         }
@@ -428,7 +421,7 @@ public final class GravityAbility extends Ability {
 
         private void suck() {
             for (LivingEntity enemy : ctx().enemiesNear(player(), center, radius)) {
-                Vector to = center.toVector().subtract(body(enemy).toVector());
+                Vector to = center.toVector().subtract(Fx.body(enemy).toVector());
                 double distance = to.length();
                 Vector velocity;
                 if (distance < CORE_HOLD_DISTANCE) {
@@ -441,7 +434,7 @@ public final class GravityAbility extends Ability {
                     velocity = direction.multiply(SUCK_MIN + (SUCK_MAX - SUCK_MIN) * closeness).add(swirl);
                     velocity.setY(Math.clamp(velocity.getY(), -0.35, MAX_SUCK_LIFT));
                 }
-                enemy.setVelocity(clamp(velocity));
+                enemy.setVelocity(Motion.clamp(velocity, MAX_SPEED));
                 enemy.setFallDistance(0);
             }
         }
@@ -469,7 +462,7 @@ public final class GravityAbility extends Ability {
             if (tick % 5 == 0) {
                 Location edge = center.clone();
                 edge.setY(floorY);
-                ring(edge, radius, (int) Math.min(48, Math.max(16, radius * 3.5)), EDGE_DUST);
+                Fx.ring(edge, radius, (int) Math.min(48, Math.max(16, radius * 3.5)), 0, Particle.DUST, EDGE_DUST);
             }
         }
 
@@ -482,24 +475,25 @@ public final class GravityAbility extends Ability {
             double blastRadius = params().num("blast_radius");
             Location edge = center.clone();
             edge.setY(floorY);
-            ring(edge, blastRadius, (int) Math.min(40, Math.max(14, blastRadius * 5)), VIOLET_DUST);
-            sound(center, Sound.ENTITY_GENERIC_EXPLODE, 1.4f, 0.6f);
-            sound(center, Sound.ENTITY_WARDEN_SONIC_BOOM, 1.2f, 1.3f);
+            int points = (int) Math.min(40, Math.max(14, blastRadius * 5));
+            Fx.ring(edge, blastRadius, points, 0, Particle.DUST, VIOLET_DUST);
+            Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 1.4f, 0.6f);
+            Fx.sound(center, Sound.ENTITY_WARDEN_SONIC_BOOM, 1.2f, 1.3f);
 
             double damage = params().num("blast_damage");
             int hits = 0;
             for (LivingEntity enemy : ctx().enemiesNear(player(), center, blastRadius)) {
-                hit(enemy, damage);
+                Combat.hit(ctx(), player(), enemy, damage);
                 hits++;
-                if (!isTargetable(enemy)) {
+                if (!Combat.isTargetable(ctx(), player(), enemy)) {
                     continue;
                 }
-                Vector away = horizontal(enemy.getLocation().toVector().subtract(center.toVector()));
+                Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(center.toVector()));
                 if (away.lengthSquared() < 1.0E-6) {
                     double angle = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
                     away = new Vector(Math.cos(angle), 0, Math.sin(angle));
                 }
-                enemy.setVelocity(clamp(away.multiply(BLAST_PUSH).setY(BLAST_LIFT)));
+                enemy.setVelocity(Motion.clamp(away.multiply(BLAST_PUSH).setY(BLAST_LIFT), MAX_SPEED));
                 markAirborne(enemy);
             }
             if (hits > 0 && player().isOnline()) {
@@ -522,110 +516,5 @@ public final class GravityAbility extends Ability {
     private static Transformation orbPose(float size, float angle, Vector3f axis) {
         Quaternionf rotation = new Quaternionf().rotateAxis(angle, axis);
         return new Transformation(new Vector3f(), rotation, new Vector3f(size, size, size), new Quaternionf());
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    private boolean isTargetable(LivingEntity entity) {
-        return entity.isValid() && !entity.isDead() && ctx().isEnemy(player(), entity);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so the hit is never swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !isTargetable(target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    private static double knockbackResistance(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        return attribute == null ? 0 : Math.clamp(attribute.getValue(), 0.0, 1.0);
-    }
-
-    /** Initial upward speed (blocks per tick) that makes an entity rise {@code height} blocks under vanilla physics. */
-    private static double launchSpeed(double height) {
-        double low = 0;
-        double high = MAX_SPEED;
-        for (int i = 0; i < 24; i++) {
-            double mid = (low + high) / 2;
-            if (apex(mid) < height) {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        return high;
-    }
-
-    private static double apex(double speed) {
-        double y = 0;
-        for (int i = 0; i < 200 && speed > 0; i++) {
-            y += speed;
-            speed = (speed - GRAVITY) * DRAG;
-        }
-        return y;
-    }
-
-    /** True if the entity stands on something (or swims), judged by collisions right below its feet. */
-    private static boolean isGrounded(Entity entity) {
-        if (entity.isInWater()) {
-            return true;
-        }
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.01, box.getMinY() - 0.12, box.getMinZ() + 0.01,
-                box.getMaxX() - 0.01, box.getMinY(), box.getMaxZ() - 0.01);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    private static Vector horizontal(Vector vector) {
-        Vector flat = new Vector(vector.getX(), 0, vector.getZ());
-        return flat.lengthSquared() < 1.0E-8 ? flat : flat.normalize();
-    }
-
-    private static Vector clamp(Vector velocity) {
-        double length = velocity.length();
-        return length > MAX_SPEED ? velocity.multiply(MAX_SPEED / length) : velocity;
-    }
-
-    private static Location body(LivingEntity entity) {
-        return entity.getLocation().add(0, entity.getHeight() * 0.5, 0);
-    }
-
-    private static void ring(Location center, double radius, int points, Particle.DustOptions dust) {
-        World world = center.getWorld();
-        for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
-            world.spawnParticle(Particle.DUST, center.getX() + Math.cos(angle) * radius, center.getY(),
-                    center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, dust);
-        }
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

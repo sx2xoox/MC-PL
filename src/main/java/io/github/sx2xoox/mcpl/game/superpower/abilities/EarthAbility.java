@@ -10,6 +10,10 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -20,10 +24,8 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -31,7 +33,6 @@ import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -75,8 +76,6 @@ public final class EarthAbility extends Ability {
     private static final BlockData CAGE_ROOF = Material.TUFF.createBlockData();
 
     private static final double MAX_SPEED = 2.5;
-    private static final double GRAVITY = 0.08;
-    private static final double DRAG = 0.98;
 
     // active: earthquake
     /** Blocks the wave front advances per tick. */
@@ -135,9 +134,9 @@ public final class EarthAbility extends Ability {
         World world = owner.getWorld();
         world.spawnParticle(Particle.BLOCK, stomp, 24, 0.6, 0.1, 0.6, 0.15, displayData(ground));
         world.spawnParticle(Particle.DUST_PLUME, stomp, 10, 0.5, 0.05, 0.5, 0.02);
-        sound(stomp, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.0f, 0.8f + jitter(0.05f));
-        sound(stomp, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.6f);
-        loop(0, 1, quake.totalTicks(), quake);
+        Fx.sound(stomp, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.0f, 0.8f + Fx.jitter(0.05f));
+        Fx.sound(stomp, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.6f);
+        Loop.repeat(ctx(), player(), 0, 1, quake.totalTicks(), quake);
         return ActivationResult.success();
     }
 
@@ -201,7 +200,7 @@ public final class EarthAbility extends Ability {
             this.rayAlive = new boolean[count];
             Arrays.fill(rayAlive, true);
             this.damage = params().num("quake_damage");
-            this.launch = launchSpeed(params().num("quake_launch"));
+            this.launch = Motion.launchSpeed(params().num("quake_launch"));
         }
 
         long totalTicks() {
@@ -260,9 +259,9 @@ public final class EarthAbility extends Ability {
             if (!chunks.isEmpty()) {
                 rings.add(new Ring(tick, chunks));
                 Location at = new Location(world, soundX, soundY, soundZ);
-                sound(at, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 0.8f, 0.6f + jitter(0.1f));
+                Fx.sound(at, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 0.8f, 0.6f + Fx.jitter(0.1f));
                 if (tick % 2 == 0) {
-                    sound(at, Sound.BLOCK_ROOTED_DIRT_BREAK, 0.7f, 0.7f + jitter(0.1f));
+                    Fx.sound(at, Sound.BLOCK_ROOTED_DIRT_BREAK, 0.7f, 0.7f + Fx.jitter(0.1f));
                 }
             }
         }
@@ -330,19 +329,15 @@ public final class EarthAbility extends Ability {
                 if (!struck.add(enemy.getUniqueId())) {
                     continue;
                 }
-                hit(enemy, damage);
-                if (!isTargetable(enemy)) {
+                Combat.hit(ctx(), player(), enemy, damage);
+                if (!Combat.isTargetable(ctx(), player(), enemy)) {
                     continue;
                 }
-                double factor = 1 - knockbackResistance(enemy);
-                if (factor > 0.01) {
-                    Vector velocity = direction.clone().multiply(LAUNCH_PUSH * factor).setY(launch * factor);
-                    enemy.setVelocity(clamp(velocity));
-                }
+                Motion.push(enemy, direction.clone().multiply(LAUNCH_PUSH).setY(launch), MAX_SPEED);
                 Location body = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
                 world.spawnParticle(Particle.CRIT, body, 10, 0.3, 0.4, 0.3, 0.2);
                 world.spawnParticle(Particle.BLOCK, enemy.getLocation(), 12, 0.4, 0.2, 0.4, 0.2, FALLBACK_GROUND);
-                sound(body, Sound.ENTITY_IRON_GOLEM_ATTACK, 0.9f, 0.8f + jitter(0.1f));
+                Fx.sound(body, Sound.ENTITY_IRON_GOLEM_ATTACK, 0.9f, 0.8f + Fx.jitter(0.1f));
             }
         }
     }
@@ -374,9 +369,9 @@ public final class EarthAbility extends Ability {
         }
         long duration = Math.max(1, params().ticks("ult_duration"));
 
-        sound(origin, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.6f);
-        sound(origin, Sound.ENTITY_WARDEN_EMERGE, 0.9f, 1.4f);
-        loop(0, 1, SHOCKWAVE_TICKS, tick -> {
+        Fx.sound(origin, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.6f);
+        Fx.sound(origin, Sound.ENTITY_WARDEN_EMERGE, 0.9f, 1.4f);
+        Loop.repeat(ctx(), player(), 0, 1, SHOCKWAVE_TICKS, tick -> {
             drawShockwave(origin, radius * (tick + 1) / SHOCKWAVE_TICKS);
             return true;
         });
@@ -404,8 +399,8 @@ public final class EarthAbility extends Ability {
         World world = target.getWorld();
         world.spawnParticle(Particle.DUST_PILLAR, target.getLocation(), 24, 0.8, 0.1, 0.8, 0.1, CAGE_PILLAR);
         world.spawnParticle(Particle.BLOCK, body, 20, 0.7, 0.6, 0.7, 0.1, CAGE_WALL);
-        sound(body, Sound.BLOCK_DRIPSTONE_BLOCK_PLACE, 1.2f, 0.6f + jitter(0.05f));
-        sound(body, Sound.BLOCK_POINTED_DRIPSTONE_LAND, 1.0f, 0.8f + jitter(0.1f));
+        Fx.sound(body, Sound.BLOCK_DRIPSTONE_BLOCK_PLACE, 1.2f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(body, Sound.BLOCK_POINTED_DRIPSTONE_LAND, 1.0f, 0.8f + Fx.jitter(0.1f));
         return body;
     }
 
@@ -457,8 +452,11 @@ public final class EarthAbility extends Ability {
         return !block.getWorld().getNearbyEntities(cell, entity -> entity instanceof LivingEntity).isEmpty();
     }
 
-    /** Moves the target to the middle of its block column when that space is free, so the cage fits around it. */
-    private static void centerInBlock(LivingEntity target) {
+    /**
+     * Moves the target to the middle of its block column when that space is free (and inside the arena), so the cage
+     * fits around it.
+     */
+    private void centerInBlock(LivingEntity target) {
         Location location = target.getLocation();
         double dx = location.getBlockX() + 0.5 - location.getX();
         double dz = location.getBlockZ() + 0.5 - location.getZ();
@@ -466,10 +464,11 @@ public final class EarthAbility extends Ability {
             return;
         }
         BoundingBox moved = target.getBoundingBox().shift(dx, 0, dz).expand(-0.01);
-        if (target.getWorld().hasCollisionsIn(moved)) {
+        Location centered = location.clone().add(dx, 0, dz);
+        if (target.getWorld().hasCollisionsIn(moved) || !ctx().isInsideArena(centered)) {
             return;
         }
-        target.teleport(location.add(dx, 0, dz));
+        target.teleport(centered);
     }
 
     private static void crumble(Location center) {
@@ -477,8 +476,8 @@ public final class EarthAbility extends Ability {
         world.spawnParticle(Particle.BLOCK, center, 40, 0.8, 0.8, 0.8, 0.15, CAGE_PILLAR);
         world.spawnParticle(Particle.BLOCK, center, 20, 0.8, 0.8, 0.8, 0.15, CAGE_WALL);
         world.spawnParticle(Particle.DUST_PLUME, center, 8, 0.6, 0.6, 0.6, 0.02);
-        sound(center, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 1.2f, 0.7f + jitter(0.05f));
-        sound(center, Sound.BLOCK_STONE_BREAK, 1.0f, 0.6f + jitter(0.05f));
+        Fx.sound(center, Sound.BLOCK_DRIPSTONE_BLOCK_BREAK, 1.2f, 0.7f + Fx.jitter(0.05f));
+        Fx.sound(center, Sound.BLOCK_STONE_BREAK, 1.0f, 0.6f + Fx.jitter(0.05f));
     }
 
     private void drawShockwave(Location origin, double radius) {
@@ -499,19 +498,6 @@ public final class EarthAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    private boolean isTargetable(LivingEntity entity) {
-        return entity.isValid() && !entity.isDead() && ctx().isEnemy(player(), entity);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so the hit is never swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !isTargetable(target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
     private static boolean passable(World world, int x, int y, int z) {
         if (y < world.getMinHeight() || y >= world.getMaxHeight()) {
             return true;
@@ -521,66 +507,5 @@ public final class EarthAbility extends Ability {
 
     private static long blockKey(int x, int y, int z) {
         return ((long) x & 0x3FFFFFFL) << 38 | ((long) z & 0x3FFFFFFL) << 12 | (long) y & 0xFFFL;
-    }
-
-    private static double knockbackResistance(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        return attribute == null ? 0 : Math.clamp(attribute.getValue(), 0.0, 1.0);
-    }
-
-    /** Initial upward speed (blocks per tick) that makes an entity rise {@code height} blocks under vanilla physics. */
-    private static double launchSpeed(double height) {
-        if (height <= 0) {
-            return 0;
-        }
-        double low = 0;
-        double high = MAX_SPEED;
-        for (int i = 0; i < 24; i++) {
-            double mid = (low + high) / 2;
-            double y = 0;
-            double speed = mid;
-            for (int t = 0; t < 200 && speed > 0; t++) {
-                y += speed;
-                speed = (speed - GRAVITY) * DRAG;
-            }
-            if (y < height) {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        return high;
-    }
-
-    private static Vector clamp(Vector velocity) {
-        double length = velocity.length();
-        return length > MAX_SPEED ? velocity.multiply(MAX_SPEED / length) : velocity;
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

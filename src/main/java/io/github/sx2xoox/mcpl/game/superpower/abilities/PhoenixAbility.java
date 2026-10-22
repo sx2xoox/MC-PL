@@ -6,12 +6,18 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
-import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Color;
@@ -21,11 +27,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -33,9 +35,6 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 
@@ -92,6 +91,10 @@ public final class PhoenixAbility extends Ability {
     // Leap
     private static final double LEAP_FORWARD = 0.45;
     private static final double MAX_LEAP_VELOCITY = 2.5;
+    /** Launch speed of a plain vanilla jump, used when no leap height is configured. */
+    private static final double PLAIN_JUMP = 0.42;
+    /** Caps every velocity this ability applies, so nobody is flung out of the arena. */
+    private static final double MAX_VELOCITY = 3.0;
     /** Upper bound on how long a leap may last before its state is dropped (the glide itself is a potion). */
     private static final long LEAP_TIMEOUT_TICKS = 20 * 20;
     private static final long LEAP_MIN_AIR_TICKS = 6;
@@ -136,7 +139,7 @@ public final class PhoenixAbility extends Ability {
             event.setCancelled(true);
             return;
         }
-        if (isFall(event) && (leaping || now <= fallGraceUntil)) {
+        if (Combat.isFall(event) && (leaping || now <= fallGraceUntil)) {
             event.setCancelled(true);
             return;
         }
@@ -162,7 +165,7 @@ public final class PhoenixAbility extends Ability {
         rebirthUsed = true;
         long now = ctx().currentTick();
         rebirthGraceUntil = now + params().ticks("revive_grace");
-        double max = maxHealth(owner);
+        double max = Combat.maxHealth(owner);
         owner.setHealth(Math.clamp(max * params().num("revive_health") / 100.0, 1.0, max));
         owner.setFireTicks(0);
         owner.setFreezeTicks(0);
@@ -178,16 +181,13 @@ public final class PhoenixAbility extends Ability {
         world.spawnParticle(Particle.LAVA, body, 12, 0.4, 0.4, 0.4, 0);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 30, 0.5, 0.9, 0.5, 0, WING_DUST);
         drawWings(owner, 0.25, 1.4);
-        sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.6f);
-        sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.3f);
-        sound(feet, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 0.8f);
+        Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.6f);
+        Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.3f);
+        Fx.sound(feet, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 0.8f);
         owner.sendActionBar(Text.mm("<" + FLAME + "><b>✹ 환생!</b></" + FLAME + "> <white>잿더미에서 되살아났습니다</white>"));
-        Component notice = Text.mm("<" + FLAME + ">✹</" + FLAME + "> <white><player></white><gray>이(가) "
+        ctx().announce(Text.mm("<" + FLAME + ">✹</" + FLAME + "> <white><player></white><gray>이(가) "
                 + "</gray><" + FLAME + ">불사조</" + FLAME + "><gray>의 힘으로 잿더미에서 되살아났습니다!</gray>",
-                Placeholder.unparsed("player", owner.getName()));
-        for (Player viewer : world.getPlayers()) {
-            viewer.sendMessage(notice);
-        }
+                Placeholder.unparsed("player", owner.getName())));
         // The shockwave is dealt a tick later, outside the damage event that triggered the rebirth.
         ctx().runLater(owner, 1, this::rebirthShockwave);
     }
@@ -202,7 +202,7 @@ public final class PhoenixAbility extends Ability {
         double damage = params().num("revive_damage");
         long burn = params().ticks("revive_burn");
         for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
-            ctx().damage(owner, enemy, damage);
+            Combat.hit(ctx(), owner, enemy, damage);
             ignite(enemy, burn);
             Vector push = enemy.getLocation().toVector().subtract(center.toVector()).setY(0);
             if (push.lengthSquared() < 1.0E-4) {
@@ -210,23 +210,20 @@ public final class PhoenixAbility extends Ability {
                         ThreadLocalRandom.current().nextDouble() - 0.5);
             }
             push.normalize().multiply(0.9).setY(0.4);
-            enemy.setVelocity(clamp(enemy.getVelocity().add(push)));
+            enemy.setVelocity(Motion.clamp(enemy.getVelocity().add(push), MAX_VELOCITY));
             enemy.getWorld().spawnParticle(Particle.FLAME, enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0),
                     10, 0.25, 0.4, 0.25, 0.04);
         }
-        sound(center, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.7f);
-        sound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.5f);
+        Fx.sound(center, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.7f);
+        Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.5f);
         // An expanding ring of fire, one frame per tick.
-        int[] frame = {0};
-        BukkitTask[] task = new BukkitTask[1];
-        task[0] = ctx().runTimer(owner, 0, 1, () -> {
-            frame[0]++;
-            double r = radius * frame[0] / 4.0;
+        Loop.repeat(ctx(), owner, 0, 1, 4, run -> {
+            double r = radius * (run + 1) / 4.0;
             ring(center.clone().add(0, 0.2, 0), r, Math.max(8, (int) (r * 6)), Particle.FLAME, 0.02);
-            if (frame[0] >= 4) {
+            if (run == 3) {
                 center.getWorld().spawnParticle(Particle.LAVA, center, 8, radius / 3, 0.2, radius / 3, 0);
-                task[0].cancel();
             }
+            return true;
         });
     }
 
@@ -238,9 +235,10 @@ public final class PhoenixAbility extends Ability {
         if (owner.isInsideVehicle()) {
             return ActivationResult.fail("탈것에 탄 채로는 날아오를 수 없습니다");
         }
-        double up = Math.min(MAX_LEAP_VELOCITY, launchVelocity(params().num("leap_height")));
-        Vector forward = horizontalLook(owner).multiply(LEAP_FORWARD);
-        owner.setVelocity(clamp(new Vector(forward.getX(), up, forward.getZ())));
+        double height = params().num("leap_height");
+        double up = Math.min(MAX_LEAP_VELOCITY, height > 0 ? Motion.launchSpeed(height) : PLAIN_JUMP);
+        Vector forward = Motion.horizontal(owner.getLocation().getDirection()).multiply(LEAP_FORWARD);
+        owner.setVelocity(Motion.clamp(new Vector(forward.getX(), up, forward.getZ()), MAX_VELOCITY));
         owner.setFallDistance(0);
         int glide = (int) params().ticks("glide_duration");
         // Slow falling has no effect while rising, so the ascent time is simply added on top.
@@ -256,8 +254,8 @@ public final class PhoenixAbility extends Ability {
         world.spawnParticle(Particle.FLAME, feet.clone().add(0, 0.1, 0), 30, 0.4, 0.05, 0.4, 0.08);
         ring(feet.clone().add(0, 0.1, 0), 1.2, 16, Particle.SMALL_FLAME, 0.01);
         world.spawnParticle(Particle.LARGE_SMOKE, feet, 6, 0.3, 0.05, 0.3, 0.02);
-        sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.2f + jitter(0.1f));
-        sound(feet, Sound.ENTITY_BLAZE_SHOOT, 0.8f, 0.9f + jitter(0.1f));
+        Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.2f + Fx.jitter(0.1f));
+        Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 0.8f, 0.9f + Fx.jitter(0.1f));
         owner.sendActionBar(Text.mm("<" + FLAME + ">✹ 화염 날개</" + FLAME + "> <gray>웅크리면 급강하</gray>"));
         return ActivationResult.success();
     }
@@ -278,7 +276,7 @@ public final class PhoenixAbility extends Ability {
         Player owner = player();
         long airborne = tick - leapStartTick;
         owner.setFallDistance(0);
-        boolean grounded = isGrounded(owner) || owner.isInWater();
+        boolean grounded = Motion.isGrounded(owner) || owner.isInWater();
         if (!grounded) {
             leftGround = true;
         }
@@ -292,9 +290,9 @@ public final class PhoenixAbility extends Ability {
             dived = true;
             owner.removePotionEffect(PotionEffectType.SLOW_FALLING);
             Vector velocity = owner.getVelocity();
-            owner.setVelocity(clamp(new Vector(velocity.getX(), Math.min(velocity.getY(), DIVE_VELOCITY),
-                    velocity.getZ())));
-            sound(owner.getLocation(), Sound.ENTITY_PHANTOM_FLAP, 1.0f, 0.7f);
+            owner.setVelocity(Motion.clamp(new Vector(velocity.getX(), Math.min(velocity.getY(), DIVE_VELOCITY),
+                    velocity.getZ()), MAX_VELOCITY));
+            Fx.sound(owner.getLocation(), Sound.ENTITY_PHANTOM_FLAP, 1.0f, 0.7f);
         }
         if (tick % 2 != 0) {
             return;
@@ -308,7 +306,7 @@ public final class PhoenixAbility extends Ability {
             drawWings(owner, flap, 1.0);
         }
         if (tick % 12 == 0 && !dived) {
-            sound(feet, Sound.ENTITY_PHANTOM_FLAP, 0.4f, 1.3f + jitter(0.1f));
+            Fx.sound(feet, Sound.ENTITY_PHANTOM_FLAP, 0.4f, 1.3f + Fx.jitter(0.1f));
         }
     }
 
@@ -323,7 +321,7 @@ public final class PhoenixAbility extends Ability {
         Location feet = owner.getLocation();
         if (dived) {
             ring(feet.clone().add(0, 0.15, 0), 1.6, 18, Particle.FLAME, 0.03);
-            sound(feet, Sound.ITEM_FIRECHARGE_USE, 0.7f, 1.2f);
+            Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 0.7f, 1.2f);
         } else {
             feet.getWorld().spawnParticle(Particle.SMALL_FLAME, feet.clone().add(0, 0.1, 0), 10, 0.4, 0.05, 0.4, 0.02);
         }
@@ -347,11 +345,16 @@ public final class PhoenixAbility extends Ability {
         if (reach < MIN_DASH) {
             return ActivationResult.fail("앞이 막혀 돌진할 수 없습니다");
         }
+        // The dash never carries the owner past the arena border.
+        reach = Spots.arenaReach(ctx(), owner.getLocation(), direction, reach);
+        if (reach < MIN_DASH) {
+            return ActivationResult.fail("자기장 밖으로는 돌진할 수 없습니다");
+        }
         new Dash(owner, direction, reach).start();
         return ActivationResult.success();
     }
 
-    private final class Dash implements Runnable {
+    private final class Dash implements LongPredicate {
         private final Player owner;
         private final Vector direction;
         private final int pushes;
@@ -361,7 +364,6 @@ public final class PhoenixAbility extends Ability {
         private final List<Location> path = new ArrayList<>();
         private Location previous;
         private int age;
-        private BukkitTask task;
 
         Dash(Player owner, Vector direction, double reach) {
             this.owner = owner;
@@ -379,24 +381,23 @@ public final class PhoenixAbility extends Ability {
             world.spawnParticle(Particle.FLAME, body, 40, 0.4, 0.6, 0.4, 0.15);
             world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 20, 0.5, 0.7, 0.5, 0, WING_DUST);
             drawWings(owner, 0.15, 1.6);
-            sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.7f);
-            sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.5f);
-            sound(feet, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.8f);
-            task = ctx().runTimer(owner, 0, 1, this);
+            Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.7f);
+            Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.5f);
+            Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.8f);
+            Loop.repeat(ctx(), owner, 0, 1, pushes + DASH_LATENCY_TICKS, this);
         }
 
         @Override
-        public void run() {
-            if (!owner.isOnline() || !ctx().isAlive(owner) || owner.isInsideVehicle()) {
-                task.cancel();
-                return;
+        public boolean test(long run) {
+            if (owner.isInsideVehicle()) {
+                return false;
             }
             age++;
             owner.setFallDistance(0);
             if (age <= pushes) {
                 Vector velocity = direction.clone().multiply(speed);
                 velocity.setY(velocity.getY() + DASH_LIFT);
-                owner.setVelocity(clamp(velocity));
+                owner.setVelocity(Motion.clamp(velocity, MAX_VELOCITY));
             } else if (age == pushes + 1) {
                 // Brake, or the air drag would carry the owner much further than the dash.
                 owner.setVelocity(direction.clone().multiply(0.3).setY(0.05));
@@ -407,8 +408,9 @@ public final class PhoenixAbility extends Ability {
             previous = now;
             if (age >= pushes + DASH_LATENCY_TICKS) {
                 finish(now);
-                task.cancel();
+                return false;
             }
+            return true;
         }
 
         /** Damages every enemy within the dash radius of the segment travelled since the last tick. */
@@ -428,7 +430,7 @@ public final class PhoenixAbility extends Ability {
                     continue;
                 }
                 hit.add(enemy.getUniqueId());
-                ctx().damage(owner, enemy, damage);
+                Combat.hit(ctx(), owner, enemy, damage);
                 ignite(enemy, burn);
                 // Flung aside and up, away from the phoenix's path.
                 Vector side = new Vector(-direction.getZ(), 0, direction.getX());
@@ -438,11 +440,12 @@ public final class PhoenixAbility extends Ability {
                 if (side.lengthSquared() > 1.0E-6) {
                     side.normalize();
                 }
-                enemy.setVelocity(clamp(side.multiply(0.6).add(direction.clone().multiply(0.4)).setY(0.45)));
+                Vector fling = side.multiply(0.6).add(direction.clone().multiply(0.4)).setY(0.45);
+                enemy.setVelocity(Motion.clamp(fling, MAX_VELOCITY));
                 Location at = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
                 enemy.getWorld().spawnParticle(Particle.FLAME, at, 16, 0.25, 0.4, 0.25, 0.08);
                 enemy.getWorld().spawnParticle(Particle.LAVA, at, 3, 0.2, 0.3, 0.2, 0);
-                sound(at, Sound.ENTITY_BLAZE_HURT, 0.8f, 1.2f + jitter(0.1f));
+                Fx.sound(at, Sound.ENTITY_BLAZE_HURT, 0.8f, 1.2f + Fx.jitter(0.1f));
             }
         }
 
@@ -456,7 +459,7 @@ public final class PhoenixAbility extends Ability {
                 path.add(feet.clone().add(0, 0.15, 0));
             }
             if (age % 3 == 0) {
-                sound(feet, Sound.BLOCK_FIRE_AMBIENT, 0.8f, 1.4f + jitter(0.2f));
+                Fx.sound(feet, Sound.BLOCK_FIRE_AMBIENT, 0.8f, 1.4f + Fx.jitter(0.2f));
             }
         }
 
@@ -466,7 +469,7 @@ public final class PhoenixAbility extends Ability {
             world.spawnParticle(Particle.EXPLOSION, body, 1, 0, 0, 0, 0);
             world.spawnParticle(Particle.FLAME, body, 30, 0.5, 0.5, 0.5, 0.12);
             world.spawnParticle(Particle.LAVA, body, 6, 0.4, 0.3, 0.4, 0);
-            sound(feet, Sound.ENTITY_GENERIC_EXPLODE, 0.5f, 1.6f);
+            Fx.sound(feet, Sound.ENTITY_GENERIC_EXPLODE, 0.5f, 1.6f);
             if (!hit.isEmpty()) {
                 owner.sendActionBar(Text.mm("<" + FLAME + ">✹ 불사조 강림</" + FLAME + "> <white>" + hit.size()
                         + "명 적중</white>"));
@@ -480,20 +483,15 @@ public final class PhoenixAbility extends Ability {
         if (path.isEmpty()) {
             return;
         }
-        Player owner = player();
-        int[] age = {0};
-        BukkitTask[] task = new BukkitTask[1];
-        task[0] = ctx().runTimer(owner, 4, 4, () -> {
-            age[0] += 4;
+        Loop.repeat(ctx(), player(), 4, 4, SCORCH_TICKS / 4, run -> {
+            boolean ash = run % 2 == 1;
             for (Location point : path) {
                 point.getWorld().spawnParticle(Particle.FLAME, point, 1, 0.3, 0.05, 0.3, 0.005);
-                if (age[0] % 8 == 0) {
+                if (ash) {
                     point.getWorld().spawnParticle(Particle.DUST, point, 1, 0.3, 0.05, 0.3, 0, ASH_DUST);
                 }
             }
-            if (age[0] >= SCORCH_TICKS) {
-                task[0].cancel();
-            }
+            return true;
         });
     }
 
@@ -551,12 +549,12 @@ public final class PhoenixAbility extends Ability {
      * @param size  wing span multiplier on top of the owner's scale
      */
     private static void drawWings(Player owner, double flap, double size) {
-        double scale = scaleOf(owner) * size;
+        double scale = Body.scaleOf(owner) * size;
         double yaw = Math.toRadians(owner.getBodyYaw());
         Vector right = new Vector(-Math.cos(yaw), 0, -Math.sin(yaw));
         Vector back = new Vector(Math.sin(yaw), 0, -Math.cos(yaw));
-        Location shoulder = owner.getLocation().add(0, SHOULDER_HEIGHT * scaleOf(owner), 0)
-                .add(back.clone().multiply(0.2 * scaleOf(owner)));
+        Location shoulder = owner.getLocation().add(0, SHOULDER_HEIGHT * Body.scaleOf(owner), 0)
+                .add(back.clone().multiply(0.2 * Body.scaleOf(owner)));
         World world = owner.getWorld();
         for (int side = -1; side <= 1; side += 2) {
             Vector out = right.clone().multiply(side * Math.cos(flap)).add(back.clone().multiply(Math.sin(flap)));
@@ -584,34 +582,6 @@ public final class PhoenixAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Initial upward velocity that peaks at roughly {@code height} blocks (vanilla gravity 0.08, drag 0.98). */
-    private static double launchVelocity(double height) {
-        if (height <= 0) {
-            return 0.42;
-        }
-        double low = 0;
-        double high = MAX_LEAP_VELOCITY;
-        for (int i = 0; i < 30; i++) {
-            double mid = (low + high) / 2;
-            if (peakHeight(mid) < height) {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        return high;
-    }
-
-    private static double peakHeight(double velocity) {
-        double y = 0;
-        double v = velocity;
-        while (v > 0) {
-            y += v;
-            v = (v - 0.08) * 0.98;
-        }
-        return y;
-    }
-
     private static int ascentTicks(double velocity) {
         int ticks = 0;
         double v = velocity;
@@ -622,11 +592,6 @@ public final class PhoenixAbility extends Ability {
         return ticks;
     }
 
-    private static Vector horizontalLook(Player owner) {
-        Vector look = owner.getLocation().getDirection().setY(0);
-        return look.lengthSquared() < 1.0E-6 ? new Vector() : look.normalize();
-    }
-
     private static void ignite(LivingEntity target, long ticks) {
         if (ticks <= 0 || !target.isValid()) {
             return;
@@ -635,48 +600,5 @@ public final class PhoenixAbility extends Ability {
         if (target.getFireTicks() < fireTicks) {
             target.setFireTicks(fireTicks);
         }
-    }
-
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
-    }
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(LivingEntity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    private static double maxHealth(LivingEntity entity) {
-        AttributeInstance max = entity.getAttribute(Attribute.MAX_HEALTH);
-        return max == null ? 20.0 : Math.max(1.0, max.getValue());
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    /** Caps a velocity so nobody is flung out of the arena. */
-    private static Vector clamp(Vector velocity) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > 3.0 ? velocity.multiply(3.0 / length) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

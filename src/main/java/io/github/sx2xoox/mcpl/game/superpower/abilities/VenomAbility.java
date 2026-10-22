@@ -11,6 +11,9 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -24,7 +27,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.damage.DamageType;
@@ -38,7 +40,6 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -147,7 +148,7 @@ public final class VenomAbility extends Ability {
             return;
         }
         victim.addPotionEffect(new PotionEffect(PotionEffectType.POISON, ticks, 0, false, true, true));
-        Location body = body(victim);
+        Location body = Fx.body(victim);
         victim.getWorld().spawnParticle(Particle.ITEM_SLIME, body, 4, 0.25, 0.35, 0.25, 0.05);
         victim.getWorld().spawnParticle(Particle.DUST, body, 3, 0.25, 0.35, 0.25, 0, POISON_DUST);
     }
@@ -162,9 +163,9 @@ public final class VenomAbility extends Ability {
         Location landing = aimPoint(eye, direction, params().num("cloud_range"));
         Location start = eye.clone().add(direction.clone().multiply(0.6)).subtract(0, 0.2, 0);
         Flask flask = new Flask(start, landing);
-        loop(0, 1, flask.flightTicks + 1L, flask);
-        sound(eye, Sound.ENTITY_SPLASH_POTION_THROW, 1.0f, 0.8f + jitter(0.05f));
-        sound(eye, Sound.ENTITY_WITCH_THROW, 0.6f, 1.1f + jitter(0.1f));
+        Loop.repeat(ctx(), player(), 0, 1, flask.flightTicks + 1L, flask);
+        Fx.sound(eye, Sound.ENTITY_SPLASH_POTION_THROW, 1.0f, 0.8f + Fx.jitter(0.05f));
+        Fx.sound(eye, Sound.ENTITY_WITCH_THROW, 0.6f, 1.1f + Fx.jitter(0.1f));
         return ActivationResult.success();
     }
 
@@ -256,10 +257,10 @@ public final class VenomAbility extends Ability {
             Location splash = landing.clone().add(0, 0.3, 0);
             world.spawnParticle(Particle.EFFECT, splash, 30, 0.6, 0.3, 0.6, 0.2, new Particle.Spell(VENOM_GREEN, 1.0f));
             world.spawnParticle(Particle.ITEM_SLIME, splash, 12, 0.5, 0.2, 0.5, 0.1);
-            sound(splash, Sound.ENTITY_SPLASH_POTION_BREAK, 1.0f, 0.8f + jitter(0.05f));
-            sound(splash, Sound.ENTITY_PUFFER_FISH_BLOW_UP, 0.8f, 0.6f);
+            Fx.sound(splash, Sound.ENTITY_SPLASH_POTION_BREAK, 1.0f, 0.8f + Fx.jitter(0.05f));
+            Fx.sound(splash, Sound.ENTITY_PUFFER_FISH_BLOW_UP, 0.8f, 0.6f);
             Cloud cloud = new Cloud(landing);
-            loop(0, 1, cloud.lifeTicks, cloud);
+            Loop.repeat(ctx(), player(), 0, 1, cloud.lifeTicks, cloud);
         }
     }
 
@@ -296,8 +297,8 @@ public final class VenomAbility extends Ability {
                 drawEdge();
             }
             if (tick % 15 == 0) {
-                sound(core, Sound.BLOCK_BUBBLE_COLUMN_BUBBLE_POP, 0.9f, 0.6f + jitter(0.1f));
-                sound(core, Sound.ENTITY_SLIME_SQUISH_SMALL, 0.5f, 0.6f + jitter(0.1f));
+                Fx.sound(core, Sound.BLOCK_BUBBLE_COLUMN_BUBBLE_POP, 0.9f, 0.6f + Fx.jitter(0.1f));
+                Fx.sound(core, Sound.ENTITY_SLIME_SQUISH_SMALL, 0.5f, 0.6f + Fx.jitter(0.1f));
             }
             return tick + 1 < lifeTicks;
         }
@@ -307,8 +308,8 @@ public final class VenomAbility extends Ability {
                 if (poisonTicks > 0) {
                     enemy.addPotionEffect(new PotionEffect(PotionEffectType.POISON, poisonTicks, 1, false, true, true));
                 }
-                hit(enemy, damage, DamageType.MAGIC);
-                enemy.getWorld().spawnParticle(Particle.ITEM_SLIME, body(enemy), 3, 0.25, 0.4, 0.25, 0.05);
+                Combat.hit(ctx(), player(), enemy, damage);
+                enemy.getWorld().spawnParticle(Particle.ITEM_SLIME, Fx.body(enemy), 3, 0.25, 0.4, 0.25, 0.05);
             }
         }
 
@@ -346,9 +347,9 @@ public final class VenomAbility extends Ability {
         if (targets.isEmpty()) {
             return ActivationResult.fail("반경 " + AbilityInfo.formatNumber(radius) + "블록 안에 적이 없습니다");
         }
-        sound(origin, Sound.ENTITY_ELDER_GUARDIAN_CURSE, 0.8f, 1.2f);
-        sound(origin, Sound.ENTITY_WITHER_SHOOT, 0.8f, 0.6f);
-        loop(0, 1, WAVE_TICKS, tick -> {
+        Fx.sound(origin, Sound.ENTITY_ELDER_GUARDIAN_CURSE, 0.8f, 1.2f);
+        Fx.sound(origin, Sound.ENTITY_WITHER_SHOOT, 0.8f, 0.6f);
+        Loop.repeat(ctx(), player(), 0, 1, WAVE_TICKS, tick -> {
             drawWave(origin, radius * (tick + 1) / WAVE_TICKS);
             return true;
         });
@@ -359,7 +360,7 @@ public final class VenomAbility extends Ability {
         }
         player().sendActionBar(Text.mm("<" + COLOR_TAG + ">☣ 역병 감염 <white>" + plague.infectedCount()
                 + "명</white></" + COLOR_TAG + ">"));
-        loop(1, 1, plague.duration + 1, plague);
+        Loop.repeat(ctx(), player(), 1, 1, plague.duration + 1, plague);
         return ActivationResult.success();
     }
 
@@ -405,7 +406,7 @@ public final class VenomAbility extends Ability {
 
         /** Infects {@code target}, caught from {@code source} (null: from the owner's outbreak). */
         void infect(LivingEntity target, @Nullable Infection source) {
-            if (!isTargetable(target) || infectedOnce.contains(target.getUniqueId())) {
+            if (!Combat.isTargetable(ctx(), player(), target) || infectedOnce.contains(target.getUniqueId())) {
                 return;
             }
             long end = source == null ? now + duration : source.end();
@@ -417,15 +418,15 @@ public final class VenomAbility extends Ability {
             int remaining = (int) Math.min(Integer.MAX_VALUE, end - now);
             target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, remaining, 0, false, true, true));
             showWither(target, remaining);
-            hit(target, damage, DamageType.WITHER);
+            Combat.hit(ctx(), player(), target, damage, DamageType.WITHER);
 
-            Location body = body(target);
+            Location body = Fx.body(target);
             World world = target.getWorld();
             world.spawnParticle(Particle.SQUID_INK, body, 6, 0.3, 0.4, 0.3, 0.02);
             world.spawnParticle(Particle.DUST, body, 6, 0.3, 0.5, 0.3, 0, PLAGUE_DUST);
-            sound(body, Sound.ENTITY_ZOMBIE_INFECT, 0.8f, 1.3f + jitter(0.1f));
+            Fx.sound(body, Sound.ENTITY_ZOMBIE_INFECT, 0.8f, 1.3f + Fx.jitter(0.1f));
             if (source != null && source.target().getWorld().equals(world)) {
-                world.spawnParticle(Particle.TRAIL, body(source.target()), 8, 0.2, 0.3, 0.2, 0,
+                world.spawnParticle(Particle.TRAIL, Fx.body(source.target()), 8, 0.2, 0.3, 0.2, 0,
                         new Particle.Trail(body, PLAGUE_GREEN, 8));
             }
         }
@@ -438,19 +439,19 @@ public final class VenomAbility extends Ability {
             while (iterator.hasNext()) {
                 Infection infection = iterator.next();
                 LivingEntity target = infection.target();
-                if (!isTargetable(target) || tick >= infection.end()) {
+                if (!Combat.isTargetable(ctx(), player(), target) || tick >= infection.end()) {
                     iterator.remove();
                     continue;
                 }
                 long age = tick - infection.start();
                 if (age > 0 && age % interval == 0) {
-                    hit(target, damage, DamageType.WITHER);
+                    Combat.hit(ctx(), player(), target, damage, DamageType.WITHER);
                 }
                 if (age > 0 && age % 20 == 0) {
                     showWither(target, (int) Math.min(Integer.MAX_VALUE, infection.end() - tick));
                 }
                 if (tick % 4 == 0) {
-                    Location body = body(target);
+                    Location body = Fx.body(target);
                     target.getWorld().spawnParticle(Particle.DUST, body, 2, 0.3, 0.5, 0.3, 0, PLAGUE_DUST);
                     target.getWorld().spawnParticle(Particle.SQUID_INK, body, 1, 0.25, 0.4, 0.25, 0.01);
                 }
@@ -478,51 +479,5 @@ public final class VenomAbility extends Ability {
         if (ticks > 0) {
             target.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, ticks, 0, false, false, true));
         }
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    private boolean isTargetable(LivingEntity entity) {
-        return entity.isValid() && !entity.isDead() && ctx().isEnemy(player(), entity);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so the tick is never swallowed. */
-    private void hit(LivingEntity target, double amount, DamageType type) {
-        if (amount <= 0 || !isTargetable(target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount, type);
-    }
-
-    private static Location body(LivingEntity entity) {
-        return entity.getLocation().add(0, entity.getHeight() * 0.5, 0);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

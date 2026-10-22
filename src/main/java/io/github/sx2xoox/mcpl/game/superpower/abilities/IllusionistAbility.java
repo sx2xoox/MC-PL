@@ -1,15 +1,17 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 
 import com.destroystokyo.paper.ClientOption;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Stealth;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -20,7 +22,6 @@ import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
-import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -28,8 +29,6 @@ import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -53,8 +52,6 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.projectiles.ProjectileSource;
 import org.bukkit.scoreboard.Team;
-import org.bukkit.util.BoundingBox;
-import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -114,9 +111,6 @@ public final class IllusionistAbility extends Ability {
     private static final int GROUND_SEARCH_DEPTH = 3;
 
     // Placement
-    private static final double STANDING_WIDTH = 0.6;
-    private static final double STANDING_HEIGHT = 1.8;
-    private static final double STANDING_EYE = 1.62;
     private static final double[] LIFTS = {0, 0.5, 1.0, -0.5, -1.0, 1.5, -1.5};
     private static final double GROUND_SNAP = 2.1;
     private static final double MIN_SPOT_SPACING = 1.3;
@@ -133,10 +127,7 @@ public final class IllusionistAbility extends Ability {
     private boolean shieldAnnounced = true;
 
     // Stealth
-    private boolean stealthed;
-    private int stealthToken;
-    private long stealthEndTick;
-    private final Set<UUID> hiddenFrom = new HashSet<>();
+    private final Stealth stealth = new Stealth();
 
     // Owner motion (sampled every few ticks), so a decoy can keep running the way the owner was going.
     private @Nullable Location motionSample;
@@ -164,7 +155,7 @@ public final class IllusionistAbility extends Ability {
             sampleMotion(owner);
         }
         tickShield(owner, tick);
-        if (stealthed) {
+        if (stealth.isActive()) {
             tickStealth(owner, tick);
         }
         if (!copies.isEmpty()) {
@@ -194,10 +185,10 @@ public final class IllusionistAbility extends Ability {
             owner.playSound(owner, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, SoundCategory.PLAYERS, 0.8f, 1.5f);
             owner.sendActionBar(Text.mm("<" + LILAC + ">◈ 환영 보호막 준비</" + LILAC + ">"));
         }
-        if (!stealthed && tick % 10 == 0) {
+        if (!stealth.isActive() && tick % 10 == 0) {
             // A faint orbiting glint tells everyone the shield is up.
             double angle = tick * 0.35;
-            double radius = 0.55 * scaleOf(owner);
+            double radius = 0.55 * Body.scaleOf(owner);
             Location at = owner.getLocation().add(Math.cos(angle) * radius, owner.getHeight() * 0.55,
                     Math.sin(angle) * radius);
             owner.getWorld().spawnParticle(Particle.DUST, at, 1, 0, 0, 0, 0, SHIELD_GLINT);
@@ -222,8 +213,8 @@ public final class IllusionistAbility extends Ability {
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 24, 0.4, 0.55, 0.4, 0, SHATTER_DUST);
         world.spawnParticle(Particle.ENCHANTED_HIT, body, 14, 0.35, 0.5, 0.35, 0.3);
         world.spawnParticle(Particle.REVERSE_PORTAL, body, 12, 0.3, 0.4, 0.3, 0.05);
-        sound(body, Sound.BLOCK_GLASS_BREAK, 0.9f, 1.5f + jitter(0.1f));
-        sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.8f, 1.3f);
+        Fx.sound(body, Sound.BLOCK_GLASS_BREAK, 0.9f, 1.5f + Fx.jitter(0.1f));
+        Fx.sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.8f, 1.3f);
         owner.sendActionBar(Text.mm("<" + LILAC + ">◈ 환영 보호막</" + LILAC + "> <white>공격을 흘려보냈습니다</white>"));
     }
 
@@ -260,8 +251,8 @@ public final class IllusionistAbility extends Ability {
         World world = body.getWorld();
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 18, 0.35, 0.6, 0.35, 0, MIRAGE_DUST);
         world.spawnParticle(Particle.REVERSE_PORTAL, body, 16, 0.3, 0.6, 0.3, 0.04);
-        sound(at, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 1.1f + jitter(0.1f));
-        sound(at, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 0.6f, 1.4f);
+        Fx.sound(at, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 1.1f + Fx.jitter(0.1f));
+        Fx.sound(at, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 0.6f, 1.4f);
 
         startStealth(owner, params().ticks("invis_duration"));
         owner.sendActionBar(Text.mm("<" + LILAC + ">◈ 분신</" + LILAC + "> <gray>분신을 남기고 사라졌습니다</gray>"));
@@ -300,7 +291,7 @@ public final class IllusionistAbility extends Ability {
             copySpots.removeLast();
         }
 
-        Vector facing = horizontal(origin.getDirection());
+        Vector facing = Motion.horizontal(origin.getDirection());
         int made = 0;
         for (Location spot : copySpots) {
             Copy copy = spawnCopy(spot, lifetime);
@@ -308,7 +299,7 @@ public final class IllusionistAbility extends Ability {
                 continue;
             }
             made++;
-            Vector away = horizontal(spot.toVector().subtract(origin.toVector()));
+            Vector away = Motion.horizontal(spot.toVector().subtract(origin.toVector()));
             Vector direction = away.lengthSquared() > 1.0E-4 ? away : facing;
             if (direction.lengthSquared() > 1.0E-4) {
                 copy.run(direction, LEGION_RUN_SPEED, ctx().currentTick() + LEGION_RUN_TICKS);
@@ -328,9 +319,9 @@ public final class IllusionistAbility extends Ability {
         Location center = origin.clone().add(0, 1.0, 0);
         world.spawnParticle(Particle.REVERSE_PORTAL, center, 40, 1.2, 0.6, 1.2, 0.05);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, center, 30, 1.5, 0.6, 1.5, 0, MIRAGE_DUST);
-        sound(origin, Sound.ENTITY_ILLUSIONER_PREPARE_MIRROR, 1.0f, 1.0f);
-        sound(origin, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.0f, 0.8f);
-        sound(origin, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 0.7f);
+        Fx.sound(origin, Sound.ENTITY_ILLUSIONER_PREPARE_MIRROR, 1.0f, 1.0f);
+        Fx.sound(origin, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.0f, 0.8f);
+        Fx.sound(origin, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.0f, 0.7f);
 
         startStealth(owner, params().ticks("legion_invis"));
         owner.sendActionBar(Text.mm("<" + LILAC + ">◈ 환영 군단</" + LILAC + "> <white>분신 " + made + "개</white>"
@@ -338,13 +329,17 @@ public final class IllusionistAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** Up to {@code count} safe standing spots around {@code origin}, spread apart and in line of sight. */
+    /**
+     * Up to {@code count} safe standing spots around {@code origin} ({@link Spots#isSafe}, so also inside the arena),
+     * spread apart and in line of sight. They fit a full-size player, since copies are full size.
+     */
     private List<Location> ringSpots(Player owner, Location origin, int count, double distance) {
         List<Location> spots = new ArrayList<>();
         World world = origin.getWorld();
-        double width = STANDING_WIDTH * Math.max(1.0, scaleOf(owner));
-        double height = STANDING_HEIGHT * Math.max(1.0, scaleOf(owner));
-        Location eye = origin.clone().add(0, STANDING_EYE * scaleOf(owner), 0);
+        double scale = Body.scaleOf(owner);
+        Body body = new Body(Body.PLAYER.width() * Math.max(1.0, scale), Body.PLAYER.height() * Math.max(1.0, scale),
+                Body.PLAYER.eyeHeight() * scale);
+        Location eye = origin.clone().add(0, body.eyeHeight(), 0);
         double baseAngle = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
         for (double d : new double[] {distance, distance * 0.65}) {
             for (int index : RING_ORDER) {
@@ -353,9 +348,9 @@ public final class IllusionistAbility extends Ability {
                 }
                 double angle = baseAngle + Math.PI * 2 * index / RING_ORDER.length;
                 Location base = origin.clone().add(Math.cos(angle) * d, 0, Math.sin(angle) * d);
-                Location spot = standingSpotNear(world, base, width, height);
+                Location spot = standingSpotNear(world, base, body);
                 if (spot == null || tooClose(spot, spots) || spot.distanceSquared(origin) < 1.0
-                        || !clearPath(world, eye, spot.clone().add(0, STANDING_EYE, 0))) {
+                        || !Spots.clearPath(eye, spot.clone().add(0, Body.PLAYER.eyeHeight(), 0))) {
                     continue;
                 }
                 spot.setYaw((float) Math.toDegrees(Math.atan2(-(spot.getX() - origin.getX()),
@@ -366,11 +361,11 @@ public final class IllusionistAbility extends Ability {
         return spots;
     }
 
-    private static @Nullable Location standingSpotNear(World world, Location base, double width, double height) {
+    private @Nullable Location standingSpotNear(World world, Location base, Body body) {
         for (double lift : LIFTS) {
             Location feet = base.clone().add(0, lift, 0);
-            snapToGround(world, feet, GROUND_SNAP);
-            if (fits(world, feet, width, height) && hasGroundBelow(world, feet)) {
+            Spots.snapToGround(world, feet, GROUND_SNAP);
+            if (Spots.isSafe(ctx(), feet, body)) {
                 return feet;
             }
         }
@@ -433,7 +428,7 @@ public final class IllusionistAbility extends Ability {
             Location eye = target.getEyeLocation();
             body.lookAt(eye.getX(), eye.getY(), eye.getZ(), LookAnchor.EYES);
             body.setBodyYaw(body.getLocation().getYaw());
-            Vector toward = horizontal(target.getLocation().toVector().subtract(body.getLocation().toVector()));
+            Vector toward = Motion.horizontal(target.getLocation().toVector().subtract(body.getLocation().toVector()));
             double distance = target.getLocation().distance(body.getLocation());
             if (distance > SWING_RANGE) {
                 if (toward.lengthSquared() > 1.0E-4) {
@@ -628,10 +623,10 @@ public final class IllusionistAbility extends Ability {
             world.spawnParticle(Particle.POOF, center, struck ? 10 : 5, 0.25, 0.5, 0.25, 0.03);
             if (struck) {
                 world.spawnParticle(Particle.ENCHANTED_HIT, center, 12, 0.3, 0.5, 0.3, 0.3);
-                sound(center, Sound.BLOCK_GLASS_BREAK, 1.0f, 1.2f + jitter(0.1f));
-                sound(center, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 1.6f);
+                Fx.sound(center, Sound.BLOCK_GLASS_BREAK, 1.0f, 1.2f + Fx.jitter(0.1f));
+                Fx.sound(center, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 1.6f);
             } else {
-                sound(center, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.5f, 1.8f + jitter(0.1f));
+                Fx.sound(center, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.5f, 1.8f + Fx.jitter(0.1f));
             }
             body.remove();
         }
@@ -727,54 +722,33 @@ public final class IllusionistAbility extends Ability {
         if (ticks <= 0) {
             return;
         }
-        stealthed = true;
-        int token = ++stealthToken;
-        stealthEndTick = ctx().currentTick() + ticks;
         // Allies and spectators keep seeing the vanilla translucent body; enemies do not see the owner at all.
         owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, (int) ticks + 5, 0, false, false, true));
-        hideFromEnemies(owner);
+        stealth.begin(ctx(), owner, ticks, () -> reveal(true));
         redirectAggro(owner);
-        ctx().runLater(owner, ticks, () -> {
-            if (token == stealthToken) {
-                reveal(true);
-            }
-        });
     }
 
     private void tickStealth(Player owner, long tick) {
         if (tick % 5 == 0) {
-            double left = Math.max(0, stealthEndTick - ctx().currentTick()) / 20.0;
             owner.sendActionBar(Text.mm("<" + LILAC + ">◈ 투명</" + LILAC + "> <gray>"
-                    + AbilityInfo.formatNumber(Math.ceil(left * 10) / 10.0) + "초</gray>"));
+                    + Fx.seconds(stealth.ticksLeft(ctx().currentTick())) + "초</gray>"));
         }
         if (tick % 20 == 0) {
-            hideFromEnemies(owner);
+            stealth.hideFromEnemies(ctx(), owner);
             redirectAggro(owner);
         }
     }
 
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (stealthed && !event.isCancelled()) {
+        if (stealth.isActive() && !event.isCancelled()) {
             reveal(true);
-        }
-    }
-
-    private void hideFromEnemies(Player owner) {
-        for (Player viewer : ctx().alivePlayers()) {
-            if (!viewer.equals(owner) && ctx().isEnemy(owner, viewer) && hiddenFrom.add(viewer.getUniqueId())) {
-                viewer.hidePlayer(ctx().plugin(), owner);
-            }
         }
     }
 
     /** Enemy mobs chasing the owner turn on the nearest copy instead (or lose track). */
     private void redirectAggro(Player owner) {
-        for (Entity entity : owner.getNearbyEntities(AGGRO_RANGE, AGGRO_RANGE / 2, AGGRO_RANGE)) {
-            if (entity instanceof Mob mob && owner.equals(mob.getTarget()) && ctx().isEnemy(owner, mob)) {
-                mob.setTarget(nearestCopy(mob.getLocation()));
-            }
-        }
+        Stealth.redirectAggro(ctx(), owner, AGGRO_RANGE, mob -> nearestCopy(mob.getLocation()));
     }
 
     private @Nullable LivingEntity nearestCopy(Location from) {
@@ -794,20 +768,8 @@ public final class IllusionistAbility extends Ability {
     }
 
     private void reveal(boolean feedback) {
-        if (!stealthed) {
-            return;
-        }
-        stealthed = false;
-        stealthToken++;
         Player owner = player();
-        for (UUID id : hiddenFrom) {
-            Player viewer = Bukkit.getPlayer(id);
-            if (viewer != null) {
-                viewer.showPlayer(ctx().plugin(), owner);
-            }
-        }
-        hiddenFrom.clear();
-        if (!owner.isOnline()) {
+        if (!stealth.end(ctx(), owner) || !owner.isOnline()) {
             return;
         }
         PotionEffect invisibility = owner.getPotionEffect(PotionEffectType.INVISIBILITY);
@@ -817,75 +779,23 @@ public final class IllusionistAbility extends Ability {
         if (feedback) {
             Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
             body.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 12, 0.3, 0.5, 0.3, 0, MIRAGE_DUST);
-            sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.5f, 1.5f + jitter(0.1f));
+            Fx.sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.5f, 1.5f + Fx.jitter(0.1f));
         }
     }
 
     // ------------------------------------------------------------------ world checks
-
-    /** True if a standing body of the given size fits at {@code feet}: no collisions and no harmful blocks. */
-    private static boolean fits(World world, Location feet, double width, double height) {
-        if (feet.getY() < world.getMinHeight() + 1 || feet.getY() + height > world.getMaxHeight()) {
-            return false;
-        }
-        double half = width / 2 - 0.01;
-        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + 0.01, feet.getZ() - half,
-                feet.getX() + half, feet.getY() + height, feet.getZ() + half);
-        if (world.hasCollisionsIn(box)) {
-            return false;
-        }
-        int x = feet.getBlockX();
-        int z = feet.getBlockZ();
-        for (int y = (int) Math.floor(box.getMinY()); y <= (int) Math.floor(box.getMaxY()); y++) {
-            if (isHazard(world.getBlockAt(x, y, z))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isHazard(Block block) {
-        Material type = block.getType();
-        return type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE
-                || type == Material.POWDER_SNOW || type == Material.COBWEB || type == Material.MAGMA_BLOCK;
-    }
-
-    /** False above the void: something (block or fluid) must exist somewhere below. */
-    private static boolean hasGroundBelow(World world, Location feet) {
-        double depth = feet.getY() - world.getMinHeight();
-        return depth > 0 && world.rayTraceBlocks(feet, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS,
-                true) != null;
-    }
-
-    /** Lowers {@code feet} onto the ground if it is at most {@code maxDrop} blocks below. */
-    private static void snapToGround(World world, Location feet, double maxDrop) {
-        RayTraceResult ground = world.rayTraceBlocks(feet, new Vector(0, -1, 0), maxDrop, FluidCollisionMode.NEVER,
-                true);
-        if (ground != null) {
-            feet.setY(ground.getHitPosition().getY());
-        }
-    }
-
-    private static boolean clearPath(World world, Location from, Location to) {
-        Vector delta = to.toVector().subtract(from.toVector());
-        double length = delta.length();
-        if (length < 1.0E-3) {
-            return true;
-        }
-        return world.rayTraceBlocks(from, delta.multiply(1 / length), length, FluidCollisionMode.NEVER, true) == null;
-    }
 
     /** A copy only walks where there is solid, safe ground within a short drop (never off a cliff or into lava). */
     private static boolean hasFooting(World world, Location ahead) {
         int x = ahead.getBlockX();
         int z = ahead.getBlockZ();
         int y = (int) Math.floor(ahead.getY() + 0.01);
-        if (isHazard(world.getBlockAt(x, y, z))) {
+        if (Spots.isHazard(world.getBlockAt(x, y, z))) {
             return false;
         }
         for (int depth = 0; depth <= GROUND_SEARCH_DEPTH; depth++) {
             Block below = world.getBlockAt(x, y - 1 - depth, z);
-            if (isHazard(below) || below.isLiquid()) {
+            if (Spots.isHazard(below) || below.isLiquid()) {
                 return false;
             }
             if (below.isSolid()) {
@@ -898,25 +808,5 @@ public final class IllusionistAbility extends Ability {
     private static boolean passable(World world, Location feet, double heightAbove) {
         return world.getBlockAt(feet.getBlockX(), (int) Math.floor(feet.getY() + heightAbove), feet.getBlockZ())
                 .isPassable();
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    private static Vector horizontal(Vector vector) {
-        Vector flat = vector.clone().setY(0);
-        return flat.lengthSquared() < 1.0E-8 ? new Vector() : flat.normalize();
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

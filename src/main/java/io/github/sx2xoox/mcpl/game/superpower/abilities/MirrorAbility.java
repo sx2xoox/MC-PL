@@ -3,6 +3,11 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -13,7 +18,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
@@ -29,9 +33,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
@@ -100,7 +102,8 @@ public final class MirrorAbility extends Ability {
 
     private long shieldUntil = -1;
     private long mirrorWorldUntil = -1;
-    private long fallGraceUntil = -1;
+    /** Cancels the fall damage of the landing after a swap into mid-air. */
+    private final LandingGuard landing = new LandingGuard();
 
     @Override
     public AbilityInfo info() {
@@ -111,7 +114,14 @@ public final class MirrorAbility extends Ability {
     public void onRevoke() {
         shieldUntil = -1;
         mirrorWorldUntil = -1;
-        fallGraceUntil = -1;
+        landing.disarm();
+    }
+
+    @Override
+    public void onTick(long tick) {
+        if (tick % 2 == 0) {
+            landing.update(player(), tick);
+        }
     }
 
     // ------------------------------------------------------------------ passive + reflection
@@ -122,9 +132,7 @@ public final class MirrorAbility extends Ability {
             return;
         }
         long now = ctx().currentTick();
-        if (now < fallGraceUntil && isFall(event)) {
-            event.setCancelled(true);
-            fallGraceUntil = -1;
+        if (landing.absorb(event, now)) {
             return;
         }
         if (isProjectile(event)) {
@@ -161,24 +169,24 @@ public final class MirrorAbility extends Ability {
 
     private void reflect(LivingEntity attacker, double amount) {
         Player owner = player();
-        if (!isTargetable(attacker) || !ctx().isAlive(owner) || !attacker.getWorld().equals(owner.getWorld())) {
+        if (!Combat.isTargetable(ctx(), owner, attacker) || !ctx().isAlive(owner)
+                || !attacker.getWorld().equals(owner.getWorld())) {
             return;
         }
         reflecting = true;
         try {
-            attacker.setNoDamageTicks(0);
             ctx().damage(owner, attacker, amount);
         } finally {
             reflecting = false;
         }
-        Location from = body(owner);
-        Location to = body(attacker);
+        Location from = Fx.body(owner);
+        Location to = Fx.body(attacker);
         beam(from, to);
         World world = attacker.getWorld();
         world.spawnParticle(Particle.END_ROD, to, 8, 0.25, 0.35, 0.25, 0.05);
         world.spawnParticle(Particle.BLOCK, to, 8, 0.25, 0.35, 0.25, 0.1, GLASS);
-        sound(to, Sound.BLOCK_AMETHYST_CLUSTER_HIT, 1.0f, 1.5f + jitter(0.1f));
-        sound(from, Sound.BLOCK_GLASS_HIT, 0.8f, 1.8f);
+        Fx.sound(to, Sound.BLOCK_AMETHYST_CLUSTER_HIT, 1.0f, 1.5f + Fx.jitter(0.1f));
+        Fx.sound(from, Sound.BLOCK_GLASS_HIT, 0.8f, 1.8f);
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">◈ 반사 <white>" + AbilityInfo.formatNumber(amount)
                 + "</white></" + COLOR_TAG + ">"));
     }
@@ -189,25 +197,25 @@ public final class MirrorAbility extends Ability {
                 ? byEntity.getDamager()
                 : event.getDamageSource().getDirectEntity();
         Entity causing = event.getDamageSource().getCausingEntity();
-        if (direct instanceof LivingEntity living && isTargetable(living)) {
+        if (direct instanceof LivingEntity living && Combat.isTargetable(ctx(), player(), living)) {
             return living;
         }
         if (direct instanceof Projectile projectile && projectile.getShooter() instanceof LivingEntity shooter
-                && isTargetable(shooter)) {
+                && Combat.isTargetable(ctx(), player(), shooter)) {
             return shooter;
         }
-        if (causing instanceof LivingEntity living && isTargetable(living)) {
+        if (causing instanceof LivingEntity living && Combat.isTargetable(ctx(), player(), living)) {
             return living;
         }
         Player responsible = ctx().resolveAttacker(direct != null ? direct : causing);
-        return responsible != null && isTargetable(responsible) ? responsible : null;
+        return responsible != null && Combat.isTargetable(ctx(), player(), responsible) ? responsible : null;
     }
 
     private void glint() {
-        Location body = body(player());
+        Location body = Fx.body(player());
         player().getWorld().spawnParticle(Particle.DUST, body, 5, 0.35, 0.45, 0.35, 0, GLINT_DUST);
         player().getWorld().spawnParticle(Particle.END_ROD, body, 2, 0.3, 0.4, 0.3, 0.02);
-        sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.7f, 1.8f + jitter(0.1f));
+        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.7f, 1.8f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ active: mirror shield
@@ -218,10 +226,10 @@ public final class MirrorAbility extends Ability {
         shieldUntil = ctx().currentTick() + ticks;
         new ShardRing(SHIELD_SHARDS, Material.LIGHT_BLUE_STAINED_GLASS_PANE, SHIELD_RADIUS, SHIELD_SPIN, ticks).start();
 
-        Location body = body(player());
+        Location body = Fx.body(player());
         player().getWorld().spawnParticle(Particle.END_ROD, body, 16, 0.5, 0.6, 0.5, 0.06);
-        sound(body, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.2f, 1.4f);
-        sound(body, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 0.8f, 1.6f + jitter(0.05f));
+        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.2f, 1.4f);
+        Fx.sound(body, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 0.8f, 1.6f + Fx.jitter(0.05f));
         return ActivationResult.success();
     }
 
@@ -238,6 +246,9 @@ public final class MirrorAbility extends Ability {
         Location targetSpot = target.getLocation();
         if (!target.getWorld().equals(owner.getWorld()) || !fits(owner, targetSpot) || !fits(target, ownerSpot)) {
             return ActivationResult.fail("위치를 바꿀 공간이 없습니다");
+        }
+        if (!ctx().isInsideArena(targetSpot) || !ctx().isInsideArena(ownerSpot)) {
+            return ActivationResult.fail("자기장 밖으로는 위치를 바꿀 수 없습니다");
         }
 
         // The owner arrives facing the enemy; the enemy keeps its own facing and has to find the owner again.
@@ -265,9 +276,7 @@ public final class MirrorAbility extends Ability {
         target.setFallDistance(0);
 
         long now = ctx().currentTick();
-        if (!isGrounded(owner)) {
-            fallGraceUntil = now + FALL_GRACE_TICKS;
-        }
+        landing.armIfAirborne(owner, now, FALL_GRACE_TICKS);
         long ticks = Math.max(1, params().ticks("ult_duration"));
         mirrorWorldUntil = now + ticks;
         new ShardRing(WORLD_SHARDS, Material.GLASS_PANE, WORLD_RADIUS, WORLD_SPIN, ticks).start();
@@ -275,27 +284,20 @@ public final class MirrorAbility extends Ability {
         swapFlash(ownerSpot, owner.getHeight());
         swapFlash(targetSpot, target.getHeight());
         line(ownerSpot.clone().add(0, 1, 0), targetSpot.clone().add(0, 1, 0), SWAP_DUST);
-        sound(ownerSpot, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.2f, 1.0f);
-        sound(targetSpot, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.2f, 1.0f);
-        sound(targetSpot, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.2f, 0.8f);
-        sound(targetSpot, Sound.BLOCK_GLASS_BREAK, 0.8f, 1.5f);
+        Fx.sound(ownerSpot, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.2f, 1.0f);
+        Fx.sound(targetSpot, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 1.2f, 1.0f);
+        Fx.sound(targetSpot, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.2f, 0.8f);
+        Fx.sound(targetSpot, Sound.BLOCK_GLASS_BREAK, 0.8f, 1.5f);
         return ActivationResult.success();
     }
 
     /**
-     * True if {@code entity}'s standing hitbox would be free of blocks at {@code destination} (and above the void).
+     * True if {@code entity}'s standing hitbox would be free of blocks at {@code destination}.
      * A sneaking player is checked at full height, since it stands up again right after the swap.
      */
     private static boolean fits(LivingEntity entity, Location destination) {
-        World world = destination.getWorld();
-        if (destination.getY() < world.getMinHeight() + 1) {
-            return false;
-        }
         double height = entity.getHeight() * (entity instanceof Player player && player.isSneaking() ? 1.2 : 1.0);
-        double half = entity.getWidth() / 2;
-        BoundingBox box = new BoundingBox(destination.getX() - half, destination.getY(), destination.getZ() - half,
-                destination.getX() + half, destination.getY() + height, destination.getZ() + half).expand(-0.02);
-        return !world.hasCollisionsIn(box);
+        return Spots.isFree(destination.getWorld(), destination, entity.getWidth(), height);
     }
 
     private void swapFlash(Location feet, double height) {
@@ -342,7 +344,7 @@ public final class MirrorAbility extends Ability {
                             new Vector3f(0.6f, 0.6f, 0.6f), new Quaternionf()));
                 }));
             }
-            loop(RING_PERIOD, RING_PERIOD, lifeTicks / RING_PERIOD + 1, this);
+            Loop.repeat(ctx(), player(), RING_PERIOD, RING_PERIOD, lifeTicks / RING_PERIOD + 1, this);
         }
 
         @Override
@@ -365,7 +367,7 @@ public final class MirrorAbility extends Ability {
                 shard.teleport(slot(owner, i));
             }
             if (run % 2 == 0) {
-                Location body = body(owner);
+                Location body = Fx.body(owner);
                 owner.getWorld().spawnParticle(Particle.WAX_OFF, body, 1, radius * 0.6, 0.5, radius * 0.6, 0);
             }
             return true;
@@ -395,16 +397,12 @@ public final class MirrorAbility extends Ability {
             }
             Player owner = player();
             if (owner.isOnline()) {
-                sound(body(owner), Sound.BLOCK_GLASS_BREAK, 0.8f, 1.4f + jitter(0.1f));
+                Fx.sound(Fx.body(owner), Sound.BLOCK_GLASS_BREAK, 0.8f, 1.4f + Fx.jitter(0.1f));
             }
         }
     }
 
     // ------------------------------------------------------------------ helpers
-
-    private boolean isTargetable(LivingEntity entity) {
-        return entity.isValid() && !entity.isDead() && ctx().isEnemy(player(), entity);
-    }
 
     /** A percentage param as a fraction in 0..1. */
     private double percent(String key) {
@@ -419,34 +417,11 @@ public final class MirrorAbility extends Ability {
         return projectile != null && projectile.isTagged(event.getDamageSource().getDamageType());
     }
 
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
-    }
-
     /** Damage the shield does not touch: falling out of the world, the border and kill commands. */
     private static boolean isUnblockable(EntityDamageEvent event) {
         DamageCause cause = event.getCause();
         return cause == DamageCause.VOID || cause == DamageCause.KILL || cause == DamageCause.WORLD_BORDER
                 || cause == DamageCause.SUICIDE;
-    }
-
-    /** True if the entity stands on something (or swims), judged by collisions right below its feet. */
-    private static boolean isGrounded(Entity entity) {
-        if (entity.isInWater()) {
-            return true;
-        }
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.01, box.getMinY() - 0.12, box.getMinZ() + 0.01,
-                box.getMaxX() - 0.01, box.getMinY(), box.getMaxZ() - 0.01);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    private static Location body(LivingEntity entity) {
-        return entity.getLocation().add(0, entity.getHeight() * 0.5, 0);
     }
 
     private static void beam(Location from, Location to) {
@@ -466,32 +441,5 @@ public final class MirrorAbility extends Ability {
             world.spawnParticle(Particle.DUST_COLOR_TRANSITION, from.getX() + delta.getX() * t,
                     from.getY() + delta.getY() * t, from.getZ() + delta.getZ() * t, 1, 0, 0, 0, 0, dust);
         }
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }
