@@ -43,6 +43,9 @@ class TargetingTest {
 
     @Test
     void aimingNeverLocksOntoAStealthedPlayer() {
+        h.close();
+        h = MatchHarness.flat(); // findTarget ray-traces blocks, which only the flat world supports
+        h.registerTestAbilities();
         List<TestPlayer> players = h.join(2);
         SuperpowerMatch match = h.startFight();
         MatchContext ctx = match.context();
