@@ -1,14 +1,17 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Stealth;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -21,17 +24,23 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
-import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -67,22 +76,44 @@ public final class PixieAbility extends Ability {
             .build();
 
     private static final String PINK = "#FF8AD8";
-    private static final Color PETAL = Color.fromRGB(0xFF, 0x8A, 0xD8);
-    private static final Color SKY = Color.fromRGB(0x8A, 0xE6, 0xFF);
-    private static final Color GLOW = Color.fromRGB(0xFF, 0xF2, 0xFB);
-    private static final Particle.DustTransition FAIRY_DUST = new Particle.DustTransition(PETAL, SKY, 0.9f);
-    private static final Particle.DustTransition WING_DUST = new Particle.DustTransition(GLOW, PETAL, 0.6f);
-    private static final Particle.DustTransition WING_EDGE = new Particle.DustTransition(SKY, GLOW, 0.6f);
-    private static final Particle.DustOptions SPARKLE_PINK = new Particle.DustOptions(PETAL, 0.6f);
-    private static final Particle.DustOptions SPARKLE_SKY = new Particle.DustOptions(SKY, 0.6f);
 
-    /** Butterfly-like wing outline in body space: x = distance out from the spine, y = height from the shoulders. */
-    private static final double[][] WING = {
-            {0.1, 0.1}, {0.3, 0.38}, {0.52, 0.58}, {0.74, 0.62}, {0.86, 0.46}, {0.72, 0.24}, {0.45, 0.08},
-            {0.38, -0.08}, {0.56, -0.24}, {0.6, -0.44}, {0.42, -0.5}, {0.22, -0.3}};
-    private static final double SHOULDER_HEIGHT = 1.35;
-    /** Wings are drawn larger than the owner's (tiny) scale so they stay readable. */
-    private static final double WING_SIZE = 1.6;
+    // ------------------------------------------------------------------ look: white glitter, blossom pink, hot pink
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFFFFF, 0xFFC1EC, 0xFF8AD8);
+    /** A cool sparkle mixed into the glitter so it shimmers instead of reading as one flat pink. */
+    private static final Color SKY = Color.fromRGB(0xA8, 0xE8, 0xFF);
+    private static final Particle.DustTransition GLITTER = PALETTE.glow(0.7f);
+    private static final Particle.DustTransition PETAL_DUST = PALETTE.fade(1.0f);
+    private static final Particle.DustOptions SPARK_PINK = new Particle.DustOptions(PALETTE.edge(), 0.6f);
+    private static final Particle.DustOptions SPARK_SKY = new Particle.DustOptions(SKY, 0.55f);
+    private static final BlockData UPPER_WING = Material.PINK_STAINED_GLASS.createBlockData();
+    private static final BlockData LOWER_WING = Material.MAGENTA_STAINED_GLASS.createBlockData();
+
+    // Wings (in the owner's body space, scaled by the owner's size times WING_SIZE)
+    /** Height of the wing roots on a full-size body (mid-back, so the upper panes frame the shoulders). */
+    private static final float WING_ROOT_HEIGHT = 1.05f;
+    private static final float WING_BACK = 0.2f;
+    /** Wings are drawn larger than the owner's (tiny) body so they stay readable on stream. */
+    private static final float WING_SIZE = 1.6f;
+    private static final float UPPER_LENGTH = 0.6f;
+    private static final float UPPER_HEIGHT = 0.72f;
+    private static final float LOWER_LENGTH = 0.36f;
+    private static final float LOWER_HEIGHT = 0.46f;
+    private static final float UPPER_ROLL = -35f;
+    private static final float LOWER_ROLL = -110f;
+    private static final float WING_THICKNESS = 0.02f;
+    private static final double SWEEP_REST = 32;
+    private static final double SWEEP_AMPLITUDE = 26;
+    private static final int FLAP_STEP_TICKS = 2;
+    private static final int WING_OPEN_TICKS = 5;
+    private static final int WING_FOLD_TICKS = 6;
+    /** In the last ticks of the flight the wings beat faster, a tell that the flight is ending. */
+    private static final long WING_WARNING_TICKS = 40;
+
+    // Fairy dust
+    private static final int DUST_WAVE_TICKS = 6;
+    private static final int PETALS = 6;
+    private static final int PETAL_FLIGHT_TICKS = 9;
+    private static final int TRAIL_TICKS = 6;
 
     private static final double DEFAULT_FLY_SPEED = 0.1;
     private static final double TAKE_OFF_VELOCITY = 0.55;
@@ -103,6 +134,7 @@ public final class PixieAbility extends Ability {
     private long flightEndTick;
     private long descentEndTick;
     private long fallGraceUntil = -1;
+    private @Nullable Wings wings;
 
     private @Nullable Location lastTrailSample;
 
@@ -143,14 +175,22 @@ public final class PixieAbility extends Ability {
             ctx().addModifier(owner, owner, Attribute.SAFE_FALL_DISTANCE, jumpLevel,
                     AttributeModifier.Operation.ADD_NUMBER, 0);
         }
-        Location body = owner.getLocation().add(0, 0.5, 0);
-        body.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 20, 0.3, 0.4, 0.3, 0, FAIRY_DUST);
-        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 1.8f);
+        // Shrinking into a fairy: a double helix of glitter spirals up around the new, tiny body.
+        Location feet = owner.getLocation();
+        double height = Body.PLAYER.height() * scale;
+        Vfx.helix(ctx(), feet, 0.45, height + 0.3, 1.5, 2, 12, 0, Particle.DUST_COLOR_TRANSITION, GLITTER, false);
+        Vfx.dot(feet.clone().add(0, height + 0.4, 0), Particle.END_ROD, null, false);
+        Fx.sound(feet, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 1.8f + Fx.jitter(0.1f));
+        Fx.sound(feet, Sound.ENTITY_ALLAY_ITEM_GIVEN, 0.5f, 1.6f);
     }
 
     @Override
     public void onRevoke() {
         reveal(false);
+        if (wings != null) {
+            wings.remove();
+            wings = null;
+        }
         if (flying || descending) {
             Player owner = player();
             if (flying) {
@@ -174,22 +214,28 @@ public final class PixieAbility extends Ability {
         }
         if (stealth.isActive()) {
             tickStealth(owner, tick);
-        } else if (!flying && tick % 8 == 0) {
-            trailSparkle(owner);
+        } else if (!flying && tick % 4 == 0) {
+            trailSparkle(owner, tick);
         }
     }
 
-    /** A faint glitter left behind while moving, the pixie's signature. */
-    private void trailSparkle(Player owner) {
+    /** A faint glitter (and now and then a petal) left behind while moving, the pixie's signature. */
+    private void trailSparkle(Player owner, long tick) {
         Location feet = owner.getLocation();
         Location last = lastTrailSample;
         lastTrailSample = feet;
-        if (last == null || last.getWorld() != feet.getWorld() || last.distanceSquared(feet) < 0.25) {
+        if (last == null || last.getWorld() != feet.getWorld() || last.distanceSquared(feet) < 0.12) {
             return;
         }
-        Location at = feet.add(0, owner.getHeight() * 0.4, 0);
-        boolean pink = ThreadLocalRandom.current().nextBoolean();
-        owner.getWorld().spawnParticle(Particle.DUST, at, 1, 0.12, 0.12, 0.12, 0, pink ? SPARKLE_PINK : SPARKLE_SKY);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Location at = feet.clone().add(random.nextDouble(-0.15, 0.15), owner.getHeight() * 0.45,
+                random.nextDouble(-0.15, 0.15));
+        Vfx.dot(at, Particle.DUST, random.nextBoolean() ? SPARK_PINK : SPARK_SKY, false);
+        if (tick % 16 == 0) {
+            Vfx.dot(at, Particle.CHERRY_LEAVES, null, false);
+        } else if (tick % 12 == 0) {
+            Vfx.dot(at.add(0, 0.2, 0), Particle.WAX_OFF, null, false);
+        }
     }
 
     @Override
@@ -215,9 +261,9 @@ public final class PixieAbility extends Ability {
     public ActivationResult onActive() {
         Player owner = player();
         Location center = owner.getLocation();
-        World world = center.getWorld();
         double radius = params().num("dust_radius");
         int blind = (int) params().ticks("blind_duration");
+        Location chest = center.clone().add(0, owner.getHeight() * 0.55, 0);
 
         List<LivingEntity> enemies = ctx().enemiesNear(owner, center, radius);
         for (LivingEntity enemy : enemies) {
@@ -227,22 +273,24 @@ public final class PixieAbility extends Ability {
             if (enemy instanceof Mob mob && owner.equals(mob.getTarget())) {
                 mob.setTarget(null);
             }
-            Location head = enemy.getEyeLocation();
-            world.spawnParticle(Particle.DUST_COLOR_TRANSITION, head, 12, 0.3, 0.25, 0.3, 0, FAIRY_DUST);
-            world.spawnParticle(Particle.CHERRY_LEAVES, head, 3, 0.3, 0.2, 0.3, 0);
+            dustTrail(chest, enemy);
             if (enemy instanceof Player victim) {
                 victim.playSound(victim, Sound.ENTITY_ILLUSIONER_PREPARE_BLINDNESS, SoundCategory.PLAYERS, 0.8f, 1.6f);
             }
         }
+        if (blind > 0 && !enemies.isEmpty()) {
+            dizzyStars(enemies, blind);
+        }
 
-        Location body = center.clone().add(0, owner.getHeight() * 0.5, 0);
-        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 40, 0.8, 0.6, 0.8, 0, FAIRY_DUST);
-        world.spawnParticle(Particle.CHERRY_LEAVES, body, 14, 1.2, 0.6, 1.2, 0);
-        world.spawnParticle(Particle.END_ROD, body, 8, 0.5, 0.4, 0.5, 0.05);
-        dustWave(center, radius);
+        // The puff the pixie vanishes in: a flash of glitter, petals flying out and a wave sweeping to the radius.
+        Vfx.burst(ctx(), chest, PALETTE, 0.8, Particle.CHERRY_LEAVES, false);
+        Vfx.cloud(ctx(), chest, Particle.CHERRY_LEAVES, 10, 0.9, 0, null, false);
+        petalBurst(chest);
+        dustWave(center.clone().add(0, 0.25, 0), radius);
         Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.5f + Fx.jitter(0.1f));
         Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 2.0f);
         Fx.sound(center, Sound.ENTITY_ALLAY_ITEM_THROWN, 0.9f, 1.3f + Fx.jitter(0.1f));
+        Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 0.5f, 1.9f + Fx.jitter(0.05f));
 
         startStealth(owner, params().ticks("invis_duration"));
         owner.sendActionBar(Text.mm(enemies.isEmpty()
@@ -252,21 +300,84 @@ public final class PixieAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** A sparkling ring that sweeps out to the dust radius over a few ticks (visual only). */
+    /** A sparkling double ring that sweeps out to the dust radius (visual only). */
     private void dustWave(Location center, double radius) {
-        int frames = 5;
-        Loop.repeat(ctx(), player(), 0, 1, frames, run -> {
-            long frame = run + 1;
-            double r = radius * frame / frames;
-            int points = Math.max(8, (int) (r * 5));
-            World world = center.getWorld();
-            double offset = frame * 0.4;
-            for (int i = 0; i < points; i++) {
-                double angle = offset + Math.PI * 2 * i / points;
-                Location at = center.clone().add(Math.cos(angle) * r, 0.25, Math.sin(angle) * r);
-                world.spawnParticle(Particle.DUST, at, 1, 0, 0.05, 0, 0, i % 2 == 0 ? SPARKLE_PINK : SPARKLE_SKY);
+        Loop.repeat(ctx(), player(), 0, 1, DUST_WAVE_TICKS, run -> {
+            double t = (double) (run + 1) / DUST_WAVE_TICKS;
+            double r = radius * (1 - (1 - t) * (1 - t));
+            int points = (int) Math.max(10, Math.round(r * 7));
+            Vfx.ring(ctx(), center, r, points, run * 0.35, Particle.DUST_COLOR_TRANSITION, GLITTER, false);
+            Vfx.ring(ctx(), center.clone().add(0, 0.12, 0), r * 0.92, Math.max(4, points / 3), run * 0.35 + 0.5,
+                    Particle.DUST, run % 2 == 0 ? SPARK_PINK : SPARK_SKY, false);
+            if (run == DUST_WAVE_TICKS - 1) {
+                Vfx.ring(ctx(), center.clone().add(0, 0.3, 0), r, Math.max(6, points / 4), 0, Particle.WAX_OFF,
+                        null, false);
             }
             return true;
+        });
+    }
+
+    /** Pink petals (item displays) bursting out of the puff, spinning, then fading. */
+    private void petalBurst(Location chest) {
+        Player owner = player();
+        Location at = chest.clone();
+        at.setYaw(0);
+        at.setPitch(0);
+        ItemStack petal = new ItemStack(Material.PINK_PETALS);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        double base = random.nextDouble(Math.PI * 2);
+        for (int i = 0; i < PETALS; i++) {
+            double angle = base + i * Math.PI * 2 / PETALS;
+            float yaw = (float) Math.toDegrees(angle);
+            ItemDisplay display = Displays.item(ctx(), owner, at, petal,
+                    Displays.centered(0, 0, 0, 0.15f, 0.15f, 0.15f, yaw, 0, 0), PETAL_FLIGHT_TICKS + 12);
+            double reach = 1.4 + random.nextDouble(0.5);
+            Transformation out = Displays.centered((float) (Math.cos(angle) * reach),
+                    (float) random.nextDouble(0.1, 0.6), (float) (Math.sin(angle) * reach), 0.5f, 0.5f, 0.5f,
+                    yaw + 180, 60 + random.nextInt(40), random.nextInt(-60, 60));
+            Displays.animateNextTick(ctx(), owner, display, out, PETAL_FLIGHT_TICKS);
+            ctx().runLater(owner, PETAL_FLIGHT_TICKS + 1, () -> Displays.shrinkAway(ctx(), owner, display, 8));
+        }
+    }
+
+    /** Glittering motes fly from the pixie into the enemy's eyes, then puff there. */
+    private void dustTrail(Location from, LivingEntity enemy) {
+        Location eye = enemy.getEyeLocation();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        int motes = Vfx.n(ctx(), 3);
+        for (int i = 0; i < motes; i++) {
+            Location start = from.clone().add(random.nextDouble(-0.2, 0.2), random.nextDouble(-0.1, 0.2),
+                    random.nextDouble(-0.2, 0.2));
+            Vfx.trail(start, eye, i % 2 == 0 ? PALETTE.edge() : PALETTE.core(), TRAIL_TICKS + i, false);
+        }
+        ctx().runLater(player(), TRAIL_TICKS, () -> {
+            if (!enemy.isValid()) {
+                return;
+            }
+            Location head = enemy.getEyeLocation();
+            Vfx.cloud(ctx(), head, Particle.DUST_COLOR_TRANSITION, 8, 0.25, 0, PETAL_DUST, false);
+            Vfx.cloud(ctx(), head, Particle.CHERRY_LEAVES, 2, 0.3, 0, null, false);
+        });
+    }
+
+    /** Little stars circle above the heads of the blinded enemies while the blindness lasts. */
+    private void dizzyStars(List<LivingEntity> enemies, int ticks) {
+        List<LivingEntity> dazed = new ArrayList<>(enemies);
+        Loop.repeat(ctx(), player(), TRAIL_TICKS, 3, Math.max(1, (ticks - TRAIL_TICKS) / 3), run -> {
+            dazed.removeIf(enemy -> !enemy.isValid() || !enemy.hasPotionEffect(PotionEffectType.BLINDNESS));
+            for (LivingEntity enemy : dazed) {
+                Location top = enemy.getLocation().add(0, enemy.getHeight() + 0.25, 0);
+                double angle = run * 0.7;
+                for (int i = 0; i < 2; i++) {
+                    double a = angle + i * Math.PI;
+                    Location at = top.clone().add(Math.cos(a) * 0.4, 0, Math.sin(a) * 0.4);
+                    Vfx.dot(at, Particle.DUST, i == 0 ? SPARK_PINK : SPARK_SKY, false);
+                }
+                if (run % 3 == 0) {
+                    Vfx.dot(top, Particle.WAX_OFF, null, false);
+                }
+            }
+            return !dazed.isEmpty();
         });
     }
 
@@ -280,13 +391,18 @@ public final class PixieAbility extends Ability {
         owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, (int) ticks + 5, 0, false, false, true));
         stealth.begin(ctx(), owner, ticks, () -> reveal(true));
         Stealth.dropAggro(ctx(), owner, AGGRO_DROP_RANGE);
+        if (wings != null) {
+            // Glowing wings would give the hidden pixie away; they come back when the stealth ends.
+            wings.remove();
+            wings = null;
+        }
     }
 
     private void tickStealth(Player owner, long tick) {
         if (tick % 6 == 0) {
-            // The only tell: a few specks of dust drifting where the pixie is.
+            // The only tell: a speck of dust drifting where the pixie is.
             Location at = owner.getLocation().add(0, 0.2, 0);
-            owner.getWorld().spawnParticle(Particle.DUST, at, 1, 0.15, 0.1, 0.15, 0, SPARKLE_PINK);
+            Vfx.dot(at, Particle.DUST, SPARK_PINK, false);
         }
         if (!flying && tick % 5 == 0) {
             owner.sendActionBar(Text.mm("<" + PINK + ">✿ 투명</" + PINK + "> <gray>"
@@ -309,9 +425,12 @@ public final class PixieAbility extends Ability {
             owner.removePotionEffect(PotionEffectType.INVISIBILITY);
         }
         if (feedback) {
+            // Glitter condenses back into the pixie.
             Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
-            body.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 14, 0.25, 0.3, 0.25, 0, FAIRY_DUST);
+            Vfx.sphere(ctx(), body, 0.55, 16, Particle.DUST_COLOR_TRANSITION, GLITTER, false);
+            Vfx.dot(body, Particle.FLASH, PALETTE.body(), false);
             Fx.sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.6f, 1.8f + Fx.jitter(0.1f));
+            Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.5f, 2.0f);
         }
     }
 
@@ -346,15 +465,24 @@ public final class PixieAbility extends Ability {
         owner.setFlying(true);
         owner.setFallDistance(0);
 
-        Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
-        World world = body.getWorld();
-        world.spawnParticle(Particle.CHERRY_LEAVES, body, 24, 0.8, 0.4, 0.8, 0);
-        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 30, 0.6, 0.5, 0.6, 0, FAIRY_DUST);
-        world.spawnParticle(Particle.END_ROD, body, 10, 0.4, 0.4, 0.4, 0.08);
-        drawWings(owner, 0.1);
+        // Take-off: a flash of glitter, a pink ring rushing out over the ground and a spiral lifting the pixie.
+        Location feet = owner.getLocation();
+        Location body = feet.clone().add(0, owner.getHeight() * 0.5, 0);
+        Vfx.burst(ctx(), body, PALETTE, 1.0, Particle.CHERRY_LEAVES, true);
+        Vfx.shockwave(ctx(), owner, feet.clone().add(0, 0.1, 0), 0.3, 2.4, 6, Particle.DUST_COLOR_TRANSITION,
+                PETAL_DUST, true);
+        Vfx.helix(ctx(), feet, 0.6, 2.4, 1.5, 2, 14, 0, Particle.DUST_COLOR_TRANSITION, GLITTER, true);
+        Vfx.cloud(ctx(), body, Particle.CHERRY_LEAVES, 18, 0.8, 0, null, true);
+        if (!stealth.isActive()) {
+            if (wings != null) {
+                wings.remove();
+            }
+            wings = new Wings(owner);
+        }
         Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.0f, 1.6f);
         Fx.sound(body, Sound.ENTITY_ALLAY_AMBIENT_WITHOUT_ITEM, 1.0f, 1.2f + Fx.jitter(0.1f));
         Fx.sound(body, Sound.ITEM_ARMOR_EQUIP_ELYTRA, 0.8f, 1.4f);
+        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.9f, 2.0f);
         return ActivationResult.success();
     }
 
@@ -365,9 +493,21 @@ public final class PixieAbility extends Ability {
             return;
         }
         owner.setFallDistance(0);
-        if (!stealth.isActive() && tick % 2 == 0) {
-            double flap = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(tick * 1.1));
-            drawWings(owner, flap);
+        if (!stealth.isActive()) {
+            if (wings == null) {
+                wings = new Wings(owner);
+            }
+            if (!wings.update(owner, tick, left <= WING_WARNING_TICKS)) {
+                wings = null;
+            }
+            if (tick % 2 == 0) {
+                // Glitter shed behind the flier.
+                Location at = owner.getLocation().add(0, owner.getHeight() * 0.3, 0);
+                Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, GLITTER, false);
+                if (tick % 8 == 0) {
+                    Vfx.dot(at, Particle.CHERRY_LEAVES, null, false);
+                }
+            }
         }
         if (tick % 5 == 0) {
             String bar = "<" + PINK + ">✿ 요정의 날개</" + PINK + "> <gray>"
@@ -395,9 +535,17 @@ public final class PixieAbility extends Ability {
             descentEndTick = tick + MAX_DESCENT_TICKS;
             owner.addPotionEffect(slowFalling());
         }
+        if (wings != null) {
+            wings.fold();
+            wings = null;
+        }
         Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
-        body.getWorld().spawnParticle(Particle.CHERRY_LEAVES, body, 10, 0.5, 0.3, 0.5, 0);
+        if (!stealth.isActive()) {
+            Vfx.cloud(ctx(), body, Particle.CHERRY_LEAVES, 12, 0.5, 0, null, false);
+            Vfx.cloud(ctx(), body, Particle.DUST_COLOR_TRANSITION, 10, 0.4, 0, PETAL_DUST, false);
+        }
         Fx.sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.7f, 1.3f);
+        Fx.sound(body, Sound.BLOCK_CHERRY_LEAVES_BREAK, 0.8f, 1.2f + Fx.jitter(0.1f));
         owner.sendActionBar(Text.mm("<" + PINK + ">✿ 날개가 사라졌습니다</" + PINK + ">"
                 + (descending ? " <gray>천천히 내려갑니다</gray>" : "")));
     }
@@ -414,9 +562,17 @@ public final class PixieAbility extends Ability {
         if (current == null || current.getDuration() < SLOW_FALL_REFRESH_TICKS / 2) {
             owner.addPotionEffect(slowFalling());
         }
+        if (stealth.isActive()) {
+            return;
+        }
         if (tick % 4 == 0) {
-            owner.getWorld().spawnParticle(Particle.CHERRY_LEAVES, owner.getLocation().add(0, 0.3, 0), 1,
-                    0.2, 0.1, 0.2, 0);
+            // Petals drifting down with the pixie, and a faint ring of glitter like a tiny parachute.
+            Location feet = owner.getLocation();
+            Vfx.dot(feet.clone().add(0, 0.3, 0), Particle.CHERRY_LEAVES, null, false);
+            if (tick % 8 == 0) {
+                Vfx.ring(ctx(), feet.clone().add(0, owner.getHeight() + 0.25, 0), 0.35, 6, tick * 0.2,
+                        Particle.DUST, SPARK_PINK, false);
+            }
         }
     }
 
@@ -445,28 +601,126 @@ public final class PixieAbility extends Ability {
         }
     }
 
+    // ------------------------------------------------------------------ wings
+
     /**
-     * Draws a pair of glittering wings behind the owner's back.
-     *
-     * @param flap how far the wings are swept back, in radians (0 = spread flat to the sides)
+     * A pair of butterfly wings on the owner's back: per side a large pink upper and a small magenta lower pane of
+     * thin stained glass (block displays), pivoting at the shoulders. They follow the owner every tick and beat by
+     * interpolating their sweep angle.
      */
-    private static void drawWings(Player owner, double flap) {
-        double bodyScale = Body.scaleOf(owner);
-        double scale = bodyScale * WING_SIZE;
-        double yaw = Math.toRadians(owner.getBodyYaw());
-        Vector right = new Vector(-Math.cos(yaw), 0, -Math.sin(yaw));
-        Vector back = new Vector(Math.sin(yaw), 0, -Math.cos(yaw));
-        Location shoulder = owner.getLocation().add(0, SHOULDER_HEIGHT * bodyScale, 0)
-                .add(back.clone().multiply(0.15 * bodyScale));
-        World world = owner.getWorld();
-        for (int side = -1; side <= 1; side += 2) {
-            Vector out = right.clone().multiply(side * Math.cos(flap)).add(back.clone().multiply(Math.sin(flap)));
-            for (int i = 0; i < WING.length; i++) {
-                double[] point = WING[i];
-                Location at = shoulder.clone().add(out.clone().multiply(point[0] * scale)).add(0, point[1] * scale, 0);
-                world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 1, 0, 0, 0, 0,
-                        i % 3 == 0 ? WING_EDGE : WING_DUST);
+    private final class Wings {
+        private final BlockDisplay[] panes = new BlockDisplay[4];
+        private final float size;
+        private final float bodyScale;
+        private double phase;
+        private int age;
+
+        Wings(Player owner) {
+            this.bodyScale = (float) Body.scaleOf(owner);
+            this.size = bodyScale * WING_SIZE;
+            long lifetime = Math.max(1, flightEndTick - ctx().currentTick()) + WING_FOLD_TICKS + 20;
+            Location at = anchor(owner);
+            Transformation folded = new Transformation(new Vector3f(0, WING_ROOT_HEIGHT * bodyScale, 0),
+                    new Quaternionf(), new Vector3f(0.001f), new Quaternionf());
+            int index = 0;
+            for (boolean left : new boolean[] {true, false}) {
+                for (boolean upper : new boolean[] {true, false}) {
+                    BlockDisplay pane = Displays.block(ctx(), owner, at, upper ? UPPER_WING : LOWER_WING, folded,
+                            lifetime);
+                    Displays.animateNextTick(ctx(), owner, pane, pane(left, upper, SWEEP_REST), WING_OPEN_TICKS);
+                    panes[index++] = pane;
+                }
             }
+        }
+
+        /** Follows the owner and beats; false (after removing itself) if the wings are gone. */
+        boolean update(Player owner, long tick, boolean hurried) {
+            for (BlockDisplay pane : panes) {
+                if (!pane.isValid() || pane.getWorld() != owner.getWorld()) {
+                    remove();
+                    return false;
+                }
+            }
+            Location at = anchor(owner);
+            for (BlockDisplay pane : panes) {
+                pane.teleport(at);
+            }
+            phase += hurried ? 0.9 : 0.5;
+            // Let the opening animation play before the first beat.
+            if (++age > WING_OPEN_TICKS && tick % FLAP_STEP_TICKS == 0) {
+                double sweep = SWEEP_REST + SWEEP_AMPLITUDE * Math.sin(phase);
+                int index = 0;
+                for (boolean left : new boolean[] {true, false}) {
+                    for (boolean upper : new boolean[] {true, false}) {
+                        Displays.animate(panes[index++], pane(left, upper, sweep), FLAP_STEP_TICKS);
+                    }
+                }
+                sparkleTips(owner, at, sweep);
+            }
+            return true;
+        }
+
+        /** Glitter shed from the two upper wing tips. */
+        private void sparkleTips(Player owner, Location at, double sweep) {
+            double yaw = Math.toRadians(at.getYaw());
+            for (boolean left : new boolean[] {true, false}) {
+                Transformation t = pane(left, true, sweep);
+                Vector3f tip = t.getLeftRotation().transform(new Vector3f(t.getScale().x(), t.getScale().y(), 0))
+                        .add(t.getTranslation());
+                // Body space to world space: the display's yaw rotation (local +Z = facing).
+                double x = tip.x() * Math.cos(yaw) - tip.z() * Math.sin(yaw);
+                double z = tip.x() * Math.sin(yaw) + tip.z() * Math.cos(yaw);
+                Location point = at.clone().add(x, tip.y(), z);
+                Vfx.dot(point, Particle.DUST, left ? SPARK_PINK : SPARK_SKY, false);
+                if (ThreadLocalRandom.current().nextInt(4) == 0) {
+                    Vfx.dot(point, Particle.WAX_OFF, null, false);
+                }
+            }
+            if (ThreadLocalRandom.current().nextInt(6) == 0) {
+                Fx.sound(owner.getLocation(), Sound.ITEM_ELYTRA_FLYING, 0.08f, 2.0f);
+            }
+        }
+
+        /** Folds the wings into the back and removes them. */
+        void fold() {
+            for (BlockDisplay pane : panes) {
+                if (pane.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), pane, WING_FOLD_TICKS);
+                }
+            }
+        }
+
+        void remove() {
+            for (BlockDisplay pane : panes) {
+                if (pane.isValid()) {
+                    pane.remove();
+                }
+            }
+        }
+
+        private Location anchor(Player owner) {
+            Location at = owner.getLocation();
+            at.setYaw(owner.getBodyYaw());
+            at.setPitch(0);
+            return at;
+        }
+
+        /**
+         * One wing pane in body space (local +Z = facing, +X = the owner's left): a thin glass block with its corner
+         * at the wing root, rolled outwards and swept back by {@code sweepDegrees}.
+         */
+        private Transformation pane(boolean left, boolean upper, double sweepDegrees) {
+            float length = (upper ? UPPER_LENGTH : LOWER_LENGTH) * size;
+            float height = (upper ? UPPER_HEIGHT : LOWER_HEIGHT) * size;
+            float roll = (float) Math.toRadians(upper ? UPPER_ROLL : LOWER_ROLL);
+            float sweep = (float) Math.toRadians(sweepDegrees);
+            Quaternionf rotation = left
+                    ? new Quaternionf().rotateY(sweep).rotateZ(roll)
+                    : new Quaternionf().rotateY(-sweep).rotateY((float) Math.PI).rotateZ(roll);
+            Vector3f root = new Vector3f((left ? 0.05f : -0.05f) * bodyScale, WING_ROOT_HEIGHT * bodyScale,
+                    -WING_BACK * bodyScale);
+            return new Transformation(root, rotation, new Vector3f(length, height, WING_THICKNESS),
+                    new Quaternionf());
         }
     }
 }
