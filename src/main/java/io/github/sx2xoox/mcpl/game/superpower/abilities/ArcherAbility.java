@@ -251,7 +251,7 @@ public final class ArcherAbility extends Ability {
         }
     }
 
-    /** One fading green-white mote behind every arrow in flight. */
+    /** A fading white-to-green streak behind every arrow in flight, over the distance it covered this tick. */
     private void drawStreaks() {
         for (Iterator<AbstractArrow> it = streaks.values().iterator(); it.hasNext(); ) {
             AbstractArrow arrow = it.next();
@@ -259,7 +259,9 @@ public final class ArcherAbility extends Ability {
                 it.remove();
                 continue;
             }
-            Vfx.dot(arrow.getLocation(), Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
+            Location at = arrow.getLocation();
+            Location behind = at.clone().subtract(Motion.clamp(arrow.getVelocity(), MAX_SPEED));
+            Vfx.line(ctx(), behind, at, 1.5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.6f), false);
         }
     }
 
@@ -415,14 +417,15 @@ public final class ArcherAbility extends Ability {
     private void volleyFlash(Location eye, Vector look, List<Vector> directions) {
         World world = eye.getWorld();
         Location muzzle = eye.clone().add(look.clone().multiply(1.0)).subtract(0, 0.25, 0);
-        Location bowAt = muzzle.clone();
+        // Low in the archer's view and short-lived, so it never hides where the arrows go.
+        Location bowAt = eye.clone().add(look.clone().multiply(1.4)).subtract(0, 0.5, 0);
         bowAt.setDirection(look);
         ItemDisplay bow = Displays.item(ctx(), player(), bowAt, ItemStack.of(Material.BOW),
                 Displays.centered(0, 0, 0, 0.3f, 0.3f, 0.3f, 0, 0, -45), 12);
-        Displays.animateNextTick(ctx(), player(), bow, Displays.centered(0, 0, 0, 1.0f, 1.0f, 0.4f, 0, 0, -45), 2);
-        ctx().runLater(player(), 4, () -> {
+        Displays.animateNextTick(ctx(), player(), bow, Displays.centered(0, 0, 0, 0.9f, 0.9f, 0.35f, 0, 0, -45), 2);
+        ctx().runLater(player(), 3, () -> {
             if (bow.isValid()) {
-                Displays.shrinkAway(ctx(), player(), bow, 5);
+                Displays.shrinkAway(ctx(), player(), bow, 4);
             }
         });
 
@@ -581,7 +584,7 @@ public final class ArcherAbility extends Ability {
             }
         }
 
-        /** Turns the reticle to its angle at {@code tick} over the next 10 ticks. */
+        /** Turns the reticle to its angle {@code tick} ticks into the rain, over the next 10 ticks. */
         private void turnReticle(long tick) {
             double spin = tick * 0.012;
             for (int i = 0; i < bars.size(); i++) {
@@ -615,7 +618,7 @@ public final class ArcherAbility extends Ability {
 
         void drawZone(long tick) {
             if (tick >= RAIN_WINDUP && (tick - RAIN_WINDUP) % 10 == 0) {
-                turnReticle(tick + 10);
+                turnReticle(tick - RAIN_WINDUP + 10);
             }
             if (tick % 4 == 0) {
                 // A sparse particle ring for spectators far away and a soft glow drifting inside the zone.

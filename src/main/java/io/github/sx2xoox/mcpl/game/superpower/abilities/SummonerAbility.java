@@ -650,6 +650,7 @@ public final class SummonerAbility extends Ability {
      * unfolds outwards, turns while arcane motes stream into its center, then collapses inwards and vanishes.
      */
     private final class RuneCircle {
+        private static final int UNFOLD_TICKS = 7;
         private final Location center;
         private final double radius;
         private final int count;
@@ -693,9 +694,10 @@ public final class SummonerAbility extends Ability {
             long closeAt = lifetime - 8;
             Loop.repeat(ctx(), player(), 1, 1, closeAt, tick -> {
                 if (tick == 0) {
-                    turn(0, 7); // unfold
-                } else if (tick % 10 == 7) {
-                    turn(tick + 10, 10); // keep turning: aim where the ring should be at the next update
+                    turn(0, UNFOLD_TICKS); // unfold
+                } else if (tick >= UNFOLD_TICKS && (tick - UNFOLD_TICKS) % 10 == 0) {
+                    // keep turning: aim where the ring should be at the next update
+                    turn(tick - UNFOLD_TICKS + 10, 10);
                 }
                 if (tick % 3 == 0) {
                     inflow(tick);
@@ -708,7 +710,7 @@ public final class SummonerAbility extends Ability {
             }, this::close);
         }
 
-        /** Turns the ring to its angle at {@code tick} over {@code ticks} ticks. */
+        /** Turns the ring to its angle {@code tick} ticks after it unfolded, over {@code ticks} ticks. */
         private void turn(long tick, int ticks) {
             double spin = tick * 0.035;
             for (int i = 0; i < runes.size(); i++) {

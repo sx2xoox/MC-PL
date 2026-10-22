@@ -265,7 +265,7 @@ public final class BomberAbility extends Ability {
             }
             long left = fuse - tick - 1;
             Location at = grenade.getLocation().add(0, 0.5, 0);
-            fuseSparks(at.clone().add(0, 0.55, 0), tick);
+            fuseSparks(at.clone().add(0, 0.85, 0), tick); // just above the light
             long beepEvery = left > 15 ? 8 : left > 6 ? 4 : 2;
             boolean beep = left % beepEvery == 0;
             if (beep) {
@@ -662,7 +662,7 @@ public final class BomberAbility extends Ability {
 
         world.spawnParticle(Particle.FLASH, center, 1, 0, 0, 0, 0, PALETTE.core(), big);
         world.spawnParticle(big ? Particle.EXPLOSION_EMITTER : Particle.EXPLOSION, center, 1, 0, 0, 0, 0, null, big);
-        fireball(center, radius * (big ? 0.6 : 0.5), big ? 3 : 2);
+        fireball(center, radius * (big ? 0.5 : 0.45), big ? 3 : 2);
 
         // Fire bloom: flames thrown out in every direction, a few hot lava pops.
         int flames = Vfx.n(ctx(), big ? 26 : 14);

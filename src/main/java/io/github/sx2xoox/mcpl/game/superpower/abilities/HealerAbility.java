@@ -17,6 +17,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
@@ -385,7 +386,7 @@ public final class HealerAbility extends Ability {
         Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.8f, 1.2f + Fx.jitter(0.1f));
     }
 
-    /** A pane of light flashing up where an enemy is thrown out, facing the sanctuary's center. */
+    /** A pane of light flashing up between an enemy being thrown out and the sanctuary's center. */
     private void barrierFlash(LivingEntity enemy, Vector outwards) {
         Location at = enemy.getLocation();
         at.setDirection(outwards);
@@ -393,10 +394,10 @@ public final class HealerAbility extends Ability {
         float width = (float) Math.max(1.0, enemy.getWidth() * 2.0);
         float height = (float) Math.max(1.4, enemy.getHeight() * 1.1);
         BlockDisplay pane = Displays.block(ctx(), player(), at, Material.YELLOW_STAINED_GLASS.createBlockData(),
-                Displays.transform(0, height * 0.5f, -0.1f, width * 0.5f, height * 0.5f, 0.05f, 0, 0, 0),
+                Displays.transform(0, height * 0.5f, -0.45f, width * 0.5f, height * 0.5f, 0.05f, 0, 0, 0),
                 PANE_TICKS + 2);
         Displays.animateNextTick(ctx(), player(), pane,
-                Displays.transform(0, height * 0.5f, -0.1f, width, height, 0.05f, 0, 0, 0), 2);
+                Displays.transform(0, height * 0.5f, -0.45f, width, height, 0.05f, 0, 0, 0), 2);
         ctx().runLater(player(), 3, () -> {
             if (pane.isValid()) {
                 Displays.shrinkAway(ctx(), player(), pane, PANE_TICKS - 3);
@@ -450,8 +451,8 @@ public final class HealerAbility extends Ability {
 
         void tick(long t, long left) {
             draw(t);
-            if (t > RING_UNFOLD_TICKS && t % 20 == RING_UNFOLD_TICKS % 20) {
-                turn(t + 20);
+            if (t >= RING_UNFOLD_TICKS && (t - RING_UNFOLD_TICKS) % 20 == 0) {
+                turn(t - RING_UNFOLD_TICKS + 20);
             }
             if (t >= 12 && t % 20 == 12) {
                 breathe(t);
@@ -461,7 +462,7 @@ public final class HealerAbility extends Ability {
             }
         }
 
-        /** Turns the ring to its angle at {@code t} over the next 20 ticks. */
+        /** Turns the ring to its angle {@code t} ticks after it unfolded, over the next 20 ticks. */
         private void turn(long t) {
             double spin = t * 0.008;
             for (int i = 0; i < bars.size(); i++) {
@@ -547,7 +548,7 @@ public final class HealerAbility extends Ability {
         }
     }
 
-    private static net.kyori.adventure.text.Component labelText(long ticksLeft) {
+    private static Component labelText(long ticksLeft) {
         long seconds = Math.max(0, (ticksLeft + 19) / 20);
         return Text.mm("<#FFD866><bold>✚ 성역</bold></#FFD866> <white>" + seconds + "</white>");
     }
