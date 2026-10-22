@@ -2,8 +2,11 @@ package io.github.sx2xoox.mcpl.core.player;
 
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.bukkit.Bukkit;
@@ -17,7 +20,11 @@ import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.inventory.CraftingInventory;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -26,7 +33,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Everything a match changes on a player, captured before the match and put back afterwards: inventory (including
- * armor and offhand), location, game mode, health, food, saturation, exhaustion, experience, potion effects, fire,
+ * armor and offhand, plus loose cursor/crafting-grid items when taken with {@link #takeLooseItems}), location, game
+ * mode, health, absorption, food, saturation, exhaustion, experience, potion effects, fire,
  * freeze, fall distance, air, flight, walk/fly speed, glowing/invisible flags and scoreboard. Restoring also
  * clears the invulnerable flag (modes may set it, e.g. during a preparation phase).
  *
@@ -69,6 +77,9 @@ public final class PlayerSnapshot {
     private final boolean glowing;
     private final boolean invisible;
     private final ItemStack[] inventory;
+    /** Loose items that were not in the inventory: the cursor stack and crafting-grid/menu inputs. */
+    private final ItemStack[] extras;
+    private final double absorption;
     private final @Nullable Scoreboard scoreboard;
 
     private PlayerSnapshot(Builder b) {
@@ -103,11 +114,21 @@ public final class PlayerSnapshot {
         this.glowing = b.glowing;
         this.invisible = b.invisible;
         this.inventory = cloneItems(b.inventory);
+        this.extras = cloneItems(b.extras);
+        this.absorption = b.absorption;
         this.scoreboard = b.scoreboard;
     }
 
     /** Captures the player's current state. {@code gameId} is informational (which match took the snapshot). */
     public static PlayerSnapshot capture(Player player, String gameId) {
+        return capture(player, gameId, List.of());
+    }
+
+    /**
+     * Captures the player's current state plus {@code extras}: loose items taken from the player beforehand (see
+     * {@link #takeLooseItems}) that are given back on restore.
+     */
+    public static PlayerSnapshot capture(Player player, String gameId, List<ItemStack> extras) {
         Builder b = new Builder();
         b.playerId = player.getUniqueId();
         b.playerName = player.getName();
@@ -142,8 +163,81 @@ public final class PlayerSnapshot {
         b.glowing = player.isGlowing();
         b.invisible = player.isInvisible();
         b.inventory = player.getInventory().getContents();
+        b.extras = extras.toArray(new ItemStack[0]);
+        b.absorption = player.getAbsorptionAmount();
         b.scoreboard = player.getScoreboard();
         return new PlayerSnapshot(b);
+    }
+
+    /**
+     * Takes the items that belong to the player but are not in their inventory: the stack on the cursor and the
+     * slots an open menu would hand back on close (2x2 or 3x3 crafting grid; anvil, smithing table, grindstone,
+     * enchanting table, loom, stonecutter, cartography table, merchant and beacon inputs; never a result slot and never
+     * a block's own inventory such as a chest or crafter). The slots are emptied, so closing the menu afterwards moves
+     * nothing; the caller keeps the returned items (in a snapshot) or gives them back ({@link #giveBack}).
+     */
+    public static List<ItemStack> takeLooseItems(Player player) {
+        List<ItemStack> taken = new ArrayList<>();
+        ItemStack cursor = player.getItemOnCursor();
+        if (!isEmpty(cursor)) {
+            taken.add(cursor.clone());
+            player.setItemOnCursor(null);
+        }
+        InventoryView view = player.getOpenInventory();
+        Inventory top = view == null ? null : view.getTopInventory();
+        if (top instanceof CraftingInventory crafting) {
+            ItemStack[] matrix = crafting.getMatrix();
+            boolean any = false;
+            for (ItemStack item : matrix) {
+                if (!isEmpty(item)) {
+                    taken.add(item.clone());
+                    any = true;
+                }
+            }
+            if (any) {
+                crafting.setMatrix(new ItemStack[matrix.length]);
+            }
+        } else if (top != null && HANDED_BACK_ON_CLOSE.contains(top.getType())) {
+            int result = resultSlot(top.getType());
+            for (int slot = 0; slot < top.getSize(); slot++) {
+                ItemStack item = top.getItem(slot);
+                if (slot != result && !isEmpty(item)) {
+                    taken.add(item.clone());
+                    top.setItem(slot, null);
+                }
+            }
+        }
+        return taken;
+    }
+
+    /** Menus (besides crafting grids) whose input slots go back to the player when closed. */
+    private static final Set<InventoryType> HANDED_BACK_ON_CLOSE = EnumSet.of(InventoryType.ANVIL,
+            InventoryType.SMITHING, InventoryType.GRINDSTONE, InventoryType.ENCHANTING, InventoryType.LOOM,
+            InventoryType.STONECUTTER, InventoryType.CARTOGRAPHY, InventoryType.MERCHANT, InventoryType.BEACON);
+
+    /** The result slot of a menu in {@link #HANDED_BACK_ON_CLOSE} (as {@code InventoryView#getSlotType}), or -1. */
+    private static int resultSlot(InventoryType type) {
+        return switch (type) {
+            case ANVIL, CARTOGRAPHY, GRINDSTONE, MERCHANT -> 2;
+            case STONECUTTER -> 1;
+            case LOOM, SMITHING -> 3;
+            default -> -1;
+        };
+    }
+
+    /** Adds items to the player's inventory and drops whatever does not fit at their feet. */
+    public static void giveBack(Player player, Collection<ItemStack> items) {
+        if (items.isEmpty()) {
+            return;
+        }
+        Map<Integer, ItemStack> leftovers = player.getInventory().addItem(items.toArray(new ItemStack[0]));
+        for (ItemStack leftover : leftovers.values()) {
+            player.getWorld().dropItem(player.getLocation(), leftover);
+        }
+    }
+
+    private static boolean isEmpty(@Nullable ItemStack item) {
+        return item == null || item.isEmpty();
     }
 
     // ------------------------------------------------------------------ restore
@@ -153,14 +247,18 @@ public final class PlayerSnapshot {
      * pending and retry after respawn otherwise.
      *
      * @param pluginNamespace attribute modifiers whose key has this namespace are removed
+     * @return true if the player is back at the saved location; false if the teleport was cancelled (e.g. by another
+     * plugin) or the saved world is not loaded (they were sent to the main world spawn instead). Everything else is
+     * restored either way.
      */
-    public void restore(Player player, String pluginNamespace) {
+    public boolean restore(Player player, String pluginNamespace) {
         player.closeInventory();
         if (player.isInsideVehicle()) {
             player.leaveVehicle();
         }
         player.eject();
-        player.teleport(location(), PlayerTeleportEvent.TeleportCause.PLUGIN);
+        Location saved = savedLocation();
+        boolean moved = player.teleport(saved != null ? saved : location(), PlayerTeleportEvent.TeleportCause.PLUGIN);
         player.setGameMode(gameMode);
 
         ItemStack[] contents = player.getInventory().getContents();
@@ -170,8 +268,12 @@ public final class PlayerSnapshot {
         }
         player.getInventory().setContents(restored);
         player.setItemOnCursor(null);
+        giveBack(player, List.of(cloneItems(extras)));
 
         stripPluginModifiers(player, pluginNamespace);
+        // effects first: a HEALTH_BOOST raises the maximum the saved health is clamped to
+        player.clearActivePotionEffects();
+        player.addPotionEffects(effects);
         AttributeInstance maxHealth = player.getAttribute(Attribute.MAX_HEALTH);
         double max = maxHealth == null ? 20.0 : maxHealth.getValue();
         player.setHealth(Math.max(0.5, Math.min(max, health)));
@@ -182,8 +284,10 @@ public final class PlayerSnapshot {
         player.setExp(Math.max(0f, Math.min(1f, exp)));
         player.setTotalExperience(Math.max(0, totalExperience));
 
-        player.clearActivePotionEffects();
-        player.addPotionEffects(effects);
+        // after the effects: re-adding ABSORPTION would otherwise refill the absorption hearts
+        AttributeInstance maxAbsorption = player.getAttribute(Attribute.MAX_ABSORPTION);
+        double absorptionCap = maxAbsorption == null ? absorption : maxAbsorption.getValue();
+        player.setAbsorptionAmount(Math.max(0, Math.min(absorptionCap, absorption)));
         player.setFireTicks(fireTicks);
         player.setFreezeTicks(freezeTicks);
         player.setFallDistance(fallDistance);
@@ -200,6 +304,26 @@ public final class PlayerSnapshot {
         player.setInvulnerable(false);
 
         player.setScoreboard(scoreboard != null ? scoreboard : Bukkit.getScoreboardManager().getMainScoreboard());
+        return saved != null && moved;
+    }
+
+    /** Teleports the player to the saved location (nothing else). False if the world is missing or it was cancelled. */
+    public boolean teleportBack(Player player) {
+        Location saved = savedLocation();
+        if (saved == null) {
+            return false;
+        }
+        if (player.isInsideVehicle()) {
+            player.leaveVehicle();
+        }
+        player.setFallDistance(0f);
+        return player.teleport(saved, PlayerTeleportEvent.TeleportCause.PLUGIN);
+    }
+
+    /** "world (uid) x, y, z" of the saved location, for logs. */
+    public String describeLocation() {
+        return (worldName == null ? "?" : worldName) + " (" + worldId + ") "
+                + String.format(java.util.Locale.ROOT, "%.1f, %.1f, %.1f", x, y, z);
     }
 
     /** Removes every attribute modifier of the player whose key namespace is {@code namespace}. */
@@ -219,14 +343,17 @@ public final class PlayerSnapshot {
 
     /** Where the player stood; falls back to the main world spawn if that world is gone. */
     public Location location() {
+        Location saved = savedLocation();
+        return saved != null ? saved : Bukkit.getWorlds().getFirst().getSpawnLocation();
+    }
+
+    /** Where the player stood, or null if that world is not loaded. */
+    public @Nullable Location savedLocation() {
         World world = worldId == null ? null : Bukkit.getWorld(worldId);
         if (world == null && worldName != null) {
             world = Bukkit.getWorld(worldName);
         }
-        if (world == null) {
-            return Bukkit.getWorlds().getFirst().getSpawnLocation();
-        }
-        return new Location(world, x, y, z, yaw, pitch);
+        return world == null ? null : new Location(world, x, y, z, yaw, pitch);
     }
 
     private static float clampSpeed(float speed) {
@@ -266,6 +393,15 @@ public final class PlayerSnapshot {
     /** A copy of the saved inventory contents (storage, armor, offhand). */
     public ItemStack[] inventory() {
         return cloneItems(inventory);
+    }
+
+    /** A copy of the loose items (cursor, crafting grid, menu inputs) taken at capture; given back on restore. */
+    public ItemStack[] extras() {
+        return cloneItems(extras);
+    }
+
+    public double absorption() {
+        return absorption;
     }
 
     public List<PotionEffect> effects() {
@@ -318,6 +454,10 @@ public final class PlayerSnapshot {
         out.set("glowing", glowing);
         out.set("invisible", invisible);
         out.set("inventory", Base64.getEncoder().encodeToString(ItemStack.serializeItemsAsBytes(inventory)));
+        if (extras.length > 0) {
+            out.set("extras", Base64.getEncoder().encodeToString(ItemStack.serializeItemsAsBytes(extras)));
+        }
+        out.set("absorption", absorption);
     }
 
     /**
@@ -373,6 +513,9 @@ public final class PlayerSnapshot {
             throw new IllegalArgumentException("missing inventory");
         }
         b.inventory = ItemStack.deserializeItemsFromBytes(Base64.getDecoder().decode(items));
+        String extras = in.getString("extras");
+        b.extras = extras == null ? new ItemStack[0] : ItemStack.deserializeItemsFromBytes(Base64.getDecoder().decode(extras));
+        b.absorption = in.getDouble("absorption");
         b.scoreboard = null;
         return new PlayerSnapshot(b);
     }
@@ -433,6 +576,8 @@ public final class PlayerSnapshot {
         boolean glowing;
         boolean invisible;
         ItemStack[] inventory = new ItemStack[0];
+        ItemStack[] extras = new ItemStack[0];
+        double absorption;
         @Nullable Scoreboard scoreboard;
     }
 }

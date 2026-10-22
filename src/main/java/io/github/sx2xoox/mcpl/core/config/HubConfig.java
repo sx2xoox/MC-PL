@@ -1,5 +1,9 @@
 package io.github.sx2xoox.mcpl.core.config;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -11,8 +15,10 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.configuration.Configuration;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.Nullable;
 
@@ -48,15 +54,48 @@ public final class HubConfig {
     private double arenaZ;
     private int arenaRadius = 60;
     private ProtectionSettings protection = ProtectionSettings.ALL;
+    private boolean loadedOnce;
+    private boolean writable = true;
+    private boolean warnedUnwritable;
+    private long lastBrokenBackup = -1;
 
     public HubConfig(JavaPlugin plugin) {
         this.plugin = plugin;
     }
 
-    /** (Re)loads {@code config.yml}, writing the default file on first run, migrating and adding missing keys. */
+    /**
+     * (Re)loads {@code config.yml}, writing the default file on first run, migrating and adding missing keys.
+     *
+     * <p>A file that fails to parse (a tab, a bad indent, an unquoted {@code :}) is never overwritten: it is copied to
+     * {@code config.yml.broken-<time>}, the built-in defaults (startup) or the previous values (reload) stay in effect
+     * and {@link #isWritable()} is false until a later load succeeds.
+     *
+     * @throws IllegalStateException on a reload ({@code /게임 리로드}) of a file with a syntax error
+     */
     public void load() {
         plugin.saveDefaultConfig();
+        File file = new File(plugin.getDataFolder(), "config.yml");
+        String parseError = probe(file);
+        if (parseError != null) {
+            writable = false;
+            warnedUnwritable = false;
+            plugin.getLogger().severe("config.yml has a syntax error and was NOT loaded: " + parseError);
+            backupBroken(file);
+            if (loadedOnce) {
+                plugin.getLogger().severe("Keeping the previous settings. Fix config.yml and run /게임 리로드 again;"
+                        + " nothing is saved to config.yml until then.");
+                throw new IllegalStateException("config.yml could not be parsed: " + parseError);
+            }
+            plugin.getLogger().severe("Using the built-in defaults. Fix config.yml and run /게임 리로드;"
+                    + " nothing is saved to config.yml until then.");
+            plugin.reloadConfig(); // an empty configuration with the jar defaults attached
+            read(plugin.getConfig());
+            loadedOnce = true;
+            return;
+        }
         plugin.reloadConfig();
+        writable = true;
+        loadedOnce = true;
         FileConfiguration config = plugin.getConfig();
         boolean dirty = migrate(config);
         dirty |= addMissingDefaults(config);
@@ -64,6 +103,42 @@ public final class HubConfig {
         if (dirty) {
             save();
         }
+    }
+
+    /** Parses the file on its own; returns the error (with line and column), or null if it is fine or missing. */
+    private static @Nullable String probe(File file) {
+        if (!file.isFile()) {
+            return null;
+        }
+        try {
+            new YamlConfiguration().load(file);
+            return null;
+        } catch (IOException | InvalidConfigurationException e) {
+            return String.valueOf(e.getMessage());
+        }
+    }
+
+    private void backupBroken(File file) {
+        long modified = file.lastModified();
+        if (modified == lastBrokenBackup) {
+            return; // this version of the file was already copied
+        }
+        File copy = new File(file.getParentFile(), file.getName() + ".broken-" + System.currentTimeMillis());
+        try {
+            Files.copy(file.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            lastBrokenBackup = modified;
+            plugin.getLogger().severe("A copy of the broken file was saved as " + copy.getName());
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING, "Could not copy the broken config.yml", e);
+        }
+    }
+
+    /**
+     * False while {@code config.yml} has a syntax error: settings then live in memory only and nothing is saved, so the
+     * owner's file is never overwritten. Commands that change settings refuse while this is false.
+     */
+    public boolean isWritable() {
+        return writable;
     }
 
     private boolean migrate(FileConfiguration config) {
@@ -132,8 +207,15 @@ public final class HubConfig {
         protection = protectionSection == null ? ProtectionSettings.ALL : ProtectionSettings.read(protectionSection);
     }
 
-    /** Writes the current in-memory configuration to disk. */
+    /** Writes the current in-memory configuration to disk (skipped while {@link #isWritable()} is false). */
     public void save() {
+        if (!writable) {
+            if (!warnedUnwritable) {
+                warnedUnwritable = true;
+                plugin.getLogger().warning("config.yml has a syntax error; changes are kept in memory only, not saved.");
+            }
+            return;
+        }
         try {
             plugin.saveConfig();
         } catch (RuntimeException e) {

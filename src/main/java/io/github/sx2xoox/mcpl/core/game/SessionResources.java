@@ -143,6 +143,24 @@ final class SessionResources {
         }
     }
 
+    /**
+     * Sends the borders again (not the boss bars) to a viewer whose client just received a real world border: after
+     * joining (Paper sends the level's border after the join event) or changing worlds.
+     */
+    void showBordersTo(Player viewer) {
+        if (closed) {
+            return;
+        }
+        for (VirtualBorder border : borders) {
+            border.show(viewer);
+        }
+    }
+
+    /** True while the entity is tracked (created by the mode and removed when it stops). */
+    boolean isTracked(Entity entity) {
+        return entities.containsKey(entity.getUniqueId());
+    }
+
     /** A viewer left the server. */
     void forget(UUID playerId) {
         sharedBars.forEach(bar -> bar.forget(playerId));

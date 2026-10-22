@@ -14,6 +14,9 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param hanging            breaking or manipulating paintings, item frames and armor stands
  * @param interact           using doors, trapdoors, gates, buttons, levers, containers, beds, ...
  * @param itemDrop           participants dropping items
+ * @param entities           players of the match hurting or using entities the match did not create (villagers,
+ *                           animals, pets, vehicles, entity inventories), real pets joining the fight and participants
+ *                           picking up world items
  */
 public record ProtectionSettings(
         boolean blockBreak,
@@ -23,11 +26,19 @@ public record ProtectionSettings(
         boolean entityChangeBlock,
         boolean hanging,
         boolean interact,
-        boolean itemDrop
+        boolean itemDrop,
+        boolean entities
 ) {
 
     /** Everything protected. */
-    public static final ProtectionSettings ALL = new ProtectionSettings(true, true, true, true, true, true, true, true);
+    public static final ProtectionSettings ALL =
+            new ProtectionSettings(true, true, true, true, true, true, true, true, true);
+
+    /** The settings without the {@code entities} flag (protected). */
+    public ProtectionSettings(boolean blockBreak, boolean blockPlace, boolean explosions, boolean fire,
+                              boolean entityChangeBlock, boolean hanging, boolean interact, boolean itemDrop) {
+        this(blockBreak, blockPlace, explosions, fire, entityChangeBlock, hanging, interact, itemDrop, true);
+    }
 
     static ProtectionSettings read(ConfigurationSection section) {
         return new ProtectionSettings(
@@ -38,6 +49,7 @@ public record ProtectionSettings(
                 section.getBoolean("entity-change-block", true),
                 section.getBoolean("hanging", true),
                 section.getBoolean("interact", true),
-                section.getBoolean("item-drop", true));
+                section.getBoolean("item-drop", true),
+                section.getBoolean("entities", true));
     }
 }

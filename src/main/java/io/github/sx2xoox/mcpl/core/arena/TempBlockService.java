@@ -4,18 +4,24 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.TileState;
+import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -39,6 +45,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Temporary blocks: {@link #place} replaces a block and remembers the original, which comes back after the given
@@ -67,12 +74,24 @@ public final class TempBlockService implements Listener {
         final BlockKey key;
         final BlockData original;
         final long expireTick;
+        /**
+         * True for the other half of a double plant that was only emptied (air or water) because its partner was
+         * replaced; {@link #place} may still use it for another temporary block.
+         */
+        final boolean placeholder;
+        /** The other half of a double plant (both halves are taken and restored together), or null. */
+        @Nullable BlockKey partner;
         boolean done;
 
-        Entry(BlockKey key, BlockData original, long expireTick) {
+        Entry(BlockKey key, BlockData original, long expireTick, boolean placeholder) {
             this.key = key;
             this.original = original;
             this.expireTick = expireTick;
+            this.placeholder = placeholder;
+        }
+
+        boolean upperHalf() {
+            return original instanceof Bisected bisected && bisected.getHalf() == Bisected.Half.TOP;
         }
     }
 
@@ -139,18 +158,32 @@ public final class TempBlockService implements Listener {
     /**
      * Temporarily replaces {@code block} with {@code data}.
      *
+     * <p>Replacing one half of a double plant (tall grass, large fern, tall seagrass) also empties the other half and
+     * restores both together, lower half first, so the plant never ends up split.
+     *
      * @param durationTicks restore after this many ticks; {@code <= 0} keeps it until {@link #restoreAll()} (match end)
      * @return false if the block is not air/replaceable, has a block entity, is outside the world height or is
      * already temporary
      */
     public boolean place(Block block, BlockData data, long durationTicks) {
-        World world = block.getWorld();
-        if (block.getY() < world.getMinHeight() || block.getY() >= world.getMaxHeight()) {
+        if (outsideHeight(block)) {
             return false;
         }
         BlockKey key = BlockKey.of(block);
-        if (entries.containsKey(key)) {
-            return false;
+        long expire = durationTicks > 0 ? Bukkit.getCurrentTick() + durationTicks : Long.MAX_VALUE;
+        Entry existing = entries.get(key);
+        if (existing != null) {
+            if (!existing.placeholder) {
+                return false;
+            }
+            // the emptied half of a double plant we already hold: it can carry this temporary block as well
+            Entry claimed = new Entry(key, existing.original, expire, false);
+            claimed.partner = existing.partner;
+            existing.done = true;
+            track(claimed, durationTicks);
+            block.setBlockData(data, false);
+            afterChange();
+            return true;
         }
         if (!block.isEmpty() && !block.isReplaceable()) {
             return false;
@@ -158,16 +191,61 @@ public final class TempBlockService implements Listener {
         if (block.getState(false) instanceof TileState) {
             return false;
         }
-        long expire = durationTicks > 0 ? Bukkit.getCurrentTick() + durationTicks : Long.MAX_VALUE;
-        Entry entry = new Entry(key, block.getBlockData(), expire);
-        entries.put(key, entry);
+        BlockData original = block.getBlockData();
+        Block other = otherHalf(block, original);
+        if (other != null && (outsideHeight(other) || entries.containsKey(BlockKey.of(other)))) {
+            return false;
+        }
+        Entry entry = new Entry(key, original, expire, false);
+        track(entry, durationTicks);
+        if (other != null) {
+            Entry partner = new Entry(BlockKey.of(other), other.getBlockData(), expire, true);
+            entry.partner = partner.key;
+            partner.partner = key;
+            track(partner, durationTicks);
+            other.setBlockData(emptied(original), false);
+        }
+        block.setBlockData(data, false);
+        afterChange();
+        return true;
+    }
+
+    private static boolean outsideHeight(Block block) {
+        World world = block.getWorld();
+        return block.getY() < world.getMinHeight() || block.getY() >= world.getMaxHeight();
+    }
+
+    /** The matching other half if {@code data} is half of a (whole) double plant, else null. */
+    private static @Nullable Block otherHalf(Block block, BlockData data) {
+        if (!(data instanceof Bisected half)) {
+            return null;
+        }
+        Block other = block.getRelative(half.getHalf() == Bisected.Half.BOTTOM ? BlockFace.UP : BlockFace.DOWN);
+        BlockData otherData = other.getBlockData();
+        if (otherData.getMaterial() != data.getMaterial() || !(otherData instanceof Bisected otherHalf)
+                || otherHalf.getHalf() == half.getHalf()) {
+            return null;
+        }
+        return other;
+    }
+
+    /** What the emptied other half of a double plant holds meanwhile: water under water, else air. */
+    private static BlockData emptied(BlockData plant) {
+        boolean wet = plant.getMaterial() == Material.TALL_SEAGRASS
+                || plant instanceof Waterlogged waterlogged && waterlogged.isWaterlogged();
+        return (wet ? Material.WATER : Material.AIR).createBlockData();
+    }
+
+    private void track(Entry entry, long durationTicks) {
+        entries.put(entry.key, entry);
         if (durationTicks > 0) {
             expiring.add(entry);
         }
-        block.setBlockData(data, false);
+    }
+
+    private void afterChange() {
         scheduleFlush();
         updatePhysicsGuard();
-        return true;
     }
 
     /** True if the block is currently temporary. */
@@ -175,15 +253,14 @@ public final class TempBlockService implements Listener {
         return !entries.isEmpty() && entries.containsKey(BlockKey.of(block));
     }
 
-    /** Restores one temporary block early. Returns false if it was not temporary. */
+    /** Restores one temporary block early (with the other half of a double plant). False if it was not temporary. */
     public boolean restore(Block block) {
-        Entry entry = entries.remove(BlockKey.of(block));
+        Entry entry = entries.get(BlockKey.of(block));
         if (entry == null) {
             return false;
         }
-        apply(entry);
-        scheduleFlush();
-        updatePhysicsGuard();
+        release(entry);
+        afterChange();
         return true;
     }
 
@@ -193,14 +270,35 @@ public final class TempBlockService implements Listener {
             return 0;
         }
         List<Entry> all = new ArrayList<>(entries.values());
-        entries.clear();
         expiring.clear();
         for (int i = all.size() - 1; i >= 0; i--) {
-            apply(all.get(i));
+            Entry entry = all.get(i);
+            if (entries.get(entry.key) == entry) {
+                release(entry); // blocks restored later stay guarded meanwhile
+            }
         }
-        scheduleFlush();
-        updatePhysicsGuard();
+        entries.clear();
+        afterChange();
         return all.size();
+    }
+
+    /**
+     * Unregisters and restores {@code entry}. A double plant comes back whole: the lower half first (the upper one
+     * stays registered, so physics cannot touch it), then the upper half, so no shape update sees a split plant.
+     */
+    private void release(Entry entry) {
+        Entry partner = entry.partner == null ? null : entries.get(entry.partner);
+        if (partner == null || partner.done) {
+            entries.remove(entry.key);
+            apply(entry);
+            return;
+        }
+        Entry lower = entry.upperHalf() ? partner : entry;
+        Entry upper = lower == entry ? partner : entry;
+        entries.remove(lower.key);
+        apply(lower);
+        entries.remove(upper.key);
+        apply(upper);
     }
 
     /** Number of temporary blocks right now. */
@@ -233,13 +331,15 @@ public final class TempBlockService implements Listener {
             if (entry.done || entries.get(entry.key) != entry) {
                 continue;
             }
-            entries.remove(entry.key);
-            apply(entry);
+            Entry partner = entry.partner == null ? null : entries.get(entry.partner);
+            if (partner != null && !partner.done && partner.expireTick > now) {
+                continue; // a double plant comes back whole, when its other half expires too
+            }
+            release(entry);
             changed = true;
         }
         if (changed) {
-            scheduleFlush();
-            updatePhysicsGuard();
+            afterChange();
         }
         if (flushIn > 0 && --flushIn == 0) {
             flush();
@@ -262,8 +362,21 @@ public final class TempBlockService implements Listener {
             return;
         }
         List<String> lines = new ArrayList<>(entries.size());
+        Set<BlockKey> written = new HashSet<>();
         for (Entry entry : entries.values()) {
-            lines.add(entry.key.serialize() + ";" + entry.original.getAsString());
+            if (!written.add(entry.key)) {
+                continue;
+            }
+            Entry partner = entry.partner == null ? null : entries.get(entry.partner);
+            if (partner != null && written.add(partner.key)) {
+                // both halves of a double plant, lower first: recovery restores them in file order
+                Entry lower = entry.upperHalf() ? partner : entry;
+                Entry upper = lower == entry ? partner : entry;
+                lines.add(lower.key.serialize() + ";" + lower.original.getAsString());
+                lines.add(upper.key.serialize() + ";" + upper.original.getAsString());
+            } else {
+                lines.add(entry.key.serialize() + ";" + entry.original.getAsString());
+            }
         }
         orphans.forEach((world, rest) -> rest.forEach(line -> lines.add(world + ";" + line)));
         YamlConfiguration yaml = new YamlConfiguration();
@@ -359,9 +472,11 @@ public final class TempBlockService implements Listener {
         }
     }
 
+    /** Also keeps grass, mycelium and nylium under a temporary block from fading to dirt or netherrack. */
     @EventHandler(ignoreCancelled = true)
     public void onFade(BlockFadeEvent event) {
-        if (isTemporary(event.getBlock())) {
+        Block block = event.getBlock();
+        if (isTemporary(block) || isTemporary(block.getRelative(BlockFace.UP))) {
             event.setCancelled(true);
         }
     }

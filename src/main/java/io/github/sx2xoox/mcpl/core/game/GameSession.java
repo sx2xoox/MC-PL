@@ -22,6 +22,7 @@ import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.combat.MatchStats;
 import io.github.sx2xoox.mcpl.core.config.ProtectionSettings;
 import io.github.sx2xoox.mcpl.core.player.PlayerReset;
+import io.github.sx2xoox.mcpl.core.player.SnapshotWriteException;
 import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
@@ -538,6 +539,15 @@ public final class GameSession {
         resources.untrack(entity);
     }
 
+    /**
+     * True if the match created or owns the entity: {@link #track tracked} or registered with an owner in the
+     * {@link CombatTracker} (summons, decoys, projectiles, displays...). Other entities are bystanders the
+     * {@link ProtectionListener} protects.
+     */
+    public boolean isMatchEntity(Entity entity) {
+        return resources.isTracked(entity) || hub.combat().ownerOf(entity) != null;
+    }
+
     /** Registers a Bukkit listener until the mode stops. */
     public void registerListener(Listener listener) {
         resources.registerListener(listener);
@@ -774,6 +784,27 @@ public final class GameSession {
         }
         participants.retainAll(players.stream().map(Player::getUniqueId).toList());
 
+        // Snapshot everyone before anyone is reset: a player whose state cannot be saved to disk is left out untouched.
+        Set<UUID> unsaved = new HashSet<>();
+        List<Player> captured = new ArrayList<>(players.size());
+        for (Player player : players) {
+            UUID id = player.getUniqueId();
+            names.put(id, player.getName());
+            if (snapshot(player)) {
+                members.add(id);
+                captured.add(player);
+            } else {
+                unsaved.add(id);
+                participants.remove(id);
+            }
+        }
+        if (captured.size() < Math.max(1, game.minPlayers())) {
+            abort(messages().get("match.reason-not-enough", Messages.tag("count", captured.size()),
+                    Messages.tag("min", game.minPlayers())));
+            return;
+        }
+        players = captured;
+
         int teamSize = hub.config().teamSize();
         if (game.supportsTeams() && teamSize > 0) {
             teams = TeamAssigner.assign(participants, teamSize, random);
@@ -788,16 +819,13 @@ public final class GameSession {
         String namespace = hub.snapshots().namespace();
         for (Player player : players) {
             UUID id = player.getUniqueId();
-            names.put(id, player.getName());
-            hub.snapshots().capture(player, game.id());
-            members.add(id);
             PlayerReset.reset(player, namespace);
             alive.add(id);
             stats.of(id);
         }
         boards.setTeams(teams, this::plainName);
         for (Player player : List.copyOf(Bukkit.getOnlinePlayers())) {
-            if (!participants.contains(player.getUniqueId())) {
+            if (!participants.contains(player.getUniqueId()) && !unsaved.contains(player.getUniqueId())) {
                 addWatcher(player, false);
             }
         }
@@ -966,14 +994,45 @@ public final class GameSession {
         resources.showTo(player);
     }
 
-    /** Puts a non-participant into the session as a spectator (snapshotted first). */
-    private void addWatcher(Player player, boolean announce) {
+    /**
+     * A player on the death screen is respawned first: snapshotting (or healing) a corpse would record the death spot
+     * and leave the client stuck on the death screen, since the server ignores the respawn button once health is > 0.
+     */
+    private static void ensureAlive(Player player) {
+        if (player.isDead()) {
+            player.spigot().respawn();
+        }
+    }
+
+    /**
+     * Respawns the player if needed and takes their snapshot (a no-op if one is pending). If it cannot be saved to
+     * disk the player is told and left untouched.
+     */
+    private boolean snapshot(Player player) {
+        ensureAlive(player);
+        try {
+            hub.snapshots().capture(player, game.id());
+            return true;
+        } catch (RuntimeException e) {
+            if (!(e instanceof SnapshotWriteException)) {
+                log("snapshot of " + player.getName(), e);
+            }
+            messages().send(player, "match.snapshot-failed");
+            return false;
+        }
+    }
+
+    /** Puts a non-participant into the session as a spectator (snapshotted first); false if that failed. */
+    private boolean addWatcher(Player player, boolean announce) {
         UUID id = player.getUniqueId();
         names.put(id, player.getName());
+        ensureAlive(player);
         if (!members.contains(id) && hub.snapshots().has(id)) {
             hub.snapshots().restore(player); // left over from an earlier, interrupted match
         }
-        hub.snapshots().capture(player, game.id());
+        if (!snapshot(player)) {
+            return false;
+        }
         members.add(id);
         watchers.add(id);
         makeSpectator(player, spectatorSpawn());
@@ -982,11 +1041,15 @@ public final class GameSession {
         if (announce) {
             messages().send(player, "match.joined-spectator", Messages.tag("game", game.displayComponent()));
         }
+        return true;
     }
 
-    private void addLateParticipant(Player player, boolean rejoining) {
+    /** Lets a player into the running match; false (player untouched) if their snapshot could not be saved. */
+    private boolean addLateParticipant(Player player, boolean rejoining) {
         UUID id = player.getUniqueId();
-        hub.snapshots().capture(player, game.id());
+        if (!snapshot(player)) {
+            return false;
+        }
         members.add(id);
         if (watchers.remove(id)) {
             boards.removeSpectator(player.getName());
@@ -1009,6 +1072,7 @@ public final class GameSession {
         } catch (RuntimeException e) {
             log("onLateJoin", e);
         }
+        return true;
     }
 
     private void makeSpectator(Player player, @Nullable Location at) {
@@ -1091,7 +1155,7 @@ public final class GameSession {
                     hub.snapshots().restore(player);
                 }
                 if (!manager.prefersSpectating(id) && !alive.contains(id) && allowLateJoin(player, rejoining)) {
-                    addLateParticipant(player, rejoining);
+                    addLateParticipant(player, rejoining); // on failure the player is told and left untouched
                 } else if (members.contains(id)) {
                     makeSpectator(player, spectatorSpawn());
                     attachViewer(player);
@@ -1111,6 +1175,22 @@ public final class GameSession {
             case CLOSED -> {
                 // the restore listener handles it
             }
+        }
+        if (members.contains(id)) {
+            // Paper sends the level's real world border after the join event, replacing a virtual border shown now
+            hubLater(1, () -> {
+                Player online = Bukkit.getPlayer(id);
+                if (online != null && members.contains(id)) {
+                    resources.showBordersTo(online);
+                }
+            });
+        }
+    }
+
+    /** A player changed worlds: the client got the new world's real border, so virtual borders are sent again. */
+    void handleWorldChange(Player player) {
+        if (members.contains(player.getUniqueId())) {
+            resources.showBordersTo(player);
         }
     }
 
@@ -1262,6 +1342,7 @@ public final class GameSession {
             attachViewer(player);
             return;
         }
+        resources.showBordersTo(player); // a respawn resends the level's real border
         DeathOutcome.Respawn respawn = awaitingRespawn.remove(id);
         if (respawn == null || state != GameState.RUNNING || !alive.contains(id)) {
             return;

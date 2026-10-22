@@ -312,7 +312,19 @@ public final class GameCommand {
         return rotationList(sender);
     }
 
+    /** True (and tells the sender) when config.yml has a syntax error, so a setting change could not be saved. */
+    private boolean configLocked(CommandSender sender) {
+        if (hub.config().isWritable()) {
+            return false;
+        }
+        messages().send(sender, "error.config-broken");
+        return true;
+    }
+
     private int rotationToggle(CommandSender sender, boolean enabled) {
+        if (configLocked(sender)) {
+            return 0;
+        }
         Rotation rotation = games().rotation();
         if (enabled && rotation.next() == null) {
             messages().send(sender, "error.rotation-empty");
@@ -331,12 +343,13 @@ public final class GameCommand {
             messages().send(sender, "command.rotation-list-empty");
             return Command.SINGLE_SUCCESS;
         }
-        MiniGame next = rotation.next();
+        int nextIndex = rotation.nextIndex();
         List<Component> parts = new ArrayList<>();
-        for (String id : ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            String id = ids.get(i);
             MiniGame game = games().game(id);
             Component part = game == null ? Component.text(id + "(?)", NamedTextColor.DARK_GRAY) : game.displayComponent();
-            if (game != null && game == next) {
+            if (game != null && i == nextIndex) {
                 part = Component.text("▶", NamedTextColor.YELLOW).append(part);
             }
             parts.add(part);
@@ -371,6 +384,9 @@ public final class GameCommand {
             messages().send(sender, "error.player-only");
             return 0;
         }
+        if (configLocked(sender)) {
+            return 0;
+        }
         int value = radius == null ? hub.config().arenaRadius() : radius;
         hub.config().setArena(location, value);
         messages().send(sender, "command.arena-set", locationTags(hub.config().arenaCenter() == null ? location
@@ -392,6 +408,9 @@ public final class GameCommand {
     }
 
     private int arenaReset(CommandSender sender) {
+        if (configLocked(sender)) {
+            return 0;
+        }
         hub.config().clearArena();
         messages().send(sender, "command.arena-reset", Messages.tag("radius", hub.config().arenaRadius()));
         return Command.SINGLE_SUCCESS;
@@ -416,7 +435,7 @@ public final class GameCommand {
     private static String protectionSummary(ProtectionSettings p) {
         int on = 0;
         boolean[] flags = {p.blockBreak(), p.blockPlace(), p.explosions(), p.fire(), p.entityChangeBlock(),
-                p.hanging(), p.interact(), p.itemDrop()};
+                p.hanging(), p.interact(), p.itemDrop(), p.entities()};
         for (boolean flag : flags) {
             if (flag) {
                 on++;
@@ -426,6 +445,9 @@ public final class GameCommand {
     }
 
     private int teamSize(CommandSender sender, int size) {
+        if (configLocked(sender)) {
+            return 0;
+        }
         hub.config().setTeamSize(size);
         if (size == 0) {
             messages().send(sender, "command.team-ffa");
