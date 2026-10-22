@@ -42,6 +42,24 @@ class TargetingTest {
     }
 
     @Test
+    void aimingNeverLocksOntoAStealthedPlayer() {
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = h.startFight();
+        MatchContext ctx = match.context();
+        TestPlayer a = players.get(0);
+        TestPlayer b = players.get(1);
+        Location center = match.session().arena().center();
+        a.teleport(center);
+        b.teleport(center.clone().add(-4, 0, 0));
+        a.setRotation(90, 0); // facing -x, straight at b
+        assertEquals(b, ctx.findTarget(a, 20), "a visible enemy straight ahead is targeted");
+        a.hidePlayer(h.hub.plugin(), b);
+        assertNull(ctx.findTarget(a, 20), "a stealthed enemy is never aimed at (it would reveal them)");
+        a.showPlayer(h.hub.plugin(), b);
+        assertEquals(b, ctx.findTarget(a, 20));
+    }
+
+    @Test
     void freeForAllEveryoneElseIsAnEnemy() {
         List<TestPlayer> players = h.join(3);
         SuperpowerMatch match = h.startFight();
