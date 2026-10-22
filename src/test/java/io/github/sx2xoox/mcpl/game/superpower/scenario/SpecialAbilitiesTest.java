@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
@@ -14,6 +15,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Wolf;
@@ -22,6 +24,10 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.plugin.RegisteredListener;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 /** 특수 계열: 요정, 불사조, 환영술사, 도박사 (도박사의 잭팟은 {@link GamblerJackpotTest}). */
@@ -36,6 +42,43 @@ class SpecialAbilitiesTest {
 
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    private static List<BlockDisplay> blockDisplays(Scenario s, Material... types) {
+        List<Material> wanted = List.of(types);
+        return s.world.getEntities().stream().filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                .filter(display -> wanted.contains(display.getBlock().getMaterial())).toList();
+    }
+
+    /**
+     * Wing displays on an owner facing -x (yaw 90): unrotated themselves (their transformation alone turns them),
+     * rooted on the owner's back (+x) and spreading to both sides (+z is the owner's left, -z its right).
+     */
+    private static void assertWingsOnTheBackOfAnOwnerFacingWest(List<BlockDisplay> wing, String what) {
+        boolean left = false;
+        boolean right = false;
+        for (BlockDisplay pane : wing) {
+            assertEquals(0, pane.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+            assertEquals(0, pane.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+            Transformation t = pane.getTransformation();
+            assertTrue(t.getTranslation().x() > 0.05, what + " is rooted on the back: " + t.getTranslation());
+            // The far end of the pane, along its length.
+            Vector3f tip = rotationOf(pane).transform(new Vector3f(t.getScale().x(), 0, 0)).add(t.getTranslation());
+            left |= tip.z() > 0.15;
+            right |= tip.z() < -0.15;
+        }
+        assertTrue(left && right, what + " spreads to both sides");
+    }
+
+    /**
+     * The rotation a display's transformation applies. MockBukkit 4.118 rebuilds the transformation from a matrix and
+     * returns its left rotation conjugated (the very same conjugate also as the right rotation). The abilities never
+     * set a right rotation, so a right rotation equal to the left one marks that bug, and it is undone here.
+     */
+    private static Quaternionf rotationOf(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        Quaternionf left = new Quaternionf(t.getLeftRotation());
+        return left.equals(t.getRightRotation(), 1.0E-6f) ? left.conjugate() : left;
     }
 
     // ------------------------------------------------------------------ 요정 pixie
@@ -95,6 +138,30 @@ class SpecialAbilitiesTest {
         }
     }
 
+    @Test
+    void pixieWingsTurnWithTheBodyThroughTheirTransformation() {
+        try (Scenario s = Scenario.ffa("pixie")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 90, 0);
+            s.owner.setVelocity(new Vector(1.5, 0, 1.5)); // a stale velocity on the server
+            s.assertSucceeded(s.ultimate(), "요정의 날개");
+            Vector takeOff = s.owner.getVelocity();
+            assertEquals(0, Math.hypot(takeOff.getX(), takeOff.getZ()), EPSILON, "the take-off is straight up");
+            assertTrue(takeOff.getY() > 0, "and lifts the pixie");
+            for (int tick = 0; tick < 10; tick++) {
+                s.ticks(1);
+                List<BlockDisplay> wings = blockDisplays(s, Material.PINK_STAINED_GLASS,
+                        Material.MAGENTA_STAINED_GLASS);
+                assertEquals(4, wings.size(), "two pairs of wing panes");
+                if (tick >= 6) { // opened
+                    assertWingsOnTheBackOfAnOwnerFacingWest(wings, "a fairy wing");
+                }
+            }
+            s.ticks(s.paramTicks("flight_duration"));
+            s.tickUntilGrounded(s.owner, 600);
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 불사조 phoenix
 
     @Test
@@ -135,6 +202,25 @@ class SpecialAbilitiesTest {
             s.ticks(5);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertFalse(s.owner.hasPotionEffect(PotionEffectType.SLOW_FALLING), "the glide ends on landing");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phoenixFlameWingsTurnWithTheBodyThroughTheirTransformation() {
+        try (Scenario s = Scenario.ffa("phoenix")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 90, 0);
+            s.assertSucceeded(s.active(), "화염 날개");
+            for (int tick = 0; tick < 10; tick++) {
+                s.ticks(1);
+                List<BlockDisplay> feathers = blockDisplays(s, Material.YELLOW_STAINED_GLASS,
+                        Material.ORANGE_STAINED_GLASS, Material.RED_STAINED_GLASS);
+                assertEquals(6, feathers.size(), "two fans of three feathers");
+                if (tick >= 5) { // opened
+                    assertWingsOnTheBackOfAnOwnerFacingWest(feathers, "a flame feather");
+                }
+            }
+            s.tickUntilGrounded(s.owner, 800);
             s.finishClean();
         }
     }
@@ -277,6 +363,21 @@ class SpecialAbilitiesTest {
             s.ticks(s.paramTicks("legion_duration") + 2);
             assertTrue(copies(s).isEmpty());
             assertTrue(s.enemy.canSee(s.owner));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void illusionistLegionSwapLandsExactlyOnTheGround() {
+        try (Scenario s = illusionist()) {
+            s.assertSucceeded(s.ultimate(), "환영 군단");
+            Location feet = s.owner.getLocation();
+            assertEquals(FlatWorld.SURFACE, feet.getY(), EPSILON, "on the floor, not half a step into it");
+            assertTrue(Spots.isFree(s.world, feet, 0.6, 1.8), "the body is free");
+            for (Mannequin copy : copies(s)) {
+                assertEquals(FlatWorld.SURFACE, copy.getLocation().getY(), EPSILON, "copies stand on the floor too");
+            }
+            s.ticks(s.paramTicks("legion_duration") + 2);
             s.finishClean();
         }
     }

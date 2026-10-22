@@ -203,6 +203,40 @@ class ControlAbilitiesTest {
         }
     }
 
+    @Test
+    void earthCageCentresItsPrisonerOnTheFloorAndItsSpikesStandUnrotatedInTheOpen() {
+        try (Scenario s = Scenario.ffa("earth")) {
+            s.place(s.enemy2, 0.5, -15.5, 0); // out of range: a single cage
+            s.place(s.enemy, 0.8, 4.2, 180); // off the middle of its block, facing away
+            s.assertSucceeded(s.ultimate(), "바위 감옥");
+            Location feet = s.enemy.getLocation();
+            assertEquals(0.5, feet.getX(), EPSILON, "slid to the middle of its block column");
+            assertEquals(4.5, feet.getZ(), EPSILON);
+            assertEquals(FlatWorld.SURFACE, feet.getY(), EPSILON, "standing exactly on the floor");
+            assertFalse(s.world.hasCollisionsIn(s.enemy.getBoundingBox().expand(-1.0E-3)), "never inside a block");
+
+            s.ticks(2);
+            java.util.List<BlockDisplay> spikes = blockDisplays(s, Material.POINTED_DRIPSTONE);
+            assertEquals(4, spikes.size(), "four corner spikes");
+            for (BlockDisplay spike : spikes) {
+                assertUnrotated(spike, "corner spike");
+                assertFalse(spike.getLocation().getBlock().getType().isOccluding(),
+                        "a spike never stands inside a pillar, where clients would light it black: "
+                                + spike.getLocation());
+                Vector up = localAxis(spike, 0, 1, 0);
+                Vector out = spike.getLocation().toVector().subtract(feet.toVector()).setY(0);
+                assertTrue(up.getX() * out.getX() + up.getZ() * out.getZ() > 0, "the spike flares outwards");
+            }
+
+            s.ticks(s.paramTicks("ult_duration"));
+            java.util.List<BlockDisplay> rubble = blockDisplays(s, Material.COBBLESTONE, Material.MOSSY_COBBLESTONE,
+                    Material.DRIPSTONE_BLOCK, Material.TUFF);
+            assertFalse(rubble.isEmpty(), "the cage crumbles into rubble");
+            rubble.forEach(rock -> assertUnrotated(rock, "rubble"));
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 독술사 venom
 
     @Test
@@ -266,6 +300,26 @@ class ControlAbilitiesTest {
             s.clearHits();
             s.ticks(40);
             assertTrue(s.hitsBy(s.owner, s.enemy).isEmpty(), "the plague ran its course");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void venomFlaskAndPlagueMarksFollowWithoutTakingAnyoneElsesRotation() {
+        try (Scenario s = Scenario.ffa("venom")) {
+            s.aimAtFloor(s.owner, -3.5, 6.5); // turned and looking down
+            s.assertSucceeded(s.active(), "독안개");
+            s.ticks(3);
+            java.util.List<org.bukkit.entity.ItemDisplay> flasks = displays(s, org.bukkit.entity.ItemDisplay.class);
+            assertEquals(1, flasks.size(), "the flask in flight");
+            assertUnrotated(flasks.getFirst(), "the flying flask");
+
+            s.assertSucceeded(s.ultimate(), "역병");
+            s.ticks(3);
+            java.util.List<org.bukkit.entity.TextDisplay> marks = displays(s, org.bukkit.entity.TextDisplay.class);
+            assertFalse(marks.isEmpty(), "plague marks over the infected");
+            marks.forEach(mark -> assertUnrotated(mark, "plague mark"));
+            s.ticks(s.paramTicks("ult_duration") + 20);
             s.finishClean();
         }
     }
@@ -384,5 +438,96 @@ class ControlAbilitiesTest {
             assertFalse(s.ultimate().succeeded());
             s.finishClean();
         }
+    }
+
+    @Test
+    void mirrorShardsAndPanesFaceTheirWayThroughTheirTransformationOnly() {
+        try (Scenario s = Scenario.ffa("mirror")) {
+            s.place(s.owner, 0.5, 0.5, 70);
+            s.place(s.enemy, 4.5, 0.5, 90); // to the owner's east, at the same height
+            s.assertSucceeded(s.active(), "반사막");
+            s.ticks(5);
+            java.util.List<org.bukkit.entity.ItemDisplay> ring = items(s, Material.LIGHT_BLUE_STAINED_GLASS_PANE);
+            assertEquals(5, ring.size(), "the shield's shard ring");
+            for (org.bukkit.entity.ItemDisplay shard : ring) {
+                assertUnrotated(shard, "shield shard");
+                Vector face = localAxis(shard, 0, 0, 1).setY(0).normalize();
+                Vector out = shard.getLocation().toVector().subtract(s.owner.getLocation().toVector()).setY(0)
+                        .normalize();
+                assertTrue(face.dot(out) > 0.95, "a shard faces outwards: " + face + " vs " + out);
+            }
+
+            s.melee(s.enemy, s.owner, 4); // a pane flashes up towards the attacker, a shard flies back at it
+            s.ticks(2);
+            Vector toward = new Vector(1, 0, 0);
+            java.util.List<org.bukkit.entity.ItemDisplay> glass = items(s, Material.GLASS_PANE);
+            assertEquals(2, glass.size(), "the flashing pane and the reflected shard");
+            for (org.bukkit.entity.ItemDisplay display : glass) {
+                assertUnrotated(display, "pane / shard");
+                assertTrue(localAxis(display, 0, 0, 1).dot(toward) > 0.98,
+                        "faces the attacker: " + localAxis(display, 0, 0, 1));
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mirrorWorldMirrorsStandUnrotatedAcrossTheSwap() {
+        try (Scenario s = Scenario.ffa("mirror")) {
+            Vector across = s.enemy.getLocation().toVector().subtract(s.owner.getLocation().toVector()).normalize();
+            s.aimAt(s.owner, s.enemy); // the owner looks slightly down, the enemy faces it (yaw 180)
+            s.assertSucceeded(s.ultimate(), "거울 세계");
+            s.ticks(1);
+            java.util.List<BlockDisplay> mirrors = blockDisplays(s, Material.WHITE_STAINED_GLASS);
+            assertEquals(2, mirrors.size(), "a standing mirror at each spot");
+            for (BlockDisplay mirror : mirrors) {
+                assertUnrotated(mirror, "standing mirror");
+                assertTrue(Math.abs(localAxis(mirror, 0, 0, 1).dot(across)) > 0.99, "it faces the other spot");
+            }
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ real-client display checks
+
+    private static <T extends org.bukkit.entity.Entity> java.util.List<T> displays(Scenario s, Class<T> type) {
+        return s.world.getEntities().stream().filter(type::isInstance).map(type::cast).toList();
+    }
+
+    private static java.util.List<BlockDisplay> blockDisplays(Scenario s, Material... types) {
+        java.util.List<Material> wanted = java.util.List.of(types);
+        return displays(s, BlockDisplay.class).stream()
+                .filter(display -> wanted.contains(display.getBlock().getMaterial())).toList();
+    }
+
+    private static java.util.List<org.bukkit.entity.ItemDisplay> items(Scenario s, Material type) {
+        return displays(s, org.bukkit.entity.ItemDisplay.class).stream()
+                .filter(display -> display.getItemStack().getType() == type).toList();
+    }
+
+    /**
+     * A display's own yaw and pitch rotate its model on top of its transformation: they must stay 0, and only the
+     * transformation orients it.
+     */
+    private static void assertUnrotated(org.bukkit.entity.Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    /** Where the display's transformation turns the model's local axis {@code (x, y, z)}. */
+    private static Vector localAxis(org.bukkit.entity.Display display, float x, float y, float z) {
+        org.joml.Vector3f axis = rotationOf(display).transform(new org.joml.Vector3f(x, y, z));
+        return new Vector(axis.x(), axis.y(), axis.z());
+    }
+
+    /**
+     * The rotation a display's transformation applies. MockBukkit 4.118 rebuilds the transformation from a matrix and
+     * returns its left rotation conjugated (the very same conjugate also as the right rotation). The abilities never
+     * set a right rotation, so a right rotation equal to the left one marks that bug, and it is undone here.
+     */
+    private static org.joml.Quaternionf rotationOf(org.bukkit.entity.Display display) {
+        org.bukkit.util.Transformation t = display.getTransformation();
+        org.joml.Quaternionf left = new org.joml.Quaternionf(t.getLeftRotation());
+        return left.equals(t.getRightRotation(), 1.0E-6f) ? left.conjugate() : left;
     }
 }

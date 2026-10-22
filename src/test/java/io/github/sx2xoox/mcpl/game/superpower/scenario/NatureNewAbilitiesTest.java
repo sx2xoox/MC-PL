@@ -386,6 +386,44 @@ class NatureNewAbilitiesTest {
     }
 
     @Test
+    void hydroWaveColumnsAreUnrotatedAndRollAlongTheOwnersFacing() {
+        try (Scenario s = Scenario.ffa("hydro")) {
+            s.place(s.owner, 0.5, 0.5, 90); // the wave rolls towards -x
+            s.assertSucceeded(s.ultimate(), "해일");
+            for (int tick = 0; tick < 6; tick++) {
+                s.ticks(1);
+                List<org.bukkit.entity.BlockDisplay> layers = s.world.getEntities().stream()
+                        .filter(org.bukkit.entity.BlockDisplay.class::isInstance)
+                        .map(org.bukkit.entity.BlockDisplay.class::cast).toList();
+                assertFalse(layers.isEmpty(), "the wave's water columns");
+                for (org.bukkit.entity.BlockDisplay layer : layers) {
+                    // A display's own yaw would turn its model on top of the pose that already faces the wave on.
+                    assertEquals(0, layer.getLocation().getYaw(), 1.0E-3, "water column display yaw");
+                    assertEquals(0, layer.getLocation().getPitch(), 1.0E-3, "water column display pitch");
+                    // MockBukkit 4.118 returns a display's left rotation conjugated (and the same conjugate as its
+                    // right rotation, which the wave never sets): undo that.
+                    org.bukkit.util.Transformation t = layer.getTransformation();
+                    org.joml.Quaternionf rotation = new org.joml.Quaternionf(t.getLeftRotation());
+                    if (rotation.equals(t.getRightRotation(), 1.0E-6f)) {
+                        rotation.conjugate();
+                    }
+                    // Its pose only tilts around its local x axis (across the wave): +z stays in the rolling direction.
+                    org.joml.Vector3f forward = rotation.transform(new org.joml.Vector3f(0, 0, 1));
+                    assertTrue(forward.x() / Math.hypot(forward.x(), forward.z()) < -0.999,
+                            "the column's pose faces the way the wave rolls: " + forward);
+                    if (layer.getBlock().getMaterial() == Material.BLUE_STAINED_GLASS) {
+                        org.joml.Vector3f middle = rotation.transform(new org.joml.Vector3f(t.getScale()).mul(0.5f))
+                                .add(t.getTranslation());
+                        assertTrue(middle.x() > 0.5, "the deep body trails behind the front: " + middle);
+                    }
+                }
+            }
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void hydroWaveBreaksOnAWallAndSmashesItsRidersThere() {
         try (Scenario s = Scenario.ffa("hydro")) {
             s.world.wallAlongX(-8, 8, 9, 3, Material.STONE);

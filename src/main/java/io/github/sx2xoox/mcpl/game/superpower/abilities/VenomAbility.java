@@ -271,7 +271,8 @@ public final class VenomAbility extends Ability {
             double t = (double) (tick + 1) / flightTicks;
             Location position = start.clone().add(path.clone().multiply(t)).add(0, 4 * arc * t * (1 - t), 0);
             if (visual.isValid()) {
-                visual.teleport(position);
+                // Moved without taking the thrower's yaw and pitch, which would turn the tumble on top of its pose.
+                Displays.moveTo(visual, position);
                 // Tumbling end over end.
                 Displays.animate(visual, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, tick * 25f, tick * 40f, 0), 1);
             }
@@ -586,7 +587,7 @@ public final class VenomAbility extends Ability {
             TextDisplay mark = infection.mark();
             if (mark != null && mark.isValid()) {
                 if (mark.getWorld().equals(target.getWorld())) {
-                    mark.teleport(markPoint(target));
+                    Displays.moveTo(mark, markPoint(target));
                 } else {
                     mark.remove();
                 }

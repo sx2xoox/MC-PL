@@ -46,6 +46,8 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -107,6 +109,8 @@ public final class BomberAbility extends Ability {
     private static final double BLAST_PUSH = 0.9;
     private static final double BLAST_LIFT = 0.45;
     private static final double MAX_SPEED = 2.5;
+    /** Ground probes start this far above their point, never on a block's face. */
+    private static final double GROUND_PROBE_LIFT = 0.05;
 
     /** Sideways zig-zag of the carpet bombs around the bombing line. */
     private static final double BOMB_LATERAL = 1.4;
@@ -480,7 +484,8 @@ public final class BomberAbility extends Ability {
 
     /**
      * The carpet's bomber: a small dark plane of block displays flying the bombing line at drop height, trailing
-     * contrails from its wingtips. It swoops in small, flies at constant speed and shrinks away after the run.
+     * contrails from its wingtips. It swoops in small, flies at constant speed and shrinks away after the run. The
+     * plane's heading lives in the transformations of its parts; the displays themselves are never rotated.
      */
     private final class Plane {
         private final Location base;
@@ -488,18 +493,21 @@ public final class BomberAbility extends Ability {
         private final Vector side;
         private final double start;
         private final double speed;
+        /** The flight direction as a Minecraft yaw (degrees), and the rotation that turns the plane's +Z onto it. */
+        private final float yaw;
+        private final Quaternionf heading;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private final List<Transformation> shapes = new ArrayList<>();
         private long lastTick;
 
         Plane(Location aim, Vector forward, Vector side, double start, double speed, long lifetime) {
-            this.base = aim.clone().add(0, BOMB_DROP_HEIGHT + 0.6, 0);
-            this.base.setDirection(forward);
-            this.base.setPitch(0);
+            this.base = Displays.unrotated(aim).add(0, BOMB_DROP_HEIGHT + 0.6, 0);
             this.forward = forward.clone();
             this.side = side.clone();
             this.start = start;
             this.speed = speed;
+            this.yaw = (float) Math.toDegrees(Math.atan2(-forward.getX(), forward.getZ()));
+            this.heading = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
             Location at = position(0);
             // fuselage, wings, tail plane, tail fin, cockpit stripe (local +Z is the flight direction)
             add(at, Material.GRAY_CONCRETE, 0, 0, 0, 0.55f, 0.5f, 3.2f, lifetime);
@@ -514,13 +522,19 @@ public final class BomberAbility extends Ability {
 
         private void add(Location at, Material material, float x, float y, float z, float sx, float sy, float sz,
                          long lifetime) {
-            Transformation full = Displays.transform(x, y, z, sx, sy, sz, 0, 0, 0);
-            float s = PLANE_SPAWN_SCALE;
+            Transformation full = part(x, y, z, sx, sy, sz, 1);
             BlockDisplay part = Displays.block(ctx(), player(), at, material.createBlockData(),
-                    Displays.transform(x * s, y * s, z * s, sx * s, sy * s, sz * s, 0, 0, 0), lifetime);
+                    part(x, y, z, sx, sy, sz, PLANE_SPAWN_SCALE), lifetime);
             part.setTeleportDuration(1);
             parts.add(part);
             shapes.add(full);
+        }
+
+        /** One part of the plane, given in the plane's frame (local +Z forward), scaled and turned to the heading. */
+        private Transformation part(float x, float y, float z, float sx, float sy, float sz, float scale) {
+            Vector3f offset = new Quaternionf(heading).transform(new Vector3f(x, y, z).mul(scale));
+            return Displays.transform(offset.x(), offset.y(), offset.z(), sx * scale, sy * scale, sz * scale, yaw, 0,
+                    0);
         }
 
         private Location position(long tick) {
@@ -531,9 +545,7 @@ public final class BomberAbility extends Ability {
             lastTick = tick;
             Location at = position(tick);
             for (BlockDisplay part : parts) {
-                if (part.isValid()) {
-                    part.teleport(at);
-                }
+                Displays.moveTo(part, at);
             }
             // Contrails from the wingtips and a hot exhaust behind the fuselage.
             Location tail = at.clone().subtract(forward.clone().multiply(1.9));
@@ -578,11 +590,10 @@ public final class BomberAbility extends Ability {
                     : Math.max(0.5, ceiling.getHitPosition().getY() - ground.getY() - 1.0);
             this.top = ground.clone().add(drift).add(0, 0.4 + height, 0);
             this.yaw = ThreadLocalRandom.current().nextFloat() * 360f;
-            Location spawn = top.clone();
-            spawn.setYaw(yaw);
-            spawn.setPitch(0);
-            this.display = Displays.block(ctx(), player(), spawn, Material.TNT.createBlockData(),
+            this.display = Displays.block(ctx(), player(), top, Material.TNT.createBlockData(),
                     Displays.scaled(BOMB_SIZE), BOMB_FALL_TICKS + 4);
+            // The bomb spins through the display's own yaw (its transformation has no rotation, so nothing doubles).
+            display.setRotation(yaw, 0);
             display.setTeleportDuration(1);
             Displays.outline(display, PALETTE.body());
             targetRing(1);
@@ -760,7 +771,8 @@ public final class BomberAbility extends Ability {
         double factor = Motion.knockbackFactor(target);
         away.normalize().multiply(BLAST_PUSH * (0.4 + 0.6 * proximity) * factor);
         away.setY(BLAST_LIFT * (0.5 + 0.5 * proximity) * factor);
-        target.setVelocity(Motion.clamp(target.getVelocity().add(away), MAX_SPEED));
+        // Replaces the velocity: a player's velocity on the server is stale, never add to it.
+        target.setVelocity(Motion.clamp(away, MAX_SPEED));
     }
 
     /** True if no solid block stands between the blast and the target's eyes or body center. */
@@ -771,11 +783,16 @@ public final class BomberAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /** The ground point the owner aims at within {@code range}: an aimed enemy's feet, else the aimed block. */
+    /**
+     * The ground point the owner aims at within {@code range}: below an aimed enemy's feet (a jumping enemy marks
+     * the ground under it, not a spot in mid-air), else below the aimed block.
+     */
     private @Nullable Location aimedGround(double range) {
         LivingEntity target = ctx().findTarget(player(), range);
         if (target != null) {
-            return target.getLocation();
+            Location feet = target.getLocation();
+            Location ground = groundBelow(feet, 8);
+            return ground == null ? feet : ground;
         }
         Location eye = player().getEyeLocation();
         World world = eye.getWorld();
@@ -792,10 +809,16 @@ public final class BomberAbility extends Ability {
         return ground == null ? point : ground;
     }
 
-    /** The first solid surface at most {@code maxDrop} blocks below {@code point}, null if there is none. */
+    /**
+     * The first solid surface at most {@code maxDrop} blocks below {@code point}, null if there is none. The ray
+     * starts a little above the point: a ray that starts on a block's face (a point on the ground) reports its hit
+     * inside the block.
+     */
     private static @Nullable Location groundBelow(Location point, double maxDrop) {
         World world = point.getWorld();
-        RayTraceResult down = world.rayTraceBlocks(point, new Vector(0, -1, 0), maxDrop, FluidCollisionMode.NEVER, true);
+        Location from = point.clone().add(0, GROUND_PROBE_LIFT, 0);
+        RayTraceResult down = world.rayTraceBlocks(from, new Vector(0, -1, 0), maxDrop + GROUND_PROBE_LIFT,
+                FluidCollisionMode.NEVER, true);
         return down == null ? null : down.getHitPosition().toLocation(world);
     }
 

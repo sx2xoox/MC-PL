@@ -8,9 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
@@ -19,16 +21,22 @@ import org.bukkit.damage.DamageType;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Arrow;
 import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.IronGolem;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.TNTPrimed;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 /** 원거리 · 소환 · 지원 계열: 궁수, 폭탄마, 소환사, 치유사. */
@@ -38,6 +46,46 @@ class RangedSupportAbilitiesTest {
 
     private static <T extends Entity> List<T> entities(Scenario s, Class<T> type) {
         return s.world.getEntities().stream().filter(type::isInstance).map(type::cast).toList();
+    }
+
+    private static List<BlockDisplay> blockDisplays(Scenario s, Material... types) {
+        List<Material> wanted = List.of(types);
+        return entities(s, BlockDisplay.class).stream()
+                .filter(display -> wanted.contains(display.getBlock().getMaterial())).toList();
+    }
+
+    /**
+     * A display's own yaw and pitch rotate its model on top of its transformation: they must stay 0, and only the
+     * transformation orients it.
+     */
+    private static void assertUnrotated(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    /** Where the display's transformation turns the model's local axis {@code (x, y, z)}. */
+    private static Vector localAxis(Display display, float x, float y, float z) {
+        Vector3f axis = rotationOf(display).transform(new Vector3f(x, y, z));
+        return new Vector(axis.x(), axis.y(), axis.z());
+    }
+
+    /** The middle of a block display's (rotated, scaled) block, relative to the display's position. */
+    private static Vector blockCenter(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        Vector3f center = rotationOf(display).transform(new Vector3f(t.getScale()).mul(0.5f))
+                .add(t.getTranslation());
+        return new Vector(center.x(), center.y(), center.z());
+    }
+
+    /**
+     * The rotation a display's transformation applies. MockBukkit 4.118 rebuilds the transformation from a matrix and
+     * returns its left rotation conjugated (the very same conjugate also as the right rotation). The abilities never
+     * set a right rotation, so a right rotation equal to the left one marks that bug, and it is undone here.
+     */
+    private static Quaternionf rotationOf(Display display) {
+        Transformation t = display.getTransformation();
+        Quaternionf left = new Quaternionf(t.getLeftRotation());
+        return left.equals(t.getRightRotation(), 1.0E-6f) ? left.conjugate() : left;
     }
 
     private static int count(TestPlayer player, Material type) {
@@ -130,6 +178,48 @@ class RangedSupportAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "the archer stands in the zone unharmed");
             s.ticks(60);
             assertTrue(entities(s, Arrow.class).isEmpty(), "rain arrows are cleaned up");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void archerVolleyBowFacesTheShotAndTheRecoilNeverAddsAStaleVelocity() {
+        try (Scenario s = Scenario.ffa("archer")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 30, 10);
+            // On a server, a player's velocity is whatever the server last set: an old shove, not its motion.
+            s.owner.setVelocity(new Vector(2, 0, 2));
+            s.assertSucceeded(s.active(), "산탄");
+            Vector look = s.owner.getEyeLocation().getDirection();
+            Vector recoil = s.owner.getVelocity();
+            Vector back = look.clone().setY(0).normalize().multiply(-1);
+            assertTrue(recoil.clone().setY(0).normalize().dot(back) > 0.999, "pushed straight back: " + recoil);
+            assertTrue(recoil.length() < 0.5, "a small hop, without the stale velocity: " + recoil);
+
+            s.ticks(1);
+            List<ItemDisplay> bows = entities(s, ItemDisplay.class).stream()
+                    .filter(display -> display.getItemStack().getType() == Material.BOW).toList();
+            assertEquals(1, bows.size(), "the spectral bow");
+            assertUnrotated(bows.getFirst(), "spectral bow");
+            assertTrue(localAxis(bows.getFirst(), 0, 0, 1).dot(look) > 0.999, "the bow faces along the shot");
+            s.ticks(120);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void archerRainReticleLiesOnTheGroundUnderAJumpingEnemy() {
+        try (Scenario s = Scenario.ffa("archer")) {
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE + 1.2, 6.5, 180, 0); // mid-jump
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "화살비");
+            List<BlockDisplay> reticle = blockDisplays(s, Material.LIME_STAINED_GLASS, Material.WHITE_CONCRETE);
+            assertFalse(reticle.isEmpty(), "the reticle");
+            for (BlockDisplay piece : reticle) {
+                assertEquals(FlatWorld.SURFACE + 0.04, piece.getLocation().getY(), EPSILON,
+                        "the reticle lies on the ground, not in mid-air under the enemy's feet");
+                assertUnrotated(piece, "reticle bar");
+            }
+            s.ticks(120);
             s.finishClean();
         }
     }
@@ -234,6 +324,29 @@ class RangedSupportAbilitiesTest {
         }
     }
 
+    @Test
+    void bomberPlaneFliesUnrotatedNoseFirstAlongTheCarpet() {
+        try (Scenario s = Scenario.ffa("bomber")) {
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.aimAtFloor(s.owner, -7.5, 0.5); // the carpet runs towards -x
+            s.assertSucceeded(s.ultimate(), "융단폭격");
+            for (int tick = 0; tick < 6; tick++) {
+                s.ticks(1);
+                List<BlockDisplay> plane = blockDisplays(s, Material.GRAY_CONCRETE, Material.LIGHT_GRAY_CONCRETE,
+                        Material.RED_CONCRETE);
+                assertEquals(5, plane.size(), "the bomber flies the line");
+                plane.forEach(part -> assertUnrotated(part, "bomber part"));
+            }
+            BlockDisplay fuselage = blockDisplays(s, Material.GRAY_CONCRETE).getFirst();
+            assertTrue(localAxis(fuselage, 0, 0, 1).getX() < -0.999, "nose first along the carpet");
+            // The tail fin (red, tall) sits behind the middle of the plane, towards +x.
+            assertTrue(blockDisplays(s, Material.RED_CONCRETE).stream()
+                    .anyMatch(part -> blockCenter(part).getX() > 1.0), "the tail trails behind");
+            s.ticks(s.paramTicks("carpet_duration") + 30);
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 소환사 summoner
 
     @Test
@@ -331,6 +444,34 @@ class RangedSupportAbilitiesTest {
     }
 
     @Test
+    void summonsAppearExactlyOnTheGroundAndTheRuneCircleLiesOnIt() {
+        try (Scenario s = Scenario.ffa("summoner")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1.0, 0.5, 0, 0); // cast in mid-jump
+            s.assertSucceeded(s.active(), "늑대 무리");
+            List<Wolf> wolves = entities(s, Wolf.class);
+            assertEquals((int) s.param("wolf_count"), wolves.size());
+            for (Wolf wolf : wolves) {
+                Location feet = wolf.getLocation();
+                assertEquals(FlatWorld.SURFACE, feet.getY(), EPSILON, "a wolf stands exactly on the floor");
+                assertTrue(Spots.isFree(s.world, feet, 0.6, 0.85), "and its body is free");
+            }
+            List<TextDisplay> runes = entities(s, TextDisplay.class).stream()
+                    .filter(rune -> rune.getBillboard() == Display.Billboard.FIXED).toList();
+            assertFalse(runes.isEmpty(), "a rune circle");
+            for (TextDisplay rune : runes) {
+                assertEquals(FlatWorld.SURFACE + 0.04, rune.getLocation().getY(), EPSILON,
+                        "the runes lie on the ground under the jumping summoner");
+                assertUnrotated(rune, "rune");
+            }
+
+            s.assertSucceeded(s.ultimate(), "철골렘");
+            IronGolem golem = entities(s, IronGolem.class).getFirst();
+            assertEquals(FlatWorld.SURFACE, golem.getLocation().getY(), EPSILON, "the golem stands on the floor");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void summonerWolfBitesDealTheAdvertisedDamage() {
         // Summon hits deal exactly the summon's attack damage (no difficulty scaling: on easy a 3-damage wolf would
         // bite for 2.5) and are routed to the summoner's onDealDamage.
@@ -409,6 +550,28 @@ class RangedSupportAbilitiesTest {
             s.ticks(s.paramTicks("sanctum_duration") + 20);
             assertTrue(entities(s, BlockDisplay.class).isEmpty(), "the light beam is gone");
             assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "repelling never causes fall damage");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void healerBarrierPaneStandsUnrotatedBetweenTheEnemyAndTheSanctuary() {
+        try (Scenario s = Scenario.ffa("healer")) {
+            s.place(s.enemy, 3.0, 0.5, 90); // to the healer's east
+            Location center = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "성역");
+            s.ticks(2);
+            // The sanctuary's own displays stand at its centre; the barrier panes stand where enemies were thrown.
+            List<BlockDisplay> panes = blockDisplays(s, Material.YELLOW_STAINED_GLASS).stream()
+                    .filter(pane -> Math.hypot(pane.getX() - center.getX(), pane.getZ() - center.getZ()) > 1)
+                    .toList();
+            assertFalse(panes.isEmpty(), "a pane of light flashes up at the thrown enemy");
+            for (BlockDisplay pane : panes) {
+                assertUnrotated(pane, "barrier pane");
+                Vector outwards = pane.getLocation().toVector().subtract(center.toVector()).setY(0).normalize();
+                assertTrue(Math.abs(localAxis(pane, 0, 0, 1).dot(outwards)) > 0.99, "it faces along the push");
+                assertTrue(blockCenter(pane).dot(outwards) < -0.3, "it stands on the sanctuary's side of the enemy");
+            }
             s.finishClean();
         }
     }

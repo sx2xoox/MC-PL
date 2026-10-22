@@ -220,21 +220,18 @@ public final class MirrorAbility extends Ability {
         Fx.sound(from, Sound.BLOCK_GLASS_HIT, 0.8f, 1.8f + Fx.jitter(0.1f));
     }
 
-    /** A glass shard display shot from {@code from} to {@code to}, removed when it arrives. */
+    /**
+     * A glass shard display shot from {@code from} to {@code to}, its face turned along the flight (through its
+     * transformation; the display itself stays unrotated), removed when it arrives.
+     */
     private void flyShard(Location from, Location to) {
-        Location start = from.clone();
-        start.setDirection(to.toVector().subtract(from.toVector()));
-        ItemDisplay shard = Displays.item(ctx(), player(), start, ItemStack.of(Material.GLASS_PANE),
-                Displays.centered(0, 0, 0, 0.45f, 0.45f, 0.45f, 0, 0, 45), SHARD_FLIGHT_TICKS + 2L);
+        Location heading = from.clone().setDirection(to.toVector().subtract(from.toVector()));
+        ItemDisplay shard = Displays.item(ctx(), player(), from, ItemStack.of(Material.GLASS_PANE),
+                Displays.centered(0, 0, 0, 0.45f, 0.45f, 0.45f, heading.getYaw(), heading.getPitch(), 45),
+                SHARD_FLIGHT_TICKS + 2L);
         shard.setTeleportDuration(SHARD_FLIGHT_TICKS);
         Location end = to.clone();
-        end.setYaw(start.getYaw());
-        end.setPitch(start.getPitch());
-        ctx().runLater(player(), 1, () -> {
-            if (shard.isValid()) {
-                shard.teleport(end);
-            }
-        });
+        ctx().runLater(player(), 1, () -> Displays.moveTo(shard, end));
     }
 
     /** The enemy to reflect to: the living damager, the shooter of a projectile, or the responsible participant. */
@@ -272,10 +269,14 @@ public final class MirrorAbility extends Ability {
         }
         toward.normalize();
         Location at = body.clone().add(toward.clone().multiply(0.75));
-        at.setDirection(toward);
+        // The pane faces the attacker through its transformation (the display itself stays unrotated).
+        Location facing = at.clone().setDirection(toward);
+        float yaw = facing.getYaw();
+        float pitch = facing.getPitch();
         ItemDisplay pane = Displays.item(ctx(), owner, at, ItemStack.of(Material.GLASS_PANE),
-                Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0), PANE_FLASH_TICKS + 1L);
-        Displays.animateNextTick(ctx(), owner, pane, Displays.centered(0, 0, 0, 0.95f, 0.95f, 0.95f, 0, 0, 0), 2);
+                Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, yaw, pitch, 0), PANE_FLASH_TICKS + 1L);
+        Displays.animateNextTick(ctx(), owner, pane, Displays.centered(0, 0, 0, 0.95f, 0.95f, 0.95f, yaw, pitch, 0),
+                2);
         ctx().runLater(owner, 3, () -> {
             if (pane.isValid()) {
                 Displays.shrinkAway(ctx(), owner, pane, PANE_FLASH_TICKS - 3);
@@ -468,9 +469,9 @@ public final class MirrorAbility extends Ability {
 
     /**
      * A ring of glass shards orbiting the owner's chest for a fixed time, then shattering outwards. Each shard is an
-     * item display: its teleports are interpolated, so the orbit looks smooth with an update every few ticks, and it
-     * rocks gently through its transformation. Light glints run from shard to shard; in the mirror world a hexagon
-     * turns on the ground as well.
+     * item display: its moves are interpolated, so the orbit looks smooth with an update every few ticks; its
+     * transformation turns its face outwards and rocks it gently (the display itself is never rotated). Light glints
+     * run from shard to shard; in the mirror world a hexagon turns on the ground as well.
      */
     private final class ShardRing implements LongPredicate {
 
@@ -497,7 +498,7 @@ public final class MirrorAbility extends Ability {
             for (int i = 0; i < shards.length; i++) {
                 // Shards fly in from further out and grow into place.
                 shards[i] = Displays.item(ctx(), owner, slot(owner, i, radius * 2.2), item,
-                        Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0), lifeTicks + 10);
+                        Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, outwardYaw(i), 0, 0), lifeTicks + 10);
                 shards[i].setTeleportDuration(RING_PERIOD);
                 Displays.animateNextTick(ctx(), owner, shards[i], pose(i), RING_PERIOD + 1);
             }
@@ -521,10 +522,9 @@ public final class MirrorAbility extends Ability {
                     shard.remove();
                     continue;
                 }
-                shard.teleport(slot(owner, i, radius));
-                if (run > 0) {
-                    Displays.animate(shard, pose(i), RING_PERIOD);
-                }
+                Displays.moveTo(shard, slot(owner, i, radius));
+                // Also on the first run: the shard's facing turns with the ring (it lives in the transformation).
+                Displays.animate(shard, pose(i), RING_PERIOD);
             }
             if (run % 2 == 0) {
                 Vfx.cloud(ctx(), Fx.body(owner), Particle.WAX_OFF, 1, radius * 0.6, 0, null, false);
@@ -545,23 +545,29 @@ public final class MirrorAbility extends Ability {
             return true;
         }
 
-        /** Where shard {@code index} floats now: on a ring around the chest, bobbing, facing outwards. */
+        /** Where shard {@code index} floats now: on a ring around the chest, bobbing. */
         private Location slot(Player owner, int index, double ringRadius) {
-            double angle = phase + index * (Math.PI * 2 / shards.length);
-            double x = Math.cos(angle);
-            double z = Math.sin(angle);
+            double angle = angleOf(index);
             double bob = Math.sin(phase * 1.5 + index) * 0.15;
-            Location at = owner.getLocation().add(x * ringRadius, owner.getHeight() * 0.55 + bob, z * ringRadius);
-            at.setYaw((float) Math.toDegrees(Math.atan2(-x, z)));
-            at.setPitch(0);
-            return at;
+            return owner.getLocation().add(Math.cos(angle) * ringRadius, owner.getHeight() * 0.55 + bob,
+                    Math.sin(angle) * ringRadius);
         }
 
-        /** The shard's own gentle rocking. */
+        private double angleOf(int index) {
+            return phase + index * (Math.PI * 2 / shards.length);
+        }
+
+        /** The yaw that turns shard {@code index}'s face outwards, away from the owner. */
+        private float outwardYaw(int index) {
+            double angle = angleOf(index);
+            return (float) Math.toDegrees(Math.atan2(-Math.cos(angle), Math.sin(angle)));
+        }
+
+        /** The shard facing outwards, rocking gently. */
         private Transformation pose(int index) {
             float roll = (float) (Math.sin(phase * 2 + index * 1.3) * 25);
             float pitch = (float) (Math.cos(phase * 1.7 + index) * 15);
-            return Displays.centered(0, 0, 0, SHARD_SCALE, SHARD_SCALE, SHARD_SCALE, 0, pitch, roll);
+            return Displays.centered(0, 0, 0, SHARD_SCALE, SHARD_SCALE, SHARD_SCALE, outwardYaw(index), pitch, roll);
         }
 
         private void shatter() {
@@ -575,7 +581,7 @@ public final class MirrorAbility extends Ability {
                         GLASS);
                 if (owner.isOnline() && shard.getWorld().equals(owner.getWorld())) {
                     shard.setTeleportDuration(3);
-                    shard.teleport(slot(owner, i, radius * 2.2));
+                    Displays.moveTo(shard, slot(owner, i, radius * 2.2));
                     Displays.shrinkAway(ctx(), owner, shard, 3);
                 } else {
                     shard.remove();

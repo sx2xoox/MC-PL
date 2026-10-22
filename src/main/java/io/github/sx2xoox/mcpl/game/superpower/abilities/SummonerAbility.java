@@ -139,6 +139,10 @@ public final class SummonerAbility extends Ability {
     private static final TextColor SPIRIT_RUNE_COLOR = TextColor.color(0x9FEAFF);
     /** A focus mark is drawn again for the same target at most this often. */
     private static final long FOCUS_MARK_TICKS = 30;
+    /** A rune circle cast in mid-air still lies on the ground up to this far below. */
+    private static final double RUNE_GROUND_DROP = 3;
+    /** Ground probes start this far above their point, never on a block's face. */
+    private static final double GROUND_PROBE_LIFT = 0.05;
 
     /** Alive summons, oldest first. */
     private final List<Summon> summons = new ArrayList<>();
@@ -383,7 +387,8 @@ public final class SummonerAbility extends Ability {
             }
             away.setY(0.6);
             away.multiply(Motion.knockbackFactor(target));
-            target.setVelocity(Motion.clamp(target.getVelocity().add(away), MAX_SPEED));
+            // Replaces the velocity: a player's velocity on the server is stale, never add to it.
+            target.setVelocity(Motion.clamp(away, MAX_SPEED));
             Vfx.cloud(ctx(), Fx.body(target), Particle.DUST_COLOR_TRANSITION, 8, 0.3, 0, PALETTE.fade(1.1f), false);
         }
     }
@@ -521,7 +526,8 @@ public final class SummonerAbility extends Ability {
             if (golem) {
                 Fx.sound(body, Sound.ENTITY_IRON_GOLEM_ATTACK, 1.0f, 1.0f + Fx.jitter(0.1f));
                 if (target.isValid() && !target.isDead()) {
-                    Motion.push(target, target.getVelocity().setY(GOLEM_TOSS), MAX_SPEED);
+                    // Straight up: the target is a player, whose velocity on the server is stale.
+                    Motion.push(target, new Vector(0, GOLEM_TOSS, 0), MAX_SPEED);
                 }
             }
         }
@@ -662,9 +668,10 @@ public final class SummonerAbility extends Ability {
         private final double startAngle = ThreadLocalRandom.current().nextDouble(TAU);
 
         RuneCircle(Location at, double radius, int count, int letters, float scale, TextColor color, long lifetime) {
-            this.center = at.clone().add(0, 0.04, 0);
-            this.center.setYaw(0);
-            this.center.setPitch(0);
+            // Lies on the ground even when cast in mid-jump.
+            this.center = Displays.unrotated(at);
+            Spots.snapToGround(center.getWorld(), center, RUNE_GROUND_DROP);
+            this.center.add(0, 0.04, 0);
             this.radius = radius;
             this.count = count;
             this.letters = Math.max(1, letters);
@@ -794,11 +801,15 @@ public final class SummonerAbility extends Ability {
         return null;
     }
 
+    /**
+     * The surface a summon stands on exactly, at most one block above (a step up) or {@code maxDrop} below
+     * {@code point}. The ray never starts on a block's face: from a face, vanilla reports the hit inside the block.
+     */
     private static @Nullable Location groundBelow(World world, Location point, double maxDrop) {
-        Location start = point.clone().add(0, 1.0, 0);
-        RayTraceResult down = world.rayTraceBlocks(start, new Vector(0, -1, 0), maxDrop + 1.0,
+        Location start = point.clone().add(0, 1.0 + GROUND_PROBE_LIFT, 0);
+        RayTraceResult down = world.rayTraceBlocks(start, new Vector(0, -1, 0), maxDrop + 1.0 + GROUND_PROBE_LIFT,
                 FluidCollisionMode.NEVER, true);
-        return down == null ? null : down.getHitPosition().toLocation(world).add(0, 0.01, 0);
+        return down == null ? null : down.getHitPosition().toLocation(world);
     }
 
     // ------------------------------------------------------------------ helpers

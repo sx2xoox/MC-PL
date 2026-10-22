@@ -307,7 +307,8 @@ public final class PhoenixAbility extends Ability {
                         ThreadLocalRandom.current().nextDouble() - 0.5);
             }
             push.normalize().multiply(0.9).setY(0.4);
-            enemy.setVelocity(Motion.clamp(enemy.getVelocity().add(push), MAX_VELOCITY));
+            // Replaces the velocity: a player's velocity on the server is stale, never add to it.
+            enemy.setVelocity(Motion.clamp(push, MAX_VELOCITY));
             Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.6, Particle.FLAME, false);
         }
         Fx.sound(center, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.7f);
@@ -401,9 +402,11 @@ public final class PhoenixAbility extends Ability {
         if (!dived && airborne >= LEAP_MIN_AIR_TICKS && owner.isSneaking()) {
             dived = true;
             owner.removePotionEffect(PotionEffectType.SLOW_FALLING);
-            Vector velocity = owner.getVelocity();
-            owner.setVelocity(Motion.clamp(new Vector(velocity.getX(), Math.min(velocity.getY(), DIVE_VELOCITY),
-                    velocity.getZ()), MAX_VELOCITY));
+            // Down and along the view: a player's velocity on the server is stale (its client moves it), so the
+            // dive does not try to keep it.
+            Vector dive = Motion.horizontal(owner.getLocation().getDirection()).multiply(LEAP_FORWARD)
+                    .setY(DIVE_VELOCITY);
+            owner.setVelocity(Motion.clamp(dive, MAX_VELOCITY));
             Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
             Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.FLAME, false);
             Fx.sound(owner.getLocation(), Sound.ENTITY_PHANTOM_FLAP, 1.0f, 0.7f);
@@ -782,6 +785,7 @@ public final class PhoenixAbility extends Ability {
     /**
      * The leap's wings: per side a fan of three thin glass feathers (block displays) rooted between the shoulder
      * blades. They follow the owner, beat slowly while gliding and fold back into a dive. Flames lick off the tips.
+     * The body's facing is part of each feather's transformation: the displays themselves are never rotated.
      */
     private final class FlameWings {
         private final BlockDisplay[] feathers = new BlockDisplay[FEATHER_BLOCKS.length * 2];
@@ -791,7 +795,8 @@ public final class PhoenixAbility extends Ability {
 
         FlameWings(Player owner) {
             this.bodyScale = (float) Body.scaleOf(owner);
-            Location at = anchor(owner);
+            Location at = owner.getLocation();
+            float bodyYaw = owner.getBodyYaw();
             Transformation folded = new Transformation(new Vector3f(0, WING_ROOT_HEIGHT * bodyScale, 0),
                     new Quaternionf(), new Vector3f(0.001f), new Quaternionf());
             for (int i = 0; i < feathers.length; i++) {
@@ -799,7 +804,7 @@ public final class PhoenixAbility extends Ability {
                 int index = i % FEATHER_BLOCKS.length;
                 BlockDisplay feather = Displays.block(ctx(), owner, at, FEATHER_BLOCKS[index], folded,
                         LEAP_TIMEOUT_TICKS + WING_FOLD_TICKS + 20);
-                Displays.animateNextTick(ctx(), owner, feather, feather(left, index, GLIDE_SWEEP, 1.0),
+                Displays.animateNextTick(ctx(), owner, feather, feather(left, index, GLIDE_SWEEP, 1.0, bodyYaw),
                         WING_OPEN_TICKS);
                 feathers[i] = feather;
             }
@@ -813,21 +818,28 @@ public final class PhoenixAbility extends Ability {
                     return false;
                 }
             }
-            Location at = anchor(owner);
+            Location at = owner.getLocation();
             for (BlockDisplay feather : feathers) {
-                feather.teleport(at);
+                Displays.moveTo(feather, at);
             }
             phase += 0.35;
-            if (++age <= WING_OPEN_TICKS || tick % WING_STEP_TICKS != 0) {
+            age++;
+            // The opening animation starts the tick after the wings spawned; until it is over, the wings only turn
+            // with the body (finishing on time), then they beat.
+            boolean opening = age <= WING_OPEN_TICKS;
+            if (tick % WING_STEP_TICKS != 0 || age < 2) {
                 return true;
             }
-            double sweep = diving ? DIVE_SWEEP : GLIDE_SWEEP + GLIDE_SWEEP_AMPLITUDE * Math.sin(phase);
-            double spread = diving ? 0.35 : 1.0;
+            float bodyYaw = owner.getBodyYaw();
+            double sweep = opening ? GLIDE_SWEEP
+                    : diving ? DIVE_SWEEP : GLIDE_SWEEP + GLIDE_SWEEP_AMPLITUDE * Math.sin(phase);
+            double spread = diving && !opening ? 0.35 : 1.0;
+            int ticks = opening ? WING_OPEN_TICKS + 1 - age : WING_STEP_TICKS;
             for (int i = 0; i < feathers.length; i++) {
                 boolean left = i < FEATHER_BLOCKS.length;
-                Transformation shape = feather(left, i % FEATHER_BLOCKS.length, sweep, spread);
-                Displays.animate(feathers[i], shape, WING_STEP_TICKS);
-                if (i % FEATHER_BLOCKS.length == 1) {
+                Transformation shape = feather(left, i % FEATHER_BLOCKS.length, sweep, spread, bodyYaw);
+                Displays.animate(feathers[i], shape, ticks);
+                if (!opening && i % FEATHER_BLOCKS.length == 1) {
                     flameAt(at, shape);
                 }
             }
@@ -838,10 +850,7 @@ public final class PhoenixAbility extends Ability {
         private void flameAt(Location at, Transformation shape) {
             Vector3f tip = shape.getLeftRotation().transform(new Vector3f(shape.getScale().x(),
                     shape.getScale().y() * 0.5f, 0)).add(shape.getTranslation());
-            double yaw = Math.toRadians(at.getYaw());
-            double x = tip.x() * Math.cos(yaw) - tip.z() * Math.sin(yaw);
-            double z = tip.x() * Math.sin(yaw) + tip.z() * Math.cos(yaw);
-            Location point = at.clone().add(x, tip.y(), z);
+            Location point = at.clone().add(tip.x(), tip.y(), tip.z());
             Vfx.dot(point, Particle.FLAME, null, false);
             Vfx.dot(point, Particle.DUST_COLOR_TRANSITION, EMBER, false);
         }
@@ -862,18 +871,12 @@ public final class PhoenixAbility extends Ability {
             }
         }
 
-        private Location anchor(Player owner) {
-            Location at = owner.getLocation();
-            at.setYaw(owner.getBodyYaw());
-            at.setPitch(0);
-            return at;
-        }
-
         /**
-         * One feather in body space (local +Z = facing, +X = the owner's left): a long thin glass block rooted at the
-         * spine, fanned by its roll ({@code spread} narrows the fan) and swept back by {@code sweepDegrees}.
+         * One feather: built in body space (local +Z = facing, +X = the owner's left) as a long thin glass block
+         * rooted at the spine, fanned by its roll ({@code spread} narrows the fan) and swept back by
+         * {@code sweepDegrees}, then turned to the body's yaw (Minecraft's: 0 faces +Z, 90 faces -X).
          */
-        private Transformation feather(boolean left, int index, double sweepDegrees, double spread) {
+        private Transformation feather(boolean left, int index, double sweepDegrees, double spread, float bodyYaw) {
             float length = FEATHER_LENGTH[index] * bodyScale;
             float width = FEATHER_WIDTH[index] * bodyScale;
             float roll = (float) Math.toRadians(FEATHER_ROLL[index] * spread);
@@ -884,7 +887,10 @@ public final class PhoenixAbility extends Ability {
             // Centre the feather's width on its axis, so it fans around the root instead of hanging off one edge.
             Vector3f root = new Vector3f((left ? 0.08f : -0.08f) * bodyScale, WING_ROOT_HEIGHT * bodyScale,
                     -WING_ROOT_BACK * bodyScale).add(rotation.transform(new Vector3f(0, -width / 2, 0)));
-            return new Transformation(root, rotation, new Vector3f(length, width, FEATHER_THICKNESS),
+            Quaternionf body = new Quaternionf().rotateY((float) Math.toRadians(-bodyYaw));
+            Vector3f turnedRoot = body.transform(root, new Vector3f());
+            Quaternionf turned = new Quaternionf(body).mul(rotation);
+            return new Transformation(turnedRoot, turned, new Vector3f(length, width, FEATHER_THICKNESS),
                     new Quaternionf());
         }
     }

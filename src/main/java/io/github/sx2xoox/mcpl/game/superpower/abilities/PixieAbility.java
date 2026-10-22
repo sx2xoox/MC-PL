@@ -459,9 +459,8 @@ public final class PixieAbility extends Ability {
         float speed = (float) Math.clamp(DEFAULT_FLY_SPEED * params().num("fly_speed") / 100.0, 0.02, 0.2);
         owner.setAllowFlight(true);
         owner.setFlySpeed(speed);
-        Vector velocity = owner.getVelocity();
-        owner.setVelocity(new Vector(velocity.getX(), Math.max(velocity.getY(), TAKE_OFF_VELOCITY),
-                velocity.getZ()));
+        // Straight up: a player's velocity on the server is stale (its client moves it), so none of it is reused.
+        owner.setVelocity(new Vector(0, TAKE_OFF_VELOCITY, 0));
         owner.setFlying(true);
         owner.setFallDistance(0);
 
@@ -606,7 +605,8 @@ public final class PixieAbility extends Ability {
     /**
      * A pair of butterfly wings on the owner's back: per side a large pink upper and a small magenta lower pane of
      * thin stained glass (block displays), pivoting at the shoulders. They follow the owner every tick and beat by
-     * interpolating their sweep angle.
+     * interpolating their sweep angle. The body's facing is part of each pane's transformation: the displays
+     * themselves are never rotated, only moved.
      */
     private final class Wings {
         private final BlockDisplay[] panes = new BlockDisplay[4];
@@ -619,7 +619,8 @@ public final class PixieAbility extends Ability {
             this.bodyScale = (float) Body.scaleOf(owner);
             this.size = bodyScale * WING_SIZE;
             long lifetime = Math.max(1, flightEndTick - ctx().currentTick()) + WING_FOLD_TICKS + 20;
-            Location at = anchor(owner);
+            Location at = owner.getLocation();
+            float bodyYaw = owner.getBodyYaw();
             Transformation folded = new Transformation(new Vector3f(0, WING_ROOT_HEIGHT * bodyScale, 0),
                     new Quaternionf(), new Vector3f(0.001f), new Quaternionf());
             int index = 0;
@@ -627,7 +628,8 @@ public final class PixieAbility extends Ability {
                 for (boolean upper : new boolean[] {true, false}) {
                     BlockDisplay pane = Displays.block(ctx(), owner, at, upper ? UPPER_WING : LOWER_WING, folded,
                             lifetime);
-                    Displays.animateNextTick(ctx(), owner, pane, pane(left, upper, SWEEP_REST), WING_OPEN_TICKS);
+                    Displays.animateNextTick(ctx(), owner, pane, pane(left, upper, SWEEP_REST, bodyYaw),
+                            WING_OPEN_TICKS);
                     panes[index++] = pane;
                 }
             }
@@ -641,36 +643,40 @@ public final class PixieAbility extends Ability {
                     return false;
                 }
             }
-            Location at = anchor(owner);
+            Location at = owner.getLocation();
             for (BlockDisplay pane : panes) {
-                pane.teleport(at);
+                Displays.moveTo(pane, at);
             }
             phase += hurried ? 0.9 : 0.5;
-            // Let the opening animation play before the first beat.
-            if (++age > WING_OPEN_TICKS && tick % FLAP_STEP_TICKS == 0) {
-                double sweep = SWEEP_REST + SWEEP_AMPLITUDE * Math.sin(phase);
-                int index = 0;
-                for (boolean left : new boolean[] {true, false}) {
-                    for (boolean upper : new boolean[] {true, false}) {
-                        Displays.animate(panes[index++], pane(left, upper, sweep), FLAP_STEP_TICKS);
-                    }
+            age++;
+            // The opening animation starts the tick after the wings spawned; until it is over, the wings only turn
+            // with the body (finishing on time), then they beat.
+            boolean opening = age <= WING_OPEN_TICKS;
+            if (tick % FLAP_STEP_TICKS != 0 || age < 2) {
+                return true;
+            }
+            float bodyYaw = owner.getBodyYaw();
+            double sweep = opening ? SWEEP_REST : SWEEP_REST + SWEEP_AMPLITUDE * Math.sin(phase);
+            int ticks = opening ? WING_OPEN_TICKS + 1 - age : FLAP_STEP_TICKS;
+            int index = 0;
+            for (boolean left : new boolean[] {true, false}) {
+                for (boolean upper : new boolean[] {true, false}) {
+                    Displays.animate(panes[index++], pane(left, upper, sweep, bodyYaw), ticks);
                 }
-                sparkleTips(owner, at, sweep);
+            }
+            if (!opening) {
+                sparkleTips(owner, at, sweep, bodyYaw);
             }
             return true;
         }
 
         /** Glitter shed from the two upper wing tips. */
-        private void sparkleTips(Player owner, Location at, double sweep) {
-            double yaw = Math.toRadians(at.getYaw());
+        private void sparkleTips(Player owner, Location at, double sweep, float bodyYaw) {
             for (boolean left : new boolean[] {true, false}) {
-                Transformation t = pane(left, true, sweep);
+                Transformation t = pane(left, true, sweep, bodyYaw);
                 Vector3f tip = t.getLeftRotation().transform(new Vector3f(t.getScale().x(), t.getScale().y(), 0))
                         .add(t.getTranslation());
-                // Body space to world space: the display's yaw rotation (local +Z = facing).
-                double x = tip.x() * Math.cos(yaw) - tip.z() * Math.sin(yaw);
-                double z = tip.x() * Math.sin(yaw) + tip.z() * Math.cos(yaw);
-                Location point = at.clone().add(x, tip.y(), z);
+                Location point = at.clone().add(tip.x(), tip.y(), tip.z());
                 Vfx.dot(point, Particle.DUST, left ? SPARK_PINK : SPARK_SKY, false);
                 if (ThreadLocalRandom.current().nextInt(4) == 0) {
                     Vfx.dot(point, Particle.WAX_OFF, null, false);
@@ -698,18 +704,12 @@ public final class PixieAbility extends Ability {
             }
         }
 
-        private Location anchor(Player owner) {
-            Location at = owner.getLocation();
-            at.setYaw(owner.getBodyYaw());
-            at.setPitch(0);
-            return at;
-        }
-
         /**
-         * One wing pane in body space (local +Z = facing, +X = the owner's left): a thin glass block with its corner
-         * at the wing root, rolled outwards and swept back by {@code sweepDegrees}.
+         * One wing pane: built in body space (local +Z = facing, +X = the owner's left) as a thin glass block with
+         * its corner at the wing root, rolled outwards and swept back by {@code sweepDegrees}, then turned to the
+         * body's yaw (Minecraft's: 0 faces +Z, 90 faces -X).
          */
-        private Transformation pane(boolean left, boolean upper, double sweepDegrees) {
+        private Transformation pane(boolean left, boolean upper, double sweepDegrees, float bodyYaw) {
             float length = (upper ? UPPER_LENGTH : LOWER_LENGTH) * size;
             float height = (upper ? UPPER_HEIGHT : LOWER_HEIGHT) * size;
             float roll = (float) Math.toRadians(upper ? UPPER_ROLL : LOWER_ROLL);
@@ -719,7 +719,10 @@ public final class PixieAbility extends Ability {
                     : new Quaternionf().rotateY(-sweep).rotateY((float) Math.PI).rotateZ(roll);
             Vector3f root = new Vector3f((left ? 0.05f : -0.05f) * bodyScale, WING_ROOT_HEIGHT * bodyScale,
                     -WING_BACK * bodyScale);
-            return new Transformation(root, rotation, new Vector3f(length, height, WING_THICKNESS),
+            Quaternionf body = new Quaternionf().rotateY((float) Math.toRadians(-bodyYaw));
+            Vector3f turnedRoot = body.transform(root, new Vector3f());
+            Quaternionf turned = new Quaternionf(body).mul(rotation);
+            return new Transformation(turnedRoot, turned, new Vector3f(length, height, WING_THICKNESS),
                     new Quaternionf());
         }
     }
