@@ -72,7 +72,8 @@ public final class LightAbility extends Ability {
                     9)
             .ultimate("심판의 빛",
                     "조준한 곳({ult_range}블록 이내)에 {ult_delay}초 뒤 하늘에서 거대한 빛기둥이 내리꽂힙니다. "
-                            + "반경 {ult_radius}블록의 적은 {ult_damage} 피해를 받고, 나와 아군은 {ult_heal} 회복합니다.")
+                            + "빛기둥 반경 {ult_radius}블록 안의 적은 {ult_damage} 피해를 받고, 그 안에 있는 나와 아군은 "
+                            + "{ult_heal} 회복합니다.")
             .param("day_reduction", 15)
             .param("flash_range", 8)
             .param("flash_angle", 80)

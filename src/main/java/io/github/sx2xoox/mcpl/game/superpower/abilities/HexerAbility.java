@@ -139,6 +139,11 @@ public final class HexerAbility extends Ability {
     private static final int MAX_SKULLS = 10;
     private static final long CHAIN_DRAW_PERIOD = 3;
     private static final int CHAIN_MAX_LINKS = 20;
+    /**
+     * Links drawn per chain update over all chains together: with many bound enemies each chain gets fewer, longer
+     * links, so a big fight does not flood the clients with particles for the whole binding.
+     */
+    private static final int CHAIN_LINK_BUDGET = 48;
     private static final ItemStack SKULL = ItemStack.of(Material.WITHER_SKELETON_SKULL);
     /** The chains lash out as glowing lime beams. */
     private static final BlockData LASH = Material.VERDANT_FROGLIGHT.createBlockData();
@@ -796,11 +801,13 @@ public final class HexerAbility extends Ability {
             Player owner = player();
             if (links.size() == 1) {
                 Link only = links.getFirst();
-                chain(owner.getEyeLocation().subtract(0, 0.4, 0), anchorOf(only, tick), tick);
+                chain(owner.getEyeLocation().subtract(0, 0.4, 0), anchorOf(only, tick), tick, CHAIN_MAX_LINKS);
             } else {
                 int edges = links.size() == 2 ? 1 : links.size();
+                int perEdge = Math.clamp(CHAIN_LINK_BUDGET / edges, 2, CHAIN_MAX_LINKS);
                 for (int i = 0; i < edges; i++) {
-                    chain(anchorOf(links.get(i), tick), anchorOf(links.get((i + 1) % links.size()), tick), tick);
+                    chain(anchorOf(links.get(i), tick), anchorOf(links.get((i + 1) % links.size()), tick), tick,
+                            perEdge);
                 }
             }
             for (Link link : links) {
@@ -814,7 +821,7 @@ public final class HexerAbility extends Ability {
         }
 
         /** Links of light: small loops alternating between two planes along the line, lime and purple. */
-        private void chain(Location from, Location to, long tick) {
+        private void chain(Location from, Location to, long tick, int maxLinks) {
             if (!from.getWorld().equals(to.getWorld())) {
                 return;
             }
@@ -827,7 +834,7 @@ public final class HexerAbility extends Ability {
             Vector helper = Math.abs(axis.getY()) > 0.95 ? new Vector(1, 0, 0) : new Vector(0, 1, 0);
             Vector u = axis.clone().crossProduct(helper).normalize();
             Vector v = axis.clone().crossProduct(u).normalize();
-            int count = (int) Math.min(CHAIN_MAX_LINKS, Math.max(2, Math.round(length / 0.45)));
+            int count = (int) Math.min(maxLinks, Math.max(2, Math.round(length / 0.45)));
             double spacing = length / count;
             int points = Vfx.n(ctx(), 4);
             World world = from.getWorld();

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -36,6 +37,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -457,6 +459,19 @@ class MysticNewAbilitiesTest {
     }
 
     @Test
+    void sonicHearsASkillEvenFromASneakingEnemy() {
+        try (Scenario s = Scenario.ffa("sonic")) {
+            s.ticks(8);
+            s.enemy.setSneaking(true);
+            s.assertSucceeded(s.match.useActive(s.enemy), "the enemy's skill");
+            s.ticks(5);
+            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.GLOWING), "sneaking hides footsteps, not skills");
+            s.enemy.setSneaking(false);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void sonicBoomPiercesEveryEnemyInTheLineAndPushesThem() {
         try (Scenario s = Scenario.ffa("sonic")) {
             s.place(s.enemy2, 0.5, 9.5, 180);
@@ -618,6 +633,92 @@ class MysticNewAbilitiesTest {
             assertTrue(s.enemy.getLocation().getZ() < 8, "stopped by the wall");
             assertFalse(s.world.hasCollisionsIn(s.enemy.getBoundingBox().expand(-0.01)), "never inside the wall");
             s.world.wallAlongX(-3, 3, 8, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void psychicThrowCrunchesIntoWallsEvenWhenTheServerSeesTheTargetLate() {
+        try (Scenario s = Scenario.ffa("psychic")) {
+            s.place(s.enemy2, -10.5, 0.5, 0);
+            s.world.wallAlongX(-3, 3, 8, 4, Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "염동 투척");
+            s.ticks(s.paramTicks("lift_time"));
+            // A laggy client: from the release on, the server never hears where the thrown player went.
+            s.world.physics().setEnabled(false);
+            double crunch = s.param("throw_damage") + s.param("slam_damage");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) >= crunch - EPSILON, 20,
+                    "the crunch, judged on the throw's own path");
+            PotionEffect slow = s.enemy.getPotionEffect(PotionEffectType.SLOWNESS);
+            assertNotNull(slow, "staggered");
+            s.world.physics().setEnabled(true);
+            s.ticks(30);
+            assertEquals(crunch, s.damageBy(s.owner, s.enemy), EPSILON, "one crunch");
+            s.world.wallAlongX(-3, 3, 8, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void psychicThrowCrunchesASummonIntoAWallToo() {
+        try (Scenario s = Scenario.ffa("psychic")) {
+            s.place(s.enemy, 8.5, 0.5, 180);
+            s.place(s.enemy2, -10.5, 0.5, 0);
+            Wolf wolf = s.world.spawn(new Location(s.world, 0.5, FlatWorld.SURFACE, 4.5), Wolf.class);
+            wolf.getAttribute(Attribute.MAX_HEALTH).setBaseValue(40);
+            wolf.setHealth(40);
+            s.ctx().summon(s.enemy, wolf);
+            s.world.wallAlongX(-3, 3, 8, 4, Material.STONE);
+            s.aimAt(s.owner, wolf);
+            s.assertSucceeded(s.active(), "염동 투척 on a summon");
+            double crunch = s.param("throw_damage") + s.param("slam_damage");
+            s.h.tickUntil(() -> s.damageBy(s.owner, wolf) >= crunch - EPSILON, 40, "the crunch");
+            s.ticks(30);
+            assertEquals(crunch, s.damageBy(s.owner, wolf), EPSILON, "one crunch");
+            assertTrue(wolf.getLocation().getZ() < 8, "stopped by the wall");
+            s.world.wallAlongX(-3, 3, 8, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void psychicLiftHoldsItsHeightEvenWhenTheServerSeesTheTargetLate() {
+        try (Scenario s = Scenario.ffa("psychic")) {
+            s.place(s.enemy2, -10.5, 0.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            // A laggy client: the server never hears that the lifted player rose.
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "염동 투척");
+            double rise = 0;
+            for (int i = 0; i < s.paramTicks("lift_time") - 1; i++) {
+                s.ticks(1);
+                rise += s.enemy.getVelocity().getY();
+            }
+            // The client moves by exactly the velocities it is sent: their sum is how high it really floats.
+            assertTrue(rise < 1.7, "lifted about 1.6 blocks, not flung up: " + rise);
+            assertTrue(rise > 1.0, "but lifted: " + rise);
+            s.world.physics().setEnabled(true);
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void psychicThrowStopsWhenThePsychicFallsMidFlight() {
+        try (Scenario s = Scenario.ffa("psychic")) {
+            s.place(s.enemy2, -10.5, 0.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "염동 투척");
+            s.ticks(s.paramTicks("lift_time") + 2);
+            double z = s.enemy.getLocation().getZ();
+            assertTrue(z > 4.5 + 0.5, "in flight: " + z);
+            s.killOwner(s.enemy2);
+            s.ticks(40);
+            assertTrue(s.enemy.getLocation().getZ() < z + 2, "the grip is gone, so is the throw's speed: "
+                    + s.enemy.getLocation().getZ() + " (was " + z + ")");
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "no fall damage");
+            s.assertNoProblems();
             s.finishClean();
         }
     }
@@ -907,6 +1008,33 @@ class MysticNewAbilitiesTest {
                     EPSILON);
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "out of range");
             assertNull(s.enemy2.getPotionEffect(PotionEffectType.SLOWNESS));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hexerSoulChainsBindABigCrowdOnAParticleBudget() {
+        try (Scenario s = Scenario.ffa("hexer")) {
+            // The enemy's summons count as enemies too: a crowd of a dozen bound at once.
+            List<Wolf> crowd = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                double angle = i * Math.PI * 2 / 10;
+                Location at = new Location(s.world, 0.5 + Math.cos(angle) * 9, FlatWorld.SURFACE,
+                        0.5 + Math.sin(angle) * 9);
+                Wolf wolf = s.world.spawn(at, Wolf.class);
+                wolf.getAttribute(Attribute.MAX_HEALTH).setBaseValue(40);
+                wolf.setHealth(40);
+                crowd.add(s.ctx().summon(s.enemy, wolf));
+            }
+            s.assertSucceeded(s.ultimate(), "영혼 사슬 on a crowd");
+            s.ticks(s.paramTicks("ult_duration") + 10);
+            double drains = Math.floor(s.param("ult_duration") / s.param("ult_tick"));
+            for (Wolf wolf : crowd) {
+                assertEquals(s.param("ult_damage") + drains * s.param("ult_drain"), s.damageBy(s.owner, wolf),
+                        EPSILON, "every one of the crowd is bound and drained");
+            }
+            assertEquals(0, displays(s), "the chains break");
+            s.assertNoProblems();
             s.finishClean();
         }
     }

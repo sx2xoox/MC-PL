@@ -570,6 +570,24 @@ class CreatureNewAbilitiesTest {
     }
 
     @Test
+    void dragonTakesOffToItsTakeOffHeight() {
+        try (Scenario s = Scenario.ffa("dragon")) {
+            double ground = s.owner.getLocation().getY();
+            s.assertSucceeded(s.ultimate(), "용의 비상");
+            double peak = ground;
+            for (int i = 0; i < 20; i++) {
+                s.ticks(1);
+                peak = Math.max(peak, s.owner.getLocation().getY());
+            }
+            // Flight damps the vertical speed every tick, so the kick must be sized for flight, not for a jump.
+            assertEquals(s.param("take_off_height"), peak - ground, 0.25, "rises to the take-off height");
+            s.ticks(s.paramTicks("flight_duration"));
+            s.tickUntilGrounded(s.owner, 600);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void dragonBombsNeverHurtAllies() {
         try (Scenario s = Scenario.teams("dragon")) {
             s.place(s.enemy, 0.5, 2.5, 180);

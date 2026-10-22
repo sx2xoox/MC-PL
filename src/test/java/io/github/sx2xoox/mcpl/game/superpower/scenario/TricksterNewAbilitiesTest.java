@@ -19,6 +19,8 @@ import org.bukkit.Material;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.damage.DamageSource;
+import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
@@ -28,6 +30,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Skeleton;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Zombie;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffectType;
 import org.junit.jupiter.api.Test;
@@ -681,6 +684,31 @@ class TricksterNewAbilitiesTest {
             s.ticks(40);
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "the slip never hurts the thief");
             s.world.wallAlongX(-4, 5, 5, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void thiefSlippingBehindAnEnemyInMidAirLandsSoftly() {
+        try (Scenario s = Scenario.ffa("thief")) {
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            // The enemy hangs in mid-air (a jump, a launch...) the moment the thief slips behind it.
+            s.world.physics().setEnabled(false);
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE + 6, 4.5, 180, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "소매치기");
+            assertTrue(s.owner.getLocation().getY() > FlatWorld.SURFACE + 4, "behind it, in the air: "
+                    + s.owner.getLocation());
+            // A real server measures the fall from the client's movement packets (a lag spike delivers several at
+            // once) and hurts the thief when it lands: whatever it works out, that fall damage is refused.
+            s.ticks(10);
+            s.owner.setNoDamageTicks(0);
+            s.owner.damage(4, DamageSource.builder(DamageType.FALL).build());
+            assertTrue(s.hitsOf(s.owner, DamageCause.FALL).isEmpty(), "the drop does not hurt");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.place(s.owner, 0.5, 9.5, 180);
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.world.physics().setEnabled(true);
             s.finishClean();
         }
     }

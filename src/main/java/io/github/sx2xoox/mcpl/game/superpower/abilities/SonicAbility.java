@@ -65,7 +65,7 @@ public final class SonicAbility extends Ability {
             .difficulty(2)
             .passive("진동 감지",
                     "{sense_radius}블록 안에서 달리거나 스킬을 쓴 적의 진동을 느껴 {sense_glow}초간 발광시킵니다. "
-                            + "웅크린 적은 감지되지 않습니다.")
+                            + "웅크린 채 움직이면 발소리는 감출 수 있지만, 스킬을 쓰는 진동은 숨길 수 없습니다.")
             .active("음파 폭발",
                     "{boom_charge}초간 음파를 모은 뒤 바라보는 방향으로 {boom_range}블록 음파를 쏩니다. 경로의 모든 적을 "
                             + "관통해 {boom_damage} 피해(방어구 무시)를 주고 밀쳐내며, 벽은 뚫지 못합니다.",

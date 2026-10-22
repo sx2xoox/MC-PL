@@ -9,6 +9,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
@@ -33,6 +34,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.inventory.ItemStack;
@@ -99,7 +101,7 @@ public final class ThiefAbility extends Ability {
 
     /** Enemy mobs this close that are chasing the owner lose track of them when the thief vanishes. */
     private static final double AGGRO_DROP_RANGE = 24;
-    /** The drop after slipping behind an airborne enemy is harmless for at most this long. */
+    /** The drop after slipping behind an airborne enemy is harmless if it lands within this long. */
     private static final long LANDING_GRACE_TICKS = 60;
     /** Gold coins flying from one victim, and in total for one skill. */
     private static final int COINS_PER_VICTIM = 3;
@@ -124,8 +126,8 @@ public final class ThiefAbility extends Ability {
     /** The target of the ability hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
     private @Nullable LivingEntity pendingTarget;
     private boolean landed;
-    /** Generation of the running landing protection; a newer one retires the older loop. */
-    private int fallGuardToken;
+    /** Protects the landing after slipping behind an airborne enemy. */
+    private final LandingGuard landing = new LandingGuard();
 
     private enum Reveal { ATTACK, EXPIRED, REVOKE }
 
@@ -138,6 +140,12 @@ public final class ThiefAbility extends Ability {
     public void onRevoke() {
         reveal(Reveal.REVOKE);
         lastPick.clear();
+        landing.disarm();
+    }
+
+    @Override
+    public void onTakeDamage(EntityDamageEvent event) {
+        landing.absorb(event, ctx().currentTick());
     }
 
     // ------------------------------------------------------------------ passive: sticky fingers
@@ -232,7 +240,8 @@ public final class ThiefAbility extends Ability {
             return ActivationResult.fail("이동할 수 없습니다");
         }
         owner.setFallDistance(0);
-        guardLanding(owner);
+        // Slipping behind an enemy in mid-air leaves the thief falling: that landing must not hurt.
+        landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
         slipFx(owner, from, spot);
 
         if (!strike(target, params().num("dash_damage")) || !Combat.isTargetable(ctx(), owner, target)) {
@@ -274,21 +283,6 @@ public final class ThiefAbility extends Ability {
             pendingTarget = null;
         }
         return landed;
-    }
-
-    /**
-     * A protection loop of its own rather than a {@code LandingGuard}: slipping behind an enemy that is in mid-air may
-     * leave the thief falling, and that fall should not hurt.
-     */
-    private void guardLanding(Player owner) {
-        int token = ++fallGuardToken;
-        Loop.repeat(ctx(), owner, 0, 1, LANDING_GRACE_TICKS, run -> {
-            if (token != fallGuardToken) {
-                return false;
-            }
-            owner.setFallDistance(0);
-            return !Motion.isGrounded(owner) && !owner.isInWater();
-        });
     }
 
     /** The slip: a green-black puff where the thief was, streaks of green and gold to where it reappears. */
@@ -564,10 +558,11 @@ public final class ThiefAbility extends Ability {
 
     @Override
     public void onTick(long tick) {
+        Player owner = player();
+        landing.update(owner, tick);
         if (!stealth.isActive()) {
             return;
         }
-        Player owner = player();
         if (tick % 5 == 0) {
             owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">♛ 대도 은신</" + COLOR_TAG + "> <gray>"
                     + Fx.seconds(stealth.ticksLeft(ctx().currentTick())) + "초 · 첫 근접 공격은 기습 강탈</gray>"));
