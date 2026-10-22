@@ -159,6 +159,9 @@ public final class AstronomerAbility extends Ability {
             new Quaternionf().rotateZ((float) Math.toRadians(45)).rotateY((float) Math.toRadians(30)),
     };
     private static final Vector3f TUMBLE_AXIS = new Vector3f(0.4f, 1f, 0.25f).normalize();
+    /** After the impact the boulder's rocks fly apart for this long, then crumble away over {@link #CRUMBLE_TICKS}. */
+    private static final int SHATTER_TICKS = 5;
+    private static final int CRUMBLE_TICKS = 8;
     private static final int RUBBLE = 8;
     private static final int CRACKS = 6;
     private static final long RUBBLE_HOLD_TICKS = 30;
@@ -217,8 +220,10 @@ public final class AstronomerAbility extends Ability {
         return 1 - Math.clamp(params().num("night_cooldown") / 100.0, 0.0, 0.95);
     }
 
+    /** Night in a world with a day cycle; the nether and the end (fixed time) have no night sky. */
     private boolean isNight() {
-        return !player().getWorld().isDayTime();
+        World world = player().getWorld();
+        return !world.isFixedTime() && !world.isDayTime();
     }
 
     @Override
@@ -628,13 +633,16 @@ public final class AstronomerAbility extends Ability {
         void begin() {
             Player owner = player();
             long life = delay + 6;
+            // The rocks outlive the impact: they are hurled apart and crumble away (see shatterRocks).
+            long rockLife = delay + SHATTER_TICKS + CRUMBLE_TICKS + 5;
             if (claim(ROCK_ORIENTATIONS.length + 3)) {
                 shown = true;
-                ctx().runLater(owner, life, () -> release(ROCK_ORIENTATIONS.length + 3));
+                ctx().runLater(owner, life, () -> release(3));
+                ctx().runLater(owner, rockLife, () -> release(ROCK_ORIENTATIONS.length));
                 Location at = plain(sky);
                 for (int i = 0; i < rocks.length; i++) {
                     rocks[i] = Displays.block(ctx(), owner, at, ROCK_BLOCKS[i % ROCK_BLOCKS.length].createBlockData(),
-                            cube(0.1f, ROCK_ORIENTATIONS[i]), life);
+                            cube(0.1f, ROCK_ORIENTATIONS[i]), rockLife);
                     rocks[i].setTeleportDuration(POSE_PERIOD);
                     rocks[i].setViewRange(3f);
                 }
@@ -866,12 +874,12 @@ public final class AstronomerAbility extends Ability {
                 double angle = random.nextDouble(TAU);
                 Location to = impact.clone().add(Math.cos(angle) * radius * 0.8, 0.6 + random.nextDouble(),
                         Math.sin(angle) * radius * 0.8);
-                rock.setTeleportDuration(5);
+                rock.setTeleportDuration(SHATTER_TICKS);
                 Displays.moveTo(rock, to);
-                Displays.animate(rock, cube(ROCK_SIZE * 0.45f, randomRotation(random)), 5);
-                ctx().runLater(owner, 5, () -> {
+                Displays.animate(rock, cube(ROCK_SIZE * 0.45f, randomRotation(random)), SHATTER_TICKS);
+                ctx().runLater(owner, SHATTER_TICKS, () -> {
                     if (rock.isValid()) {
-                        Displays.shrinkAway(ctx(), owner, rock, 8);
+                        Displays.shrinkAway(ctx(), owner, rock, CRUMBLE_TICKS);
                     }
                 });
             }

@@ -76,11 +76,12 @@ public final class MechAbility extends Ability {
             .active("미사일 포드",
                     "어깨의 포드에서 소형 미사일 {missile_count}발을 연달아 쏩니다. 미사일은 조준한 적(없으면 조준한 곳, "
                             + "{missile_range}블록 이내)을 향해 살짝 휘어 날아가, 부딪힌 곳 반경 {missile_radius}블록의 적에게 "
-                            + "{missile_damage} 피해를 줍니다.",
+                            + "{missile_damage} 피해를 주고 살짝 밀쳐냅니다.",
                     9)
             .ultimate("메카 변신",
                     "{ult_duration}초간 강철 슈트를 입습니다. 크기가 {ult_scale}배가 되고 넉백에 면역이 되며, 받는 피해가 "
-                            + "{ult_armor}% 줄고 근접 피해가 {ult_melee}% 늘어납니다. 그동안 액티브는 {punch_cooldown}초마다 "
+                            + "{ult_armor}% 줄고 근접 피해가 {ult_melee}% 늘어나며, 주먹에 맞은 적은 더 멀리 밀려납니다. "
+                            + "그동안 액티브는 {punch_cooldown}초마다 "
                             + "쓸 수 있는 로켓 펀치로 바뀌어, 주먹을 {punch_range}블록 날려 처음 맞은 적에게 {punch_damage} "
                             + "피해를 주고 멀리 날려 보냅니다.")
             // The melee bonus, the armor and the rocket punch live in this instance's hooks.
@@ -120,6 +121,14 @@ public final class MechAbility extends Ability {
     private static final double MAX_SPEED = 2.5;
     /** Display entities this ability keeps alive at most at once (extra visuals fall back to particles). */
     private static final int MAX_DISPLAYS = 24;
+    /** A launch point that would be inside a wall the pilot touches stays this far in front of the wall instead. */
+    private static final double LAUNCH_BACKOFF = 0.1;
+    /**
+     * The suit and pod displays stand this far above the pilot's feet, in the block its body fills, and their poses
+     * are lowered by as much ({@link #box}). On soul sand or mud the feet are inside that opaque block, and steel
+     * pieces lit by the world there would render black.
+     */
+    private static final double DISPLAY_LIFT = 0.5;
 
     // passive
     /** Fewest ticks between two armor feedbacks, so a flurry of arrows does not spam effects. */
@@ -143,6 +152,8 @@ public final class MechAbility extends Ability {
     private static final double MISSILE_ACCEL = 0.1;
     /** Ticks a missile flies straight on its launch heading before it starts to steer. */
     private static final long MISSILE_BOOST_TICKS = 2;
+    /** Room a launch heading needs in front of the pod: a little more than the straight boost flies. */
+    private static final double MISSILE_BOOST_ROOM = 2.0;
     private static final double MISSILE_TURN = Math.toRadians(7);
     /** Close in, missiles turn harder (by this many blocks over the distance), so they dive into a near target. */
     private static final double MISSILE_CLOSE_TURN = 4;
@@ -434,7 +445,7 @@ public final class MechAbility extends Ability {
         side.normalize().multiply(left ? 0.3 : -0.3);
         double climb = Math.clamp(owner.getEyeLocation().distance(aim) / MISSILE_CLIMB_DISTANCE, MISSILE_MIN_CLIMB,
                 MISSILE_MAX_CLIMB);
-        Vector heading = look.clone().normalize().add(new Vector(0, climb, 0)).add(side).normalize();
+        Vector heading = launchHeading(muzzle, look, climb, side);
         Location goal = aim.clone();
         if (target == null) {
             double angle = index * TAU / Math.max(1, volley.count) + ThreadLocalRandom.current().nextDouble(0.6);
@@ -452,6 +463,27 @@ public final class MechAbility extends Ability {
         world.spawnParticle(Particle.WHITE_SMOKE, muzzle, Vfx.n(ctx(), 4), 0.1, 0.05, 0.1, 0.03);
         Fx.sound(muzzle, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 0.9f, 0.85f + index * 0.06f + Fx.jitter(0.05f));
         Fx.sound(muzzle, Sound.BLOCK_DISPENSER_LAUNCH, 0.6f, 1.3f + Fx.jitter(0.1f));
+    }
+
+    /**
+     * The launch heading: along the look, climbing and breaking to the pod's side. A pilot hugging a wall or under a
+     * low ceiling would send that straight into the block next to the pod, so the missile then leaves without the
+     * break, or without the climb too. Aimed point-blank at a wall, it still flies into it.
+     */
+    private static Vector launchHeading(Location muzzle, Vector look, double climb, Vector side) {
+        Vector forward = look.clone().normalize();
+        Vector[] options = {
+                forward.clone().add(new Vector(0, climb, 0)).add(side).normalize(),
+                forward.clone().add(new Vector(0, climb, 0)).normalize(),
+                forward,
+        };
+        for (Vector option : options) {
+            if (muzzle.getWorld().rayTraceBlocks(muzzle, option, MISSILE_BOOST_ROOM, FluidCollisionMode.NEVER,
+                    true) == null) {
+                return option;
+            }
+        }
+        return options[0];
     }
 
     /**
@@ -475,11 +507,11 @@ public final class MechAbility extends Ability {
                 return;
             }
             float yaw = owner.getBodyYaw();
-            Location feet = owner.getLocation();
+            Location at = displaySpot(owner);
             for (boolean left : new boolean[] {true, false}) {
                 for (int part = 0; part < PER_SIDE; part++) {
                     Material block = part == 0 ? POD_CASING : part == 1 ? POD_MUZZLE : POD_STRIPE;
-                    BlockDisplay display = Displays.block(ctx(), owner, feet, block.createBlockData(),
+                    BlockDisplay display = Displays.block(ctx(), owner, at, block.createBlockData(),
                             podPose(left, part, 0.01f, 0, yaw), life + POD_FOLD_TICKS + 2);
                     display.setTeleportDuration(1);
                     if (part == 0) {
@@ -498,7 +530,7 @@ public final class MechAbility extends Ability {
         private boolean follow(long tick) {
             age = tick;
             Player owner = player();
-            Location feet = owner.getLocation();
+            Location at = displaySpot(owner);
             float yaw = owner.getBodyYaw();
             float grow = growth();
             for (int i = 0; i < parts.size(); i++) {
@@ -508,7 +540,7 @@ public final class MechAbility extends Ability {
                 }
                 boolean left = i < PER_SIDE;
                 float kick = age < (left ? kickLeftUntil : kickRightUntil) ? -0.12f : 0f;
-                Displays.moveTo(part, feet);
+                Displays.moveTo(part, at);
                 Displays.animate(part, podPose(left, i % PER_SIDE, grow, kick, yaw), 1);
             }
             return true;
@@ -544,11 +576,14 @@ public final class MechAbility extends Ability {
             }
         }
 
-        /** The world position of a pod's muzzle (or the shoulder, when the pods could not be shown). */
+        /**
+         * The world position of a pod's muzzle (or the shoulder, when the pods could not be shown). The pods stick out
+         * past the shoulders, so next to a wall the muzzle is kept on the pilot's side of it.
+         */
         Location muzzle(Player owner, boolean left) {
             Location at = anchor(owner, false);
             Vector3f local = new Vector3f(left ? 0.36f : -0.36f, 1.45f + 0.18f * growth(), 0.27f).mul(scale);
-            return bodyToWorld(at, local);
+            return clearOf(at.clone().add(0, local.y(), 0), bodyToWorld(at, local));
         }
 
         /**
@@ -939,7 +974,7 @@ public final class MechAbility extends Ability {
                 return;
             }
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            Location feet = owner.getLocation();
+            Location spot = displaySpot(owner);
             for (int i = 0; i < SUIT.length; i++) {
                 Piece piece = SUIT[i];
                 double angle = random.nextDouble(TAU);
@@ -947,7 +982,7 @@ public final class MechAbility extends Ability {
                         (float) Math.sin(angle) * 1.6f);
                 flyStart[i] = NOT_PLACED;
                 float yaw = yawOf(owner, piece);
-                BlockDisplay display = Displays.block(ctx(), owner, feet, piece.block().createBlockData(),
+                BlockDisplay display = Displays.block(ctx(), owner, spot, piece.block().createBlockData(),
                         piecePose(piece, (float) baseScale, FLY_IN_SIZE, flyFrom[i], yaw),
                         duration + 4L * GROW_INTERVAL + EJECT_TICKS + 30);
                 display.setTeleportDuration(1);
@@ -1063,12 +1098,12 @@ public final class MechAbility extends Ability {
         }
 
         /**
-         * Keeps the suit on the pilot. The displays stay unrotated at the pilot's feet ({@link Displays#moveTo});
-         * the body's (or, for the helmet, the head's) yaw, the fly-in and the size live in each piece's
-         * transformation, re-sent with a one-tick interpolation whenever one of them changed.
+         * Keeps the suit on the pilot. The displays stay unrotated just over the pilot's feet ({@link #displaySpot},
+         * {@link Displays#moveTo}); the body's (or, for the helmet, the head's) yaw, the fly-in and the size live in
+         * each piece's transformation, re-sent with a one-tick interpolation whenever one of them changed.
          */
         private void follow(Player owner) {
-            Location feet = owner.getLocation();
+            Location spot = displaySpot(owner);
             long now = ctx().currentTick();
             float scale = currentScale();
             for (int i = 0; i < pieces.length; i++) {
@@ -1076,7 +1111,7 @@ public final class MechAbility extends Ability {
                 if (display == null || !display.isValid() || !display.getWorld().equals(owner.getWorld())) {
                     continue;
                 }
-                Displays.moveTo(display, feet);
+                Displays.moveTo(display, spot);
                 if (flyStart[i] == NOT_PLACED) {
                     continue;
                 }
@@ -1202,7 +1237,10 @@ public final class MechAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** The rocket fist's launch point: in front of the pilot's right hand. */
+    /**
+     * The rocket fist's launch point: in front of the pilot's right hand. The hand reaches past the suit's side, so
+     * next to a wall the point is kept on the pilot's side of it (the fist neither starts in the wall nor behind it).
+     */
     private static Location rightHand(Player owner) {
         Location eye = owner.getEyeLocation();
         Vector look = eye.getDirection();
@@ -1211,8 +1249,32 @@ public final class MechAbility extends Ability {
             right = new Vector(1, 0, 0);
         }
         double scale = Body.scaleOf(owner);
-        return eye.clone().add(right.normalize().multiply(0.4 * scale)).subtract(0, 0.4 * scale, 0)
+        Location hand = eye.clone().add(right.normalize().multiply(0.4 * scale)).subtract(0, 0.4 * scale, 0)
                 .add(look.clone().normalize().multiply(0.6));
+        return clearOf(eye, hand);
+    }
+
+    /**
+     * {@code point}, pulled back towards {@code from} until no block lies between them, {@link #LAUNCH_BACKOFF} in
+     * front of the block. {@code from} is a point inside the owner's body, so a launch point next to the owner never
+     * ends up inside, or on the far side of, a wall or ceiling the owner touches.
+     */
+    private static Location clearOf(Location from, Location point) {
+        Vector delta = point.toVector().subtract(from.toVector());
+        double length = delta.length();
+        if (!(length > 1.0E-6)) {
+            return point;
+        }
+        Vector unit = delta.multiply(1 / length);
+        RayTraceResult wall = from.getWorld().rayTraceBlocks(from, unit, length, FluidCollisionMode.NEVER, true);
+        if (wall == null) {
+            return point;
+        }
+        double reach = Math.max(0, wall.getHitPosition().distance(from.toVector()) - LAUNCH_BACKOFF);
+        Location clear = from.clone().add(unit.multiply(reach));
+        clear.setYaw(point.getYaw());
+        clear.setPitch(point.getPitch());
+        return clear;
     }
 
     /** A ring of hot dust perpendicular to {@code direction}, like a shockwave off the launch. */
@@ -1430,16 +1492,23 @@ public final class MechAbility extends Ability {
         return copy;
     }
 
+    /** Where the suit and pod displays stand: {@link #DISPLAY_LIFT} over the pilot's feet. */
+    private static Location displaySpot(Player owner) {
+        return owner.getLocation().add(0, DISPLAY_LIFT, 0);
+    }
+
     /**
-     * A box of {@code size} centered on the body-space point {@code center} (local +Z = facing, +X = left), rolled
-     * around the facing axis and turned to {@code yawDegrees} (Minecraft yaw: 0 faces +Z, 90 faces −X). The yaw is
-     * part of the transformation; the display entity itself stays unrotated.
+     * A box of {@code size} centered on the body-space point {@code center} (local +Z = facing, +X = left, Y from the
+     * feet), rolled around the facing axis and turned to {@code yawDegrees} (Minecraft yaw: 0 faces +Z, 90 faces −X),
+     * for a display standing at {@link #displaySpot}. The yaw is part of the transformation; the display entity itself
+     * stays unrotated.
      */
     private static Transformation box(Vector3f center, Vector3f size, float rollDegrees, float yawDegrees) {
         Quaternionf facing = new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees));
         Quaternionf rotation = new Quaternionf(facing).rotateZ((float) Math.toRadians(rollDegrees));
         Vector3f translation = facing.transform(new Vector3f(center))
-                .sub(rotation.transform(new Vector3f(size).mul(0.5f)));
+                .sub(rotation.transform(new Vector3f(size).mul(0.5f)))
+                .sub(0, (float) DISPLAY_LIFT, 0);
         return new Transformation(translation, rotation, new Vector3f(size), new Quaternionf());
     }
 

@@ -21,7 +21,9 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Color;
 import org.bukkit.Location;
@@ -64,9 +66,10 @@ public final class HackerAbility extends Ability {
             .color(TextColor.color(0x39FF14))
             .difficulty(3)
             .passive("백도어",
-                    "공격한 적에게 {backdoor_duration}초간 백도어를 심습니다. 백도어가 심어진 적은 머리 위에 액티브 "
-                            + "쿨타임이 드러나고, 쿨타임이 끝나는 순간 {backdoor_lag}초간 먹통(침묵)이 되어 다음 스킬이 늦어집니다. "
-                            + "같은 적에게는 발동 후 {backdoor_cooldown}초 뒤부터 다시 심을 수 있습니다.")
+                    "공격한 적에게 백도어를 심습니다. 백도어가 심어진 적은 머리 위에 액티브 쿨타임이 드러나고, 쿨타임이 "
+                            + "끝나는 순간 {backdoor_lag}초간 먹통(침묵)이 되어 다음 스킬이 늦어집니다. 스킬이 준비된 적의 "
+                            + "백도어는 {backdoor_duration}초 안에 스킬을 쓰지 않으면 사라지고, 같은 적에게는 발동 후 "
+                            + "{backdoor_cooldown}초 뒤부터 다시 심을 수 있습니다.")
             .active("글리치",
                     "조준한 적({glitch_range}블록 이내)을 해킹해 {glitch_damage} 피해를 주고, {glitch_hops}번 무작위 "
                             + "방향으로 짧게 튕겨 보내며(최대 {glitch_distance}블록) 시야를 뒤틀고 {glitch_nausea}초간 멀미를 "
@@ -202,7 +205,10 @@ public final class HackerAbility extends Ability {
         backdoor.expires = now + duration;
         if (fresh) {
             backdoor.cooling = ctx().cooldownRemaining(target) > 0;
-            plantFx(target);
+            // A hit can land on an enemy hidden from the hacker (a sweep): the backdoor goes in without a trace.
+            if (isVisible(target)) {
+                plantFx(target);
+            }
             showLabel(backdoor);
         }
     }
@@ -220,8 +226,8 @@ public final class HackerAbility extends Ability {
         Vfx.ring(ctx(), head, 0.35, 8, random.nextDouble(TAU), Particle.DUST, PIXEL_SMALL, false);
         Fx.sound(head, Sound.BLOCK_NOTE_BLOCK_BIT, 0.6f, 1.6f);
         player().playSound(player(), Sound.BLOCK_NOTE_BLOCK_BIT, SoundCategory.PLAYERS, 0.5f, 2.0f);
-        player().sendActionBar(Text.mm("<" + GREEN + ">⟨/⟩ 백도어 설치</" + GREEN + "> <white>" + target.getName()
-                + "</white>"));
+        player().sendActionBar(Text.mm("<" + GREEN + ">⟨/⟩ 백도어 설치</" + GREEN + "> <white><name></white>",
+                Placeholder.component("name", target.name())));
     }
 
     @Override
@@ -238,13 +244,16 @@ public final class HackerAbility extends Ability {
                 Vfx.ring(ctx(), hand, 0.14, 4, tick * 0.4, Particle.DUST, PIXEL_SMALL, false);
             }
         }
-        if (backdoors.isEmpty() || tick % BACKDOOR_PERIOD != 0) {
+        if (backdoors.isEmpty()) {
             return;
         }
         long now = ctx().currentTick();
         if (tick % CLEANUP_PERIOD == 0) {
             backdoors.values().removeIf(b -> !b.armed && now >= b.lockedUntil);
         }
+        // The cooldowns are watched every tick, so the lag lands on the very tick a skill comes back (a click in a
+        // skipped tick would slip the skill out first); the readouts move and change every few ticks.
+        boolean labels = tick % BACKDOOR_PERIOD == 0;
         List<Backdoor> fired = new ArrayList<>();
         Iterator<Backdoor> it = backdoors.values().iterator();
         while (it.hasNext()) {
@@ -270,6 +279,9 @@ public final class HackerAbility extends Ability {
                 dropLabel(backdoor, false);
                 continue;
             }
+            if (!labels) {
+                continue;
+            }
             if (tick % LABEL_PERIOD == 0) {
                 updateLabel(backdoor, remaining);
             } else {
@@ -290,29 +302,39 @@ public final class HackerAbility extends Ability {
         long lag = params().ticks("backdoor_lag");
         if (lag > 0) {
             ctx().silence(target, lag);
-            spinner(target, lag);
         }
         TextDisplay label = backdoor.label;
         if (label != null && label.isValid()) {
             label.text(Text.mm("<b><" + RED + ">LAG</" + RED + "></b> <" + GREEN + ">⟳</" + GREEN + ">"));
         }
         dropLabel(backdoor, true);
+        if (!isVisible(target)) {
+            // A victim in stealth lags all the same, but nothing shows where, or who, it is.
+            return;
+        }
+        if (lag > 0) {
+            spinner(target, lag);
+        }
         Location head = target.getEyeLocation().add(0, 0.3, 0);
         glitchBurst(Fx.body(target), 0.5, false);
         Fx.sound(head, Sound.BLOCK_NOTE_BLOCK_BIT, 0.8f, 0.9f);
         Fx.sound(head, Sound.BLOCK_REDSTONE_TORCH_BURNOUT, 0.6f, 1.4f + Fx.jitter(0.1f));
         Player owner = player();
         if (owner.isOnline()) {
-            owner.sendActionBar(Text.mm("<" + GREEN + ">⟨/⟩ 백도어 발동</" + GREEN + "> <white>" + target.getName()
-                    + "</white> <gray>" + AbilityInfo.formatNumber(lag / 20.0) + "초 먹통</gray>"));
+            owner.sendActionBar(Text.mm("<" + GREEN + ">⟨/⟩ 백도어 발동</" + GREEN + "> <white><name></white> <gray>"
+                    + AbilityInfo.formatNumber(lag / 20.0) + "초 먹통</gray>", Placeholder.component("name",
+                    target.name())));
         }
     }
 
-    /** A loading spinner turning around the lagging target's head while it is silenced. */
+    /** A loading spinner turning around the lagging target's head while it is silenced (and seen). */
     private void spinner(Player target, long ticks) {
         Loop.repeat(ctx(), player(), 0, 2, Math.max(1, ticks / 2), run -> {
             if (!target.isValid() || target.isDead()) {
                 return false;
+            }
+            if (!isVisible(target)) {
+                return true;
             }
             Location head = target.getEyeLocation().add(0, 0.55, 0);
             int dots = 8;
@@ -565,21 +587,31 @@ public final class HackerAbility extends Ability {
             if (done >= hops) {
                 Player owner = player();
                 if (owner.isOnline()) {
-                    owner.sendActionBar(Text.mm("<" + GREEN + ">글리치</" + GREEN + "> <white>"
-                            + (target instanceof Player p ? p.getName() : "대상") + "</white>"
-                            + (exploited ? " <" + RED + ">익스플로잇!</" + RED + ">" : "")));
+                    Component name = target instanceof Player victim ? victim.name() : Component.text("대상");
+                    owner.sendActionBar(Text.mm("<" + GREEN + ">글리치</" + GREEN + "> <white><name></white>"
+                            + (exploited ? " <" + RED + ">익스플로잇!</" + RED + ">" : ""),
+                            Placeholder.component("name", name)));
                 }
             }
             return true;
         }
 
-        /** One stutter: a torn afterimage stays behind, the victim reappears nearby looking somewhere else. */
+        /**
+         * One stutter: a torn afterimage stays behind, the victim reappears nearby looking somewhere else. A victim
+         * that slipped into stealth meanwhile keeps stuttering, but without an afterimage, burst or sound giving its
+         * position away.
+         */
         private void hop() {
+            boolean seen = isVisible(target);
             Location from = target.getLocation();
             Location to = target.isInsideVehicle() ? null : hopSpot(target, anchor);
-            ghostFrame(target, from);
+            if (seen) {
+                ghostFrame(target, from);
+            }
             if (to == null) {
-                glitchBurst(Fx.body(target), 0.5, false);
+                if (seen) {
+                    glitchBurst(Fx.body(target), 0.5, false);
+                }
                 return;
             }
             ThreadLocalRandom random = ThreadLocalRandom.current();
@@ -590,6 +622,9 @@ public final class HackerAbility extends Ability {
             }
             target.setVelocity(new Vector());
             target.setFallDistance(0);
+            if (!seen) {
+                return;
+            }
             glitchBurst(Fx.body(target), 0.6, false);
             Location body = Fx.body(target);
             Fx.sound(body, Sound.ENTITY_ENDERMAN_TELEPORT, 0.5f, 1.7f + Fx.jitter(0.2f));
@@ -768,6 +803,11 @@ public final class HackerAbility extends Ability {
                 if (!Combat.isTargetable(ctx(), owner, target)) {
                     continue;
                 }
+                if (!isVisible(target)) {
+                    // The victim slipped into stealth: its bar must not follow it around.
+                    hideBar(bars.remove(target.getUniqueId()));
+                    continue;
+                }
                 TextDisplay bar = bars.get(target.getUniqueId());
                 if (bar != null && bar.isValid()) {
                     Displays.moveTo(bar, barPoint(target));
@@ -775,7 +815,7 @@ public final class HackerAbility extends Ability {
                         bar.text(Text.mm(progress(t)));
                     }
                 }
-                if (isVisible(target) && target.getWorld().equals(owner.getWorld())) {
+                if (target.getWorld().equals(owner.getWorld())) {
                     Location from = Fx.body(owner).add(Fx.jitter(0.3f), Fx.jitter(0.3f), Fx.jitter(0.3f));
                     Vfx.trail(from, Fx.body(target), tick % 3 == 0 ? CYAN : PALETTE.body(), 8, true);
                 }
@@ -875,7 +915,12 @@ public final class HackerAbility extends Ability {
                 if (nausea > 0) {
                     target.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
                 }
-                crashFx(target, bar, silence, drain);
+                if (isVisible(target)) {
+                    crashFx(target, bar, silence, drain);
+                } else {
+                    // Crashed all the same, but no burst, melody or countdown marks where it hides.
+                    hideBar(bar);
+                }
             }
             Location at = owner.getLocation();
             Fx.sound(at, Sound.BLOCK_BEACON_DEACTIVATE, 1.4f, 0.6f);
@@ -884,6 +929,13 @@ public final class HackerAbility extends Ability {
             if (owner.isOnline()) {
                 owner.sendActionBar(Text.mm("<" + GREEN + "><b>SYSTEM DOWN</b></" + GREEN + "> <white>" + crashed
                         + "명 해킹</white>"));
+            }
+        }
+
+        /** The bar of an enemy that slipped into stealth: gone at once, so it never follows the enemy around. */
+        private void hideBar(@Nullable TextDisplay bar) {
+            if (bar != null && bar.isValid()) {
+                Displays.shrinkAway(ctx(), player(), bar, 2);
             }
         }
 
@@ -923,7 +975,7 @@ public final class HackerAbility extends Ability {
             Displays.animate(bar, Displays.centered(0, 0.1f, 0, 0.7f, 0.7f, 0.7f, 0, 0, 0), 3);
             long reboot = Math.max(10, silence);
             Loop.repeat(ctx(), owner, 10, 2, Math.max(1, (reboot - 10) / 2), run -> {
-                if (!bar.isValid() || !target.isValid() || target.isDead()) {
+                if (!bar.isValid() || !target.isValid() || target.isDead() || !isVisible(target)) {
                     return false;
                 }
                 Displays.moveTo(bar, barPoint(target));

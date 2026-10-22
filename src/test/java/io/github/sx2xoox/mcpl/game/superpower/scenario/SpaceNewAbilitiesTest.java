@@ -5,18 +5,29 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.AstronomerAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.HackerAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.MechAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
+import io.github.sx2xoox.mcpl.game.superpower.support.DummyAbility;
+import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Registry;
+import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.damage.DamageSource;
@@ -35,6 +46,7 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.sound.AudioExperience;
 
 /** 기술·우주 계열 (new): 메카, 천문학자, 해커. */
 class SpaceNewAbilitiesTest {
@@ -93,6 +105,45 @@ class SpaceNewAbilitiesTest {
 
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    /** Every action bar {@code player} was sent since the last call, as plain text. */
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    /** Sounds the hacker's effects play (glitch bursts, lag, crash melody). */
+    private static final List<String> HACKER_SOUNDS = List.of("block.redstone_torch.burnout", "block.note_block.bit",
+            "entity.enderman.teleport", "block.comparator.click");
+
+    /** The hacker effect sounds {@code listener} heard after the first {@code skip}, within 2 blocks of {@code at}. */
+    private static List<String> hackerSoundsNear(TestPlayer listener, int skip, Location at) {
+        List<AudioExperience> heard = listener.getHeardSounds();
+        return heard.subList(Math.min(skip, heard.size()), heard.size()).stream()
+                .filter(sound -> sound.getLocation() != null && sound.getLocation().getWorld() == at.getWorld()
+                        && sound.getLocation().distance(at) <= 2.0)
+                .map(AudioExperience::getSound)
+                .filter(name -> HACKER_SOUNDS.stream().anyMatch(name::contains))
+                .toList();
+    }
+
+    /** A wall of {@code type} along z at block column {@code x}, {@code height} blocks tall from the floor up. */
+    private static void wallAlongZ(Scenario s, int x, int z1, int z2, int height, Material type) {
+        for (int z = z1; z <= z2; z++) {
+            for (int y = 0; y < height; y++) {
+                s.world.setBlock(x, FlatWorld.FLOOR_Y + 1 + y, z, type);
+            }
+        }
+    }
+
+    /** The plain description of a skill with its default params filled in. */
+    private static String text(AbilityInfo info, AbilityInfo.Skill skill) {
+        return AbilityInfo.render(skill.description(), AbilityParams.defaults(info));
     }
 
     /** An arrow from {@code shooter} hitting {@code victim} for {@code amount}. */
@@ -540,10 +591,46 @@ class SpaceNewAbilitiesTest {
                 double along = at.getX() + center.x() - s.owner.getLocation().getX();
                 assertTrue(Math.abs(side) > 0.25 && Math.abs(along) < 0.2,
                         "the pods are over the shoulders of a pilot facing west: side " + side + ", along " + along);
-                assertTrue(center.y() > 1.5f, "above the shoulders: " + center.y());
+                double up = at.getY() + center.y() - s.owner.getLocation().getY();
+                assertTrue(up > 1.5, "above the shoulders: " + up);
             }
             s.ticks(60);
             assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the missiles still find the enemy to the west");
+            s.finishClean();
+        }
+    }
+
+    /**
+     * Steel pieces take the world's light at their own block. Standing on soul sand or mud the pilot's feet are inside
+     * that opaque block (light 0), so a piece standing at the feet would render black: they stand in the body.
+     */
+    private static void assertStandsInThePilotsBody(Scenario s, String what) {
+        double feet = s.owner.getLocation().getY();
+        List<BlockDisplay> displays = entities(s, BlockDisplay.class);
+        assertFalse(displays.isEmpty(), what);
+        for (BlockDisplay display : displays) {
+            double up = display.getLocation().getY() - feet;
+            assertTrue(up >= 0.4, what + ": " + display.getBlock().getMaterial() + " stands " + up
+                    + " over the feet, in the ground block it would render black");
+        }
+    }
+
+    @Test
+    void mechSteelStandsInThePilotsBodyNotInTheGroundUnderIt() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "미사일 포드");
+            s.ticks(2);
+            assertStandsInThePilotsBody(s, "missile pods");
+            s.ticks(60);
+            s.assertSucceeded(s.ultimate(), "메카 변신");
+            s.ticks(20);
+            assertStandsInThePilotsBody(s, "steel suit");
+            BlockDisplay core = blocks(s, Material.SHROOMLIGHT).getFirst();
+            double coreY = core.getLocation().getY() + boxCenter(core).y() - s.owner.getLocation().getY();
+            assertEquals(1.16 * s.param("ult_scale"), coreY, 0.05, "the chest core still sits at chest height");
+            s.ticks(s.paramTicks("ult_duration") + 30);
             s.finishClean();
         }
     }
@@ -596,6 +683,95 @@ class SpaceNewAbilitiesTest {
             int suit = entities(s, BlockDisplay.class).size();
             assertTrue(suit <= 12, "the fist is back on the arm: " + suit);
             s.world.wallAlongX(-3, 3, 3, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mechMissilesLeaveThePodsOfAPilotHuggingAWall() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            int count = (int) s.param("missile_count");
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.place(s.enemy, 0.5, 8.5, 180);
+            // Facing +z the pilot's left is +x: its left shoulder touches a wall there, so the left pod sticks into it.
+            wallAlongZ(s, 1, -2, 3, 3, Material.STONE);
+            s.place(s.owner, 0.7, 0.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "미사일 포드 along a wall");
+            s.ticks(60);
+            assertEquals(count, s.hitsBy(s.owner, s.enemy).size(),
+                    "no missile blows up in the wall at the pilot's shoulder: " + s.hits());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            wallAlongZ(s, 1, -2, 3, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mechMissilesLeaveThePodsUnderALowCeiling() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            int count = (int) s.param("missile_count");
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.place(s.enemy, 0.5, 8.5, 180);
+            // A two-block-high passage: the missiles' climb out of the pods would hit the ceiling at once.
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 2; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 3, z, Material.STONE);
+                }
+            }
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "미사일 포드 under a low ceiling");
+            s.ticks(60);
+            assertEquals(count, s.hitsBy(s.owner, s.enemy).size(),
+                    "no missile blows up in the ceiling over the pilot's head: " + s.hits());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 2; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 3, z, Material.AIR);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mechRocketPunchLeavesTheArmOfAPilotHuggingAWall() {
+        try (Scenario s = Scenario.ffa("mech")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.assertSucceeded(s.ultimate(), "메카 변신");
+            s.ticks(15);
+            assertEquals(s.param("ult_scale"), scale(s.owner), EPSILON, "the suit is on");
+            // Facing +z the pilot's right is -x: the big suit's right side touches a wall, the fist arm reaches into it.
+            wallAlongZ(s, -1, -2, 9, 3, Material.STONE);
+            s.place(s.owner, 0.4, 0.5, 0);
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "로켓 펀치 along a wall");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the fist flying along the wall to the enemy");
+            assertEquals(s.param("punch_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "rocket punch");
+            wallAlongZ(s, -1, -2, 9, 3, Material.AIR);
+            s.ticks(s.paramTicks("ult_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mechDescriptionsMentionTheKnockback() {
+        String volley = text(MechAbility.INFO, MechAbility.INFO.active());
+        assertTrue(volley.contains("밀쳐"), "the missile blasts push enemies: " + volley);
+        String suit = text(MechAbility.INFO, MechAbility.INFO.ultimate());
+        assertTrue(suit.contains("더 멀리 밀려"), "steel fists knock enemies back further: " + suit);
+        try (Scenario s = Scenario.ffa("mech")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            Location before = s.enemy.getLocation();
+            s.assertSucceeded(s.active(), "미사일 포드");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 40, "the first missile");
+            s.ticks(2);
+            assertTrue(s.enemy.getLocation().getZ() > before.getZ() + 0.05, "the blast pushes the enemy back");
+            s.ticks(60);
             s.finishClean();
         }
     }
@@ -769,6 +945,44 @@ class SpaceNewAbilitiesTest {
         }
     }
 
+    @Test
+    void astronomerFindsNoNightSkyInAWorldWithoutAClock() {
+        try (Scenario s = Scenario.ffa("astronomer")) {
+            // The nether and the end have a fixed time: no day, but no night sky either.
+            s.world.setEnvironment(World.Environment.NETHER);
+            s.world.setTime(18000);
+            s.ticks(21);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "유성 in the nether");
+            assertEquals(s.param("cooldown"), s.ctx().cooldownRemaining(s.owner), 0.06,
+                    "no shorter cooldown without a night sky");
+            s.ticks(40);
+            s.world.setEnvironment(World.Environment.NORMAL);
+            s.world.setTime(6000);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void astronomerGreatMeteorRocksCrumbleAwayAfterTheImpact() {
+        try (Scenario s = Scenario.ffa("astronomer")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "대운석");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, s.paramTicks("ult_delay") + 10, "the impact");
+            List<BlockDisplay> rocks = new ArrayList<>(blocks(s, Material.BLACKSTONE));
+            rocks.addAll(blocks(s, Material.POLISHED_BLACKSTONE));
+            assertEquals(2, rocks.size(), "the boulder breaks into its rocks");
+            s.ticks(8);
+            assertTrue(rocks.stream().allMatch(Entity::isValid), "the rocks are still crumbling away, not cut off");
+            s.ticks(10);
+            assertTrue(rocks.stream().noneMatch(Entity::isValid), "and then gone");
+            s.ticks(60);
+            assertNoDisplays(s, "meteor, rubble and cracks");
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 해커 hacker
 
     private static Scenario hackerWithQuickDummies() {
@@ -821,9 +1035,13 @@ class SpaceNewAbilitiesTest {
     void hackerBackdoorReadoutNeverRevealsAHiddenEnemy() {
         try (Scenario s = hackerWithQuickDummies()) {
             s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            actionBars(s.owner);
+            // A sweep of a swing at someone else can still catch the hidden enemy.
             s.melee(s.owner, s.enemy, 2);
             s.ticks(6);
             assertTrue(entities(s, TextDisplay.class).isEmpty(), "no readout over a hidden enemy");
+            assertTrue(actionBars(s.owner).stream().noneMatch(bar -> bar.contains(s.enemy.getName())),
+                    "the hacker is not told whom it just backdoored");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(6);
             assertEquals(1, entities(s, TextDisplay.class).size(), "it shows once the enemy is visible again");
@@ -1013,6 +1231,162 @@ class SpaceNewAbilitiesTest {
         try (Scenario s = Scenario.builder("hacker").param("ult_radius", 2).start()) {
             assertFalse(s.ultimate().succeeded(), "nobody within 2 blocks");
             s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerBackdoorLagsTheSkillOnTheVeryTickItComesBack() {
+        try (Scenario s = hackerWithQuickDummies()) {
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(4);
+            // The victim's (whole-second) cooldown then ends on an odd fight tick.
+            if (s.ctx().currentTick() % 2 == 0) {
+                s.ticks(1);
+            }
+            s.assertSucceeded(s.match.useActive(s.enemy), "the victim uses its skill");
+            s.h.tickUntil(() -> s.ctx().cooldownRemaining(s.enemy) <= 0, 60, "the victim's cooldown runs out");
+            assertTrue(s.ctx().isSilenced(s.enemy), "lagged on the very tick its skill comes back");
+            assertFalse(s.match.useActive(s.enemy).succeeded(), "so the skill cannot slip out before the lag");
+            s.ticks(s.paramTicks("backdoor_lag") + 2);
+            assertFalse(s.ctx().isSilenced(s.enemy), "the lag wore off");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerBackdoorFiringOnAHiddenEnemyGivesNothingAway() {
+        try (Scenario s = hackerWithQuickDummies()) {
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(4);
+            s.assertSucceeded(s.match.useActive(s.enemy), "the victim uses its skill");
+            s.ticks(2);
+            // The victim slips into stealth before its skill comes back.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            actionBars(s.owner);
+            int heard = s.owner.getHeardSounds().size();
+            s.h.tickUntil(() -> s.ctx().cooldownRemaining(s.enemy) <= 0, 60, "the victim's cooldown runs out");
+            s.ticks(3);
+            assertTrue(s.ctx().isSilenced(s.enemy), "the backdoor still lags the hidden victim");
+            assertTrue(actionBars(s.owner).stream().noneMatch(bar -> bar.contains(s.enemy.getName())),
+                    "the hacker is not told where or who the hidden victim is");
+            assertEquals(List.of(), hackerSoundsNear(s.owner, heard, s.enemy.getLocation()),
+                    "no glitch sound plays where the hidden victim stands");
+            assertTrue(entities(s, TextDisplay.class).isEmpty(), "no readout over the hidden victim");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerGlitchOnAnEnemyThatVanishesLeavesNoAfterimages() {
+        try (Scenario s = Scenario.ffa("hacker")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            Location start = s.enemy.getLocation();
+            s.assertSucceeded(s.active(), "글리치");
+            s.ticks(1);
+            // The victim answers with stealth before the first stutter.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            int heard = s.owner.getHeardSounds().size();
+            List<String> sounds = new ArrayList<>();
+            for (int i = 0; i < 24; i++) {
+                int before = s.owner.getHeardSounds().size();
+                s.ticks(1);
+                assertTrue(entities(s, BlockDisplay.class).isEmpty(),
+                        "no torn afterimage marks where the hidden enemy stood");
+                sounds.addAll(hackerSoundsNear(s.owner, Math.max(heard, before), s.enemy.getLocation()));
+            }
+            assertEquals(List.of(), sounds, "no glitch sound plays where the hidden enemy reappears");
+            assertTrue(horizontalDistance(start, s.enemy.getLocation()) > 0.5,
+                    "the glitch still stutters it around, unseen");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerSystemDownNeverMarksAnEnemyThatVanishesDuringTheUpload() {
+        try (Scenario s = noGaugeGain(Scenario.builder("hacker")).start()) {
+            s.place(s.enemy2, 2.5, 3.5, 180);
+            s.assertSucceeded(s.ultimate(), "시스템 다운");
+            s.ticks(3);
+            // The enemy slips into stealth and moves during the upload.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.place(s.enemy, -2.5, 5.5, 180);
+            int heard = s.owner.getHeardSounds().size();
+            for (int i = 0; i < s.paramTicks("ult_upload") + 20; i++) {
+                s.ticks(1);
+                Location head = s.enemy.getLocation();
+                for (TextDisplay text : entities(s, TextDisplay.class)) {
+                    assertTrue(horizontalDistance(text.getLocation(), head) > 1.0,
+                            "no upload bar or reboot countdown follows the hidden enemy: " + text.getLocation());
+                }
+            }
+            assertTrue(s.ctx().isSilenced(s.enemy), "the hidden enemy crashes all the same");
+            assertTrue(s.ctx().isSilenced(s.enemy2), "and so does the visible one");
+            assertEquals(List.of(), hackerSoundsNear(s.owner, heard, s.enemy.getLocation()),
+                    "no crash melody plays where the hidden enemy stands");
+            assertFalse(hackerSoundsNear(s.owner, heard, s.enemy2.getLocation()).isEmpty(),
+                    "the visible enemy's crash is heard");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerDescriptionTellsWhenAnUnusedBackdoorLapses() {
+        String passive = text(HackerAbility.INFO, HackerAbility.INFO.passive());
+        assertFalse(passive.contains("12초간 백도어를 심습니다"),
+                "a backdoor on a recharging skill waits for the cooldown however long it is: " + passive);
+        assertTrue(passive.contains("준비된"), "only a ready skill's backdoor lapses: " + passive);
+        // The behaviour the text describes: a cooldown longer than the backdoor duration is still lagged.
+        try (Scenario s = Scenario.builder("hacker").param("backdoor_duration", 1)
+                .configure(h -> h.setParam("dummy", "cooldown", 3)).start()) {
+            s.assertSucceeded(s.match.useActive(s.enemy), "the victim uses its skill");
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(30);
+            assertFalse(s.ctx().isSilenced(s.enemy), "still recharging, past the backdoor duration");
+            s.h.tickUntil(() -> s.ctx().cooldownRemaining(s.enemy) <= 0, 60, "the victim's cooldown runs out");
+            assertTrue(s.ctx().isSilenced(s.enemy), "the backdoor waited for it");
+            s.finishClean();
+        }
+    }
+
+    /** Offline-mode servers allow names such as {@code <red>Mal}: they must show as typed. */
+    @Test
+    void hackerShowsPlayerNamesAsTyped() {
+        try (MatchHarness h = MatchHarness.flat()) {
+            h.registerDummy();
+            h.settings().set("time-limit-seconds", 0);
+            TestPlayer hacker = h.join("Hacker");
+            TestPlayer odd = h.join("<red>Mal");
+            TestPlayer other = h.join("Blue");
+            h.game.queueAssignment(hacker.getUniqueId(), "hacker");
+            h.game.queueAssignment(odd.getUniqueId(), DummyAbility.INFO.id());
+            h.game.queueAssignment(other.getUniqueId(), DummyAbility.INFO.id());
+            SuperpowerMatch match = h.startFight();
+            World world = h.flatWorld();
+            hacker.teleport(new Location(world, 0.5, FlatWorld.SURFACE, 0.5, 0, 0));
+            odd.teleport(new Location(world, 0.5, FlatWorld.SURFACE, 4.5, 180, 0));
+            other.teleport(new Location(world, 9.5, FlatWorld.SURFACE, -6.5, 0, 0));
+            actionBars(hacker);
+
+            odd.damage(2, DamageSource.builder(DamageType.PLAYER_ATTACK).withCausingEntity(hacker)
+                    .withDirectEntity(hacker).build());
+            List<String> planted = actionBars(hacker);
+            assertTrue(planted.stream().anyMatch(bar -> bar.contains("백도어") && bar.contains("<red>Mal")),
+                    "the backdoor notice names the victim as typed: " + planted);
+
+            Location look = hacker.getLocation();
+            look.setDirection(odd.getLocation().add(0, 1.1, 0).toVector()
+                    .subtract(hacker.getEyeLocation().toVector()));
+            hacker.teleport(look);
+            assertTrue(match.useActive(hacker).succeeded(), "글리치");
+            h.ticks(20);
+            List<String> glitched = actionBars(hacker);
+            assertTrue(glitched.stream().anyMatch(bar -> bar.contains("글리치") && bar.contains("<red>Mal")),
+                    "the glitch report names the victim as typed: " + glitched);
         }
     }
 }
