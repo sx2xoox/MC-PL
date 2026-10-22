@@ -95,6 +95,8 @@ public final class MonkAbility extends Ability {
 
     /** Hard cap for every velocity this ability applies. */
     private static final double MAX_SPEED = 2.5;
+    /** Vanilla's vertical speed of a body resting on the ground: one tick of gravity. */
+    private static final double REST_FALL = -Motion.GRAVITY * Motion.DRAG;
     /**
      * Roughly how many blocks a body knocked back with a small hop travels per block/tick of horizontal launch speed
      * (vanilla air drag 0.91 for the hop, then ground friction). Turns the "push" params (blocks) into a speed.
@@ -585,7 +587,7 @@ public final class MonkAbility extends Ability {
         }
 
         void begin() {
-            target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+            stopDrift(target, true);
             guardLanding(owner);
             Location body = Fx.body(target);
             Vfx.dot(body, Particle.FLASH, PALETTE.body(), true);
@@ -639,7 +641,7 @@ public final class MonkAbility extends Ability {
                 return;
             }
             // Pinned in place: the hits carry no knockback, any drift is cancelled.
-            target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+            stopDrift(target, false);
             ThreadLocalRandom random = ThreadLocalRandom.current();
             Vector toward = target.getLocation().toVector().subtract(owner.getLocation().toVector()).setY(0);
             Vector forward = toward.lengthSquared() < 1.0E-6 ? Motion.horizontalFacing(owner.getLocation())
@@ -782,6 +784,24 @@ public final class MonkAbility extends Ability {
             grounded[0] = Motion.isGrounded(owner) || owner.isInWater() ? grounded[0] + 1 : 0;
             return grounded[0] < LandingGuard.SETTLE_TICKS;
         });
+    }
+
+    /**
+     * Cancels {@code target}'s drift. A mob keeps the fall speed the server simulates for it. A player's server-side
+     * velocity is stale (only what the server last sent it), so its fall speed is never read back: an airborne player
+     * is stopped only when {@code always} (once, at the grab), otherwise left to fall on its own. Pinning it every
+     * punch would reset its client's fall again and again and leave it hovering in the air. A player on the ground
+     * gets vanilla's resting fall speed, which keeps it there (and settles one the ground check already counts as
+     * standing a few hundredths above the floor).
+     */
+    private static void stopDrift(LivingEntity target, boolean always) {
+        if (target instanceof Player) {
+            if (always || Motion.isGrounded(target)) {
+                target.setVelocity(new Vector(0, REST_FALL, 0));
+            }
+            return;
+        }
+        target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
     }
 
     // ------------------------------------------------------------------ shared visuals

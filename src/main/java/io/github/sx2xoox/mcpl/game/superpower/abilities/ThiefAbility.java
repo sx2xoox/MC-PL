@@ -356,7 +356,7 @@ public final class ThiefAbility extends Ability {
             Location hand = hand(owner);
             Location control = start.clone().add(hand).multiply(0.5).add(0, 1.0, 0);
             Location at = bezier(start, control, hand, t * t);
-            pouch.teleport(at);
+            Displays.moveTo(pouch, at);
             Vfx.dot(at, Particle.DUST, GLINT, false);
             return true;
         }, () -> {
@@ -489,7 +489,9 @@ public final class ThiefAbility extends Ability {
                     continue;
                 }
                 Location at = vaultPoint(base, phase, i, t);
-                ingot.teleport(at);
+                // The point carries the thief's yaw and pitch: teleporting there would tilt every ingot with the
+                // thief's view on top of its own spin and tilt.
+                Displays.moveTo(ingot, at);
                 if (run >= 4) {
                     float size = (float) (0.42 * (1 - 0.5 * t));
                     Displays.animate(ingot, Displays.centered(0, 0, 0, size, size, size, i * 60f + run * 35f * (1 + (float) t),
@@ -634,7 +636,7 @@ public final class ThiefAbility extends Ability {
                 Location hand = hand(owner);
                 Location control = start.clone().add(hand).multiply(0.5).add(sway).add(0, lift, 0);
                 Location at = bezier(start, control, hand, t);
-                coin.teleport(at);
+                Displays.moveTo(coin, at);
                 Displays.animate(coin, Displays.centered(0, 0, 0, scale, scale, scale, run * 40f, 0, 0), 1);
                 Vfx.dot(at, Particle.DUST, GLINT, false);
                 if (run % 3 == 0) {

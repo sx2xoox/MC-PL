@@ -786,6 +786,123 @@ class TricksterNewAbilitiesTest {
         }
     }
 
+    // ------------------------------------------------------------------ real client: rotations, positions, velocity
+
+    /**
+     * The left rotation a display's transformation was set with. MockBukkit 4.118 hands it back conjugated (inverted),
+     * a faithful test double does not: a probe display tells which, so the check holds with either.
+     */
+    private static org.joml.Quaternionf leftRotation(Display display) {
+        org.joml.Quaternionf read = new org.joml.Quaternionf(display.getTransformation().getLeftRotation());
+        org.bukkit.entity.BlockDisplay probe = display.getWorld().spawn(display.getLocation(),
+                org.bukkit.entity.BlockDisplay.class);
+        try {
+            probe.setTransformation(new org.bukkit.util.Transformation(new org.joml.Vector3f(),
+                    new org.joml.Quaternionf().rotateY(1.0f), new org.joml.Vector3f(1), new org.joml.Quaternionf()));
+            org.joml.Vector3f turned = new org.joml.Quaternionf(probe.getTransformation().getLeftRotation())
+                    .transform(new org.joml.Vector3f(0, 0, 1));
+            return turned.x() < 0 ? read.conjugate() : read;
+        } finally {
+            probe.remove();
+        }
+    }
+
+    @Test
+    void necromancerSkullsFaceTheirFlightThroughTheirTransformation() {
+        try (Scenario s = Scenario.ffa("necromancer")) {
+            s.place(s.enemy, -7.5, 0.5, 270);
+            s.place(s.enemy2, 0.5, -14.5, 0);
+            s.aimAt(s.owner, s.enemy); // looks along -X
+            s.assertSucceeded(s.active(), "망령탄");
+            java.util.Map<java.util.UUID, Location> last = new java.util.HashMap<>();
+            int checked = 0;
+            for (int i = 0; i < 12; i++) {
+                s.ticks(1);
+                for (ItemDisplay skull : entities(s, ItemDisplay.class)) {
+                    Location at = skull.getLocation();
+                    // The display itself must not carry the heading: its model would be turned by it twice.
+                    assertEquals(0, at.getYaw(), 1.0E-3, "skull display yaw");
+                    assertEquals(0, at.getPitch(), 1.0E-3, "skull display pitch");
+                    Location before = last.put(skull.getUniqueId(), at);
+                    if (before == null || before.distanceSquared(at) < 1.0E-4) {
+                        continue;
+                    }
+                    org.joml.Vector3f face = leftRotation(skull).transform(new org.joml.Vector3f(0, 0, 1));
+                    org.bukkit.util.Vector flight = at.toVector().subtract(before.toVector()).normalize();
+                    double dot = face.x() * flight.getX() + face.y() * flight.getY() + face.z() * flight.getZ();
+                    assertTrue(dot > 0.98, "the skull faces the way it flies (cos=" + dot + ")");
+                    checked++;
+                }
+            }
+            assertTrue(checked > 0, "the skulls flew");
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "and hit");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void necromancerBoneHandsDoNotReplayAStaleFallSpeed() {
+        try (Scenario s = Scenario.ffa("necromancer")) {
+            s.place(s.enemy2, 0.5, -14.5, 0);
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.ultimate(), "언데드 군단");
+            // The server's velocity of a player is what it last sent it (a slam downwards, here), never its motion.
+            for (int i = 0; i < 30 && s.damageBy(s.owner, s.enemy) == 0; i++) {
+                s.enemy.setVelocity(new org.bukkit.util.Vector(0.3, -1.5, 0.2));
+                s.ticks(1);
+            }
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "grabbed by the rising dead");
+            org.bukkit.util.Vector held = s.enemy.getVelocity();
+            assertEquals(0, held.getX(), EPSILON, "stopped: " + held);
+            assertEquals(0, held.getZ(), EPSILON, "stopped: " + held);
+            assertTrue(held.getY() > -0.1, "the stale fall speed is not sent back: " + held);
+            s.world.physics().setEnabled(true);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void thiefPickpocketLandsExactlyOnTheFloor() {
+        try (Scenario s = noGaugeGain(Scenario.builder("thief")).start()) {
+            s.place(s.owner, 0.5, -5.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "소매치기");
+            // A spot a few thousandths into the floor makes the client sink into the ground.
+            Location at = s.owner.getLocation();
+            assertEquals(FlatWorld.SURFACE, at.getY(), EPSILON, "on the floor: " + at);
+            assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().shift(0, 1.0E-3, 0)), "nothing in the body");
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void thiefVaultIngotsSpinOnTheirOwnNotWithTheThiefsView() {
+        try (Scenario s = noGaugeGain(Scenario.builder("thief")).start()) {
+            s.match.setGauge(s.enemy, 80);
+            // An oblique look: the ingots must not be tilted by the thief's yaw and pitch.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 70, 40);
+            s.assertSucceeded(s.ultimate(), "대도");
+            int checked = 0;
+            for (int i = 0; i < 10; i++) {
+                s.ticks(1);
+                for (ItemDisplay display : entities(s, ItemDisplay.class)) {
+                    assertEquals(0, display.getLocation().getYaw(), 1.0E-3, "display yaw");
+                    assertEquals(0, display.getLocation().getPitch(), 1.0E-3, "display pitch");
+                    if (i >= 2 && display.getItemStack().getType() == Material.GOLD_INGOT) {
+                        // Spun about the vertical and tipped 30 degrees: its up axis leans exactly that much.
+                        org.joml.Vector3f up = leftRotation(display).transform(new org.joml.Vector3f(0, 1, 0));
+                        assertEquals(Math.cos(Math.toRadians(30)), up.y(), 1.0E-3, "the ingot's tilt");
+                        checked++;
+                    }
+                }
+            }
+            assertTrue(checked > 0, "the vault ring spun in");
+            s.ticks(s.paramTicks("heist_invis") + 20);
+            s.finishClean();
+        }
+    }
+
     @Test
     void thiefHeistNeedsSomeoneToRob() {
         try (Scenario s = Scenario.ffa("thief")) {

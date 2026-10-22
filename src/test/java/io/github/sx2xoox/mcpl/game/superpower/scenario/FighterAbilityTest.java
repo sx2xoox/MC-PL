@@ -454,6 +454,57 @@ class FighterAbilityTest {
     }
 
     @Test
+    void piledriverDashLandsExactlyOnTheFloor() {
+        try (Scenario s = Scenario.ffa("fighter")) {
+            s.place(s.enemy, 0.5, 10.5, 180);
+            s.place(s.enemy2, 12.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "파일드라이버");
+            // A dash a few thousandths into the floor makes the client sink into the ground.
+            Location at = s.owner.getLocation();
+            assertTrue(horizontalDistance(at, s.enemy.getLocation()) < 3, "dashed to the enemy: " + at);
+            assertEquals(FlatWorld.SURFACE, at.getY(), EPSILON, "on the floor: " + at);
+            assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().shift(0, 1.0E-3, 0)), "nothing in the body");
+            s.ticks(s.paramTicks("crater_duration") + 80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void piledriverDebrisNeverFliesIntoOrLandsInsideABlock() {
+        try (Scenario s = Scenario.ffa("fighter")) {
+            // A small pen two blocks high around the drive: most debris throws would end inside its walls, where a
+            // display lit like the floor (no brightness of its own) renders black.
+            for (int y = FlatWorld.FLOOR_Y + 1; y <= FlatWorld.FLOOR_Y + 2; y++) {
+                slab(s.world, -2, -2, y, -2, 4, Material.STONE);
+                slab(s.world, 2, 2, y, -2, 4, Material.STONE);
+                slab(s.world, -2, 2, y, -2, -2, Material.STONE);
+                slab(s.world, -2, 2, y, 4, 4, Material.STONE);
+            }
+            s.place(s.enemy, 0.5, 2.0, 180); // close enough to grab without a dash
+            s.place(s.enemy2, 12.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "파일드라이버");
+            tickUntilHurt(s, s.enemy, 60);
+            for (int i = 0; i < 30; i++) {
+                for (Entity entity : s.world.getEntities()) {
+                    if (entity instanceof Display display && display.getBrightness() == null) {
+                        Location at = display.getLocation();
+                        assertFalse(s.world.getBlockAt(at).getType().isSolid(),
+                                "a display lit like the floor inside a block at " + at);
+                    }
+                }
+                s.ticks(1);
+            }
+            s.ticks(s.paramTicks("crater_duration") + 20);
+            for (int y = FlatWorld.FLOOR_Y + 1; y <= FlatWorld.FLOOR_Y + 2; y++) {
+                slab(s.world, -2, 2, y, -2, 4, Material.AIR);
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
     void piledriverThatKillsRingsTheKnockoutBell() {
         try (Scenario s = Scenario.ffa("fighter")) {
             s.place(s.enemy, 0.5, 10.5, 180);

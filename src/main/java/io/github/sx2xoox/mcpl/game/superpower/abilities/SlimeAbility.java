@@ -109,6 +109,8 @@ public final class SlimeAbility extends Ability {
     /** A bounce lower than this is not worth it (it only jiggles). */
     private static final double MIN_BOUNCE = 0.6;
     private static final int PAD_TICKS = 22;
+    /** Most horizontal speed (blocks/tick) a bounce carries over from the landing. */
+    private static final double MAX_CARRIED_SPEED = 1.0;
     /** Fewest ticks between two jiggles of the elastic body when it is hit. */
     private static final long JIGGLE_COOLDOWN = 8;
 
@@ -163,6 +165,9 @@ public final class SlimeAbility extends Ability {
     private int liveDisplays;
     private long lastJiggle = Long.MIN_VALUE / 2;
     private @Nullable King king;
+    /** The owner's feet at the last tick, and how far they moved during it (the owner's real motion). */
+    private @Nullable Location lastFeet;
+    private Vector motion = new Vector();
 
     @Override
     public AbilityInfo info() {
@@ -189,6 +194,21 @@ public final class SlimeAbility extends Ability {
         }
         slimes.clear();
         king = null;
+        lastFeet = null;
+        motion = new Vector();
+    }
+
+    /**
+     * Measures the owner's motion from its movement: a player's server-side velocity is stale (only what the server
+     * last sent it, slowly decaying), so the bounce must not read it back.
+     */
+    @Override
+    public void onTick(long tick) {
+        Location feet = player().getLocation();
+        Location previous = lastFeet;
+        motion = previous != null && previous.getWorld().equals(feet.getWorld())
+                ? feet.toVector().subtract(previous.toVector()) : new Vector();
+        lastFeet = feet;
     }
 
     @Override
@@ -224,8 +244,10 @@ public final class SlimeAbility extends Ability {
             if (!ctx().isAlive(owner) || owner.isSneaking()) {
                 return;
             }
-            Vector velocity = owner.getVelocity();
-            owner.setVelocity(Motion.clamp(new Vector(velocity.getX(), up, velocity.getZ()), MAX_VELOCITY));
+            // Keeps the momentum the owner really landed with (not its stale server-side velocity, which may still
+            // hold an old knockback).
+            Vector carried = Motion.clamp(new Vector(motion.getX(), 0, motion.getZ()), MAX_CARRIED_SPEED);
+            owner.setVelocity(Motion.clamp(carried.setY(up), MAX_VELOCITY));
             Location feet = owner.getLocation();
             Vfx.helix(ctx(), feet, 0.5, 1.4, 1, 2, 8, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), false);
             Fx.sound(feet, Sound.BLOCK_SLIME_BLOCK_FALL, 1.0f, 1.2f + Fx.jitter(0.1f));
@@ -449,6 +471,9 @@ public final class SlimeAbility extends Ability {
             }
             for (BlockDisplay part : skin()) {
                 part.setTeleportDuration(1);
+                // The skin's shapes have no rotation of their own: the display's yaw is the slime's facing (displays
+                // spawn unrotated, so it is set here and then kept by teleporting to the skin anchor every tick).
+                part.setRotation(yaw, 0);
             }
             // Pops out of the owner: grows from a blob into a full slime.
             stretch = 3;
@@ -627,6 +652,7 @@ public final class SlimeAbility extends Ability {
             }
         }
 
+        /** The carrier's feet turned to the slime's own facing, the one rotation its skin displays carry. */
         private Location skinAnchor() {
             Location at = body.getLocation();
             at.setYaw(yaw);

@@ -122,12 +122,19 @@ public final class DragonAbility extends Ability {
     private static final long FALL_GRACE_TICKS = 10;
     /** The ground marker under the dragon brightens this many ticks before a bomb drops. */
     private static final long BOMB_WARNING_TICKS = 8;
+    /** A bomb is released this far below the dragon's feet. */
+    private static final double BOMB_RELEASE = 0.2;
     private static final double BOMB_START_SPEED = 0.4;
     private static final double BOMB_GRAVITY = 0.1;
     private static final double BOMB_MAX_SPEED = 1.8;
     private static final double BOMB_MAX_FALL = 40;
     /** Height (above the pool's ground) up to which the smouldering pool burns. */
     private static final double POOL_HEIGHT = 1.5;
+    /**
+     * Ground rays start this far above the point they search from: a ray that starts on (or in) a block reports a
+     * hit slightly inside it, so a search from feet standing on the floor would find a point in the floor.
+     */
+    private static final double GROUND_LIFT = 0.05;
 
     // ------------------------------------------------------------------ look: pale pink, magenta, deep purple
     private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFD6FF, 0xC13BE0, 0x3D0A5C);
@@ -160,6 +167,8 @@ public final class DragonAbility extends Ability {
     private static final int FLAP_STEP_TICKS = 2;
     private static final int WING_OPEN_TICKS = 6;
     private static final int WING_FOLD_TICKS = 8;
+    /** The wings are re-posed when the body turns more than this (degrees) since they were last posed. */
+    private static final float TURN_EPSILON = 0.5f;
 
     private final LandingGuard landing = new LandingGuard();
     private long lastScaleFx = Long.MIN_VALUE / 2;
@@ -172,6 +181,9 @@ public final class DragonAbility extends Ability {
     private long fallGraceUntil = -1;
     private int liveDisplays;
     private @Nullable Wings wings;
+    /** The owner's feet at the last tick, and how far they moved during it (the owner's real motion). */
+    private @Nullable Location lastFeet;
+    private Vector motion = new Vector();
 
     @Override
     public AbilityInfo info() {
@@ -195,11 +207,20 @@ public final class DragonAbility extends Ability {
         flying = false;
         descending = false;
         landing.disarm();
+        lastFeet = null;
+        motion = new Vector();
     }
 
     @Override
     public void onTick(long tick) {
         Player owner = player();
+        // The owner's motion, measured from its movement: a player's server-side velocity is stale (only what the
+        // server last sent it), so the take-off must not read it back.
+        Location feet = owner.getLocation();
+        Location previous = lastFeet;
+        motion = previous != null && previous.getWorld().equals(feet.getWorld())
+                ? feet.toVector().subtract(previous.toVector()) : new Vector();
+        lastFeet = feet;
         landing.update(owner, tick);
         if (descending) {
             tickDescent(owner, tick);
@@ -519,9 +540,9 @@ public final class DragonAbility extends Ability {
         owner.setFlySpeed(speed);
         // The kick lands while the owner already flies, so it follows flight physics, not a jump arc under gravity.
         double lift = Math.max(0, params().num("take_off_height")) * (1 - FLIGHT_VERTICAL_DRAG);
-        Vector velocity = owner.getVelocity();
-        owner.setVelocity(Motion.clamp(new Vector(velocity.getX(), Math.max(velocity.getY(), lift),
-                velocity.getZ()), MAX_VELOCITY));
+        // The owner's real motion carries over, never its stale server-side velocity (an old knockback).
+        owner.setVelocity(Motion.clamp(new Vector(motion.getX(), Math.max(motion.getY(), lift), motion.getZ()),
+                MAX_VELOCITY));
         owner.setFlying(true);
         owner.setFallDistance(0);
 
@@ -616,10 +637,22 @@ public final class DragonAbility extends Ability {
         }
     }
 
-    /** A breath bomb falls from the dragon's belly and accelerates to the ground. */
+    /**
+     * A breath bomb falls from the dragon's belly and accelerates to the ground. Dropped by a dragon standing on (or
+     * skimming) the ground, it bursts right away on the ground at its feet.
+     */
     private void dropBomb(Player owner) {
-        Location start = owner.getLocation().add(0, -0.2, 0);
+        Location feet = owner.getLocation();
+        Location start = feet.clone().add(0, -BOMB_RELEASE, 0);
         World world = start.getWorld();
+        Fx.sound(start, Sound.ENTITY_ENDER_DRAGON_SHOOT, 0.9f, 1.3f + Fx.jitter(0.08f));
+        Fx.sound(start, Sound.ENTITY_GHAST_SHOOT, 0.4f, 0.6f);
+        Location under = groundBelow(feet, BOMB_RELEASE);
+        if (under != null) {
+            // The release point would lie in the floor: the bomb bursts on its surface instead of inside it.
+            explode(owner, under);
+            return;
+        }
         Location position = flat(start);
         long lifetime = 40;
         boolean shown = reserveDisplays(2, lifetime);
@@ -633,16 +666,12 @@ public final class DragonAbility extends Ability {
         if (shell != null) {
             shell.setTeleportDuration(1);
         }
-        Fx.sound(start, Sound.ENTITY_ENDER_DRAGON_SHOOT, 0.9f, 1.3f + Fx.jitter(0.08f));
-        Fx.sound(start, Sound.ENTITY_GHAST_SHOOT, 0.4f, 0.6f);
         double[] speed = {BOMB_START_SPEED};
         double[] fallen = {0};
         Loop.repeat(ctx(), owner, 0, 1, (long) (BOMB_MAX_FALL / BOMB_START_SPEED) + 2, tick -> {
             double step = Math.min(speed[0], BOMB_MAX_FALL - fallen[0]);
-            RayTraceResult floor = world.rayTraceBlocks(position, new Vector(0, -1, 0), step + 0.05,
-                    FluidCollisionMode.ALWAYS, true);
-            if (floor != null) {
-                Location impact = floor.getHitPosition().toLocation(world);
+            Location impact = groundBelow(position, step + 0.05);
+            if (impact != null) {
                 removeAll(core, shell);
                 explode(owner, impact);
                 return false;
@@ -653,11 +682,11 @@ public final class DragonAbility extends Ability {
             speed[0] = Math.min(BOMB_MAX_SPEED, speed[0] + BOMB_GRAVITY);
             float spin = tick * 37f;
             if (core != null && core.isValid()) {
-                core.teleport(position);
+                Displays.moveTo(core, position);
                 Displays.animate(core, Displays.transform(0, 0, 0, 0.38f, 0.38f, 0.38f, spin, spin * 0.7f, 0), 1);
             }
             if (shell != null && shell.isValid()) {
-                shell.teleport(position);
+                Displays.moveTo(shell, position);
                 Displays.animate(shell, Displays.transform(0, 0, 0, 0.6f, 0.6f, 0.6f, -spin, 0, spin * 0.5f), 1);
             }
             Vfx.line(ctx(), from, position, 2, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), true);
@@ -831,18 +860,25 @@ public final class DragonAbility extends Ability {
      * A pair of dragon wings on the owner's back: per side a large magenta upper membrane, a smaller purple lower
      * membrane and a dark bone along the upper membrane's leading edge (thin block displays), pivoting at the
      * shoulders. They follow the owner every tick and beat slowly by interpolating their sweep angle.
+     *
+     * <p>The displays keep yaw and pitch 0: each part is posed in the owner's body space and turned to the owner's
+     * body yaw in its transformation, which is re-posed (interpolated) whenever the body turns.
      */
     private final class Wings {
         private final BlockDisplay[] parts = new BlockDisplay[6];
         private final float size;
         private final float bodyScale;
         private double phase;
+        private double sweep = SWEEP_REST;
+        /** The body yaw the wings are posed for. */
+        private float posedYaw;
         private int age;
         private boolean wasDown;
 
         Wings(Player owner, long duration) {
             this.bodyScale = (float) Body.scaleOf(owner);
             this.size = bodyScale * WING_SIZE;
+            this.posedYaw = owner.getBodyYaw();
             long lifetime = duration + WING_FOLD_TICKS + 20;
             Location at = anchor(owner);
             Transformation folded = new Transformation(new Vector3f(0, WING_ROOT_HEIGHT * bodyScale, 0),
@@ -855,13 +891,14 @@ public final class DragonAbility extends Ability {
                     if (part == 2) {
                         display.setBrightness(null);
                     }
-                    Displays.animateNextTick(ctx(), owner, display, part(left, part, SWEEP_REST), WING_OPEN_TICKS);
+                    Displays.animateNextTick(ctx(), owner, display, pose(left, part, SWEEP_REST, posedYaw),
+                            WING_OPEN_TICKS);
                     parts[index++] = display;
                 }
             }
         }
 
-        /** Follows the owner and beats; false (after removing itself) if the wings are gone. */
+        /** Follows the owner, turns with its body and beats; false (after removing itself) if the wings are gone. */
         boolean update(Player owner, long tick, boolean hurried) {
             for (BlockDisplay display : parts) {
                 if (!display.isValid() || display.getWorld() != owner.getWorld()) {
@@ -871,21 +908,32 @@ public final class DragonAbility extends Ability {
             }
             Location at = anchor(owner);
             for (BlockDisplay display : parts) {
-                display.teleport(at);
+                Displays.moveTo(display, at);
             }
             phase += hurried ? FLAP_SPEED * 1.6 : FLAP_SPEED;
-            if (++age > WING_OPEN_TICKS && tick % FLAP_STEP_TICKS == 0) {
-                double sweep = SWEEP_REST + SWEEP_AMPLITUDE * Math.sin(phase);
+            boolean open = ++age > WING_OPEN_TICKS;
+            boolean flap = open && tick % FLAP_STEP_TICKS == 0;
+            float yaw = owner.getBodyYaw();
+            boolean turned = Math.abs(Location.normalizeYaw(yaw - posedYaw)) > TURN_EPSILON;
+            if (flap) {
+                sweep = SWEEP_REST + SWEEP_AMPLITUDE * Math.sin(phase);
+            }
+            if (flap || turned) {
+                posedYaw = yaw;
+                // Still unfolding: finish the opening in the time it has left, now facing the new way.
+                int ticks = open ? FLAP_STEP_TICKS : Math.max(FLAP_STEP_TICKS, WING_OPEN_TICKS - age + 1);
                 int index = 0;
                 for (boolean left : new boolean[] {true, false}) {
                     for (int part = 0; part < 3; part++) {
-                        Displays.animate(parts[index++], part(left, part, sweep), FLAP_STEP_TICKS);
+                        Displays.animate(parts[index++], pose(left, part, sweep, yaw), ticks);
                     }
                 }
+            }
+            if (flap) {
                 boolean down = Math.sin(phase) < 0;
                 if (down && !wasDown) {
                     Fx.sound(owner.getLocation(), Sound.ENTITY_ENDER_DRAGON_FLAP, 0.7f, 1.1f + Fx.jitter(0.1f));
-                    tipEmbers(owner, at, sweep);
+                    tipEmbers(owner, at);
                 }
                 wasDown = down;
             }
@@ -893,15 +941,12 @@ public final class DragonAbility extends Ability {
         }
 
         /** Violet embers shed from the wing tips on each down-stroke. */
-        private void tipEmbers(Player owner, Location at, double sweep) {
-            double yaw = Math.toRadians(at.getYaw());
+        private void tipEmbers(Player owner, Location at) {
             for (boolean left : new boolean[] {true, false}) {
-                Transformation t = part(left, 0, sweep);
+                Transformation t = pose(left, 0, sweep, posedYaw);
                 Vector3f tip = t.getLeftRotation().transform(new Vector3f(t.getScale().x(), t.getScale().y() * 0.5f,
                         0)).add(t.getTranslation());
-                double x = tip.x() * Math.cos(yaw) - tip.z() * Math.sin(yaw);
-                double z = tip.x() * Math.sin(yaw) + tip.z() * Math.cos(yaw);
-                Location point = at.clone().add(x, tip.y(), z);
+                Location point = at.clone().add(tip.x(), tip.y(), tip.z());
                 Vfx.cloud(ctx(), point, Particle.DUST, 3, 0.1, 0, EMBER, false);
                 Vfx.dot(point, Particle.DRAGON_BREATH, 1.0f, false);
             }
@@ -924,11 +969,21 @@ public final class DragonAbility extends Ability {
             }
         }
 
+        /** The owner's feet, without its rotation (the wings turn with the body in their transformation). */
         private Location anchor(Player owner) {
-            Location at = owner.getLocation();
-            at.setYaw(owner.getBodyYaw());
-            at.setPitch(0);
-            return at;
+            return flat(owner.getLocation());
+        }
+
+        /**
+         * One wing part turned from body space to the world by the body yaw {@code yawDegrees} (Minecraft yaw: 0 faces
+         * +Z, 90 faces -X), for a display with yaw and pitch 0 at the owner's feet.
+         */
+        private Transformation pose(boolean left, int part, double sweepDegrees, float yawDegrees) {
+            Transformation body = part(left, part, sweepDegrees);
+            Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yawDegrees));
+            return new Transformation(new Quaternionf(turn).transform(new Vector3f(body.getTranslation())),
+                    new Quaternionf(turn).mul(body.getLeftRotation()), new Vector3f(body.getScale()),
+                    new Quaternionf(body.getRightRotation()));
         }
 
         /**
@@ -968,9 +1023,14 @@ public final class DragonAbility extends Ability {
         }
     }
 
-    /** The ground straight below {@code at} within {@code depth} blocks, null over the void. */
+    /**
+     * The ground surface straight below {@code at} within {@code depth} blocks (or fluid), null over the void. The
+     * ray starts {@link #GROUND_LIFT} above {@code at}, so feet standing on the floor find its top face, not a point
+     * inside the block.
+     */
     private static @Nullable Location groundBelow(Location at, double depth) {
-        RayTraceResult down = at.getWorld().rayTraceBlocks(at, new Vector(0, -1, 0), depth,
+        Location from = at.clone().add(0, GROUND_LIFT, 0);
+        RayTraceResult down = at.getWorld().rayTraceBlocks(from, new Vector(0, -1, 0), depth + GROUND_LIFT,
                 FluidCollisionMode.ALWAYS, true);
         return down == null ? null : down.getHitPosition().toLocation(at.getWorld());
     }

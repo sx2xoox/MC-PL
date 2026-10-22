@@ -348,7 +348,7 @@ public final class BardAbility extends Ability {
             float roll = (random.nextBoolean() ? 1 : -1) * (120f + random.nextFloat() * 120f);
             ctx().runLater(owner, 1, () -> {
                 if (glyph.isValid()) {
-                    glyph.teleport(out);
+                    Displays.moveTo(glyph, out);
                     Displays.animate(glyph, Displays.centered(0, 0, 0, 1.5f, 1.5f, 1.5f, 0, 0, roll), SOUR_FLIGHT_TICKS);
                 }
             });
@@ -400,7 +400,7 @@ public final class BardAbility extends Ability {
             }
             Location above = enemy.getLocation().add(Fx.jitter(0.08f), enemy.getHeight() + 0.45 + Fx.jitter(0.05f),
                     Fx.jitter(0.08f));
-            mark.teleport(above);
+            Displays.moveTo(mark, above);
             if (run % 4 == 0) {
                 Displays.animate(mark, Displays.centered(0, 0, 0, 1.4f, 1.4f, 1.4f, 0, 0, Fx.jitter(14)), 2);
             }
@@ -482,7 +482,7 @@ public final class BardAbility extends Ability {
                 for (int i = 0; i < glyphs.length; i++) {
                     TextDisplay glyph = glyphs[i];
                     if (glyph != null && glyph.isValid()) {
-                        glyph.teleport(orbitPoint(base, i, tick + 2));
+                        Displays.moveTo(glyph, orbitPoint(base, i, tick + 2));
                     }
                 }
                 ItemDisplay record = disc;

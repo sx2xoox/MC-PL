@@ -381,7 +381,7 @@ public final class NecromancerAbility extends Ability {
             Location at = base.clone().add(Math.cos(angle) * SOUL_ORBIT_RADIUS, height,
                     Math.sin(angle) * SOUL_ORBIT_RADIUS);
             if (skull.isValid()) {
-                skull.teleport(at);
+                Displays.moveTo(skull, at);
             }
             if (tick % 6 == i % 3 * 2) {
                 Vfx.dot(at.clone().add(0, -0.15, 0), Particle.SOUL_FIRE_FLAME, null, false);
@@ -401,7 +401,7 @@ public final class NecromancerAbility extends Ability {
             }
             Vfx.trail(skull.getLocation(), hand, SOUL_CYAN, SOUL_SPEND_TICKS + 1, false);
             skull.setTeleportDuration(SOUL_SPEND_TICKS);
-            skull.teleport(hand);
+            Displays.moveTo(skull, hand);
             ctx().runLater(owner, SOUL_SPEND_TICKS, () -> {
                 if (skull.isValid()) {
                     Displays.shrinkAway(ctx(), owner, skull, 2);
@@ -585,14 +585,18 @@ public final class NecromancerAbility extends Ability {
             long lifetime = (long) Math.ceil(remaining / SKULL_START_SPEED) + 8;
             float scale = soul ? SOUL_SKULL_SCALE : SKULL_SCALE;
             ItemStack item = ItemStack.of(soul ? Material.WITHER_SKELETON_SKULL : Material.SKELETON_SKULL);
-            this.visual = Displays.item(ctx(), player(), facing(start, direction), item,
-                    Displays.centered(0, 0, 0, scale * 0.3f, scale * 0.3f, scale * 0.3f, 0, 0, 0), lifetime);
+            // The display itself stays unrotated: the skull faces its heading through its transformation.
+            this.visual = Displays.item(ctx(), player(), start, item, pose(scale * 0.3f, 0), lifetime);
             visual.setTeleportDuration(1);
             if (soul) {
                 Displays.outline(visual, SOUL_CYAN);
             }
-            Displays.animateNextTick(ctx(), player(), visual,
-                    Displays.centered(0, 0, 0, scale, scale, scale, 0, 0, 0), 3);
+            Displays.animateNextTick(ctx(), player(), visual, pose(scale, 0), 3);
+        }
+
+        /** The skull at {@code scale}, facing its heading and rolled {@code roll} degrees around it. */
+        private Transformation pose(float scale, float roll) {
+            return Displays.centered(0, 0, 0, scale, scale, scale, yawOf(direction), pitchOf(direction), roll);
         }
 
         @Override
@@ -683,11 +687,11 @@ public final class NecromancerAbility extends Ability {
         /** Moves the skull (nodding as it flies) and leaves a streak of bone-to-cyan dust, soul fire and wisps. */
         private void fly(Location from, long tick) {
             if (visual.isValid()) {
-                visual.teleport(facing(position, direction));
+                Displays.moveTo(visual, position);
                 float scale = soul ? SOUL_SKULL_SCALE : SKULL_SCALE;
                 float roll = (float) Math.sin(tick * 0.7) * 14f;
                 if (tick > 0) {
-                    Displays.animate(visual, Displays.centered(0, 0, 0, scale, scale, scale, 0, 0, roll), 1);
+                    Displays.animate(visual, pose(scale, roll), 1);
                 }
             }
             Vfx.line(ctx(), from, position, 2.0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(soul ? 1.0f : 0.75f),
@@ -1021,8 +1025,12 @@ public final class NecromancerAbility extends Ability {
             if (hold > 0) {
                 int ticks = (int) Math.min(Integer.MAX_VALUE, hold);
                 enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, ticks, 3, false, true, true));
-                Vector velocity = enemy.getVelocity();
-                enemy.setVelocity(new Vector(0, Math.min(0, velocity.getY()), 0));
+                // A player's server-side velocity is stale (only what the server last sent it): its fall speed is
+                // not read back, the hands stop it with vanilla's resting fall speed (one tick of gravity). A mob
+                // keeps falling as the server simulates it.
+                double fall = enemy instanceof Player ? -Motion.GRAVITY * Motion.DRAG
+                        : Math.min(0, enemy.getVelocity().getY());
+                enemy.setVelocity(new Vector(0, fall, 0));
             }
             if (fingers) {
                 boneFingers(enemy.getLocation(), Math.max(6, hold));
@@ -1325,13 +1333,15 @@ public final class NecromancerAbility extends Ability {
         return !(target instanceof Player hidden) || player().canSee(hidden);
     }
 
-    /** {@code at} looking along {@code direction} (the display's facing). */
-    private static Location facing(Location at, Vector direction) {
-        Location look = at.clone();
-        if (direction.lengthSquared() > 1.0E-6) {
-            look.setDirection(direction);
-        }
-        return look;
+    /** The Minecraft yaw (degrees: 0 faces +Z, 90 faces -X) of {@code direction}. */
+    private static float yawOf(Vector direction) {
+        return (float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ()));
+    }
+
+    /** The Minecraft pitch (degrees, positive looking down) of {@code direction}. */
+    private static float pitchOf(Vector direction) {
+        return (float) Math.toDegrees(Math.atan2(-direction.getY(),
+                Math.hypot(direction.getX(), direction.getZ())));
     }
 
     /** A point on the quadratic Bézier curve from {@code a} over {@code control} to {@code b}. */
