@@ -1154,10 +1154,13 @@ public final class BeekeeperAbility extends Ability {
     }
 
     /**
-     * Poison I lasting at least {@code ticks} more. A running Poison I is extended in whole {@link #POISON_PERIOD}
-     * steps: vanilla hurts whenever the remaining duration is a multiple of that period, so resetting it to a fresh
-     * duration on every sting (every 0.5 s) would make the poison hurt on every sting instead of every 1.25 s.
-     * A stronger or endless poison is left alone.
+     * Poison I for about {@code ticks} more. A fresh poison lasts exactly {@code ticks}. A running Poison I is
+     * extended in whole {@link #POISON_PERIOD} steps, to the length closest to {@code ticks} (never shortened):
+     * vanilla hurts whenever the remaining duration is a multiple of that period, so resetting it to a fresh duration
+     * on every sting (every 0.5 s) would make the poison hurt on every sting instead of every 1.25 s, and rounding the
+     * extension up would leave up to a whole period of extra poison after every sting (a few bees landing a tick
+     * apart would each add one). So the poison keeps its pace and ends within half a period of {@code ticks} after
+     * the last sting. A stronger or endless poison is left alone.
      */
     private static void poison(LivingEntity target, long ticks) {
         if (ticks <= 0) {
@@ -1171,7 +1174,11 @@ public final class BeekeeperAbility extends Ability {
                 return;
             }
             int left = current.getDuration();
-            duration = left + (int) Math.ceil((wanted - left) / (double) POISON_PERIOD) * POISON_PERIOD;
+            int periods = (int) Math.round((wanted - left) / (double) POISON_PERIOD);
+            if (periods <= 0) {
+                return;
+            }
+            duration = left + periods * POISON_PERIOD;
         }
         target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, duration, 0, false, true, true));
     }

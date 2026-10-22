@@ -8,6 +8,7 @@ import java.util.function.LongPredicate;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
@@ -126,6 +127,8 @@ public final class AnglerAbility extends Ability {
     /** Where the catch lands: this far in front of the angler, towards where it came from. */
     private static final double LAND_DISTANCE = 2.2;
     private static final long RETRACT_TICKS = 5;
+    /** The longest a catch let go mid-reel is kept from fall damage while it comes down. */
+    private static final long CUSHION_MAX_TICKS = 80;
     private static final double FLOP_HOP = 0.28;
     private static final float BOBBER_SIZE = 0.2f;
 
@@ -507,6 +510,9 @@ public final class AnglerAbility extends Ability {
         private boolean reel() {
             LivingEntity target = hooked;
             if (target == null || !holds(target)) {
+                if (target != null) {
+                    cushion(target);
+                }
                 startRetract(drawnBobber());
                 return true;
             }
@@ -533,6 +539,27 @@ public final class AnglerAbility extends Ability {
                 Vfx.cloud(ctx(), body, Particle.SPLASH, 3, 0.3, 0.05, null, false);
             }
             return true;
+        }
+
+        /**
+         * A catch let go mid-reel (it slipped into stealth, say) falls the rest of the way without fall damage, as it
+         * would have landed on the reel: its fall distance is kept at zero until it has settled on the ground (or
+         * swims). Nothing is drawn, so a stealthed catch stays hidden.
+         */
+        private void cushion(LivingEntity target) {
+            if (!target.isValid() || target.isDead()) {
+                return;
+            }
+            target.setFallDistance(0);
+            long[] settled = {0};
+            Loop.repeat(ctx(), owner, 1, 1, CUSHION_MAX_TICKS, run -> {
+                if (!target.isValid() || target.isDead()) {
+                    return false;
+                }
+                target.setFallDistance(0);
+                settled[0] = Motion.isGrounded(target) || target.isInWater() ? settled[0] + 1 : 0;
+                return settled[0] < LandingGuard.SETTLE_TICKS;
+            });
         }
 
         /** The catch lands on the deck: the slam, a slow and a fish-out-of-water flop. */
@@ -966,8 +993,12 @@ public final class AnglerAbility extends Ability {
             long slow = params().ticks("ult_slow");
             int hits = 0;
             for (LivingEntity enemy : ctx().enemiesNear(owner, center.clone().add(0, 0.5, 0), radius)) {
+                // A stealthed enemy is hit all the same, but neither marked nor counted on the action bar.
+                boolean seen = visible(owner, enemy);
                 Combat.hit(ctx(), owner, enemy, damage);
-                hits++;
+                if (seen) {
+                    hits++;
+                }
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
@@ -981,8 +1012,7 @@ public final class AnglerAbility extends Ability {
                     enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS,
                             (int) Math.min(Integer.MAX_VALUE, slow), 1, false, true, true));
                 }
-                if (visible(owner, enemy)) {
-                    // A stealthed enemy is hit all the same, but nothing is drawn on it to give it away.
+                if (seen) {
                     Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.5, Particle.SPLASH, false);
                 }
             }

@@ -16,12 +16,14 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.AnglerAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.BeekeeperAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.ChefAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.FarmerAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -1240,12 +1242,15 @@ class JobNewAbilitiesTest {
     void chefPanHitsAStealthedEnemyWithoutMarkingIt() {
         try (Scenario s = Scenario.ffa("chef")) {
             s.place(s.enemy, 0.5, 2.5, 180);
-            s.place(s.enemy2, 0.5, -6.5, 0);
+            // The visible enemy in reach is what makes the pan swing (see chefPanNeedsAnEnemyTheCookCanSee...).
+            s.place(s.enemy2, -1.0, 2.0, 180);
             s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
             s.assertSucceeded(s.active(), "프라이팬");
             assertEquals(s.param("pan_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the swing still lands");
-            s.ticks(2);
-            assertTrue(entities(s, TextDisplay.class).isEmpty(), "no sign or star over the hidden enemy");
+            assertNothingDrawnOn(s, s.enemy, 0.35, 2, "프라이팬");
+            assertEquals(1, entities(s, TextDisplay.class).stream()
+                    .filter(text -> Scenario.plain(text.text()).contains("★")).count(),
+                    "a star circles the visible enemy's head only");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(20);
             assertVisualsGone(s, "after the swing");
@@ -1407,6 +1412,240 @@ class JobNewAbilitiesTest {
                     EPSILON, "reaped and bleeding all the same");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(20);
+            assertVisualsGone(s, "after the swing");
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== review regressions
+
+    /** The action bar texts sent to {@code player} since the last call, as plain text. */
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    private static List<BlockDisplay> jackOLanterns(Scenario s) {
+        return entities(s, BlockDisplay.class).stream()
+                .filter(display -> display.getBlock().getMaterial() == Material.JACK_O_LANTERN).toList();
+    }
+
+    @Test
+    void farmerPumpkinLosesATargetThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.builder("farmer").param("ult_root", 0).start()) {
+            s.place(s.enemy, 0.5, 5.5, 180);
+            s.place(s.enemy2, -20.5, 0.5, 0);
+            Location center = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "대풍년");
+            s.ticks(s.paramTicks("ult_grow") + 6);
+            List<BlockDisplay> pumpkins = jackOLanterns(s);
+            assertEquals(1, pumpkins.size(), "a pumpkin sprouted and rolls at the enemy");
+            BlockDisplay pumpkin = pumpkins.getFirst();
+            // The enemy is last seen a few blocks from the pumpkin, towards the middle of the field...
+            Vector inwards = Motion.horizontal(center.toVector().subtract(pumpkin.getLocation().toVector()));
+            if (inwards.lengthSquared() < 1.0E-6) {
+                inwards = new Vector(1, 0, 0);
+            }
+            Location seen = pumpkin.getLocation().add(inwards.clone().multiply(3));
+            s.place(s.enemy, seen.getX(), seen.getZ(), 180);
+            s.ticks(1);
+            // ...then slips into stealth and runs off the other way.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            Location away = pumpkin.getLocation().subtract(inwards.clone().multiply(6));
+            s.place(s.enemy, away.getX(), away.getZ(), 0);
+            double before = horizontal(pumpkin.getLocation(), s.enemy.getLocation());
+            s.ticks(3);
+            double after = horizontal(pumpkin.getLocation(), s.enemy.getLocation());
+            assertTrue(after > before, "the pumpkin does not follow the hidden enemy: " + before + " -> " + after);
+            s.ticks(60);
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "nor bursts on it: " + s.hitsBy(s.owner, s.enemy));
+            assertTrue(jackOLanterns(s).isEmpty(), "it burst where the enemy was last seen");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(s.paramTicks("ult_duration") + 60);
+            assertVisualsGone(s, "after the harvest");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void farmerBindStaysBehindWhenTheBoundEnemySlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("farmer")) {
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.place(s.enemy2, -20.5, 0.5, 0);
+            s.assertSucceeded(s.ultimate(), "대풍년");
+            s.h.tickUntil(() -> speed(s.enemy) == 0, s.paramTicks("ult_grow") + 5, "the ripe ears bind the enemy");
+            Location feet = s.enemy.getLocation();
+            List<BlockDisplay> stalks = entities(s, BlockDisplay.class).stream()
+                    .filter(display -> display.getBlock().getMaterial() == Material.WHEAT
+                            && horizontal(display.getLocation(), feet) < 1.0E-3).toList();
+            assertEquals(2, stalks.size(), "two wheat stalks bind its legs");
+            // Bound, it slips into stealth and is pushed across the field (by a pumpkin's knockback, say).
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.place(s.enemy, 0.5, -3.5, 0);
+            assertEquals(0, speed(s.enemy), 1.0E-9, "still bound");
+            // The ripening's golden wave sweeps the whole field first; then nothing may be drawn on the enemy.
+            s.ticks(8);
+            assertNothingDrawnOn(s, s.enemy, 0.8, s.paramTicks("ult_root") - 8, "the bind");
+            for (BlockDisplay stalk : stalks) {
+                assertTrue(!stalk.isValid() || horizontal(stalk.getLocation(), s.enemy.getLocation()) > 3,
+                        "the stalks stay where it was last seen: " + stalk.getLocation());
+            }
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(s.paramTicks("ult_duration") + 60);
+            assertVisualsGone(s, "after the harvest");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void farmerScytheCountsOnlyTheEnemiesTheFarmerCanSee() {
+        try (Scenario s = Scenario.ffa("farmer")) {
+            s.place(s.enemy, -1.0, 2.0, 180);
+            // Stealthed at the tip of the blade.
+            s.place(s.enemy2, 0.5, 3.6, 180);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            actionBars(s.owner);
+            s.assertSucceeded(s.active(), "낫질");
+            s.ticks(8);
+            assertEquals(s.param("sweep_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the visible enemy is reaped");
+            assertEquals(s.param("sweep_damage") + s.param("sweet_bonus"), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "and so is the stealthed one, by the tip");
+            List<String> bars = actionBars(s.owner);
+            assertTrue(bars.stream().anyMatch(bar -> bar.contains("낫질 1명")), "one enemy counted: " + bars);
+            assertTrue(bars.stream().noneMatch(bar -> bar.contains("2명") || bar.contains("날 끝")),
+                    "the hidden one is not counted: " + bars);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(s.paramTicks("bleed_duration") + 20);
+            assertVisualsGone(s, "after the swing");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerBellyFlopCountsOnlyTheEnemiesTheAnglerCanSee() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            actionBars(s.owner);
+            s.assertSucceeded(s.ultimate(), "대어");
+            s.ticks(s.paramTicks("ult_warning") + 40);
+            for (TestPlayer target : s.enemies()) {
+                assertEquals(s.param("ult_burst_damage") + s.param("ult_slam_damage"), s.damageBy(s.owner, target),
+                        EPSILON, target.getName() + " is flattened");
+            }
+            List<String> bars = actionBars(s.owner);
+            assertTrue(bars.stream().anyMatch(bar -> bar.contains("1명 적중")), "one enemy counted: " + bars);
+            assertTrue(bars.stream().noneMatch(bar -> bar.contains("2명")), "the hidden one is not counted: " + bars);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerCatchLetGoMidReelLandsWithoutFallDamage() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 7.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낚아채기");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the bobber hooks the enemy");
+            // High up on the reel, still rising, the catch slips into stealth and the line lets it go.
+            s.h.tickUntil(() -> s.enemy.getLocation().getY() > FlatWorld.SURFACE + 2.5, 30, "reeled up");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            double peak = s.enemy.getLocation().getY();
+            for (int i = 0; i < 80 && !Motion.isGrounded(s.enemy); i++) {
+                s.ticks(1);
+                peak = Math.max(peak, s.enemy.getLocation().getY());
+            }
+            assertTrue(peak > FlatWorld.SURFACE + 3.0, "it was let go high up: " + peak);
+            s.ticks(10);
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(),
+                    "no fall damage from the ride: " + s.hitsOf(s.enemy, DamageCause.FALL));
+            assertEquals(s.param("reel_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "and no slam");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(20);
+            assertVisualsGone(s, "after the line was wound in");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void beekeeperStingTopsUpARunningPoisonToAboutStingPoison() {
+        try (Scenario s = Scenario.ffa("beekeeper")) {
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "벌떼");
+            // When the first sting lands, a Poison I is running with a little less than sting_poison left.
+            int almost = s.paramTicks("sting_poison") - 4;
+            for (int i = 0; i < 60 && magicHits(s, s.enemy) == 0; i++) {
+                s.enemy.addPotionEffect(new PotionEffect(PotionEffectType.POISON, almost, 0, false, true, true));
+                s.ticks(1);
+            }
+            assertEquals(1, magicHits(s, s.enemy), "the first sting landed");
+            PotionEffect poison = s.enemy.getPotionEffect(PotionEffectType.POISON);
+            assertNotNull(poison, "still poisoned");
+            // Rounded up to a whole poison period, it would run for almost a period more than sting_poison.
+            assertTrue(poison.getDuration() <= s.paramTicks("sting_poison") + 12,
+                    "topped up to about sting_poison, not a whole period more: " + poison.getDuration());
+            s.ticks(120);
+            assertVisualsGone(s, "after the swarm");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void chefPanNeedsAnEnemyTheCookCanSeeAndCountsOnlyThose() {
+        try (Scenario s = Scenario.ffa("chef")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            // Going off on a stealthed enemy alone would tell the cook that someone hidden stands in front.
+            assertFalse(s.active().succeeded(), "nobody the cook can see is in reach");
+            assertEquals(0, s.ctx().cooldownRemaining(s.owner), EPSILON, "a failed skill costs no cooldown");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the hidden enemy is not whacked");
+            // With a visible enemy in reach, the swing hits both, but counts (and marks) only the visible one.
+            s.place(s.enemy2, 1.5, 2.0, 180);
+            actionBars(s.owner);
+            s.assertSucceeded(s.active(), "프라이팬");
+            assertEquals(s.param("pan_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the hidden enemy is hit");
+            assertEquals(s.param("pan_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "and the visible one");
+            List<String> bars = actionBars(s.owner);
+            assertTrue(bars.stream().noneMatch(bar -> bar.contains("2명")), "the hidden one is not counted: " + bars);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(30);
+            assertVisualsGone(s, "after the swing");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void chefDizzyStarFadesWhenTheStunnedEnemySlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("chef")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            s.assertSucceeded(s.active(), "프라이팬");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            assertEquals(0, speed(s.enemy), 1.0E-9, "the stun goes on in stealth");
+            for (int i = 0; i < s.paramTicks("pan_stun"); i++) {
+                Location head = s.enemy.getLocation().add(0, s.enemy.getHeight() + 0.3, 0);
+                s.world.clearSpawnedParticles();
+                s.ticks(1);
+                assertTrue(entities(s, TextDisplay.class).stream().noneMatch(text -> Scenario.plain(text.text())
+                        .contains("★")), "no star circles the hidden head");
+                for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
+                    double distance = Math.sqrt(Math.pow(particle.x() - head.getX(), 2)
+                            + Math.pow(particle.y() - head.getY(), 2) + Math.pow(particle.z() - head.getZ(), 2));
+                    assertTrue(distance > 0.8, particle.particle() + " drawn around the hidden head");
+                }
+            }
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(30);
             assertVisualsGone(s, "after the swing");
             s.finishClean();
         }
