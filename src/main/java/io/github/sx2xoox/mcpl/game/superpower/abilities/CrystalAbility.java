@@ -160,6 +160,8 @@ public final class CrystalAbility extends Ability {
     private final List<Shard> shards = new ArrayList<>();
     private @Nullable Location amethystNearby;
     private boolean resonating;
+    /** Prisons of this instance still holding someone, released when the owner's ability is revoked. */
+    private final List<Prison> prisons = new ArrayList<>();
     /** Display entities spawned by this instance (pruned when counted). */
     private final List<Display> live = new ArrayList<>();
 
@@ -184,6 +186,11 @@ public final class CrystalAbility extends Ability {
 
     @Override
     public void onRevoke() {
+        // The cage disappears with the owner: its prisoner is let go at once instead of when the root runs out.
+        for (Prison prison : List.copyOf(prisons)) {
+            prison.unroot();
+        }
+        prisons.clear();
         shards.clear();
         live.clear();
         resonating = false;
@@ -600,6 +607,7 @@ public final class CrystalAbility extends Ability {
             return ActivationResult.fail("조준한 곳에 적이 없습니다");
         }
         Prison prison = new Prison(target);
+        prisons.add(prison);
         prison.cast();
         Loop.repeat(ctx(), owner, 1, 1, prison.hold + 1, prison, prison::release);
         return ActivationResult.success();
@@ -803,10 +811,7 @@ public final class CrystalAbility extends Ability {
             }
             shattered = true;
             Player owner = player();
-            for (NamespacedKey key : keys) {
-                ctx().removeModifier(prisoner, key);
-            }
-            keys.clear();
+            unroot();
 
             Location center = cell.clone().add(0, 1.0, 0);
             double radius = Math.max(0.5, params().num("shatter_radius"));
@@ -942,6 +947,15 @@ public final class CrystalAbility extends Ability {
         /** The loop ended: make sure the cage broke (the shatter normally ran already) and the root is lifted. */
         void release() {
             shatter();
+        }
+
+        /** Lifts the root (the modifiers would also run out on their own shortly after the prison's time). */
+        void unroot() {
+            for (NamespacedKey key : keys) {
+                ctx().removeModifier(prisoner, key);
+            }
+            keys.clear();
+            prisons.remove(this);
         }
     }
 

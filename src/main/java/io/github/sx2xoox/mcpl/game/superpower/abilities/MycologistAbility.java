@@ -70,7 +70,7 @@ public final class MycologistAbility extends Ability {
                     "근접 공격한 적에게 포자를 묻혀 {spore_nausea}초간 멀미를 겁니다(같은 적은 {spore_cooldown}초마다). "
                             + "포자가 묻은 적은 버섯 지뢰 피해를 {spore_bonus}% 더 받습니다.")
             .active("버섯 지뢰",
-                    "조준한 바닥({mine_range}블록 이내)에 버섯 지뢰 {mine_count}개를 심습니다. {mine_arm}초 뒤 다 자란 버섯을 "
+                    "조준한 바닥({mine_range}블록 이내)에 버섯 지뢰 {mine_count}개를 가로로 심습니다. {mine_arm}초 뒤 다 자란 버섯을 "
                             + "적이 밟으면 포자가 터져 반경 {mine_radius}블록의 적에게 {mine_damage} 피해를 주고 "
                             + "{mine_confuse}초간 멀미와 구속을 겁니다. 버섯은 {mine_duration}초간 남고, 새로 심으면 이전 버섯은 "
                             + "시듭니다.",
@@ -378,18 +378,24 @@ public final class MycologistAbility extends Ability {
     }
 
     /**
-     * The mines' spots: {@code mine_count} points on a small circle around the aimed floor point (one pointing away
-     * from the owner), each on solid ground with nothing solid between it and the center.
+     * The mines' spots: {@code mine_count} points in a row across the owner's view, {@code mine_spread} apart and
+     * centered on the aimed floor point (so the middle one lands right under an aimed enemy), each on solid ground
+     * with nothing solid between it and the center.
      */
     private List<Location> mineSpots(Location center) {
         int count = Math.max(1, params().integer("mine_count"));
         double spread = Math.max(0, params().num("mine_spread"));
-        double ring = count == 1 ? 0 : spread / (2 * Math.sin(Math.PI / count));
-        Vector forward = Motion.horizontalFacing(player().getLocation());
+        Vector across = Motion.horizontalFacing(player().getLocation()).rotateAroundY(Math.PI / 2);
         Location middle = center.clone().add(0, 0.5, 0);
         List<Location> spots = new ArrayList<>();
+        // The middle first, then outwards: the seeds fly out in that order.
+        List<Double> slots = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            Vector offset = forward.clone().rotateAroundY(i * Math.PI * 2 / count).multiply(ring);
+            slots.add(i - (count - 1) / 2.0);
+        }
+        slots.sort((a, b) -> Double.compare(Math.abs(a), Math.abs(b)));
+        for (double slot : slots) {
+            Vector offset = across.clone().multiply(slot * spread);
             Location probe = center.clone().add(offset).add(0, 1.2, 0);
             Double ground = groundBelow(probe, 3);
             if (ground == null) {

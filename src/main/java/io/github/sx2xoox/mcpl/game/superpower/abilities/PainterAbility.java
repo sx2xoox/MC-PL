@@ -459,6 +459,10 @@ public final class PainterAbility extends Ability {
         double damage = params().num("splash_damage");
         int hits = 0;
         for (LivingEntity enemy : ctx().enemiesNear(owner, center.clone().add(0, 0.6, 0), radius)) {
+            // The splash does not go through walls.
+            if (!Spots.clearPath(burst, Fx.body(enemy))) {
+                continue;
+            }
             Combat.hit(ctx(), owner, enemy, damage);
             if (Combat.isTargetable(ctx(), owner, enemy)) {
                 hits++;
@@ -588,9 +592,11 @@ public final class PainterAbility extends Ability {
             this.slows = new SlowField(paint.drop);
         }
 
+        /** In the puddle and not behind a wall from its middle (paint does not soak through walls). */
         @Override
         public boolean covers(LivingEntity entity) {
-            return within(entity, center, radius);
+            return within(entity, center, radius)
+                    && Spots.clearPath(center.clone().add(0, 0.3, 0), entity.getLocation().add(0, 0.3, 0));
         }
 
         /** The paint spreads into an irregular splat with a sheen and a few stray droplets. */
