@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -42,6 +44,7 @@ import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -911,6 +914,263 @@ class WeaponNewAbilitiesTest {
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
+        }
+    }
+
+    /**
+     * 일섬 돌격 at 0, 150 and 250 ms (the server hears where the charging lancer is none, three and five ticks late).
+     * The charge's length was measured on the velocities sent, but the spear point still skewered where the server
+     * last heard of the lancer: an enemy near the end of the lane was never skewered (the lancer's client had long run
+     * past it), the skewered enemies rode at the lagging position, behind the lancer's back, and the hurl went off
+     * blocks behind the spot where the lancer really stopped.
+     */
+    @Test
+    void lancerChargeSkewersCarriesAndHurlsWhereALaggingLancerReallyIs() {
+        double stop = Double.NaN;
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = Scenario.ffa("lancer")) {
+                String run = ping + " ms";
+                s.place(s.enemy, 0.5, 4.5, 180); // early in the lane
+                s.place(s.enemy2, 0.5, 14.0, 180); // near its end (the lane is 14 blocks long)
+                s.owner.setPing(ping);
+                Location start = s.owner.getLocation();
+                LaggyClients clients = new LaggyClients(s).add(s.owner, ping / 50).add(s.enemy, 0).add(s.enemy2, 0);
+                s.assertSucceeded(s.ultimate(), "일섬 돌격");
+                Location hurl = null;
+                Location lancerAtHurl = null;
+                List<Location> enemiesAtHurl = List.of();
+                for (int i = 0; i < 40; i++) {
+                    Location lancer = clients.at(s.owner);
+                    List<Location> enemies = List.of(clients.at(s.enemy), clients.at(s.enemy2));
+                    int heard = s.owner.getHeardSounds().size();
+                    clients.tick();
+                    if (hurl == null) {
+                        hurl = soundAt(s.owner, heard, "item.mace.smash_ground_heavy");
+                        lancerAtHurl = lancer;
+                        enemiesAtHurl = enemies;
+                    }
+                }
+                Location end = clients.at(s.owner);
+                clients.close();
+                for (TestPlayer enemy : s.enemies()) {
+                    assertEquals(2, s.hitsBy(s.owner, enemy).size(),
+                            enemy.getName() + " is skewered, then hurled: " + run + ", " + s.hits());
+                }
+                double travelled = horizontalDistance(start, end);
+                double length = s.param("ult_distance");
+                assertTrue(travelled > length - 0.3 && travelled < length + 0.8,
+                        "the charge runs its length (and a little glide): " + run + ", " + travelled);
+                if (Double.isNaN(stop)) {
+                    stop = travelled;
+                } else {
+                    assertEquals(stop, travelled, 0.15, "and stops at the same place whatever the ping: " + run);
+                }
+                assertNotNull(hurl, "the charge ends in a hurl: " + run);
+                assertEquals(lancerAtHurl.getZ() + 1.6, hurl.getZ(), 0.3,
+                        "right in front of the lancer as it stops: " + run + ", " + lancerAtHurl);
+                for (Location enemy : enemiesAtHurl) {
+                    double ahead = enemy.getZ() - lancerAtHurl.getZ();
+                    assertTrue(ahead > 0.8 && ahead < 3.8,
+                            "the enemies ride on the spear point, ahead of the lancer: " + run + ", " + ahead);
+                }
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.layout();
+                s.ticks(60);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                assertEquals(0, blockDisplays(s));
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * Charging into a wall at 0, 150 and 250 ms: the lancer's client stops at the wall while the steps sent run on past
+     * it (the server sees it stand still only a round trip later). The charge stops at the wall, the hurl goes off
+     * there, and an enemy behind the wall is never skewered through it.
+     */
+    @Test
+    void lancerChargeNeverSkewersThroughAWallWhateverThePing() {
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = Scenario.ffa("lancer")) {
+                String run = ping + " ms";
+                s.place(s.enemy, 0.5, 9.5, 180); // behind the wall
+                s.place(s.enemy2, -6.5, 0.5, 0);
+                s.world.wallAlongX(-3, 3, 6, 3, Material.STONE);
+                s.owner.setPing(ping);
+                int heard = s.owner.getHeardSounds().size();
+                LaggyClients clients = new LaggyClients(s).add(s.owner, ping / 50);
+                s.assertSucceeded(s.ultimate(), "일섬 돌격");
+                for (int i = 0; i < 40; i++) {
+                    clients.tick();
+                }
+                Location end = clients.at(s.owner);
+                clients.close();
+                assertTrue(end.getZ() > 5.4 && end.getZ() < 5.75, "stopped at the wall: " + run + ", " + end);
+                assertEquals(0, s.damageTaken(s.enemy), EPSILON, "nobody is skewered through the wall: " + run);
+                Location hurl = soundAt(s.owner, heard, "item.mace.smash_ground_heavy");
+                assertNotNull(hurl, "the charge ends in a hurl: " + run);
+                assertEquals(end.getZ() + 1.6, hurl.getZ(), 0.3, "right at the wall: " + run);
+                s.world.wallAlongX(-3, 3, 6, 3, Material.AIR);
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.ticks(60);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                s.finishClean();
+            }
+        }
+    }
+
+    /** Where {@code listener} heard the first sound named like {@code key} since {@code from}, null if none. */
+    private static @Nullable Location soundAt(TestPlayer listener, int from, String key) {
+        var heard = listener.getHeardSounds();
+        for (int i = from; i < heard.size(); i++) {
+            if (heard.get(i).getSound().contains(key) && heard.get(i).getLocation() != null) {
+                return heard.get(i).getLocation();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Players whose real position is their client's, for the bugs a plain world simulation hides. A real server never
+     * reads a player's motion back ({@code Player#getVelocity} is only what it last sent): every client tick each
+     * player moves by the last velocity the server sent it (then gravity, drag and ground friction over the flat floor;
+     * a wall stops it flush against it), and the server sees where it is {@code lag} ticks late. The harness's own
+     * physics is off while they run.
+     */
+    private static final class LaggyClients {
+
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final List<Client> clients = new ArrayList<>();
+
+        /** Create it before the skill is cast: a velocity the cast sets must count as new. */
+        LaggyClients(Scenario s) {
+            this.s = s;
+            s.world.physics().setEnabled(false);
+        }
+
+        LaggyClients add(TestPlayer player, int lag) {
+            clients.add(new Client(s, player, lag));
+            return this;
+        }
+
+        /** One server tick, then one client tick of every player with whatever the server sent it. */
+        void tick() {
+            for (Client client : clients) {
+                client.mark();
+            }
+            s.ticks(1);
+            for (Client client : clients) {
+                client.step();
+            }
+        }
+
+        /** Where {@code player} really is (its client). */
+        Location at(TestPlayer player) {
+            for (Client client : clients) {
+                if (client.player.equals(player)) {
+                    return client.at.clone();
+                }
+            }
+            throw new IllegalArgumentException(player.getName());
+        }
+
+        /** Back to the harness's physics, every player where its client really is. */
+        void close() {
+            for (Client client : clients) {
+                Location real = client.at.clone();
+                Location look = client.player.getLocation();
+                real.setYaw(look.getYaw());
+                real.setPitch(look.getPitch());
+                client.player.teleport(real);
+                client.player.setVelocity(new Vector());
+            }
+            s.world.physics().setEnabled(true);
+        }
+
+        private static final class Client {
+            private final Scenario s;
+            private final TestPlayer player;
+            private final Deque<Location> late = new ArrayDeque<>();
+            private final Location at;
+            private final Vector velocity = new Vector();
+            private Vector sent = new Vector();
+            private Vector marked = new Vector();
+
+            Client(Scenario s, TestPlayer player, int lag) {
+                this.s = s;
+                this.player = player;
+                this.at = player.getLocation();
+                for (int i = 0; i < lag; i++) {
+                    late.addLast(at.clone());
+                }
+            }
+
+            void mark() {
+                marked = sent.clone().setX(sent.getX() + MARK);
+                player.setVelocity(marked);
+            }
+
+            void step() {
+                Vector now = player.getVelocity();
+                if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                        || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                    sent = now.clone();
+                    velocity.copy(now);
+                }
+                at.setY(at.getY() + velocity.getY());
+                boolean grounded = at.getY() <= FlatWorld.SURFACE;
+                if (grounded) {
+                    at.setY(FlatWorld.SURFACE);
+                }
+                // One horizontal axis at a time, like the client: a wall stops the body flush against it.
+                double dx = sweep(velocity.getX(), true);
+                at.setX(at.getX() + dx);
+                if (dx != velocity.getX()) {
+                    velocity.setX(0);
+                }
+                double dz = sweep(velocity.getZ(), false);
+                at.setZ(at.getZ() + dz);
+                if (dz != velocity.getZ()) {
+                    velocity.setZ(0);
+                }
+                double gravity = player.hasPotionEffect(PotionEffectType.SLOW_FALLING) && velocity.getY() <= 0
+                        ? 0.01 : 0.08;
+                double vy = (velocity.getY() - gravity) * 0.98;
+                double friction = grounded ? 0.546 : 0.91;
+                velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                        .setZ(velocity.getZ() * friction);
+                late.addLast(at.clone());
+                Location seen = late.removeFirst();
+                Location look = player.getLocation();
+                seen.setYaw(look.getYaw());
+                seen.setPitch(look.getPitch());
+                player.teleport(seen);
+            }
+
+            /** How far the body gets along x (or z) towards {@code delta} before a block stops it. */
+            private double sweep(double delta, boolean alongX) {
+                if (delta == 0 || fits(delta, alongX)) {
+                    return delta;
+                }
+                double free = 0;
+                double blocked = Math.abs(delta);
+                for (int i = 0; i < 30; i++) {
+                    double mid = (free + blocked) / 2;
+                    if (fits(Math.copySign(mid, delta), alongX)) {
+                        free = mid;
+                    } else {
+                        blocked = mid;
+                    }
+                }
+                return Math.copySign(free, delta);
+            }
+
+            private boolean fits(double delta, boolean alongX) {
+                Location next = at.clone().add(alongX ? delta : 0, 0, alongX ? 0 : delta);
+                return Spots.isFree(s.world, next, player.getWidth(), player.getHeight());
+            }
         }
     }
 

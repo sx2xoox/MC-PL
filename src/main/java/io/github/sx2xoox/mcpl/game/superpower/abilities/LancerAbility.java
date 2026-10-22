@@ -124,6 +124,10 @@ public final class LancerAbility extends Ability {
     private static final float CHARGE_SPEAR_SCALE = 1.6f;
     /** How far ahead the charge looks for ground; it stops at the edge of the void or a lava pit. */
     private static final double VOID_LOOKAHEAD = CHARGE_SPEED + 0.6;
+    /** The client steps up anything this low: only a block above it in the path stops the charge. */
+    private static final double STEP_HEIGHT = 0.6;
+    /** Sampling distance of the check for a block in the charge's path. */
+    private static final double PATH_STEP = 0.1;
 
     // Visuals
     /** White core, sea green body, deep sea edge; silver for the shaft and streaks. */
@@ -530,7 +534,14 @@ public final class LancerAbility extends Ability {
         return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / MILLIS_PER_TICK));
     }
 
-    /** One 일섬 돌격: the wind-up with its lane marker, the charge carrying skewered enemies, and the hurl. */
+    /**
+     * One 일섬 돌격: the wind-up with its lane marker, the charge carrying skewered enemies, and the hurl. The lancer's
+     * client runs every velocity step sent to it at once, while the server hears where it is only a round trip later.
+     * So the charge is measured on the steps sent, and everything it meets is met where the lancer really is: the start
+     * plus the steps sent, short of a wall in the way. The spear point skewers there, the skewered enemies ride ahead
+     * of it (not behind the lancer's back, where the server last heard of it), and the hurl goes off where the lancer
+     * stops.
+     */
     private final class Charge implements LongPredicate {
 
         private final Vector direction;
@@ -551,6 +562,10 @@ public final class LancerAbility extends Ability {
          * charge's length is measured on what was sent (the server's view would let it run on past its end).
          */
         private double sent;
+        /** How far along the path the body is known to pass without touching a block. */
+        private double clear;
+        /** A block stands in the path at {@link #clear}: the lancer's client stops there. */
+        private boolean blocked;
         private Location last;
         private int stalls;
         private boolean moved;
@@ -559,6 +574,10 @@ public final class LancerAbility extends Ability {
         private boolean edge;
         /** The arena border cut the charge short: it ends dead still at the border, without a glide. */
         private boolean bordered;
+        /** The charge ran into a wall: it ends there, without a glide. */
+        private boolean wall;
+        /** Where the lancer stops, once the charge is over. */
+        private @Nullable Location stop;
 
         Charge(Vector direction, double distance) {
             this.direction = direction;
@@ -641,16 +660,31 @@ public final class LancerAbility extends Ability {
             if (begin == null || !now.getWorld().equals(begin.getWorld())) {
                 return false;
             }
-            if (sent >= distance - 0.2) {
-                return false;
-            }
             if (!moved && horizontalDistance(begin, now) >= STALL_EPSILON) {
                 moved = true;
+            }
+            // Its client has already run every step sent: the spear point skewers what it meets there.
+            Location reached = reached(owner, begin, now);
+            Location point = reached.clone().add(0, owner.getHeight() * 0.55, 0)
+                    .add(direction.clone().multiply(SKEWER_AHEAD));
+            for (LivingEntity enemy : ctx().enemiesNear(owner, point, SKEWER_REACH)) {
+                if (struck.add(enemy.getUniqueId())) {
+                    skewer(owner, enemy);
+                }
+            }
+            if (blocked) {
+                wall = true;
+                return stopAt(reached);
+            }
+            if (sent >= distance - 0.2) {
+                return stopAt(reached);
             }
             if (moved || tick >= CHARGE_GRACE_TICKS + lag) {
                 stalls = horizontalDistance(last, now) < STALL_EPSILON ? stalls + 1 : 0;
                 if (stalls >= STALL_LIMIT) {
-                    return false;
+                    // Stopped by something the path check cannot see: the server has seen it stand still there.
+                    wall = true;
+                    return stopAt(now);
                 }
             }
             last = now;
@@ -660,7 +694,7 @@ public final class LancerAbility extends Ability {
             ahead.setY(now.getY());
             if (!Spots.hasGroundBelow(now.getWorld(), ahead)) {
                 edge = true;
-                return false;
+                return stopAt(reached);
             }
             // The last step is only as long as what is left, so the charge ends exactly at its end.
             double step = Math.min(CHARGE_SPEED, distance - sent);
@@ -668,17 +702,39 @@ public final class LancerAbility extends Ability {
             owner.setVelocity(direction.clone().multiply(step).setY(CHARGE_SINK));
             owner.setFallDistance(0);
 
-            double height = owner.getHeight();
-            Location point = now.clone().add(0, height * 0.55, 0).add(direction.clone().multiply(SKEWER_AHEAD));
-            for (LivingEntity enemy : ctx().enemiesNear(owner, point, SKEWER_REACH)) {
-                if (struck.add(enemy.getUniqueId())) {
-                    skewer(owner, enemy);
-                }
-            }
-            carry(owner, now);
+            carry(owner, reached, step);
             placeSpear(owner, 0.9 + CHARGE_SPEED, CHARGE_SPEAR_SCALE, WINDUP_TICKS * 4f + tick * 20f);
             riptide(owner, now, tick);
             return true;
+        }
+
+        /**
+         * Where the lancer's client is: the start plus the steps sent, short of the first block in the path (the client
+         * stops flush against a wall while the server still sees it run up to it). Below {@link #STEP_HEIGHT} the
+         * client steps up, so only blocks above it count.
+         */
+        private Location reached(Player owner, Location begin, Location now) {
+            double width = owner.getWidth();
+            double height = Math.max(0.1, owner.getHeight() - STEP_HEIGHT);
+            while (!blocked && clear < sent - 1.0E-9) {
+                double next = Math.min(sent, clear + PATH_STEP);
+                Location feet = begin.clone().add(direction.clone().multiply(next));
+                feet.setY(now.getY() + STEP_HEIGHT);
+                if (Spots.isFree(begin.getWorld(), feet, width, height)) {
+                    clear = next;
+                } else {
+                    blocked = true;
+                }
+            }
+            Location reached = begin.clone().add(direction.clone().multiply(Math.min(sent, clear)));
+            reached.setY(now.getY());
+            return reached;
+        }
+
+        /** Ends the charge with the lancer standing {@code at}. */
+        private boolean stopAt(Location at) {
+            stop = at.clone();
+            return false;
         }
 
         private void skewer(Player owner, LivingEntity enemy) {
@@ -691,22 +747,25 @@ public final class LancerAbility extends Ability {
             Fx.sound(Fx.body(enemy), Sound.ENTITY_GOAT_RAM_IMPACT, 0.8f, 1.2f + Fx.jitter(0.1f));
         }
 
-        /** Keeps every skewered enemy riding on the spear ahead of the lancer; one stopped by a wall slips off. */
-        private void carry(Player owner, Location now) {
+        /**
+         * Keeps every skewered enemy riding on the spear ahead of the lancer, which stands {@code reached} and moves on
+         * by {@code step} this tick; one stopped by a wall slips off.
+         */
+        private void carry(Player owner, Location reached, double step) {
             for (int i = skewered.size() - 1; i >= 0; i--) {
                 LivingEntity enemy = skewered.get(i);
-                if (!Combat.isTargetable(ctx(), owner, enemy) || !enemy.getWorld().equals(now.getWorld())) {
+                if (!Combat.isTargetable(ctx(), owner, enemy) || !enemy.getWorld().equals(reached.getWorld())) {
                     skewered.remove(i);
                     continue;
                 }
-                Location spot = now.clone().add(direction.clone().multiply(CARRY_AHEAD + i * CARRY_SPACING));
+                Location spot = reached.clone().add(direction.clone().multiply(CARRY_AHEAD + i * CARRY_SPACING));
                 Vector offset = spot.toVector().subtract(enemy.getLocation().toVector());
                 double leash = CARRY_LEASH + (enemy instanceof Player rider ? CHARGE_SPEED * lagTicks(rider) : 0);
                 if (offset.length() > leash) {
                     skewered.remove(i);
                     continue;
                 }
-                Vector velocity = direction.clone().multiply(CHARGE_SPEED).add(offset.multiply(CARRY_PULL));
+                Vector velocity = direction.clone().multiply(step).add(offset.multiply(CARRY_PULL));
                 velocity.setY(Math.max(0.02, Math.min(0.3, velocity.getY())));
                 Motion.push(enemy, velocity, MAX_VELOCITY);
                 Vfx.dot(Fx.body(enemy), Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.0f), false);
@@ -721,8 +780,14 @@ public final class LancerAbility extends Ability {
             ended = true;
             charging = false;
             Player owner = player();
-            Location at = owner.getLocation();
-            owner.setVelocity(edge || bordered ? new Vector(0, CHARGE_SINK, 0)
+            Location now = owner.getLocation();
+            Location at = stop;
+            if (at == null) {
+                // Out of time, or carried off to another world (or never launched).
+                Location begin = start;
+                at = begin != null && now.getWorld().equals(begin.getWorld()) ? reached(owner, begin, now) : now;
+            }
+            owner.setVelocity(edge || bordered || wall ? new Vector(0, CHARGE_SINK, 0)
                     : direction.clone().multiply(0.2).setY(CHARGE_SINK));
             guardLanding(owner);
             wake(owner, at);
@@ -764,13 +829,13 @@ public final class LancerAbility extends Ability {
                 Fx.sound(front, Sound.ITEM_TRIDENT_THUNDER, 0.5f, 1.8f);
                 Fx.sound(front, Sound.ENTITY_GOAT_RAM_IMPACT, 1.0f, 0.8f + Fx.jitter(0.1f));
             }
-            // The spear thrusts once more and dissolves into spray.
+            // The spear thrusts once more where the lancer stops and dissolves into spray.
             for (int i = 0; i < spear.length; i++) {
                 BlockDisplay part = spear[i];
                 if (!part.isValid()) {
                     continue;
                 }
-                Displays.moveTo(part, spearSpot(owner, 1.6));
+                Displays.moveTo(part, spearSpot(owner, at, 1.6));
                 Displays.animate(part, pose(SPEAR_PARTS[i], CHARGE_SPEAR_SCALE * 1.2f, 0, aim), 3);
                 ctx().runLater(owner, 4, () -> {
                     if (part.isValid()) {
@@ -858,9 +923,13 @@ public final class LancerAbility extends Ability {
 
         /** The charge spear's center: at the lancer's side, {@code lead} blocks ahead of its chest. */
         private Location spearSpot(Player owner, double lead) {
+            return spearSpot(owner, owner.getLocation(), lead);
+        }
+
+        /** The charge spear's center for the lancer standing at {@code feet}. */
+        private Location spearSpot(Player owner, Location feet, double lead) {
             Vector side = new Vector(-direction.getZ(), 0, direction.getX()).multiply(-0.35);
-            return owner.getLocation().add(0, owner.getHeight() * 0.5, 0).add(side)
-                    .add(direction.clone().multiply(lead));
+            return feet.clone().add(0, owner.getHeight() * 0.5, 0).add(side).add(direction.clone().multiply(lead));
         }
     }
 

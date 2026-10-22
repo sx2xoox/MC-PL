@@ -4,6 +4,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.LongPredicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
@@ -77,6 +78,8 @@ public final class BerserkerAbility extends Ability {
     private static final double CHARGE_SPEED = 1.15;
     /** Small downward pull so the charge hugs the ground instead of floating off ledges. */
     private static final double CHARGE_SINK = -0.08;
+    /** The little forward glide left after the charge (none at a wall, an edge or the border). */
+    private static final double CHARGE_GLIDE = 0.25;
     private static final double CHARGE_HIT_RADIUS = 1.2;
     /** Ticks before stall detection starts (the client needs a moment to pick up the new velocity). */
     private static final long CHARGE_GRACE_TICKS = 3;
@@ -86,6 +89,12 @@ public final class BerserkerAbility extends Ability {
     /** Most ticks a slow connection may add to the grace period and the charge length. */
     private static final long MAX_LAG_TICKS = 8;
     private static final double MILLIS_PER_TICK = 50.0;
+    /** How far ahead the charge looks for ground; it stops at the edge of the void or a lava pit. */
+    private static final double VOID_LOOKAHEAD = CHARGE_SPEED + 0.6;
+    /** The client steps up anything this low: only a block above it in the path stops the charge. */
+    private static final double STEP_HEIGHT = 0.6;
+    /** Sampling distance of the check for a block in the charge's path. */
+    private static final double PATH_STEP = 0.1;
     private static final double BOWL_FORWARD = 0.9;
     private static final double BOWL_SIDE = 0.75;
     private static final double BOWL_UP = 0.42;
@@ -265,62 +274,179 @@ public final class BerserkerAbility extends Ability {
         }
         Vector direction = Motion.horizontalFacing(owner.getLocation());
         Location start = owner.getLocation();
+        double length = Math.max(1, params().num("charge_distance"));
         // The charge never carries the owner past the arena border.
-        double distance = Spots.arenaReach(ctx(), start, direction, Math.max(1, params().num("charge_distance")));
+        double distance = Spots.arenaReach(ctx(), start, direction, length);
         if (distance < 1) {
             return ActivationResult.fail("자기장 밖으로는 돌진할 수 없습니다");
+        }
+        if (!Spots.hasGroundBelow(start.getWorld(), start.clone().add(direction.clone().multiply(VOID_LOOKAHEAD)))) {
+            return ActivationResult.fail("앞이 낭떠러지입니다");
         }
         // The server sees the owner move only a round trip after the velocity is sent: wait that long for the
         // first movement before calling the charge stalled, and give the charge that much more time.
         long lag = lagTicks(owner);
         long maxTicks = (long) Math.ceil(distance / CHARGE_SPEED) + 6 + lag;
-        Set<UUID> struck = new HashSet<>();
         charging = true;
-
         chargeStart(start);
-        owner.setVelocity(direction.clone().multiply(CHARGE_SPEED).setY(CHARGE_SINK));
         owner.setFallDistance(0);
+        // Cut short by the border: the charge ends dead still there, without a glide.
+        boolean bordered = distance < length - 1.0E-6;
+        Charge charge = new Charge(start, direction, distance, bordered, lag);
+        Loop.repeat(ctx(), owner, 0, 1, maxTicks, charge, charge::end);
+        return ActivationResult.success();
+    }
 
-        Location[] last = {start};
-        int[] stalls = {0};
-        boolean[] moved = {false};
-        Loop.repeat(ctx(), player(), 0, 1, maxTicks, tick -> {
+    /**
+     * One charge. The berserker's client runs every velocity step sent to it at once, while the server hears where it
+     * is only a round trip later. So the charge is measured on the steps sent (the server's view would let it run on
+     * past its end), and everything it meets is met where the berserker really is: the start plus the steps sent, short
+     * of a wall in the way. Enemies are bowled as the berserker reaches them (not a round trip later, after its client
+     * ran through them), it pulls up at the edge of the void looking ahead of where those steps carry it, and the charge
+     * ends where the berserker stops, not where the server last heard of it.
+     */
+    private final class Charge implements LongPredicate {
+
+        private final Location start;
+        private final Vector direction;
+        private final double distance;
+        /** The border cut the charge short: it ends dead still there, without a glide. */
+        private final boolean bordered;
+        private final long lag;
+        private final Set<UUID> struck = new HashSet<>();
+        /**
+         * How far the charge has been sent so far: the sum of the steps of the velocities sent to the berserker. The
+         * first step goes out with the first run: a velocity set at the cast would only be replaced by it before the
+         * server sends it on.
+         */
+        private double sent;
+        /** How far along the path the body is known to pass without touching a block. */
+        private double clear;
+        /** A block stands in the path at {@link #clear}: the berserker's client stops there. */
+        private boolean blocked;
+        private Location last;
+        private int stalls;
+        private boolean moved;
+        /** The charge pulled up at the edge of the void or a lava pit: it ends dead still there, without a glide. */
+        private boolean edge;
+        /** The charge ran into a wall: it ends with a bump, without a glide. */
+        private boolean wall;
+        /** Where the berserker stops, once the charge is over. */
+        private @Nullable Location stop;
+        private boolean ended;
+
+        Charge(Location start, Vector direction, double distance, boolean bordered, long lag) {
+            this.start = start;
+            this.direction = direction;
+            this.distance = distance;
+            this.bordered = bordered;
+            this.lag = lag;
+            this.last = start;
+        }
+
+        @Override
+        public boolean test(long tick) {
+            Player owner = player();
             Location now = owner.getLocation();
-            if (!now.getWorld().equals(start.getWorld()) || horizontalDistance(start, now) >= distance - 0.2) {
+            if (!now.getWorld().equals(start.getWorld())) {
                 return false;
             }
-            if (!moved[0] && horizontalDistance(start, now) >= STALL_EPSILON) {
-                moved[0] = true;
+            if (!moved && horizontalDistance(start, now) >= STALL_EPSILON) {
+                moved = true;
             }
-            if (moved[0] || tick >= CHARGE_GRACE_TICKS + lag) {
-                stalls[0] = horizontalDistance(last[0], now) < STALL_EPSILON ? stalls[0] + 1 : 0;
-                if (stalls[0] >= STALL_LIMIT) {
-                    wallBump(now, direction);
-                    return false;
-                }
-            }
-            last[0] = now;
-
-            owner.setVelocity(direction.clone().multiply(CHARGE_SPEED).setY(CHARGE_SINK));
-            owner.setFallDistance(0);
-            chargeTrail(now, direction);
-
-            Location body = now.clone().add(0, owner.getHeight() * 0.5, 0).add(direction.clone().multiply(0.4));
+            // Its client has already run every step sent: the berserker bowls what it meets there.
+            Location reached = reached(owner, now);
+            Location body = reached.clone().add(0, owner.getHeight() * 0.5, 0).add(direction.clone().multiply(0.4));
             for (LivingEntity enemy : ctx().enemiesNear(owner, body, CHARGE_HIT_RADIUS)) {
                 if (struck.add(enemy.getUniqueId())) {
-                    bowl(enemy, now, direction);
+                    bowl(enemy, reached, direction);
                 }
             }
+            if (blocked) {
+                wall = true;
+                return stopAt(reached);
+            }
+            if (sent >= distance - 0.2) {
+                return stopAt(reached);
+            }
+            if (moved || tick >= CHARGE_GRACE_TICKS + lag) {
+                stalls = horizontalDistance(last, now) < STALL_EPSILON ? stalls + 1 : 0;
+                if (stalls >= STALL_LIMIT) {
+                    // Stopped by something the path check cannot see: the server has seen it stand still there.
+                    wall = true;
+                    return stopAt(now);
+                }
+            }
+            last = now;
+            // Never into the void (or a lava pit): the charge pulls up at the edge, looking ahead of where the steps
+            // already sent are carrying the berserker (the server sees it behind that).
+            Location ahead = start.clone().add(direction.clone().multiply(sent + VOID_LOOKAHEAD));
+            ahead.setY(now.getY());
+            if (!Spots.hasGroundBelow(start.getWorld(), ahead)) {
+                edge = true;
+                return stopAt(reached);
+            }
+            // The last step is only as long as what is left, so the charge ends exactly at its end.
+            double step = Math.min(CHARGE_SPEED, distance - sent);
+            sent += step;
+            owner.setVelocity(direction.clone().multiply(step).setY(CHARGE_SINK));
+            owner.setFallDistance(0);
+            chargeTrail(now, direction);
             return true;
-        }, () -> {
+        }
+
+        /**
+         * Where the berserker's client is: the start plus the steps sent, short of the first block in the path (the
+         * client stops flush against a wall while the server still sees it run up to it). Below
+         * {@link #STEP_HEIGHT} the client steps up, so only blocks above it count.
+         */
+        private Location reached(Player owner, Location now) {
+            double width = owner.getWidth();
+            double height = Math.max(0.1, owner.getHeight() - STEP_HEIGHT);
+            while (!blocked && clear < sent - 1.0E-9) {
+                double next = Math.min(sent, clear + PATH_STEP);
+                Location feet = start.clone().add(direction.clone().multiply(next));
+                feet.setY(now.getY() + STEP_HEIGHT);
+                if (Spots.isFree(start.getWorld(), feet, width, height)) {
+                    clear = next;
+                } else {
+                    blocked = true;
+                }
+            }
+            Location reached = start.clone().add(direction.clone().multiply(Math.min(sent, clear)));
+            reached.setY(now.getY());
+            return reached;
+        }
+
+        /** Ends the charge with the berserker standing {@code at}. */
+        private boolean stopAt(Location at) {
+            stop = at.clone();
+            return false;
+        }
+
+        void end() {
+            if (ended) {
+                return;
+            }
+            ended = true;
             charging = false;
-            owner.setVelocity(direction.clone().multiply(0.25).setY(CHARGE_SINK));
-            chargeEnd(owner.getLocation());
+            Player owner = player();
+            Location now = owner.getLocation();
+            Location at = stop;
+            if (at == null) {
+                // Out of time, or carried off to another world.
+                at = now.getWorld().equals(start.getWorld()) ? reached(owner, now) : now;
+            }
+            owner.setVelocity(direction.clone().multiply(bordered || edge || wall ? 0 : CHARGE_GLIDE)
+                    .setY(CHARGE_SINK));
+            if (wall) {
+                wallBump(at, direction);
+            }
+            chargeEnd(at);
             if (!struck.isEmpty()) {
                 owner.sendActionBar(Text.mm("<#E0303A>돌진!</#E0303A> <gray>" + struck.size() + "명 적중</gray>"));
             }
-        });
-        return ActivationResult.success();
+        }
     }
 
     /** Ticks the server sees the owner's movement late: one round trip, capped (ping can read 0 after joining). */
@@ -435,10 +561,11 @@ public final class BerserkerAbility extends Ability {
         Fx.sound(front, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 0.5f, 0.6f + Fx.jitter(0.05f));
     }
 
-    /** Afterglow where the charge ended: a dark ring of settling dust. */
+    /** Where the charge ended: the berserker skids to a halt in a dark ring of settling dust. */
     private void chargeEnd(Location at) {
         Vfx.ring(ctx(), at.clone().add(0, 0.1, 0), 0.6, 10, ThreadLocalRandom.current().nextDouble(TAU),
                 Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.9f), false);
+        Fx.sound(at, Sound.ENTITY_HOGLIN_STEP, 0.8f, 0.8f + Fx.jitter(0.08f));
     }
 
     // ------------------------------------------------------------------ ultimate: frenzy

@@ -190,6 +190,156 @@ class MeleeAbilitiesTest {
         }
     }
 
+    /**
+     * The charge at 0, 150 and 250 ms (the server hears where the charging berserker is none, three and five ticks
+     * late). Measured on that lagging position, the charge kept sending its velocity until the server saw the
+     * berserker at the end, so its client ran on about a block further for every tick of the round trip (here into
+     * an enemy standing past the end of the charge, untouched); the enemy in the path was bowled only once the server
+     * saw the berserker reach it, long after the client had run through it; and the charge ended where the server last
+     * heard of the berserker, blocks behind it.
+     */
+    @Test
+    void berserkerChargeStopsHitsAndEndsWhereALaggingBerserkerReallyIs() {
+        double stop = Double.NaN;
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = Scenario.ffa("berserker")) {
+                String run = ping + " ms";
+                s.place(s.enemy, 0.5, 5.5, 180); // in the path
+                s.place(s.enemy2, 0.5, 11.5, 180); // three blocks past the end of the charge
+                s.owner.setPing(ping);
+                Location start = s.owner.getLocation();
+                s.world.physics().setEnabled(false);
+                RealClient client = new RealClient(s, s.owner, ping / 50);
+                s.assertSucceeded(s.active(), "돌진");
+                double bowledFrom = Double.NaN;
+                Location skid = null;
+                Location skidClient = null;
+                for (int i = 0; i < 30; i++) {
+                    Location before = client.at();
+                    int heard = s.owner.getHeardSounds().size();
+                    client.tick();
+                    if (Double.isNaN(bowledFrom) && !s.hitsBy(s.owner, s.enemy).isEmpty()) {
+                        bowledFrom = before.getZ();
+                    }
+                    if (skid == null) {
+                        skid = soundAt(s.owner, heard, "entity.hoglin.step");
+                        skidClient = before;
+                    }
+                }
+                s.world.physics().setEnabled(true);
+                Location end = client.at();
+                assertEquals(1, s.hitsBy(s.owner, s.enemy).size(), "the enemy in the path is bowled: " + run);
+                assertTrue(bowledFrom < s.enemy.getLocation().getZ() - 0.6,
+                        "as the berserker reaches it, not after running through it: " + run + ", from " + bowledFrom);
+                assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "the enemy past the end is not touched: " + run);
+                assertTrue(end.getZ() < s.enemy2.getLocation().getZ() - 0.6, "nor run into: " + run + ", " + end);
+                double travelled = horizontalDistance(start, end);
+                double length = s.param("charge_distance");
+                assertTrue(travelled > length - 0.3 && travelled < length + 0.8,
+                        "the charge runs its length (and a little glide): " + run + ", " + travelled);
+                if (Double.isNaN(stop)) {
+                    stop = travelled;
+                } else {
+                    assertEquals(stop, travelled, 0.1, "and stops at the same place whatever the ping: " + run);
+                }
+                assertEquals(start.getX(), end.getX(), EPSILON, "straight ahead: " + run);
+                assertNotNull(skid, "the charge ends in a skid: " + run);
+                assertEquals(skidClient.getZ(), skid.getZ(), 0.3,
+                        "where the berserker stands when it ends: " + run + ", " + skidClient);
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.ticks(20);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * Charging into a wall at 0, 150 and 250 ms: the berserker's client stops at the wall while the steps sent run on
+     * past it (the server sees it stand still only a round trip later). The charge stops at the wall, the bump goes
+     * off there, and an enemy behind the wall is never bowled through it.
+     */
+    @Test
+    void berserkerChargeNeverBowlsThroughAWallWhateverThePing() {
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = Scenario.ffa("berserker")) {
+                String run = ping + " ms";
+                s.place(s.enemy, 0.5, 5.5, 180); // behind the wall
+                s.place(s.enemy2, -8.5, 0.5, 0);
+                s.world.wallAlongX(-3, 3, 3, 3, Material.STONE);
+                s.owner.setPing(ping);
+                int heard = s.owner.getHeardSounds().size();
+                s.world.physics().setEnabled(false);
+                RealClient client = new RealClient(s, s.owner, ping / 50);
+                s.assertSucceeded(s.active(), "돌진");
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                }
+                s.world.physics().setEnabled(true);
+                assertTrue(client.at().getZ() > 2.5 && client.at().getZ() < 2.8,
+                        "stopped at the wall: " + run + ", " + client.at());
+                assertEquals(0, s.damageTaken(s.enemy), EPSILON, "nobody is bowled through the wall: " + run);
+                Location bump = soundAt(s.owner, heard, "item.mace.smash_ground");
+                assertNotNull(bump, "the charge bumps into the wall: " + run);
+                assertEquals(3.3, bump.getZ(), 0.3, "right at the wall: " + run);
+                s.world.wallAlongX(-3, 3, 3, 3, Material.AIR);
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.ticks(20);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * The charge never runs into the void or a lava pit, whatever the ping: it pulls up at the edge, looking ahead of
+     * where the steps already sent carry the berserker. It used to run its whole length straight into the pit.
+     */
+    @Test
+    void berserkerChargePullsUpAtTheEdgeOfALavaPitWhateverThePing() {
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = Scenario.ffa("berserker")) {
+                String run = ping + " ms";
+                s.place(s.enemy, 10.5, 10.5, 0);
+                s.place(s.enemy2, -10.5, 10.5, 0);
+                lavaPit(s, 6, Material.LAVA); // the pit starts 5.5 blocks ahead of the berserker (at z = 0.5)
+                s.owner.setPing(ping);
+                s.world.physics().setEnabled(false);
+                RealClient client = new RealClient(s, s.owner, ping / 50);
+                s.assertSucceeded(s.active(), "돌진");
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                }
+                s.world.physics().setEnabled(true);
+                assertTrue(client.at().getZ() + s.owner.getWidth() / 2 < 6,
+                        "the berserker stops before the pit: " + run + ", " + client.at());
+                assertTrue(client.at().getZ() > 3.5, "but still charges up to it: " + run + ", " + client.at());
+
+                s.place(s.owner, 0.5, 4.5, 0); // right at the edge, facing the pit
+                s.readyActive();
+                ActivationResult result = s.active();
+                assertFalse(result.succeeded(), "no charge straight into the pit: " + run);
+                assertTrue(String.valueOf(result.reason()).contains("낭떠러지"), "and it says why: " + result.reason());
+                lavaPit(s, 6, Material.STONE);
+                s.place(s.owner, 0.5, 0.5, 0);
+                s.ticks(20);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                s.finishClean();
+            }
+        }
+    }
+
+    /** Where {@code listener} heard the first sound named like {@code key} since {@code from}, null if none. */
+    private static @Nullable Location soundAt(TestPlayer listener, int from, String key) {
+        var heard = listener.getHeardSounds();
+        for (int i = from; i < heard.size(); i++) {
+            if (heard.get(i).getSound().contains(key) && heard.get(i).getLocation() != null) {
+                return heard.get(i).getLocation();
+            }
+        }
+        return null;
+    }
+
     @Test
     void berserkerFrenzyGrantsStrengthSpeedAndLifesteal() {
         try (Scenario s = Scenario.ffa("berserker")) {
@@ -617,9 +767,9 @@ class MeleeAbilitiesTest {
     /**
      * A player's real client against what the server knows of it, for the real-client bugs a plain world simulation
      * hides. A real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server
-     * last sent it): the client keeps its own velocity (gravity, drag, ground friction) until the server sends a new
-     * one, and the server sees the client's position {@code lag} ticks late. World physics must be off: this moves the
-     * player.
+     * last sent it): the client keeps its own velocity (gravity, drag, ground friction; walls stop it flush against
+     * them) until the server sends a new one, and the server sees the client's position {@code lag} ticks late. World
+     * physics must be off: this moves the player.
      */
     private static final class RealClient {
         /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
@@ -660,10 +810,21 @@ class MeleeAbilitiesTest {
                 velocity.copy(now);
                 mark(now);
             }
-            at.add(velocity);
+            at.setY(at.getY() + velocity.getY());
             boolean grounded = at.getY() <= FlatWorld.SURFACE;
             if (grounded) {
                 at.setY(FlatWorld.SURFACE);
+            }
+            // One horizontal axis at a time, like the client: a wall stops the body flush against it.
+            double dx = sweep(velocity.getX(), true);
+            at.setX(at.getX() + dx);
+            if (dx != velocity.getX()) {
+                velocity.setX(0);
+            }
+            double dz = sweep(velocity.getZ(), false);
+            at.setZ(at.getZ() + dz);
+            if (dz != velocity.getZ()) {
+                velocity.setZ(0);
             }
             double vy = (velocity.getY() - 0.08) * 0.98;
             double friction = grounded ? 0.546 : 0.91;
@@ -681,6 +842,29 @@ class MeleeAbilitiesTest {
         private void mark(Vector sent) {
             marked = sent.clone().setX(sent.getX() + MARK);
             player.setVelocity(marked);
+        }
+
+        /** How far the body gets along x (or z) towards {@code delta} before a block stops it. */
+        private double sweep(double delta, boolean alongX) {
+            if (delta == 0 || fits(delta, alongX)) {
+                return delta;
+            }
+            double free = 0;
+            double blocked = Math.abs(delta);
+            for (int i = 0; i < 30; i++) {
+                double mid = (free + blocked) / 2;
+                if (fits(Math.copySign(mid, delta), alongX)) {
+                    free = mid;
+                } else {
+                    blocked = mid;
+                }
+            }
+            return Math.copySign(free, delta);
+        }
+
+        private boolean fits(double delta, boolean alongX) {
+            Location next = at.clone().add(alongX ? delta : 0, 0, alongX ? 0 : delta);
+            return Spots.isFree(s.world, next, player.getWidth(), player.getHeight());
         }
     }
 
