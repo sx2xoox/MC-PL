@@ -5,6 +5,7 @@ import io.github.sx2xoox.mcpl.core.arena.TempBlockService;
 import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -26,7 +27,7 @@ public class MCPLPlugin extends JavaPlugin {
 
     /** Registers the built-in mini-games. Add new modes here. */
     private void registerGames(GameManager games) {
-        // e.g. games.register(new SuperpowerGame(hub));
+        games.register(new SuperpowerGame(hub));
     }
 
     @Override

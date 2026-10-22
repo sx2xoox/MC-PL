@@ -20,9 +20,12 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 src/main/java/io/github/sx2xoox/mcpl/
   MCPLPlugin.java              entry point, wires core + games
   core/                        game hub shared by all modes (sessions, rotation, snapshots, arena, UI, commands)
-  game/superpower/             초능력전쟁
+  game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
     abilities/                 one class per ability + BuiltinAbilities registration
+    config/                    abilities.yml (enabled flags + params, generated from AbilityInfo)
+    runtime/                   the match: phases, AbilityContext impl, listener, assignment, gauge, cooldown, HUD
+    ui/ menu/ command/         ability item/texts/reveal, CHOICE menu, /게임 능력 commands
   util/                        small shared helpers (Text = MiniMessage)
 docs/                          game design docs (Korean), the source of truth for game rules
 ```

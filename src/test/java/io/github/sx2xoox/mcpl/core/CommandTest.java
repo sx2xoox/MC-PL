@@ -45,8 +45,9 @@ class CommandTest {
         assertTrue(server.dispatchCommand(admin, "mcpl settings team 0"));
         assertEquals(0, hub.config().teamSize());
 
+        hub.config().setRotationGames(java.util.List.of("unregistered"));
         server.dispatchCommand(admin, "게임 순환 켜기");
-        assertFalse(hub.config().rotationEnabled(), "refused: the default rotation list has no registered game");
+        assertFalse(hub.config().rotationEnabled(), "refused: the rotation list has no registered game");
         hub.config().setRotationGames(java.util.List.of("fake"));
         server.dispatchCommand(admin, "게임 순환 켜기");
         assertTrue(hub.config().rotationEnabled());

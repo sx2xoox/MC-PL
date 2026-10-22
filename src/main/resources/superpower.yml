@@ -1,0 +1,172 @@
+# ─────────────────────────────────────────────────────────────
+#  초능력전쟁 메시지 (MiniMessage 형식: https://docs.advntr.dev/minimessage/format)
+#  prefix 를 지정하지 않으면 messages.yml 의 prefix 를 그대로 씁니다.
+#  <ability>, <player>, <seconds> 같은 꺾쇠 이름은 자동으로 채워집니다.
+#  이 파일에 없는 키는 플러그인에 내장된 기본 문구를 사용합니다. 수정 후 /게임 리로드
+# ─────────────────────────────────────────────────────────────
+
+# ── 게임 소개 ────────────────────────────────────────────────
+game:
+  name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient>"
+  description:
+    - "<count>가지 초능력 중 하나를 받아 최후의 1인(팀)을 가립니다."
+    - "우클릭 <white>액티브</white> · F <white>궁극기</white> (게이지 = 경험치 바) · 자기장이 점점 좁혀집니다."
+
+# ── 능력 설명 (아이템 설명, 메뉴, 정보) ─────────────────────────
+text:
+  line: "<gray><line>"
+  difficulty: "<gray>난이도 <stars>"
+  passive: "<#ffd166>◆ 패시브</#ffd166> <white><name>"
+  active: "<#7bd88f>◆ 액티브</#7bd88f> <white><name></white> <dark_gray>· 쿨타임 <cooldown>초"
+  ultimate: "<#c792ea>◆ 궁극기</#c792ea> <white><name>"
+  control-active: "<dark_gray>▶ 능력 아이템을 들고 <white>우클릭"
+  control-ultimate: "<dark_gray>▶ <white>F</white> (손 바꾸기) · 게이지 100%일 때"
+
+# ── 능력 공개 ────────────────────────────────────────────────
+reveal:
+  spin-title: "<ability>"
+  spin-subtitle: "<gray>능력 추첨 중…"
+  final-title: "<ability>"
+  final-subtitle: "<gray>액티브 <active> <dark_gray>·</dark_gray> 궁극기 <ultimate>"
+
+summary:
+  header: "<gray>당신의 능력은 <ability> <stars> <gray>입니다!"
+  passive: "  <#ffd166>패시브</#ffd166> <skill>"
+  active: "  <#7bd88f>액티브</#7bd88f> <skill> <dark_gray>· 쿨타임 <cooldown>초 · <gray>우클릭"
+  ultimate: "  <#c792ea>궁극기</#c792ea> <skill> <dark_gray>· <gray>F</gray> (게이지 100%)"
+  hint: "  <dark_gray>스킬 이름에 마우스를 올리면 설명이 보입니다."
+  spectator-header: "<gray>이번 경기의 능력 <dark_gray>(관전자에게만 보입니다)"
+  spectator-line: "  <dark_gray>▪</dark_gray> <player> <dark_gray>→</dark_gray> <ability>"
+
+choice:
+  title: "<dark_gray>능력을 선택하세요"
+  pick-hint: "<yellow>▶ 클릭하여 선택"
+  started: "<gray>후보 3개 중 능력을 고르세요! <white><seconds>초</white> 안에 고르지 않거나 창을 닫으면 무작위로 정해집니다."
+  picked: "<gray>능력을 선택했습니다: <ability>"
+  auto-picked: "<gray>능력이 무작위로 정해졌습니다: <ability>"
+
+# ── 진행 ─────────────────────────────────────────────────────
+match:
+  no-abilities: "사용할 수 있는 능력이 없습니다 (abilities.yml)"
+
+prep:
+  started: "<green>준비 시간 <white><seconds>초</white>!</green> <gray>무적이며 능력은 전투가 시작되면 쓸 수 있습니다. 능력 아이템(9번 칸)에서 설명을 확인하세요."
+  reroll-hint: "<gray>능력이 마음에 들지 않으면 능력 아이템을 들고 <white>웅크리고 우클릭</white>(또는 <white>/게임 능력 리롤</white>)으로 다시 뽑을 수 있습니다. <dark_gray>(<count>회)"
+  countdown-title: "<green><bold><seconds>"
+  countdown-subtitle: "<gray>전투 시작까지"
+
+fight:
+  title: "<gradient:#ff5e62:#ffb347><bold>전투 시작!</bold></gradient>"
+  subtitle: "<gray>우클릭 <white>액티브</white> <dark_gray>·</dark_gray> F <white>궁극기"
+  started: "<red><bold>전투 시작!</bold></red> <gray>최후의 1인이 승리합니다. 자기장이 곧 좁혀집니다."
+  ability-error: "<red>능력을 불러오지 못했습니다. 이번 경기는 능력 없이 진행됩니다. <gray>(관리자: 콘솔 로그 확인)"
+
+border:
+  warning: "<aqua>자기장</aqua> <gray>이 <white><seconds>초</white> 후 줄어들기 시작합니다!"
+  shrinking: "<red><bold>자기장이 줄어듭니다!</bold></red> <gray><white><seconds>초</white>에 걸쳐 한 변 <white><size></white>블록까지 좁혀집니다."
+  title: ""
+  subtitle: "<red>⚠ 자기장이 줄어들기 시작합니다"
+  outside: "<red><bold>⚠ 자기장 밖입니다!</bold></red> <gray>안쪽으로 이동하세요"
+
+result:
+  time-limit: "제한 시간 종료 · 킬 수 → 남은 체력 순으로 결정"
+
+# ── 입력 피드백 (액션바) ─────────────────────────────────────
+input:
+  not-yet: "<gray>아직 능력을 쓸 수 없습니다"
+  prep: "<gray>준비 시간입니다 · <white><seconds>초</white> 후 사용할 수 있습니다"
+  prep-reroll: "<gray>준비 시간 <white><seconds>초</white> <dark_gray>·</dark_gray> <yellow>웅크리고 우클릭</yellow><gray>으로 리롤"
+  prep-ultimate: "<gray>궁극기는 전투가 시작되면 쓸 수 있습니다 <dark_gray>(<seconds>초)"
+  silenced: "<dark_purple><bold>침묵!</bold></dark_purple> <gray><white><seconds>초</white> 동안 능력을 쓸 수 없습니다"
+  cooldown: "<gray>쿨타임 <yellow><seconds>초</yellow> 남음"
+  gauge: "<gray>궁극기 게이지 <aqua><percent>%</aqua> <dark_gray>(100%에서 사용)"
+  failed: "<gray>지금은 사용할 수 없습니다"
+  reason: "<gray><reason>"
+  error: "<red>능력 사용 중 오류가 발생했습니다"
+
+ultimate:
+  announce: "<player><gray>의 궁극기</gray> <ultimate> <dark_gray>(<ability><dark_gray>)"
+  title: "<ultimate>"
+  subtitle: "<gray>궁극기 발동! <dark_gray>· <ability>"
+  used-quiet: "<ultimate> <gray>발동!"
+  ready-title: "<gold><bold>궁극기 준비 완료!</bold></gold> <yellow>[F]"
+  ready-subtitle: "<gray>F 키로 <ultimate> <gray>발동"
+
+silence:
+  applied: "<dark_purple><bold>침묵!</bold></dark_purple> <gray><white><seconds>초</white> 동안 능력을 쓸 수 없습니다"
+  ended: "<gray>침묵이 풀렸습니다"
+
+reroll:
+  done: "<gray>능력을 다시 뽑습니다! <dark_gray>(남은 리롤 <count>회)"
+  not-participant: "<red>경기에 참가 중일 때만 리롤할 수 있습니다."
+  wrong-mode: "<red>무작위(RANDOM) 배정 방식에서만 리롤할 수 있습니다."
+  wrong-phase: "<red>리롤은 준비 시간에만 할 수 있습니다."
+  forced: "<red>관리자가 지정한 능력은 리롤할 수 없습니다."
+  none-left: "<red>리롤 횟수를 모두 썼습니다."
+  no-options: "<red>바꿀 수 있는 다른 능력이 없습니다."
+  no-match: "<red>진행 중인 초능력전쟁 경기가 없습니다."
+
+# ── 보스바 ───────────────────────────────────────────────────
+bossbar:
+  intro: "<light_purple>능력 추첨 준비 중…"
+  select: "<light_purple>능력 선택</light_purple> <dark_gray>·</dark_gray> <white><seconds>초</white> <gray>남음"
+  reveal: "<light_purple>능력 공개 중…"
+  prep: "<green>준비 시간</green> <dark_gray>·</dark_gray> <white><seconds>초</white> <dark_gray>·</dark_gray> <gray>무적"
+  border-waiting: "<aqua>자기장 축소까지</aqua> <white><time>"
+  border-shrinking: "<red>자기장 축소 중</red> <white><time>"
+  final: "<gold>최종 자기장</gold> <dark_gray>·</dark_gray> <gray>남은 시간 <white><time>"
+  final-unlimited: "<gold>최종 자기장"
+
+# ── 사이드바 ─────────────────────────────────────────────────
+hud:
+  title: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient>"
+  alive: "<gray>생존자 <white><count>명"
+  alive-teams: "<gray>생존 팀 <white><teams></white> <dark_gray>(<count>명)"
+  kills: "<gray>내 킬 <red><kills>"
+  ability: "<gray>능력 <ability>"
+  ability-hidden: "<gray>능력 <dark_gray>공개 대기 중…"
+  phase-reveal: "<gray>능력 공개 중…"
+  prep: "<gray>준비 시간 <green><seconds>초"
+  rerolls: "<gray>리롤 <yellow><count>회 <dark_gray>(웅크리고 우클릭)"
+  active-ready: "<gray>액티브 <green>준비 완료"
+  active-cooldown: "<gray>액티브 <yellow><seconds>초"
+  silenced: "<gray>액티브 <dark_purple>침묵 <seconds>초"
+  ultimate: "<gray>궁극기 <aqua><percent>%"
+  ultimate-ready: "<gray>궁극기 <gold><bold>준비 완료 [F]"
+  team: "<gray>팀 <team>"
+  border-waiting: "<gray>자기장 <white><time></white> <gray>후 축소"
+  border-shrinking: "<gray>자기장 <red>축소 중 <white><time>"
+  border-final: "<gray>자기장 <gold>최종 <dark_gray>(<size>블록)"
+  time: "<gray>경과 <white><time>"
+  time-limited: "<gray>경과 <white><time></white> <dark_gray>/ <limit>"
+  spectating: "<dark_gray>관전 중"
+
+# ── 명령어 (/게임 능력) ──────────────────────────────────────
+command:
+  help:
+    - "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>능력 명령어 <dark_gray>· 명령어를 클릭하면 입력됩니다"
+    - " <click:suggest_command:'/게임 능력 목록'><hover:show_text:'<gray>클릭하여 입력'><#a78bfa>/게임 능력 목록</#a78bfa></hover></click> <dark_gray>-</dark_gray> <gray>모든 능력 (마우스를 올리면 설명)"
+    - " <click:suggest_command:'/게임 능력 정보 '><hover:show_text:'<gray>클릭하여 입력'><#a78bfa>/게임 능력 정보 \\<능력></#a78bfa></hover></click> <dark_gray>-</dark_gray> <gray>능력 설명"
+    - " <click:suggest_command:'/게임 능력 리롤'><hover:show_text:'<gray>클릭하여 입력'><#a78bfa>/게임 능력 리롤</#a78bfa></hover></click> <dark_gray>-</dark_gray> <gray>준비 시간에 능력 다시 뽑기"
+  help-admin:
+    - " <click:suggest_command:'/게임 능력 지정 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 능력 지정 \\<플레이어> \\<능력></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>다음/현재 경기 능력 지정"
+    - " <click:suggest_command:'/게임 능력 선택방식 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 능력 선택방식 \\<RANDOM|CHOICE></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>능력 배정 방식"
+  usage-info: "<gray>사용법: <white>/게임 능력 정보 \\<능력 이름 또는 id></white> <dark_gray>(예: 화염술사, pyro)"
+  usage-assign: "<gray>사용법: <white>/게임 능력 지정 \\<플레이어> \\<능력></white> <dark_gray>(예: /게임 능력 지정 Steve 화염술사)"
+  list-header: "<gradient:#a78bfa:#f472b6><bold>초능력 목록</bold></gradient> <gray><count>종 <dark_gray>(사용 중 <enabled>종)"
+  list-entry: " <dark_gray>▪</dark_gray> <ability> <stars> <dark_gray><id></dark_gray> <state>"
+  list-footer: "<dark_gray>이름에 마우스를 올리면 설명이, 클릭하면 자세한 정보가 나옵니다."
+  state-on: ""
+  state-off: "<red>[꺼짐]"
+  unknown-ability: "<red>'<white><input></white>'(이)라는 능력을 찾을 수 없습니다. <gray><white>/게임 능력 목록</white>으로 확인해 주세요."
+  info-header: "<ability> <stars> <dark_gray>(<id>)</dark_gray> <state>"
+  info-line: " <line>"
+  player-not-found: "<red>접속 중인 플레이어 <white><player></white>을(를) 찾을 수 없습니다."
+  assign-disabled: "<red><ability><red>은(는) abilities.yml 에서 꺼져 있어 지정할 수 없습니다."
+  assign-applied: "<green><white><player></white>님의 능력을 <ability><green>(으)로 지정했습니다."
+  assign-next: "<green><white><player></white>님은 다음 경기에서 <ability><green> 능력을 받습니다."
+  assign-too-late: "<yellow>이미 전투가 시작되었습니다. <white><player></white>님은 다음 경기에서 <ability><yellow> 능력을 받습니다."
+  mode-current: "<gray>능력 배정 방식: <white><mode></white> <dark_gray>(<name>)</dark_gray> <gray>· 바꾸기: <white>/게임 능력 선택방식 \\<RANDOM|CHOICE>"
+  mode-set: "<green>능력 배정 방식을 <white><mode></white> <dark_gray>(<name>)</dark_gray><green>(으)로 바꿨습니다."
+  applies-next-match: "<gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
+  player-only: "<red>플레이어만 사용할 수 있는 명령어입니다."
