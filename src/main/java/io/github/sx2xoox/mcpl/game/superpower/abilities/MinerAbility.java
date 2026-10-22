@@ -26,6 +26,7 @@ import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
@@ -55,10 +56,13 @@ import org.jspecify.annotations.Nullable;
  * heavy with mining fatigue) and digs out a bit of ore that quickens the miner's own pick; the active brings the
  * ceiling down on an aimed spot: rocks hang overhead for a moment, crash down one after another and leave rubble that
  * blocks the way; the ultimate lays a rail track along the ground and sends a runaway mine cart down it, which scoops
- * up every enemy on the rails and dumps them at the end of the line.
+ * up every enemy standing on the rails, carries them to the end of the line and tips over there: the spilled ore
+ * buries everyone around the buffer stop (damage and a slow) and the riders tumble out onto the ground beyond.
  *
- * <p>Unlike the 창술사's charge (the lancer itself rushes and skewers), the miner stays put: the track is laid first,
- * so it can be seen and stepped off, it follows the ground, and it is the cart that carries the enemies away.
+ * <p>Unlike the 창술사's charge (the lancer itself rushes, skewers and flings far), the miner stays put: the track is
+ * laid first, so it can be seen and stepped off, it follows the ground, the cart carries its riders to a fixed end,
+ * and the crash is an area of spilled ore that slows, not a long throw (riders only roll a few blocks, onto safe
+ * ground).
  *
  * <p>Look: stone grey, ore colors and lantern orange. Hits throw stone crumbs and a glint of ore; the dug ores (coal,
  * gold, diamond) circle the miner's waist while its pick is quickened. The rockfall opens with a crack in the air,
@@ -84,8 +88,10 @@ public final class MinerAbility extends Ability {
                     10)
             .ultimate("광산 수레",
                     "앞쪽 땅을 따라 {cart_length}블록 레일을 깔고 {cart_delay}초 뒤 광석을 가득 실은 수레를 밀어 보냅니다. "
-                            + "점점 빨라지는 수레는 레일 위의 적을 쓸어 담아 {cart_damage} 피해를 주고 싣고 달리다가, "
-                            + "레일 끝에서 뒤집히며 실린 적에게 {crash_damage} 피해를 주고 앞으로 내동댕이칩니다.")
+                            + "점점 빨라지는 수레는 레일 위에 선 적을 쓸어 담아 {cart_damage} 피해를 주고 싣고 달립니다. "
+                            + "레일 끝에서 수레가 뒤집히면 쏟아진 광석이 반경 {crash_radius}블록의 적(실린 적 포함)에게 "
+                            + "{crash_damage} 피해를 주고 {crash_slow_duration}초간 이동 속도를 {crash_slow}% 늦추며, 실린 "
+                            + "적은 레일 끝 너머 안전한 땅으로 최대 {toss_distance}블록 굴러떨어집니다.")
             .param("fatigue_duration", 3)
             .param("fatigue_level", 2)
             .param("vein_duration", 5)
@@ -102,8 +108,12 @@ public final class MinerAbility extends Ability {
             .param("rubble_duration", 4)
             .param("cart_length", 16)
             .param("cart_delay", 0.6)
-            .param("cart_damage", 4)
+            .param("cart_damage", 3)
             .param("crash_damage", 4)
+            .param("crash_radius", 2.5)
+            .param("crash_slow", 40)
+            .param("crash_slow_duration", 2)
+            .param("toss_distance", 3)
             .build();
 
     private static final String COLOR_TAG = "#E8A33D";
@@ -145,6 +155,10 @@ public final class MinerAbility extends Ability {
     private static final long ROCK_GAP = 3;
     private static final int ROCK_FALL_TICKS = 5;
     private static final double MIN_SPACING = 1.1;
+    /** How high above the aimed spot the scattered landing spots are looked for (lowered under a ceiling). */
+    private static final double SCATTER_PROBE = 2.0;
+    /** The lowest a rock hangs, under a low ceiling. */
+    private static final double MIN_HANG = 0.6;
 
     // ultimate: runaway cart
     private static final double TRACK_STEP = 0.5;
@@ -153,6 +167,8 @@ public final class MinerAbility extends Ability {
      * so a body-wide check would refuse a point right before a one-block step (rubble, a stair) it can climb.
      */
     private static final double RAIL_GAUGE = 0.3;
+    /** The height the track needs free above each point: the cart with its heap of ore, under any low ceiling. */
+    private static final double CART_CLEARANCE = 1.3;
     private static final double TRACK_START = 1.2;
     private static final double MAX_STEP_UP = 1.05;
     private static final double MAX_STEP_DOWN = 2.5;
@@ -160,13 +176,25 @@ public final class MinerAbility extends Ability {
     private static final double CART_START_SPEED = 0.45;
     private static final double CART_ACCEL = 0.06;
     private static final double CART_MAX_SPEED = 1.2;
-    private static final double SCOOP_RADIUS = 1.25;
+    /** Half the width of the rails: an enemy is scooped only when its body overlaps the 1-block lane. */
+    private static final double LANE_HALF_WIDTH = 0.5;
+    /** The cart's half length along the track, and how far in front of it an enemy is already caught. */
+    private static final double CART_HALF_LENGTH = 0.5;
+    private static final double SCOOP_AHEAD = 0.1;
     private static final double SCOOP_HEIGHT = 1.6;
     private static final double RIDE_HEIGHT = 0.7;
     private static final double RIDE_PULL = 0.55;
     private static final double RIDE_LEASH = 3.0;
-    private static final double FLING_FORWARD = 1.3;
-    private static final double FLING_UP = 0.65;
+    /**
+     * The riders' upward speed when they tumble out: they rise about a block, so with the seat height their fall
+     * stays well under the three blocks that would hurt (they never take fall damage the miner is not credited for).
+     */
+    private static final double TOSS_UP = 0.4;
+    private static final double TOSS_STEP = 0.5;
+    private static final double TOSS_MAX_DROP = 1.0;
+    /** Vanilla's horizontal speed kept per tick by a body in the air. */
+    private static final double AIR_DRAG = 0.91;
+    private static final double SPILL_HEIGHT = 2.0;
     private static final long MAX_LAG_TICKS = 6;
     private static final double MILLIS_PER_TICK = 50.0;
     private static final long RAIL_LINGER_TICKS = 16;
@@ -367,8 +395,20 @@ public final class MinerAbility extends Ability {
         return probe;
     }
 
-    /** One rock: where it lands and its display hanging overhead. */
-    private record Rock(Location landing, @Nullable BlockDisplay display, Material type, float size) {
+    /** One rock: where it lands, how high above it hangs (under any ceiling) and its display. */
+    private record Rock(Location landing, double hang, @Nullable BlockDisplay display, Material type, float size) {
+
+        Location hangSpot() {
+            return landing.clone().add(0, hang, 0);
+        }
+    }
+
+    /** The free height above {@code floor}, up to {@code max}: how far it is to the first block overhead. */
+    private static double headroom(Location floor, double max) {
+        Location from = floor.clone().add(0, 0.1, 0);
+        RayTraceResult roof = from.getWorld().rayTraceBlocks(from, new Vector(0, 1, 0), max,
+                FluidCollisionMode.NEVER, true);
+        return roof == null ? max : Math.max(0, roof.getHitPosition().getY() - floor.getY());
     }
 
     /**
@@ -384,6 +424,8 @@ public final class MinerAbility extends Ability {
         private final double radius;
         private final List<Rock> rocks = new ArrayList<>();
         private final Map<UUID, Integer> hits = new HashMap<>();
+        /** Each enemy's slow from this rockfall: a second rock renews it instead of stacking a second one. */
+        private final Map<UUID, NamespacedKey> slows = new HashMap<>();
         private int landed;
         private int struck;
 
@@ -400,11 +442,14 @@ public final class MinerAbility extends Ability {
             int count = Math.max(1, params().integer("rock_count"));
             List<Location> spots = new ArrayList<>();
             spots.add(center.clone());
+            // The other spots are found from a little above the aimed one, but never from inside a low ceiling.
+            double lift = Math.max(0.3, Math.min(SCATTER_PROBE, headroom(center, SCATTER_PROBE + 0.5) - 0.3));
             for (int attempt = 0; spots.size() < count && attempt < count * 8; attempt++) {
                 Location candidate = Vfx.scatter(center, radius);
-                candidate.setY(center.getY() + 2.0);
+                candidate.setY(center.getY() + lift);
                 Location floor = ground(candidate);
-                if (floor == null || Math.abs(floor.getY() - center.getY()) > 2.5) {
+                if (floor == null || Math.abs(floor.getY() - center.getY()) > 2.5
+                        || !Spots.isFree(world, floor, 0.5, 1.0) || !ctx().isInsideArena(floor)) {
                     continue;
                 }
                 boolean spaced = true;
@@ -421,19 +466,21 @@ public final class MinerAbility extends Ability {
             for (Location spot : spots) {
                 Material type = ROCKS[random.nextInt(ROCKS.length)];
                 float size = 0.65f + random.nextFloat() * 0.35f;
+                // Under a roof the rock hangs just below it, never inside or above it.
+                double hang = Math.clamp(headroom(spot, HANG_HEIGHT + 1.5) - 1.1, MIN_HANG, HANG_HEIGHT);
                 BlockDisplay display = null;
                 if (reserve(1)) {
-                    Location hang = hangSpot(spot);
+                    Location at = spot.clone().add(0, hang + size / 2, 0);
                     Quaternionf tumble = randomRotation(random);
-                    display = Displays.block(ctx(), owner, hang, type.createBlockData(), cube(0.05f, tumble),
+                    display = Displays.block(ctx(), owner, at, type.createBlockData(), cube(0.05f, tumble),
                             delay + ROCK_GAP * spots.size() + ROCK_FALL_TICKS + 10);
                     display.setTeleportDuration(1);
                     displays.add(display);
                     Displays.animateNextTick(ctx(), owner, display, cube(size, tumble), 6);
                 }
-                rocks.add(new Rock(spot, display, type, size));
+                rocks.add(new Rock(spot, hang, display, type, size));
             }
-            Location crack = center.clone().add(0, HANG_HEIGHT + 0.6, 0);
+            Location crack = crackSpot();
             world.spawnParticle(Particle.BLOCK, crack, Vfx.n(ctx(), 18), radius * 0.4, 0.2, radius * 0.4, 0.05,
                     Material.STONE.createBlockData(), true);
             Fx.sound(center, Sound.BLOCK_DEEPSLATE_HIT, 1.2f, 0.5f);
@@ -443,8 +490,10 @@ public final class MinerAbility extends Ability {
             Loop.repeat(ctx(), owner, 1, 1, runs, this, this::finish);
         }
 
-        private Location hangSpot(Location landing) {
-            return landing.clone().add(0, HANG_HEIGHT, 0);
+        /** Where the ceiling cracks: over the aimed spot, as high as its rock hangs. */
+        private Location crackSpot() {
+            double hang = rocks.isEmpty() ? HANG_HEIGHT : rocks.getFirst().hang();
+            return center.clone().add(0, hang + 0.6, 0);
         }
 
         @Override
@@ -460,7 +509,7 @@ public final class MinerAbility extends Ability {
                     double drop = (t + 1) / (double) ROCK_FALL_TICKS;
                     BlockDisplay display = rock.display();
                     if (display != null && display.isValid()) {
-                        Location at = hangSpot(rock.landing()).subtract(0, HANG_HEIGHT * drop * drop, 0);
+                        Location at = rock.hangSpot().subtract(0, rock.hang() * drop * drop, 0);
                         at.add(0, rock.size() / 2, 0);
                         Displays.moveTo(display, at);
                         Vfx.dot(at.clone().add(0, 0.6, 0), Particle.DUST, STONE_DUST, false);
@@ -477,7 +526,7 @@ public final class MinerAbility extends Ability {
 
         /** Dust and pebbles trickle from the crack, each landing spot darkens and the warning ring closes in. */
         private void telegraph(long tick) {
-            Location crack = center.clone().add(0, HANG_HEIGHT + 0.7, 0);
+            Location crack = crackSpot().add(0, 0.1, 0);
             if (tick % 2 == 0) {
                 world.spawnParticle(Particle.FALLING_DUST, crack, Vfx.n(ctx(), 4), radius * 0.5, 0.1, radius * 0.5, 0,
                         Material.GRAVEL.createBlockData());
@@ -524,8 +573,12 @@ public final class MinerAbility extends Ability {
                 Combat.hit(ctx(), owner, enemy, damage);
                 struck++;
                 if (Combat.isTargetable(ctx(), owner, enemy) && slowTicks > 0 && slow > 0) {
-                    ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow, Operation.MULTIPLY_SCALAR_1,
-                            slowTicks);
+                    NamespacedKey old = slows.remove(enemy.getUniqueId());
+                    if (old != null) {
+                        ctx().removeModifier(enemy, old);
+                    }
+                    slows.put(enemy.getUniqueId(), ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow,
+                            Operation.MULTIPLY_SCALAR_1, slowTicks));
                 }
                 if (!isHidden(owner, enemy)) {
                     Vfx.cloud(ctx(), Fx.body(enemy), Particle.BLOCK_CRUMBLE, 6, 0.25, 0, rock.type().createBlockData(),
@@ -551,7 +604,8 @@ public final class MinerAbility extends Ability {
             }
             Block block = world.getBlockAt(spot.getBlockX(), (int) Math.floor(spot.getY() + 1.0E-3), spot.getBlockZ());
             Block below = block.getRelative(0, -1, 0);
-            if (!below.getType().isSolid() || isOccupied(block)) {
+            if (!below.getType().isSolid() || isOccupied(block)
+                    || !ctx().isInsideArena(block.getLocation().add(0.5, 0, 0.5))) {
                 return false;
             }
             Material type = RUBBLE[ThreadLocalRandom.current().nextInt(RUBBLE.length)];
@@ -607,7 +661,7 @@ public final class MinerAbility extends Ability {
             Location floor = probe.clone();
             Spots.snapToGround(world, floor, MAX_STEP_UP + MAX_STEP_DOWN + 0.1);
             if (floor.getY() >= probe.getY() - 1.0E-6 || previousY - floor.getY() > MAX_STEP_DOWN
-                    || floor.getY() - previousY > MAX_STEP_UP || !Spots.isFree(world, floor, RAIL_GAUGE, 1.0)
+                    || floor.getY() - previousY > MAX_STEP_UP || !Spots.isFree(world, floor, RAIL_GAUGE, CART_CLEARANCE)
                     || !Spots.hasGroundBelow(world, floor) || !ctx().isInsideArena(floor)) {
                 break;
             }
@@ -654,6 +708,7 @@ public final class MinerAbility extends Ability {
         private final List<Location> track;
         private final World world;
         private final Vector forward;
+        private final Vector side;
         private final float yaw;
         private final long delay;
         private final double length;
@@ -663,6 +718,7 @@ public final class MinerAbility extends Ability {
         private @Nullable BlockDisplay buffer;
         private final List<Rider> riders = new ArrayList<>();
         private final Set<UUID> scooped = new HashSet<>();
+        private final Map<UUID, NamespacedKey> slows = new HashMap<>();
         private double travelled;
         private double speed = CART_START_SPEED;
         private long rideTick = -1;
@@ -673,6 +729,7 @@ public final class MinerAbility extends Ability {
             this.track = track;
             this.world = owner.getWorld();
             this.forward = Motion.horizontalFacing(owner.getLocation());
+            this.side = new Vector(-forward.getZ(), 0, forward.getX());
             this.yaw = owner.getLocation().getYaw();
             this.delay = Math.max(6, params().ticks("cart_delay"));
             this.length = (track.size() - 1) * TRACK_STEP;
@@ -848,10 +905,11 @@ public final class MinerAbility extends Ability {
         /** One tick down the line: the cart speeds up, scoops whoever is on the rails and carries the riders. */
         private boolean ride(long tick) {
             speed = Math.min(CART_MAX_SPEED, speed + CART_ACCEL);
+            double before = travelled;
             travelled = Math.min(length, travelled + speed);
             Location at = point(travelled);
             moveCart(at, tick);
-            scoop(at);
+            scoop(at, travelled - before);
             carry(at);
             clatter(at, tick);
             if (travelled >= length - 1.0E-6) {
@@ -874,12 +932,13 @@ public final class MinerAbility extends Ability {
             }
         }
 
-        /** Enemies on the rails right in front of the cart tumble into it. */
-        private void scoop(Location at) {
-            Location front = at.clone().add(forward.clone().multiply(0.4)).add(0, 0.6, 0);
-            for (LivingEntity enemy : ctx().enemiesNear(owner, front, SCOOP_RADIUS)) {
-                if (scooped.contains(enemy.getUniqueId())
-                        || Math.abs(enemy.getLocation().getY() - at.getY()) > SCOOP_HEIGHT) {
+        /**
+         * Enemies on the rails tumble into the cart as it rolls over them: every enemy whose body overlaps the 1-block
+         * lane of the rails anywhere the cart passed this tick. One standing beside the rails is left alone.
+         */
+        private void scoop(Location at, double step) {
+            for (LivingEntity enemy : ctx().enemiesNear(owner, at.clone().add(0, 0.6, 0), step + 2.5)) {
+                if (scooped.contains(enemy.getUniqueId()) || !onLane(enemy, at, step)) {
                     continue;
                 }
                 scooped.add(enemy.getUniqueId());
@@ -896,6 +955,22 @@ public final class MinerAbility extends Ability {
                     riders.add(new Rider(enemy, riders.size()));
                 }
             }
+        }
+
+        /** True when {@code enemy}'s body overlaps the rails' lane over the stretch the cart covered up to {@code at}. */
+        private boolean onLane(LivingEntity enemy, Location at, double step) {
+            Location feet = enemy.getLocation();
+            if (Math.abs(feet.getY() - at.getY()) > SCOOP_HEIGHT) {
+                return false;
+            }
+            double dx = feet.getX() - at.getX();
+            double dz = feet.getZ() - at.getZ();
+            double along = dx * forward.getX() + dz * forward.getZ();
+            double across = Math.abs(dx * side.getX() + dz * side.getZ());
+            double half = enemy.getWidth() / 2;
+            return across <= LANE_HALF_WIDTH + half
+                    && along + half >= -(step + CART_HALF_LENGTH)
+                    && along - half <= CART_HALF_LENGTH + SCOOP_AHEAD;
         }
 
         /** Riders are held on top of the ore heap; one stopped by something (a wall, immunity) falls out. */
@@ -945,35 +1020,59 @@ public final class MinerAbility extends Ability {
                     LANTERN, false);
         }
 
-        /** The buffer stop: the cart tips over, the ore flies and the riders are thrown out ahead. */
+        /**
+         * The buffer stop: the cart tips over and its ore spills. Everyone around the end of the line (the riders
+         * too) is hit and slowed by the ore; the riders tumble out onto safe ground a little beyond.
+         */
         private void crash(Location at) {
             crashed = true;
             double damage = params().num("crash_damage");
+            double radius = Math.max(0, params().num("crash_radius"));
+            long slowTicks = params().ticks("crash_slow_duration");
+            double slow = Math.clamp(params().num("crash_slow") / 100.0, 0.0, 1.0);
+            Location landing = tossSpot();
+            Set<UUID> buried = new HashSet<>();
             int thrown = 0;
             for (Rider rider : riders) {
                 LivingEntity entity = rider.entity;
+                buried.add(entity.getUniqueId());
                 Combat.hit(ctx(), owner, entity, damage);
                 if (!Combat.isTargetable(ctx(), owner, entity)) {
                     continue;
                 }
+                bury(entity, slow, slowTicks);
                 thrown++;
-                Motion.push(entity, forward.clone().multiply(FLING_FORWARD).setY(FLING_UP), MAX_SPEED);
+                toss(rider, landing.clone().subtract(forward.clone().multiply(0.6 * rider.seat)));
                 if (!isHidden(owner, entity)) {
                     Vfx.burst(ctx(), Fx.body(entity), PALETTE, 0.6, Particle.CRIT, true);
                 }
             }
             riders.clear();
-            Location front = at.clone().add(forward.clone().multiply(0.8)).add(0, 0.6, 0);
+            Location spill = at.clone().add(forward.clone().multiply(0.8));
+            for (LivingEntity enemy : ctx().enemiesNear(owner, spill.clone().add(0, 0.5, 0), radius)) {
+                if (buried.contains(enemy.getUniqueId())
+                        || Math.abs(enemy.getLocation().getY() - spill.getY()) > SPILL_HEIGHT) {
+                    continue;
+                }
+                buried.add(enemy.getUniqueId());
+                Combat.hit(ctx(), owner, enemy, damage);
+                if (Combat.isTargetable(ctx(), owner, enemy)) {
+                    bury(enemy, slow, slowTicks);
+                }
+            }
+            Location front = spill.clone().add(0, 0.6, 0);
             Vfx.dot(front, Particle.FLASH, PALETTE.core(), true);
-            world.spawnParticle(Particle.BLOCK, front, Vfx.n(ctx(), 30), 0.6, 0.4, 0.6, 0.2,
+            world.spawnParticle(Particle.BLOCK, front, Vfx.n(ctx(), 24), radius * 0.35, 0.4, radius * 0.35, 0.2,
                     Material.IRON_ORE.createBlockData(), true);
-            world.spawnParticle(Particle.BLOCK, front, Vfx.n(ctx(), 20), 0.6, 0.4, 0.6, 0.2,
+            world.spawnParticle(Particle.BLOCK, front, Vfx.n(ctx(), 16), radius * 0.35, 0.4, radius * 0.35, 0.2,
                     Material.GOLD_ORE.createBlockData(), true);
-            world.spawnParticle(Particle.DUST_PLUME, at, Vfx.n(ctx(), 12), 0.6, 0.1, 0.6, 0.05, null, true);
-            Vfx.shockwave(ctx(), owner, at.clone().add(0, 0.1, 0), 0.5, 2.8, 5, Particle.DUST, STONE_DUST, true);
+            world.spawnParticle(Particle.DUST_PLUME, spill, Vfx.n(ctx(), 12), radius * 0.3, 0.1, radius * 0.3, 0.05,
+                    null, true);
+            Vfx.shockwave(ctx(), owner, spill.clone().add(0, 0.1, 0), 0.5, Math.max(0.6, radius), 5, Particle.DUST,
+                    STONE_DUST, true);
             Fx.sound(at, Sound.BLOCK_ANVIL_LAND, 1.2f, 0.6f);
             Fx.sound(at, Sound.BLOCK_STONE_BREAK, 1.4f, 0.6f);
-            Fx.sound(at, Sound.ENTITY_GENERIC_EXPLODE, 0.5f, 1.4f);
+            Fx.sound(at, Sound.BLOCK_GRAVEL_FALL, 1.2f, 0.7f);
             Fx.sound(at, Sound.ENTITY_IRON_GOLEM_DAMAGE, 1.0f, 0.7f);
             tipOver(at);
             BlockDisplay stop = buffer;
@@ -983,10 +1082,78 @@ public final class MinerAbility extends Ability {
             if (thrown > 0) {
                 owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>⛏ 광산 수레</b></" + COLOR_TAG + "> <white>" + thrown
                         + "명 하차!</white>"));
-            } else if (!scooped.isEmpty()) {
-                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛏ 광산 수레</" + COLOR_TAG + "> <white>" + scooped.size()
-                        + "명 적중</white>"));
+            } else if (!buried.isEmpty() || !scooped.isEmpty()) {
+                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛏ 광산 수레</" + COLOR_TAG + "> <white>"
+                        + Math.max(buried.size(), scooped.size()) + "명 적중</white>"));
             }
+        }
+
+        /** The spilled ore weighs the enemy down: one slow, renewed rather than stacked. */
+        private void bury(LivingEntity enemy, double slow, long ticks) {
+            if (slow <= 0 || ticks <= 0) {
+                return;
+            }
+            NamespacedKey old = slows.remove(enemy.getUniqueId());
+            if (old != null) {
+                ctx().removeModifier(enemy, old);
+            }
+            slows.put(enemy.getUniqueId(), ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow,
+                    Operation.MULTIPLY_SCALAR_1, ticks));
+            if (!isHidden(owner, enemy)) {
+                Vfx.cloud(ctx(), Fx.body(enemy), Particle.BLOCK_CRUMBLE, 6, 0.25, 0,
+                        ORES[ThreadLocalRandom.current().nextInt(ORES.length)].createBlockData(), false);
+            }
+        }
+
+        /**
+         * Where the riders land: the farthest point up to the toss distance beyond the end of the rails that is safe
+         * ground (no drop of more than a block, not the void, inside the arena, a clear way there), else back on the
+         * rails. The track stops before ledges and walls, so a toss never carries anyone over one.
+         */
+        private Location tossSpot() {
+            Location end = track.getLast();
+            double max = Math.max(0, params().num("toss_distance"));
+            Location chest = end.clone().add(0, 1.2, 0);
+            for (double d = max; d >= TOSS_STEP - 1.0E-6; d -= TOSS_STEP) {
+                Location spot = end.clone().add(forward.clone().multiply(d));
+                spot.setY(end.getY() + MAX_STEP_UP + 0.05);
+                double before = spot.getY();
+                Spots.snapToGround(world, spot, MAX_STEP_UP + TOSS_MAX_DROP + 0.1);
+                if (spot.getY() >= before - 1.0E-6 || Math.abs(spot.getY() - end.getY()) > TOSS_MAX_DROP + 1.0E-6
+                        || !Spots.isFree(world, spot, 0.6, 1.8) || !Spots.hasGroundBelow(world, spot)
+                        || !ctx().isInsideArena(spot)
+                        || !Spots.clearPath(chest, spot.clone().add(0, 1.2, 0))) {
+                    continue;
+                }
+                return spot;
+            }
+            // Nowhere safe beyond the end (a ledge, a wall, the border): back on the rails, half a block short of it.
+            return point(Math.max(0, length - TOSS_STEP));
+        }
+
+        /**
+         * The rider rolls out of the tipped cart: a low hop that ends at {@code landing}. Its speed is worked out
+         * from vanilla's gravity and air drag, starting from where it will be (dead reckoning), so a lagging player
+         * is not thrown past the spot.
+         */
+        private void toss(Rider rider, Location landing) {
+            LivingEntity entity = rider.entity;
+            double dx = landing.getX() - rider.x;
+            double dz = landing.getZ() - rider.z;
+            double height = entity.getLocation().getY() - landing.getY();
+            // Ticks in the air: up with TOSS_UP, then down to the landing height.
+            double y = height;
+            double vy = TOSS_UP;
+            int airTicks = 0;
+            while (airTicks < 60 && (vy > 0 || y > 0)) {
+                y += vy;
+                vy = (vy - Motion.GRAVITY) * Motion.DRAG;
+                airTicks++;
+            }
+            double reach = (1 - Math.pow(AIR_DRAG, Math.max(1, airTicks))) / (1 - AIR_DRAG);
+            Vector velocity = new Vector(dx / reach, TOSS_UP, dz / reach);
+            entity.setFallDistance(0);
+            Motion.push(entity, velocity, MAX_SPEED);
         }
 
         /** The cart pitches forward onto its nose and its load spills out ahead. */

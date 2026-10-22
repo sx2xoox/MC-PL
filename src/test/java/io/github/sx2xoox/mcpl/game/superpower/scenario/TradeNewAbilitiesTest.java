@@ -727,6 +727,160 @@ class TradeNewAbilitiesTest {
         }
     }
 
+    @Test
+    void policeSirenHearsEvenTheQuickestSkill() {
+        // The gunslinger's shots leave only a short cooldown: the siren must still hear every one of them, whenever
+        // in the tick cycle it is fired.
+        try (Scenario s = Scenario.builder("police").enemyAbility("gunslinger").start()) {
+            s.ticks(10);
+            for (int phase = 0; phase < 5; phase++) {
+                s.ticks(s.paramTicks("wanted_duration") + 2 + phase);
+                assertTrue(lightBar(s, s.enemy).isEmpty(), "the last warrant ran out (" + phase + ")");
+                s.assertSucceeded(s.match.useActive(s.enemy), "a quick shot (" + phase + ")");
+                s.ticks(1);
+                assertEquals(2, lightBar(s, s.enemy).size(), "the siren heard the shot (" + phase + ")");
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void policeTaserDartsStayInTheVictimForTheWholeStun() {
+        try (Scenario s = Scenario.ffa("police")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "테이저");
+            s.h.tickUntil(() -> rooted(s.enemy), 20, "the darts to hit");
+            s.ticks(s.paramTicks("taser_stun") - 3);
+            assertTrue(rooted(s.enemy), "still stunned");
+            List<BlockDisplay> darts = blocks(s, Material.YELLOW_CONCRETE);
+            assertEquals(2, darts.size(), "both darts stay stuck in the victim to the end");
+            for (BlockDisplay dart : darts) {
+                assertTrue(dart.getLocation().distance(s.enemy.getLocation().add(0, s.enemy.getHeight() / 2, 0)) < 0.5,
+                        "in the victim: " + dart.getLocation().toVector());
+            }
+            s.ticks(20);
+            assertTrue(blocks(s, Material.YELLOW_CONCRETE).isEmpty(), "pulled out after the stun");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void policeTaserDartsLeaveAVictimThatTurnsStealthy() {
+        try (Scenario s = Scenario.ffa("police")) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "테이저");
+            s.h.tickUntil(() -> rooted(s.enemy), 20, "the darts to hit");
+            s.owner.hidePlayer(s.h.hub.plugin(), s.enemy);
+            for (int i = 0; i < 10; i++) {
+                s.ticks(1);
+                for (BlockDisplay dart : blocks(s, Material.YELLOW_CONCRETE)) {
+                    assertTrue(dart.getLocation().distance(s.enemy.getLocation()) > 2.5,
+                            "no dart points at the hidden victim: " + dart.getLocation().toVector());
+                }
+            }
+            assertTrue(blocks(s, Material.YELLOW_CONCRETE).isEmpty(), "the darts are gone");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy);
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void policeCuffsAreStoppedByAWall() {
+        try (Scenario s = noGaugeGain(Scenario.builder("police")).start()) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "체포");
+            s.ticks(2);
+            s.world.wallAlongX(-6, 6, 8, 4, Material.STONE);
+            s.place(s.enemy, 0.5, 26.5, 180);
+            s.ticks(60);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the cuffs hit the wall: " + s.hits());
+            assertFalse(rooted(s.enemy), "no cell");
+            assertFalse(s.ctx().isSilenced(s.enemy));
+            assertEquals(0, s.h.hub.tempBlocks().size());
+            assertNoDisplays(s, "the cuffs dropped and faded");
+            s.world.wallAlongX(-6, 6, 8, 4, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void policeSuspectDashingAsideDodgesTheCuffs() {
+        try (Scenario s = noGaugeGain(Scenario.builder("police")).start()) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "체포");
+            // The siren lights the suspect up during the wind-up; once the cuffs are on their way it dashes aside.
+            s.h.tickUntil(() -> entities(s, ItemDisplay.class).stream()
+                    .anyMatch(cuffs -> cuffs.getLocation().distance(s.owner.getLocation()) > 3.5), 30,
+                    "the cuffs to be on their way");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the cuffs are still in the air");
+            s.place(s.enemy, 7.5, 12.5, 180);
+            s.ticks(60);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "a dash aside beats the cuffs: " + s.hits());
+            assertFalse(rooted(s.enemy), "no cell");
+            assertEquals(0, s.h.hub.tempBlocks().size());
+            assertNoDisplays(s, "the cuffs dropped and faded");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void policeArrestHoldsNoLongerThanTheHardControlCap() {
+        try (Scenario s = Scenario.ffa("police")) {
+            s.place(s.enemy, 0.5, s.param("arrest_range") - 1, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "체포");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 40, "the cuffs to snap shut");
+            // From the click of the cuffs through the drag and the cell until the prisoner walks free.
+            int controlled = 0;
+            boolean jailed = false;
+            while (controlled < 200) {
+                s.ticks(1);
+                controlled++;
+                if (rooted(s.enemy)) {
+                    jailed = true;
+                } else if (jailed) {
+                    break;
+                }
+            }
+            assertTrue(jailed, "it was jailed");
+            assertTrue(controlled <= 60, "cuffed, dragged and jailed for at most 3 s: " + controlled + " ticks");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void policeSuspectSlippingIntoStealthDuringTheDragBreaksFree() {
+        try (Scenario s = Scenario.ffa("police")) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "체포");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 40, "the cuffs to snap shut");
+            s.ticks(1);
+            s.owner.hidePlayer(s.h.hub.plugin(), s.enemy);
+            s.ticks(1);
+            for (ItemDisplay cuffs : entities(s, ItemDisplay.class)) {
+                assertTrue(cuffs.getViewRange() == 0 || cuffs.getLocation().distance(s.enemy.getLocation()) > 3,
+                        "the cuffs do not show where the suspect is");
+            }
+            s.ticks(40);
+            assertFalse(rooted(s.enemy), "no cell for a suspect that got away");
+            assertFalse(s.ctx().isSilenced(s.enemy));
+            assertEquals(0, s.h.hub.tempBlocks().size(), "no bars built round the hidden suspect");
+            assertNoDisplays(s, "the chain went slack and the car left");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 총잡이 gunslinger
 
     private static List<ItemDisplay> shells(Scenario s) {
@@ -756,14 +910,25 @@ class TradeNewAbilitiesTest {
             assertEquals(rounds * s.param("shot_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "six body shots");
             assertTrue(s.hitsBy(s.owner, s.enemy).stream().allMatch(hit -> hit.type() == DamageType.MAGIC));
             assertFalse(s.active().succeeded(), "no seventh round");
+            s.ticks(2);
+            assertEquals(rounds, chambers(s, true).size() + chambers(s, false).size(),
+                    "the cylinder turns at the hip while it reloads");
+            assertTrue(chambers(s, true).isEmpty(), "every chamber is empty at first");
+            for (BlockDisplay chamber : chambers(s, false)) {
+                assertTrue(chamber.getLocation().distance(s.owner.getLocation().add(0, 0.9, 0)) < 0.8,
+                        "at the hip: " + chamber.getLocation().toVector());
+            }
             s.h.tickUntil(() -> shells(s).size() == rounds, 20, "the shells to be dumped");
             s.h.tickUntil(() -> shells(s).stream().allMatch(shell -> shell.getLocation().getY()
                     < FlatWorld.SURFACE + 0.05), 30, "the shells to land");
             for (ItemDisplay shell : shells(s)) {
                 assertEquals(FlatWorld.SURFACE + 0.03, shell.getLocation().getY(), 0.01, "a shell lies on the floor");
             }
+            s.h.tickUntil(() -> chambers(s, true).size() >= rounds / 2, s.paramTicks("cooldown"),
+                    "the chambers to fill one by one");
+            assertFalse(chambers(s, false).isEmpty(), "not all of them yet");
             s.ticks(s.paramTicks("cooldown"));
-            assertNoDisplays(s, "the shells are gone");
+            assertNoDisplays(s, "the shells are gone and the cylinder snapped shut");
             s.clearHits();
             for (int i = 1; i <= rounds; i++) {
                 s.aimAt(s.owner, s.enemy);
@@ -774,6 +939,38 @@ class TradeNewAbilitiesTest {
             }
             assertEquals(rounds * s.param("shot_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
             s.ticks(120);
+            s.finishClean();
+        }
+    }
+
+    /** The cylinder's chambers at the hip: brass when loaded, dark iron when empty. */
+    private static List<BlockDisplay> chambers(Scenario s, boolean loaded) {
+        return blocks(s, loaded ? Material.GOLD_BLOCK : Material.POLISHED_BLACKSTONE);
+    }
+
+    @Test
+    void gunslingerCylinderOfHeadshotsStaysWithinAnActiveBudget() {
+        // A whole cylinder at close range, every shot in the head, is the most the active can do: it must stay in
+        // line with the other actives (about 4 to 6 damage every 6 to 12 seconds, a little more for precision).
+        try (Scenario s = noGaugeGain(Scenario.builder("gunslinger")).start()) {
+            int rounds = (int) s.param("rounds");
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            long start = s.ctx().currentTick();
+            for (int i = 1; i <= rounds; i++) {
+                s.aimAt(s.owner, s.enemy.getEyeLocation().add(0, 0.08, 0));
+                s.assertSucceeded(activeWhenReady(s, 40), "head shot " + i);
+                s.healAll();
+            }
+            double dealt = s.damageBy(s.owner, s.enemy);
+            assertEquals(rounds * s.param("shot_damage") * (1 + s.param("headshot_bonus") / 100), dealt, EPSILON,
+                    "every shot in the head");
+            assertTrue(dealt <= 9 + EPSILON, "a cylinder of head shots deals at most 9: " + dealt);
+            s.h.tickUntil(() -> s.ctx().cooldownRemaining(s.owner) <= 0, 400, "the reload");
+            double cycle = (s.ctx().currentTick() - start) / 20.0;
+            assertTrue(cycle >= 8.5, "a full cylinder and its reload take at least 8.5 s: " + cycle);
+            assertTrue(dealt / cycle <= 1.1, "at most about one damage per second: " + dealt / cycle);
+            s.ticks(20);
             s.finishClean();
         }
     }
@@ -856,9 +1053,11 @@ class TradeNewAbilitiesTest {
             s.assertSucceeded(s.active(), "속사");
             List<BlockDisplay> tracers = blocks(s, Material.WHITE_CONCRETE);
             List<BlockDisplay> flashes = blocks(s, Material.YELLOW_CONCRETE);
+            List<BlockDisplay> spikes = blocks(s, Material.WHITE_STAINED_GLASS);
             assertEquals(1, tracers.size(), "a tracer");
             assertEquals(1, flashes.size(), "a muzzle flash");
-            for (BlockDisplay display : List.of(tracers.getFirst(), flashes.getFirst())) {
+            assertEquals(1, spikes.size(), "a star of two blades");
+            for (BlockDisplay display : List.of(tracers.getFirst(), flashes.getFirst(), spikes.getFirst())) {
                 assertEquals(0, display.getLocation().getYaw(), 1.0E-3);
                 assertEquals(0, display.getLocation().getPitch(), 1.0E-3);
                 assertTrue(axis(display, 0, 0, 1).dot(shot) > 0.98, display.getBlock().getMaterial()
@@ -1013,7 +1212,8 @@ class TradeNewAbilitiesTest {
             s.ticks(s.paramTicks("rock_delay") - 3);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the rocks still hang");
             s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 10, "the first rock");
-            assertTrue(slowed(s.enemy), "staggered by the rock");
+            assertEquals(-s.param("rock_slow") / 100, modifierSum(s.enemy, Attribute.MOVEMENT_SPEED), EPSILON,
+                    "staggered by the rock");
             s.ticks(30);
             double damage = s.damageBy(s.owner, s.enemy);
             assertTrue(damage >= s.param("rock_damage") - EPSILON
@@ -1060,12 +1260,148 @@ class TradeNewAbilitiesTest {
             s.h.tickUntil(() -> s.damageTaken(s.enemy) > s.param("cart_damage") + EPSILON, 40, "the crash");
             assertEquals(s.param("cart_damage") + s.param("crash_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "dumped at the buffer stop");
-            s.ticks(10);
+            s.ticks(30);
             assertTrue(s.enemy.getLocation().getZ() > 14, "thrown out at the end: " + s.enemy.getLocation().toVector());
+            assertTrue(s.hits().stream().noneMatch(hit -> hit.type() == DamageType.FALL),
+                    "the tumble out of the cart hurts nobody: " + s.hits());
+            assertStandsOnFloor(s.enemy, "the rider rolled out onto the ground");
+            assertEquals(s.param("cart_damage") + s.param("crash_damage"), s.damageTaken(s.enemy), EPSILON,
+                    "no damage the miner is not credited for");
+            assertEquals(-s.param("crash_slow") / 100, modifierSum(s.enemy, Attribute.MOVEMENT_SPEED), EPSILON,
+                    "buried under the spilled ore");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "off the rails, untouched");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(80);
             assertNoDisplays(s, "the rails are taken up");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minerCartLeavesEnemiesBesideTheRailsAlone() {
+        try (Scenario s = noGaugeGain(Scenario.builder("miner")).start()) {
+            // The rails run along x = 0.5: one enemy a block and a half to the side, one right on them further on.
+            s.place(s.enemy, 2.0, 6.5, 180);
+            s.place(s.enemy2, 0.5, 11.5, 180);
+            s.assertSucceeded(s.ultimate(), "광산 수레");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy2) > 0, s.paramTicks("cart_delay") + 40, "the cart to scoop");
+            s.ticks(60);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "a step beside the rails is enough: " + s.hits());
+            assertTrue(s.damageTaken(s.enemy2) >= s.param("cart_damage") + s.param("crash_damage") - EPSILON,
+                    "the one on the rails rode to the end");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minerCartNeverThrowsRidersOffTheLedgeAtTheEndOfTheLine() {
+        try (Scenario s = noGaugeGain(Scenario.builder("miner")).start()) {
+            // A raised platform three blocks high that ends in a drop at z = 11: the track stops before the edge.
+            for (int x = -5; x <= 5; x++) {
+                for (int z = -5; z <= 10; z++) {
+                    for (int y = 1; y <= 3; y++) {
+                        s.world.setBlock(x, FlatWorld.FLOOR_Y + y, z, Material.STONE);
+                    }
+                }
+            }
+            double top = FlatWorld.SURFACE + 3;
+            s.place(s.owner, 0.5, top, 0.5, 0, 0);
+            s.place(s.enemy, 0.5, top, 5.5, 180, 0);
+            s.place(s.enemy2, 8.5, FlatWorld.SURFACE, -8.5, 0, 0);
+            s.assertSucceeded(s.ultimate(), "광산 수레");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > s.param("cart_damage") + EPSILON,
+                    s.paramTicks("cart_delay") + 60, "the crash");
+            s.ticks(40);
+            Location feet = s.enemy.getLocation();
+            assertEquals(top, feet.getY(), EPSILON, "still up on the platform: " + feet.toVector());
+            assertTrue(feet.getZ() < 11, "not thrown over the edge: " + feet.toVector());
+            assertEquals(s.param("cart_damage") + s.param("crash_damage"), s.damageTaken(s.enemy), EPSILON,
+                    "no fall: " + s.hits());
+            s.ticks(60);
+            for (int x = -5; x <= 5; x++) {
+                for (int z = -5; z <= 10; z++) {
+                    for (int y = 1; y <= 3; y++) {
+                        s.world.setBlock(x, FlatWorld.FLOOR_Y + y, z, Material.AIR);
+                    }
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minerOreSpillHitsAndSlowsEnemiesAroundTheBufferStop() {
+        try (Scenario s = noGaugeGain(Scenario.builder("miner")).start()) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            double end = 1.2 + s.param("cart_length");
+            // Beside the end of the line, off the rails: only the spilled ore reaches it.
+            s.place(s.enemy2, 2.3, end, 180);
+            s.assertSucceeded(s.ultimate(), "광산 수레");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy2) > 0, s.paramTicks("cart_delay") + 60, "the crash");
+            assertEquals(s.param("crash_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "the spilled ore");
+            assertEquals(-s.param("crash_slow") / 100, modifierSum(s.enemy2, Attribute.MOVEMENT_SPEED), EPSILON,
+                    "and its weight");
+            s.ticks(s.paramTicks("crash_slow_duration") + 2);
+            assertEquals(0, modifierSum(s.enemy2, Attribute.MOVEMENT_SPEED), EPSILON, "for a while");
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minerRocksNeverSlowAnEnemyTwiceOver() {
+        try (Scenario s = noGaugeGain(Scenario.builder("miner").param("rock_radius", 1.2).param("rock_count", 3)
+                .param("rock_hit_radius", 2.5)).start()) {
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낙석");
+            double slowest = 0;
+            for (int i = 0; i < s.paramTicks("rock_delay") + 30; i++) {
+                s.ticks(1);
+                slowest = Math.min(slowest, modifierSum(s.enemy, Attribute.MOVEMENT_SPEED));
+            }
+            assertEquals(s.param("rock_damage") * s.param("rock_max_hits"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "hit by two rocks");
+            assertEquals(-s.param("rock_slow") / 100, slowest, EPSILON,
+                    "the second rock renews the slow instead of stacking it");
+            s.ticks(s.paramTicks("rubble_duration") + 4);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void minerRocksHangUnderARoof() {
+        try (Scenario s = Scenario.ffa("miner")) {
+            // A low roof: two blocks of headroom, just enough to stand in.
+            int roof = FlatWorld.FLOOR_Y + 3;
+            for (int x = -8; x <= 8; x++) {
+                for (int z = -3; z <= 12; z++) {
+                    s.world.setBlock(x, roof, z, Material.STONE);
+                }
+            }
+            s.place(s.enemy2, 6.5, -1.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낙석");
+            for (int i = 0; i < s.paramTicks("rock_delay") + 25; i++) {
+                s.ticks(1);
+                for (BlockDisplay rock : entities(s, BlockDisplay.class)) {
+                    assertTrue(rock.getLocation().getY() < roof, "no rock hangs in or above the roof: "
+                            + rock.getLocation().toVector());
+                }
+            }
+            assertTrue(s.damageTaken(s.enemy) > 0, "the rocks still fall on the enemy");
+            for (int x = -8; x <= 8; x++) {
+                for (int z = -3; z <= 12; z++) {
+                    assertFalse(s.h.hub.tempBlocks().isTemporary(s.world.getBlockAt(x, roof + 1, z)),
+                            "no rubble on top of the roof");
+                }
+            }
+            s.ticks(s.paramTicks("rubble_duration") + 4);
+            for (int x = -8; x <= 8; x++) {
+                for (int z = -3; z <= 12; z++) {
+                    s.world.setBlock(x, roof, z, Material.AIR);
+                }
+            }
             s.finishClean();
         }
     }
@@ -1276,36 +1612,117 @@ class TradeNewAbilitiesTest {
     }
 
     @Test
-    void blacksmithForgeArmsTheTeamAndPoundsTheEnemies() {
+    void blacksmithHastyTapsNeverHeatTheBlade() {
+        try (Scenario s = Scenario.ffa("blacksmith")) {
+            double full = s.owner.getAttribute(Attribute.ATTACK_DAMAGE).getValue();
+            for (int i = 0; i < 4; i++) {
+                s.melee(s.owner, s.enemy, full * 0.3);
+                s.ticks(2);
+            }
+            assertEquals(4 * full * 0.3, s.damageBy(s.owner, s.enemy), EPSILON, "spam clicks never strike");
+            assertEquals(0, modifierSum(s.enemy, Attribute.ARMOR), EPSILON);
+            s.clearHits();
+            for (int i = 0; i < 3; i++) {
+                s.melee(s.owner, s.enemy, full);
+                s.ticks(2);
+            }
+            assertEquals(3 * full + s.param("strike_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "three full swings do");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void blacksmithForgeTempersTheTeamAndPoundsTheEnemies() {
         try (Scenario s = noGaugeGain(Scenario.builder("blacksmith").teams()).start()) {
             s.place(s.ally(), 2.5, 2.5, 0);
             s.place(s.enemy, 0.5, 5.5, 180);
             s.place(s.enemy2, 0.5, 14.5, 180);
+            Location before = s.enemy.getLocation();
             s.assertSucceeded(s.ultimate(), "대장간");
-            s.ticks(8);
+            s.ticks(4);
+            assertEquals(0, modifierSum(s.ally(), Attribute.ATTACK_DAMAGE), EPSILON, "nothing before the first blow");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, s.paramTicks("hammer_period") + 10, "the first wave");
+            assertEquals(s.param("hammer_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the shockwave");
             assertEquals(s.param("forge_bonus"), modifierSum(s.ally(), Attribute.ATTACK_DAMAGE), EPSILON,
-                    "the ally's weapon is red-hot");
+                    "the blow tempered the ally's weapon");
             assertEquals(s.param("forge_bonus"), modifierSum(s.owner, Attribute.ATTACK_DAMAGE), EPSILON,
                     "and the smith's");
             assertEquals(0, modifierSum(s.enemy, Attribute.ATTACK_DAMAGE), EPSILON, "never an enemy's");
+            s.ticks(8);
+            assertTrue(horizontal(s.enemy.getLocation(), before) > 1.0, "pushed away from the forge: "
+                    + s.enemy.getLocation().toVector());
+            // The temper is forged into the weapon: it lasts away from the forge, for its own time.
             s.place(s.ally(), 10.5, -10.5, 0);
-            s.ticks(8);
-            assertEquals(0, modifierSum(s.ally(), Attribute.ATTACK_DAMAGE), EPSILON, "it cools outside the forge");
-            s.place(s.ally(), 2.5, 2.5, 0);
-            s.ticks(8);
+            s.ticks(10);
             assertEquals(s.param("forge_bonus"), modifierSum(s.ally(), Attribute.ATTACK_DAMAGE), EPSILON,
-                    "back at the forge");
-            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, s.paramTicks("hammer_period") + 4, "the first blow");
-            assertEquals(s.param("hammer_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the shockwave");
-            s.ticks(4);
-            assertTrue(s.enemy.getLocation().getZ() > 5.6, "pushed away from the forge");
-            s.ticks(s.paramTicks("forge_duration"));
+                    "still red-hot far from the forge");
+            s.ticks((int) s.param("hammer_blows") * s.paramTicks("hammer_period") + 20);
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "out of the forge's reach");
             assertEquals(0, s.damageTaken(s.ally()) + s.damageTaken(s.owner), EPSILON);
-            assertEquals(0, modifierSum(s.ally(), Attribute.ATTACK_DAMAGE), EPSILON, "the forge cooled");
+            s.ticks(s.paramTicks("temper_duration") + 2);
+            assertEquals(0, modifierSum(s.ally(), Attribute.ATTACK_DAMAGE), EPSILON, "the temper wore off");
             assertEquals(0, modifierSum(s.owner, Attribute.ATTACK_DAMAGE), EPSILON);
-            s.ticks(20);
             assertNoDisplays(s, "the forge is gone");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void blacksmithJumpingOverTheShockwaveDodgesIt() {
+        try (Scenario s = noGaugeGain(Scenario.builder("blacksmith")).start()) {
+            s.place(s.enemy, 0.5, 5.5, 180);
+            s.place(s.enemy2, -2.5, 4.5, 90);
+            s.assertSucceeded(s.ultimate(), "대장간");
+            // Six seconds: every blow of the forge and its wave fall within them.
+            for (int i = 0; i < 120; i++) {
+                // In mid-jump every time a wave rolls past.
+                s.place(s.enemy, 0.5, FlatWorld.SURFACE + 1.0, 5.5, 180, 0);
+                s.ticks(1);
+            }
+            s.place(s.enemy, 0.5, 5.5, 180);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "every wave passed under the jumping enemy: " + s.hits());
+            assertTrue(s.damageBy(s.owner, s.enemy2) >= s.param("hammer_damage") - EPSILON,
+                    "the waves did roll: the one standing was hit");
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    /** The middle of a block display's box, in the world. */
+    private static Location boxCenter(BlockDisplay display) {
+        Transformation pose = display.getTransformation();
+        Vector3f center = new Vector3f(pose.getTranslation())
+                .add(leftRotation(display).transform(new Vector3f(pose.getScale()).mul(0.5f)));
+        return display.getLocation().add(center.x(), center.y(), center.z());
+    }
+
+    @Test
+    void blacksmithHammerNeverSwingsThroughAWall() {
+        try (Scenario s = Scenario.ffa("blacksmith")) {
+            // A wall right behind the anvil, where the hammer would swing from in the open.
+            s.world.wallAlongX(-3, 3, 4, 5, Material.STONE);
+            s.place(s.enemy, -3.5, 1.5, 90);
+            s.place(s.enemy2, 8.5, -8.5, 0);
+            s.assertSucceeded(s.ultimate(), "대장간");
+            boolean seen = false;
+            for (int i = 0; i < 100; i++) {
+                s.ticks(1);
+                for (Material part : List.of(Material.IRON_BLOCK, Material.STRIPPED_DARK_OAK_LOG)) {
+                    for (BlockDisplay display : blocks(s, part)) {
+                        seen = true;
+                        assertFalse(display.getLocation().getBlock().getType().isSolid(),
+                                "the grip is not in the wall: " + display.getLocation().toVector());
+                        Location middle = boxCenter(display);
+                        assertFalse(middle.getBlock().getType().isSolid(),
+                                part + " swings through the wall at " + middle.toVector());
+                    }
+                }
+            }
+            assertTrue(seen, "the hammer found room on another side");
+            assertTrue(s.damageTaken(s.enemy) > 0, "the blows land");
+            s.ticks(60);
+            s.world.wallAlongX(-3, 3, 4, 5, Material.AIR);
             s.finishClean();
         }
     }
@@ -1326,7 +1743,7 @@ class TradeNewAbilitiesTest {
                     + " vs " + anvil.getLocation().toVector());
             assertEquals(anvil.getLocation().getY() + 1.3, headAt.getY(), 0.1, "right on top of it");
             assertTrue(anvil.getLocation().getX() < s.owner.getLocation().getX() - 1, "the forge stands in front");
-            s.ticks(s.paramTicks("forge_duration") + 30);
+            s.ticks((int) s.param("hammer_blows") * s.paramTicks("hammer_period") + 30);
             s.finishClean();
         }
     }

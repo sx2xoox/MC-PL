@@ -31,6 +31,7 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Lightable;
@@ -51,13 +52,17 @@ import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * 대장장이 — the smith. Every melee hit heats the blade, and the hit that brings it to a white heat is a crushing blow
- * that cracks the victim's armor; the active drops an anvil out of the sky onto an aimed spot after its shadow gives
- * it away; the ultimate sets up a forge on the spot: everyone on the smith's side near it fights with red-hot weapons
- * while a giant hammer pounds the anvil and every blow sends a shockwave through the enemies around.
+ * 대장장이 — the smith. Every full-strength melee hit heats the blade, and the hit that brings it to a white heat is
+ * a crushing blow that cracks the victim's armor; the active drops an anvil out of the sky onto an aimed spot after
+ * its shadow gives it away; the ultimate sets up a forge on the spot where a giant hammer strikes the anvil a few
+ * times: every blow sends a shockwave rolling out over the ground (jump over it to dodge) and tempers the weapons of
+ * the smith's side around the forge for a while.
  *
- * <p>Unlike the 무도가 (third hit on the same enemy in a row stuns) the smith's heat builds on any enemy and its blow
- * breaks armor; unlike the 거인's leap and slam, the forge is a fixed workshop that arms the team and keeps pounding.
+ * <p>Unlike the 무도가 (third hit on the same enemy in a row stuns) the smith's heat builds on any enemy, only from
+ * charged swings, and its blow breaks armor. Unlike the 요리사's banquet (a zone that heals and buffs whoever stays at
+ * the table while food is thrown at enemies), the forge is a short rhythm of telegraphed blows: each one is a ground
+ * wave enemies can jump over, and the tempering it gives is forged into the weapon and lasts away from the forge.
+ * Unlike the 거인's leap and slam, the smith stays back and the hammer strikes again and again.
  *
  * <p>Look: forge orange, iron grey and soot. The heat shows as embers and little flames at the smith's hand that grow
  * with every step; the blow rings an anvil, throws a fountain of sparks and a cracked chestplate flies off the victim
@@ -72,19 +77,21 @@ public final class BlacksmithAbility extends Ability {
             .color(TextColor.color(0xFF7A1A))
             .difficulty(1)
             .passive("단련",
-                    "근접 공격이 적중할 때마다 무기가 달아오르고, {heat_max}번째 적중은 강타가 되어 {strike_damage} 추가 "
-                            + "피해를 주고 {sunder_duration}초간 적의 방어력을 {sunder_armor} 깎습니다. {heat_decay}초간 "
-                            + "적중하지 못하면 무기가 식습니다.")
+                    "힘을 모은(공격 게이지 {heat_charge}% 이상) 근접 공격이 적중할 때마다 무기가 달아오르고, {heat_max}번째 "
+                            + "적중은 강타가 되어 {strike_damage} 추가 피해를 주고 {sunder_duration}초간 적의 방어력을 "
+                            + "{sunder_armor} 깎습니다. {heat_decay}초간 적중하지 못하면 무기가 식습니다.")
             .active("모루 낙하",
                     "조준한 곳({anvil_range}블록 이내)에 그림자가 드리우고 {anvil_delay}초 뒤 하늘에서 모루가 떨어집니다. "
                             + "반경 {anvil_radius}블록의 적은 {anvil_damage} 피해를 입고 {anvil_stun}초간 기절합니다"
                             + "(이동·점프 불가).",
                     9)
             .ultimate("대장간",
-                    "앞에 {forge_duration}초간 대장간을 세웁니다. 대장간 반경 {forge_radius}블록 안의 나와 아군은 무기가 "
-                            + "달궈져 근접 공격력이 {forge_bonus} 오릅니다. 거대한 망치가 {hammer_period}초마다 모루를 "
-                            + "내리쳐, 반경 {forge_radius}블록까지 퍼지는 충격파가 적에게 {hammer_damage} 피해를 주고 "
-                            + "밀쳐냅니다.")
+                    "앞에 대장간을 세우고 거대한 망치로 모루를 {hammer_blows}번 내리칩니다({hammer_period}초 간격). "
+                            + "내리칠 때마다 땅을 타고 반경 {forge_radius}블록까지 퍼지는 충격파가 닿은 적에게 "
+                            + "{hammer_damage} 피해를 주고 밀쳐내며, 점프해 넘으면 피할 수 있습니다. 망치질마다 반경 안의 "
+                            + "나와 아군의 무기를 벼려 {temper_duration}초간 근접 공격력을 {forge_bonus} 올립니다"
+                            + "(대장간을 떠나도 유지).")
+            .param("heat_charge", 90)
             .param("heat_max", 3)
             .param("heat_decay", 4)
             .param("strike_damage", 3)
@@ -95,11 +102,12 @@ public final class BlacksmithAbility extends Ability {
             .param("anvil_radius", 1.8)
             .param("anvil_damage", 5)
             .param("anvil_stun", 1)
-            .param("forge_duration", 8)
-            .param("forge_radius", 6)
+            .param("forge_radius", 7)
+            .param("hammer_blows", 3)
+            .param("hammer_period", 1.4)
+            .param("hammer_damage", 3)
             .param("forge_bonus", 2)
-            .param("hammer_period", 2)
-            .param("hammer_damage", 2.5)
+            .param("temper_duration", 5)
             .build();
 
     private static final String COLOR_TAG = "#FF7A1A";
@@ -147,18 +155,27 @@ public final class BlacksmithAbility extends Ability {
     // ultimate: forge
     private static final double FORGE_AHEAD = 1.6;
     private static final float HANDLE_LENGTH = 2.6f;
+    private static final float SHORT_HANDLE_LENGTH = 1.8f;
+    private static final double HAMMER_GRIP_HEIGHT = 1.35;
     private static final float RAISED_PITCH = -105f;
+    private static final long POP_TICKS = 6;
     private static final long RAISE_TICKS = 10;
     private static final long SLAM_TICKS = 2;
-    private static final long WAVE_TICKS = 6;
-    private static final long BUFF_PERIOD = 5;
-    private static final double WAVE_BAND = 0.9;
+    /** The shockwave starts at the anvil's edge and rolls out this many blocks per tick. */
+    private static final double WAVE_START = 0.6;
+    private static final double WAVE_SPEED = 0.55;
+    /** Extra width of the strip the wave checks each tick, so nobody slips between two ticks. */
+    private static final double WAVE_BAND = 0.3;
     private static final double WAVE_HEIGHT = 2.5;
-    private static final double WAVE_PUSH = 0.9;
+    /** Feet higher than this above the ground when the wave passes: the enemy jumped over it. */
+    private static final double WAVE_CLEAR = 0.5;
+    private static final double WAVE_PUSH = 0.8;
     private static final double WAVE_LIFT = 0.35;
 
     // tempering state
     private int heat;
+    /** Whether the owner's melee hit being dealt right now was swung at full strength (see {@link #onDealDamage}). */
+    private boolean chargedSwing;
     private long lastHeat = Long.MIN_VALUE / 2;
     /** The armor-break modifier on each victim, so a new blow replaces the old one instead of stacking. */
     private final Map<UUID, NamespacedKey> sunders = new HashMap<>();
@@ -172,6 +189,7 @@ public final class BlacksmithAbility extends Ability {
     @Override
     public void onRevoke() {
         heat = 0;
+        chargedSwing = false;
         sunders.clear();
         displays.clear();
     }
@@ -188,12 +206,35 @@ public final class BlacksmithAbility extends Ability {
                 && event.getCause() == DamageCause.ENTITY_ATTACK && ctx().isEnemy(player(), victim);
     }
 
+    /**
+     * Only reads the hit: whether the swing was charged. Vanilla scales a swing's damage by 0.2 + 0.8 x charge², so a
+     * hit dealing at least that share of the owner's attack damage was swung with at least {@code heat_charge}
+     * charge. It is read here, before the victim's own hooks may reduce the damage.
+     */
+    @Override
+    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (!isOwnMelee(event, victim)) {
+            return;
+        }
+        AttributeInstance attack = player().getAttribute(Attribute.ATTACK_DAMAGE);
+        double full = attack == null ? 1.0 : attack.getValue();
+        double charge = Math.clamp(params().num("heat_charge") / 100.0, 0.0, 1.0);
+        chargedSwing = event.getDamage() >= full * (0.2 + 0.8 * charge * charge) - 1.0E-6;
+    }
+
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
         if (!isOwnMelee(event, victim)) {
             return;
         }
         Player owner = player();
+        boolean charged = chargedSwing;
+        chargedSwing = false;
+        if (!charged) {
+            // A hasty tap: a few sparks, but the blade does not heat up.
+            Vfx.dot(Fx.body(victim), Particle.SMOKE, null, false);
+            return;
+        }
         heat++;
         lastHeat = ctx().currentTick();
         if (heat >= heatMax()) {
@@ -561,9 +602,14 @@ public final class BlacksmithAbility extends Ability {
         return ActivationResult.success();
     }
 
+    /** Where the giant hammer swings from: the direction it reaches out from its grip, and its handle length. */
+    private record Swing(float yaw, float length) {
+    }
+
     /**
-     * The forge: anvil, blast furnace and coals inside a heat ring; allies inside wield red-hot weapons, and a giant
-     * hammer pounds the anvil every period, each blow a shockwave through the enemies around.
+     * The forge: anvil, blast furnace and coals, with a giant hammer that strikes the anvil a few times. Every blow
+     * sends a red-hot shockwave rolling out over the ground (an enemy in the air when it passes is spared) and
+     * tempers the weapons of the smith's side around the forge for a while.
      */
     private final class Forge implements LongPredicate {
 
@@ -571,35 +617,39 @@ public final class BlacksmithAbility extends Ability {
         private final Location center;
         private final World world;
         private final float yaw;
-        /** The hammer is swung from beyond the anvil, back towards the smith. */
-        private final float hammerYaw;
         private final Vector forward;
         private final Vector side;
-        private final long duration;
+        private final int blows;
         private final long period;
+        private final long firstBlow;
         private final double radius;
+        private final long waveTicks;
+        private final @Nullable Swing swing;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private @Nullable BlockDisplay handle;
         private @Nullable BlockDisplay head;
-        private final Map<UUID, NamespacedKey> buffs = new HashMap<>();
-        private final Map<UUID, Player> buffed = new HashMap<>();
-        private long slamAt = -1;
+        /** The temper modifier on each ally (and the smith), so a new blow renews it instead of stacking. */
+        private final Map<UUID, NamespacedKey> tempers = new HashMap<>();
+        private final Map<UUID, Player> tempered = new HashMap<>();
+        private long temperedUntil = -1;
         private long waveStart = -1;
         private final Set<UUID> waveHit = new HashSet<>();
-        private int blows;
+        private int struck;
         private boolean cooled;
 
         Forge(Player owner) {
             this.owner = owner;
             this.world = owner.getWorld();
             this.yaw = owner.getLocation().getYaw();
-            this.hammerYaw = yaw + 180;
             this.forward = Motion.horizontalFacing(owner.getLocation());
             this.side = new Vector(-forward.getZ(), 0, forward.getX());
-            this.duration = Math.max(20, params().ticks("forge_duration"));
+            this.blows = Math.max(1, params().integer("hammer_blows"));
             this.period = Math.max(RAISE_TICKS + SLAM_TICKS + 4, params().ticks("hammer_period"));
+            this.firstBlow = RAISE_TICKS + SLAM_TICKS + POP_TICKS;
             this.radius = Math.max(1, params().num("forge_radius"));
+            this.waveTicks = Math.max(1, (long) Math.ceil((radius - WAVE_START) / WAVE_SPEED));
             this.center = site(owner);
+            this.swing = fitSwing();
         }
 
         /** In front of the smith when there is room and ground there, otherwise at its feet. */
@@ -619,6 +669,65 @@ public final class BlacksmithAbility extends Ability {
             return spot;
         }
 
+        /**
+         * A way to swing the giant hammer that stays clear of every block over its whole arc: from beyond the anvil
+         * back towards the smith if there is room, else from a side or from the smith's side, else a shorter hammer;
+         * null when even that would cut through a wall or a low ceiling (the blows then fall without the hammer).
+         */
+        private @Nullable Swing fitSwing() {
+            for (float length : new float[] {HANDLE_LENGTH, SHORT_HANDLE_LENGTH}) {
+                for (float turn : new float[] {180, 90, -90, 0}) {
+                    Swing candidate = new Swing(yaw + turn, length);
+                    if (fits(candidate)) {
+                        return candidate;
+                    }
+                }
+            }
+            return null;
+        }
+
+        private boolean fits(Swing candidate) {
+            Location grip = pivot(candidate);
+            if (!isOpen(grip) || !ctx().isInsideArena(grip)) {
+                return false;
+            }
+            for (float pitch : new float[] {0, -35, -70, RAISED_PITCH}) {
+                Quaternionf rotation = swingRotation(candidate, pitch);
+                for (Vector3f local : new Vector3f[] {
+                        new Vector3f(0, 0, candidate.length() / 2),
+                        new Vector3f(0, -0.05f, candidate.length()),
+                        new Vector3f(0.55f, -0.05f, candidate.length()),
+                        new Vector3f(-0.55f, -0.05f, candidate.length()),
+                        new Vector3f(0, 0.3f, candidate.length())}) {
+                    Vector3f offset = rotation.transform(local);
+                    if (!isOpen(grip.clone().add(offset.x(), offset.y(), offset.z()))) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        private boolean isOpen(Location point) {
+            return !point.getBlock().getType().isSolid();
+        }
+
+        /** The hammer's grip: one handle length from the anvil, so the head comes down right on it. */
+        private Location pivot(Swing candidate) {
+            double angle = Math.toRadians(candidate.yaw());
+            Vector reach = new Vector(-Math.sin(angle), 0, Math.cos(angle));
+            return center.clone().subtract(reach.multiply(candidate.length())).add(0, HAMMER_GRIP_HEIGHT, 0);
+        }
+
+        private Quaternionf swingRotation(Swing candidate, float pitch) {
+            return new Quaternionf().rotateY((float) Math.toRadians(-candidate.yaw()))
+                    .rotateX((float) Math.toRadians(pitch));
+        }
+
+        private long lastBlow() {
+            return firstBlow + (blows - 1L) * period;
+        }
+
         void build() {
             BlockData furnace = FURNACE.createBlockData();
             if (furnace instanceof Lightable lit) {
@@ -627,7 +736,7 @@ public final class BlacksmithAbility extends Ability {
             Location anvilAt = center.clone();
             Location furnaceAt = center.clone().add(side.clone().multiply(1.5)).add(forward.clone().multiply(-0.4));
             Location coalsAt = center.clone().add(side.clone().multiply(-1.4)).add(forward.clone().multiply(-0.3));
-            long life = duration + 20;
+            long life = lastBlow() + waveTicks + 30;
             if (reserve(5)) {
                 spawnPart(anvilAt, ANVIL.createBlockData(), Displays.transform(0, 0.5f, 0, 1, 1, 1, yaw + 90, 0, 0),
                         life);
@@ -638,29 +747,33 @@ public final class BlacksmithAbility extends Ability {
                     spawnPart(coalsAt, COALS.createBlockData(), Displays.transform(0, 0.15f, 0, 1.0f, 0.3f, 1.0f,
                             yaw + 20, 0, 0), life);
                 }
-                Location pivot = pivot();
-                handle = spawnPart(pivot, HANDLE.createBlockData(), hammerPose(true, 0), life);
-                head = spawnPart(pivot, HEAD.createBlockData(), hammerPose(false, 0), life);
+                Swing fitted = swing;
+                if (fitted != null) {
+                    Location grip = pivot(fitted);
+                    handle = spawnPart(grip, HANDLE.createBlockData(), hammerPose(fitted, true, 0), life);
+                    head = spawnPart(grip, HEAD.createBlockData(), hammerPose(fitted, false, 0), life);
+                }
             }
             // Raise: every piece pops up out of the ground with sparks and smoke.
             for (BlockDisplay part : parts) {
                 Transformation full = part.getTransformation();
                 part.setTransformation(new Transformation(full.getTranslation(), full.getLeftRotation(),
                         new Vector3f(full.getScale()).mul(0.05f), full.getRightRotation()));
-                Displays.animateNextTick(ctx(), owner, part, full, 6);
+                Displays.animateNextTick(ctx(), owner, part, full, (int) POP_TICKS);
             }
             Location ground = center.clone().add(0, 0.1, 0);
             world.spawnParticle(Particle.BLOCK, ground, Vfx.n(ctx(), 20), 1.2, 0.1, 1.2, 0.1, FURNACE.createBlockData(),
                     true);
             Vfx.cloud(ctx(), ground.clone().add(0, 0.8, 0), Particle.LAVA, 10, 0.8, 0, null, true);
-            Vfx.shockwave(ctx(), owner, ground, 0.5, radius, 8, Particle.DUST_COLOR_TRANSITION, HOT, true);
+            Vfx.ring(ctx(), ground, radius, (int) Math.min(40, radius * 5), 0, Particle.DUST_COLOR_TRANSITION, HOT,
+                    true);
             Fx.sound(center, Sound.BLOCK_ANVIL_PLACE, 1.4f, 0.8f);
             Fx.sound(center, Sound.BLOCK_SMITHING_TABLE_USE, 1.2f, 0.9f);
             Fx.sound(center, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.7f);
             Fx.sound(center, Sound.BLOCK_BLASTFURNACE_FIRE_CRACKLE, 1.5f, 1.0f);
-            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>⚒ 대장간</b></" + COLOR_TAG + "> <gray>"
-                    + AbilityInfo.formatNumber(duration / 20.0) + "초</gray>"));
-            Loop.repeat(ctx(), owner, 1, 1, duration + WAVE_TICKS + 1, this, this::close);
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>⚒ 대장간</b></" + COLOR_TAG + "> <gray>망치질 "
+                    + blows + "번</gray>"));
+            Loop.repeat(ctx(), owner, 1, 1, lastBlow() + waveTicks + 2, this, this::close);
         }
 
         private BlockDisplay spawnPart(Location at, BlockData data, Transformation pose, long life) {
@@ -673,152 +786,169 @@ public final class BlacksmithAbility extends Ability {
 
         @Override
         public boolean test(long tick) {
-            if (tick < duration) {
-                buffAllies(tick);
+            if (tick <= lastBlow()) {
                 hammer(tick);
                 ambience(tick);
-            } else if (tick == duration) {
-                cool();
             }
             wave(tick);
+            if (tick > lastBlow() + waveTicks) {
+                cool();
+                return false;
+            }
             return true;
-        }
-
-        // ---------------------------------------------------------- red-hot weapons
-
-        /** Allies (and the smith) inside the forge's ring carry red-hot weapons; leaving the ring cools them. */
-        private void buffAllies(long tick) {
-            if (tick % BUFF_PERIOD != 0) {
-                return;
-            }
-            double bonus = params().num("forge_bonus");
-            List<Player> inside = new ArrayList<>(ctx().alliesNear(owner, center, radius));
-            if (owner.getLocation().distanceSquared(center) <= radius * radius) {
-                inside.add(owner);
-            }
-            Set<UUID> present = new HashSet<>();
-            long left = Math.max(1, duration - tick);
-            for (Player smith : inside) {
-                UUID id = smith.getUniqueId();
-                present.add(id);
-                if (!buffs.containsKey(id) && bonus > 0) {
-                    buffs.put(id, ctx().addModifier(owner, smith, Attribute.ATTACK_DAMAGE, bonus, Operation.ADD_NUMBER,
-                            left));
-                    buffed.put(id, smith);
-                    Location hand = hand(smith);
-                    Vfx.cloud(ctx(), hand, Particle.FLAME, 8, 0.12, 0.04, null, false);
-                    Fx.sound(hand, Sound.ITEM_FIRECHARGE_USE, 0.5f, 1.6f);
-                    smith.sendActionBar(Text.mm("<" + COLOR_TAG + ">⚒ 무기 강화</" + COLOR_TAG + "> <white>+"
-                            + AbilityInfo.formatNumber(bonus) + "</white> <gray>근접 공격력</gray>"));
-                } else if (tick % (BUFF_PERIOD * 2) == 0) {
-                    Location hand = hand(smith);
-                    Vfx.dot(hand, Particle.SMALL_FLAME, null, false);
-                    Vfx.dot(hand.clone().add(0, 0.08, 0), Particle.DUST_COLOR_TRANSITION, HOT, false);
-                }
-            }
-            buffs.entrySet().removeIf(entry -> {
-                if (present.contains(entry.getKey())) {
-                    return false;
-                }
-                Player smith = buffed.remove(entry.getKey());
-                if (smith != null) {
-                    ctx().removeModifier(smith, entry.getValue());
-                    Vfx.cloud(ctx(), hand(smith), Particle.CLOUD, 2, 0.05, 0.01, null, false);
-                }
-                return true;
-            });
         }
 
         // ---------------------------------------------------------- the giant hammer
 
-        /** The hammer's grip: beyond the anvil (seen from the smith), so the head comes down right on it. */
-        private Location pivot() {
-            return center.clone().add(forward.clone().multiply(HANDLE_LENGTH)).add(0, 1.35, 0);
-        }
-
-        /** The hammer is raised over the period and comes down on the anvil at its end. */
+        /** The hammer is raised before each blow and comes down on the anvil; the heat ring flares just before. */
         private void hammer(long tick) {
-            long phase = (tick + 1) % period;
-            long raiseStart = period - SLAM_TICKS - RAISE_TICKS;
-            if (phase >= raiseStart && phase < period - SLAM_TICKS && (phase - raiseStart) % 2 == 0) {
+            long sinceFirst = tick - firstBlow;
+            // Ticks to the next blow (0 on the blow itself).
+            long toBlow = sinceFirst <= 0 ? -sinceFirst : (period - sinceFirst % period) % period;
+            if (tick > lastBlow()) {
+                return;
+            }
+            long raiseFrom = RAISE_TICKS + SLAM_TICKS;
+            if (toBlow <= raiseFrom && toBlow > SLAM_TICKS && (raiseFrom - toBlow) % 2 == 0) {
                 // Raised in steps, so the head follows an arc rather than cutting across it.
-                double t = (phase - raiseStart + 2) / (double) RAISE_TICKS;
+                double t = (raiseFrom - toBlow + 2) / (double) RAISE_TICKS;
                 poseHammer((float) (RAISED_PITCH * Math.min(1.0, t)), 2);
-                if (phase == raiseStart) {
-                    Fx.sound(pivot(), Sound.BLOCK_PISTON_EXTEND, 0.6f, 0.6f);
+                if (toBlow == raiseFrom) {
+                    Fx.sound(center, Sound.BLOCK_PISTON_EXTEND, 0.6f, 0.6f);
                 }
                 if (head != null && head.isValid() && t >= 0.8) {
                     Displays.outline(head, PALETTE.body());
                 }
-            } else if (phase == period - SLAM_TICKS) {
+            } else if (toBlow == SLAM_TICKS) {
                 poseHammer(RAISED_PITCH * 0.5f, 1);
                 Fx.sound(center, Sound.ITEM_MACE_SMASH_AIR, 1.0f, 0.6f);
-                // Telegraph: the heat ring flares a moment before the blow.
-                Vfx.ring(ctx(), center.clone().add(0, 0.1, 0), radius, (int) Math.min(64, radius * 8), 0,
+                // Telegraph: the heat ring flares at the wave's full reach a moment before the blow.
+                Vfx.ring(ctx(), center.clone().add(0, 0.1, 0), radius, (int) Math.min(40, radius * 5), 0,
                         Particle.DUST_COLOR_TRANSITION, HOT, true);
-            } else if (phase == period - SLAM_TICKS + 1) {
+            } else if (toBlow == SLAM_TICKS - 1) {
                 poseHammer(0, 1);
-            } else if (phase == 0) {
-                slam(tick);
+            } else if (toBlow == 0 && sinceFirst >= 0) {
+                slam();
             }
         }
 
         private void poseHammer(float pitch, int ticks) {
+            Swing fitted = swing;
+            if (fitted == null) {
+                return;
+            }
             if (handle != null && handle.isValid()) {
-                Displays.animate(handle, hammerPose(true, pitch), ticks);
+                Displays.animate(handle, hammerPose(fitted, true, pitch), ticks);
             }
             if (head != null && head.isValid()) {
-                Displays.animate(head, hammerPose(false, pitch), ticks);
+                Displays.animate(head, hammerPose(fitted, false, pitch), ticks);
             }
         }
 
-        /** The blow: a clang, a fountain of sparks off the anvil and a shockwave rolling out over the ground. */
-        private void slam(long tick) {
-            blows++;
-            slamAt = tick;
-            waveStart = tick;
+        /**
+         * The blow: a clang and a fountain of sparks off the anvil, the smith's side around the forge is tempered and
+         * a shockwave starts rolling out over the ground.
+         */
+        private void slam() {
+            waveStart = -1;
             waveHit.clear();
             if (head != null && head.isValid()) {
                 head.setGlowing(false);
             }
             Location top = center.clone().add(0, 1.05, 0);
             Vfx.dot(top, Particle.FLASH, PALETTE.core(), true);
-            Vfx.cloud(ctx(), top, Particle.LAVA, 8, 0.3, 0, null, true);
+            Vfx.cloud(ctx(), top, Particle.LAVA, 6, 0.3, 0, null, true);
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            for (int i = 0; i < Vfx.n(ctx(), 14); i++) {
+            for (int i = 0; i < Vfx.n(ctx(), 12); i++) {
                 Vector spray = new Vector(random.nextGaussian() * 0.6, 0.8 + random.nextDouble() * 0.6,
                         random.nextGaussian() * 0.6).normalize();
                 world.spawnParticle(Particle.WAX_OFF, top.getX(), top.getY(), top.getZ(), 0, spray.getX(), spray.getY(),
                         spray.getZ(), 0.9, null, true);
             }
-            world.spawnParticle(Particle.BLOCK, center.clone().add(0, 0.1, 0), Vfx.n(ctx(), 16), 1.0, 0.1, 1.0, 0.1,
+            world.spawnParticle(Particle.BLOCK, center.clone().add(0, 0.1, 0), Vfx.n(ctx(), 12), 1.0, 0.1, 1.0, 0.1,
                     center.clone().subtract(0, 0.5, 0).getBlock().getBlockData(), true);
-            Fx.sound(center, Sound.BLOCK_ANVIL_LAND, 1.6f, 0.6f + 0.05f * blows);
+            Fx.sound(center, Sound.BLOCK_ANVIL_LAND, 1.6f, 0.6f + 0.08f * struck);
             Fx.sound(center, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.8f);
             Fx.sound(center, Sound.BLOCK_ANVIL_USE, 1.0f, 0.5f);
+            struck++;
+            temper();
+            waveStart = ctx().currentTick();
         }
 
-        /** The shockwave runs outward from the anvil and strikes each enemy once as it passes. */
+        // ---------------------------------------------------------- tempered weapons
+
+        /** The smith and its allies around the forge get red-hot weapons for a while; a new blow renews them. */
+        private void temper() {
+            double bonus = params().num("forge_bonus");
+            long ticks = params().ticks("temper_duration");
+            if (!(bonus > 0) || ticks <= 0) {
+                return;
+            }
+            List<Player> inside = new ArrayList<>(ctx().alliesNear(owner, center, radius));
+            if (!inside.contains(owner) && owner.getLocation().distanceSquared(center) <= radius * radius) {
+                inside.add(owner);
+            }
+            for (Player smith : inside) {
+                UUID id = smith.getUniqueId();
+                NamespacedKey old = tempers.remove(id);
+                if (old != null) {
+                    ctx().removeModifier(smith, old);
+                }
+                tempers.put(id, ctx().addModifier(owner, smith, Attribute.ATTACK_DAMAGE, bonus, Operation.ADD_NUMBER,
+                        ticks));
+                boolean fresh = tempered.put(id, smith) == null;
+                Location hand = hand(smith);
+                Vfx.cloud(ctx(), hand, Particle.FLAME, fresh ? 8 : 4, 0.12, 0.04, null, false);
+                Vfx.trail(top(), hand, PALETTE.body(), 8, false);
+                if (fresh) {
+                    Fx.sound(hand, Sound.ITEM_FIRECHARGE_USE, 0.5f, 1.6f);
+                }
+                smith.sendActionBar(Text.mm("<" + COLOR_TAG + ">⚒ 담금질</" + COLOR_TAG + "> <white>+"
+                        + AbilityInfo.formatNumber(bonus) + "</white> <gray>근접 공격력 · "
+                        + AbilityInfo.formatNumber(ticks / 20.0) + "초</gray>"));
+            }
+            temperedUntil = ctx().currentTick() + ticks;
+        }
+
+        private Location top() {
+            return center.clone().add(0, 1.1, 0);
+        }
+
+        // ---------------------------------------------------------- the shockwave
+
+        /**
+         * The shockwave rolls outward over the ground and strikes each enemy once as it passes: only enemies standing
+         * (not in mid-jump), within the forge's reach and not behind a wall.
+         */
         private void wave(long tick) {
             if (waveStart < 0) {
                 return;
             }
-            long age = tick - waveStart;
-            if (age > WAVE_TICKS) {
+            long age = ctx().currentTick() - waveStart;
+            if (age > waveTicks) {
                 waveStart = -1;
                 return;
             }
-            double front = 0.6 + (radius - 0.6) * age / WAVE_TICKS;
+            double front = Math.min(radius, WAVE_START + WAVE_SPEED * age);
+            double back = Math.max(0, front - WAVE_SPEED - WAVE_BAND);
             Location ground = center.clone().add(0, 0.12, 0);
-            Vfx.ring(ctx(), ground, front, (int) Math.min(60, Math.max(12, front * 8)), age * 0.2,
+            Vfx.ring(ctx(), ground, front, (int) Math.min(30, 8 + front * 3), age * 0.2,
                     Particle.DUST_COLOR_TRANSITION, HOT, true);
-            Vfx.ring(ctx(), ground.clone().add(0, 0.25, 0), Math.max(0.3, front - 0.4),
-                    (int) Math.min(40, Math.max(8, front * 5)), -age * 0.2, Particle.DUST, SOOT, false);
+            if (age % 2 == 0) {
+                Vfx.ring(ctx(), ground.clone().add(0, 0.2, 0), Math.max(0.3, front - 0.35), 10, -age * 0.2,
+                        Particle.DUST, SOOT, false);
+            }
             double damage = params().num("hammer_damage");
-            for (LivingEntity enemy : ctx().enemiesNear(owner, center, front + WAVE_BAND)) {
-                if (waveHit.contains(enemy.getUniqueId())
-                        || Math.abs(enemy.getLocation().getY() - center.getY()) > WAVE_HEIGHT
-                        || horizontal(enemy.getLocation(), center) < front - WAVE_BAND * 2) {
+            for (LivingEntity enemy : ctx().enemiesNear(owner, center, front + 1.0)) {
+                if (waveHit.contains(enemy.getUniqueId())) {
+                    continue;
+                }
+                Location feet = enemy.getLocation();
+                double distance = horizontal(feet, center);
+                if (distance > front + enemy.getWidth() / 2 || distance < back
+                        || Math.abs(feet.getY() - center.getY()) > WAVE_HEIGHT
+                        || airborne(enemy) > WAVE_CLEAR
+                        || !Spots.clearPath(center.clone().add(0, 1.0, 0), Fx.body(enemy))) {
                     continue;
                 }
                 waveHit.add(enemy.getUniqueId());
@@ -826,7 +956,7 @@ public final class BlacksmithAbility extends Ability {
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
-                Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(center.toVector()));
+                Vector away = Motion.horizontal(feet.toVector().subtract(center.toVector()));
                 if (away.lengthSquared() < 1.0E-6) {
                     away = forward.clone();
                 }
@@ -837,7 +967,16 @@ public final class BlacksmithAbility extends Ability {
             }
         }
 
-        /** Smoke from the furnace, embers from the coals and the heat ring breathing at the forge's edge. */
+        /** How high {@code entity}'s feet are above the ground right below it (a large number over a deep drop). */
+        private double airborne(LivingEntity entity) {
+            Location feet = entity.getLocation();
+            Location from = feet.clone().add(0, 0.05, 0);
+            RayTraceResult ground = world.rayTraceBlocks(from, new Vector(0, -1, 0), 4, FluidCollisionMode.ALWAYS,
+                    true);
+            return ground == null ? Double.MAX_VALUE : Math.max(0, feet.getY() - ground.getHitPosition().getY());
+        }
+
+        /** Smoke from the furnace, embers from the coals and the tempered weapons glowing. */
         private void ambience(long tick) {
             Location chimney = center.clone().add(side.clone().multiply(1.5)).add(forward.clone().multiply(-0.4))
                     .add(0, 1.2, 0);
@@ -849,34 +988,34 @@ public final class BlacksmithAbility extends Ability {
                 Vfx.dot(Vfx.scatter(coals, 0.45), Particle.LAVA, null, false);
                 Vfx.dot(Vfx.scatter(coals, 0.4), Particle.SMALL_FLAME, null, false);
             }
-            if (tick % 10 == 5 && tick - slamAt > WAVE_TICKS) {
-                Vfx.ring(ctx(), center.clone().add(0, 0.08, 0), radius, (int) Math.min(48, radius * 6), tick * 0.01,
-                        Particle.DUST, ORANGE, true);
+            if (tick % 10 == 0 && ctx().currentTick() < temperedUntil) {
+                for (Player smith : tempered.values()) {
+                    if (ctx().isAlive(smith)) {
+                        Location hand = hand(smith);
+                        Vfx.dot(hand, Particle.SMALL_FLAME, null, false);
+                        Vfx.dot(hand.clone().add(0, 0.08, 0), Particle.DUST_COLOR_TRANSITION, HOT, false);
+                    }
+                }
             }
             if (tick % 20 == 0) {
                 Fx.sound(center, Sound.BLOCK_BLASTFURNACE_FIRE_CRACKLE, 0.8f, 0.9f + Fx.jitter(0.1f));
             }
         }
 
-        /** The loop is over (the last shockwave has rolled out). */
+        /** The loop ended by itself. */
         void close() {
             cool();
         }
 
-        /** The forge cools: the red-hot weapons go back to normal and the workshop sinks away in steam. */
+        /**
+         * The forge cools and sinks away in steam. The tempered weapons keep their heat for their own time: it was
+         * forged into them.
+         */
         private void cool() {
             if (cooled) {
                 return;
             }
             cooled = true;
-            for (Map.Entry<UUID, NamespacedKey> entry : buffs.entrySet()) {
-                Player smith = buffed.get(entry.getKey());
-                if (smith != null) {
-                    ctx().removeModifier(smith, entry.getValue());
-                }
-            }
-            buffs.clear();
-            buffed.clear();
             for (BlockDisplay part : parts) {
                 if (part.isValid()) {
                     part.setGlowing(false);
@@ -892,12 +1031,12 @@ public final class BlacksmithAbility extends Ability {
          * One hammer part around the grip: the handle runs from the grip along the hammer's length, the head sits
          * across its far end. {@code pitch} 0 lays the hammer flat on the anvil, negative raises it.
          */
-        private Transformation hammerPose(boolean isHandle, float pitch) {
-            Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-hammerYaw))
-                    .rotateX((float) Math.toRadians(pitch));
-            Vector3f center = isHandle ? new Vector3f(0, 0, HANDLE_LENGTH / 2) : new Vector3f(0, -0.05f, HANDLE_LENGTH);
-            Vector3f size = isHandle ? new Vector3f(0.2f, 0.2f, HANDLE_LENGTH) : new Vector3f(1.1f, 0.7f, 0.75f);
-            Vector3f translation = rotation.transform(new Vector3f(center))
+        private Transformation hammerPose(Swing fitted, boolean isHandle, float pitch) {
+            Quaternionf rotation = swingRotation(fitted, pitch);
+            float length = fitted.length();
+            Vector3f middle = isHandle ? new Vector3f(0, 0, length / 2) : new Vector3f(0, -0.05f, length);
+            Vector3f size = isHandle ? new Vector3f(0.2f, 0.2f, length) : new Vector3f(1.1f, 0.7f, 0.75f);
+            Vector3f translation = rotation.transform(new Vector3f(middle))
                     .sub(rotation.transform(new Vector3f(size).mul(0.5f)));
             return new Transformation(translation, rotation, size, new Quaternionf());
         }

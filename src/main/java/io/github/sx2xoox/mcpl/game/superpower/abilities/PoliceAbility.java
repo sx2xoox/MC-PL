@@ -84,8 +84,9 @@ public final class PoliceAbility extends Ability {
                             + "빗나가면 쿨타임이 {taser_refund}% 돌아옵니다.",
                     9)
             .ultimate("체포",
-                    "조준한 적({arrest_range}블록 이내)에게 수갑을 던져 {arrest_damage} 피해를 주고 내 앞으로 끌고 온 뒤 "
-                            + "{jail_duration}초간 철창에 가둡니다. 갇힌 적은 움직이거나 능력을 쓸 수 없고 "
+                    "조준한 적({arrest_range}블록 이내)의 발밑에 경광등이 번쩍이고 {arrest_windup}초 뒤 수갑을 던집니다. "
+                            + "수갑은 적을 따라 조금씩 휘며 날아가다 벽에 막히고, 처음 맞은 적에게 {arrest_damage} 피해를 준 뒤 "
+                            + "내 앞으로 끌고 와 {jail_duration}초간 철창에 가둡니다. 갇힌 적은 움직이거나 능력을 쓸 수 없고 "
                             + "{jail_shock_period}초마다 {jail_shock} 감전 피해를 입습니다. 경찰차가 달려와 사이렌을 울립니다.")
             .param("siren_radius", 16)
             .param("wanted_duration", 5)
@@ -96,8 +97,9 @@ public final class PoliceAbility extends Ability {
             .param("taser_wanted_stun", 1.5)
             .param("taser_refund", 50)
             .param("arrest_range", 16)
+            .param("arrest_windup", 0.3)
             .param("arrest_damage", 2)
-            .param("jail_duration", 2.5)
+            .param("jail_duration", 2)
             .param("jail_shock", 0.75)
             .param("jail_shock_period", 0.5)
             .build();
@@ -136,9 +138,17 @@ public final class PoliceAbility extends Ability {
     private static final double REST_FALL = -Motion.GRAVITY * Motion.DRAG;
 
     // passive: siren
-    private static final long SENSE_PERIOD = 5;
-    private static final double COOLDOWN_JUMP = 0.3;
+    /**
+     * An enemy's active counts as ready while its cooldown is at most this (seconds): one tick of a running cooldown.
+     * The cooldown is read every tick, so a skill shows as a ready cooldown that suddenly runs again, however short
+     * its cooldown is, and a cooldown that someone else's ability stretches while it runs is not mistaken for one.
+     */
+    private static final double READY = 0.05 + 1.0E-6;
+    /** A rise of the cooldown above this (seconds) from one tick to the next: the active was just used. */
+    private static final double COOLDOWN_SET = 0.04;
+    /** A drop of the ultimate gauge at least this large from one tick to the next: the ultimate was just used. */
     private static final double GAUGE_DROP = 50;
+    private static final long WATCH_CLEANUP_PERIOD = 100;
     private static final int MAX_LIGHT_BARS = 6;
     private static final double LIGHT_ABOVE = 0.45;
     private static final float LIGHT_SIZE = 0.2f;
@@ -151,10 +161,16 @@ public final class PoliceAbility extends Ability {
     private static final float DART_LENGTH = 0.28f;
     private static final float DART_WIDTH = 0.06f;
     private static final long CRACKLE_PERIOD = 3;
+    /** The most particle points one taser wire draws, however long it is (two wires per shot). */
+    private static final double WIRE_POINTS = 12;
 
     // ultimate: arrest
-    private static final double CUFF_SPEED = 1.4;
-    private static final long CUFF_MAX_TICKS = 16;
+    private static final double CUFF_SPEED = 1.2;
+    /** How far (radians per tick) the thrown cuffs turn after their target: enough for a slow walk, not a dodge. */
+    private static final double CUFF_TURN = Math.toRadians(4);
+    /** How far the cuffs fly beyond the arrest range before they drop. */
+    private static final double CUFF_EXTRA = 3;
+    private static final double CUFF_PAD = 0.3;
     private static final double DRAG_STOP = 2.3;
     private static final double DRAG_ARRIVE = 0.9;
     private static final double DRAG_SPEED = 1.2;
@@ -163,6 +179,9 @@ public final class PoliceAbility extends Ability {
     private static final long MAX_LAG_TICKS = 6;
     private static final double MILLIS_PER_TICK = 50.0;
     private static final double CAR_SIDE = 2.6;
+    private static final double CAR_HALF_LENGTH = 1.2;
+    private static final double CAR_WIDTH = 1.4;
+    private static final double CAR_HEIGHT = 1.6;
     private static final double CAR_RUN = 9;
     private static final long CAR_ARRIVE_TICKS = 12;
     private static final long SIREN_PERIOD = 6;
@@ -214,20 +233,23 @@ public final class PoliceAbility extends Ability {
     @Override
     public void onTick(long tick) {
         Player owner = player();
-        if (tick % SENSE_PERIOD == 0) {
-            listen(owner);
-        }
+        listen(owner, tick);
         updateWanted(owner, tick);
     }
 
-    /** Puts every enemy within earshot that just used a skill (its cooldown jumped, its gauge was spent) on the list. */
-    private void listen(Player owner) {
+    /**
+     * Puts every enemy within earshot that just used a skill on the list: its ready active started a cooldown since
+     * the last tick, or its ultimate gauge was spent.
+     */
+    private void listen(Player owner, long tick) {
         double radius = params().num("siren_radius");
         Location at = owner.getLocation();
-        watched.keySet().removeIf(id -> {
-            Player other = owner.getServer().getPlayer(id);
-            return other == null || !ctx().isAlive(other);
-        });
+        if (tick % WATCH_CLEANUP_PERIOD == 0) {
+            watched.keySet().removeIf(id -> {
+                Player other = owner.getServer().getPlayer(id);
+                return other == null || !ctx().isAlive(other);
+            });
+        }
         for (Player other : ctx().alivePlayers()) {
             if (other.equals(owner) || !ctx().isEnemy(owner, other)) {
                 continue;
@@ -235,8 +257,8 @@ public final class PoliceAbility extends Ability {
             Watch watch = watched.computeIfAbsent(other.getUniqueId(), id -> new Watch());
             double cooldown = ctx().cooldownRemaining(other);
             double gauge = ctx().gauge(other);
-            boolean skill = watch.known
-                    && (cooldown > watch.cooldown + COOLDOWN_JUMP || watch.gauge - gauge >= GAUGE_DROP);
+            boolean active = watch.cooldown <= READY && cooldown > watch.cooldown + COOLDOWN_SET;
+            boolean skill = watch.known && (active || watch.gauge - gauge >= GAUGE_DROP);
             watch.known = true;
             watch.cooldown = cooldown;
             watch.gauge = gauge;
@@ -432,13 +454,17 @@ public final class PoliceAbility extends Ability {
 
         void fire() {
             Location muzzle = hand(owner);
+            // The darts stay stuck in a victim for the whole stun: their lifetime covers the flight and the longest
+            // stun (they are pulled out explicitly when it ends).
+            long flight = (long) Math.ceil(range / DART_SPEED) + 2;
+            long stun = Math.max(params().ticks("taser_stun"), params().ticks("taser_wanted_stun"));
             for (int i = 0; i < darts.length; i++) {
                 if (!reserve(1)) {
                     break;
                 }
                 Location at = muzzle.clone().add(side.clone().multiply(i == 0 ? DART_SPREAD : -DART_SPREAD));
                 darts[i] = Displays.block(ctx(), owner, at, DART_BLOCK.createBlockData(), dartPose(direction),
-                        (long) Math.ceil(range / DART_SPEED) + 8);
+                        flight + Math.max(0, stun) + 10);
                 darts[i].setTeleportDuration(1);
                 displays.add(darts[i]);
             }
@@ -447,7 +473,7 @@ public final class PoliceAbility extends Ability {
             Fx.sound(muzzle, Sound.ITEM_CROSSBOW_SHOOT, 0.8f, 1.8f + Fx.jitter(0.05f));
             Fx.sound(muzzle, Sound.BLOCK_COPPER_BULB_TURN_ON, 0.9f, 1.6f + Fx.jitter(0.1f));
             Fx.sound(muzzle, Sound.ENTITY_BEE_STING, 0.6f, 1.5f + Fx.jitter(0.1f));
-            Loop.repeat(ctx(), owner, 1, 1, (long) Math.ceil(range / DART_SPEED) + 2, this, this::end);
+            Loop.repeat(ctx(), owner, 1, 1, flight, this, this::end);
         }
 
         @Override
@@ -463,7 +489,7 @@ public final class PoliceAbility extends Ability {
             Vector start = position.toVector();
             RayTraceResult wall = world.rayTraceBlocks(position, direction, step, FluidCollisionMode.NEVER, true);
             double reach = wall == null ? step : wall.getHitPosition().distance(start);
-            LivingEntity victim = firstEnemy(start, reach);
+            LivingEntity victim = firstEnemyOnPath(owner, world, start, direction, reach, DART_PAD);
             if (victim != null) {
                 position = Fx.body(victim);
                 drawDarts();
@@ -480,34 +506,6 @@ public final class PoliceAbility extends Ability {
             travelled += step;
             drawDarts();
             return true;
-        }
-
-        /** The nearest enemy (visible to the police) whose padded hitbox this tick's segment crosses. */
-        private @Nullable LivingEntity firstEnemy(Vector start, double reach) {
-            Location middle = start.clone().add(direction.clone().multiply(reach / 2)).toLocation(world);
-            LivingEntity best = null;
-            double bestDistance = Double.MAX_VALUE;
-            for (LivingEntity enemy : ctx().enemiesNear(owner, middle, reach / 2 + 1.5)) {
-                if (isHidden(owner, enemy)) {
-                    continue;
-                }
-                BoundingBox box = enemy.getBoundingBox().expand(DART_PAD);
-                double distance;
-                if (box.contains(start)) {
-                    distance = 0;
-                } else {
-                    RayTraceResult crossing = box.rayTrace(start, direction, reach);
-                    if (crossing == null) {
-                        continue;
-                    }
-                    distance = crossing.getHitPosition().distance(start);
-                }
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    best = enemy;
-                }
-            }
-            return best;
         }
 
         private void drawDarts() {
@@ -555,10 +553,22 @@ public final class PoliceAbility extends Ability {
             electrify(victim, Math.max(1, stun));
         }
 
-        /** The current runs while the victim is held: darts stuck in it, the wires buzzing, sparks all over. */
+        /**
+         * The current runs while the victim is held: darts stuck in it, the wires buzzing, sparks all over. A victim
+         * that slips into stealth keeps its stun, but the darts are pulled out and the wires go quiet at once: they
+         * must not keep pointing at it.
+         */
         private void electrify(LivingEntity victim, long stun) {
             Loop.repeat(ctx(), owner, 1, 1, stun, run -> {
                 if (!Combat.isTargetable(ctx(), owner, victim)) {
+                    return false;
+                }
+                if (isHidden(owner, victim)) {
+                    for (BlockDisplay dart : darts) {
+                        if (dart != null && dart.isValid()) {
+                            dart.remove();
+                        }
+                    }
                     return false;
                 }
                 Location body = Fx.body(victim);
@@ -646,7 +656,7 @@ public final class PoliceAbility extends Ability {
         if (length < 0.2 || length > 24) {
             return;
         }
-        Vfx.line(ctx(), from, to, Math.min(3, 40 / length), Particle.DUST, WIRE, false);
+        Vfx.line(ctx(), from, to, Math.min(1.5, WIRE_POINTS / length), Particle.DUST, WIRE, false);
         if (live) {
             Location mid = from.clone().add(to.toVector().subtract(from.toVector()).multiply(
                     ThreadLocalRandom.current().nextDouble(0.2, 0.8)));
@@ -668,25 +678,33 @@ public final class PoliceAbility extends Ability {
         return ActivationResult.success();
     }
 
-    private enum Stage { THROW, DRAG, JAIL, DONE }
+    private enum Stage { WINDUP, THROW, DRAG, JAIL, DONE }
 
     /**
-     * One arrest: the cuffs fly to the target, snap shut and drag it to the police; then a cell of iron bars closes
-     * round it for the jail time while the police car stands by with its siren on.
+     * One arrest: the suspect is lit up by the siren while the police readies the cuffs; the cuffs are thrown and fly
+     * like a projectile (turning only a little after the suspect, stopped by walls, so a dash aside or cover gets
+     * away), snap shut on the first enemy they reach and drag it to the police; then a cell of iron bars closes round
+     * it for the jail time while the police car stands by with its siren on.
      */
     private final class Arrest implements LongPredicate {
 
         private final Player owner;
-        private final LivingEntity target;
         private final World world;
         private final long jail;
-        private final long lag;
-        private Stage stage = Stage.THROW;
+        private final long windup;
+        private final double maxFlight;
+        /** The suspect: the aimed enemy until the cuffs close on whoever they reach first. */
+        private LivingEntity target;
+        /** Ticks the server sees the cuffed player's movement late (its ping), 0 for a mob. */
+        private long lag;
+        private Stage stage = Stage.WINDUP;
         private long stageStart;
         private @Nullable ItemDisplay cuffs;
         private @Nullable TextDisplay label;
         private final List<BlockDisplay> car = new ArrayList<>();
         private Location cuffAt;
+        private Vector heading = new Vector(0, 0, 1);
+        private double flown;
         private Location destination;
         private Vector inward = new Vector(0, 0, 1);
         private float carYaw;
@@ -703,27 +721,37 @@ public final class PoliceAbility extends Ability {
             this.target = target;
             this.world = owner.getWorld();
             this.jail = Math.max(1, params().ticks("jail_duration"));
-            this.lag = Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, owner.getPing()) / MILLIS_PER_TICK));
+            this.windup = Math.max(1, params().ticks("arrest_windup"));
+            this.maxFlight = Math.max(1, params().num("arrest_range")) + CUFF_EXTRA;
             this.cuffAt = hand(owner);
             this.destination = owner.getLocation();
         }
 
+        private long flightTicks() {
+            return (long) Math.ceil(maxFlight / CUFF_SPEED) + 1;
+        }
+
         void start() {
-            cuffs = Displays.item(ctx(), owner, cuffAt, new ItemStack(CUFFS_ITEM), cuffPose(0.2f, 0),
-                    CUFF_MAX_TICKS + DRAG_MAX_TICKS + jail + 30);
+            long total = windup + flightTicks() + DRAG_MAX_TICKS + MAX_LAG_TICKS + jail;
+            cuffs = Displays.item(ctx(), owner, cuffAt, new ItemStack(CUFFS_ITEM), cuffPose(0.2f, 0), total + 30);
             cuffs.setTeleportDuration(1);
             cuffs.setViewRange(2.0f);
             displays.add(cuffs);
-            Fx.sound(cuffAt, Sound.BLOCK_CHAIN_PLACE, 1.0f, 1.2f + Fx.jitter(0.05f));
             Fx.sound(cuffAt, Sound.ITEM_ARMOR_EQUIP_CHAIN, 1.0f, 1.0f);
-            Fx.sound(cuffAt, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.5f, 1.8f);
-            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>⛓ 체포!</b></" + COLOR_TAG + "> <gray>수갑을 던졌습니다</gray>"));
-            Loop.repeat(ctx(), owner, 1, 1, CUFF_MAX_TICKS + DRAG_MAX_TICKS + lag + jail + 4, this, this::end);
+            Fx.sound(cuffAt, Sound.BLOCK_CHAIN_STEP, 0.8f, 1.6f);
+            // The suspect hears the siren start: it has the wind-up to get out of the way.
+            Location feet = target.getLocation();
+            Fx.sound(feet, Sound.BLOCK_NOTE_BLOCK_BIT, 1.0f, 1.5f);
+            ctx().runLater(owner, 3, () -> Fx.sound(target.getLocation(), Sound.BLOCK_NOTE_BLOCK_BIT, 1.0f, 1.1f));
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>⛓ 체포!</b></" + COLOR_TAG + "> <white><suspect></white>",
+                    Placeholder.component("suspect", target.name())));
+            Loop.repeat(ctx(), owner, 1, 1, total + 4, this, this::end);
         }
 
         @Override
         public boolean test(long tick) {
             return switch (stage) {
+                case WINDUP -> windUp(tick);
                 case THROW -> fly(tick);
                 case DRAG -> drag(tick);
                 case JAIL -> hold(tick);
@@ -731,31 +759,116 @@ public final class PoliceAbility extends Ability {
             };
         }
 
-        /** The cuffs spin through the air, homing on the target's wrists. */
-        private boolean fly(long tick) {
-            // A suspect that vanishes (stealth) before the cuffs reach it gets away: homing on it would give it away.
+        /** The telegraph: the cuffs twirl over the police's hand while red and blue light flashes at the suspect. */
+        private boolean windUp(long tick) {
             if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(world)
                     || isHidden(owner, target)) {
+                stage = Stage.DONE;
+                finishVisuals(false);
                 return false;
             }
-            Location wrists = wrists();
-            Vector to = wrists.toVector().subtract(cuffAt.toVector());
-            double distance = to.length();
+            spin += 36;
+            cuffAt = hand(owner).add(0, 0.3, 0);
+            moveCuffs(cuffAt, 0.45f);
+            if (tick % 2 == 0) {
+                Location feet = target.getLocation().add(0, 0.1, 0);
+                boolean red = (tick / 2) % 2 == 0;
+                Vfx.ring(ctx(), feet, 0.85, 10, tick * 0.4, Particle.DUST, red ? RED_DUST : BLUE_DUST, true);
+                Vfx.dot(lightSpot(target), Particle.DUST, red ? RED_DUST : BLUE_DUST, true);
+            }
+            if (tick + 1 >= windup) {
+                launch();
+            }
+            return true;
+        }
+
+        /** The cuffs leave the hand, aimed at the suspect's wrists. */
+        private void launch() {
+            cuffAt = hand(owner);
+            Vector to = wrists().toVector().subtract(cuffAt.toVector());
+            heading = to.lengthSquared() > 1.0E-8 ? to.normalize() : aim(owner);
+            flown = 0;
+            stage = Stage.THROW;
+            moveCuffs(cuffAt, 0.55f);
+            Fx.sound(cuffAt, Sound.BLOCK_CHAIN_PLACE, 1.0f, 1.2f + Fx.jitter(0.05f));
+            Fx.sound(cuffAt, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.5f, 1.8f);
+        }
+
+        /**
+         * The cuffs fly: a little turn after the suspect each tick, stopped by the first wall; they snap shut on the
+         * first enemy (visible to the police) they reach, or drop at the end of their flight.
+         */
+        private boolean fly(long tick) {
+            // A suspect that vanishes (stealth) or falls: the cuffs drop. Homing on a hidden one would give it away.
+            if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(world)
+                    || isHidden(owner, target)) {
+                drop(null);
+                return false;
+            }
+            Vector desired = wrists().toVector().subtract(cuffAt.toVector());
+            if (desired.lengthSquared() > 1.0E-6) {
+                heading = turnTowards(heading, desired.normalize(), CUFF_TURN);
+            }
+            double step = Math.min(CUFF_SPEED, maxFlight - flown);
+            if (step <= 1.0E-3) {
+                drop(null);
+                return false;
+            }
             spin += 40;
-            if (distance <= CUFF_SPEED || tick >= CUFF_MAX_TICKS - 1) {
-                cuffAt = wrists;
-                moveCuffs(wrists, 0.55f);
+            Vector start = cuffAt.toVector();
+            RayTraceResult wall = world.rayTraceBlocks(cuffAt, heading, step, FluidCollisionMode.NEVER, true);
+            double reach = wall == null ? step : wall.getHitPosition().distance(start);
+            LivingEntity caught = firstEnemyOnPath(owner, world, start, heading, reach, CUFF_PAD);
+            if (caught != null) {
+                target = caught;
+                cuffAt = wrists();
+                moveCuffs(cuffAt, 0.55f);
                 cuff();
                 return true;
             }
-            cuffAt = cuffAt.clone().add(to.multiply(CUFF_SPEED / distance));
+            if (wall != null) {
+                cuffAt = wall.getHitPosition().toLocation(world).subtract(heading.clone().multiply(0.15));
+                moveCuffs(cuffAt, 0.55f);
+                drop(cuffAt);
+                return false;
+            }
+            cuffAt = cuffAt.clone().add(heading.clone().multiply(step));
+            flown += step;
             moveCuffs(cuffAt, 0.55f);
-            Vfx.line(ctx(), hand(owner), cuffAt, 2, Particle.DUST, CHAIN_DUST, false);
+            Location from = hand(owner);
+            double length = from.distance(cuffAt);
+            if (length > 0.3) {
+                Vfx.line(ctx(), from, cuffAt, Math.min(2, WIRE_POINTS / length), Particle.DUST, CHAIN_DUST, false);
+            }
             Vfx.dot(cuffAt, Particle.WAX_OFF, null, false);
             if (tick % 2 == 0) {
                 Fx.sound(cuffAt, Sound.BLOCK_CHAIN_STEP, 0.6f, 1.5f + Fx.jitter(0.1f));
             }
             return true;
+        }
+
+        /** A miss: the cuffs clatter to the ground (off a wall with sparks) and fade there. */
+        private void drop(@Nullable Location wallHit) {
+            stage = Stage.DONE;
+            if (wallHit != null) {
+                Vfx.cloud(ctx(), wallHit, Particle.ELECTRIC_SPARK, 6, 0.1, 0.1, null, false);
+                Fx.sound(wallHit, Sound.BLOCK_CHAIN_HIT, 1.0f, 1.0f + Fx.jitter(0.1f));
+            }
+            ItemDisplay held = cuffs;
+            if (held != null && held.isValid()) {
+                Location floor = cuffAt.clone();
+                Spots.snapToGround(world, floor, 6);
+                held.setTeleportDuration(5);
+                Displays.moveTo(held, floor.add(0, 0.1, 0));
+                Displays.animate(held, cuffPose(0.5f, spin), 5);
+                Fx.sound(floor, Sound.BLOCK_CHAIN_FALL, 0.8f, 1.3f);
+                ctx().runLater(owner, 12, () -> {
+                    if (held.isValid()) {
+                        Displays.shrinkAway(ctx(), owner, held, 4);
+                    }
+                });
+            }
+            owner.sendActionBar(Text.mm("<gray>수갑이 빗나갔습니다</gray>"));
         }
 
         /** Click: the cuffs close, the arrest damage lands and the drag begins; the police car is called. */
@@ -773,6 +886,8 @@ public final class PoliceAbility extends Ability {
                 finishVisuals(false);
                 return;
             }
+            // The haul is steered by the prisoner's own lag: its client is the one that runs ahead of the server.
+            lag = target instanceof Player cuffed ? lagTicks(cuffed) : 0;
             // Drag it to a spot in front of the police, along the line between them.
             Location feet = owner.getLocation();
             Vector toTarget = Motion.horizontal(target.getLocation().toVector().subtract(feet.toVector()));
@@ -787,14 +902,15 @@ public final class PoliceAbility extends Ability {
             hauledZ = target.getLocation().getZ();
             carYaw = yawOf(inward);
             Vector side = new Vector(-inward.getZ(), 0, inward.getX());
-            carPark = parkSpot(destination, side);
+            carPark = parkSpot(destination, side, inward);
             callCar();
             stage = Stage.DRAG;
             stageStart = ctx().currentTick();
         }
 
         /**
-         * Hauls the cuffed target in by the chain; one that gets stuck (a wall) or slips too far is jailed there.
+         * Hauls the cuffed target in by the chain; one that gets stuck (a wall) or slips too far is jailed there, one
+         * that slips into stealth breaks free.
          *
          * <p>The target is steered by where it will be once it has followed every haul sent so far (dead reckoning),
          * not by its position on the server: that trails a player's client by its ping, and steering by it would keep
@@ -802,6 +918,10 @@ public final class PoliceAbility extends Ability {
          */
         private boolean drag(long tick) {
             if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(world)) {
+                return false;
+            }
+            if (isHidden(owner, target)) {
+                breakFree();
                 return false;
             }
             long elapsed = ctx().currentTick() - stageStart;
@@ -812,12 +932,8 @@ public final class PoliceAbility extends Ability {
             boolean slipped = elapsed > lag + 2 && target.getLocation().distance(owner.getLocation())
                     > params().num("arrest_range") + DRAG_LEASH;
             if (arrived || timedOut || slipped) {
-                // Stop the haul. A mob keeps the fall speed the server simulates for it; a player's server-side
-                // velocity is stale, so it gets vanilla's resting fall speed instead of a replayed one.
-                double fall = target instanceof Player ? REST_FALL : Math.min(0, target.getVelocity().getY());
-                target.setVelocity(new Vector(0, fall, 0));
-                target.setFallDistance(0);
-                lockUp();
+                stopHaul();
+                lockUp(arrived);
                 return true;
             }
             double speed = Math.min(DRAG_SPEED, Math.max(0.25, distance * 0.45));
@@ -835,7 +951,11 @@ public final class PoliceAbility extends Ability {
             moveCuffs(wrists, 0.55f);
             Location from = hand(owner);
             if (!veil()) {
-                Vfx.line(ctx(), from, wrists, 3, Particle.DUST, CHAIN_DUST, false);
+                double length = from.distance(wrists);
+                if (length > 0.3) {
+                    Vfx.line(ctx(), from, wrists, Math.min(3, WIRE_POINTS * 1.5 / length), Particle.DUST, CHAIN_DUST,
+                            false);
+                }
             }
             if (tick % 2 == 0) {
                 Fx.sound(wrists, Sound.BLOCK_CHAIN_STEP, 0.8f, 0.9f + Fx.jitter(0.1f));
@@ -844,12 +964,44 @@ public final class PoliceAbility extends Ability {
             return true;
         }
 
+        /**
+         * Stops the haul. A mob keeps the fall speed the server simulates for it; a player's server-side velocity is
+         * stale, so it gets vanilla's resting fall speed instead of a replayed one.
+         */
+        private void stopHaul() {
+            double fall = target instanceof Player ? REST_FALL : Math.min(0, target.getVelocity().getY());
+            target.setVelocity(new Vector(0, fall, 0));
+            target.setFallDistance(0);
+        }
+
+        /** The suspect vanished mid-drag: the chain goes slack and nothing more is shown around it. */
+        private void breakFree() {
+            stopHaul();
+            stage = Stage.DONE;
+            veil();
+            ItemDisplay held = cuffs;
+            if (held != null && held.isValid()) {
+                held.remove();
+            }
+            Location hand = hand(owner);
+            Fx.sound(hand, Sound.BLOCK_CHAIN_BREAK, 1.0f, 1.2f);
+            owner.sendActionBar(Text.mm("<gray>용의자가 사라졌습니다</gray>"));
+            finishVisuals(false);
+        }
+
         /** The cell closes: centered, rooted, silenced, the bars slam shut under an iron lid. */
-        private void lockUp() {
+        private void lockUp(boolean arrived) {
             stage = Stage.JAIL;
             stageStart = ctx().currentTick();
             jailEnd = stageStart + jail;
-            centerInBlock(target);
+            // A player hauled all the way stands where the hauls took its client, not where the server last saw it.
+            boolean reckoned = arrived && target instanceof Player;
+            Location spot = reckoned
+                    ? new Location(world, hauledX, target.getLocation().getY(), hauledZ)
+                    : target.getLocation();
+            if (!centerInBlock(target, spot) && reckoned) {
+                centerInBlock(target, target.getLocation());
+            }
             ctx().addModifier(owner, target, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1, jail);
             ctx().addModifier(owner, target, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1, jail);
             if (target instanceof Player prisoner) {
@@ -938,7 +1090,7 @@ public final class PoliceAbility extends Ability {
         /** The cell opens: the cuffs fall away and the car drives off. */
         private void release() {
             stage = Stage.DONE;
-            if (target.isValid()) {
+            if (target.isValid() && !isHidden(owner, target)) {
                 Location body = Fx.body(target);
                 world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 12), 0.8, 0.7, 0.8, 0.1, BARS.createBlockData());
                 Fx.sound(body, Sound.BLOCK_IRON_DOOR_OPEN, 1.0f, 0.9f);
@@ -980,13 +1132,14 @@ public final class PoliceAbility extends Ability {
             Vector forward = new Vector(-Math.sin(Math.toRadians(carYaw)), 0, Math.cos(Math.toRadians(carYaw)));
             Location away = park.clone().add(forward.multiply(4));
             Fx.sound(park, Sound.ENTITY_MINECART_RIDING, 0.6f, 1.4f);
+            boolean road = Spots.clearPath(park.clone().add(0, 0.6, 0), away.clone().add(0, 0.6, 0));
             for (BlockDisplay part : car) {
-                if (part.isValid()) {
+                if (part.isValid() && road) {
                     part.setTeleportDuration(8);
                     Displays.moveTo(part, away);
                 }
             }
-            ctx().runLater(owner, 6, () -> {
+            ctx().runLater(owner, road ? 6 : 1, () -> {
                 for (BlockDisplay part : car) {
                     if (part.isValid()) {
                         Displays.shrinkAway(ctx(), owner, part, 4);
@@ -1043,13 +1196,23 @@ public final class PoliceAbility extends Ability {
 
         // -------------------------------------------------------------- the police car
 
-        /** A spot beside the cell for the car, on a side that is free; null if both sides are walls. */
-        private @Nullable Location parkSpot(Location cell, Vector side) {
+        /**
+         * A spot beside the cell for the car, on a side where the whole car fits (its length along {@code along},
+         * its height under any ceiling) with a clear line to the cell; null if neither side has room.
+         */
+        private @Nullable Location parkSpot(Location cell, Vector side, Vector along) {
             for (double sign : new double[] {1, -1}) {
                 Location spot = cell.clone().add(side.clone().multiply(CAR_SIDE * sign));
                 Spots.snapToGround(world, spot, 3);
-                if (Spots.isFree(world, spot, 1.4, 1.3) && Spots.clearPath(cell.clone().add(0, 0.6, 0),
-                        spot.clone().add(0, 0.6, 0))) {
+                boolean fits = true;
+                for (double offset : new double[] {-CAR_HALF_LENGTH, 0, CAR_HALF_LENGTH}) {
+                    Location part = spot.clone().add(along.clone().multiply(offset));
+                    if (!Spots.isFree(world, part, CAR_WIDTH, CAR_HEIGHT)) {
+                        fits = false;
+                        break;
+                    }
+                }
+                if (fits && Spots.clearPath(cell.clone().add(0, 0.6, 0), spot.clone().add(0, 0.6, 0))) {
                     return spot;
                 }
             }
@@ -1067,7 +1230,7 @@ public final class PoliceAbility extends Ability {
             boolean road = Spots.clearPath(start.clone().add(0, 0.6, 0), park.clone().add(0, 0.6, 0))
                     && Spots.clearPath(start.clone().add(0, 1.2, 0), park.clone().add(0, 1.2, 0));
             Location spawn = road ? start : park;
-            long life = CAR_ARRIVE_TICKS + DRAG_MAX_TICKS + lag + jail + 24;
+            long life = CAR_ARRIVE_TICKS + DRAG_MAX_TICKS + MAX_LAG_TICKS + jail + 24;
             for (CarPart part : CarPart.ALL) {
                 BlockDisplay display = Displays.block(ctx(), owner, spawn, part.material.createBlockData(),
                         part.pose(carYaw, road ? 1f : 0.05f), life);
@@ -1222,25 +1385,86 @@ public final class PoliceAbility extends Ability {
     }
 
     /**
-     * Moves the prisoner to the middle of its block column when that space is free (and inside the arena), so the
-     * cell fits around it; a player is moved even when already centred, since its client runs ahead of the server.
+     * Moves the prisoner to the middle of the block column of {@code spot}, on the ground there, when that space is
+     * free, on safe ground and inside the arena, so the cell fits around it. A player is moved even when already
+     * centred: its client may stand elsewhere. Returns false (and moves nothing) when the spot is no good.
      */
-    private void centerInBlock(LivingEntity target) {
+    private boolean centerInBlock(LivingEntity target, Location spot) {
+        World world = target.getWorld();
         Location location = target.getLocation();
         Location centered = location.clone();
-        centered.setX(location.getBlockX() + 0.5);
-        centered.setZ(location.getBlockZ() + 0.5);
+        centered.setX(Math.floor(spot.getX()) + 0.5);
+        centered.setZ(Math.floor(spot.getZ()) + 0.5);
+        Spots.snapToGround(world, centered, 1.5);
         if (!(target instanceof Player) && centered.distanceSquared(location) < 0.05 * 0.05) {
-            return;
+            return true;
         }
-        if (!Spots.isFree(target.getWorld(), centered, target.getWidth(), target.getHeight())
-                || !ctx().isInsideArena(centered)) {
-            return;
+        if (!Spots.isFree(world, centered, target.getWidth(), target.getHeight())
+                || !Spots.hasGroundBelow(world, centered) || !ctx().isInsideArena(centered)) {
+            return false;
         }
         target.teleport(centered);
+        return true;
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** The nearest enemy (visible to the police) whose padded hitbox the segment from {@code start} crosses. */
+    private @Nullable LivingEntity firstEnemyOnPath(Player owner, World world, Vector start, Vector direction,
+                                                   double reach, double pad) {
+        Location middle = start.clone().add(direction.clone().multiply(reach / 2)).toLocation(world);
+        LivingEntity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (LivingEntity enemy : ctx().enemiesNear(owner, middle, reach / 2 + 1.5)) {
+            if (isHidden(owner, enemy)) {
+                continue;
+            }
+            BoundingBox box = enemy.getBoundingBox().expand(pad);
+            double distance;
+            if (box.contains(start)) {
+                distance = 0;
+            } else {
+                RayTraceResult crossing = box.rayTrace(start, direction, Math.max(reach, 1.0E-3));
+                if (crossing == null) {
+                    continue;
+                }
+                distance = crossing.getHitPosition().distance(start);
+            }
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = enemy;
+            }
+        }
+        return best;
+    }
+
+    /** {@code from} turned towards {@code to} (both unit vectors) by at most {@code maxAngle} radians. */
+    static Vector turnTowards(Vector from, Vector to, double maxAngle) {
+        double angle = from.angle(to);
+        if (!(angle > maxAngle)) {
+            return to.clone();
+        }
+        Vector axis = from.getCrossProduct(to);
+        if (axis.lengthSquared() < 1.0E-9) {
+            // Straight behind: no plane to turn in, keep going.
+            return from.clone();
+        }
+        return from.clone().rotateAroundNonUnitAxis(axis, maxAngle).normalize();
+    }
+
+    /** Ticks the server sees a player's movement late: one round trip, capped. */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / MILLIS_PER_TICK));
+    }
+
+    /** The owner's view direction, never zero. */
+    private static Vector aim(Player owner) {
+        Vector direction = owner.getEyeLocation().getDirection();
+        if (!(direction.lengthSquared() > 1.0E-8)) {
+            return Motion.horizontalFacing(owner.getLocation());
+        }
+        return direction.normalize();
+    }
 
     /** Reserves room for {@code count} more displays under {@link #MAX_DISPLAYS}; false when there is none. */
     private boolean reserve(int count) {

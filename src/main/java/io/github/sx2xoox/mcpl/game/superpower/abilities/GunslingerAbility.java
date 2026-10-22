@@ -65,7 +65,7 @@ import org.jspecify.annotations.Nullable;
  * <p>Look: brass, old leather and gun smoke. Every shot flashes a small brass star at the muzzle, draws a white-hot
  * tracer with a brass glow and leaves a wisp of smoke; a head hit rings a bell and pops "헤드샷!". When the cylinder is
  * empty six brass shells tumble to the ground with a tinkle, and while it reloads a ring of six chambers turns at the
- * gunslinger's hip, each one lighting up with a click. High noon raises a blazing sun over the gunslinger and paints
+ * gunslinger's hip, each one turning from dark iron to brass with a click. High noon raises a blazing sun over the gunslinger and paints
  * a clock face on the ground whose hand sweeps to twelve; each victim gets a reticle over its head that tightens and
  * turns from gold to red, and when the bell strikes noon every locked enemy is shot in the same instant.
  */
@@ -81,18 +81,18 @@ public final class GunslingerAbility extends Ability {
             .active("속사",
                     "허리춤의 리볼버를 뽑아 바라보는 방향으로 한 발을 쏩니다({shot_range}블록). 처음 맞은 적은 "
                             + "{shot_damage} 피해를 입고, 머리에 맞으면 피해가 {headshot_bonus}% 늘어납니다.",
-                    5)
+                    7)
             .ultimate("정오의 결투",
                     "{noon_draw}초간 리볼버를 겨누며(이동 속도 -{noon_slow}%) 정면 {noon_cone}° 시야 안, {noon_range}블록 "
                             + "이내의 적에게 조준 표식을 채웁니다. 표식은 시야에 들어와 있는 동안 차오르고, 벽 뒤로 숨거나 시야를 "
                             + "벗어나면 식습니다. 시간이 다 되면 표식이 남은 적 최대 {noon_targets}명을 한꺼번에 쏴 표식이 찬 "
                             + "만큼 {noon_min}~{noon_max} 피해를 줍니다.")
             .param("rounds", 6)
-            .param("shot_interval", 0.3)
+            .param("shot_interval", 0.4)
             .param("idle_reload", 6)
             .param("shot_range", 16)
-            .param("shot_damage", 1.5)
-            .param("headshot_bonus", 100)
+            .param("shot_damage", 1)
+            .param("headshot_bonus", 50)
             .param("noon_draw", 2)
             .param("noon_slow", 60)
             .param("noon_cone", 110)
@@ -124,9 +124,12 @@ public final class GunslingerAbility extends Ability {
     /** Block and item types of the visuals (block data is created on use: it needs a running server). */
     private static final Material TRACER_BLOCK = Material.WHITE_CONCRETE;
     private static final Material FLASH_BLOCK = Material.YELLOW_CONCRETE;
+    private static final Material SPIKE_BLOCK = Material.WHITE_STAINED_GLASS;
     private static final Material SHELL_ITEM = Material.GOLD_NUGGET;
     private static final Material SUN_CORE = Material.OCHRE_FROGLIGHT;
     private static final Material SUN_HALO = Material.YELLOW_STAINED_GLASS;
+    private static final Material LOADED_CHAMBER = Material.GOLD_BLOCK;
+    private static final Material EMPTY_CHAMBER_BLOCK = Material.POLISHED_BLACKSTONE;
 
     /** Display entities this ability keeps alive at most at once (optional pieces are skipped beyond it). */
     private static final int MAX_DISPLAYS = 24;
@@ -147,6 +150,11 @@ public final class GunslingerAbility extends Ability {
     private static final int SHELL_FALL_TICKS = 18;
     private static final long SHELL_REST_TICKS = 12;
     private static final double CYLINDER_RADIUS = 0.22;
+    /** The chambers of the cylinder shown at the hip while reloading: small cubes on a wheel turning round the barrel. */
+    private static final int MAX_CHAMBERS = 8;
+    private static final double CHAMBER_RING = 0.15;
+    private static final float CHAMBER_SIZE = 0.085f;
+    private static final long CHAMBER_LINGER = 6;
 
     // ultimate: high noon
     private static final double SUN_HEIGHT = 6.5;
@@ -173,6 +181,8 @@ public final class GunslingerAbility extends Ability {
     private @Nullable LivingEntity pendingTarget;
     private boolean landed;
     private final List<Display> displays = new ArrayList<>();
+    /** The cylinder's chambers at the hip while it reloads (see {@link #drawCylinder}). */
+    private final List<BlockDisplay> chambers = new ArrayList<>();
 
     @Override
     public AbilityInfo info() {
@@ -189,6 +199,7 @@ public final class GunslingerAbility extends Ability {
         reloading = false;
         pendingTarget = null;
         displays.clear();
+        chambers.clear();
     }
 
     @Override
@@ -252,8 +263,16 @@ public final class GunslingerAbility extends Ability {
         reloading = false;
         rounds = maxRounds();
         if (!flourish) {
+            hideChambers();
             return;
         }
+        // Every chamber shines brass for a moment, then the cylinder snaps shut.
+        drawCylinder(owner, maxRounds(), maxRounds(), ctx().currentTick());
+        ctx().runLater(owner, CHAMBER_LINGER, () -> {
+            if (!reloading) {
+                hideChambers();
+            }
+        });
         Location hand = hip(owner);
         Vfx.ring(ctx(), hand, CYLINDER_RADIUS + 0.1, 12, 0, Particle.DUST_COLOR_TRANSITION, HOT, false);
         Vfx.cloud(ctx(), hand, Particle.WAX_OFF, 4, 0.12, 0.3, null, false);
@@ -269,6 +288,11 @@ public final class GunslingerAbility extends Ability {
         rounds = max;
         Location hand = hip(owner);
         drawCylinder(owner, max, max, ctx().currentTick());
+        ctx().runLater(owner, CHAMBER_LINGER, () -> {
+            if (!reloading) {
+                hideChambers();
+            }
+        });
         Vfx.cloud(ctx(), hand, Particle.WAX_OFF, 3, 0.1, 0.2, null, false);
         for (int i = 0; i < Math.min(3, filled); i++) {
             int index = i;
@@ -289,17 +313,72 @@ public final class GunslingerAbility extends Ability {
                 + "</white> <gray>" + AbilityInfo.formatNumber(Math.ceil(remaining * 10) / 10.0) + "초</gray>"));
     }
 
-    /** The cylinder turning at the gunslinger's hip: loaded chambers glow brass, empty ones are dark. */
+    /**
+     * The cylinder turning at the gunslinger's hip, a wheel of small cubes round the barrel: loaded chambers are
+     * brass, empty ones dark iron. Only dust motes when there is no room for more displays.
+     */
     private void drawCylinder(Player owner, int loaded, int max, long tick) {
-        Location hand = hip(owner);
+        Location hip = hip(owner);
+        int count = Math.min(max, MAX_CHAMBERS);
+        Vector forward = Motion.horizontalFacing(owner.getLocation());
+        Vector right = new Vector(-forward.getZ(), 0, forward.getX());
         double turn = tick * 0.35;
-        World world = hand.getWorld();
-        for (int i = 0; i < max; i++) {
-            double angle = turn + i * TAU / max;
-            Location at = hand.clone().add(Math.cos(angle) * CYLINDER_RADIUS, Math.sin(angle) * CYLINDER_RADIUS * 0.6,
-                    Math.sin(angle) * CYLINDER_RADIUS * 0.8);
-            world.spawnParticle(Particle.DUST, at, 1, 0, 0, 0, 0, i < loaded ? BRASS : EMPTY_CHAMBER);
+        chambers.removeIf(chamber -> !chamber.isValid());
+        if (chambers.size() != count) {
+            hideChambers();
+            if (!reserve(count)) {
+                World world = hip.getWorld();
+                for (int i = 0; i < count; i++) {
+                    double angle = turn + i * TAU / count;
+                    Location at = hip.clone().add(right.clone().multiply(Math.cos(angle) * CYLINDER_RADIUS))
+                            .add(0, Math.sin(angle) * CYLINDER_RADIUS, 0);
+                    world.spawnParticle(Particle.DUST, at, 1, 0, 0, 0, 0, i < loaded ? BRASS : EMPTY_CHAMBER);
+                }
+                return;
+            }
+            for (int i = 0; i < count; i++) {
+                BlockDisplay chamber = Displays.block(ctx(), owner, hip, chamberBlock(i < loaded).createBlockData(),
+                        chamberPose(right, i, count, turn, 0.01f), reloadTicks + CHAMBER_LINGER + 40);
+                chamber.setTeleportDuration(2);
+                chambers.add(chamber);
+                displays.add(chamber);
+                Displays.animateNextTick(ctx(), owner, chamber, chamberPose(right, i, count, turn, CHAMBER_SIZE), 3);
+            }
+            return;
         }
+        for (int i = 0; i < count; i++) {
+            BlockDisplay chamber = chambers.get(i);
+            Material type = chamberBlock(i < loaded);
+            if (chamber.getBlock().getMaterial() != type) {
+                chamber.setBlock(type.createBlockData());
+            }
+            Displays.moveTo(chamber, hip);
+            Displays.animate(chamber, chamberPose(right, i, count, turn, CHAMBER_SIZE), 2);
+        }
+    }
+
+    private static Material chamberBlock(boolean loaded) {
+        return loaded ? LOADED_CHAMBER : EMPTY_CHAMBER_BLOCK;
+    }
+
+    /** Chamber {@code i} of {@code count} on the wheel turned by {@code turn}: a small cube, not rotated itself. */
+    private static Transformation chamberPose(Vector right, int i, int count, double turn, float size) {
+        double angle = turn + i * TAU / count;
+        float across = (float) (Math.cos(angle) * CHAMBER_RING);
+        float x = (float) right.getX() * across;
+        float y = (float) (Math.sin(angle) * CHAMBER_RING);
+        float z = (float) right.getZ() * across;
+        return new Transformation(new Vector3f(x - size / 2, y - size / 2, z - size / 2), new Quaternionf(),
+                new Vector3f(size), new Quaternionf());
+    }
+
+    private void hideChambers() {
+        for (BlockDisplay chamber : chambers) {
+            if (chamber.isValid()) {
+                Displays.shrinkAway(ctx(), player(), chamber, 3);
+            }
+        }
+        chambers.clear();
     }
 
     /** Six brass shells tumble out of the open cylinder and tinkle on the ground. */
@@ -508,6 +587,19 @@ public final class GunslingerAbility extends Ability {
         ctx().runLater(player(), 1, () -> {
             if (star.isValid()) {
                 Displays.animate(star, box(across, FLASH_SIZE * 0.05f, FLASH_SIZE * 0.05f, 0.01f), 3);
+            }
+        });
+        if (!reserve(1)) {
+            return;
+        }
+        // A thinner, longer white blade across it makes the flash an eight-pointed star.
+        Quaternionf blade = new Quaternionf(across).rotateZ((float) Math.toRadians(45));
+        BlockDisplay spike = Displays.block(ctx(), player(), muzzle, SPIKE_BLOCK.createBlockData(),
+                box(blade, FLASH_SIZE * 1.4f, FLASH_SIZE * 0.35f, 0.015f), 5);
+        displays.add(spike);
+        ctx().runLater(player(), 1, () -> {
+            if (spike.isValid()) {
+                Displays.animate(spike, box(blade, FLASH_SIZE * 0.05f, FLASH_SIZE * 0.02f, 0.01f), 3);
             }
         });
     }
