@@ -340,7 +340,7 @@ public final class SniperAbility extends Ability {
             Location from = muzzle(owner);
             boolean hot = aimTicks - tick <= FLICKER_TICKS;
             if (laser != null && laser.isValid()) {
-                laser.teleport(from);
+                Displays.moveTo(laser, from);
                 if (hot) {
                     laser.setBlock(tick % 2 == 0 ? LASER_HOT_BLOCK : LASER_BLOCK);
                 }
