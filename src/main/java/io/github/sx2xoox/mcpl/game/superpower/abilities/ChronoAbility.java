@@ -6,15 +6,16 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -31,19 +32,30 @@ import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BoundingBox;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
  * 시간술사 — time manipulation. Shorter cooldowns, a rewind to where (and how healthy) the owner was a few seconds
  * ago, and a time stop that pins every nearby enemy in place, mid-air included.
+ *
+ * <p>Look: gold for the present, cyan for the past. The rewind sends three small clocks spiralling backwards into the
+ * spot the owner left and retraces the undone path as a cyan thread with ghostly afterimages. The time stop lays a
+ * golden clock face on the ground whose hands race during the stop wave and then freeze; every frozen enemy gets a
+ * gray-blue stasis shell, a still clock and a countdown.
  */
 public final class ChronoAbility extends Ability {
 
@@ -66,14 +78,15 @@ public final class ChronoAbility extends Ability {
             .build();
 
     private static final String COLOR_TAG = "#F2C14E";
-    private static final Color CHRONO_GOLD = Color.fromRGB(0xF2, 0xC1, 0x4E);
-    private static final Color PAST_BLUE = Color.fromRGB(0x6F, 0xC8, 0xFF);
-    private static final Color STILL_GRAY = Color.fromRGB(0xB8, 0xB8, 0xC4);
-    private static final Particle.DustOptions ECHO_DUST = new Particle.DustOptions(CHRONO_GOLD, 0.7f);
-    private static final Particle.DustOptions FROZEN_DUST = new Particle.DustOptions(CHRONO_GOLD, 0.9f);
-    private static final Particle.DustTransition REWIND_DUST =
-            new Particle.DustTransition(CHRONO_GOLD, PAST_BLUE, 1.0f);
-    private static final Particle.DustTransition WAVE_DUST = new Particle.DustTransition(CHRONO_GOLD, STILL_GRAY, 1.4f);
+    /** Pale gold core, clock gold body, and the cyan of the past as the edge. */
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFE08A, 0xF2C14E, 0x6FE3FF);
+    /** Gray-blue of stopped time. */
+    private static final Color STILL = Color.fromRGB(0xA8, 0xB8, 0xD0);
+    private static final Particle.DustTransition ECHO_DUST = new Particle.DustTransition(PALETTE.core(),
+            PALETTE.edge(), 0.7f);
+    private static final Particle.DustTransition WAVE_DUST = new Particle.DustTransition(PALETTE.body(), STILL, 1.5f);
+    private static final Particle.DustTransition STILL_DUST = new Particle.DustTransition(STILL, PALETTE.edge(), 0.9f);
+    private static final Particle.DustOptions PAST_DUST = new Particle.DustOptions(PALETTE.edge(), 0.8f);
 
     // Rewind history
     private static final long RECORD_INTERVAL = 2;
@@ -88,8 +101,18 @@ public final class ChronoAbility extends Ability {
     private static final long WAVE_TICKS = 8;
     /** A frozen enemy displaced further than this (by anything) is put back. */
     private static final double PIN_TOLERANCE = 0.6;
-    private static final double LABEL_OFFSET = 0.9;
-    private static final int FROZEN_RING_POINTS = 8;
+    private static final double LABEL_OFFSET = 1.05;
+    private static final double CLOCK_OFFSET = 0.45;
+    /** At most this many frozen enemies also get a still clock over their head (display budget). */
+    private static final int MAX_STILL_CLOCKS = 5;
+
+    // Visuals
+    private static final long RETRACE_TICKS = 8;
+    private static final long CLOCK_SPIRAL_TICKS = 10;
+    private static final double DIAL_RADIUS = 2.6;
+    /** Degrees per tick the dial's hands race while the stop wave spreads. */
+    private static final float MINUTE_SPIN = 45;
+    private static final float HOUR_SPIN = 12;
 
     /** Where the owner was, sampled every {@link #RECORD_INTERVAL} ticks, oldest first. */
     private final Deque<Moment> history = new ArrayDeque<>();
@@ -132,7 +155,10 @@ public final class ChronoAbility extends Ability {
         }
     }
 
-    /** A faint golden silhouette where a rewind would take the owner, visible to the owner only while it is ready. */
+    /**
+     * A faint gold-to-cyan ghost where a rewind would take the owner: a slowly turning ring at the feet and a thin
+     * spine of motes, visible to the owner only and only while the rewind is ready.
+     */
     private void drawEcho(long tick) {
         if (ctx().cooldownRemaining(player()) > 0) {
             return;
@@ -149,8 +175,16 @@ public final class ChronoAbility extends Ability {
         if (dx * dx + dy * dy + dz * dz < ECHO_MIN_DISTANCE * ECHO_MIN_DISTANCE) {
             return;
         }
-        for (double h = 0.2; h < 1.9; h += 0.55) {
-            owner.spawnParticle(Particle.DUST, echo.x(), echo.y() + h, echo.z(), 1, 0.08, 0.05, 0.08, 0, ECHO_DUST);
+        double phase = tick * 0.08;
+        int ring = Vfx.n(ctx(), 6);
+        for (int i = 0; i < ring; i++) {
+            double angle = phase + i * (Math.PI * 2 / ring);
+            owner.spawnParticle(Particle.DUST_COLOR_TRANSITION, echo.x() + Math.cos(angle) * 0.35, echo.y() + 0.08,
+                    echo.z() + Math.sin(angle) * 0.35, 1, 0, 0, 0, 0, ECHO_DUST);
+        }
+        for (double h = 0.35; h < 1.9; h += 0.5) {
+            owner.spawnParticle(Particle.DUST_COLOR_TRANSITION, echo.x(), echo.y() + h, echo.z(), 1, 0.06, 0.04, 0.06,
+                    0, ECHO_DUST);
         }
     }
 
@@ -207,7 +241,7 @@ public final class ChronoAbility extends Ability {
             restored = moment.health() - health;
             ctx().heal(owner, restored);
         }
-        rewindEffects(owner, from, to, path);
+        rewindEffects(owner, from, to, path, restored > 0.05);
         history.clear();
 
         String suffix = restored > 0.05
@@ -242,35 +276,34 @@ public final class ChronoAbility extends Ability {
         return null;
     }
 
-    private void rewindEffects(Player owner, Location from, Location to, List<Moment> path) {
+    private void rewindEffects(Player owner, Location from, Location to, List<Moment> path, boolean healed) {
         World world = from.getWorld();
-        double half = owner.getHeight() * 0.5;
-        Location fromBody = from.clone().add(0, half, 0);
-        world.spawnParticle(Particle.ENCHANT, fromBody, 30, 0.3, 0.6, 0.3, 0.8);
-        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, fromBody, 12, 0.3, 0.6, 0.3, 0, REWIND_DUST);
-        // The undone path, drawn as a golden thread fading into the past.
-        for (Moment m : path) {
-            if (m.world().equals(world)) {
-                world.spawnParticle(Particle.DUST_COLOR_TRANSITION, m.x(), m.y() + half, m.z(), 1, 0.05, 0.05, 0.05,
-                        0, REWIND_DUST);
-            }
+        double height = owner.getHeight();
+        Location fromBody = flat(from.clone().add(0, height * 0.5, 0));
+
+        // Departure: three little clocks spiral backwards into the spot the owner just left.
+        clockSpiral(fromBody);
+        Vfx.cloud(ctx(), fromBody, Particle.ENCHANT, 24, 0.35, 0.8, null, false);
+        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, fromBody, Vfx.n(ctx(), 10), 0.3, 0.6, 0.3, 0,
+                PALETTE.glow(1.0f));
+
+        // The undone path, retraced from the present back into the past.
+        retrace(owner, world, path, height);
+
+        // Arrival: a gold ripple over the ground and a flash; a rising spiral when health came back too.
+        Location feet = flat(to.clone().add(0, 0.06, 0));
+        Location toBody = feet.clone().add(0, height * 0.5, 0);
+        Vfx.shockwave(ctx(), owner, feet, 0.3, 1.4, 5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), false);
+        Vfx.burst(ctx(), toBody, PALETTE, 0.6, Particle.END_ROD, false);
+        if (healed) {
+            Vfx.helix(ctx(), feet, 0.55, height, 1.5, 2, 12, 0, Particle.DUST, PALETTE.dust(0.9f), false);
+            Vfx.cloud(ctx(), toBody.clone().add(0, 0.5, 0), Particle.HEART, 2, 0.3, 0, null, false);
         }
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        int duration = Math.clamp(Math.round(from.distance(to) * 0.8), 4, 14);
-        for (int i = 0; i < 10; i++) {
-            double ox = (random.nextDouble() - 0.5) * 0.6;
-            double oy = random.nextDouble() * owner.getHeight();
-            double oz = (random.nextDouble() - 0.5) * 0.6;
-            Color color = i % 2 == 0 ? CHRONO_GOLD : PAST_BLUE;
-            world.spawnParticle(Particle.TRAIL, from.clone().add(ox, oy, oz), 1, 0, 0, 0, 0,
-                    new Particle.Trail(to.clone().add(ox, oy, oz), color, duration));
-        }
-        Location toBody = to.clone().add(0, half, 0);
-        world.spawnParticle(Particle.END_ROD, toBody, 12, 0.3, 0.6, 0.3, 0.03);
-        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, toBody, 12, 0.3, 0.6, 0.3, 0, REWIND_DUST);
 
         Fx.sound(from, Sound.BLOCK_BEACON_POWER_SELECT, 0.8f, 1.8f);
+        Fx.sound(from, Sound.ITEM_BOOK_PAGE_TURN, 1.0f, 1.6f + Fx.jitter(0.1f));
         Fx.sound(to, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 1.4f + Fx.jitter(0.05f));
+        Fx.sound(to, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 0.7f, 1.8f + Fx.jitter(0.1f));
         // A quick descending tick-tock, like a tape being rewound.
         for (int i = 1; i <= 3; i++) {
             float pitch = 1.9f - i * 0.3f;
@@ -280,6 +313,79 @@ public final class ChronoAbility extends Ability {
                 }
             });
         }
+    }
+
+    /**
+     * Draws the undone path over {@link #RETRACE_TICKS}, newest moment first: a gold-to-cyan thread with motes
+     * running backwards along it, a bright head and a ghostly afterimage every few steps.
+     */
+    private void retrace(Player owner, World world, List<Moment> path, double height) {
+        List<Location> points = new ArrayList<>();
+        for (int i = path.size() - 1; i >= 0; i--) {
+            Moment m = path.get(i);
+            if (m.world().equals(world)) {
+                points.add(new Location(world, m.x(), m.y() + height * 0.5, m.z()));
+            }
+        }
+        if (points.isEmpty()) {
+            return;
+        }
+        int perTick = (int) Math.max(1, Math.ceil(points.size() / (double) RETRACE_TICKS));
+        Loop.repeat(ctx(), owner, 0, 1, RETRACE_TICKS + 1, step -> {
+            int start = (int) step * perTick;
+            int end = Math.min(points.size(), start + perTick);
+            for (int i = start; i < end; i++) {
+                Location at = points.get(i);
+                Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.1f), false);
+                if (i + 1 < points.size()) {
+                    Vfx.trail(at, points.get(i + 1), PALETTE.edge(), 3, false);
+                }
+                if (i % 6 == 3) {
+                    // An afterimage: a faint cyan figure standing where the owner was.
+                    for (double h = -height * 0.45; h <= height * 0.45; h += height * 0.3) {
+                        Vfx.dot(at.clone().add(0, h, 0), Particle.DUST, PAST_DUST, false);
+                    }
+                }
+            }
+            if (start < end) {
+                Vfx.dot(points.get(end - 1), Particle.END_ROD, null, false);
+            }
+            return end < points.size();
+        });
+    }
+
+    /** Three small clocks orbiting {@code center} backwards while spiralling into it, then gone. */
+    private void clockSpiral(Location center) {
+        Player owner = player();
+        List<ItemDisplay> clocks = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            ItemDisplay clock = Displays.item(ctx(), owner, spiralPoint(center, i, 0), ItemStack.of(Material.CLOCK),
+                    Displays.centered(0, 0, 0, 0.45f, 0.45f, 0.45f, 0, 0, 0), CLOCK_SPIRAL_TICKS + 6);
+            clock.setBillboard(Display.Billboard.CENTER);
+            clocks.add(clock);
+        }
+        Loop.repeat(ctx(), owner, 1, 1, CLOCK_SPIRAL_TICKS, step -> {
+            for (int i = 0; i < clocks.size(); i++) {
+                ItemDisplay clock = clocks.get(i);
+                if (clock.isValid()) {
+                    clock.teleport(spiralPoint(center, i, step + 1));
+                    // Turning counter-clockwise: time runs backwards.
+                    Displays.animate(clock, Displays.centered(0, 0, 0, 0.45f, 0.45f, 0.45f, 0, 0, (step + 1) * 40f), 1);
+                }
+            }
+            return true;
+        }, () -> clocks.forEach(clock -> {
+            if (clock.isValid()) {
+                Displays.shrinkAway(ctx(), owner, clock, 4);
+            }
+        }));
+    }
+
+    private static Location spiralPoint(Location center, int index, long step) {
+        double t = Math.min(1.0, step / (double) CLOCK_SPIRAL_TICKS);
+        double radius = 0.9 * (1 - t) + 0.1;
+        double angle = index * (Math.PI * 2 / 3) - step * 0.45;
+        return center.clone().add(Math.cos(angle) * radius, 0.35 - t * 0.3, Math.sin(angle) * radius);
     }
 
     // ------------------------------------------------------------------ ultimate: time stop
@@ -296,19 +402,21 @@ public final class ChronoAbility extends Ability {
         long duration = Math.max(1, params().ticks("ult_duration"));
         List<Frozen> frozen = new ArrayList<>();
         for (LivingEntity enemy : enemies) {
-            frozen.add(freeze(enemy, duration));
+            frozen.add(freeze(enemy, duration, frozen.size() < MAX_STILL_CLOCKS));
         }
+        Dial dial = new Dial(origin, duration + 14);
 
         Fx.sound(origin, Sound.BLOCK_BELL_RESONATE, 1.6f, 0.7f);
         Fx.sound(origin, Sound.BLOCK_BEACON_DEACTIVATE, 1.6f, 0.5f);
         Fx.sound(origin, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.2f, 0.6f);
+        Fx.sound(origin, Sound.BLOCK_RESPAWN_ANCHOR_DEPLETE, 1.0f, 0.6f + Fx.jitter(0.05f));
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⏸ 시간 정지</" + COLOR_TAG + "> <white>" + frozen.size()
                 + "명</white>"));
-        Loop.repeat(ctx(), player(), 0, 1, duration, new Stasis(frozen, origin, radius, duration));
+        Loop.repeat(ctx(), player(), 0, 1, duration, new Stasis(frozen, dial, origin, radius, duration));
         return ActivationResult.success();
     }
 
-    private Frozen freeze(LivingEntity enemy, long duration) {
+    private Frozen freeze(LivingEntity enemy, long duration, boolean withClock) {
         Player owner = player();
         // Timed modifiers: they expire on their own even if the owner dies mid-stop.
         List<NamespacedKey> modifiers = new ArrayList<>();
@@ -321,26 +429,30 @@ public final class ChronoAbility extends Ability {
                 modifiers);
         enemy.setVelocity(new Vector());
 
+        // The moment it stops: a pale flash and a gray-blue shell of motes hanging around the body.
         Location pin = enemy.getLocation();
         World world = pin.getWorld();
-        Location body = pin.clone().add(0, enemy.getHeight() * 0.5, 0);
-        world.spawnParticle(Particle.FLASH, body, 1, 0, 0, 0, 0, CHRONO_GOLD);
-        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 16, 0.4, 0.6, 0.4, 0, WAVE_DUST);
-        TextDisplay label = ctx().track(owner, world.spawn(labelSpot(enemy), TextDisplay.class, display -> {
-            display.text(labelText(duration));
-            display.setBillboard(Display.Billboard.CENTER);
-            display.setTeleportDuration(2);
-            display.setPersistent(false);
-            display.setShadowed(true);
-            display.setBackgroundColor(Color.fromARGB(110, 40, 28, 0));
-            display.setBrightness(new Display.Brightness(15, 15));
-        }));
+        Location body = flat(pin.clone().add(0, enemy.getHeight() * 0.5, 0));
+        world.spawnParticle(Particle.FLASH, body, 1, 0, 0, 0, 0, PALETTE.core(), true);
+        Vfx.sphere(ctx(), body, Math.max(0.8, enemy.getHeight() * 0.55), 28, Particle.DUST_COLOR_TRANSITION,
+                STILL_DUST, true);
+
+        TextDisplay label = Displays.text(ctx(), owner, labelSpot(enemy), labelText(duration), 1.0f, duration + 10);
+        label.setBackgroundColor(Color.fromARGB(110, 40, 28, 0));
+        ItemDisplay clock = null;
+        if (withClock) {
+            // A clock that stopped: it hangs over the head without turning.
+            clock = Displays.item(ctx(), owner, clockSpot(enemy), ItemStack.of(Material.CLOCK),
+                    Displays.centered(0, 0, 0, 0.01f, 0.01f, 0.01f, 0, 0, 0), duration + 10);
+            clock.setBillboard(Display.Billboard.CENTER);
+            Displays.animateNextTick(ctx(), owner, clock, Displays.centered(0, 0, 0, 0.5f, 0.5f, 0.5f, 0, 0, -20), 4);
+        }
         if (enemy instanceof Player victim) {
             // Frozen time: no skills either.
             ctx().silence(victim, duration);
             victim.playSound(victim, Sound.BLOCK_BEACON_DEACTIVATE, SoundCategory.PLAYERS, 0.8f, 0.6f);
         }
-        return new Frozen(enemy, pin, label, modifiers);
+        return new Frozen(enemy, pin, label, clock, modifiers);
     }
 
     private void stop(Player owner, LivingEntity enemy, Attribute attribute, double amount,
@@ -350,19 +462,32 @@ public final class ChronoAbility extends Ability {
         }
     }
 
-    private record Frozen(LivingEntity entity, Location pin, TextDisplay label, List<NamespacedKey> modifiers) {
+    private record Frozen(LivingEntity entity, Location pin, TextDisplay label, @Nullable ItemDisplay clock,
+                          List<NamespacedKey> modifiers) {
+
+        /** Removes the label and the still clock. */
+        void removeDisplays() {
+            if (label.isValid()) {
+                label.remove();
+            }
+            if (clock != null && clock.isValid()) {
+                clock.remove();
+            }
+        }
     }
 
     /** Holds every frozen enemy in place, draws the wave and countdowns, and resumes time at the end. */
     private final class Stasis implements LongPredicate {
 
         private final List<Frozen> frozen;
+        private final Dial dial;
         private final Location origin;
         private final double radius;
         private final long duration;
 
-        Stasis(List<Frozen> frozen, Location origin, double radius, long duration) {
+        Stasis(List<Frozen> frozen, Dial dial, Location origin, double radius, long duration) {
             this.frozen = frozen;
+            this.dial = dial;
             this.origin = origin.clone();
             this.radius = radius;
             this.duration = duration;
@@ -372,6 +497,8 @@ public final class ChronoAbility extends Ability {
         public boolean test(long tick) {
             if (tick < WAVE_TICKS) {
                 drawWave(tick);
+                // The dial's hands race while the wave spreads, then stop dead with everything else.
+                dial.turn(MINUTE_SPIN, HOUR_SPIN);
             }
             long left = duration - tick;
             Iterator<Frozen> it = frozen.iterator();
@@ -380,7 +507,7 @@ public final class ChronoAbility extends Ability {
                 LivingEntity entity = f.entity();
                 if (!Combat.isTargetable(ctx(), player(), entity)) {
                     // Killed (and maybe already back as a spectator), or no longer an enemy: let go for good, so the
-                    // pin, the ring and the messages never touch it again.
+                    // pin, the shell and the messages never touch it again.
                     release(f);
                     it.remove();
                     continue;
@@ -409,7 +536,7 @@ public final class ChronoAbility extends Ability {
 
         /**
          * Puts a displaced enemy back on its pin (if the spot is still free and inside the arena) and keeps the
-         * label above it.
+         * label and the clock above it.
          */
         private void hold(Frozen f) {
             LivingEntity entity = f.entity();
@@ -427,31 +554,37 @@ public final class ChronoAbility extends Ability {
             if (f.label().isValid() && f.label().getWorld().equals(entity.getWorld())) {
                 f.label().teleport(labelSpot(entity));
             }
-        }
-
-        private void drawWave(long tick) {
-            World world = origin.getWorld();
-            double r = radius * (tick + 1) / (double) WAVE_TICKS;
-            int points = Math.clamp(Math.round(r * 5), 12, 72);
-            double y = origin.getY() + 0.3;
-            for (int i = 0; i < points; i++) {
-                double angle = i * (Math.PI * 2 / points);
-                world.spawnParticle(Particle.DUST_COLOR_TRANSITION, origin.getX() + Math.cos(angle) * r, y,
-                        origin.getZ() + Math.sin(angle) * r, 1, 0, 0.05, 0, 0, WAVE_DUST);
+            ItemDisplay clock = f.clock();
+            if (clock != null && clock.isValid() && clock.getWorld().equals(entity.getWorld())) {
+                clock.teleport(clockSpot(entity));
             }
         }
 
-        /** A slowly turning golden ring around the frozen enemy, like a clock face that stopped. */
+        /** The stop wave: a gold ring turning gray-blue as it runs out, with a cyan ring trailing it. */
+        private void drawWave(long tick) {
+            Location ground = flat(origin.clone().add(0, 0.3, 0));
+            double r = radius * (tick + 1) / (double) WAVE_TICKS;
+            int points = Math.clamp(Math.round(r * 5), 12, 80);
+            Vfx.ring(ctx(), ground, r, points, tick * 0.1, Particle.DUST_COLOR_TRANSITION, WAVE_DUST, true);
+            double trailing = r - radius / WAVE_TICKS * 0.6;
+            if (trailing > 0.5) {
+                Vfx.ring(ctx(), ground.clone().add(0, 0.25, 0), trailing, points / 2, tick * 0.1 + 0.2, Particle.DUST,
+                        PAST_DUST, true);
+            }
+        }
+
+        /** Gray-blue rings of hanging motes at the frozen enemy's feet and head, turning very slowly. */
         private void drawStillness(LivingEntity entity, long tick) {
             double r = Math.max(0.5, entity.getWidth() * 0.9);
-            Fx.ring(Fx.body(entity), r, FROZEN_RING_POINTS, tick * 0.05, Particle.DUST, FROZEN_DUST);
+            Location feet = flat(entity.getLocation().add(0, 0.1, 0));
+            Vfx.ring(ctx(), feet, r, 10, tick * 0.03, Particle.DUST_COLOR_TRANSITION, STILL_DUST, false);
+            Vfx.ring(ctx(), feet.clone().add(0, entity.getHeight(), 0), r * 0.7, 8, -tick * 0.03, Particle.DUST,
+                    PALETTE.dust(0.7f), false);
         }
 
-        /** Removes the label and the freeze of an entity that dropped out of the stop early. */
+        /** Removes the displays and the freeze of an entity that dropped out of the stop early. */
         private void release(Frozen f) {
-            if (f.label().isValid()) {
-                f.label().remove();
-            }
+            f.removeDisplays();
             for (NamespacedKey key : f.modifiers()) {
                 ctx().removeModifier(f.entity(), key);
             }
@@ -459,29 +592,124 @@ public final class ChronoAbility extends Ability {
 
         private void resume() {
             for (Frozen f : frozen) {
-                if (f.label().isValid()) {
-                    f.label().remove();
-                }
+                f.removeDisplays();
                 LivingEntity entity = f.entity();
                 if (!Combat.isTargetable(ctx(), player(), entity)) {
                     continue;
                 }
-                Location body = entity.getLocation().add(0, entity.getHeight() * 0.5, 0);
-                body.getWorld().spawnParticle(Particle.END_ROD, body, 8, 0.3, 0.5, 0.3, 0.06);
+                // Time flows again: the shell breaks into light.
+                Location body = flat(entity.getLocation().add(0, entity.getHeight() * 0.5, 0));
+                Vfx.cloud(ctx(), body, Particle.END_ROD, 8, 0.3, 0.06, null, true);
+                Vfx.ring(ctx(), body, 0.8, 14, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), true);
                 if (entity instanceof Player victim) {
                     victim.sendActionBar(Text.mm("<gray>시간이 다시 흐릅니다</gray>"));
                 }
             }
+            dial.release();
             Fx.sound(origin, Sound.BLOCK_BEACON_ACTIVATE, 1.4f, 1.6f);
             Fx.sound(origin, Sound.BLOCK_BELL_USE, 1.2f, 1.4f);
+            Fx.sound(origin, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.2f, 1.2f + Fx.jitter(0.1f));
         }
     }
 
+    // ------------------------------------------------------------------ the clock dial
+
+    /**
+     * A golden clock face laid on the ground where the time stop was cast: twelve hour marks (gold at 12, 3, 6 and 9,
+     * cyan glass between) and two gold hands turning around the centre. Fourteen displays.
+     */
+    private final class Dial {
+
+        private final List<BlockDisplay> parts = new ArrayList<>();
+        private final Location center;
+        private final BlockDisplay minuteHand;
+        private final BlockDisplay hourHand;
+        private float minuteAngle;
+        private float hourAngle = 120;
+
+        Dial(Location origin, long lifetime) {
+            Player owner = player();
+            center = flat(origin.clone().add(0, 0.02, 0));
+            for (int i = 0; i < 12; i++) {
+                boolean major = i % 3 == 0;
+                double angle = i * 30;
+                double rad = Math.toRadians(angle);
+                Location at = center.clone().add(Math.cos(rad) * DIAL_RADIUS, 0, Math.sin(rad) * DIAL_RADIUS);
+                float width = major ? 0.16f : 0.08f;
+                float length = major ? 0.7f : 0.38f;
+                Material material = major ? Material.GOLD_BLOCK : Material.LIGHT_BLUE_STAINED_GLASS;
+                float yaw = (float) angle - 90;
+                BlockDisplay mark = Displays.block(ctx(), owner, at, material.createBlockData(),
+                        Displays.transform(0, 0.02f, 0, 0.001f, 0.03f, 0.001f, yaw, 0, 0), lifetime);
+                Displays.animateNextTick(ctx(), owner, mark,
+                        Displays.transform(0, 0.02f, 0, width, 0.03f, length, yaw, 0, 0), 4);
+                parts.add(mark);
+            }
+            minuteHand = hand(owner, 2.2f, 0.09f, 0.05f, minuteAngle, lifetime);
+            hourHand = hand(owner, 1.4f, 0.14f, 0.08f, hourAngle, lifetime);
+            Location centerAt = center.clone().add(0, 0.06, 0);
+            Vfx.burst(ctx(), centerAt, PALETTE, 0.6, Particle.END_ROD, true);
+        }
+
+        private BlockDisplay hand(Player owner, float length, float width, float lift, float angle, long lifetime) {
+            BlockDisplay hand = Displays.block(ctx(), owner, center, Material.GOLD_BLOCK.createBlockData(),
+                    handShape(0.001f, width, lift, angle), lifetime);
+            Displays.animateNextTick(ctx(), owner, hand, handShape(length, width, lift, angle), 4);
+            parts.add(hand);
+            return hand;
+        }
+
+        /** Advances the hands by the given degrees, interpolated over one tick. */
+        void turn(float minuteDegrees, float hourDegrees) {
+            minuteAngle += minuteDegrees;
+            hourAngle += hourDegrees;
+            Displays.animate(minuteHand, handShape(2.2f, 0.09f, 0.05f, minuteAngle), 1);
+            Displays.animate(hourHand, handShape(1.4f, 0.14f, 0.08f, hourAngle), 1);
+        }
+
+        /** Time flows again: the hands give a last jolt and the whole face sinks away. */
+        void release() {
+            turn(MINUTE_SPIN, HOUR_SPIN);
+            Player owner = player();
+            ctx().runLater(owner, 2, () -> {
+                for (BlockDisplay part : parts) {
+                    if (part.isValid()) {
+                        Displays.shrinkAway(ctx(), owner, part, 6);
+                    }
+                }
+            });
+            Vfx.ring(ctx(), center.clone().add(0, 0.1, 0), DIAL_RADIUS, 36, 0, Particle.DUST_COLOR_TRANSITION,
+                    PALETTE.glow(1.2f), true);
+        }
+
+        /** A flat bar from the centre outwards, {@code angle} degrees around the dial (clockwise seen from above). */
+        private static Transformation handShape(float length, float width, float lift, float angle) {
+            Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-angle));
+            Vector3f scale = new Vector3f(width, 0.03f, length);
+            Vector3f pivot = new Vector3f(0.5f, 0, 0).mul(scale).rotate(rotation);
+            return new Transformation(pivot.negate().add(0, lift, 0), rotation, scale, new Quaternionf());
+        }
+    }
+
+    // ------------------------------------------------------------------ helpers
+
     private static Location labelSpot(LivingEntity entity) {
-        return entity.getLocation().add(0, entity.getHeight() + LABEL_OFFSET, 0);
+        return flat(entity.getLocation().add(0, entity.getHeight() + LABEL_OFFSET, 0));
+    }
+
+    private static Location clockSpot(LivingEntity entity) {
+        return flat(entity.getLocation().add(0, entity.getHeight() + CLOCK_OFFSET, 0));
     }
 
     private static Component labelText(long ticksLeft) {
         return Text.mm("<" + COLOR_TAG + ">⏸</" + COLOR_TAG + "> <white>" + Fx.seconds(ticksLeft) + "</white>");
+    }
+
+    /** A copy without yaw and pitch, so display entities are not turned by the entity rotation as well. */
+    private static Location flat(Location location) {
+        Location copy = location.clone();
+        copy.setYaw(0);
+        copy.setPitch(0);
+        return copy;
     }
 }
