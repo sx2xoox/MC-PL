@@ -68,11 +68,12 @@ public final class DuelistAbility extends Ability {
                     "반경 {duel_radius}블록 안에 적이 한 명뿐이면 그 적에게 주는 피해가 {duel_offense}% 증가하고 "
                             + "받는 피해가 {duel_defense}% 감소합니다.")
             .active("결투 신청",
-                    "조준한 적({challenge_range}블록)에게 {challenge_duration}초간 결투 표식을 겁니다. 표식이 붙은 적에게 "
-                            + "주는 피해가 {challenge_bonus}% 증가하고, 다른 적에게 받는 피해는 {challenge_guard}% 감소합니다.",
+                    "조준한 적({challenge_range}블록, 소환수 제외)에게 {challenge_duration}초간 결투 표식을 겁니다. 표식이 "
+                            + "붙은 적에게 주는 피해가 {challenge_bonus}% 증가하고, 다른 적에게 받는 피해는 "
+                            + "{challenge_guard}% 감소합니다.",
                     12)
             .ultimate("결투장",
-                    "조준한(없으면 가장 가까운) {ult_range}블록 안의 적과 함께 반경 {ult_radius}블록의 결투장에 "
+                    "조준한(없으면 가장 가까운) {ult_range}블록 안의 적(소환수 제외)과 함께 반경 {ult_radius}블록의 결투장에 "
                             + "{ult_duration}초간 들어갑니다. 둘 다 결투장을 벗어날 수 없고, 바깥과는 서로 피해를 주고받을 수 "
                             + "없으며, 다른 적은 밀려납니다. 결투 중에는 일기토가 항상 적용되고, 상대를 쓰러뜨리면 체력을 "
                             + "{ult_victory_heal} 회복합니다.")
@@ -262,11 +263,15 @@ public final class DuelistAbility extends Ability {
         }
         Player owner = player();
         LivingEntity lone = loneEnemy();
+        // The stance holds against a stealthed enemy too, but never names it nor points the way to it.
+        boolean hidden = lone != null && !seen(owner, lone);
         if ((lone != null) != stanceShown) {
             stanceShown = lone != null;
             if (stanceShown) {
-                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⚔ 일기토</" + COLOR_TAG + "> <gray>"
-                        + "<name>와(과) 1:1</gray>", Placeholder.component("name", lone.name())));
+                owner.sendActionBar(hidden
+                        ? Text.mm("<" + COLOR_TAG + ">⚔ 일기토</" + COLOR_TAG + "> <gray>1:1</gray>")
+                        : Text.mm("<" + COLOR_TAG + ">⚔ 일기토</" + COLOR_TAG + "> <gray><name>와(과) 1:1</gray>",
+                                Placeholder.component("name", lone.name())));
                 Fx.sound(owner.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.5f, 1.5f + Fx.jitter(0.1f));
             }
         }
@@ -275,7 +280,7 @@ public final class DuelistAbility extends Ability {
         }
         Location feet = owner.getLocation().add(0, 0.08, 0);
         Vfx.ring(ctx(), feet, 0.65, 12, tick * 0.05, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
-        if (tick % (STANCE_PERIOD * 2) == 0 && lone.getWorld().equals(feet.getWorld())) {
+        if (!hidden && tick % (STANCE_PERIOD * 2) == 0 && lone.getWorld().equals(feet.getWorld())) {
             Location chest = feet.clone().add(0, owner.getHeight() * 0.5, 0);
             Location toward = chest.clone().add(Motion.horizontal(lone.getLocation().toVector()
                     .subtract(chest.toVector())).multiply(1.4));
