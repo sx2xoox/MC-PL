@@ -870,7 +870,7 @@ public final class DimensionAbility extends Ability {
                 }
             }
             double damage = Math.max(0, params().num("ult_damage"));
-            int nausea = (int) Math.min(Integer.MAX_VALUE, params().ticks("ult_nausea"));
+            long nausea = params().ticks("ult_nausea");
             int slow = (int) Math.min(Integer.MAX_VALUE, params().ticks("ult_slow"));
             int moved = 0;
             for (LivingEntity enemy : caught) {
@@ -883,9 +883,7 @@ public final class DimensionAbility extends Ability {
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
-                if (nausea > 0) {
-                    enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
-                }
+                Fx.nausea(enemy, nausea);
                 if (slow > 0) {
                     enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, slow, SLOW_AMPLIFIER, false,
                             true, true));

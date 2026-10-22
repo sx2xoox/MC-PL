@@ -139,12 +139,6 @@ public final class MycologistAbility extends Ability {
     private static final long FOOTPRINT_PERIOD = 8;
     private static final double FOOTPRINT_MIN_MOVE = 0.25;
     private static final long CLEANUP_PERIOD = 200;
-    /**
-     * The client only warps the view while more than this many ticks of nausea are left (it fades the warp out over
-     * the last 3 s, and fades it in slowly), so nausea is given this much longer than the dizziness it stands for: a
-     * nausea of 3 s or less never shows at all.
-     */
-    private static final int NAUSEA_LEAD = 60;
 
     // active: mushroom mines
     /** Steps the planting ray takes down from an aimed point to find the floor. */
@@ -270,8 +264,7 @@ public final class MycologistAbility extends Ability {
         long duration = Math.max(1, params().ticks("spore_nausea"));
         spore.next = now + params().ticks("spore_cooldown");
         spore.until = now + duration;
-        victim.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, clampTicks(duration + NAUSEA_LEAD), 0, false,
-                true, true));
+        Fx.nausea(victim, duration);
         sporeBurst(victim);
         if (!spore.following) {
             growToadstool(victim, spore);
@@ -745,8 +738,7 @@ public final class MycologistAbility extends Ability {
      * hidden by stealth, which they would give away).
      */
     private void dizzy(LivingEntity enemy, long ticks) {
-        enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, clampTicks(ticks + NAUSEA_LEAD), 0, false,
-                true, true));
+        Fx.nausea(enemy, ticks);
         enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, clampTicks(ticks), 1, false, true, true));
         Player owner = player();
         double phase = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
@@ -834,8 +826,8 @@ public final class MycologistAbility extends Ability {
         private final double radius;
         private final long life;
         private final long interval;
-        /** Nausea of a sting: it lasts past the next pulse with enough left that the view keeps warping. */
-        private final int nausea;
+        /** How long a sting warps the view: past the next pulse, so it keeps warping while the enemy stays. */
+        private final long nausea;
         private final float yaw;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private final Map<UUID, Slowed> slowed = new LinkedHashMap<>();
@@ -854,7 +846,7 @@ public final class MycologistAbility extends Ability {
             this.radius = Math.max(1, params().num("ult_radius"));
             this.life = Math.max(1, params().ticks("ult_duration"));
             this.interval = Math.max(1, params().ticks("ult_interval"));
-            this.nausea = clampTicks(interval + NAUSEA_LEAD + ULT_NAUSEA_LINGER);
+            this.nausea = interval + ULT_NAUSEA_LINGER;
             this.yaw = ThreadLocalRandom.current().nextFloat() * 90f;
         }
 
@@ -1088,7 +1080,7 @@ public final class MycologistAbility extends Ability {
                     continue;
                 }
                 stung++;
-                enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
+                Fx.nausea(enemy, nausea);
                 if (!seen(owner, enemy)) {
                     continue;
                 }
@@ -1182,7 +1174,7 @@ public final class MycologistAbility extends Ability {
                     Combat.hit(ctx(), owner, enemy, damage);
                     if (Combat.isTargetable(ctx(), owner, enemy)) {
                         stung++;
-                        enemy.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
+                        Fx.nausea(enemy, nausea);
                         if (seen(owner, enemy)) {
                             Vfx.trail(top, Fx.body(enemy), PALETTE.body(), 8, true);
                         }

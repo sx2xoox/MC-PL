@@ -921,6 +921,49 @@ class MysticNewAbilitiesTest {
         }
     }
 
+    /**
+     * A real client only builds the nausea screen warp while MORE than this many ticks of the effect are left (it
+     * fades the warp out once this many or fewer remain), so a nausea of 3 s or less shows nothing at all.
+     */
+    private static final int CLIENT_NAUSEA_FADE = 60;
+
+    /** The ticks of NAUSEA {@code player} has left, 0 without it. */
+    private static int nauseaTicks(Player player) {
+        PotionEffect nausea = player.getPotionEffect(PotionEffectType.NAUSEA);
+        return nausea == null ? 0 : nausea.getDuration();
+    }
+
+    /** The longest NAUSEA each of {@code players} has now or after any of the next {@code ticks} ticks. */
+    private static int[] longestNausea(Scenario s, List<? extends Player> players, int ticks) {
+        int[] longest = new int[players.size()];
+        for (int t = 0; t <= ticks; t++) {
+            if (t > 0) {
+                s.ticks(1);
+            }
+            for (int i = 0; i < longest.length; i++) {
+                longest[i] = Math.max(longest[i], nauseaTicks(players.get(i)));
+            }
+        }
+        return longest;
+    }
+
+    @Test
+    void psychicCollapseNauseaLastsLongEnoughForTheClientToShowIt() {
+        try (Scenario s = Scenario.ffa("psychic")) {
+            s.assertSucceeded(s.ultimate(), "정신 붕괴");
+            List<TestPlayer> enemies = s.enemies();
+            int[] longest = longestNausea(s, enemies, 0);
+            for (int i = 0; i < longest.length; i++) {
+                assertTrue(longest[i] >= s.paramTicks("ult_duration") + CLIENT_NAUSEA_FADE,
+                        enemies.get(i).getName() + "'s view warps through the whole collapse on a real client: "
+                                + longest[i]);
+            }
+            assertEquals(0, nauseaTicks(s.owner), "never the owner");
+            s.ticks(s.paramTicks("ult_duration") + 10);
+            s.finishClean();
+        }
+    }
+
     @Test
     void psychicCollapseNeedsAnEnemyInRange() {
         try (Scenario s = Scenario.ffa("psychic")) {

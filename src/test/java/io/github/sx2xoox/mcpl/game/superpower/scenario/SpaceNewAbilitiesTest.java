@@ -38,6 +38,7 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -1208,6 +1209,63 @@ class SpaceNewAbilitiesTest {
             }
             s.ticks(30);
             assertNoDisplays(s, "bars and rain are gone, and the crash planted no new backdoor");
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A real client only builds the nausea screen warp while MORE than this many ticks of the effect are left (it
+     * fades the warp out once this many or fewer remain), so a nausea of 3 s or less shows nothing at all.
+     */
+    private static final int CLIENT_NAUSEA_FADE = 60;
+
+    /** The ticks of NAUSEA {@code player} has left, 0 without it. */
+    private static int nauseaTicks(Player player) {
+        PotionEffect nausea = player.getPotionEffect(PotionEffectType.NAUSEA);
+        return nausea == null ? 0 : nausea.getDuration();
+    }
+
+    /** The longest NAUSEA each of {@code players} has now or after any of the next {@code ticks} ticks. */
+    private static int[] longestNausea(Scenario s, List<? extends Player> players, int ticks) {
+        int[] longest = new int[players.size()];
+        for (int t = 0; t <= ticks; t++) {
+            if (t > 0) {
+                s.ticks(1);
+            }
+            for (int i = 0; i < longest.length; i++) {
+                longest[i] = Math.max(longest[i], nauseaTicks(players.get(i)));
+            }
+        }
+        return longest;
+    }
+
+    @Test
+    void hackerGlitchNauseaLastsLongEnoughForTheClientToShowIt() {
+        try (Scenario s = Scenario.ffa("hacker")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "글리치");
+            assertTrue(nauseaTicks(s.enemy) >= s.paramTicks("glitch_nausea") + CLIENT_NAUSEA_FADE,
+                    "the view warps for glitch_nausea on a real client: " + nauseaTicks(s.enemy));
+            assertEquals(0, nauseaTicks(s.enemy2), "only the target");
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hackerSystemDownNauseaLastsLongEnoughForTheClientToShowIt() {
+        try (Scenario s = Scenario.ffa("hacker")) {
+            s.assertSucceeded(s.ultimate(), "시스템 다운");
+            List<TestPlayer> enemies = s.enemies();
+            int[] longest = longestNausea(s, enemies, s.paramTicks("ult_upload") + 4);
+            for (int i = 0; i < longest.length; i++) {
+                assertTrue(longest[i] >= s.paramTicks("ult_nausea") + CLIENT_NAUSEA_FADE,
+                        enemies.get(i).getName() + "'s screen noise shows for ult_nausea on a real client: "
+                                + longest[i]);
+            }
+            assertEquals(0, nauseaTicks(s.owner), "never the owner");
+            s.ticks(s.paramTicks("ult_silence") + 30);
             s.finishClean();
         }
     }
