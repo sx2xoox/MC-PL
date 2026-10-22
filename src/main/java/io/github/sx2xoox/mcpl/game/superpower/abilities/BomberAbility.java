@@ -655,13 +655,15 @@ public final class BomberAbility extends Ability {
      * fire bloom thrown outwards, ground debris, two expanding shock rings and embers smouldering afterwards.
      */
     private void explosion(Location center, double radius, boolean big) {
+        boolean force = !big; // the small blasts are the carpet, the ultimate: seen from afar
         World world = center.getWorld();
         ThreadLocalRandom random = ThreadLocalRandom.current();
         Location floor = groundBelow(center, 2);
         Location ground = (floor == null ? center.clone().subtract(0, 0.5, 0) : floor).add(0, 0.12, 0);
 
-        world.spawnParticle(Particle.FLASH, center, 1, 0, 0, 0, 0, PALETTE.core(), big);
-        world.spawnParticle(big ? Particle.EXPLOSION_EMITTER : Particle.EXPLOSION, center, 1, 0, 0, 0, 0, null, big);
+        world.spawnParticle(Particle.FLASH, center, 1, 0, 0, 0, 0, PALETTE.core(), force);
+        world.spawnParticle(big ? Particle.EXPLOSION_EMITTER : Particle.EXPLOSION, center, 1, 0, 0, 0, 0, null,
+                force);
         fireball(center, radius * (big ? 0.5 : 0.45), big ? 3 : 2);
 
         // Fire bloom: flames thrown out in every direction, a few hot lava pops.
@@ -686,7 +688,7 @@ public final class BomberAbility extends Ability {
 
         // Shock rings: a hot one racing to the edge, a sooty one following.
         Vfx.shockwave(ctx(), player(), ground, 0.3, radius, big ? 5 : 4, Particle.DUST_COLOR_TRANSITION,
-                PALETTE.glow(1.4f), big);
+                PALETTE.glow(1.4f), force);
         Vfx.shockwave(ctx(), player(), ground.clone().add(0, 0.1, 0), 0.2, radius * 0.85, big ? 9 : 7, Particle.DUST,
                 new Particle.DustOptions(PALETTE.edge(), 1.6f), false);
         embers(ground, radius * 0.5, big ? EMBER_TICKS : EMBER_TICKS / 2);
