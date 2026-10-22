@@ -7,10 +7,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
 import java.util.function.Predicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -22,11 +26,8 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.BlockFace;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
@@ -36,7 +37,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
@@ -94,8 +94,7 @@ public final class BomberAbility extends Ability {
     private static final double BLAST_JUMP_REACH = 0.8;
     private static final double BLAST_JUMP_UP = 1.15;
     private static final double BLAST_JUMP_SIDE = 0.55;
-    /** Ticks after a blast jump before landing ends the fall protection, and its upper bound. */
-    private static final long BLAST_JUMP_MIN_AIR = 10;
+    /** The landing after a blast jump is protected from fall damage for at most this long. */
     private static final long BLAST_JUMP_MAX_AIR = 160;
 
     private static final double BLAST_PUSH = 0.9;
@@ -114,7 +113,8 @@ public final class BomberAbility extends Ability {
             new Particle.DustTransition(Color.fromRGB(255, 170, 60), Color.fromRGB(70, 60, 55), 1.6f);
     private static final Color FLASH_COLOR = Color.fromRGB(255, 200, 140);
 
-    private boolean blastJumping;
+    /** Cancels the fall damage of the landing after a blast jump. */
+    private final LandingGuard blastJump = new LandingGuard();
     private long blastJumpTick;
 
     @Override
@@ -129,12 +129,10 @@ public final class BomberAbility extends Ability {
         if (event.isCancelled()) {
             return;
         }
-        if (event.getCause() == DamageCause.FALL && blastJumping) {
-            event.setCancelled(true);
-            blastJumping = false;
+        if (blastJump.absorb(event, ctx().currentTick())) {
             Location feet = player().getLocation();
             feet.getWorld().spawnParticle(Particle.CLOUD, feet, 10, 0.3, 0.05, 0.3, 0.03);
-            sound(feet, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 0.6f, 1.3f + jitter(0.1f));
+            Fx.sound(feet, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 0.6f, 1.3f + Fx.jitter(0.1f));
             return;
         }
         if (!isExplosive(event)) {
@@ -148,26 +146,15 @@ public final class BomberAbility extends Ability {
 
     @Override
     public void onTick(long tick) {
-        if (!blastJumping || tick % 2 != 0) {
+        if (!blastJump.isArmed() || tick % 2 != 0) {
             return;
         }
-        long airborne = ctx().currentTick() - blastJumpTick;
-        if (airborne > BLAST_JUMP_MAX_AIR || (airborne > BLAST_JUMP_MIN_AIR && isStanding(player()))) {
-            blastJumping = false;
-            return;
-        }
-        if (airborne < 20) {
+        long now = ctx().currentTick();
+        blastJump.update(player(), now);
+        if (blastJump.isArmed() && now - blastJumpTick < 20) {
             Location feet = player().getLocation();
             feet.getWorld().spawnParticle(Particle.SMOKE, feet, 2, 0.1, 0.05, 0.1, 0.01);
         }
-    }
-
-    /** Server-side ground check (the player's own on-ground flag is client-controlled): blocks right under the feet. */
-    private static boolean isStanding(Player player) {
-        BoundingBox body = player.getBoundingBox();
-        BoundingBox feet = new BoundingBox(body.getMinX() + 0.01, body.getMinY() - 0.08, body.getMinZ() + 0.01,
-                body.getMaxX() - 0.01, body.getMinY() + 0.01, body.getMaxZ() - 0.01);
-        return player.getWorld().hasCollisionsIn(feet);
     }
 
     /** Vanilla explosions, any explosion-typed damage, and the bombs of another 폭탄마. */
@@ -199,7 +186,8 @@ public final class BomberAbility extends Ability {
             spawn = eye.clone().subtract(0, 0.3, 0);
         }
         long fuse = Math.max(1, params().ticks("grenade_fuse"));
-        Vector velocity = clamp(look.clone().multiply(GRENADE_SPEED).add(new Vector(0, GRENADE_LIFT, 0)));
+        Vector velocity = Motion.clamp(look.clone().multiply(GRENADE_SPEED).add(new Vector(0, GRENADE_LIFT, 0)),
+                MAX_SPEED);
 
         TNTPrimed grenade = ctx().track(player(), world.spawn(spawn, TNTPrimed.class, tnt -> {
             tnt.setPersistent(false);
@@ -212,11 +200,11 @@ public final class BomberAbility extends Ability {
         if (!grenade.isValid()) {
             return ActivationResult.fail("수류탄을 던질 수 없습니다");
         }
-        sound(eye, Sound.ENTITY_SNOWBALL_THROW, 1.0f, 0.6f + jitter(0.05f));
-        sound(eye, Sound.ENTITY_TNT_PRIMED, 0.9f, 1.3f + jitter(0.05f));
+        Fx.sound(eye, Sound.ENTITY_SNOWBALL_THROW, 1.0f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(eye, Sound.ENTITY_TNT_PRIMED, 0.9f, 1.3f + Fx.jitter(0.05f));
 
         double radius = Math.max(0.5, params().num("grenade_radius"));
-        new Repeater(fuse, tick -> {
+        Loop.repeat(ctx(), player(), 1, 1, fuse, tick -> {
             if (!grenade.isValid()) {
                 return false;
             }
@@ -229,7 +217,7 @@ public final class BomberAbility extends Ability {
             long beepEvery = left > 15 ? 8 : left > 6 ? 4 : 2;
             if (left % beepEvery == 0) {
                 float progress = 1f - (float) left / fuse;
-                sound(at, Sound.BLOCK_NOTE_BLOCK_PLING, 0.7f, 1.0f + progress);
+                Fx.sound(at, Sound.BLOCK_NOTE_BLOCK_PLING, 0.7f, 1.0f + progress);
             }
             if (left <= WARNING_TICKS && left % 4 == 0) {
                 Location floor = groundBelow(at, 3);
@@ -247,7 +235,7 @@ public final class BomberAbility extends Ability {
             if (grenade.isValid()) {
                 grenade.remove();
             }
-        }).start(1, 1);
+        });
         return ActivationResult.success();
     }
 
@@ -273,14 +261,14 @@ public final class BomberAbility extends Ability {
             away.normalize().multiply(BLAST_JUMP_SIDE * (0.6 + 0.4 * strength));
         }
         away.setY(BLAST_JUMP_UP * (0.7 + 0.3 * strength));
-        self.setVelocity(clamp(away));
+        self.setVelocity(Motion.clamp(away, MAX_SPEED));
         self.setFallDistance(0f);
-        blastJumping = true;
         blastJumpTick = ctx().currentTick();
+        blastJump.arm(blastJumpTick, BLAST_JUMP_MAX_AIR);
 
         Location feet = self.getLocation();
         feet.getWorld().spawnParticle(Particle.CLOUD, feet, 14, 0.3, 0.1, 0.3, 0.08);
-        sound(feet, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.0f, 0.9f + jitter(0.1f));
+        Fx.sound(feet, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.0f, 0.9f + Fx.jitter(0.1f));
         self.sendActionBar(Text.mm("<#FF7A2E>✸ 폭탄 점프!</#FF7A2E>"));
     }
 
@@ -320,9 +308,9 @@ public final class BomberAbility extends Ability {
             releaseAt[i] = bombs == 1 ? 0 : Math.round((double) duration * i / (bombs - 1));
         }
 
-        sound(player().getEyeLocation(), Sound.ENTITY_TNT_PRIMED, 1.0f, 0.6f);
-        sound(aim, Sound.BLOCK_BEACON_DEACTIVATE, 1.6f, 0.5f);
-        sound(aim, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.6f, 0.5f);
+        Fx.sound(player().getEyeLocation(), Sound.ENTITY_TNT_PRIMED, 1.0f, 0.6f);
+        Fx.sound(aim, Sound.BLOCK_BEACON_DEACTIVATE, 1.6f, 0.5f);
+        Fx.sound(aim, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.6f, 0.5f);
 
         // A target standing still (or frozen by an ally) must not eat every bomb of the carpet.
         Map<UUID, Integer> hits = new HashMap<>();
@@ -330,7 +318,7 @@ public final class BomberAbility extends Ability {
         List<FallingBomb> falling = new ArrayList<>();
         int[] released = {0};
         long runs = releaseAt[bombs - 1] + BOMB_FALL_TICKS + 2;
-        new Repeater(runs, tick -> {
+        Loop.repeat(ctx(), player(), 0, 1, runs, tick -> {
             while (released[0] < bombs && releaseAt[released[0]] <= tick) {
                 Location target = targets.get(released[0]++);
                 falling.add(new FallingBomb(target, radius));
@@ -344,7 +332,7 @@ public final class BomberAbility extends Ability {
                 }
             }
             return released[0] < bombs || !falling.isEmpty();
-        }, () -> falling.forEach(FallingBomb::discard)).start(0, 1);
+        }, () -> falling.forEach(FallingBomb::discard));
         return ActivationResult.success();
     }
 
@@ -379,7 +367,7 @@ public final class BomberAbility extends Ability {
                         new Vector3f(BOMB_SIZE, BOMB_SIZE, BOMB_SIZE), new Quaternionf()));
             }));
             drawRing(ground, radius, Particle.DUST, WARNING_DUST);
-            sound(top, Sound.ENTITY_TNT_PRIMED, 1.2f, 0.8f + jitter(0.1f));
+            Fx.sound(top, Sound.ENTITY_TNT_PRIMED, 1.2f, 0.8f + Fx.jitter(0.1f));
         }
 
         /** Advances the fall by one tick; true once the bomb has hit the ground. */
@@ -428,8 +416,8 @@ public final class BomberAbility extends Ability {
         world.spawnParticle(Particle.FLAME, center, big ? 30 : 16, 0.3, 0.3, 0.3, radius * 0.05);
         world.spawnParticle(Particle.LARGE_SMOKE, center, big ? 16 : 8, 0.4, 0.3, 0.4, 0.06);
         drawRing(center.clone().subtract(0, 0.35, 0), radius, Particle.DUST_COLOR_TRANSITION, BLAST_DUST);
-        sound(center, Sound.ENTITY_GENERIC_EXPLODE, big ? 2.2f : 1.6f, (big ? 0.95f : 1.1f) + jitter(0.08f));
-        sound(center, Sound.ENTITY_FIREWORK_ROCKET_BLAST, 1.2f, 0.6f + jitter(0.1f));
+        Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, big ? 2.2f : 1.6f, (big ? 0.95f : 1.1f) + Fx.jitter(0.08f));
+        Fx.sound(center, Sound.ENTITY_FIREWORK_ROCKET_BLAST, 1.2f, 0.6f + Fx.jitter(0.1f));
 
         for (LivingEntity target : ctx().enemiesNear(player(), center, radius)) {
             if (!exposed(center, target) || !admit.test(target)) {
@@ -437,7 +425,7 @@ public final class BomberAbility extends Ability {
             }
             double distance = Math.min(radius, distanceToBox(center, target.getBoundingBox()));
             double proximity = 1 - distance / radius;
-            hit(target, minDamage + (maxDamage - minDamage) * proximity);
+            Combat.hit(ctx(), player(), target, minDamage + (maxDamage - minDamage) * proximity);
             if (target.isValid() && !target.isDead()) {
                 knockback(center, target, proximity);
             }
@@ -450,26 +438,16 @@ public final class BomberAbility extends Ability {
             double angle = ThreadLocalRandom.current().nextDouble() * Math.PI * 2;
             away = new Vector(Math.cos(angle), 0, Math.sin(angle));
         }
-        double factor = knockbackFactor(target);
+        double factor = Motion.knockbackFactor(target);
         away.normalize().multiply(BLAST_PUSH * (0.4 + 0.6 * proximity) * factor);
         away.setY(BLAST_LIFT * (0.5 + 0.5 * proximity) * factor);
-        target.setVelocity(clamp(target.getVelocity().add(away)));
+        target.setVelocity(Motion.clamp(target.getVelocity().add(away), MAX_SPEED));
     }
 
     /** True if no solid block stands between the blast and the target's eyes or body center. */
     private static boolean exposed(Location center, LivingEntity target) {
-        return clearLine(center, target.getEyeLocation())
-                || clearLine(center, target.getLocation().add(0, target.getHeight() * 0.5, 0));
-    }
-
-    private static boolean clearLine(Location from, Location to) {
-        Vector between = to.toVector().subtract(from.toVector());
-        double distance = between.length();
-        if (distance < 0.1) {
-            return true;
-        }
-        return from.getWorld().rayTraceBlocks(from, between.multiply(1 / distance), distance,
-                FluidCollisionMode.NEVER, true) == null;
+        return Spots.clearPath(center, target.getEyeLocation())
+                || Spots.clearPath(center, target.getLocation().add(0, target.getHeight() * 0.5, 0));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -503,14 +481,8 @@ public final class BomberAbility extends Ability {
     }
 
     private static <T> void drawRing(Location center, double radius, Particle particle, T data) {
-        World world = center.getWorld();
         int points = (int) Math.max(12, Math.min(40, radius * 7));
-        double y = center.getY() + 0.15;
-        for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
-            world.spawnParticle(particle, center.getX() + Math.cos(angle) * radius, y,
-                    center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, data);
-        }
+        Fx.ring(center.clone().add(0, 0.15, 0), radius, points, 0, particle, data);
     }
 
     /** Distance from a point to the closest point of a box (0 inside), matching how enemies are found. */
@@ -519,91 +491,5 @@ public final class BomberAbility extends Ability {
         double dy = Math.max(Math.max(box.getMinY() - point.getY(), 0), point.getY() - box.getMaxY());
         double dz = Math.max(Math.max(box.getMinZ() - point.getZ(), 0), point.getZ() - box.getMaxZ());
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so chained bombs are not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || target.isDead() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /** 1 minus the target's knockback resistance, so tanky abilities keep their identity. */
-    private static double knockbackFactor(LivingEntity target) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        return resistance == null ? 1.0 : Math.max(0.0, 1.0 - resistance.getValue());
-    }
-
-    private static Vector clamp(Vector velocity) {
-        return velocity.lengthSquared() > MAX_SPEED * MAX_SPEED ? velocity.normalize().multiply(MAX_SPEED) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
-    }
-
-    /**
-     * Runs a step with a 0-based index every period until it returns false, has run {@code maxRuns} times or the
-     * owner is no longer alive; {@code onEnd} then runs once. Owner-scoped (cancelled on revoke) and fail-safe: a
-     * step that throws stops the loop instead of failing every tick.
-     */
-    private final class Repeater implements Runnable {
-        private final long maxRuns;
-        private final LongPredicate step;
-        private final @Nullable Runnable onEnd;
-        private @Nullable BukkitTask task;
-        private long runs;
-        private boolean finished;
-
-        Repeater(long maxRuns, LongPredicate step, @Nullable Runnable onEnd) {
-            this.maxRuns = maxRuns;
-            this.step = step;
-            this.onEnd = onEnd;
-        }
-
-        void start(long delay, long period) {
-            if (maxRuns <= 0) {
-                finish();
-                return;
-            }
-            task = ctx().runTimer(player(), delay, period, this);
-            if (finished) {
-                task.cancel();
-            }
-        }
-
-        @Override
-        public void run() {
-            if (finished) {
-                return;
-            }
-            long index = runs++;
-            boolean more;
-            try {
-                more = ctx().isAlive(player()) && step.test(index);
-            } catch (RuntimeException e) {
-                ctx().plugin().getLogger().log(Level.WARNING, "Bomber ability task failed", e);
-                more = false;
-            }
-            if (!more || index + 1 >= maxRuns) {
-                finish();
-            }
-        }
-
-        private void finish() {
-            finished = true;
-            if (task != null) {
-                task.cancel();
-            }
-            if (onEnd != null) {
-                onEnd.run();
-            }
-        }
     }
 }

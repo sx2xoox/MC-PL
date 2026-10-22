@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
@@ -21,8 +24,6 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Display;
@@ -35,7 +36,6 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Transformation;
 import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
@@ -151,8 +151,8 @@ public final class GamblerAbility extends Ability {
         World world = body.getWorld();
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 14, 0.35, 0.5, 0.35, 0, LUCK_DUST);
         world.spawnParticle(Particle.ITEM, body, 6, 0.2, 0.3, 0.2, 0.12, new ItemStack(Material.GOLD_NUGGET));
-        sound(body, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.5f + jitter(0.2f));
-        sound(body, Sound.BLOCK_NOTE_BLOCK_BELL, 0.5f, 1.8f);
+        Fx.sound(body, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.5f + Fx.jitter(0.2f));
+        Fx.sound(body, Sound.BLOCK_NOTE_BLOCK_BELL, 0.5f, 1.8f);
         owner.sendActionBar(Text.mm(lethal
                 ? "<" + GOLD + "><b>✦ 기적의 행운!</b></" + GOLD + "> <white>치명상을 피했습니다</white>"
                 : "<" + GOLD + ">✦ 행운!</" + GOLD + "> <gray>피해 무효</gray>"));
@@ -185,8 +185,8 @@ public final class GamblerAbility extends Ability {
         world.spawnParticle(Particle.ITEM, at, 10, 0.25, 0.3, 0.25, 0.18, new ItemStack(Material.GOLD_INGOT));
         world.spawnParticle(Particle.DUST, at, 10, 0.35, 0.45, 0.35, 0, GOLD_DUST);
         world.spawnParticle(Particle.ENCHANTED_HIT, at, 12, 0.3, 0.4, 0.3, 0.25);
-        sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 1.1f + jitter(0.1f));
-        sound(at, Sound.BLOCK_NOTE_BLOCK_PLING, 0.7f, 1.9f);
+        Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 1.1f + Fx.jitter(0.1f));
+        Fx.sound(at, Sound.BLOCK_NOTE_BLOCK_PLING, 0.7f, 1.9f);
         player().sendActionBar(Text.mm("<" + GOLD + "><b>✦ 더블!</b></" + GOLD + "> <white>피해 ×"
                 + AbilityInfo.formatNumber(multiplier) + "</white>"));
     }
@@ -205,7 +205,7 @@ public final class GamblerAbility extends Ability {
         DiceRoll roll = new DiceRoll(dice);
         dice.text(faceText(roll.shown, false));
         startDisplay(dice, roll);
-        sound(owner.getLocation(), Sound.BLOCK_DECORATED_POT_INSERT, 0.9f, 1.4f + jitter(0.1f));
+        Fx.sound(owner.getLocation(), Sound.BLOCK_DECORATED_POT_INSERT, 0.9f, 1.4f + Fx.jitter(0.1f));
         owner.sendActionBar(Text.mm("<" + GOLD + ">주사위를 굴립니다…</" + GOLD + ">"));
         return ActivationResult.success();
     }
@@ -231,7 +231,7 @@ public final class GamblerAbility extends Ability {
                     if (age % 2 == 0) {
                         shown = randomFace(shown);
                         display.text(faceText(shown, false));
-                        sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.6f,
+                        Fx.sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.6f,
                                 0.9f + 0.6f * age / ROLL_TICKS);
                     }
                     return true;
@@ -264,8 +264,8 @@ public final class GamblerAbility extends Ability {
             case BUST -> {
                 double damage = Math.min(params().num("dice_self_damage"), owner.getHealth() - 1);
                 world.spawnParticle(Particle.LARGE_SMOKE, body, 10, 0.3, 0.4, 0.3, 0.02);
-                sound(body, Sound.ENTITY_VILLAGER_NO, 0.9f, 0.8f + jitter(0.1f));
-                sound(body, Sound.BLOCK_NOTE_BLOCK_BIT, 0.8f, 0.5f);
+                Fx.sound(body, Sound.ENTITY_VILLAGER_NO, 0.9f, 0.8f + Fx.jitter(0.1f));
+                Fx.sound(body, Sound.BLOCK_NOTE_BLOCK_BIT, 0.8f, 0.5f);
                 owner.sendActionBar(Text.mm(head + "<gray>꽝!</gray>"));
                 if (damage > 0) {
                     owner.damage(damage, DamageSource.builder(DamageType.MAGIC).build());
@@ -275,7 +275,7 @@ public final class GamblerAbility extends Ability {
                 int ticks = (int) params().ticks("dice_buff_duration");
                 owner.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, ticks, 1, false, true, true));
                 world.spawnParticle(Particle.CLOUD, owner.getLocation().add(0, 0.1, 0), 12, 0.3, 0.05, 0.3, 0.06);
-                sound(body, Sound.ENTITY_BREEZE_JUMP, 0.8f, 1.3f + jitter(0.1f));
+                Fx.sound(body, Sound.ENTITY_BREEZE_JUMP, 0.8f, 1.3f + Fx.jitter(0.1f));
                 owner.sendActionBar(Text.mm(head + "<white>신속 II</white> <gray>"
                         + AbilityInfo.formatNumber(params().num("dice_buff_duration")) + "초</gray>"));
             }
@@ -283,14 +283,14 @@ public final class GamblerAbility extends Ability {
                 int ticks = (int) params().ticks("dice_buff_duration");
                 owner.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, ticks, 0, false, true, true));
                 world.spawnParticle(Particle.CRIT, body, 16, 0.35, 0.45, 0.35, 0.2);
-                sound(body, Sound.ENTITY_EVOKER_CAST_SPELL, 0.7f, 1.4f + jitter(0.1f));
+                Fx.sound(body, Sound.ENTITY_EVOKER_CAST_SPELL, 0.7f, 1.4f + Fx.jitter(0.1f));
                 owner.sendActionBar(Text.mm(head + "<white>힘 I</white> <gray>"
                         + AbilityInfo.formatNumber(params().num("dice_buff_duration")) + "초</gray>"));
             }
             case MEND -> {
                 ctx().heal(owner, params().num("dice_heal"));
                 world.spawnParticle(Particle.HEART, body.clone().add(0, 0.5, 0), 5, 0.4, 0.3, 0.4, 0);
-                sound(body, Sound.ENTITY_PLAYER_LEVELUP, 0.6f, 1.6f + jitter(0.1f));
+                Fx.sound(body, Sound.ENTITY_PLAYER_LEVELUP, 0.6f, 1.6f + Fx.jitter(0.1f));
                 owner.sendActionBar(Text.mm(head + "<white>체력 "
                         + AbilityInfo.formatNumber(params().num("dice_heal")) + " 회복</white>"));
             }
@@ -300,8 +300,8 @@ public final class GamblerAbility extends Ability {
                 ctx().addGauge(owner, gauge);
                 world.spawnParticle(Particle.TOTEM_OF_UNDYING, body, 24, 0.4, 0.6, 0.4, 0.25);
                 world.spawnParticle(Particle.WAX_ON, body, 10, 0.5, 0.6, 0.5, 0);
-                sound(body, Sound.BLOCK_NOTE_BLOCK_BELL, 0.9f, 1.2f);
-                sound(body, Sound.ENTITY_PLAYER_LEVELUP, 0.7f, 1.2f);
+                Fx.sound(body, Sound.BLOCK_NOTE_BLOCK_BELL, 0.9f, 1.2f);
+                Fx.sound(body, Sound.ENTITY_PLAYER_LEVELUP, 0.7f, 1.2f);
                 owner.sendActionBar(Text.mm(head + "<" + GOLD + ">궁극기 게이지 +"
                         + AbilityInfo.formatNumber(gauge) + "%</" + GOLD + ">"));
             }
@@ -367,7 +367,7 @@ public final class GamblerAbility extends Ability {
         JackpotSpin spin = new JackpotSpin(reel, pool);
         reel.text(reelText(pool.get(ThreadLocalRandom.current().nextInt(pool.size())).info()));
         startDisplay(reel, spin);
-        sound(owner.getLocation(), Sound.BLOCK_VAULT_OPEN_SHUTTER, 1.0f, 1.2f);
+        Fx.sound(owner.getLocation(), Sound.BLOCK_VAULT_OPEN_SHUTTER, 1.0f, 1.2f);
         owner.sendActionBar(Text.mm("<" + GOLD + "><b>★ 잭팟</b></" + GOLD + "> <gray>슬롯머신이 돌아갑니다…</gray>"));
         return ActivationResult.success();
     }
@@ -414,7 +414,7 @@ public final class GamblerAbility extends Ability {
                     // The gauge was already consumed when the spin started: give it back.
                     ctx().addGauge(owner, 100);
                     display.text(Text.mm("<gray><b>꽝…</b></gray>"));
-                    sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_BIT, 0.9f, 0.5f);
+                    Fx.sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_BIT, 0.9f, 0.5f);
                     owner.sendActionBar(Text.mm("<gray>발동할 수 있는 궁극기가 없어 게이지를 돌려받았습니다</gray>"));
                 }
                 return true;
@@ -426,7 +426,7 @@ public final class GamblerAbility extends Ability {
                 int next = ThreadLocalRandom.current().nextInt(pool.size() - 1);
                 shownIndex = next >= shownIndex ? next + 1 : next;
                 display.text(reelText(pool.get(shownIndex).info()));
-                sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.7f, 0.8f + (float) progress);
+                Fx.sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.7f, 0.8f + (float) progress);
             }
             return true;
         }
@@ -446,7 +446,7 @@ public final class GamblerAbility extends Ability {
                 break;
             }
             if (fireBorrowed(owner, entry.info())) {
-                announce(owner, entry.info(), display);
+                announceJackpot(owner, entry.info(), display);
                 return true;
             }
         }
@@ -466,7 +466,8 @@ public final class GamblerAbility extends Ability {
         }
     }
 
-    private void announce(Player owner, AbilityInfo info, @Nullable TextDisplay display) {
+    /** Shows the jackpot on the reel and tells everyone watching the match which ultimate fired. */
+    private void announceJackpot(Player owner, AbilityInfo info, @Nullable TextDisplay display) {
         Component ultimate = skillName(info);
         Component ability = Text.mm(info.name()).colorIfAbsent(info.color());
         if (display != null) {
@@ -474,20 +475,17 @@ public final class GamblerAbility extends Ability {
                     Placeholder.component("ult", ultimate)));
             pop(display, REEL_SCALE * 1.25f);
         }
-        Component message = Text.mm("<" + GOLD + "><b>★ 잭팟!</b></" + GOLD + "> <white><player></white><gray>의 "
+        ctx().announce(Text.mm("<" + GOLD + "><b>★ 잭팟!</b></" + GOLD + "> <white><player></white><gray>의 "
                         + "슬롯머신 →</gray> <ult> <gray>(<ability>)</gray>",
                 Placeholder.unparsed("player", owner.getName()),
                 Placeholder.component("ult", ultimate),
-                Placeholder.component("ability", ability));
+                Placeholder.component("ability", ability)));
         World world = owner.getWorld();
-        for (Player viewer : world.getPlayers()) {
-            viewer.sendMessage(message);
-        }
         Location at = owner.getLocation().add(0, owner.getHeight() + REEL_LIFT, 0);
         world.spawnParticle(Particle.TOTEM_OF_UNDYING, at, 30, 0.5, 0.4, 0.5, 0.35);
         world.spawnParticle(Particle.FIREWORK, at, 16, 0.3, 0.3, 0.3, 0.12);
-        sound(at, Sound.BLOCK_NOTE_BLOCK_BELL, 1.0f, 1.0f);
-        sound(at, Sound.ENTITY_FIREWORK_ROCKET_TWINKLE, 0.9f, 1.1f + jitter(0.1f));
+        Fx.sound(at, Sound.BLOCK_NOTE_BLOCK_BELL, 1.0f, 1.0f);
+        Fx.sound(at, Sound.ENTITY_FIREWORK_ROCKET_TWINKLE, 0.9f, 1.1f + Fx.jitter(0.1f));
         owner.playSound(owner, Sound.UI_TOAST_CHALLENGE_COMPLETE, SoundCategory.PLAYERS, 0.6f, 1.2f);
     }
 
@@ -529,19 +527,12 @@ public final class GamblerAbility extends Ability {
     }
 
     /**
-     * Runs {@code animation} every tick until it returns false or the owner is gone, then removes the display.
-     * Both the task and the tracked display are also cleaned up by the framework on revoke.
+     * Runs {@code animation} every tick until it returns false, then removes the display. If the owner is gone
+     * first, the framework removes the task and the tracked display on revoke.
      */
     private void startDisplay(TextDisplay display, DisplayAnimation animation) {
-        BukkitTask[] task = new BukkitTask[1];
-        task[0] = ctx().runTimer(player(), 1, 1, () -> {
-            Player owner = player();
-            boolean keep = display.isValid() && owner.isOnline() && ctx().isAlive(owner) && animation.step();
-            if (!keep) {
-                task[0].cancel();
-                display.remove();
-            }
-        });
+        Loop.repeat(ctx(), player(), 1, 1, Long.MAX_VALUE, run -> display.isValid() && animation.step(),
+                display::remove);
     }
 
     private static void follow(TextDisplay display, Player owner, double lift) {
@@ -549,7 +540,7 @@ public final class GamblerAbility extends Ability {
     }
 
     private static Location displaySpot(Player owner, double lift) {
-        Location at = owner.getLocation().add(0, owner.getHeight() + lift * scaleOf(owner), 0);
+        Location at = owner.getLocation().add(0, owner.getHeight() + lift * Body.scaleOf(owner), 0);
         at.setYaw(0);
         at.setPitch(0);
         return at;
@@ -571,18 +562,5 @@ public final class GamblerAbility extends Ability {
 
     private static boolean chance(double percent) {
         return ThreadLocalRandom.current().nextDouble() * 100.0 < percent;
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

@@ -1,17 +1,19 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Stealth;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
-import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -19,24 +21,16 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
-import org.bukkit.damage.DamageType;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -99,12 +93,7 @@ public final class PixieAbility extends Ability {
     private static final double MIN_HEALTH = 2;
 
     // Stealth
-    private boolean stealthed;
-    /** Generation counter so that a stale expiry timer never ends a newer stealth. */
-    private int stealthToken;
-    private long stealthEndTick;
-    /** Players the owner is currently hidden from (they must all see the owner again). */
-    private final Set<UUID> hiddenFrom = new HashSet<>();
+    private final Stealth stealth = new Stealth();
 
     // Flight
     private boolean flying;
@@ -131,12 +120,12 @@ public final class PixieAbility extends Ability {
         if (scale < 1.0) {
             ctx().addModifier(owner, owner, Attribute.SCALE, scale - 1.0, AttributeModifier.Operation.ADD_NUMBER, 0);
         }
-        double max = maxHealth(owner);
+        double max = Combat.maxHealth(owner);
         double penalty = Math.clamp(params().num("health_penalty"), 0, Math.max(0, max - MIN_HEALTH));
         if (penalty > 0) {
             ctx().addModifier(owner, owner, Attribute.MAX_HEALTH, -penalty, AttributeModifier.Operation.ADD_NUMBER,
                     0);
-            double newMax = maxHealth(owner);
+            double newMax = Combat.maxHealth(owner);
             if (owner.getHealth() > newMax) {
                 owner.setHealth(newMax);
             }
@@ -156,7 +145,7 @@ public final class PixieAbility extends Ability {
         }
         Location body = owner.getLocation().add(0, 0.5, 0);
         body.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 20, 0.3, 0.4, 0.3, 0, FAIRY_DUST);
-        sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 1.8f);
+        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 1.8f);
     }
 
     @Override
@@ -183,7 +172,7 @@ public final class PixieAbility extends Ability {
         } else if (descending) {
             tickDescent(owner, tick);
         }
-        if (stealthed) {
+        if (stealth.isActive()) {
             tickStealth(owner, tick);
         } else if (!flying && tick % 8 == 0) {
             trailSparkle(owner);
@@ -205,7 +194,7 @@ public final class PixieAbility extends Ability {
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled() || !isFall(event)) {
+        if (event.isCancelled() || !Combat.isFall(event)) {
             return;
         }
         if (flying || descending || ctx().currentTick() <= fallGraceUntil) {
@@ -215,7 +204,7 @@ public final class PixieAbility extends Ability {
 
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (stealthed && !event.isCancelled()) {
+        if (stealth.isActive() && !event.isCancelled()) {
             reveal(true);
         }
     }
@@ -251,9 +240,9 @@ public final class PixieAbility extends Ability {
         world.spawnParticle(Particle.CHERRY_LEAVES, body, 14, 1.2, 0.6, 1.2, 0);
         world.spawnParticle(Particle.END_ROD, body, 8, 0.5, 0.4, 0.5, 0.05);
         dustWave(center, radius);
-        sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.5f + jitter(0.1f));
-        sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 2.0f);
-        sound(center, Sound.ENTITY_ALLAY_ITEM_THROWN, 0.9f, 1.3f + jitter(0.1f));
+        Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.0f, 1.5f + Fx.jitter(0.1f));
+        Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 2.0f);
+        Fx.sound(center, Sound.ENTITY_ALLAY_ITEM_THROWN, 0.9f, 1.3f + Fx.jitter(0.1f));
 
         startStealth(owner, params().ticks("invis_duration"));
         owner.sendActionBar(Text.mm(enemies.isEmpty()
@@ -266,22 +255,18 @@ public final class PixieAbility extends Ability {
     /** A sparkling ring that sweeps out to the dust radius over a few ticks (visual only). */
     private void dustWave(Location center, double radius) {
         int frames = 5;
-        int[] frame = {0};
-        BukkitTask[] task = new BukkitTask[1];
-        task[0] = ctx().runTimer(player(), 0, 1, () -> {
-            frame[0]++;
-            double r = radius * frame[0] / frames;
+        Loop.repeat(ctx(), player(), 0, 1, frames, run -> {
+            long frame = run + 1;
+            double r = radius * frame / frames;
             int points = Math.max(8, (int) (r * 5));
             World world = center.getWorld();
-            double offset = frame[0] * 0.4;
+            double offset = frame * 0.4;
             for (int i = 0; i < points; i++) {
                 double angle = offset + Math.PI * 2 * i / points;
                 Location at = center.clone().add(Math.cos(angle) * r, 0.25, Math.sin(angle) * r);
                 world.spawnParticle(Particle.DUST, at, 1, 0, 0.05, 0, 0, i % 2 == 0 ? SPARKLE_PINK : SPARKLE_SKY);
             }
-            if (frame[0] >= frames) {
-                task[0].cancel();
-            }
+            return true;
         });
     }
 
@@ -291,18 +276,10 @@ public final class PixieAbility extends Ability {
         if (ticks <= 0) {
             return;
         }
-        stealthed = true;
-        int token = ++stealthToken;
-        stealthEndTick = ctx().currentTick() + ticks;
         // Allies and spectators keep seeing the vanilla translucent body; enemies do not see the owner at all.
         owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, (int) ticks + 5, 0, false, false, true));
-        hideFromEnemies(owner);
-        dropAggro(owner);
-        ctx().runLater(owner, ticks, () -> {
-            if (token == stealthToken) {
-                reveal(true);
-            }
-        });
+        stealth.begin(ctx(), owner, ticks, () -> reveal(true));
+        Stealth.dropAggro(ctx(), owner, AGGRO_DROP_RANGE);
     }
 
     private void tickStealth(Player owner, long tick) {
@@ -312,48 +289,19 @@ public final class PixieAbility extends Ability {
             owner.getWorld().spawnParticle(Particle.DUST, at, 1, 0.15, 0.1, 0.15, 0, SPARKLE_PINK);
         }
         if (!flying && tick % 5 == 0) {
-            double left = Math.max(0, stealthEndTick - ctx().currentTick()) / 20.0;
             owner.sendActionBar(Text.mm("<" + PINK + ">✿ 투명</" + PINK + "> <gray>"
-                    + AbilityInfo.formatNumber(Math.ceil(left * 10) / 10.0) + "초</gray>"));
+                    + Fx.seconds(stealth.ticksLeft(ctx().currentTick())) + "초</gray>"));
         }
         if (tick % 20 == 0) {
-            hideFromEnemies(owner);
-            dropAggro(owner);
-        }
-    }
-
-    private void hideFromEnemies(Player owner) {
-        for (Player viewer : ctx().alivePlayers()) {
-            if (!viewer.equals(owner) && ctx().isEnemy(owner, viewer) && hiddenFrom.add(viewer.getUniqueId())) {
-                viewer.hidePlayer(ctx().plugin(), owner);
-            }
-        }
-    }
-
-    private void dropAggro(Player owner) {
-        for (Entity entity : owner.getNearbyEntities(AGGRO_DROP_RANGE, AGGRO_DROP_RANGE / 2, AGGRO_DROP_RANGE)) {
-            if (entity instanceof Mob mob && owner.equals(mob.getTarget()) && ctx().isEnemy(owner, mob)) {
-                mob.setTarget(null);
-            }
+            stealth.hideFromEnemies(ctx(), owner);
+            Stealth.dropAggro(ctx(), owner, AGGRO_DROP_RANGE);
         }
     }
 
     /** Ends the stealth (if any), showing the owner to everyone it was hidden from. */
     private void reveal(boolean feedback) {
-        if (!stealthed) {
-            return;
-        }
-        stealthed = false;
-        stealthToken++;
         Player owner = player();
-        for (UUID id : hiddenFrom) {
-            Player viewer = Bukkit.getPlayer(id);
-            if (viewer != null) {
-                viewer.showPlayer(ctx().plugin(), owner);
-            }
-        }
-        hiddenFrom.clear();
-        if (!owner.isOnline()) {
+        if (!stealth.end(ctx(), owner) || !owner.isOnline()) {
             return;
         }
         PotionEffect invisibility = owner.getPotionEffect(PotionEffectType.INVISIBILITY);
@@ -363,7 +311,7 @@ public final class PixieAbility extends Ability {
         if (feedback) {
             Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
             body.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 14, 0.25, 0.3, 0.25, 0, FAIRY_DUST);
-            sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.6f, 1.8f + jitter(0.1f));
+            Fx.sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.6f, 1.8f + Fx.jitter(0.1f));
         }
     }
 
@@ -404,9 +352,9 @@ public final class PixieAbility extends Ability {
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 30, 0.6, 0.5, 0.6, 0, FAIRY_DUST);
         world.spawnParticle(Particle.END_ROD, body, 10, 0.4, 0.4, 0.4, 0.08);
         drawWings(owner, 0.1);
-        sound(body, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.0f, 1.6f);
-        sound(body, Sound.ENTITY_ALLAY_AMBIENT_WITHOUT_ITEM, 1.0f, 1.2f + jitter(0.1f));
-        sound(body, Sound.ITEM_ARMOR_EQUIP_ELYTRA, 0.8f, 1.4f);
+        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.0f, 1.6f);
+        Fx.sound(body, Sound.ENTITY_ALLAY_AMBIENT_WITHOUT_ITEM, 1.0f, 1.2f + Fx.jitter(0.1f));
+        Fx.sound(body, Sound.ITEM_ARMOR_EQUIP_ELYTRA, 0.8f, 1.4f);
         return ActivationResult.success();
     }
 
@@ -417,14 +365,14 @@ public final class PixieAbility extends Ability {
             return;
         }
         owner.setFallDistance(0);
-        if (!stealthed && tick % 2 == 0) {
+        if (!stealth.isActive() && tick % 2 == 0) {
             double flap = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(tick * 1.1));
             drawWings(owner, flap);
         }
         if (tick % 5 == 0) {
             String bar = "<" + PINK + ">✿ 요정의 날개</" + PINK + "> <gray>"
-                    + AbilityInfo.formatNumber(Math.ceil(left / 2.0) / 10.0) + "초</gray>";
-            if (stealthed) {
+                    + Fx.seconds(left) + "초</gray>";
+            if (stealth.isActive()) {
                 bar += " <dark_gray>·</dark_gray> <gray>투명</gray>";
             }
             owner.sendActionBar(Text.mm(bar));
@@ -434,7 +382,7 @@ public final class PixieAbility extends Ability {
                     1.0f + 0.2f * (3 - left / 20f));
         }
         if (tick % 16 == 0) {
-            sound(owner.getLocation(), Sound.ENTITY_ALLAY_AMBIENT_WITHOUT_ITEM, 0.3f, 1.6f + jitter(0.2f));
+            Fx.sound(owner.getLocation(), Sound.ENTITY_ALLAY_AMBIENT_WITHOUT_ITEM, 0.3f, 1.6f + Fx.jitter(0.2f));
         }
     }
 
@@ -442,21 +390,21 @@ public final class PixieAbility extends Ability {
         flying = false;
         restoreFlight(owner);
         fallGraceUntil = tick + FALL_GRACE_TICKS;
-        if (!isGrounded(owner) && !owner.isInWater()) {
+        if (!Motion.isGrounded(owner) && !owner.isInWater()) {
             descending = true;
             descentEndTick = tick + MAX_DESCENT_TICKS;
             owner.addPotionEffect(slowFalling());
         }
         Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
         body.getWorld().spawnParticle(Particle.CHERRY_LEAVES, body, 10, 0.5, 0.3, 0.5, 0);
-        sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.7f, 1.3f);
+        Fx.sound(body, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.7f, 1.3f);
         owner.sendActionBar(Text.mm("<" + PINK + ">✿ 날개가 사라졌습니다</" + PINK + ">"
                 + (descending ? " <gray>천천히 내려갑니다</gray>" : "")));
     }
 
     private void tickDescent(Player owner, long tick) {
         owner.setFallDistance(0);
-        if (tick > descentEndTick || owner.isInWater() || isGrounded(owner)) {
+        if (tick > descentEndTick || owner.isInWater() || Motion.isGrounded(owner)) {
             descending = false;
             fallGraceUntil = tick + FALL_GRACE_TICKS;
             removeOwnSlowFalling(owner);
@@ -503,7 +451,7 @@ public final class PixieAbility extends Ability {
      * @param flap how far the wings are swept back, in radians (0 = spread flat to the sides)
      */
     private static void drawWings(Player owner, double flap) {
-        double bodyScale = scaleOf(owner);
+        double bodyScale = Body.scaleOf(owner);
         double scale = bodyScale * WING_SIZE;
         double yaw = Math.toRadians(owner.getBodyYaw());
         Vector right = new Vector(-Math.cos(yaw), 0, -Math.sin(yaw));
@@ -520,41 +468,5 @@ public final class PixieAbility extends Ability {
                         i % 3 == 0 ? WING_EDGE : WING_DUST);
             }
         }
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
-    }
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(LivingEntity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.02, box.getMinY() - 0.15, box.getMinZ() + 0.02,
-                box.getMaxX() - 0.02, box.getMinY() - 0.01, box.getMaxZ() - 0.02);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    private static double maxHealth(LivingEntity entity) {
-        AttributeInstance max = entity.getAttribute(Attribute.MAX_HEALTH);
-        return max == null ? 20.0 : Math.max(1.0, max.getValue());
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

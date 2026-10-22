@@ -3,9 +3,13 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -17,27 +21,20 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
-import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -97,8 +94,7 @@ public final class GrappleAbility extends Ability {
     private static final double PULL_STOP_DISTANCE = 2.3;
     private static final long PULL_TIMEOUT_TICKS = 30;
 
-    // Fall grace after a grapple: extended while airborne, capped.
-    private static final long FALL_GRACE_TICKS = 10;
+    /** The landing after a reel is protected from fall damage for at most this long. */
     private static final long FALL_GRACE_CAP_TICKS = 200;
 
     // Chain bind
@@ -109,8 +105,8 @@ public final class GrappleAbility extends Ability {
 
     /** Generation counter of the current hook; a new hook retires the old one. */
     private int hookToken;
-    private long fallGraceUntil = -1;
-    private long fallGraceCap = -1;
+    /** Cancels the fall damage of the landing after a reel. */
+    private final LandingGuard landing = new LandingGuard();
 
     @Override
     public AbilityInfo info() {
@@ -130,34 +126,18 @@ public final class GrappleAbility extends Ability {
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled() || fallGraceUntil < 0 || !isFall(event)) {
+        if (!landing.absorb(event, ctx().currentTick())) {
             return;
         }
-        fallGraceUntil = -1;
-        event.setCancelled(true);
         Location feet = player().getLocation();
         feet.getWorld().spawnParticle(Particle.CLOUD, feet.clone().add(0, 0.1, 0), 6, 0.3, 0.05, 0.3, 0.02);
-        sound(feet, Sound.BLOCK_CHAIN_STEP, 0.8f, 1.2f + jitter(0.1f));
-    }
-
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
+        Fx.sound(feet, Sound.BLOCK_CHAIN_STEP, 0.8f, 1.2f + Fx.jitter(0.1f));
     }
 
     @Override
     public void onTick(long tick) {
-        if (fallGraceUntil < 0 || tick % 2 != 0) {
-            return;
-        }
-        Player owner = player();
-        if (!isGrounded(owner) && !owner.isInWater() && tick < fallGraceCap) {
-            fallGraceUntil = Math.max(fallGraceUntil, tick + FALL_GRACE_TICKS);
-        } else if (tick > fallGraceUntil) {
-            fallGraceUntil = -1;
+        if (tick % 2 == 0) {
+            landing.update(player(), tick);
         }
     }
 
@@ -191,6 +171,9 @@ public final class GrappleAbility extends Ability {
         if (anchor.distance(eye.toVector()) < MIN_HOOK_DISTANCE) {
             return ActivationResult.fail("너무 가까워 갈고리를 걸 수 없습니다");
         }
+        if (!ctx().isInsideArena(anchor.toLocation(eye.getWorld()))) {
+            return ActivationResult.fail("자기장 밖에는 갈고리를 걸 수 없습니다");
+        }
         Block block = hit.getHitBlock();
         launch(new Hook(null, anchor, block == null ? null : block.getBlockData()));
         return ActivationResult.success();
@@ -198,9 +181,10 @@ public final class GrappleAbility extends Ability {
 
     private void launch(Hook hook) {
         Player owner = player();
-        sound(owner.getLocation(), Sound.ENTITY_FISHING_BOBBER_THROW, 1.0f, 0.7f + jitter(0.08f));
-        sound(owner.getLocation(), Sound.ITEM_CROSSBOW_SHOOT, 0.7f, 1.3f + jitter(0.1f));
-        loop(0, 1, MAX_THROW_TICKS + Math.max(REEL_TIMEOUT_TICKS, PULL_TIMEOUT_TICKS) + 2, hook);
+        Fx.sound(owner.getLocation(), Sound.ENTITY_FISHING_BOBBER_THROW, 1.0f, 0.7f + Fx.jitter(0.08f));
+        Fx.sound(owner.getLocation(), Sound.ITEM_CROSSBOW_SHOOT, 0.7f, 1.3f + Fx.jitter(0.1f));
+        long maxTicks = MAX_THROW_TICKS + Math.max(REEL_TIMEOUT_TICKS, PULL_TIMEOUT_TICKS) + 2;
+        Loop.repeat(ctx(), player(), 0, 1, maxTicks, hook);
     }
 
     private enum Phase { THROW, REEL, PULL }
@@ -285,11 +269,10 @@ public final class GrappleAbility extends Ability {
             World world = head.getWorld();
             Location at = headPosition.toLocation(world);
             if (victim != null) {
-                victim.setNoDamageTicks(0);
-                ctx().damage(player(), victim, params().num("pull_damage"));
+                Combat.hit(ctx(), player(), victim, params().num("pull_damage"));
                 world.spawnParticle(Particle.CRIT, at, 14, 0.25, 0.3, 0.25, 0.3);
-                sound(at, Sound.ITEM_TRIDENT_HIT, 1.0f, 1.1f + jitter(0.1f));
-                sound(at, Sound.BLOCK_CHAIN_HIT, 1.0f, 0.8f + jitter(0.1f));
+                Fx.sound(at, Sound.ITEM_TRIDENT_HIT, 1.0f, 1.1f + Fx.jitter(0.1f));
+                Fx.sound(at, Sound.BLOCK_CHAIN_HIT, 1.0f, 0.8f + Fx.jitter(0.1f));
                 if (victim instanceof Player caught) {
                     caught.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛓ 갈고리에 걸렸습니다!</" + COLOR_TAG + ">"));
                 }
@@ -299,9 +282,9 @@ public final class GrappleAbility extends Ability {
                     world.spawnParticle(Particle.BLOCK, at, 12, 0.15, 0.15, 0.15, 0.1, anchorBlock);
                 }
                 world.spawnParticle(Particle.CRIT, at, 8, 0.15, 0.15, 0.15, 0.2);
-                sound(at, Sound.ITEM_TRIDENT_HIT_GROUND, 1.0f, 1.2f + jitter(0.1f));
-                sound(at, Sound.BLOCK_CHAIN_HIT, 0.9f, 1.0f + jitter(0.1f));
-                sound(player().getLocation(), Sound.ENTITY_FISHING_BOBBER_RETRIEVE, 1.0f, 0.8f);
+                Fx.sound(at, Sound.ITEM_TRIDENT_HIT_GROUND, 1.0f, 1.2f + Fx.jitter(0.1f));
+                Fx.sound(at, Sound.BLOCK_CHAIN_HIT, 0.9f, 1.0f + Fx.jitter(0.1f));
+                Fx.sound(player().getLocation(), Sound.ENTITY_FISHING_BOBBER_RETRIEVE, 1.0f, 0.8f);
                 phase = Phase.REEL;
             }
             phaseTicks = 0;
@@ -319,7 +302,7 @@ public final class GrappleAbility extends Ability {
             if (distance <= ARRIVE_DISTANCE) {
                 Vector hop = distance > 1.0E-3 ? toAnchor.multiply(0.25 / distance) : new Vector();
                 hop.setY(Math.max(hop.getY(), 0) + ARRIVAL_HOP);
-                owner.setVelocity(clamp(hop, MAX_VELOCITY));
+                owner.setVelocity(Motion.clamp(hop, MAX_VELOCITY));
                 release(owner);
                 return false;
             }
@@ -328,7 +311,7 @@ public final class GrappleAbility extends Ability {
                 return false;
             }
             double speed = Math.min(REEL_MAX_SPEED, REEL_START_SPEED + phaseTicks * REEL_ACCELERATION);
-            owner.setVelocity(clamp(toAnchor.multiply(Math.min(speed, distance) / distance), MAX_VELOCITY));
+            owner.setVelocity(Motion.clamp(toAnchor.multiply(Math.min(speed, distance) / distance), MAX_VELOCITY));
             owner.setFallDistance(0);
             drawChain(hand(owner).toVector(), anchor, CHAIN_DUST);
             if (phaseTicks % 2 == 0) {
@@ -361,11 +344,11 @@ public final class GrappleAbility extends Ability {
                 return false;
             }
             Vector velocity = toGoal.multiply(Math.min(PULL_MAX_SPEED, distance * 0.5 + 0.3) / distance);
-            if (isGrounded(victim)) {
+            if (Motion.isGrounded(victim)) {
                 // A little lift so ground friction and small steps do not stop the drag.
                 velocity.setY(Math.max(velocity.getY(), 0.12));
             }
-            victim.setVelocity(clamp(velocity, MAX_VELOCITY));
+            victim.setVelocity(Motion.clamp(velocity, MAX_VELOCITY));
             victim.setFallDistance(0);
             headPosition = center(victim);
             moveHead();
@@ -385,7 +368,7 @@ public final class GrappleAbility extends Ability {
         }
 
         private boolean isHookable(LivingEntity entity) {
-            return entity.isValid() && !entity.isDead() && ctx().isEnemy(player(), entity)
+            return Combat.isTargetable(ctx(), player(), entity)
                     && entity.getWorld().equals(head.getWorld());
         }
 
@@ -405,11 +388,9 @@ public final class GrappleAbility extends Ability {
 
     /** Ends a reel: the owner keeps their momentum and the landing that follows deals no fall damage. */
     private void release(Player owner) {
-        long now = ctx().currentTick();
-        fallGraceUntil = now + FALL_GRACE_TICKS;
-        fallGraceCap = now + FALL_GRACE_CAP_TICKS;
+        landing.arm(ctx().currentTick(), FALL_GRACE_CAP_TICKS);
         owner.setFallDistance(0);
-        sound(owner.getLocation(), Sound.ENTITY_FISHING_BOBBER_RETRIEVE, 0.8f, 1.3f + jitter(0.1f));
+        Fx.sound(owner.getLocation(), Sound.ENTITY_FISHING_BOBBER_RETRIEVE, 0.8f, 1.3f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ ultimate: chain bind
@@ -433,7 +414,7 @@ public final class GrappleAbility extends Ability {
             Location at = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
             enemy.getWorld().spawnParticle(Particle.ITEM, at, 8, 0.25, 0.4, 0.25, 0.05,
                     ItemStack.of(Material.IRON_CHAIN));
-            sound(at, Sound.BLOCK_CHAIN_PLACE, 1.0f, 0.8f + jitter(0.1f));
+            Fx.sound(at, Sound.BLOCK_CHAIN_PLACE, 1.0f, 0.8f + Fx.jitter(0.1f));
             if (enemy instanceof Player victim) {
                 victim.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛓ 사슬에 묶였습니다!</" + COLOR_TAG + ">"));
             }
@@ -447,11 +428,11 @@ public final class GrappleAbility extends Ability {
             world.spawnParticle(Particle.DUST, origin.getX() + Math.cos(angle) * radius, origin.getY() + 0.2,
                     origin.getZ() + Math.sin(angle) * radius, 1, 0, 0.05, 0, 0, CHAIN_DUST);
         }
-        sound(origin, Sound.BLOCK_CHAIN_PLACE, 1.5f, 0.6f);
-        sound(origin, Sound.ITEM_ARMOR_EQUIP_CHAIN, 1.5f, 0.7f);
-        sound(origin, Sound.ENTITY_IRON_GOLEM_REPAIR, 1.0f, 0.8f);
+        Fx.sound(origin, Sound.BLOCK_CHAIN_PLACE, 1.5f, 0.6f);
+        Fx.sound(origin, Sound.ITEM_ARMOR_EQUIP_CHAIN, 1.5f, 0.7f);
+        Fx.sound(origin, Sound.ENTITY_IRON_GOLEM_REPAIR, 1.0f, 0.8f);
 
-        loop(0, 1, duration, new Binding(bound, length, radius, duration));
+        Loop.repeat(ctx(), player(), 0, 1, duration, new Binding(bound, length, radius, duration));
         return ActivationResult.success();
     }
 
@@ -478,7 +459,7 @@ public final class GrappleAbility extends Ability {
             Iterator<LivingEntity> it = bound.iterator();
             while (it.hasNext()) {
                 LivingEntity enemy = it.next();
-                if (!enemy.isValid() || enemy.isDead() || !ctx().isEnemy(owner, enemy)
+                if (!Combat.isTargetable(ctx(), owner, enemy)
                         || !enemy.getWorld().equals(owner.getWorld())) {
                     it.remove();
                     taut.remove(enemy);
@@ -497,14 +478,14 @@ public final class GrappleAbility extends Ability {
                 if (isTaut) {
                     double strength = Math.min(TUG_MAX, TUG_BASE + (distance - length) * TUG_GAIN);
                     Vector tug = toOwner.multiply(strength / distance);
-                    if (isGrounded(enemy)) {
+                    if (Motion.isGrounded(enemy)) {
                         tug.setY(Math.max(tug.getY(), 0.1));
                     }
-                    enemy.setVelocity(clamp(tug, MAX_VELOCITY));
+                    enemy.setVelocity(Motion.clamp(tug, MAX_VELOCITY));
                     enemy.setFallDistance(0);
                     if (!taut.contains(enemy)) {
                         taut.add(enemy);
-                        sound(enemy.getLocation(), Sound.BLOCK_CHAIN_HIT, 0.9f, 0.7f + jitter(0.1f));
+                        Fx.sound(enemy.getLocation(), Sound.BLOCK_CHAIN_HIT, 0.9f, 0.7f + Fx.jitter(0.1f));
                     }
                 } else {
                     taut.remove(enemy);
@@ -516,10 +497,8 @@ public final class GrappleAbility extends Ability {
 
             boolean last = tick >= duration - 1 || bound.isEmpty();
             if (tick % 10 == 0 && !last) {
-                double left = (duration - tick) / 20.0;
                 owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛓ 사슬 결박</" + COLOR_TAG + "> <white>"
-                        + bound.size() + "명</white> <gray>" + AbilityInfo.formatNumber(Math.ceil(left * 10) / 10.0)
-                        + "초</gray>"));
+                        + bound.size() + "명</white> <gray>" + Fx.seconds(duration - tick) + "초</gray>"));
             }
             if (last) {
                 bound.forEach(GrappleAbility::shatter);
@@ -533,7 +512,7 @@ public final class GrappleAbility extends Ability {
     private static void shatter(LivingEntity enemy) {
         Location at = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
         at.getWorld().spawnParticle(Particle.ITEM, at, 10, 0.3, 0.4, 0.3, 0.12, ItemStack.of(Material.IRON_CHAIN));
-        sound(at, Sound.BLOCK_CHAIN_BREAK, 1.0f, 0.9f + jitter(0.1f));
+        Fx.sound(at, Sound.BLOCK_CHAIN_BREAK, 1.0f, 0.9f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -568,48 +547,5 @@ public final class GrappleAbility extends Ability {
             world.spawnParticle(Particle.DUST, at.getX(), at.getY(), at.getZ(), 1, 0, 0, 0, 0, dust);
             at.add(step);
         }
-    }
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(Entity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static Vector clamp(Vector velocity, double max) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > max ? velocity.multiply(max / length) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

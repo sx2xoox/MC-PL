@@ -1,9 +1,8 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
-
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -17,16 +16,12 @@ import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.util.BoundingBox;
-import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -56,8 +51,6 @@ public final class VampireAbility extends Ability {
 
     /** Extra blocks a drained enemy may move beyond the aim range before the tether snaps. */
     private static final double DRAIN_LEASH = 3;
-    /** Gentle pull applied with each siphon; replaces the vanilla knockback of the hit. */
-    private static final double DRAIN_PULL = 0.12;
     private static final int FEAST_SPEED_AMPLIFIER = 0;
     private static final long FEAST_VISUAL_PERIOD = 2;
     /** Minimum ticks between two lifesteal slurp sounds for the owner. */
@@ -142,7 +135,7 @@ public final class VampireAbility extends Ability {
         long now = ctx().currentTick();
         if (now - lastSlurp >= SLURP_COOLDOWN) {
             lastSlurp = now;
-            owner.playSound(owner, Sound.ITEM_HONEY_BOTTLE_DRINK, SoundCategory.PLAYERS, 0.4f, 1.5f + jitter(0.1f));
+            owner.playSound(owner, Sound.ITEM_HONEY_BOTTLE_DRINK, SoundCategory.PLAYERS, 0.4f, 1.5f + Fx.jitter(0.1f));
         }
     }
 
@@ -183,11 +176,11 @@ public final class VampireAbility extends Ability {
 
         void begin() {
             Player owner = player();
-            sound(owner.getLocation(), Sound.ENTITY_VEX_CHARGE, 1.0f, 0.7f);
-            sound(target.getLocation(), Sound.ENTITY_EVOKER_PREPARE_ATTACK, 0.8f, 1.6f);
+            Fx.sound(owner.getLocation(), Sound.ENTITY_VEX_CHARGE, 1.0f, 0.7f);
+            Fx.sound(target.getLocation(), Sound.ENTITY_EVOKER_PREPARE_ATTACK, 0.8f, 1.6f);
             target.getWorld().spawnParticle(Particle.DUST, chest(target), 12, 0.3, 0.4, 0.3, 0, BLOOD_DUST);
             long duration = Math.max(1, params().ticks("drain_duration"));
-            loop(1, 1, duration, this::tick, this::finish);
+            Loop.repeat(ctx(), player(), 1, 1, duration, this::tick, this::finish);
         }
 
         void stop() {
@@ -211,8 +204,7 @@ public final class VampireAbility extends Ability {
 
         private boolean holds() {
             Player owner = player();
-            if (!target.isValid() || target.isDead() || !ctx().isEnemy(owner, target)
-                    || !target.getWorld().equals(owner.getWorld())) {
+            if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
                 return false;
             }
             double leash = range + DRAIN_LEASH;
@@ -237,37 +229,24 @@ public final class VampireAbility extends Ability {
             double before = target.getHealth() + target.getAbsorptionAmount();
             draining = true;
             try {
-                hit(target, damage);
+                Combat.hit(ctx(), player(), target, damage);
             } finally {
                 draining = false;
             }
             boolean alive = target.isValid() && !target.isDead();
             double after = alive ? target.getHealth() + target.getAbsorptionAmount() : 0;
             double drained = Math.max(0, before - after);
-            if (alive && ctx().isEnemy(owner, target)) {
-                tug();
-            }
             Location at = chest(target);
-            sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 0.9f, 1.4f + jitter(0.1f));
+            Fx.sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 0.9f, 1.4f + Fx.jitter(0.1f));
             if (drained <= 0) {
                 return;
             }
             ctx().heal(owner, drained);
             total += drained;
-            owner.playSound(owner, Sound.ITEM_HONEY_BOTTLE_DRINK, SoundCategory.PLAYERS, 0.45f, 1.4f + jitter(0.1f));
+            owner.playSound(owner, Sound.ITEM_HONEY_BOTTLE_DRINK, SoundCategory.PLAYERS, 0.45f, 1.4f + Fx.jitter(0.1f));
             owner.getWorld().spawnParticle(Particle.DUST, chest(owner), 4, 0.25, 0.3, 0.25, 0, BLOOD_DUST);
             owner.sendActionBar(Text.mm("<#B0174F>생명 흡수</#B0174F> <gray>+" + AbilityInfo.formatNumber(total)
                     + "</gray>"));
-        }
-
-        /** Replaces the hit's vanilla knockback with a slight pull toward the owner, so the tether holds. */
-        private void tug() {
-            Vector pull = player().getLocation().toVector().subtract(target.getLocation().toVector()).setY(0);
-            if (pull.lengthSquared() > 1.0E-4) {
-                pull.normalize().multiply(DRAIN_PULL);
-            }
-            double y = isGrounded(target) ? 0.0 : Math.max(-1.0, Math.min(0.4, target.getVelocity().getY()));
-            target.setVelocity(pull.setY(y));
         }
 
         private void finish() {
@@ -279,11 +258,11 @@ public final class VampireAbility extends Ability {
             }
             Player owner = player();
             if (snapped) {
-                sound(owner.getLocation(), Sound.BLOCK_RESPAWN_ANCHOR_DEPLETE, 0.7f, 1.6f);
+                Fx.sound(owner.getLocation(), Sound.BLOCK_RESPAWN_ANCHOR_DEPLETE, 0.7f, 1.6f);
                 owner.sendActionBar(Text.mm("<gray>흡수가 끊겼습니다</gray> <#B0174F>+"
                         + AbilityInfo.formatNumber(total) + "</#B0174F>"));
             } else {
-                sound(owner.getLocation(), Sound.ENTITY_BAT_TAKEOFF, 0.8f, 1.1f);
+                Fx.sound(owner.getLocation(), Sound.ENTITY_BAT_TAKEOFF, 0.8f, 1.1f);
             }
         }
     }
@@ -300,19 +279,15 @@ public final class VampireAbility extends Ability {
 
         Location at = owner.getLocation();
         World world = at.getWorld();
-        sound(at, Sound.ENTITY_BAT_TAKEOFF, 1.2f, 0.7f);
-        sound(at, Sound.ENTITY_EVOKER_CAST_SPELL, 1.0f, 0.6f);
-        sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 1.6f, 0.9f);
+        Fx.sound(at, Sound.ENTITY_BAT_TAKEOFF, 1.2f, 0.7f);
+        Fx.sound(at, Sound.ENTITY_EVOKER_CAST_SPELL, 1.0f, 0.6f);
+        Fx.sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 1.6f, 0.9f);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, chest(owner), 40, 0.6, 0.7, 0.6, 0, FEAST_DUST);
         world.spawnParticle(Particle.LARGE_SMOKE, at.clone().add(0, 0.3, 0), 12, 0.5, 0.2, 0.5, 0.02);
-        int points = 28;
-        for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
-            world.spawnParticle(Particle.DUST, at.getX() + Math.cos(angle) * 2.0, at.getY() + 0.15,
-                    at.getZ() + Math.sin(angle) * 2.0, 1, 0, 0, 0, 0, BLOOD_DUST);
-        }
+        Fx.ring(at.clone().add(0, 0.15, 0), 2.0, 28, 0, Particle.DUST, BLOOD_DUST);
 
-        loop(FEAST_VISUAL_PERIOD, FEAST_VISUAL_PERIOD, Math.max(1, duration / FEAST_VISUAL_PERIOD), tick -> {
+        long visualRuns = Math.max(1, duration / FEAST_VISUAL_PERIOD);
+        Loop.repeat(ctx(), player(), FEAST_VISUAL_PERIOD, FEAST_VISUAL_PERIOD, visualRuns, tick -> {
             if (!isFeasting()) {
                 return false;
             }
@@ -327,7 +302,7 @@ public final class VampireAbility extends Ability {
             return true;
         }, () -> {
             if (feastUntil >= 0 && ctx().currentTick() + FEAST_VISUAL_PERIOD >= feastUntil) {
-                sound(owner.getLocation(), Sound.ENTITY_BAT_AMBIENT, 0.8f, 0.8f);
+                Fx.sound(owner.getLocation(), Sound.ENTITY_BAT_AMBIENT, 0.8f, 0.8f);
                 owner.sendActionBar(Text.mm("<gray>피의 축제가 끝났습니다</gray>"));
             }
         });
@@ -338,71 +313,5 @@ public final class VampireAbility extends Ability {
 
     private static Location chest(LivingEntity entity) {
         return entity.getLocation().add(0, entity.getHeight() * 0.55, 0);
-    }
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(Entity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so the hit is not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false or has run {@code maxRuns} times; then runs {@code finish}. Stops silently (without {@code finish}) when
-     * the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step, @Nullable Runnable finish) {
-        if (maxRuns <= 0) {
-            if (finish != null) {
-                finish.run();
-            }
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        boolean[] done = {false};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            if (done[0]) {
-                return;
-            }
-            boolean alive = ctx().isAlive(player()) && player().isOnline();
-            boolean more = false;
-            if (alive) {
-                long index = runs[0]++;
-                try {
-                    more = step.test(index) && index + 1 < maxRuns;
-                } catch (RuntimeException e) {
-                    ctx().plugin().getLogger().log(Level.WARNING, "흡혈귀 능력 처리 중 오류", e);
-                }
-            }
-            if (!more) {
-                done[0] = true;
-                if (handle[0] != null) {
-                    handle[0].cancel();
-                }
-                if (alive && finish != null) {
-                    finish.run();
-                }
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

@@ -3,9 +3,12 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -18,21 +21,15 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.damage.DamageType;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
@@ -160,17 +157,9 @@ public final class TitanAbility extends Ability {
             event.setCancelled(true);
             return;
         }
-        if ((leaping || ctx().currentTick() <= fallGuardUntil) && isFall(event)) {
+        if ((leaping || ctx().currentTick() <= fallGuardUntil) && Combat.isFall(event)) {
             event.setCancelled(true);
         }
-    }
-
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
     }
 
     // ------------------------------------------------------------------ active: ground slam
@@ -189,14 +178,20 @@ public final class TitanAbility extends Ability {
         double forwardSpeed = Math.max(0, params().num("leap_distance")) / DISTANCE_PER_SPEED;
         // Unnormalised: looking down shortens the leap, looking straight down slams in place.
         Vector forward = owner.getLocation().getDirection().setY(0).multiply(forwardSpeed);
-        owner.setVelocity(clamp(forward.clone().setY(up), MAX_LAUNCH));
+        // The slam must land inside the arena: a leap towards the border is shortened.
+        double travel = forward.length() * DISTANCE_PER_SPEED;
+        double reach = Spots.arenaReach(ctx(), owner.getLocation(), forward, travel);
+        if (travel > 1.0E-3 && reach < travel) {
+            forward.multiply(reach / travel);
+        }
+        owner.setVelocity(Motion.clamp(forward.clone().setY(up), MAX_LAUNCH));
         owner.setFallDistance(0);
         leaping = true;
 
         Location start = owner.getLocation();
         World world = start.getWorld();
-        sound(start, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.6f);
-        sound(start, Sound.ENTITY_GOAT_LONG_JUMP, 1.0f, 0.6f);
+        Fx.sound(start, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.6f);
+        Fx.sound(start, Sound.ENTITY_GOAT_LONG_JUMP, 1.0f, 0.6f);
         BlockData ground = start.clone().subtract(0, 0.2, 0).getBlock().getBlockData();
         if (!ground.getMaterial().isAir()) {
             world.spawnParticle(Particle.BLOCK, start.clone().add(0, 0.1, 0), 20, 0.5, 0.1, 0.5, 0.15, ground);
@@ -207,10 +202,10 @@ public final class TitanAbility extends Ability {
         int[] flatTicks = {0};
         boolean[] airborne = {false};
         boolean[] diving = {false};
-        loop(1, 1, MAX_AIR_TICKS, tick -> {
+        Loop.repeat(ctx(), player(), 1, 1, MAX_AIR_TICKS, tick -> {
             Location now = owner.getLocation();
             owner.setFallDistance(0);
-            boolean landed = isGrounded(owner) || owner.isInWater() || owner.isInLava() || owner.isClimbing();
+            boolean landed = Motion.isGrounded(owner) || owner.isInWater() || owner.isInLava() || owner.isClimbing();
             if (!landed) {
                 airborne[0] = true;
             } else if (airborne[0] || tick >= STUCK_LANDING_TICKS) {
@@ -221,8 +216,8 @@ public final class TitanAbility extends Ability {
             if (!diving[0] && airborne[0] && tick >= MIN_RISE_TICKS && flatTicks[0] >= 2) {
                 diving[0] = true;
                 Vector carry = forward.clone().multiply(DIVE_CARRY);
-                owner.setVelocity(clamp(carry.setY(-DIVE_SPEED), MAX_LAUNCH));
-                sound(now, Sound.ITEM_MACE_SMASH_AIR, 1.0f, 0.7f);
+                owner.setVelocity(Motion.clamp(carry.setY(-DIVE_SPEED), MAX_LAUNCH));
+                Fx.sound(now, Sound.ITEM_MACE_SMASH_AIR, 1.0f, 0.7f);
             }
             lastY[0] = now.getY();
             if (tick % 2 == 0) {
@@ -248,14 +243,8 @@ public final class TitanAbility extends Ability {
         if (hit == null) {
             return;
         }
-        Vector ground = hit.getHitPosition();
-        double radius = params().num("slam_radius");
-        int points = 20;
-        for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
-            world.spawnParticle(Particle.DUST, ground.getX() + Math.cos(angle) * radius, ground.getY() + 0.15,
-                    ground.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, WARNING_DUST);
-        }
+        Location ground = hit.getHitPosition().toLocation(world).add(0, 0.15, 0);
+        Fx.ring(ground, params().num("slam_radius"), 20, 0, Particle.DUST, WARNING_DUST);
     }
 
     private void slam(Location center) {
@@ -265,9 +254,9 @@ public final class TitanAbility extends Ability {
         double damage = Math.max(0, params().num("slam_damage"));
         int struck = 0;
         for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
-            hit(enemy, damage);
+            Combat.hit(ctx(), player(), enemy, damage);
             struck++;
-            if (!enemy.isValid() || enemy.isDead() || !ctx().isEnemy(owner, enemy)) {
+            if (!Combat.isTargetable(ctx(), owner, enemy)) {
                 continue;
             }
             Vector away = enemy.getLocation().toVector().subtract(center.toVector()).setY(0);
@@ -275,7 +264,7 @@ public final class TitanAbility extends Ability {
                 double angle = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
                 away = new Vector(Math.cos(angle), 0, Math.sin(angle));
             }
-            push(enemy, away.normalize().multiply(LAUNCH_OUT).setY(LAUNCH_UP));
+            Motion.push(enemy, away.normalize().multiply(LAUNCH_OUT).setY(LAUNCH_UP), MAX_VELOCITY);
             world.spawnParticle(Particle.CRIT, enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0), 10, 0.3,
                     0.4, 0.3, 0.3);
         }
@@ -287,9 +276,9 @@ public final class TitanAbility extends Ability {
         if (solid) {
             world.spawnParticle(Particle.BLOCK, low, 40, radius * 0.35, 0.2, radius * 0.35, 0.25, ground);
         }
-        sound(center, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.7f + jitter(0.05f));
-        sound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 0.6f);
-        loop(0, 1, SHOCKWAVE_TICKS, tick -> {
+        Fx.sound(center, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.7f + Fx.jitter(0.05f));
+        Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 0.6f);
+        Loop.repeat(ctx(), player(), 0, 1, SHOCKWAVE_TICKS, tick -> {
             double r = radius * (tick + 1) / SHOCKWAVE_TICKS;
             int points = 10 + (int) (tick * 4);
             for (int i = 0; i < points; i++) {
@@ -305,7 +294,7 @@ public final class TitanAbility extends Ability {
                 }
             }
             return true;
-        }, null);
+        });
         if (struck > 0) {
             owner.sendActionBar(Text.mm("<#C08A4E>대지 강타!</#C08A4E> <gray>" + struck + "명 적중</gray>"));
         }
@@ -364,13 +353,13 @@ public final class TitanAbility extends Ability {
                     Operation.ADD_NUMBER, 0));
 
             Location at = owner.getLocation();
-            sound(at, Sound.ENTITY_WARDEN_ROAR, 1.2f, 1.1f);
-            sound(at, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 1.0f, 0.6f);
+            Fx.sound(at, Sound.ENTITY_WARDEN_ROAR, 1.2f, 1.1f);
+            Fx.sound(at, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 1.0f, 0.6f);
             at.getWorld().spawnParticle(Particle.DUST, at.clone().add(0, owner.getHeight() * 0.5, 0), 30, 0.6,
                     owner.getHeight() * 0.4, 0.6, 0, BRONZE_DUST);
 
             long duration = Math.max(1, params().ticks("ult_duration"));
-            loop(0, 1, duration, this::tick, this::shrink);
+            Loop.repeat(ctx(), player(), 0, 1, duration, this::tick, this::shrink);
         }
 
         private boolean tick(long tick) {
@@ -394,7 +383,7 @@ public final class TitanAbility extends Ability {
             }
             setStep(next);
             Location at = owner.getLocation();
-            sound(at, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.5f + next * 0.08f);
+            Fx.sound(at, Sound.ENTITY_RAVAGER_STEP, 1.2f, 0.5f + next * 0.08f);
             BlockData ground = at.clone().subtract(0, 0.2, 0).getBlock().getBlockData();
             if (!ground.getMaterial().isAir()) {
                 double spread = owner.getWidth() * 0.6;
@@ -403,7 +392,7 @@ public final class TitanAbility extends Ability {
             }
             if (next == GROW_STEPS) {
                 at.getWorld().spawnParticle(Particle.EXPLOSION, at.clone().add(0, 0.3, 0), 1, 0, 0, 0, 0);
-                sound(at, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.2f, 0.6f);
+                Fx.sound(at, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.2f, 0.6f);
             }
         }
 
@@ -413,7 +402,7 @@ public final class TitanAbility extends Ability {
             lastFootstep = at;
             if (previous == null || !previous.getWorld().equals(at.getWorld()) || step == 0
                     || Math.hypot(at.getX() - previous.getX(), at.getZ() - previous.getZ()) < 0.8
-                    || !isGrounded(owner)) {
+                    || !Motion.isGrounded(owner)) {
                 return;
             }
             BlockData ground = at.clone().subtract(0, 0.2, 0).getBlock().getBlockData();
@@ -422,13 +411,13 @@ public final class TitanAbility extends Ability {
                 at.getWorld().spawnParticle(Particle.BLOCK, at.clone().add(0, 0.1, 0), 8, spread, 0.05, spread, 0.1,
                         ground);
             }
-            sound(at, Sound.ENTITY_RAVAGER_STEP, 0.9f, 0.55f + jitter(0.05f));
+            Fx.sound(at, Sound.ENTITY_RAVAGER_STEP, 0.9f, 0.55f + Fx.jitter(0.05f));
         }
 
         private void shrink() {
             Player owner = player();
-            sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 0.7f);
-            loop(0, GROW_INTERVAL, Math.max(1, step), tick -> {
+            Fx.sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 1.0f, 0.7f);
+            Loop.repeat(ctx(), player(), 0, GROW_INTERVAL, Math.max(1, step), tick -> {
                 setStep(Math.max(0, step - 1));
                 return step > 0;
             }, this::end);
@@ -470,91 +459,5 @@ public final class TitanAbility extends Ability {
                 at.getZ() - HEADROOM_HALF_WIDTH, at.getX() + HEADROOM_HALF_WIDTH,
                 at.getY() + STANDING_HEIGHT * scale + 0.05, at.getZ() + HEADROOM_HALF_WIDTH);
         return !player.getWorld().hasCollisionsIn(column);
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(Entity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so the hit is not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /** Applies a knockback velocity, reduced by the target's knockback resistance like vanilla knockback. */
-    private static void push(LivingEntity target, Vector velocity) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        double factor = 1.0 - (resistance == null ? 0.0 : Math.max(0.0, Math.min(1.0, resistance.getValue())));
-        if (factor <= 0) {
-            return;
-        }
-        target.setVelocity(clamp(velocity.clone().multiply(factor), MAX_VELOCITY));
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false or has run {@code maxRuns} times; then runs {@code finish}. Stops silently (without {@code finish}) when
-     * the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step, @Nullable Runnable finish) {
-        if (maxRuns <= 0) {
-            if (finish != null) {
-                finish.run();
-            }
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        boolean[] done = {false};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            if (done[0]) {
-                return;
-            }
-            boolean alive = ctx().isAlive(player()) && player().isOnline();
-            boolean more = false;
-            if (alive) {
-                long index = runs[0]++;
-                try {
-                    more = step.test(index) && index + 1 < maxRuns;
-                } catch (RuntimeException e) {
-                    ctx().plugin().getLogger().log(Level.WARNING, "거인 능력 처리 중 오류", e);
-                }
-            }
-            if (!more) {
-                done[0] = true;
-                if (handle[0] != null) {
-                    handle[0].cancel();
-                }
-                if (alive && finish != null) {
-                    finish.run();
-                }
-            }
-        });
-    }
-
-    private static Vector clamp(Vector velocity, double max) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > max ? velocity.multiply(max / length) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }

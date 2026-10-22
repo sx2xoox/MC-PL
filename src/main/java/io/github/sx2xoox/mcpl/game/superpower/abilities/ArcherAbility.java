@@ -7,9 +7,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -26,8 +28,6 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.BlockFace;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.AbstractArrow;
@@ -39,7 +39,6 @@ import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.persistence.PersistentDataType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -270,14 +269,14 @@ public final class ArcherAbility extends Ability {
         Vector recoil = look.clone().setY(0);
         if (recoil.lengthSquared() > 1.0E-4) {
             recoil.normalize().multiply(-VOLLEY_RECOIL).setY(0.12);
-            player().setVelocity(clamp(player().getVelocity().add(recoil)));
+            player().setVelocity(Motion.clamp(player().getVelocity().add(recoil), MAX_SPEED));
         }
 
         Location muzzle = eye.clone().add(look.clone().multiply(1.0));
         world.spawnParticle(Particle.CRIT, muzzle, 12, 0.25, 0.15, 0.25, 0.25);
         world.spawnParticle(Particle.DUST, muzzle, 8, 0.3, 0.2, 0.3, 0, VOLLEY_DUST);
-        sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.0f, 1.1f + jitter(0.08f));
-        sound(eye, Sound.ENTITY_ARROW_SHOOT, 1.0f, 0.75f + jitter(0.05f));
+        Fx.sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.0f, 1.1f + Fx.jitter(0.08f));
+        Fx.sound(eye, Sound.ENTITY_ARROW_SHOOT, 1.0f, 0.75f + Fx.jitter(0.05f));
         return ActivationResult.success();
     }
 
@@ -309,14 +308,15 @@ public final class ArcherAbility extends Ability {
         Location body = target.getLocation().add(0, target.getHeight() * 0.6, 0);
         target.getWorld().spawnParticle(Particle.CRIT, body, 6, 0.2, 0.25, 0.2, 0.2);
         target.getWorld().spawnParticle(Particle.DUST, body, 4, 0.2, 0.25, 0.2, 0, VOLLEY_DUST);
-        player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.5f, 1.0f + jitter(0.1f));
-        hit(target, damage);
+        player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.5f,
+                1.0f + Fx.jitter(0.1f));
+        Combat.hit(ctx(), player(), target, damage);
 
         if (target.isValid() && !target.isDead()) {
             Vector push = flight.setY(0);
             if (push.lengthSquared() > 1.0E-4) {
-                push.normalize().multiply(VOLLEY_PUSH * knockbackFactor(target)).setY(0.1);
-                target.setVelocity(clamp(target.getVelocity().add(push)));
+                push.normalize().multiply(VOLLEY_PUSH * Motion.knockbackFactor(target)).setY(0.1);
+                target.setVelocity(Motion.clamp(target.getVelocity().add(push), MAX_SPEED));
             }
         }
     }
@@ -334,13 +334,13 @@ public final class ArcherAbility extends Ability {
         int arrows = Math.max(1, params().integer("rain_arrows"));
 
         Location eye = player().getEyeLocation();
-        sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.2f, 0.7f);
-        sound(eye, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.0f, 0.8f + jitter(0.05f));
+        Fx.sound(eye, Sound.ITEM_CROSSBOW_SHOOT, 1.2f, 0.7f);
+        Fx.sound(eye, Sound.ENTITY_FIREWORK_ROCKET_LAUNCH, 1.0f, 0.8f + Fx.jitter(0.05f));
         eye.getWorld().spawnParticle(Particle.CRIT, eye.clone().add(0, 0.6, 0), 20, 0.15, 0.8, 0.15, 0.3);
-        sound(center, Sound.ITEM_CROSSBOW_QUICK_CHARGE_3, 1.5f, 0.6f);
+        Fx.sound(center, Sound.ITEM_CROSSBOW_QUICK_CHARGE_3, 1.5f, 0.6f);
         player().sendActionBar(Text.mm("<#FFC94D>➶ 화살비 투하!</#FFC94D>"));
 
-        new Repeater(RAIN_WINDUP + duration, tick -> {
+        Loop.repeat(ctx(), player(), 0, 1, RAIN_WINDUP + duration, tick -> {
             if (tick % 6 == 0) {
                 rain.drawZone();
             }
@@ -353,7 +353,7 @@ public final class ArcherAbility extends Ability {
                 rain.drop(due);
             }
             return true;
-        }, null).start(0, 1);
+        });
         return ActivationResult.success();
     }
 
@@ -418,23 +418,18 @@ public final class ArcherAbility extends Ability {
                 lastHit.put(target.getUniqueId(), now);
                 Location body = target.getLocation().add(0, target.getHeight() * 0.6, 0);
                 world.spawnParticle(Particle.DUST, body, 6, 0.25, 0.3, 0.25, 0, RAIN_DUST);
-                sound(body, Sound.ENTITY_ARROW_HIT, 0.8f, 1.2f + jitter(0.1f));
+                Fx.sound(body, Sound.ENTITY_ARROW_HIT, 0.8f, 1.2f + Fx.jitter(0.1f));
                 player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.4f,
-                        1.1f + jitter(0.1f));
-                hit(target, damage);
+                        1.1f + Fx.jitter(0.1f));
+                Combat.hit(ctx(), player(), target, damage);
             }
         }
 
         void drawZone() {
-            World world = center.getWorld();
             int points = (int) Math.max(16, Math.min(48, radius * 7));
-            double y = center.getY() + 0.15;
-            for (int i = 0; i < points; i++) {
-                double angle = i * (Math.PI * 2 / points);
-                world.spawnParticle(Particle.DUST, center.getX() + Math.cos(angle) * radius, y,
-                        center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, RAIN_DUST);
-            }
-            world.spawnParticle(Particle.CRIT, center.getX(), y + 0.2, center.getZ(), 3, 0.3, 0.1, 0.3, 0.05);
+            Location edge = center.clone().add(0, 0.15, 0);
+            Fx.ring(edge, radius, points, 0, Particle.DUST, RAIN_DUST);
+            center.getWorld().spawnParticle(Particle.CRIT, edge.add(0, 0.2, 0), 3, 0.3, 0.1, 0.3, 0.05);
         }
     }
 
@@ -521,91 +516,5 @@ public final class ArcherAbility extends Ability {
         }
         RayTraceResult ground = world.rayTraceBlocks(point, new Vector(0, -1, 0), 8, FluidCollisionMode.NEVER, true);
         return ground == null ? point : ground.getHitPosition().toLocation(world);
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so simultaneous arrows all count. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || target.isDead() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /** 1 minus the target's knockback resistance, so tanky abilities keep their identity. */
-    private static double knockbackFactor(LivingEntity target) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        return resistance == null ? 1.0 : Math.max(0.0, 1.0 - resistance.getValue());
-    }
-
-    private static Vector clamp(Vector velocity) {
-        return velocity.lengthSquared() > MAX_SPEED * MAX_SPEED ? velocity.normalize().multiply(MAX_SPEED) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
-    }
-
-    /**
-     * Runs a step with a 0-based index every period until it returns false, has run {@code maxRuns} times or the
-     * owner is no longer alive; {@code onEnd} then runs once. Owner-scoped (cancelled on revoke) and fail-safe: a
-     * step that throws stops the loop instead of failing every tick.
-     */
-    private final class Repeater implements Runnable {
-        private final long maxRuns;
-        private final LongPredicate step;
-        private final @Nullable Runnable onEnd;
-        private @Nullable BukkitTask task;
-        private long runs;
-        private boolean finished;
-
-        Repeater(long maxRuns, LongPredicate step, @Nullable Runnable onEnd) {
-            this.maxRuns = maxRuns;
-            this.step = step;
-            this.onEnd = onEnd;
-        }
-
-        void start(long delay, long period) {
-            if (maxRuns <= 0) {
-                finish();
-                return;
-            }
-            task = ctx().runTimer(player(), delay, period, this);
-            if (finished) {
-                task.cancel();
-            }
-        }
-
-        @Override
-        public void run() {
-            if (finished) {
-                return;
-            }
-            long index = runs++;
-            boolean more;
-            try {
-                more = ctx().isAlive(player()) && step.test(index);
-            } catch (RuntimeException e) {
-                ctx().plugin().getLogger().log(Level.WARNING, "Archer ability task failed", e);
-                more = false;
-            }
-            if (!more || index + 1 >= maxRuns) {
-                finish();
-            }
-        }
-
-        private void finish() {
-            finished = true;
-            if (task != null) {
-                task.cancel();
-            }
-            if (onEnd != null) {
-                onEnd.run();
-            }
-        }
     }
 }

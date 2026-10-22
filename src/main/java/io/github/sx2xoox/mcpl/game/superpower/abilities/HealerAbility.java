@@ -6,9 +6,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
-import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -20,10 +22,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
@@ -31,14 +30,12 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
-import org.jspecify.annotations.Nullable;
 
 /**
  * 치유사 — sustain and support. Slowly regenerates, bursts healing light over itself and nearby allies (cleansing
@@ -101,7 +98,7 @@ public final class HealerAbility extends Ability {
             return;
         }
         Player self = player();
-        if (self.getHealth() >= maxHealth(self) - 0.01) {
+        if (self.getHealth() >= Combat.maxHealth(self) - 0.01) {
             return;
         }
         ctx().heal(self, params().num("regen_amount"));
@@ -133,13 +130,13 @@ public final class HealerAbility extends Ability {
         World world = origin.getWorld();
         world.spawnParticle(Particle.END_ROD, origin.clone().add(0, 1, 0), 20, 0.3, 0.8, 0.3, 0.05);
         world.spawnParticle(Particle.FLASH, origin.clone().add(0, 1, 0), 1, 0, 0, 0, 0, GOLD);
-        new Repeater(LIGHT_RING_TICKS, t -> {
+        Loop.repeat(ctx(), player(), 0, 1, LIGHT_RING_TICKS, t -> {
             drawRing(origin, radius * (t + 1) / LIGHT_RING_TICKS, Particle.DUST_COLOR_TRANSITION, HALO_DUST, 0);
             return true;
-        }, null).start(0, 1);
-        sound(origin, Sound.BLOCK_BEACON_POWER_SELECT, 1.0f, 1.6f + jitter(0.05f));
-        sound(origin, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.4f, 1.2f + jitter(0.1f));
-        sound(origin, Sound.ENTITY_PLAYER_LEVELUP, 0.5f, 1.8f);
+        });
+        Fx.sound(origin, Sound.BLOCK_BEACON_POWER_SELECT, 1.0f, 1.6f + Fx.jitter(0.05f));
+        Fx.sound(origin, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1.4f, 1.2f + Fx.jitter(0.1f));
+        Fx.sound(origin, Sound.ENTITY_PLAYER_LEVELUP, 0.5f, 1.8f);
 
         int allies = needy.contains(player()) ? needy.size() - 1 : needy.size();
         player().sendActionBar(Text.mm(allies > 0
@@ -149,7 +146,7 @@ public final class HealerAbility extends Ability {
     }
 
     private static boolean needsCare(LivingEntity target) {
-        if (target.getHealth() < maxHealth(target) - 0.01 || target.getFireTicks() > 0) {
+        if (target.getHealth() < Combat.maxHealth(target) - 0.01 || target.getFireTicks() > 0) {
             return true;
         }
         for (PotionEffect effect : target.getActivePotionEffects()) {
@@ -189,7 +186,7 @@ public final class HealerAbility extends Ability {
         if (!target.equals(player()) && world.equals(player().getWorld())) {
             Location from = player().getLocation().add(0, player().getHeight() * 0.6, 0);
             world.spawnParticle(Particle.TRAIL, from, 8, 0.15, 0.2, 0.15, 0, new Particle.Trail(body, GOLD, 14));
-            sound(body, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.7f, 1.3f + jitter(0.1f));
+            Fx.sound(body, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.7f, 1.3f + Fx.jitter(0.1f));
         }
     }
 
@@ -207,14 +204,14 @@ public final class HealerAbility extends Ability {
         BlockDisplay beam = spawnBeam(center);
         TextDisplay label = spawnLabel(center);
         updateLabel(label, duration);
-        sound(center, Sound.BLOCK_BEACON_ACTIVATE, 1.5f, 1.3f);
-        sound(center, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.2f, 0.8f);
-        sound(center, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.0f, 1.4f);
+        Fx.sound(center, Sound.BLOCK_BEACON_ACTIVATE, 1.5f, 1.3f);
+        Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.2f, 0.8f);
+        Fx.sound(center, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.0f, 1.4f);
         center.getWorld().spawnParticle(Particle.FLASH, center.clone().add(0, 1, 0), 1, 0, 0, 0, 0, GOLD);
 
         Map<UUID, Long> lastPush = new HashMap<>();
         long[] nextHeal = {0};
-        new Repeater(duration, t -> {
+        Loop.repeat(ctx(), player(), 0, 1, duration, t -> {
             if (t % 2 == 0) {
                 for (LivingEntity enemy : ctx().enemiesNear(player(), center, radius)) {
                     Long last = lastPush.get(enemy.getUniqueId());
@@ -233,7 +230,7 @@ public final class HealerAbility extends Ability {
                 updateLabel(label, duration - t);
             }
             return true;
-        }, () -> close(center, beam, label)).start(0, 1);
+        }, () -> close(center, beam, label));
         return ActivationResult.success();
     }
 
@@ -245,14 +242,14 @@ public final class HealerAbility extends Ability {
             inside.add(self);
         }
         for (LivingEntity target : inside) {
-            if (target.getHealth() >= maxHealth(target) - 0.01) {
+            if (target.getHealth() >= Combat.maxHealth(target) - 0.01) {
                 continue;
             }
             ctx().heal(target, amount);
             target.getWorld().spawnParticle(Particle.HEART, target.getLocation().add(0, target.getHeight() + 0.3, 0),
                     1, 0.2, 0.1, 0.2, 0);
         }
-        sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.6f, 1.5f + jitter(0.15f));
+        Fx.sound(center, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.6f, 1.5f + Fx.jitter(0.15f));
     }
 
     /** Throws an enemy out of the sanctuary (harder the deeper it got) and weakens it. */
@@ -265,11 +262,11 @@ public final class HealerAbility extends Ability {
         } else {
             out.multiply(1 / distance);
         }
-        double factor = knockbackFactor(enemy);
+        double factor = Motion.knockbackFactor(enemy);
         if (factor > 0.05) {
             double depth = 1 - Math.min(1, distance / radius);
             out.multiply(SANCTUM_PUSH * (0.6 + 0.8 * depth) * factor).setY(SANCTUM_LIFT * factor);
-            enemy.setVelocity(clamp(out));
+            enemy.setVelocity(Motion.clamp(out, MAX_SPEED));
         }
         if (weaknessTicks > 0) {
             enemy.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, weaknessTicks, 0, false, true, true));
@@ -277,18 +274,14 @@ public final class HealerAbility extends Ability {
         Location body = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
         enemy.getWorld().spawnParticle(Particle.END_ROD, body, 6, 0.2, 0.4, 0.2, 0.08);
         enemy.getWorld().spawnParticle(Particle.DUST, body, 6, 0.3, 0.4, 0.3, 0, LIGHT_DUST);
-        sound(body, Sound.ITEM_SHIELD_BLOCK, 0.7f, 1.5f + jitter(0.1f));
+        Fx.sound(body, Sound.ITEM_SHIELD_BLOCK, 0.7f, 1.5f + Fx.jitter(0.1f));
     }
 
     private void drawSanctum(Location center, double radius, long t) {
         World world = center.getWorld();
         // Four bright motes circling the edge, plus a full ring every half second.
         double spin = t * 0.12;
-        for (int i = 0; i < 4; i++) {
-            double angle = spin + i * (Math.PI / 2);
-            world.spawnParticle(Particle.END_ROD, center.getX() + Math.cos(angle) * radius, center.getY() + 0.3,
-                    center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0);
-        }
+        Fx.ring(center.clone().add(0, 0.3, 0), radius, 4, spin, Particle.END_ROD, null);
         if (t % 10 == 0) {
             drawRing(center, radius, Particle.DUST, LIGHT_DUST, 0.15);
         }
@@ -355,7 +348,7 @@ public final class HealerAbility extends Ability {
             label.remove();
         }
         center.getWorld().spawnParticle(Particle.END_ROD, center.clone().add(0, 1.5, 0), 20, 0.3, 1.2, 0.3, 0.06);
-        sound(center, Sound.BLOCK_BEACON_DEACTIVATE, 1.2f, 1.2f);
+        Fx.sound(center, Sound.BLOCK_BEACON_DEACTIVATE, 1.2f, 1.2f);
         if (!beam.isValid()) {
             return;
         }
@@ -380,14 +373,8 @@ public final class HealerAbility extends Ability {
     }
 
     private static <T> void drawRing(Location center, double radius, Particle particle, T data, double lift) {
-        World world = center.getWorld();
         int points = (int) Math.max(12, Math.min(40, radius * 6));
-        double y = center.getY() + 0.15 + lift;
-        for (int i = 0; i < points; i++) {
-            double angle = i * (Math.PI * 2 / points);
-            world.spawnParticle(particle, center.getX() + Math.cos(angle) * radius, y,
-                    center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, data);
-        }
+        Fx.ring(center.clone().add(0, 0.15 + lift, 0), radius, points, 0, particle, data);
     }
 
     /** Distance from a point to the closest point of a box (0 inside), matching how allies are found. */
@@ -396,87 +383,5 @@ public final class HealerAbility extends Ability {
         double dy = Math.max(Math.max(box.getMinY() - point.getY(), 0), point.getY() - box.getMaxY());
         double dz = Math.max(Math.max(box.getMinZ() - point.getZ(), 0), point.getZ() - box.getMaxZ());
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
-    private static double maxHealth(LivingEntity entity) {
-        AttributeInstance instance = entity.getAttribute(Attribute.MAX_HEALTH);
-        return instance == null ? 20.0 : instance.getValue();
-    }
-
-    /** 1 minus the target's knockback resistance, so tanky abilities keep their identity. */
-    private static double knockbackFactor(LivingEntity target) {
-        AttributeInstance resistance = target.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        return resistance == null ? 1.0 : Math.max(0.0, 1.0 - resistance.getValue());
-    }
-
-    private static Vector clamp(Vector velocity) {
-        return velocity.lengthSquared() > MAX_SPEED * MAX_SPEED ? velocity.normalize().multiply(MAX_SPEED) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
-    }
-
-    /**
-     * Runs a step with a 0-based index every period until it returns false, has run {@code maxRuns} times or the
-     * owner is no longer alive; {@code onEnd} then runs once. Owner-scoped (cancelled on revoke) and fail-safe: a
-     * step that throws stops the loop instead of failing every tick.
-     */
-    private final class Repeater implements Runnable {
-        private final long maxRuns;
-        private final LongPredicate step;
-        private final @Nullable Runnable onEnd;
-        private @Nullable BukkitTask task;
-        private long runs;
-        private boolean finished;
-
-        Repeater(long maxRuns, LongPredicate step, @Nullable Runnable onEnd) {
-            this.maxRuns = maxRuns;
-            this.step = step;
-            this.onEnd = onEnd;
-        }
-
-        void start(long delay, long period) {
-            if (maxRuns <= 0) {
-                finish();
-                return;
-            }
-            task = ctx().runTimer(player(), delay, period, this);
-            if (finished) {
-                task.cancel();
-            }
-        }
-
-        @Override
-        public void run() {
-            if (finished) {
-                return;
-            }
-            long index = runs++;
-            boolean more;
-            try {
-                more = ctx().isAlive(player()) && step.test(index);
-            } catch (RuntimeException e) {
-                ctx().plugin().getLogger().log(Level.WARNING, "Healer ability task failed", e);
-                more = false;
-            }
-            if (!more || index + 1 >= maxRuns) {
-                finish();
-            }
-        }
-
-        private void finish() {
-            finished = true;
-            if (task != null) {
-                task.cancel();
-            }
-            if (onEnd != null) {
-                onEnd.run();
-            }
-        }
     }
 }

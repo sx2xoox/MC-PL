@@ -8,6 +8,11 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -15,28 +20,20 @@ import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Color;
-import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
-import org.bukkit.block.Block;
-import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.tag.DamageTypeTags;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -51,14 +48,14 @@ public final class ChronoAbility extends Ability {
             .color(TextColor.color(0xF2C14E))
             .difficulty(2)
             .passive("가속된 시간",
-                    "액티브 쿨타임이 {cooldown_reduction}% 줄어듭니다. {rewind_seconds}초 전의 내 위치가 나에게만 "
-                            + "희미하게 보입니다.")
+                    "액티브 쿨타임이 {cooldown_reduction}% 줄어듭니다. 되감기를 쓸 수 있으면 {rewind_seconds}초 전의 "
+                            + "내 위치가 나에게만 희미하게 보입니다.")
             .active("되감기",
                     "{rewind_seconds}초 전의 위치로 돌아갑니다. 그때의 체력이 지금보다 높았다면 체력도 되돌립니다.",
                     12)
             .ultimate("시간 정지",
                     "반경 {ult_radius}블록의 모든 적의 시간을 {ult_duration}초간 멈춥니다. 멈춘 적은 움직이거나 뛸 수 없고 "
-                            + "밀려나지도 않으며, 공중에 있었다면 그대로 떠 있습니다.")
+                            + "능력도 쓸 수 없으며(침묵), 밀려나지도 않고, 공중에 있었다면 그대로 떠 있습니다.")
             .param("cooldown_reduction", 20)
             .param("rewind_seconds", 3)
             .param("ult_radius", 15)
@@ -82,8 +79,6 @@ public final class ChronoAbility extends Ability {
     private static final long ECHO_INTERVAL = 5;
     /** The echo is only drawn when it is at least this far away (no clutter while standing still). */
     private static final double ECHO_MIN_DISTANCE = 1.5;
-    private static final double STANDING_WIDTH = 0.6;
-    private static final double STANDING_HEIGHT = 1.8;
     private static final long LANDING_GRACE_TICKS = 100;
 
     // Time stop
@@ -95,8 +90,8 @@ public final class ChronoAbility extends Ability {
 
     /** Where the owner was, sampled every {@link #RECORD_INTERVAL} ticks, oldest first. */
     private final Deque<Moment> history = new ArrayDeque<>();
-    /** Until this tick the next fall damage is cancelled (-1: none); set when a rewind ends in mid-air. */
-    private long landingGraceUntil = -1;
+    /** Cancels the fall damage of the landing after a rewind that ended in mid-air. */
+    private final LandingGuard landing = new LandingGuard();
 
     private record Moment(long tick, World world, double x, double y, double z, double health) {
     }
@@ -117,9 +112,7 @@ public final class ChronoAbility extends Ability {
     public void onTick(long tick) {
         if (tick % RECORD_INTERVAL == 0) {
             record(tick);
-            if (landingGraceUntil >= 0 && (tick > landingGraceUntil || isGrounded(player()))) {
-                landingGraceUntil = -1;
-            }
+            landing.update(player(), tick);
         }
         if (tick % ECHO_INTERVAL == 0) {
             drawEcho(tick);
@@ -136,8 +129,11 @@ public final class ChronoAbility extends Ability {
         }
     }
 
-    /** A faint golden silhouette where a rewind would take the owner, visible to the owner only. */
+    /** A faint golden silhouette where a rewind would take the owner, visible to the owner only while it is ready. */
     private void drawEcho(long tick) {
+        if (ctx().cooldownRemaining(player()) > 0) {
+            return;
+        }
         Moment echo = momentAt(tick - params().ticks("rewind_seconds"));
         Player owner = player();
         if (echo == null || !echo.world().equals(owner.getWorld())) {
@@ -200,10 +196,8 @@ public final class ChronoAbility extends Ability {
             return ActivationResult.fail("되감기가 막혔습니다");
         }
         owner.setFallDistance(0);
-        if (!isGrounded(owner)) {
-            // Rewinding into the middle of a jump must not end in fall damage.
-            landingGraceUntil = ctx().currentTick() + LANDING_GRACE_TICKS;
-        }
+        // Rewinding into the middle of a jump must not end in fall damage.
+        landing.armIfAirborne(owner, ctx().currentTick(), LANDING_GRACE_TICKS);
 
         double restored = 0;
         if (moment.health() > health) {
@@ -221,36 +215,24 @@ public final class ChronoAbility extends Ability {
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled() || landingGraceUntil < 0 || !isFall(event)) {
-            return;
-        }
-        if (ctx().currentTick() <= landingGraceUntil) {
-            event.setCancelled(true);
-        }
-        landingGraceUntil = -1;
+        landing.absorb(event, ctx().currentTick());
     }
 
-    private static boolean isFall(EntityDamageEvent event) {
-        if (event.getCause() == DamageCause.FALL) {
-            return true;
-        }
-        Tag<DamageType> fall = DamageTypeTags.IS_FALL;
-        return fall != null && fall.isTagged(event.getDamageSource().getDamageType());
-    }
-
-    /** The recorded moment closest to {@code target} (older first on ties) whose spot is still free and safe. */
+    /**
+     * The recorded moment closest to {@code target} (older first on ties) whose spot is still free and safe
+     * ({@link Spots#isSafe}: no blocks or hazards, no void, inside the arena).
+     */
     private @Nullable Moment safestMomentNear(Player owner, long target) {
         List<Moment> candidates = new ArrayList<>(history);
         candidates.sort(Comparator.comparingLong((Moment m) -> Math.abs(m.tick() - target))
                 .thenComparingLong(Moment::tick));
-        double scale = scaleOf(owner);
+        Body body = Body.standing(owner);
         for (Moment moment : candidates) {
             if (!moment.world().equals(owner.getWorld())) {
                 continue;
             }
             Location feet = new Location(moment.world(), moment.x(), moment.y(), moment.z());
-            if (fits(moment.world(), feet, STANDING_WIDTH * scale, STANDING_HEIGHT * scale)
-                    && hasGroundBelow(moment.world(), feet)) {
+            if (Spots.isSafe(ctx(), feet, body)) {
                 return moment;
             }
         }
@@ -284,14 +266,14 @@ public final class ChronoAbility extends Ability {
         world.spawnParticle(Particle.END_ROD, toBody, 12, 0.3, 0.6, 0.3, 0.03);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, toBody, 12, 0.3, 0.6, 0.3, 0, REWIND_DUST);
 
-        sound(from, Sound.BLOCK_BEACON_POWER_SELECT, 0.8f, 1.8f);
-        sound(to, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 1.4f + jitter(0.05f));
+        Fx.sound(from, Sound.BLOCK_BEACON_POWER_SELECT, 0.8f, 1.8f);
+        Fx.sound(to, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.9f, 1.4f + Fx.jitter(0.05f));
         // A quick descending tick-tock, like a tape being rewound.
         for (int i = 1; i <= 3; i++) {
             float pitch = 1.9f - i * 0.3f;
             ctx().runLater(owner, i * 2L, () -> {
                 if (owner.isOnline() && ctx().isAlive(owner)) {
-                    sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.8f, pitch);
+                    Fx.sound(owner.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 0.8f, pitch);
                 }
             });
         }
@@ -314,12 +296,12 @@ public final class ChronoAbility extends Ability {
             frozen.add(freeze(enemy, duration));
         }
 
-        sound(origin, Sound.BLOCK_BELL_RESONATE, 1.6f, 0.7f);
-        sound(origin, Sound.BLOCK_BEACON_DEACTIVATE, 1.6f, 0.5f);
-        sound(origin, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.2f, 0.6f);
+        Fx.sound(origin, Sound.BLOCK_BELL_RESONATE, 1.6f, 0.7f);
+        Fx.sound(origin, Sound.BLOCK_BEACON_DEACTIVATE, 1.6f, 0.5f);
+        Fx.sound(origin, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 1.2f, 0.6f);
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⏸ 시간 정지</" + COLOR_TAG + "> <white>" + frozen.size()
                 + "명</white>"));
-        loop(0, 1, duration, new Stasis(frozen, origin, radius, duration));
+        Loop.repeat(ctx(), player(), 0, 1, duration, new Stasis(frozen, origin, radius, duration));
         return ActivationResult.success();
     }
 
@@ -347,6 +329,8 @@ public final class ChronoAbility extends Ability {
             display.setBrightness(new Display.Brightness(15, 15));
         }));
         if (enemy instanceof Player victim) {
+            // Frozen time: no skills either.
+            ctx().silence(victim, duration);
             victim.playSound(victim, Sound.BLOCK_BEACON_DEACTIVATE, SoundCategory.PLAYERS, 0.8f, 0.6f);
         }
         return new Frozen(enemy, pin, label);
@@ -400,11 +384,11 @@ public final class ChronoAbility extends Ability {
                 }
                 if (tick % 10 == 0 && entity instanceof Player victim) {
                     victim.sendActionBar(Text.mm("<" + COLOR_TAG + ">⏸ 시간이 멈췄습니다</" + COLOR_TAG + "> <gray>"
-                            + seconds(left) + "초</gray>"));
+                            + Fx.seconds(left) + "초</gray>"));
                 }
             }
             if (tick % 10 == 0) {
-                sound(origin, Sound.BLOCK_NOTE_BLOCK_HAT, 1.2f, (tick / 10) % 2 == 0 ? 0.8f : 0.6f);
+                Fx.sound(origin, Sound.BLOCK_NOTE_BLOCK_HAT, 1.2f, (tick / 10) % 2 == 0 ? 0.8f : 0.6f);
             }
             if (tick >= duration - 1) {
                 resume();
@@ -413,12 +397,15 @@ public final class ChronoAbility extends Ability {
             return true;
         }
 
-        /** Puts a displaced enemy back on its pin (if the spot is still free) and keeps the label above it. */
+        /**
+         * Puts a displaced enemy back on its pin (if the spot is still free and inside the arena) and keeps the
+         * label above it.
+         */
         private void hold(Frozen f) {
             LivingEntity entity = f.entity();
             Location now = entity.getLocation();
             if (now.getWorld().equals(f.pin().getWorld())
-                    && now.distanceSquared(f.pin()) > PIN_TOLERANCE * PIN_TOLERANCE) {
+                    && now.distanceSquared(f.pin()) > PIN_TOLERANCE * PIN_TOLERANCE && ctx().isInsideArena(f.pin())) {
                 Location back = f.pin().clone();
                 back.setYaw(now.getYaw());
                 back.setPitch(now.getPitch());
@@ -446,16 +433,8 @@ public final class ChronoAbility extends Ability {
 
         /** A slowly turning golden ring around the frozen enemy, like a clock face that stopped. */
         private void drawStillness(LivingEntity entity, long tick) {
-            Location at = entity.getLocation();
-            World world = at.getWorld();
             double r = Math.max(0.5, entity.getWidth() * 0.9);
-            double y = at.getY() + entity.getHeight() * 0.5;
-            double spin = tick * 0.05;
-            for (int i = 0; i < FROZEN_RING_POINTS; i++) {
-                double angle = spin + i * (Math.PI * 2 / FROZEN_RING_POINTS);
-                world.spawnParticle(Particle.DUST, at.getX() + Math.cos(angle) * r, y, at.getZ() + Math.sin(angle) * r,
-                        1, 0, 0, 0, 0, FROZEN_DUST);
-            }
+            Fx.ring(Fx.body(entity), r, FROZEN_RING_POINTS, tick * 0.05, Particle.DUST, FROZEN_DUST);
         }
 
         private void resume() {
@@ -473,8 +452,8 @@ public final class ChronoAbility extends Ability {
                     victim.sendActionBar(Text.mm("<gray>시간이 다시 흐릅니다</gray>"));
                 }
             }
-            sound(origin, Sound.BLOCK_BEACON_ACTIVATE, 1.4f, 1.6f);
-            sound(origin, Sound.BLOCK_BELL_USE, 1.2f, 1.4f);
+            Fx.sound(origin, Sound.BLOCK_BEACON_ACTIVATE, 1.4f, 1.6f);
+            Fx.sound(origin, Sound.BLOCK_BELL_USE, 1.2f, 1.4f);
         }
     }
 
@@ -483,84 +462,6 @@ public final class ChronoAbility extends Ability {
     }
 
     private static Component labelText(long ticksLeft) {
-        return Text.mm("<" + COLOR_TAG + ">⏸</" + COLOR_TAG + "> <white>" + seconds(ticksLeft) + "</white>");
-    }
-
-    private static String seconds(long ticks) {
-        return AbilityInfo.formatNumber(Math.max(0, Math.ceil(ticks / 2.0) / 10.0));
-    }
-
-    // ------------------------------------------------------------------ helpers
-
-    /** True when a solid surface is right below the entity's feet (server-side, not the client's claim). */
-    private static boolean isGrounded(LivingEntity entity) {
-        BoundingBox box = entity.getBoundingBox();
-        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
-                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
-        return entity.getWorld().hasCollisionsIn(below) || entity.isInWater();
-    }
-
-    private static boolean fits(World world, Location feet, double width, double height) {
-        if (feet.getY() < world.getMinHeight() + 1 || feet.getY() + height > world.getMaxHeight()) {
-            return false;
-        }
-        double half = width / 2 - 0.01;
-        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + 0.01, feet.getZ() - half,
-                feet.getX() + half, feet.getY() + height, feet.getZ() + half);
-        if (world.hasCollisionsIn(box)) {
-            return false;
-        }
-        int x = feet.getBlockX();
-        int z = feet.getBlockZ();
-        for (int y = (int) Math.floor(box.getMinY()); y <= (int) Math.floor(box.getMaxY()); y++) {
-            if (isHazard(world.getBlockAt(x, y, z))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isHazard(Block block) {
-        Material type = block.getType();
-        return type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE
-                || type == Material.POWDER_SNOW || type == Material.COBWEB;
-    }
-
-    private static boolean hasGroundBelow(World world, Location feet) {
-        double depth = feet.getY() - world.getMinHeight();
-        return depth > 0 && world.rayTraceBlocks(feet, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS,
-                true) != null;
-    }
-
-    private static double scaleOf(LivingEntity entity) {
-        AttributeInstance scale = entity.getAttribute(Attribute.SCALE);
-        return scale == null ? 1.0 : Math.max(0.1, scale.getValue());
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
+        return Text.mm("<" + COLOR_TAG + ">⏸</" + COLOR_TAG + "> <white>" + Fx.seconds(ticksLeft) + "</white>");
     }
 }

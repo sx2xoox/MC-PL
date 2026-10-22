@@ -2,8 +2,11 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -15,7 +18,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.LivingEntity;
@@ -23,7 +25,6 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -96,12 +97,12 @@ public final class ThunderAbility extends Ability {
         World world = victim.getWorld();
         world.spawnParticle(Particle.ELECTRIC_SPARK, body, 14, 0.3, 0.5, 0.3, 0.15);
         world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 6, 0.3, 0.5, 0.3, 0, ARC);
-        sound(body, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 0.45f, 1.8f + jitter(0.15f));
+        Fx.sound(body, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 0.45f, 1.8f + Fx.jitter(0.15f));
         player().sendActionBar(Text.mm("<#FFE14D>⚡ 감전!</#FFE14D>"));
 
         // Deal the shock right after the melee hit has resolved, instead of nesting it inside this event.
         double damage = params().num("shock_damage");
-        ctx().runLater(player(), 1, () -> hit(victim, damage));
+        ctx().runLater(player(), 1, () -> Combat.hit(ctx(), player(), victim, damage));
     }
 
     // ------------------------------------------------------------------ active: lightning strike
@@ -116,13 +117,13 @@ public final class ThunderAbility extends Ability {
         double radius = params().num("radius");
         long delay = params().ticks("strike_delay");
 
-        sound(target, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 1.6f);
-        sound(player().getLocation(), Sound.ENTITY_EVOKER_CAST_SPELL, 0.6f, 1.8f);
+        Fx.sound(target, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 1.6f);
+        Fx.sound(player().getLocation(), Sound.ENTITY_EVOKER_CAST_SPELL, 0.6f, 1.8f);
         drawWarning(target, radius, 0);
         if (delay <= 0) {
             strike(target);
         } else {
-            loop(1, 1, delay, tick -> {
+            Loop.repeat(ctx(), player(), 1, 1, delay, tick -> {
                 if (tick == delay - 1) {
                     strike(target);
                     return false;
@@ -156,15 +157,8 @@ public final class ThunderAbility extends Ability {
     }
 
     private void drawWarning(Location center, double radius, long tick) {
-        World world = center.getWorld();
-        int points = 18;
-        double turn = tick * 0.4;
-        for (int i = 0; i < points; i++) {
-            double angle = turn + i * (Math.PI * 2 / points);
-            world.spawnParticle(Particle.ELECTRIC_SPARK, center.getX() + Math.cos(angle) * radius,
-                    center.getY() + 0.15, center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0);
-        }
-        world.spawnParticle(Particle.DUST, center.clone().add(0, 0.3, 0), 4, radius * 0.35, 0.05,
+        Fx.ring(center.clone().add(0, 0.15, 0), radius, 18, tick * 0.4, Particle.ELECTRIC_SPARK, null);
+        center.getWorld().spawnParticle(Particle.DUST, center.clone().add(0, 0.3, 0), 4, radius * 0.35, 0.05,
                 radius * 0.35, 0, CHARGE);
     }
 
@@ -180,9 +174,9 @@ public final class ThunderAbility extends Ability {
         double launch = launchVelocity(params().num("launch_height"));
         int hits = 0;
         for (LivingEntity enemy : ctx().enemiesNear(player(), point, radius)) {
-            hit(enemy, damage);
+            Combat.hit(ctx(), player(), enemy, damage);
             hits++;
-            if (!enemy.isValid() || enemy.isDead() || !ctx().isEnemy(player(), enemy)) {
+            if (!Combat.isTargetable(ctx(), player(), enemy)) {
                 continue;
             }
             Vector push = enemy.getLocation().toVector().subtract(point.toVector()).setY(0);
@@ -191,7 +185,7 @@ public final class ThunderAbility extends Ability {
             } else {
                 push.zero();
             }
-            enemy.setVelocity(clamp(push.setY(launch), MAX_VELOCITY));
+            enemy.setVelocity(Motion.clamp(push.setY(launch), MAX_VELOCITY));
         }
         if (hits > 0) {
             player().sendActionBar(Text.mm("<#FFE14D>⚡ 낙뢰 적중</#FFE14D> <gray>" + hits + "명</gray>"));
@@ -211,12 +205,12 @@ public final class ThunderAbility extends Ability {
         long total = ULT_WINDUP_TICKS + (strikes - 1) * interval + 1;
 
         Location origin = player().getLocation();
-        sound(origin, Sound.ITEM_TRIDENT_THUNDER, 1.6f, 0.8f);
-        sound(origin, Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.8f);
+        Fx.sound(origin, Sound.ITEM_TRIDENT_THUNDER, 1.6f, 0.8f);
+        Fx.sound(origin, Sound.BLOCK_BEACON_ACTIVATE, 1.0f, 1.8f);
         origin.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, origin.clone().add(0, 1, 0), 40, 0.5, 0.8, 0.5,
                 0.4);
 
-        loop(0, 1, total, tick -> {
+        Loop.repeat(ctx(), player(), 0, 1, total, tick -> {
             Location center = player().getLocation();
             drawStorm(center, tick);
             long sinceWindup = tick - ULT_WINDUP_TICKS;
@@ -239,7 +233,7 @@ public final class ThunderAbility extends Ability {
             World world = at.getWorld();
             world.strikeLightningEffect(at);
             world.spawnParticle(Particle.ELECTRIC_SPARK, at.clone().add(0, 1, 0), 24, 0.4, 0.8, 0.4, 0.4);
-            hit(enemy, damage);
+            Combat.hit(ctx(), player(), enemy, damage);
         }
         player().sendActionBar(Text.mm("<#FFE14D>⚡ 천벌 " + wave + "/" + strikes + "</#FFE14D> <gray>"
                 + enemies.size() + "명 적중</gray>"));
@@ -254,7 +248,7 @@ public final class ThunderAbility extends Ability {
             world.spawnParticle(Particle.ELECTRIC_SPARK, cloud, 3, 2.5, 0.3, 2.5, 0.2);
         }
         if (tick % 6 == 0) {
-            sound(center, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 0.5f, 0.6f + jitter(0.1f));
+            Fx.sound(center, Sound.ENTITY_LIGHTNING_BOLT_IMPACT, 0.5f, 0.6f + Fx.jitter(0.1f));
         }
     }
 
@@ -263,49 +257,5 @@ public final class ThunderAbility extends Ability {
     /** Initial upward speed that lifts a player roughly {@code height} blocks (vanilla gravity 0.08/tick). */
     private static double launchVelocity(double height) {
         return Math.sqrt(2 * GRAVITY * Math.max(0, height));
-    }
-
-    /** Deals credited ability damage. Clears the hurt cooldown first so follow-up hits are not swallowed. */
-    private void hit(LivingEntity target, double amount) {
-        if (amount <= 0 || !target.isValid() || !ctx().isEnemy(player(), target)) {
-            return;
-        }
-        target.setNoDamageTicks(0);
-        ctx().damage(player(), target, amount);
-    }
-
-    /**
-     * Runs {@code step} with a 0-based run index every {@code period} ticks after {@code delay}, until it returns
-     * false, has run {@code maxRuns} times or the owner is no longer alive. Owner-scoped: cancelled on revoke.
-     */
-    private void loop(long delay, long period, long maxRuns, LongPredicate step) {
-        if (maxRuns <= 0) {
-            return;
-        }
-        BukkitTask[] handle = new BukkitTask[1];
-        long[] runs = {0};
-        handle[0] = ctx().runTimer(player(), delay, period, () -> {
-            long index = runs[0]++;
-            boolean more = index < maxRuns && ctx().isAlive(player()) && step.test(index);
-            if ((!more || index + 1 >= maxRuns) && handle[0] != null) {
-                handle[0].cancel();
-            }
-        });
-    }
-
-    private static Vector clamp(Vector velocity, double max) {
-        double length = velocity.length();
-        if (!Double.isFinite(length)) {
-            return new Vector();
-        }
-        return length > max ? velocity.multiply(max / length) : velocity;
-    }
-
-    private static void sound(Location at, Sound sound, float volume, float pitch) {
-        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume, pitch);
-    }
-
-    private static float jitter(float amount) {
-        return (ThreadLocalRandom.current().nextFloat() * 2 - 1) * amount;
     }
 }
