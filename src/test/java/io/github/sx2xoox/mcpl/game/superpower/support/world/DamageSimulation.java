@@ -29,8 +29,9 @@ import org.bukkit.potion.PotionEffectType;
  *     <li>the {@link DamageCause} is derived from the damage type and the direct entity exactly like
  *     {@code CraftEventFactory#handleEntityDamageEvent} (ability damage of type {@code MAGIC} with an entity is
  *     {@code MAGIC}, an arrow is {@code PROJECTILE}, ...);</li>
- *     <li>players hit by living non-players get the vanilla difficulty scaling (easy: {@code min(d/2+1, d)},
- *     hard: {@code d*1.5});</li>
+ *     <li>players get the vanilla difficulty scaling when the source scales with difficulty
+ *     ({@link DamageSource#scalesWithDifficulty()}: explosions always, most other types only when caused by a living
+ *     non-player; easy: {@code min(d/2+1, d)}, hard: {@code d*1.5});</li>
  *     <li>invulnerability frames: while {@code noDamageTicks > maxNoDamageTicks/2} a hit only lands if it is
  *     stronger than the last one, and only the difference is dealt;</li>
  *     <li>the event carries the {@code RESISTANCE} (20% per level) and {@code ABSORPTION} modifiers with their
@@ -57,7 +58,7 @@ public final class DamageSimulation {
                 && (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR)))) {
             return;
         }
-        if (target instanceof Player && scalesWithDifficulty(source)) {
+        if (target instanceof Player && source.scalesWithDifficulty()) {
             Difficulty difficulty = target.getWorld().getDifficulty();
             amount = switch (difficulty) {
                 case PEACEFUL -> 0;
@@ -96,12 +97,6 @@ public final class DamageSimulation {
         if (finalDamage > 0) {
             target.setHealth(Math.max(0, target.getHealth() - finalDamage));
         }
-    }
-
-    /** Damage of a living non-player causer is scaled for players (the vanilla default damage scaling). */
-    private static boolean scalesWithDifficulty(DamageSource source) {
-        Entity causing = source.getCausingEntity();
-        return causing instanceof LivingEntity && !(causing instanceof Player);
     }
 
     @SuppressWarnings("deprecation")

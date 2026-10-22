@@ -192,7 +192,8 @@ class RangedSupportAbilitiesTest {
     void bomberShrugsOffExplosionsAndRidesItsOwnBlast() {
         try (Scenario s = Scenario.ffa("bomber")) {
             s.owner.damage(10, DamageSource.builder(DamageType.EXPLOSION).build());
-            assertEquals(10 * (1 - s.param("blast_resist") / 100), s.damageTaken(s.owner), EPSILON);
+            // Explosions always scale with difficulty: 10 becomes min(10 / 2 + 1, 10) = 6 on easy.
+            assertEquals(6 * (1 - s.param("blast_resist") / 100), s.damageTaken(s.owner), EPSILON);
             s.clearHits();
 
             s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, 89);
