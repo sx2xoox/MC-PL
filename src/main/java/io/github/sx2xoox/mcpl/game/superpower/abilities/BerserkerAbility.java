@@ -1,6 +1,8 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -23,6 +25,7 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
+import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
@@ -89,12 +92,17 @@ public final class BerserkerAbility extends Ability {
     /** Most ticks a slow connection may add to the grace period and the charge length. */
     private static final long MAX_LAG_TICKS = 8;
     private static final double MILLIS_PER_TICK = 50.0;
+    /** Runs a charge may take beyond its length at full speed, for stairs or a cobweb that slow the client down. */
+    private static final long CHARGE_SLACK_TICKS = 6;
     /** How far ahead the charge looks for ground; it stops at the edge of the void or a lava pit. */
     private static final double VOID_LOOKAHEAD = CHARGE_SPEED + 0.6;
-    /** The client steps up anything this low: only a block above it in the path stops the charge. */
+    /** The client steps up onto anything this high (a slab, a stair) while it runs on the ground. */
     private static final double STEP_HEIGHT = 0.6;
-    /** Sampling distance of the check for a block in the charge's path. */
-    private static final double PATH_STEP = 0.1;
+    /**
+     * The server seeing the berserker this far from every place its client was reckoned to be means something else
+     * moved it (a knockback, a teleport): the reckoning has lost it.
+     */
+    private static final double STRAY_DISTANCE = 3.0;
     private static final double BOWL_FORWARD = 0.9;
     private static final double BOWL_SIDE = 0.75;
     private static final double BOWL_UP = 0.42;
@@ -284,26 +292,29 @@ public final class BerserkerAbility extends Ability {
             return ActivationResult.fail("앞이 낭떠러지입니다");
         }
         // The server sees the owner move only a round trip after the velocity is sent: wait that long for the
-        // first movement before calling the charge stalled, and give the charge that much more time.
+        // first movement before calling the charge stalled. The client runs the steps the same whatever the ping, so
+        // the time the charge gets does not depend on it.
         long lag = lagTicks(owner);
-        long maxTicks = (long) Math.ceil(distance / CHARGE_SPEED) + 6 + lag;
+        long budget = (long) Math.ceil(distance / CHARGE_SPEED) + CHARGE_SLACK_TICKS;
         charging = true;
         chargeStart(start);
         owner.setFallDistance(0);
         // Cut short by the border: the charge ends dead still there, without a glide.
         boolean bordered = distance < length - 1.0E-6;
-        Charge charge = new Charge(start, direction, distance, bordered, lag);
-        Loop.repeat(ctx(), owner, 0, 1, maxTicks, charge, charge::end);
+        Charge charge = new Charge(owner, start, direction, distance, bordered, lag, budget);
+        // One run more than steps: the last one only bowls at the end and stops.
+        Loop.repeat(ctx(), owner, 0, 1, budget + 1, charge, charge::end);
         return ActivationResult.success();
     }
 
     /**
      * One charge. The berserker's client runs every velocity step sent to it at once, while the server hears where it
-     * is only a round trip later. So the charge is measured on the steps sent (the server's view would let it run on
-     * past its end), and everything it meets is met where the berserker really is: the start plus the steps sent, short
-     * of a wall in the way. Enemies are bowled as the berserker reaches them (not a round trip later, after its client
-     * ran through them), it pulls up at the edge of the void looking ahead of where those steps carry it, and the charge
-     * ends where the berserker stops, not where the server last heard of it.
+     * is only a round trip later. So everything the charge meets is met where the client really is, reckoned from the
+     * start along the steps sent the way the client runs them ({@link Reckoning}: it slides along a wall, steps up
+     * stairs, crawls through a cobweb). The charge is measured on that run (the server's view would let it run on past
+     * its end), enemies are bowled as the berserker reaches them (not a round trip later, after its client ran through
+     * them) and only with no wall between, it pulls up at the edge of the void looking ahead of where the next step
+     * carries it, and it ends where the berserker stops, not where the server last heard of it.
      */
     private final class Charge implements LongPredicate {
 
@@ -313,17 +324,14 @@ public final class BerserkerAbility extends Ability {
         /** The border cut the charge short: it ends dead still there, without a glide. */
         private final boolean bordered;
         private final long lag;
+        /** Runs that may send a step; the run after them ends the charge wherever it got to. */
+        private final long budget;
         private final Set<UUID> struck = new HashSet<>();
         /**
-         * How far the charge has been sent so far: the sum of the steps of the velocities sent to the berserker. The
-         * first step goes out with the first run: a velocity set at the cast would only be replaced by it before the
-         * server sends it on.
+         * Where the berserker's client is: it has already run every step sent. The first step goes out with the
+         * first run: a velocity set at the cast would only be replaced by it before the server sends it on.
          */
-        private double sent;
-        /** How far along the path the body is known to pass without touching a block. */
-        private double clear;
-        /** A block stands in the path at {@link #clear}: the berserker's client stops there. */
-        private boolean blocked;
+        private final Reckoning client;
         private Location last;
         private int stalls;
         private boolean moved;
@@ -331,16 +339,21 @@ public final class BerserkerAbility extends Ability {
         private boolean edge;
         /** The charge ran into a wall: it ends with a bump, without a glide. */
         private boolean wall;
+        /** Something else moved the berserker far off its path (a knockback, a teleport): it ends there, still. */
+        private boolean lost;
         /** Where the berserker stops, once the charge is over. */
         private @Nullable Location stop;
         private boolean ended;
 
-        Charge(Location start, Vector direction, double distance, boolean bordered, long lag) {
+        Charge(Player owner, Location start, Vector direction, double distance, boolean bordered, long lag,
+               long budget) {
             this.start = start;
             this.direction = direction;
             this.distance = distance;
             this.bordered = bordered;
             this.lag = lag;
+            this.budget = budget;
+            this.client = new Reckoning(owner, start);
             this.last = start;
         }
 
@@ -351,71 +364,57 @@ public final class BerserkerAbility extends Ability {
             if (!now.getWorld().equals(start.getWorld())) {
                 return false;
             }
+            if (client.lost(now)) {
+                lost = true;
+                return stopAt(now);
+            }
             if (!moved && horizontalDistance(start, now) >= STALL_EPSILON) {
                 moved = true;
             }
-            // Its client has already run every step sent: the berserker bowls what it meets there.
-            Location reached = reached(owner, now);
+            // Its client has already run every step sent: the berserker bowls what it meets there, never through a
+            // wall (the hit reaches past the body, and a wall it stops at is right in front of it).
+            Location reached = client.at();
             Location body = reached.clone().add(0, owner.getHeight() * 0.5, 0).add(direction.clone().multiply(0.4));
             for (LivingEntity enemy : ctx().enemiesNear(owner, body, CHARGE_HIT_RADIUS)) {
-                if (struck.add(enemy.getUniqueId())) {
+                if (!struck.contains(enemy.getUniqueId()) && inSight(owner, reached, enemy)) {
+                    struck.add(enemy.getUniqueId());
                     bowl(enemy, reached, direction);
                 }
             }
-            if (blocked) {
-                wall = true;
-                return stopAt(reached);
-            }
-            if (sent >= distance - 0.2) {
+            if (client.travelled() >= distance - 0.2 || tick >= budget) {
                 return stopAt(reached);
             }
             if (moved || tick >= CHARGE_GRACE_TICKS + lag) {
                 stalls = horizontalDistance(last, now) < STALL_EPSILON ? stalls + 1 : 0;
                 if (stalls >= STALL_LIMIT) {
-                    // Stopped by something the path check cannot see: the server has seen it stand still there.
+                    // Stopped by something the reckoning cannot see: the server has seen it stand still there.
                     wall = true;
                     return stopAt(now);
                 }
             }
             last = now;
-            // Never into the void (or a lava pit): the charge pulls up at the edge, looking ahead of where the steps
-            // already sent are carrying the berserker (the server sees it behind that).
-            Location ahead = start.clone().add(direction.clone().multiply(sent + VOID_LOOKAHEAD));
-            ahead.setY(now.getY());
+            // The last step is only as long as what is left, so the charge ends exactly at its end.
+            double step = Math.min(CHARGE_SPEED, distance - client.travelled());
+            Vector velocity = direction.clone().multiply(step).setY(CHARGE_SINK);
+            Vector move = client.next(velocity);
+            double progress = Math.hypot(move.getX(), move.getZ());
+            if (progress < STALL_EPSILON) {
+                // Flush against a wall (or anything too high to step up onto): the client would not get anywhere.
+                wall = true;
+                return stopAt(reached);
+            }
+            // Never into the void (or a lava pit): the charge pulls up at the edge, looking ahead along where this
+            // step carries the berserker (the server sees it behind that).
+            Location ahead = reached.clone().add(move.clone().setY(0).multiply(VOID_LOOKAHEAD / progress));
             if (!Spots.hasGroundBelow(start.getWorld(), ahead)) {
                 edge = true;
                 return stopAt(reached);
             }
-            // The last step is only as long as what is left, so the charge ends exactly at its end.
-            double step = Math.min(CHARGE_SPEED, distance - sent);
-            sent += step;
-            owner.setVelocity(direction.clone().multiply(step).setY(CHARGE_SINK));
+            owner.setVelocity(velocity);
             owner.setFallDistance(0);
+            client.advance(move);
             chargeTrail(now, direction);
             return true;
-        }
-
-        /**
-         * Where the berserker's client is: the start plus the steps sent, short of the first block in the path (the
-         * client stops flush against a wall while the server still sees it run up to it). Below
-         * {@link #STEP_HEIGHT} the client steps up, so only blocks above it count.
-         */
-        private Location reached(Player owner, Location now) {
-            double width = owner.getWidth();
-            double height = Math.max(0.1, owner.getHeight() - STEP_HEIGHT);
-            while (!blocked && clear < sent - 1.0E-9) {
-                double next = Math.min(sent, clear + PATH_STEP);
-                Location feet = start.clone().add(direction.clone().multiply(next));
-                feet.setY(now.getY() + STEP_HEIGHT);
-                if (Spots.isFree(start.getWorld(), feet, width, height)) {
-                    clear = next;
-                } else {
-                    blocked = true;
-                }
-            }
-            Location reached = start.clone().add(direction.clone().multiply(Math.min(sent, clear)));
-            reached.setY(now.getY());
-            return reached;
         }
 
         /** Ends the charge with the berserker standing {@code at}. */
@@ -434,10 +433,10 @@ public final class BerserkerAbility extends Ability {
             Location now = owner.getLocation();
             Location at = stop;
             if (at == null) {
-                // Out of time, or carried off to another world.
-                at = now.getWorld().equals(start.getWorld()) ? reached(owner, now) : now;
+                // Carried off to another world (or a failing run).
+                at = now.getWorld().equals(start.getWorld()) ? client.at() : now;
             }
-            owner.setVelocity(direction.clone().multiply(bordered || edge || wall ? 0 : CHARGE_GLIDE)
+            owner.setVelocity(direction.clone().multiply(bordered || edge || wall || lost ? 0 : CHARGE_GLIDE)
                     .setY(CHARGE_SINK));
             if (wall) {
                 wallBump(at, direction);
@@ -446,6 +445,214 @@ public final class BerserkerAbility extends Ability {
             if (!struck.isEmpty()) {
                 owner.sendActionBar(Text.mm("<#E0303A>돌진!</#E0303A> <gray>" + struck.size() + "명 적중</gray>"));
             }
+        }
+    }
+
+    /** True if no block stands between the berserker at {@code feet} and {@code enemy} (chest to chest, eye to eye). */
+    private static boolean inSight(Player owner, Location feet, LivingEntity enemy) {
+        return Spots.clearPath(feet.clone().add(0, owner.getHeight() * 0.5, 0), Fx.body(enemy))
+                || Spots.clearPath(feet.clone().add(0, owner.getEyeHeight(), 0), enemy.getEyeLocation());
+    }
+
+    /**
+     * Where a player's client is while it follows the velocities sent to it, one every tick. The server hears where
+     * the client is only a round trip late, but the client moves by each velocity as soon as it arrives (with a new
+     * one every tick nothing else moves it), so it is reckoned from where it set off, moving the way the client
+     * moves: y first, then the longer horizontal axis first, each stopped flush against a block (sliding along it on
+     * the other axis), stepping up onto anything up to {@link #STEP_HEIGHT} high while on the ground, held back on
+     * ladders and vines, and slowed down on the move after it went through a cobweb, a berry bush or powder snow.
+     */
+    private static final class Reckoning {
+        /** Samples of a sweep lie closer together than the body is wide, so no block between two is missed. */
+        private static final double SWEEP_SAMPLE = 0.5;
+        private static final int SWEEP_ITERATIONS = 12;
+        /** A client on a ladder or a vine moves at most this fast along each horizontal axis. */
+        private static final double CLIMB_SPEED = 0.15;
+        /** The blocks a body touches are looked up this far inside its box. */
+        private static final double TOUCH_INSET = 0.01;
+
+        private final World world;
+        private final double width;
+        private final double height;
+        private final Location at;
+        /** Every place the client was reckoned to be, to compare the lagging server position with. */
+        private final List<Vector> trail = new ArrayList<>();
+        /** How much a block the last move went through slows the next move down (x, y and z), if any. */
+        private @Nullable Vector stuck;
+        private double travelled;
+
+        Reckoning(LivingEntity body, Location from) {
+            this.world = from.getWorld();
+            this.width = body.getWidth();
+            this.height = body.getHeight();
+            this.at = from.clone();
+            trail.add(at.toVector());
+        }
+
+        /** Where the client is. */
+        Location at() {
+            return at.clone();
+        }
+
+        /** How far the client has run, along the ground. */
+        double travelled() {
+            return travelled;
+        }
+
+        /** The move the client makes with {@code velocity} from where it is; {@link #advance} makes it. */
+        Vector next(Vector velocity) {
+            Vector v = velocity.clone();
+            if (climbable()) {
+                v.setX(Math.clamp(v.getX(), -CLIMB_SPEED, CLIMB_SPEED)).setY(Math.max(v.getY(), -CLIMB_SPEED))
+                        .setZ(Math.clamp(v.getZ(), -CLIMB_SPEED, CLIMB_SPEED));
+            }
+            Vector slowdown = stuck;
+            if (slowdown != null) {
+                v.multiply(slowdown);
+            }
+            if (!fits(at)) {
+                return v; // already inside a block (a shape the box check misreads): only the velocity is known
+            }
+            Vector moved = collide(at, v.getX(), v.getY(), v.getZ());
+            boolean blocked = moved.getX() != v.getX() || moved.getZ() != v.getZ();
+            if (blocked && v.getY() < 0 && moved.getY() != v.getY()) {
+                // On the ground against a block: like the client, up by as much as a step, across and back down.
+                Vector climbed = collide(at, v.getX(), STEP_HEIGHT, v.getZ());
+                climbed.setY(climbed.getY() + sweep(at.clone().add(climbed), 1, v.getY() - climbed.getY()));
+                if (horizontalSquared(climbed) > horizontalSquared(moved)) {
+                    moved = climbed;
+                }
+            }
+            return moved;
+        }
+
+        /** Makes a move found by {@link #next}. */
+        void advance(Vector move) {
+            Location from = at.clone();
+            at.add(move);
+            stuck = slowdown(from, at);
+            travelled += Math.hypot(move.getX(), move.getZ());
+            trail.add(at.toVector());
+        }
+
+        /** True if the server sees the body farther than {@link #STRAY_DISTANCE} from every place it was reckoned. */
+        boolean lost(Location seen) {
+            if (!world.equals(seen.getWorld())) {
+                return true;
+            }
+            Vector place = seen.toVector();
+            for (Vector reckoned : trail) {
+                if (reckoned.distanceSquared(place) <= STRAY_DISTANCE * STRAY_DISTANCE) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** The body's move from {@code from} by (x, y, z): y first, then the longer horizontal axis, like vanilla. */
+        private Vector collide(Location from, double x, double y, double z) {
+            Location to = from.clone();
+            double dy = sweep(to, 1, y);
+            to.setY(to.getY() + dy);
+            double dx;
+            double dz;
+            if (Math.abs(x) < Math.abs(z)) {
+                dz = sweep(to, 2, z);
+                to.setZ(to.getZ() + dz);
+                dx = sweep(to, 0, x);
+            } else {
+                dx = sweep(to, 0, x);
+                to.setX(to.getX() + dx);
+                dz = sweep(to, 2, z);
+            }
+            return new Vector(dx, dy, dz);
+        }
+
+        /** How far the body gets from {@code from} along one axis (0 x, 1 y, 2 z) towards {@code delta}. */
+        private double sweep(Location from, int axis, double delta) {
+            double length = Math.abs(delta);
+            if (length < 1.0E-9) {
+                return delta;
+            }
+            int samples = (int) Math.ceil(length / SWEEP_SAMPLE);
+            double free = 0;
+            for (int i = 1; i <= samples; i++) {
+                double reach = length * i / samples;
+                if (fits(shifted(from, axis, Math.copySign(reach, delta)))) {
+                    free = reach;
+                    continue;
+                }
+                double blocked = reach;
+                for (int k = 0; k < SWEEP_ITERATIONS; k++) {
+                    double mid = (free + blocked) / 2;
+                    if (fits(shifted(from, axis, Math.copySign(mid, delta)))) {
+                        free = mid;
+                    } else {
+                        blocked = mid;
+                    }
+                }
+                return Math.copySign(free, delta);
+            }
+            return delta;
+        }
+
+        private static Location shifted(Location from, int axis, double by) {
+            return from.clone().add(axis == 0 ? by : 0, axis == 1 ? by : 0, axis == 2 ? by : 0);
+        }
+
+        private boolean fits(Location feet) {
+            return Spots.isFree(world, feet, width, height);
+        }
+
+        /** True if the client's feet are in a ladder, a vine or anything else it climbs. */
+        private boolean climbable() {
+            int y = (int) Math.floor(at.getY() + TOUCH_INSET);
+            if (y < world.getMinHeight() || y >= world.getMaxHeight()) {
+                return false;
+            }
+            return tagged(Tag.CLIMBABLE, world.getBlockAt(at.getBlockX(), y, at.getBlockZ()).getType());
+        }
+
+        /** The strongest slowdown of the blocks the body went through moving from {@code from} to {@code to}. */
+        private @Nullable Vector slowdown(Location from, Location to) {
+            double half = width / 2 - TOUCH_INSET;
+            int minX = (int) Math.floor(Math.min(from.getX(), to.getX()) - half);
+            int maxX = (int) Math.floor(Math.max(from.getX(), to.getX()) + half);
+            int minY = Math.max(world.getMinHeight(), (int) Math.floor(Math.min(from.getY(), to.getY()) + TOUCH_INSET));
+            int maxY = Math.min(world.getMaxHeight() - 1,
+                    (int) Math.floor(Math.max(from.getY(), to.getY()) + height - TOUCH_INSET));
+            int minZ = (int) Math.floor(Math.min(from.getZ(), to.getZ()) - half);
+            int maxZ = (int) Math.floor(Math.max(from.getZ(), to.getZ()) + half);
+            Vector slowest = null;
+            for (int x = minX; x <= maxX; x++) {
+                for (int y = minY; y <= maxY; y++) {
+                    for (int z = minZ; z <= maxZ; z++) {
+                        Vector factor = slowdownOf(world.getBlockAt(x, y, z).getType());
+                        if (factor != null && (slowest == null || factor.getX() < slowest.getX())) {
+                            slowest = factor;
+                        }
+                    }
+                }
+            }
+            return slowest;
+        }
+
+        /** How much the client's move is scaled after it went through a block of {@code type} (vanilla). */
+        private static @Nullable Vector slowdownOf(Material type) {
+            return switch (type) {
+                case COBWEB -> new Vector(0.25, 0.05, 0.25);
+                case SWEET_BERRY_BUSH -> new Vector(0.8, 0.75, 0.8);
+                case POWDER_SNOW -> new Vector(0.9, 1.5, 0.9);
+                default -> null;
+            };
+        }
+
+        private static boolean tagged(@Nullable Tag<Material> tag, Material type) {
+            return tag != null && tag.isTagged(type);
+        }
+
+        private static double horizontalSquared(Vector move) {
+            return move.getX() * move.getX() + move.getZ() * move.getZ();
         }
     }
 

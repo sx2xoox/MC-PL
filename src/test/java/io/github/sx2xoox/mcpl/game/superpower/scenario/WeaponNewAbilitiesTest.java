@@ -26,6 +26,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Tag;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -918,11 +919,13 @@ class WeaponNewAbilitiesTest {
     }
 
     /**
-     * 일섬 돌격 at 0, 150 and 250 ms (the server hears where the charging lancer is none, three and five ticks late).
-     * The charge's length was measured on the velocities sent, but the spear point still skewered where the server
-     * last heard of the lancer: an enemy near the end of the lane was never skewered (the lancer's client had long run
-     * past it), the skewered enemies rode at the lagging position, behind the lancer's back, and the hurl went off
-     * blocks behind the spot where the lancer really stopped.
+     * 일섬 돌격 at 0, 150 and 250 ms (the server hears where the charging lancer, and every enemy, is none, three
+     * and five ticks late). The charge's length was measured on the velocities sent, but the spear point still
+     * skewered where the server last heard of the lancer: an enemy near the end of the lane was never skewered (the
+     * lancer's client had long run past it), the skewered enemies rode at the lagging position, behind the lancer's
+     * back, and the hurl went off blocks behind the spot where the lancer really stopped. Then the enemies on the
+     * spear were steered from their own lagging positions: with a ping of their own the pull kept going after they
+     * were there, and threw them up to nine blocks past the spear point.
      */
     @Test
     void lancerChargeSkewersCarriesAndHurlsWhereALaggingLancerReallyIs() {
@@ -933,12 +936,17 @@ class WeaponNewAbilitiesTest {
                 s.place(s.enemy, 0.5, 4.5, 180); // early in the lane
                 s.place(s.enemy2, 0.5, 14.0, 180); // near its end (the lane is 14 blocks long)
                 s.owner.setPing(ping);
+                s.enemy.setPing(ping);
+                s.enemy2.setPing(ping);
                 Location start = s.owner.getLocation();
-                LaggyClients clients = new LaggyClients(s).add(s.owner, ping / 50).add(s.enemy, 0).add(s.enemy2, 0);
+                LaggyClients clients = new LaggyClients(s).add(s.owner, ping / 50).add(s.enemy, ping / 50)
+                        .add(s.enemy2, ping / 50);
                 s.assertSucceeded(s.ultimate(), "일섬 돌격");
                 Location hurl = null;
                 Location lancerAtHurl = null;
                 List<Location> enemiesAtHurl = List.of();
+                double nearest = Double.MAX_VALUE;
+                double farthest = -Double.MAX_VALUE;
                 for (int i = 0; i < 40; i++) {
                     Location lancer = clients.at(s.owner);
                     List<Location> enemies = List.of(clients.at(s.enemy), clients.at(s.enemy2));
@@ -948,6 +956,16 @@ class WeaponNewAbilitiesTest {
                         hurl = soundAt(s.owner, heard, "item.mace.smash_ground_heavy");
                         lancerAtHurl = lancer;
                         enemiesAtHurl = enemies;
+                    }
+                    if (hurl != null) {
+                        continue;
+                    }
+                    for (TestPlayer enemy : s.enemies()) {
+                        if (s.hitsBy(s.owner, enemy).size() == 1) { // on the spear
+                            double ahead = clients.at(enemy).getZ() - clients.at(s.owner).getZ();
+                            nearest = Math.min(nearest, ahead);
+                            farthest = Math.max(farthest, ahead);
+                        }
                     }
                 }
                 Location end = clients.at(s.owner);
@@ -973,6 +991,8 @@ class WeaponNewAbilitiesTest {
                     assertTrue(ahead > 0.8 && ahead < 3.8,
                             "the enemies ride on the spear point, ahead of the lancer: " + run + ", " + ahead);
                 }
+                assertTrue(nearest > 0.8 && farthest < 3.8,
+                        "all the way, whatever their ping: " + run + ", " + nearest + " to " + farthest);
                 s.place(s.owner, 0.5, 0.5, 0);
                 s.layout();
                 s.ticks(60);
@@ -986,14 +1006,15 @@ class WeaponNewAbilitiesTest {
     /**
      * Charging into a wall at 0, 150 and 250 ms: the lancer's client stops at the wall while the steps sent run on past
      * it (the server sees it stand still only a round trip later). The charge stops at the wall, the hurl goes off
-     * there, and an enemy behind the wall is never skewered through it.
+     * there, and an enemy right behind the wall is never skewered through it: the spear point reaches past the body,
+     * and it used to reach through the wall the lancer stopped at (skewering, carrying and hurling the enemy).
      */
     @Test
     void lancerChargeNeverSkewersThroughAWallWhateverThePing() {
         for (int ping : new int[] {0, 150, 250}) {
             try (Scenario s = Scenario.ffa("lancer")) {
                 String run = ping + " ms";
-                s.place(s.enemy, 0.5, 9.5, 180); // behind the wall
+                s.place(s.enemy, 0.5, 7.3, 180); // right behind the wall
                 s.place(s.enemy2, -6.5, 0.5, 0);
                 s.world.wallAlongX(-3, 3, 6, 3, Material.STONE);
                 s.owner.setPing(ping);
@@ -1019,6 +1040,148 @@ class WeaponNewAbilitiesTest {
         }
     }
 
+    /**
+     * 일섬 돌격 at a slant along a wall at 0, 150 and 250 ms: the lancer's client slides along the wall, like any
+     * client, and charges on. Checked on the straight line ahead, the charge stopped right away as if it had run into
+     * a wall, and the enemy further along was never reached.
+     */
+    @Test
+    void lancerChargeSlidesAlongAWallWhateverThePing() {
+        double stop = Double.NaN;
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = Scenario.ffa("lancer")) {
+                String run = ping + " ms";
+                wallAlongZ(s, 2, -2, 18, Material.STONE);
+                s.place(s.owner, 1.5, 0.5, -15);
+                s.place(s.enemy, 1.4, 8.5, 180);
+                s.place(s.enemy2, -8.5, 0.5, 0);
+                s.owner.setPing(ping);
+                s.enemy.setPing(ping);
+                Location start = s.owner.getLocation();
+                Vector heading = start.getDirection().setY(0).normalize();
+                LaggyClients clients = new LaggyClients(s).add(s.owner, ping / 50).add(s.enemy, ping / 50);
+                s.assertSucceeded(s.ultimate(), "일섬 돌격");
+                Location hurl = null;
+                Location lancerAtHurl = null;
+                for (int i = 0; i < 40; i++) {
+                    Location lancer = clients.at(s.owner);
+                    int heard = s.owner.getHeardSounds().size();
+                    clients.tick();
+                    if (hurl == null) {
+                        hurl = soundAt(s.owner, heard, "item.mace.smash_ground_heavy");
+                        lancerAtHurl = lancer;
+                    }
+                }
+                Location end = clients.at(s.owner);
+                clients.close();
+                assertEquals(2, s.hitsBy(s.owner, s.enemy).size(),
+                        "the enemy further along is skewered, then hurled: " + run + ", " + s.hits());
+                double travelled = horizontalDistance(start, end);
+                assertTrue(travelled > s.param("ult_distance") - 1.5, "the charge runs on: " + run + ", " + end);
+                if (Double.isNaN(stop)) {
+                    stop = travelled;
+                } else {
+                    assertEquals(stop, travelled, 0.15, "and stops at the same place whatever the ping: " + run);
+                }
+                assertNotNull(hurl, "the charge ends in a hurl: " + run);
+                Location front = lancerAtHurl.clone().add(heading.clone().multiply(1.6));
+                assertTrue(horizontalDistance(front, hurl) < 0.3,
+                        "right in front of the lancer as it stops: " + run + ", " + lancerAtHurl + " vs " + hurl);
+                wallAlongZ(s, 2, -2, 18, Material.AIR);
+                s.place(s.owner, -4.5, 0.5, 0);
+                s.ticks(60);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                assertEquals(0, blockDisplays(s));
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * 일섬 돌격 into cobwebs, and into vines, at 0, 150 and 250 ms: the lancer's client crawls through the webs at
+     * a quarter of the speed and creeps through the vines. The steps sent ran on as if they were not there, so the
+     * spear point skewered an enemy waiting behind them while the lancer was still stuck blocks away. It is skewered
+     * once the lancer really gets there.
+     */
+    @Test
+    void lancerChargeCrawlsThroughCobwebsAndVinesWhateverThePing() {
+        for (Material type : new Material[] {Material.COBWEB, Material.VINE}) {
+            double stop = Double.NaN;
+            int above = type == Material.COBWEB ? 1 : 0;
+            for (int ping : new int[] {0, 150, 250}) {
+                try (Scenario s = Scenario.ffa("lancer")) {
+                    String run = type + ", " + ping + " ms";
+                    plant(s, 4, 6, above, type);
+                    s.place(s.enemy, 0.5, 9.5, 180); // behind them
+                    s.place(s.enemy2, -8.5, 0.5, 0);
+                    s.owner.setPing(ping);
+                    s.enemy.setPing(ping);
+                    Location start = s.owner.getLocation();
+                    LaggyClients clients = new LaggyClients(s).add(s.owner, ping / 50).add(s.enemy, ping / 50);
+                    s.assertSucceeded(s.ultimate(), "일섬 돌격");
+                    double reachedFrom = Double.NaN;
+                    Location hurl = null;
+                    Location lancerAtHurl = null;
+                    for (int i = 0; i < 40; i++) {
+                        Location lancer = clients.at(s.owner);
+                        double enemyZ = clients.at(s.enemy).getZ();
+                        int heard = s.owner.getHeardSounds().size();
+                        clients.tick();
+                        if (Double.isNaN(reachedFrom) && !s.hitsBy(s.owner, s.enemy).isEmpty()) {
+                            reachedFrom = enemyZ - lancer.getZ();
+                        }
+                        if (hurl == null) {
+                            hurl = soundAt(s.owner, heard, "item.mace.smash_ground_heavy");
+                            lancerAtHurl = lancer;
+                        }
+                    }
+                    Location end = clients.at(s.owner);
+                    clients.close();
+                    assertTrue(reachedFrom < 3.0,
+                            "the enemy is skewered once the lancer's client gets to it: " + run + ", " + reachedFrom);
+                    double travelled = horizontalDistance(start, end);
+                    if (Double.isNaN(stop)) {
+                        stop = travelled;
+                    } else {
+                        assertEquals(stop, travelled, 0.15,
+                                "the charge stops at the same place whatever the ping: " + run);
+                    }
+                    assertNotNull(hurl, "the charge ends in a hurl: " + run);
+                    assertEquals(lancerAtHurl.getZ() + 1.6, hurl.getZ(), 0.3,
+                            "right in front of the lancer as it stops: " + run + ", " + lancerAtHurl);
+                    plant(s, 4, 6, above, Material.AIR);
+                    s.place(s.owner, 0.5, 0.5, 0);
+                    s.ticks(60);
+                    assertEquals(0, s.damageTaken(s.owner), EPSILON);
+                    assertEquals(0, blockDisplays(s));
+                    s.finishClean();
+                }
+            }
+        }
+    }
+
+    /** A wall of {@code type} along z at {@code x}, from {@code z1} to {@code z2}, three blocks high. */
+    private static void wallAlongZ(Scenario s, int x, int z1, int z2, Material type) {
+        for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
+            for (int y = 0; y < 3; y++) {
+                s.world.setBlock(x, FlatWorld.FLOOR_Y + 1 + y, z, type);
+            }
+        }
+    }
+
+    /**
+     * Blocks of {@code type} from {@code z1} to {@code z2} across x = -1..1, {@code above} blocks above the floor: a
+     * cobweb hangs at head height (one lying on the ground counts as a hazard, and a charge stops before it), a vine
+     * grows at the feet.
+     */
+    private static void plant(Scenario s, int z1, int z2, int above, Material type) {
+        for (int x = -1; x <= 1; x++) {
+            for (int z = z1; z <= z2; z++) {
+                s.world.setBlock(x, FlatWorld.FLOOR_Y + 1 + above, z, type);
+            }
+        }
+    }
+
     /** Where {@code listener} heard the first sound named like {@code key} since {@code from}, null if none. */
     private static @Nullable Location soundAt(TestPlayer listener, int from, String key) {
         var heard = listener.getHeardSounds();
@@ -1034,8 +1197,9 @@ class WeaponNewAbilitiesTest {
      * Players whose real position is their client's, for the bugs a plain world simulation hides. A real server never
      * reads a player's motion back ({@code Player#getVelocity} is only what it last sent): every client tick each
      * player moves by the last velocity the server sent it (then gravity, drag and ground friction over the flat floor;
-     * a wall stops it flush against it), and the server sees where it is {@code lag} ticks late. The harness's own
-     * physics is off while they run.
+     * a wall stops it flush against it, one horizontal axis at a time, the longer first; on a vine it creeps, and the
+     * move after it went through a cobweb is slowed to a crawl), and the server sees where it is {@code lag} ticks
+     * late. The harness's own physics is off while they run.
      */
     private static final class LaggyClients {
 
@@ -1097,6 +1261,8 @@ class WeaponNewAbilitiesTest {
             private final Vector velocity = new Vector();
             private Vector sent = new Vector();
             private Vector marked = new Vector();
+            /** The last move went through a cobweb: the next one is slowed down (vanilla's stuck multiplier). */
+            private boolean webbed;
 
             Client(Scenario s, TestPlayer player, int lag) {
                 this.s = s;
@@ -1119,22 +1285,33 @@ class WeaponNewAbilitiesTest {
                     sent = now.clone();
                     velocity.copy(now);
                 }
-                at.setY(at.getY() + velocity.getY());
+                if (Tag.CLIMBABLE.isTagged(s.world.getBlockAt(at.getBlockX(), (int) Math.floor(at.getY() + 0.01),
+                        at.getBlockZ()).getType())) {
+                    // Like the client on a ladder or a vine: at most 0.15 a tick along each horizontal axis.
+                    velocity.setX(Math.clamp(velocity.getX(), -0.15, 0.15))
+                            .setZ(Math.clamp(velocity.getZ(), -0.15, 0.15));
+                }
+                Vector move = velocity.clone();
+                if (webbed) {
+                    // Like the client: the move after going through a cobweb is slowed to a crawl, its motion lost.
+                    move.multiply(new Vector(0.25, 0.05, 0.25));
+                    velocity.zero();
+                }
+                Location from = at.clone();
+                at.setY(at.getY() + move.getY());
                 boolean grounded = at.getY() <= FlatWorld.SURFACE;
                 if (grounded) {
                     at.setY(FlatWorld.SURFACE);
                 }
-                // One horizontal axis at a time, like the client: a wall stops the body flush against it.
-                double dx = sweep(velocity.getX(), true);
-                at.setX(at.getX() + dx);
-                if (dx != velocity.getX()) {
-                    velocity.setX(0);
+                // One horizontal axis at a time, the longer first like the client: a wall stops the body flush.
+                if (Math.abs(move.getX()) < Math.abs(move.getZ())) {
+                    moveAlong(move.getZ(), false);
+                    moveAlong(move.getX(), true);
+                } else {
+                    moveAlong(move.getX(), true);
+                    moveAlong(move.getZ(), false);
                 }
-                double dz = sweep(velocity.getZ(), false);
-                at.setZ(at.getZ() + dz);
-                if (dz != velocity.getZ()) {
-                    velocity.setZ(0);
-                }
+                webbed = goesThrough(from, Material.COBWEB);
                 double gravity = player.hasPotionEffect(PotionEffectType.SLOW_FALLING) && velocity.getY() <= 0
                         ? 0.01 : 0.08;
                 double vy = (velocity.getY() - gravity) * 0.98;
@@ -1147,6 +1324,42 @@ class WeaponNewAbilitiesTest {
                 seen.setYaw(look.getYaw());
                 seen.setPitch(look.getPitch());
                 player.teleport(seen);
+            }
+
+            /** Moves the body {@code delta} along x (or z) up to the first block; a block stops that axis' motion. */
+            private void moveAlong(double delta, boolean alongX) {
+                double done = sweep(delta, alongX);
+                if (alongX) {
+                    at.setX(at.getX() + done);
+                } else {
+                    at.setZ(at.getZ() + done);
+                }
+                if (done != delta) {
+                    if (alongX) {
+                        velocity.setX(0);
+                    } else {
+                        velocity.setZ(0);
+                    }
+                }
+            }
+
+            /** True if the body moving from {@code from} to where it is went through a block of {@code type}. */
+            private boolean goesThrough(Location from, Material type) {
+                double half = player.getWidth() / 2 - 0.01;
+                int minY = (int) Math.floor(Math.min(from.getY(), at.getY()) + 0.01);
+                int maxY = (int) Math.floor(Math.max(from.getY(), at.getY()) + player.getHeight() - 0.01);
+                for (int x = (int) Math.floor(Math.min(from.getX(), at.getX()) - half);
+                     x <= (int) Math.floor(Math.max(from.getX(), at.getX()) + half); x++) {
+                    for (int z = (int) Math.floor(Math.min(from.getZ(), at.getZ()) - half);
+                         z <= (int) Math.floor(Math.max(from.getZ(), at.getZ()) + half); z++) {
+                        for (int y = minY; y <= maxY; y++) {
+                            if (s.world.getBlockAt(x, y, z).getType() == type) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
             }
 
             /** How far the body gets along x (or z) towards {@code delta} before a block stops it. */
