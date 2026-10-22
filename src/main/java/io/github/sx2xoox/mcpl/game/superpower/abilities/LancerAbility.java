@@ -147,10 +147,17 @@ public final class LancerAbility extends Ability {
     /** The target of the spear hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
     private @Nullable LivingEntity pendingTarget;
     private boolean landed;
+    /** The hooks run for this instance (a charge borrowed by the gambler gets none, see {@link #land}). */
+    private boolean granted;
 
     @Override
     public AbilityInfo info() {
         return INFO;
+    }
+
+    @Override
+    public void onGrant() {
+        granted = true;
     }
 
     @Override
@@ -861,9 +868,13 @@ public final class LancerAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Deals a spear hit and tells whether it landed (nothing cancelled it). */
+    /**
+     * Deals a spear hit and tells whether it landed (nothing cancelled it). A charge borrowed by the gambler never
+     * hears {@link #onDamageDealt}; it counts every hit on a target that is still standing as landed.
+     */
     private boolean land(LivingEntity target, double damage) {
-        if (!(damage > 0)) {
+        if (!(damage > 0) || !granted) {
+            Combat.hit(ctx(), player(), target, damage);
             return Combat.isTargetable(ctx(), player(), target);
         }
         pendingTarget = target;

@@ -288,6 +288,20 @@ class WeaponNewAbilitiesTest {
         }
     }
 
+    @Test
+    void aBorrowedLancerChargeStillSkewersAndHurls() {
+        try (Scenario s = gambler()) {
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            s.assertSucceeded(borrow(s, "lancer"), "borrowed 일섬 돌격");
+            s.ticks(40);
+            assertEquals(2, s.hitsBy(s.owner, s.enemy).size(), "skewered, then hurled: " + s.hits());
+            assertTrue(s.enemy.getLocation().getZ() > s.owner.getLocation().getZ(), "carried ahead on the spear");
+            s.ticks(60);
+            assertEquals(0, blockDisplays(s));
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 검성 blade
 
     @Test
