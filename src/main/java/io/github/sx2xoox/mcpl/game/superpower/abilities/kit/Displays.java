@@ -30,6 +30,9 @@ import org.jspecify.annotations.Nullable;
  * Displays.animate(rock, Displays.scaled(1.4f), 6);   // grows smoothly over 6 ticks
  * }</pre>
  *
+ * <p>Displays spawned here always have yaw and pitch 0: orient them only through their transformation, and move
+ * them with {@link #moveTo} (not {@code teleport} to an entity location, which would add that entity's rotation).
+ *
  * <p>The transformation origin of a block display is the block's corner, so {@link #scaled(float)} and
  * {@link #transform} center the shape on the entity location. Item and text displays are already centered.
  * Spawned displays are tracked through {@link AbilityContext#track} (removed when the owner's ability is revoked or
@@ -83,7 +86,7 @@ public final class Displays {
      */
     public static <T extends Display> T spawn(AbilityContext ctx, Player owner, Location at, Class<T> type,
                                               long lifetimeTicks, @Nullable Consumer<? super T> setup) {
-        T display = at.getWorld().spawn(at, type, d -> {
+        T display = at.getWorld().spawn(unrotated(at), type, d -> {
             d.setPersistent(false);
             d.setBrightness(FULL_BRIGHT);
             d.setShadowRadius(0);
@@ -104,6 +107,33 @@ public final class Displays {
             });
         }
         return display;
+    }
+
+    /**
+     * Moves {@code display} to {@code to} without changing its own rotation. Use this instead of
+     * {@code display.teleport(location)}: an entity location (eye, feet) carries the entity's yaw and pitch, and a
+     * display teleported there would rotate its model by them <em>on top of</em> its transformation.
+     */
+    public static void moveTo(Display display, Location to) {
+        if (!display.isValid()) {
+            return;
+        }
+        Location spot = to.clone();
+        spot.setYaw(display.getLocation().getYaw());
+        spot.setPitch(display.getLocation().getPitch());
+        display.teleport(spot);
+    }
+
+    /**
+     * {@code at} with yaw and pitch 0. Displays orient through their transformation only: a display spawned at an
+     * entity location would otherwise also rotate its model by that entity's yaw and pitch (a classic "beam points
+     * somewhere else" bug).
+     */
+    public static Location unrotated(Location at) {
+        Location spot = at.clone();
+        spot.setYaw(0);
+        spot.setPitch(0);
+        return spot;
     }
 
     // ------------------------------------------------------------------ animation
