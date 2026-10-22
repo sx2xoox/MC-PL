@@ -223,7 +223,7 @@ class GamblerJackpotTest {
             s.ticks(s.paramTicks("jackpot_spin") + 2);
             List<String> announced = jackpotMessages(s.enemy);
             assertEquals(1, announced.size(), "the jackpot is announced to everyone: " + announced);
-            assertTrue(SIGNS.keySet().stream().map(GamblerJackpotTest::abilityName)
+            assertTrue(standaloneIds().stream().map(GamblerJackpotTest::abilityName)
                     .anyMatch(name -> announced.getFirst().contains("(" + name + ")")),
                     "names a standalone ability: " + announced.getFirst());
             s.ticks(300);
@@ -237,8 +237,9 @@ class GamblerJackpotTest {
     void jackpotOnlyBorrowsEnabledAbilities() {
         try (Scenario s = Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 0)
                 .configure(h -> {
-                    for (String id : SIGNS.keySet()) {
-                        if (!id.equals("thunder")) {
+                    for (AbilityRegistry.Entry entry : h.game.registry().all()) {
+                        String id = entry.info().id();
+                        if (!id.equals("thunder") && !id.equals("gambler")) {
                             h.game.abilities().setEnabled(h.game.registry(), id, false);
                         }
                     }
@@ -259,6 +260,19 @@ class GamblerJackpotTest {
             }
             s.finishClean();
         }
+    }
+
+    /** Every registered ability whose ultimate the gambler may borrow (all 50, not only the classified ones). */
+    private static Set<String> standaloneIds() {
+        AbilityRegistry registry = new AbilityRegistry();
+        BuiltinAbilities.registerAll(registry);
+        Set<String> ids = new TreeSet<>();
+        for (AbilityRegistry.Entry entry : registry.all()) {
+            if (entry.info().ultimateStandalone() && !entry.info().id().equals("gambler")) {
+                ids.add(entry.info().id());
+            }
+        }
+        return ids;
     }
 
     private static List<String> jackpotMessages(TestPlayer player) {
