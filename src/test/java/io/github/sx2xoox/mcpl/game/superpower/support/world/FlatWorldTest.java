@@ -84,11 +84,18 @@ class FlatWorldTest {
         assertNull(world.rayTraceBlocks(at(0.5, 65.6, 0.5), new Vector(0, 0, 1), 4.0, FluidCollisionMode.NEVER, true),
                 "the wall is out of reach");
 
-        RayTraceResult floor = world.rayTraceBlocks(at(3.0, 64.0, 3.0), new Vector(0, -1, 0), 5,
+        RayTraceResult floor = world.rayTraceBlocks(at(3.0, 64.2, 3.0), new Vector(0, -1, 0), 5,
                 FluidCollisionMode.NEVER, true);
         assertNotNull(floor, "a ray straight down along block edges still finds the floor");
         assertEquals(64.0, floor.getHitPosition().getY(), 1.0E-9);
         assertEquals(BlockFace.UP, floor.getHitBlockFace());
+
+        // Vanilla VoxelShape#clip: a ray starting exactly on the floor and pointing into it reports a hit 0.1% of
+        // its length INSIDE the block, not on the face. Feet snapped there sink into the ground on the client.
+        RayTraceResult onFloor = world.rayTraceBlocks(at(3.0, 64.0, 3.0), new Vector(0, -1, 0), 5,
+                FluidCollisionMode.NEVER, true);
+        assertNotNull(onFloor);
+        assertEquals(64.0 - 0.005, onFloor.getHitPosition().getY(), 1.0E-9);
 
         RayTraceResult inside = world.rayTraceBlocks(at(3.5, 63.5, 3.5), new Vector(0, 1, 0), 10,
                 FluidCollisionMode.NEVER, true);

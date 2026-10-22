@@ -31,6 +31,10 @@ public final class Spots {
     private static final double[] AROUND_HEIGHTS = {0, 0.5, 1.0, -0.5, -1.0};
     /** {@link #around} destinations hovering at most this high above ground are snapped onto it. */
     private static final double AROUND_GROUND_SNAP = 1.1;
+    /** {@link #snapToGround} starts its ray this far above the feet, outside the ground block. */
+    private static final double SNAP_LIFT = 0.05;
+    /** {@link #isFree} lets the body touch the floor it stands on, but not reach into it. */
+    private static final double FLOOR_TOLERANCE = 1.0E-3;
     /** Sampling distance of {@link #arenaReach}. */
     private static final double ARENA_STEP = 0.5;
 
@@ -80,7 +84,7 @@ public final class Spots {
             return false;
         }
         double half = width / 2 - 0.01;
-        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + 0.01, feet.getZ() - half,
+        BoundingBox box = new BoundingBox(feet.getX() - half, feet.getY() + FLOOR_TOLERANCE, feet.getZ() - half,
                 feet.getX() + half, feet.getY() + height, feet.getZ() + half);
         return !world.hasCollisionsIn(box);
     }
@@ -119,11 +123,17 @@ public final class Spots {
         return block == null || (!isHazard(block) && !isHazard(block.getRelative(BlockFace.UP)));
     }
 
-    /** Lowers {@code feet} (in place) onto the ground if the ground is at most {@code maxDrop} blocks below. */
+    /**
+     * Lowers {@code feet} (in place) onto the ground if the ground is at most {@code maxDrop} blocks below.
+     *
+     * <p>The ray starts {@link #SNAP_LIFT} above the feet: in vanilla, a ray that starts on (or in) a block reports
+     * a hit slightly <em>inside</em> it, and feet placed there sink into the ground on the client.
+     */
     public static void snapToGround(World world, Location feet, double maxDrop) {
-        RayTraceResult ground = world.rayTraceBlocks(feet, new Vector(0, -1, 0), maxDrop, FluidCollisionMode.NEVER,
-                true);
-        if (ground != null) {
+        Location from = feet.clone().add(0, SNAP_LIFT, 0);
+        RayTraceResult ground = world.rayTraceBlocks(from, new Vector(0, -1, 0), maxDrop + SNAP_LIFT,
+                FluidCollisionMode.NEVER, true);
+        if (ground != null && ground.getHitPosition().getY() <= from.getY() - 1.0E-4) {
             feet.setY(ground.getHitPosition().getY());
         }
     }
