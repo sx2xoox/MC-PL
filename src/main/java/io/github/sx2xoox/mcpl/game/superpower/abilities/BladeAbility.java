@@ -78,7 +78,7 @@ public final class BladeAbility extends Ability {
             .param("dash_width", 1.2)
             .param("ult_radius", 12)
             .param("ult_swords", 6)
-            .param("ult_damage", 3)
+            .param("ult_damage", 2.5)
             .param("ult_interval", 0.3)
             .param("ult_impact_radius", 1.3)
             .build();
@@ -92,6 +92,9 @@ public final class BladeAbility extends Ability {
     private static final double WAVE_REACH = 0.9;
     private static final double WAVE_ARC_RADIUS = 1.0;
     private static final double WAVE_ARC_DEGREES = 120;
+
+    /** How far behind the start of a wave or a dash (along its direction) an enemy's body may be and still be cut. */
+    private static final double BEHIND_TOLERANCE = 0.5;
 
     // Active: gale slash
     private static final double MIN_DASH = 1.0;
@@ -107,10 +110,14 @@ public final class BladeAbility extends Ability {
     private static final long SUMMON_TICKS = 10;
     private static final long HOLD_TICKS = 4;
     private static final long AIM_TICKS = 4;
-    /** The dive stops following its target this many ticks before it lands (the marker stays put, dodge now). */
-    private static final long COMMIT_TICKS = 5;
+    /**
+     * The dive stops following its target this many ticks before it lands (the marker stays put, dodge now): long
+     * enough for a sprinting enemy (0.28 blocks a tick) to get its whole body out of the impact radius.
+     */
+    private static final long COMMIT_TICKS = 8;
     private static final double DIVE_SPEED = 1.6;
-    private static final long MIN_DIVE_TICKS = 6;
+    /** At least {@link #COMMIT_TICKS}, so even a short dive leaves the full dodge window after the last aim. */
+    private static final long MIN_DIVE_TICKS = 8;
     private static final long MAX_DIVE_TICKS = 16;
     private static final long PLANTED_TICKS = 14;
     private static final int FADE_TICKS = 5;
@@ -136,15 +143,26 @@ public final class BladeAbility extends Ability {
     /** Distance from the sword's center to its point. */
     private static final double POINT = 0.85;
 
+    /** Most display entities one 검성 keeps alive at once; decorative cuts are left out beyond it. */
+    private static final int MAX_DISPLAYS = 24;
+
     private record Part(Material material, float width, float thickness, float length, float offset) {
     }
 
     /** Generation of the running landing protection; a newer one retires the older loop. */
     private int fallGuardToken;
+    /** Displays this ability spawned that may still be alive (pruned whenever the budget is checked). */
+    private final List<BlockDisplay> displays = new ArrayList<>();
 
     @Override
     public AbilityInfo info() {
         return INFO;
+    }
+
+    @Override
+    public void onRevoke() {
+        // The displays themselves are tracked and removed with the ability.
+        displays.clear();
     }
 
     // ------------------------------------------------------------------ passive: sword aura
@@ -211,7 +229,7 @@ public final class BladeAbility extends Ability {
             for (double d = 0; d <= advance + 1.0E-6; d += 0.5) {
                 Location sample = from.clone().add(direction.clone().multiply(Math.min(d, advance)));
                 for (LivingEntity enemy : ctx().enemiesNear(owner, sample, WAVE_REACH)) {
-                    if (struck.add(enemy.getUniqueId())) {
+                    if (ahead(start, direction, enemy) && struck.add(enemy.getUniqueId())) {
                         Combat.hit(ctx(), owner, enemy, damage);
                         waveHit(enemy);
                     }
@@ -242,12 +260,15 @@ public final class BladeAbility extends Ability {
 
     /** The thin blade of light riding in front of the wind crescent: a cyan sheet with a white edge. */
     private BlockDisplay[] waveBlade(Location start, Vector direction, float roll, long lifetime) {
+        if (!roomFor(2)) {
+            return new BlockDisplay[0]; // the crescent of particles alone still reads as the wave
+        }
         Player owner = player();
         Location at = oriented(start, direction);
-        BlockDisplay sheet = Displays.block(ctx(), owner, at, GLASS.createBlockData(),
-                Displays.transform(0, 0, 0.35f, 0.4f, 0.03f, 0.12f, 0, 0, roll), lifetime);
-        BlockDisplay edge = Displays.block(ctx(), owner, at, CORE.createBlockData(),
-                Displays.transform(0, 0, 0.42f, 0.3f, 0.02f, 0.03f, 0, 0, roll), lifetime);
+        BlockDisplay sheet = display(at, GLASS, Displays.transform(0, 0, 0.35f, 0.4f, 0.03f, 0.12f, 0, 0, roll),
+                lifetime);
+        BlockDisplay edge = display(at, CORE, Displays.transform(0, 0, 0.42f, 0.3f, 0.02f, 0.03f, 0, 0, roll),
+                lifetime);
         sheet.setTeleportDuration(1);
         edge.setTeleportDuration(1);
         Displays.animateNextTick(ctx(), owner, sheet, Displays.transform(0, 0, 0.35f, 1.9f, 0.03f, 0.18f, 0, 0, roll),
@@ -343,7 +364,10 @@ public final class BladeAbility extends Ability {
         return null;
     }
 
-    /** Enemies within {@code width} of the segment {@code from} to {@code to}, in the order the dash meets them. */
+    /**
+     * Enemies within {@code width} of the segment {@code from} to {@code to}, in the order the dash meets them. Those
+     * behind the starting point (pressed against the master's back) are not on the path.
+     */
     private List<LivingEntity> enemiesAlong(Player owner, Location from, Location to, double width) {
         Map<UUID, LivingEntity> found = new LinkedHashMap<>();
         Vector delta = to.toVector().subtract(from.toVector());
@@ -352,10 +376,22 @@ public final class BladeAbility extends Ability {
         for (int i = 0; i <= samples; i++) {
             Location sample = from.clone().add(delta.clone().multiply((double) i / samples));
             for (LivingEntity enemy : ctx().enemiesNear(owner, sample, width)) {
-                found.putIfAbsent(enemy.getUniqueId(), enemy);
+                if (ahead(from, delta, enemy)) {
+                    found.putIfAbsent(enemy.getUniqueId(), enemy);
+                }
             }
         }
         return new ArrayList<>(found.values());
+    }
+
+    /** False for an enemy whose body is more than half a block behind {@code from} along {@code direction}. */
+    private static boolean ahead(Location from, Vector direction, LivingEntity enemy) {
+        Vector flat = Motion.horizontal(direction);
+        if (flat.lengthSquared() < 1.0E-6) {
+            return true;
+        }
+        Vector offset = Fx.body(enemy).toVector().subtract(from.toVector()).setY(0);
+        return offset.dot(flat) >= -BEHIND_TOLERANCE;
     }
 
     /**
@@ -428,15 +464,15 @@ public final class BladeAbility extends Ability {
         Player owner = player();
         Vector delta = to.toVector().subtract(from.toVector());
         float length = (float) delta.length();
-        if (length < 0.2f) {
+        if (length < 0.2f || !roomFor(2)) {
             return;
         }
         Location middle = oriented(from.clone().add(delta.clone().multiply(0.5)), delta);
         float roll = Fx.jitter(12);
         long life = 14;
-        BlockDisplay sheet = Displays.block(ctx(), owner, middle, GLASS.createBlockData(),
+        BlockDisplay sheet = display(middle, GLASS,
                 Displays.transform(0, 0, -length / 2 + 0.05f, 0.34f, 0.03f, 0.1f, 0, 0, roll), life);
-        BlockDisplay core = Displays.block(ctx(), owner, middle, CORE.createBlockData(),
+        BlockDisplay core = display(middle, CORE,
                 Displays.transform(0, 0, -length / 2 + 0.05f, 0.06f, 0.035f, 0.1f, 0, 0, roll), life);
         Displays.animateNextTick(ctx(), owner, sheet, Displays.transform(0, 0, 0, 0.34f, 0.03f, length, 0, 0, roll),
                 2);
@@ -450,7 +486,7 @@ public final class BladeAbility extends Ability {
 
     /**
      * The cuts open on a struck enemy: two blades of light crossing in the plane across the dash, a burst, sparks
-     * and a ringing slice.
+     * and a ringing slice. The blades are left out (the burst stays) once the display budget is spent.
      */
     private void crossCut(LivingEntity enemy, Vector direction, int index) {
         Player owner = player();
@@ -458,10 +494,11 @@ public final class BladeAbility extends Ability {
         Location at = oriented(body, direction);
         float tilt = 38 + Fx.jitter(10);
         float first = index % 2 == 0 ? tilt : -tilt;
-        for (float roll : new float[] {first, -first}) {
+        float[] rolls = roomFor(4) ? new float[] {first, -first} : new float[0];
+        for (float roll : rolls) {
             for (boolean core : new boolean[] {false, true}) {
                 float depth = core ? 0.04f : 0.16f;
-                BlockDisplay part = Displays.block(ctx(), owner, at, (core ? CORE : GLASS).createBlockData(),
+                BlockDisplay part = display(at, core ? CORE : GLASS,
                         Displays.transform(0, 0, 0, 0.3f, 0.03f, depth, 0, 0, roll), 12);
                 Displays.animateNextTick(ctx(), owner, part,
                         Displays.transform(0, 0, 0, 2.0f, core ? 0.035f : 0.03f, depth, 0, 0, roll), 2);
@@ -496,7 +533,7 @@ public final class BladeAbility extends Ability {
     public ActivationResult onUltimate() {
         Player owner = player();
         double radius = Math.max(1, params().num("ult_radius"));
-        if (ctx().enemiesNear(owner, owner.getLocation(), radius).isEmpty()) {
+        if (ctx().enemiesNear(owner, owner.getLocation(), radius).stream().noneMatch(enemy -> seen(owner, enemy))) {
             return ActivationResult.fail("반경 " + AbilityInfo.formatNumber(radius) + "블록 안에 적이 없습니다");
         }
         Halo halo = new Halo(radius);
@@ -528,8 +565,7 @@ public final class BladeAbility extends Ability {
             this.roll = ThreadLocalRandom.current().nextFloat() * 180f;
             Location at = oriented(spawn, facing);
             for (int i = 0; i < SWORD_PARTS.length; i++) {
-                parts[i] = Displays.block(ctx(), player(), at, SWORD_PARTS[i].material().createBlockData(),
-                        pose(SWORD_PARTS[i], 0.1f, roll), lifetime);
+                parts[i] = display(at, SWORD_PARTS[i].material(), pose(SWORD_PARTS[i], 0.1f, roll), lifetime);
                 parts[i].setTeleportDuration(1);
             }
         }
@@ -720,13 +756,17 @@ public final class BladeAbility extends Ability {
 
         /**
          * The enemy within range with the fewest swords on it so far, nearest first. Enemies the master can see
-         * come first: breaking line of sight is the way to shake the swords off while others are in view.
+         * come first: breaking line of sight is the way to shake the swords off while others are in view. Enemies
+         * hidden by stealth are never hunted (a marker ring under them would give them away).
          */
         private @Nullable LivingEntity pickTarget(Player owner) {
             LivingEntity best = null;
             int fewest = Integer.MAX_VALUE;
             boolean bestVisible = false;
             for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), radius)) {
+                if (!seen(owner, enemy)) {
+                    continue;
+                }
                 int taken = assigned.getOrDefault(enemy.getUniqueId(), 0);
                 boolean visible = owner.hasLineOfSight(enemy);
                 if (best == null || (visible && !bestVisible) || (visible == bestVisible && taken < fewest)) {
@@ -778,10 +818,10 @@ public final class BladeAbility extends Ability {
             }
         }
 
-        /** While not committed the aim follows the target's feet. */
+        /** While not committed the aim follows the target's feet (not into stealth: it keeps the last spot then). */
         private void follow(Sword sword) {
             LivingEntity target = sword.target;
-            if (target != null && Combat.isTargetable(ctx(), player(), target)
+            if (target != null && Combat.isTargetable(ctx(), player(), target) && seen(player(), target)
                     && target.getWorld().equals(sword.aim.getWorld())) {
                 sword.aim = target.getLocation();
             }
@@ -857,6 +897,24 @@ public final class BladeAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Spawns a block display of the ability and counts it against {@link #MAX_DISPLAYS}. */
+    private BlockDisplay display(Location at, Material material, Transformation pose, long lifetime) {
+        BlockDisplay display = Displays.block(ctx(), player(), at, material.createBlockData(), pose, lifetime);
+        displays.add(display);
+        return display;
+    }
+
+    /** True if {@code count} more displays fit in {@link #MAX_DISPLAYS}. */
+    private boolean roomFor(int count) {
+        displays.removeIf(display -> !display.isValid());
+        return displays.size() + count <= MAX_DISPLAYS;
+    }
+
+    /** False for an enemy player hidden from the owner by stealth. */
+    private static boolean seen(Player owner, LivingEntity enemy) {
+        return !(enemy instanceof Player player) || owner.canSee(player);
+    }
 
     /** The pose of one sword part at {@code scale} (1 = full size), rolled {@code roll} degrees about its length. */
     private static Transformation pose(Part part, float scale, float roll) {

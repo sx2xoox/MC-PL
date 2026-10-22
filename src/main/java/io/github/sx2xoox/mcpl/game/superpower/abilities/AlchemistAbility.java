@@ -167,6 +167,8 @@ public final class AlchemistAbility extends Ability {
     private @Nullable LivingEntity pendingTarget;
     private boolean landed;
     private long lastPotionPop = Long.MIN_VALUE / 2;
+    /** The passive runs (a borrowed ultimate on a gambler has no passive stretching its buffs). */
+    private boolean granted;
 
     private record Seen(int duration, int amplifier) {
     }
@@ -174,6 +176,11 @@ public final class AlchemistAbility extends Ability {
     @Override
     public AbilityInfo info() {
         return INFO;
+    }
+
+    @Override
+    public void onGrant() {
+        granted = true;
     }
 
     @Override
@@ -185,7 +192,7 @@ public final class AlchemistAbility extends Ability {
 
     /**
      * Rescales every freshly applied (or refreshed) timed effect once: beneficial ones last longer, harmful ones
-     * shorter. An effect counts as fresh when it is new, its level changed or its duration went up since last tick.
+     * shorter. An effect counts as fresh when it is new, its level went up or its duration went up since last tick.
      */
     @Override
     public void onTick(long tick) {
@@ -202,8 +209,9 @@ public final class AlchemistAbility extends Ability {
                 continue;
             }
             Seen last = seen.get(type);
-            boolean fresh = last == null || last.amplifier() != effect.getAmplifier()
-                    || effect.getDuration() > last.duration();
+            // A lower level showing up is a weaker effect resurfacing after a stronger one ran out, not a new one.
+            boolean fresh = last == null || effect.getAmplifier() > last.amplifier()
+                    || effect.getAmplifier() == last.amplifier() && effect.getDuration() > last.duration();
             seen.put(type, new Seen(fresh ? rescale(owner, effect) : effect.getDuration(), effect.getAmplifier()));
         }
         seen.keySet().retainAll(present);
@@ -221,13 +229,21 @@ public final class AlchemistAbility extends Ability {
             return effect.getDuration();
         }
         int duration = (int) Math.clamp(Math.round(effect.getDuration() * factor), 1L, Integer.MAX_VALUE);
-        owner.removePotionEffect(effect.getType());
+        boolean harmful = category == PotionEffectType.Category.HARMFUL;
+        if (harmful) {
+            // Only a removal can shorten an effect.
+            owner.removePotionEffect(effect.getType());
+        }
+        // A longer effect of the same level replaces the old one in place: no flicker, no lost hidden effect.
         owner.addPotionEffect(new PotionEffect(effect.getType(), duration, effect.getAmplifier(), effect.isAmbient(),
                 effect.hasParticles(), effect.hasIcon()));
-        // A curse is neutralised (violet turning green), a blessing glitters a moment longer.
+        // A curse is neutralised (violet turning green), a blessing glitters a moment longer. Throttled: an aura
+        // that refreshes an effect every few ticks would otherwise rattle on and on.
+        if (!potionPop(owner, harmful)) {
+            return duration;
+        }
         Location body = Fx.body(owner);
-        potionPop(owner, category == PotionEffectType.Category.HARMFUL);
-        if (category == PotionEffectType.Category.HARMFUL) {
+        if (harmful) {
             Vfx.cloud(ctx(), body, Particle.DUST_COLOR_TRANSITION, 6, 0.3, 0, TRANSMUTE, false);
             Vfx.cloud(ctx(), body, Particle.WHITE_SMOKE, 2, 0.2, 0.01, null, false);
             Fx.sound(body, Sound.BLOCK_BREWING_STAND_BREW, 0.35f, 1.8f + Fx.jitter(0.1f));
@@ -241,11 +257,13 @@ public final class AlchemistAbility extends Ability {
     /**
      * A little flask pops out over the alchemist's head and is drained: violet when it neutralised a curse, green
      * when it stretched a blessing. At most one at a time.
+     *
+     * @return false if it was skipped (too soon after the last one)
      */
-    private void potionPop(Player owner, boolean antidote) {
+    private boolean potionPop(Player owner, boolean antidote) {
         long now = ctx().currentTick();
         if (now - lastPotionPop < POTION_POP_COOLDOWN) {
-            return;
+            return false;
         }
         lastPotionPop = now;
         ItemStack item = ItemStack.of(Material.POTION);
@@ -263,6 +281,7 @@ public final class AlchemistAbility extends Ability {
         });
         Fx.sound(above, antidote ? Sound.ENTITY_GENERIC_DRINK : Sound.ITEM_BOTTLE_FILL, 0.35f,
                 1.5f + Fx.jitter(0.1f));
+        return true;
     }
 
     @Override
@@ -691,7 +710,9 @@ public final class AlchemistAbility extends Ability {
         Fx.sound(chest, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 1.0f, 0.8f + Fx.jitter(0.05f));
         Fx.sound(chest, Sound.ENTITY_ZOMBIE_VILLAGER_CURE, 0.4f, 1.8f);
         owner.sendActionBar(Text.mm("<b><gradient:#FFF6D0:#FFC83D:#C1121F>현자의 돌!</gradient></b>"));
-        shards(ticks);
+        // The shards and the countdown last as long as the buffs, which the passive stretches on the alchemist.
+        long buffTicks = granted ? Math.round(ticks * (1 + Math.max(0, params().num("boon_extend")) / 100.0)) : ticks;
+        shards(buffTicks);
     }
 
     /** Removes harmful potion effects and fire. */

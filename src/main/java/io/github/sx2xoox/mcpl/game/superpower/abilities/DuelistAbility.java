@@ -68,11 +68,12 @@ public final class DuelistAbility extends Ability {
                     "반경 {duel_radius}블록 안에 적이 한 명뿐이면 그 적에게 주는 피해가 {duel_offense}% 증가하고 "
                             + "받는 피해가 {duel_defense}% 감소합니다.")
             .active("결투 신청",
-                    "조준한 적({challenge_range}블록)에게 {challenge_duration}초간 결투 표식을 겁니다. 표식이 붙은 적에게 "
-                            + "주는 피해가 {challenge_bonus}% 증가하고, 다른 적에게 받는 피해는 {challenge_guard}% 감소합니다.",
+                    "조준한 적({challenge_range}블록, 소환수 제외)에게 {challenge_duration}초간 결투 표식을 겁니다. 표식이 "
+                            + "붙은 적에게 주는 피해가 {challenge_bonus}% 증가하고, 다른 적에게 받는 피해는 "
+                            + "{challenge_guard}% 감소합니다.",
                     12)
             .ultimate("결투장",
-                    "조준한(없으면 가장 가까운) {ult_range}블록 안의 적과 함께 반경 {ult_radius}블록의 결투장에 "
+                    "조준한(없으면 가장 가까운) {ult_range}블록 안의 적(소환수 제외)과 함께 반경 {ult_radius}블록의 결투장에 "
                             + "{ult_duration}초간 들어갑니다. 둘 다 결투장을 벗어날 수 없고, 바깥과는 서로 피해를 주고받을 수 "
                             + "없으며, 다른 적은 밀려납니다. 결투 중에는 일기토가 항상 적용되고, 상대를 쓰러뜨리면 체력을 "
                             + "{ult_victory_heal} 회복합니다.")
@@ -127,6 +128,7 @@ public final class DuelistAbility extends Ability {
     private static final Material PANEL = Material.YELLOW_STAINED_GLASS;
     private static final Material PANEL_FLASH = Material.WHITE_STAINED_GLASS;
     private static final TextColor GOLD = TextColor.color(0xF2B632);
+    private static final Component EMBLEM = Component.text("⚔", GOLD, TextDecoration.BOLD);
 
     private @Nullable LivingEntity marked;
     private long markUntil = -1;
@@ -261,11 +263,15 @@ public final class DuelistAbility extends Ability {
         }
         Player owner = player();
         LivingEntity lone = loneEnemy();
+        // The stance holds against a stealthed enemy too, but never names it nor points the way to it.
+        boolean hidden = lone != null && !seen(owner, lone);
         if ((lone != null) != stanceShown) {
             stanceShown = lone != null;
             if (stanceShown) {
-                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⚔ 일기토</" + COLOR_TAG + "> <gray>"
-                        + "<name>와(과) 1:1</gray>", Placeholder.component("name", lone.name())));
+                owner.sendActionBar(hidden
+                        ? Text.mm("<" + COLOR_TAG + ">⚔ 일기토</" + COLOR_TAG + "> <gray>1:1</gray>")
+                        : Text.mm("<" + COLOR_TAG + ">⚔ 일기토</" + COLOR_TAG + "> <gray><name>와(과) 1:1</gray>",
+                                Placeholder.component("name", lone.name())));
                 Fx.sound(owner.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.5f, 1.5f + Fx.jitter(0.1f));
             }
         }
@@ -274,7 +280,7 @@ public final class DuelistAbility extends Ability {
         }
         Location feet = owner.getLocation().add(0, 0.08, 0);
         Vfx.ring(ctx(), feet, 0.65, 12, tick * 0.05, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
-        if (tick % (STANCE_PERIOD * 2) == 0 && lone.getWorld().equals(feet.getWorld())) {
+        if (!hidden && tick % (STANCE_PERIOD * 2) == 0 && lone.getWorld().equals(feet.getWorld())) {
             Location chest = feet.clone().add(0, owner.getHeight() * 0.5, 0);
             Location toward = chest.clone().add(Motion.horizontal(lone.getLocation().toVector()
                     .subtract(chest.toVector())).multiply(1.4));
@@ -289,31 +295,41 @@ public final class DuelistAbility extends Ability {
         Player owner = player();
         double range = Math.max(1, params().num("challenge_range"));
         LivingEntity target = ctx().findTarget(owner, range);
-        if (target == null) {
+        // An enemy hidden by stealth cannot be challenged (the golden mark would give it away to everyone), nor
+        // someone's summon (a wolf is no duellist, and marking one would only buy protection from the players).
+        if (target == null || !duelable(owner, target)) {
             return ActivationResult.fail("시야에 결투할 적이 없습니다");
         }
         long duration = Math.max(1, params().ticks("challenge_duration"));
         marked = target;
         markUntil = ctx().currentTick() + duration;
         int token = ++markToken;
-        TextDisplay emblem = Displays.text(ctx(), owner, emblemSpot(target),
-                Component.text("⚔", GOLD, TextDecoration.BOLD), 0.4f, duration + 10);
+        TextDisplay emblem = Displays.text(ctx(), owner, emblemSpot(target), EMBLEM, 0.4f, duration + 10);
         emblem.setTeleportDuration(2);
         Displays.animateNextTick(ctx(), owner, emblem, Displays.centered(0, 0, 0, 1.6f, 1.6f, 1.6f, 0, 0, 0), 4);
         challengeCast(owner, target);
 
+        boolean[] veiled = {false};
         Loop.repeat(ctx(), owner, MARK_FX_PERIOD, MARK_FX_PERIOD, duration / MARK_FX_PERIOD, run -> {
             if (token != markToken || !Combat.isTargetable(ctx(), owner, target)) {
                 return false;
             }
+            // The challenge holds through stealth, but its mark never shows where a stealthed enemy is.
+            boolean hidden = !seen(owner, target);
             if (emblem.isValid()) {
+                if (hidden != veiled[0]) {
+                    veiled[0] = hidden;
+                    emblem.text(hidden ? Component.empty() : EMBLEM);
+                }
                 emblem.teleport(emblemSpot(target));
                 if (run % 10 == 0) {
                     float pulse = run % 20 == 0 ? 1.9f : 1.6f;
                     Displays.animate(emblem, Displays.centered(0, 0, 0, pulse, pulse, pulse, 0, 0, 0), 5);
                 }
             }
-            markAura(owner, target, run);
+            if (!hidden) {
+                markAura(owner, target, run);
+            }
             return true;
         }, () -> {
             if (emblem.isValid()) {
@@ -394,9 +410,16 @@ public final class DuelistAbility extends Ability {
         }
         double range = Math.max(1, params().num("ult_range"));
         LivingEntity target = ctx().findTarget(owner, range);
-        if (target == null) {
-            List<LivingEntity> near = ctx().enemiesNear(owner, owner.getLocation(), range);
-            target = near.isEmpty() ? null : near.getFirst();
+        if (target == null || !duelable(owner, target)) {
+            // Else the nearest enemy fighter the duellist can see: nobody is dragged into a duel out of stealth, and
+            // a ring around the duellist and a summoned wolf would only shut the players out.
+            target = null;
+            for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), range)) {
+                if (duelable(owner, enemy)) {
+                    target = enemy;
+                    break;
+                }
+            }
         }
         if (target == null || !target.getWorld().equals(owner.getWorld())) {
             return ActivationResult.fail("반경 " + AbilityInfo.formatNumber(range) + "블록 안에 결투할 적이 없습니다");
@@ -531,6 +554,9 @@ public final class DuelistAbility extends Ability {
             }
             if (run % 5 == 0) {
                 for (LivingEntity duelist : List.of(owner, target)) {
+                    if (!seen(owner, duelist)) {
+                        continue; // an opponent that slipped into stealth is not pointed out
+                    }
                     Vfx.ring(ctx(), duelist.getLocation().add(0, 0.08, 0), 0.6, 10, run * 0.2,
                             Particle.DUST_COLOR_TRANSITION, duelist == owner ? PALETTE.glow(0.8f) : PALETTE.fade(0.8f),
                             false);
@@ -772,6 +798,23 @@ public final class DuelistAbility extends Ability {
                 registered = false;
             }
         }
+    }
+
+    /** False for an enemy player hidden from the owner by stealth. */
+    private static boolean seen(Player owner, LivingEntity entity) {
+        return !(entity instanceof Player player) || player.equals(owner) || owner.canSee(player);
+    }
+
+    /**
+     * An enemy one can duel: in sight, and a fighter in its own right (a participant, or a practice dummy), never
+     * another participant's summon.
+     */
+    private boolean duelable(Player owner, LivingEntity enemy) {
+        if (!seen(owner, enemy)) {
+            return false;
+        }
+        Player master = ctx().resolveAttacker(enemy);
+        return master == null || master.equals(enemy);
     }
 
     private static Component timerText(long ticks) {

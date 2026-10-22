@@ -16,6 +16,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.LancerAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.NinjaAbility;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.game.superpower.support.DummyAbility;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -29,6 +30,7 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
@@ -286,6 +288,20 @@ class WeaponNewAbilitiesTest {
         }
     }
 
+    @Test
+    void aBorrowedLancerChargeStillSkewersAndHurls() {
+        try (Scenario s = gambler()) {
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            s.assertSucceeded(borrow(s, "lancer"), "borrowed 일섬 돌격");
+            s.ticks(40);
+            assertEquals(2, s.hitsBy(s.owner, s.enemy).size(), "skewered, then hurled: " + s.hits());
+            assertTrue(s.enemy.getLocation().getZ() > s.owner.getLocation().getZ(), "carried ahead on the spear");
+            s.ticks(60);
+            assertEquals(0, blockDisplays(s));
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 검성 blade
 
     @Test
@@ -370,6 +386,26 @@ class WeaponNewAbilitiesTest {
     }
 
     @Test
+    void bladeSlashAndWaveNeverCutAnEnemyAtTheMastersBack() {
+        try (Scenario s = Scenario.builder("blade").param("wave_chance", 100).start()) {
+            s.owner.getInventory().setItemInMainHand(ItemStack.of(Material.IRON_SWORD));
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -0.4, 0); // pressed against the master's back
+            s.melee(s.owner, s.enemy, 4);
+            s.ticks(8);
+            assertEquals(4 + s.param("wave_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the wave goes forward");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "not backwards");
+
+            s.clearHits();
+            s.assertSucceeded(s.active(), "질풍참");
+            s.ticks(8);
+            assertEquals(s.param("dash_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the slash cuts ahead");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "and leaves the one behind alone");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void bladeGaleSlashStopsBeforeAWallAndFailsWhenBlocked() {
         try (Scenario s = Scenario.ffa("blade")) {
             s.world.wallAlongX(-3, 3, 3, 3, Material.STONE);
@@ -442,6 +478,69 @@ class WeaponNewAbilitiesTest {
                     "every sword found the visible enemy where it went");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "the hidden enemy is passed over");
             s.world.wallAlongX(1, 4, 5, 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bladeSwordsCanBeOutrunOnceTheirMarkIsSet() {
+        try (Scenario s = Scenario.ffa("blade")) {
+            s.place(s.enemy2, 40.5, 0.5, 0); // out of range: every sword goes after the runner
+            double radius = 5;
+            double sprint = 0.28; // blocks per tick
+            s.assertSucceeded(s.ultimate(), "천검");
+            for (int t = 0; t < 120; t++) {
+                double angle = t * sprint / radius;
+                s.place(s.enemy, 0.5 + Math.cos(angle) * radius, 0.5 + Math.sin(angle) * radius, 0);
+                s.ticks(1);
+            }
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON,
+                    "a sprinting enemy gets out of every marked spot before the sword lands: " + s.hits());
+            s.ticks(40);
+            assertEquals(0, blockDisplays(s), "the swords dissolved");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bladeKeepsItsDisplaysWithinTheBudget() {
+        try (Scenario s = Scenario.ffa("blade")) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 0.8, 4.5, 180);
+            s.assertSucceeded(s.ultimate(), "천검");
+            s.ticks(3);
+            assertEquals(s.param("ult_swords") * 3, blockDisplays(s), "the swords themselves always appear");
+            s.assertSucceeded(s.active(), "질풍참 under the swords");
+            long most = 0;
+            for (int i = 0; i < 12; i++) {
+                most = Math.max(most, blockDisplays(s));
+                s.ticks(1);
+            }
+            assertTrue(most <= 24, "at most 24 displays at once: " + most);
+            assertEquals(s.param("dash_damage"), s.hitsBy(s.owner, s.enemy).getFirst().damage(), EPSILON,
+                    "the cuts still land without their blades of light");
+            assertEquals(s.param("dash_damage"), s.hitsBy(s.owner, s.enemy2).getFirst().damage(), EPSILON);
+            s.ticks(150);
+            assertEquals(0, blockDisplays(s));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bladeSwordsNeverHuntAnEnemyHiddenByStealth() {
+        try (Scenario s = Scenario.ffa("blade")) {
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.ultimate(), "천검");
+            s.ticks(150);
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "no marker ring gives the stealthed enemy away");
+            assertEquals(s.param("ult_swords"), s.hitsBy(s.owner, s.enemy).size(), "every sword goes to the other");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            assertFalse(s.ultimate().succeeded(), "only stealthed enemies around: nothing to strike");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
             s.finishClean();
         }
     }
@@ -538,6 +637,56 @@ class WeaponNewAbilitiesTest {
     }
 
     @Test
+    void lancerChargeMeasuresTheBorderFromWhereItReallyStarts() {
+        try (Scenario s = Scenario.ffa("lancer")) {
+            Location center = s.session.arena().center();
+            double z = center.getZ();
+            while (z < center.getZ() + 200 && s.ctx().isInsideArena(new Location(s.world, center.getX(),
+                    FlatWorld.SURFACE, z + 0.5))) {
+                z += 0.5;
+            }
+            double edge = z;
+            double x = center.getX();
+            s.place(s.owner, x, edge - 20, 0);
+            s.place(s.enemy, x + 12, edge - 25, 0);
+            s.place(s.enemy2, x - 12, edge - 25, 0);
+            s.assertSucceeded(s.ultimate(), "일섬 돌격, far from the border");
+            s.ticks(3);
+            s.place(s.owner, x, edge - 5, 0); // walked up to the border while aiming
+            s.ticks(40);
+            assertTrue(s.ctx().isInsideArena(s.owner.getLocation()),
+                    "the charge stops at the border, measured from where it began: " + s.owner.getLocation());
+            assertTrue(s.owner.getLocation().getZ() > edge - 1.5, "and still runs all the way up to it");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void lancerDodgedSpearsNeitherDragNorSkewer() {
+        try (Scenario s = Scenario.builder("lancer").enemyAbility("gambler")
+                .configure(h -> h.setParam("gambler", "dodge_chance", 100)).start()) {
+            Location start = s.enemy.getLocation();
+            s.assertSucceeded(s.active(), "창 투척");
+            s.ticks(60);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "every spear hit was dodged");
+            assertTrue(horizontalDistance(s.enemy.getLocation(), start) < 0.3,
+                    "a dodged returning spear drags nobody: " + s.enemy.getLocation());
+
+            s.layout();
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            Location before = s.enemy.getLocation();
+            s.assertSucceeded(s.ultimate(), "일섬 돌격");
+            s.ticks(40);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the skewer was dodged");
+            assertTrue(horizontalDistance(s.enemy.getLocation(), before) < 0.3,
+                    "so the enemy is not carried off on the spear: " + s.enemy.getLocation());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void lancerChargeStopsAtAWallAndAtTheVoid() {
         try (Scenario s = Scenario.ffa("lancer")) {
             s.place(s.enemy, 6.5, 0.5, 0);
@@ -622,6 +771,21 @@ class WeaponNewAbilitiesTest {
                     EPSILON);
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ninjaDodgedStarOpensNoWound() {
+        try (Scenario s = Scenario.builder("ninja").param("shuriken_count", 1).enemyAbility("gambler")
+                .configure(h -> h.setParam("gambler", "dodge_chance", 100)).start()) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "수리검");
+            s.ticks(5);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the star was dodged");
+            assertTrue(s.match.replaceAbility(s.enemy, DummyAbility.INFO.id()), "the enemy's luck runs out");
+            s.ticks(60);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "and no bleeding follows a dodged star: " + s.hits());
             s.finishClean();
         }
     }
@@ -772,6 +936,66 @@ class WeaponNewAbilitiesTest {
             assertFalse(s.active().succeeded(), "nobody in the sky");
             assertEquals(0, s.ctx().cooldownRemaining(s.owner), EPSILON);
             assertEquals(0, textDisplays(s));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void duelistNeverPointsOutAStealthedEnemy() {
+        try (Scenario s = Scenario.ffa("duelist")) {
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.aimAt(s.owner, s.enemy);
+            assertFalse(s.active().succeeded(), "an enemy hidden by stealth cannot be challenged");
+            assertEquals(0, textDisplays(s));
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+
+            s.assertSucceeded(s.active(), "결투 신청");
+            s.ticks(2);
+            TextDisplay emblem = s.world.getEntities().stream().filter(TextDisplay.class::isInstance)
+                    .map(TextDisplay.class::cast).findFirst().orElseThrow();
+            assertEquals("⚔", Scenario.plain(emblem.text()));
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy); // the challenged enemy slips into stealth
+            s.ticks(4);
+            assertEquals("", Scenario.plain(emblem.text()), "the emblem no longer shows where it is");
+            s.melee(s.owner, s.enemy, 10);
+            assertEquals(10 * (1 + s.param("challenge_bonus") / 100), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the challenge itself still holds");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(4);
+            assertEquals("⚔", Scenario.plain(emblem.text()), "back in sight, back over its head");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void duelistNeverDuelsASummon() {
+        try (Scenario s = Scenario.ffa("duelist")) {
+            Wolf wolf = s.world.spawn(new Location(s.world, 0.5, FlatWorld.SURFACE, 2.5), Wolf.class);
+            s.ctx().summon(s.enemy, wolf);
+            s.aimAt(s.owner, wolf);
+            assertFalse(s.active().succeeded(), "a summoned wolf is no duellist to challenge");
+            s.assertSucceeded(s.ultimate(), "결투장 with the wolf in the crosshair");
+            s.ticks(2);
+            s.melee(s.owner, s.enemy, 10);
+            assertEquals(10 * (1 + s.param("duel_offense") / 100), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the duel is with the wolf's master, the nearest real fighter");
+            s.ticks(s.paramTicks("ult_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void duelistArenaPicksAnEnemyItCanSee() {
+        try (Scenario s = Scenario.ffa("duelist")) {
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "결투장");
+            s.ticks(2);
+            s.melee(s.owner, s.enemy2, 10);
+            assertEquals(10 * (1 + s.param("duel_offense") / 100), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "the visible enemy is the one in the duel");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(s.paramTicks("ult_duration") + 10);
             s.finishClean();
         }
     }

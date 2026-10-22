@@ -136,6 +136,11 @@ public final class MagnetAbility extends Ability {
     private static final double PULL_STOP = 1.8;
     private static final int TRAIL_TICKS = 6;
     private static final int DEFLECT_TICKS = 8;
+    /**
+     * Minimum ticks between two deflection shows (bars, arcs, sounds): a volley or a burning beam is deflected hit by
+     * hit, but drawn at most this often so its displays stay few.
+     */
+    private static final long DEFLECT_FX_COOLDOWN = 5;
     /** How far above or below the eyes the polarity fan reaches. */
     private static final double CONE_HEIGHT = 2.5;
 
@@ -154,6 +159,7 @@ public final class MagnetAbility extends Ability {
 
     /** Charges stored by deflections, consumed by the next polarity. */
     private int charges;
+    private long lastDeflectFx = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
 
     @Override
     public AbilityInfo info() {
@@ -177,15 +183,20 @@ public final class MagnetAbility extends Ability {
         }
         event.setCancelled(true);
         Player owner = player();
+        int max = Math.max(0, params().integer("charge_max"));
+        if (charges < max) {
+            charges++;
+        }
+        long now = ctx().currentTick();
+        if (now - lastDeflectFx < DEFLECT_FX_COOLDOWN) {
+            return;
+        }
+        lastDeflectFx = now;
         Vector incoming = event instanceof EntityDamageByEntityEvent byEntity
                 && byEntity.getDamager().getWorld().equals(owner.getWorld())
                 ? owner.getLocation().toVector().subtract(byEntity.getDamager().getLocation().toVector())
                 : owner.getLocation().getDirection();
         deflectFx(owner, incoming);
-        int max = Math.max(0, params().integer("charge_max"));
-        if (charges < max) {
-            charges++;
-        }
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">⇋ 자기 편향!</" + COLOR_TAG + "> <gray>충전 " + charges + "/"
                 + max + "</gray>"));
     }

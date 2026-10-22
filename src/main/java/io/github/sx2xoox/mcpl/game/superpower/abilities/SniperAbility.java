@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
+import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
@@ -31,6 +32,7 @@ import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -71,8 +73,9 @@ public final class SniperAbility extends Ability {
                     8)
             .ultimate("표적 지정",
                     "{mark_range}블록 안의 모든 적을 {mark_duration}초간 표적으로 지정합니다. 표적은 발광하고 방어력이 "
-                            + "{mark_armor} 줄며 저격수에게 받는 피해가 {mark_bonus}% 늘어납니다. 그동안 정조준 사격은 즉시 "
-                            + "준비되고 조준 시간이 {mark_aim_time}초, 쿨타임이 {mark_cooldown_cut}% 줄어듭니다.")
+                            + "{mark_armor} 줄며 저격수에게 받는 피해가 {mark_bonus}% 늘어납니다. 그동안 정조준 사격은 바로 "
+                            + "준비되고, 조준 시간은 {mark_aim_time}초로, 쿨타임(헤드샷 감소분 포함)은 {mark_cooldown_cut}% "
+                            + "줄어듭니다.")
             .ultimateNotStandalone()
             .param("bonus_start", 8)
             .param("bonus_per_block", 2.5)
@@ -279,6 +282,8 @@ public final class SniperAbility extends Ability {
     private final class Aim implements LongPredicate {
 
         private final long aimTicks;
+        /** The multiplier of the cooldown this shot started (read when the active was used). */
+        private final double refundScale = cooldownMultiplier();
         private @Nullable NamespacedKey slow;
         private @Nullable BlockDisplay laser;
         private @Nullable LivingEntity locked;
@@ -296,7 +301,7 @@ public final class SniperAbility extends Ability {
                         AttributeModifier.Operation.MULTIPLY_SCALAR_1, aimTicks + 2);
             }
             Location eye = owner.getEyeLocation();
-            Trace trace = trace(eye, eye.getDirection(), params().num("shot_range"));
+            Trace trace = aimTrace(eye, eye.getDirection(), params().num("shot_range"));
             Location from = muzzle(owner);
             laser = Displays.block(ctx(), owner, from, LASER_BLOCK,
                     beamPose(beamDelta(from, trace.end()), LASER_WIDTH), aimTicks + 4);
@@ -331,7 +336,7 @@ public final class SniperAbility extends Ability {
         private void draw(long tick) {
             Player owner = player();
             Location eye = owner.getEyeLocation();
-            Trace trace = trace(eye, eye.getDirection(), params().num("shot_range"));
+            Trace trace = aimTrace(eye, eye.getDirection(), params().num("shot_range"));
             Location from = muzzle(owner);
             boolean hot = aimTicks - tick <= FLICKER_TICKS;
             if (laser != null && laser.isValid()) {
@@ -399,7 +404,7 @@ public final class SniperAbility extends Ability {
                 if (strike(target, damage)) {
                     bodyImpact(trace.end(), direction);
                     if (trace.head()) {
-                        headshot(target);
+                        headshot(target, refundScale);
                     }
                     if (Combat.isTargetable(ctx(), owner, target)) {
                         Vector push = Motion.horizontal(direction).multiply(SHOT_PUSH).setY(0.12);
@@ -512,8 +517,12 @@ public final class SniperAbility extends Ability {
         Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 1.1f + Fx.jitter(0.1f));
     }
 
-    /** A headshot: a ring snaps around the head, "헤드샷!" pops up and the sniper hears a bright ding. */
-    private void headshot(LivingEntity target) {
+    /**
+     * A headshot: a ring snaps around the head, "헤드샷!" pops up and the sniper hears a bright ding.
+     *
+     * @param refundScale the cooldown multiplier the shot's cooldown started with
+     */
+    private void headshot(LivingEntity target, double refundScale) {
         Player owner = player();
         Location head = target.getEyeLocation();
         Vfx.ring(ctx(), head, 0.5, 16, ThreadLocalRandom.current().nextDouble(Math.PI), Particle.DUST_COLOR_TRANSITION,
@@ -530,7 +539,10 @@ public final class SniperAbility extends Ability {
         owner.playSound(owner, Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 0.9f, 2.0f);
         owner.playSound(owner, Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.8f, 1.3f);
 
-        double refund = Math.min(Math.max(0, params().num("headshot_refund")), ctx().cooldownRemaining(owner));
+        // The refund shrinks with the cooldown it is taken off: during the mark a full refund would bring the next
+        // shot back almost at once (a 10+ damage headshot every second).
+        double refund = Math.min(Math.max(0, params().num("headshot_refund")) * refundScale,
+                ctx().cooldownRemaining(owner));
         String suffix = "";
         if (refund > 0) {
             ctx().reduceCooldown(owner, refund);
@@ -761,8 +773,10 @@ public final class SniperAbility extends Ability {
                 ctx().removeModifier(target, armorKey);
             }
             if (target.isValid() && !target.isDead()) {
+                // Only the mark's own glow: one that outlasts the mark was given by someone else (a flash, a sense).
                 PotionEffect glow = target.getPotionEffect(PotionEffectType.GLOWING);
-                if (glow != null && !glow.isInfinite()) {
+                long left = Math.max(0, markEnd - ctx().currentTick());
+                if (glow != null && !glow.isInfinite() && glow.getDuration() <= left + 2) {
                     target.removePotionEffect(PotionEffectType.GLOWING);
                 }
             }
@@ -778,7 +792,21 @@ public final class SniperAbility extends Ability {
     private record Trace(Location end, @Nullable LivingEntity target, boolean head, @Nullable Block block) {
     }
 
+    /**
+     * The aiming laser's trace: it passes through enemies hidden from the sniper by stealth, so its dot and lock-on
+     * ring never give their position away (the bullet itself still hits whatever is there, see {@link #trace}).
+     */
+    private Trace aimTrace(Location eye, Vector direction, double range) {
+        Player owner = player();
+        return trace(eye, direction, range,
+                entity -> !(entity instanceof Player hidden) || owner.canSee(hidden));
+    }
+
     private Trace trace(Location eye, Vector direction, double range) {
+        return trace(eye, direction, range, entity -> true);
+    }
+
+    private Trace trace(Location eye, Vector direction, double range, Predicate<Entity> visible) {
         World world = eye.getWorld();
         Vector unit = direction.clone();
         if (unit.lengthSquared() < 1.0E-8) {
@@ -788,7 +816,7 @@ public final class SniperAbility extends Ability {
         double reach = Math.max(1, range);
         Player owner = player();
         RayTraceResult hit = world.rayTrace(eye, unit, reach, FluidCollisionMode.NEVER, true, SHOT_RAY,
-                entity -> entity instanceof LivingEntity && ctx().isEnemy(owner, entity));
+                entity -> entity instanceof LivingEntity && ctx().isEnemy(owner, entity) && visible.test(entity));
         if (hit == null) {
             return new Trace(eye.clone().add(unit.multiply(reach)), null, false, null);
         }

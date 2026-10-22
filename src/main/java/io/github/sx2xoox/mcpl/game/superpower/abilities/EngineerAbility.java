@@ -82,7 +82,7 @@ public final class EngineerAbility extends Ability {
             .param("turret_range", 12)
             .param("turret_interval", 0.8)
             .param("turret_damage", 1)
-            .param("laser_duration", 10)
+            .param("laser_duration", 8)
             .param("laser_charge", 0.75)
             .param("laser_range", 16)
             .param("laser_interval", 0.25)
@@ -141,8 +141,11 @@ public final class EngineerAbility extends Ability {
     private static final double LASER_PLATE = 0.2;
     private static final double LASER_PYLON = 0.75;
     private static final float LASER_HEAD_SIZE = 0.6f;
-    /** Radians per tick the beam can swing towards its target; a fast enough dodge outruns it up close. */
-    private static final double BEAM_TURN = 0.22;
+    /**
+     * Radians per tick the beam can swing towards its target (about 140° a second): a sprint outruns it within two
+     * blocks of the turret, and a new target is reached in a visible sweep that burns whoever it crosses.
+     */
+    private static final double BEAM_TURN = 0.12;
     private static final float BEAM_CORE_WIDTH = 0.06f;
     private static final float BEAM_SHEATH_WIDTH = 0.17f;
     /** Enemies within this distance of the beam's axis are burned. */
@@ -779,7 +782,7 @@ public final class EngineerAbility extends Ability {
             if (target != null) {
                 Vector desired = Fx.body(target).toVector().subtract(lensAt.toVector());
                 if (desired.lengthSquared() > 1.0E-6) {
-                    beamDirection = turn(beamDirection, desired.normalize(), BEAM_TURN);
+                    beamDirection = turn(beamDirection, desired, BEAM_TURN);
                 }
             } else {
                 // Nothing to shoot: the head pans slowly around, looking for a target.
@@ -997,17 +1000,18 @@ public final class EngineerAbility extends Ability {
         return wrapped;
     }
 
-    /** Rotates {@code current} towards {@code desired} (both unit vectors) by at most {@code maxAngle} radians. */
+    /**
+     * Turns a unit direction towards {@code desired} like a turret head: yaw and pitch each by at most
+     * {@code maxAngle} radians, so a target behind it is reached by swinging round, never by pitching over the top or
+     * down through the floor.
+     */
     private static Vector turn(Vector current, Vector desired, double maxAngle) {
-        double angle = current.angle(desired);
-        if (!(angle > maxAngle)) {
-            return desired.clone();
-        }
-        Vector axis = current.getCrossProduct(desired);
-        if (axis.lengthSquared() < 1.0E-9) {
-            axis = Math.abs(current.getY()) > 0.95 ? new Vector(1, 0, 0) : new Vector(0, 1, 0);
-        }
-        return current.clone().rotateAroundAxis(axis.normalize(), maxAngle).normalize();
+        double step = Math.toDegrees(maxAngle);
+        double yaw = yawOf(current);
+        double pitch = pitchOf(current);
+        double newYaw = yaw + Math.clamp(wrap(yawOf(desired) - yaw), -step, step);
+        double newPitch = pitch + Math.clamp(pitchOf(desired) - pitch, -step, step);
+        return facingVector(newYaw, newPitch);
     }
 
     /**

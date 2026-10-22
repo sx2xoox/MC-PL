@@ -320,6 +320,42 @@ class TechNewAbilitiesTest {
     }
 
     @Test
+    void sniperHeadshotRefundShrinksWithTheMarkedCooldown() {
+        try (Scenario s = Scenario.ffa("sniper")) {
+            s.assertSucceeded(s.ultimate(), "표적 지정");
+            s.aimAt(s.owner, s.enemy.getEyeLocation());
+            s.assertSucceeded(s.active(), "정조준 사격");
+            double cut = 1 - s.param("mark_cooldown_cut") / 100;
+            s.ticks(s.paramTicks("mark_aim_time") + 2);
+            assertTrue(entities(s, TextDisplay.class).stream()
+                    .anyMatch(label -> Scenario.plain(label.text()).contains("헤드샷")), "a marked headshot");
+            double elapsed = s.param("mark_aim_time") + 0.1;
+            double expected = s.param("cooldown") * cut - elapsed - s.param("headshot_refund") * cut;
+            assertEquals(expected, s.ctx().cooldownRemaining(s.owner), 0.2,
+                    "the refund is cut like the cooldown, so marked headshots cannot chain every second");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sniperLaserNeverPointsOutAStealthedEnemy() {
+        try (Scenario s = Scenario.ffa("sniper")) {
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "정조준 사격");
+            s.ticks(3);
+            BlockDisplay laser = entities(s, BlockDisplay.class).getFirst();
+            double toEnemy = s.owner.getEyeLocation().distance(s.enemy.getLocation().add(0, s.enemy.getHeight() / 2, 0));
+            assertTrue(laser.getTransformation().getScale().z() > toEnemy + 2,
+                    "the laser runs on through the hidden enemy: " + laser.getTransformation().getScale().z());
+            s.ticks(s.paramTicks("aim_time"));
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the bullet still hits whatever is really there");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void sniperRangeBonusGrowsWithDistanceButNeverForMelee() {
         try (Scenario s = Scenario.ffa("sniper")) {
             s.place(s.enemy, 0.5, 16.5, 180);
@@ -575,6 +611,22 @@ class TechNewAbilitiesTest {
         }
     }
 
+    @Test
+    void engineerLaserSweepsRoundToATargetBehindIt() {
+        try (Scenario s = Scenario.ffa("engineer")) {
+            s.place(s.enemy, 0.5, -6.5, 0); // behind the engineer: the beam starts out facing the other way
+            s.place(s.enemy2, 30.5, 30.5, 0);
+            s.aimAtFloor(s.owner, 0.5, 2.5);
+            s.assertSucceeded(s.ultimate(), "레이저 포탑");
+            s.ticks(25);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the beam is still swinging round");
+            s.ticks(40);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "then it reaches the target and burns it");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "the sweep passes over the engineer harmlessly");
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 연금술사 alchemist
 
     @Test
@@ -591,6 +643,27 @@ class TechNewAbilitiesTest {
             s.ticks(5);
             assertTrue(s.owner.getPotionEffect(PotionEffectType.SLOWNESS).getDuration() <= slow, "rescaled once");
             assertTrue(s.owner.getPotionEffect(PotionEffectType.SPEED).getDuration() <= speed, "rescaled once");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void alchemistStretchesABlessingWithoutLosingAWeakerOneUnderIt() {
+        try (Scenario s = Scenario.ffa("alchemist")) {
+            double extend = 1 + s.param("boon_extend") / 100;
+            s.owner.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 400, 0));
+            s.ticks(1);
+            s.owner.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 60, 1)); // a short speed II on top
+            s.ticks(1);
+            PotionEffect strong = s.owner.getPotionEffect(PotionEffectType.SPEED);
+            assertEquals(1, strong.getAmplifier());
+            assertEquals(Math.round(60 * extend), strong.getDuration(), 2, "the speed II is stretched");
+            s.ticks((int) Math.round(60 * extend) + 5);
+            PotionEffect weak = s.owner.getPotionEffect(PotionEffectType.SPEED);
+            assertNotNull(weak, "the longer speed I under it was kept");
+            assertEquals(0, weak.getAmplifier());
+            assertTrue(weak.getDuration() <= Math.round(400 * extend), "and stretched only once: "
+                    + weak.getDuration());
             s.finishClean();
         }
     }
@@ -668,8 +741,14 @@ class TechNewAbilitiesTest {
             assertEquals(10, s.enemy.getHealth(), EPSILON, "enemies get nothing");
             assertTrue(s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS));
             assertFalse(s.enemy.hasPotionEffect(PotionEffectType.STRENGTH));
-            s.ticks(s.paramTicks("stone_duration") + 20);
-            assertTrue(entities(s, Display.class).isEmpty(), "the shards fade");
+            // The passive stretches the stone's buffs on the alchemist, and the shards orbit as long as they last.
+            int buffs = (int) Math.round(s.paramTicks("stone_duration") * (1 + s.param("boon_extend") / 100));
+            assertEquals(buffs, s.owner.getPotionEffect(PotionEffectType.STRENGTH).getDuration(), 25);
+            s.ticks(buffs - 30);
+            assertEquals(3, entities(s, BlockDisplay.class).size(), "the shards orbit while the buffs last");
+            assertTrue(s.owner.hasPotionEffect(PotionEffectType.STRENGTH));
+            s.ticks(50);
+            assertTrue(entities(s, Display.class).isEmpty(), "the shards fade with the buffs");
             s.finishClean();
         }
     }
@@ -793,6 +872,27 @@ class TechNewAbilitiesTest {
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.active(), "plain 극성");
             assertEquals(polarityDamage(s, s.enemy, 0), s.damageBy(s.owner, s.enemy), EPSILON, "charges spent");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void magnetDeflectsEveryHitOfAVolleyButShowsItCalmly() {
+        try (Scenario s = Scenario.builder("magnet").param("deflect_chance", 100).start()) {
+            s.place(s.enemy, 0.5, 12.5, 180);
+            for (int i = 0; i < 10; i++) {
+                s.ctx().damage(s.enemy, s.owner, 1);
+            }
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "every hit slid off");
+            assertEquals(2, entities(s, BlockDisplay.class).size(), "one deflection show (two crossed bars)");
+            s.ticks(30);
+            assertTrue(entities(s, Display.class).isEmpty());
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.place(s.enemy2, 6.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "fully charged 극성");
+            assertEquals(polarityDamage(s, s.enemy, (int) s.param("charge_max")), s.damageBy(s.owner, s.enemy),
+                    EPSILON, "every deflection still charged the field");
             s.finishClean();
         }
     }
