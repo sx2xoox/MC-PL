@@ -16,6 +16,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.DemonAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.GhostAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.PhantomAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.ReaperAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -37,6 +38,10 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -72,13 +77,80 @@ class SpiritNewAbilitiesTest {
         victim.damage(amount, DamageSource.builder(DamageType.GENERIC).build());
     }
 
-    /** Ticks {@code ticks} times, asserting the display budget after every tick. */
+    /** Ticks {@code ticks} times, asserting the display budget and unrotated displays after every tick. */
     private static void ticksWithinBudget(Scenario s, int ticks) {
         for (int i = 0; i < ticks; i++) {
             s.ticks(1);
             long alive = displays(s);
             assertTrue(alive <= DISPLAY_BUDGET, s.abilityId + ": " + alive + " displays alive at once");
+            assertUnrotated(s);
         }
+    }
+
+    /**
+     * Every display has yaw and pitch 0: its orientation lives in its transformation only (a display moved to an
+     * entity location would otherwise turn its model by that entity's rotation on top of the transformation).
+     */
+    private static void assertUnrotated(Scenario s) {
+        for (Entity entity : s.world.getEntities()) {
+            if (entity instanceof Display display) {
+                assertEquals(0, display.getLocation().getYaw(), EPSILON, s.abilityId + ": display yaw " + display);
+                assertEquals(0, display.getLocation().getPitch(), EPSILON, s.abilityId + ": display pitch " + display);
+            }
+        }
+    }
+
+    private static List<BlockDisplay> blocks(Scenario s, Material type) {
+        return s.world.getEntities().stream().filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                .filter(display -> display.getBlock().getMaterial() == type).toList();
+    }
+
+    /**
+     * The left rotation the ability gave {@code display} (its right rotation is always the identity).
+     *
+     * <p>MockBukkit's {@code DisplayMock#getTransformation} rebuilds the transformation from its matrix and then
+     * conjugates the extracted rotation <em>in place</em>, so it reports the inverse rotation as both the left and the
+     * right rotation. That signature (left == right, not the identity) is undone here; a fixed mock passes through.
+     */
+    private static Quaternionf leftRotation(Display display) {
+        Transformation transformation = display.getTransformation();
+        Quaternionf left = new Quaternionf(transformation.getLeftRotation());
+        Quaternionf right = transformation.getRightRotation();
+        boolean mirroredByMock = left.equals(right, 1.0E-6f) && !left.equals(new Quaternionf(), 1.0E-6f);
+        return mirroredByMock ? left.conjugate() : left;
+    }
+
+    /** Where a display's transformation turns its local axis {@code (x, y, z)}. */
+    private static Vector turned(Display display, float x, float y, float z) {
+        Vector3f v = leftRotation(display).transform(new Vector3f(x, y, z));
+        return new Vector(v.x(), v.y(), v.z());
+    }
+
+    /** The center of a block display's box in world space (the display entity itself is unrotated). */
+    private static Vector center(BlockDisplay display) {
+        Transformation transformation = display.getTransformation();
+        Vector3f half = new Vector3f(transformation.getScale()).mul(0.5f);
+        Vector3f c = leftRotation(display).transform(half).add(transformation.getTranslation());
+        return display.getLocation().toVector().add(new Vector(c.x(), c.y(), c.z()));
+    }
+
+    /** The horizontal unit vector Minecraft's {@code yaw} faces (0 = +Z, 90 = -X). */
+    private static Vector yawVector(double yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+    }
+
+    private static void assertSameDirection(Vector expected, Vector actual, String what) {
+        assertTrue(expected.clone().normalize().distance(actual.clone().normalize()) < 1.0E-3,
+                what + ": expected " + expected.clone().normalize() + " but was " + actual.clone().normalize());
+    }
+
+    /** Lands (or waits for) {@code player} and checks it stands exactly on the floor, inside no block. */
+    private static void assertStandingOnFloor(Scenario s, Player player, String what) {
+        s.tickUntilGrounded(player, 100);
+        Location at = player.getLocation();
+        assertEquals(FlatWorld.SURFACE, at.getY(), 1.0E-6, what + " stands exactly on the floor: " + at);
+        assertTrue(Spots.isFree(s.world, at, player.getWidth(), player.getHeight()), what + " is inside no block");
     }
 
     /** The default layout, aimed at the enemy; the reaper's scythe needs the enemy within its reach. */
@@ -413,6 +485,9 @@ class SpiritNewAbilitiesTest {
                     "thrown away from the gate: " + before + " -> " + s.enemy2.getLocation());
             ticksWithinBudget(s, 200);
             assertEquals(0, displays(s), "the gate sinks away");
+            for (TestPlayer enemy : s.enemies()) {
+                assertStandingOnFloor(s, enemy, enemy.getName() + " thrown by the pillars");
+            }
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
         }
@@ -487,6 +562,8 @@ class SpiritNewAbilitiesTest {
             double heal = 2 * s.param("spin_damage") * s.param("spin_lifesteal") / 100;
             assertEquals(10 + heal, s.health(s.owner), EPSILON, "the stolen life heals the reaper");
             assertTrue(s.enemy.getLocation().getZ() < 2.5, "pulled in: " + s.enemy.getLocation());
+            assertStandingOnFloor(s, s.enemy, "the pulled enemy");
+            assertStandingOnFloor(s, s.enemy2, "the pulled enemy behind");
             s.ticks(20);
             assertEquals(0, displays(s), "the scythe vanished");
             s.finishClean();
@@ -614,6 +691,7 @@ class SpiritNewAbilitiesTest {
             assertEquals(speed, s.enemy.getAttribute(Attribute.MOVEMENT_SPEED).getValue(), EPSILON);
             s.melee(s.enemy, s.owner, 4);
             assertEquals(4 * (1 - s.param("ethereal_reduction") / 100), s.damageTaken(s.owner), EPSILON);
+            assertStandingOnFloor(s, s.enemy, "the terrified enemy");
             s.ticks(10);
             assertEquals(0, displays(s), "the mark and the specter are gone");
             s.finishClean();
@@ -749,7 +827,8 @@ class SpiritNewAbilitiesTest {
             assertEquals(s.param("dive_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
             assertTrue(s.owner.getLocation().getZ() > 5, "dived onto the prey: " + s.owner.getLocation());
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "far from the dive");
-            s.tickUntilGrounded(s.owner, 100);
+            assertStandingOnFloor(s, s.owner, "the diving phantom");
+            assertStandingOnFloor(s, s.enemy, "the struck prey");
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage from the dive: " + s.hits());
             assertEquals(0, displays(s), "the reticle is gone");
@@ -768,7 +847,7 @@ class SpiritNewAbilitiesTest {
             s.owner.setRotation(0, 45);
             s.ticks(30);
             assertTrue(s.owner.getLocation().getZ() > 4, "dived where it looked: " + s.owner.getLocation());
-            s.tickUntilGrounded(s.owner, 100);
+            assertStandingOnFloor(s, s.owner, "the diving phantom");
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage: " + s.hits());
             s.finishClean();
@@ -835,6 +914,172 @@ class SpiritNewAbilitiesTest {
             assertFalse(s.ultimate().succeeded(), "nobody to hunt");
             assertEquals(100, s.participant(s.owner).gauge(), EPSILON, "the gauge is kept");
             assertEquals(0, displays(s));
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ display orientation (real clients)
+
+    @Test
+    void demonGateFacesTheDemonThroughItsTransformation() {
+        try (Scenario s = Scenario.ffa("demon")) {
+            s.place(s.owner, 4.5, 0.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "지옥문");
+            s.ticks(2);
+            assertUnrotated(s);
+            Vector toDemon = s.owner.getLocation().toVector().subtract(s.enemy.getLocation().toVector()).setY(0);
+            List<BlockDisplay> portal = blocks(s, Material.NETHER_PORTAL);
+            assertEquals(1, portal.size());
+            assertSameDirection(toDemon, turned(portal.getFirst(), 0, 0, 1), "the portal faces the demon");
+            List<BlockDisplay> posts = blocks(s, Material.CRYING_OBSIDIAN);
+            assertEquals(2, posts.size());
+            s.ticks(14);
+            Vector across = center(posts.get(0)).subtract(center(posts.get(1))).setY(0);
+            assertEquals(0, across.clone().normalize().dot(toDemon.clone().normalize()), 1.0E-3,
+                    "the posts stand side by side across the demon's view");
+            assertEquals(2.7, across.length(), 1.0E-3, "posts at either side of the gate");
+            for (BlockDisplay sigil : blocks(s, Material.RED_STAINED_GLASS)) {
+                assertEquals(0, turned(sigil, 0, 1, 0).angle(new Vector(0, 1, 0)), 1.0E-3, "sigils lie flat");
+            }
+            ticksWithinBudget(s, 120);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void reaperScytheSweepsRoundInItsTransformation() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            s.place(s.owner, 0.5, 0.5, 30);
+            s.assertSucceeded(s.active(), "낫 회전");
+            ItemDisplay scythe = s.world.getEntities().stream().filter(ItemDisplay.class::isInstance)
+                    .map(ItemDisplay.class::cast).findFirst().orElseThrow();
+            s.ticks(1);
+            Vector first = handle(scythe);
+            s.ticks(2);
+            Vector later = handle(scythe);
+            assertUnrotated(s);
+            double turnedBy = Math.toDegrees(Math.atan2(-later.getX(), later.getZ()))
+                    - Math.toDegrees(Math.atan2(-first.getX(), first.getZ()));
+            assertEquals(90, Math.floorMod(Math.round(turnedBy), 360), 1, "two steps of the sweep, turning right");
+            Vector3f out = scythe.getTransformation().getTranslation();
+            assertSameDirection(later, new Vector(out.x(), 0, out.z()), "the scythe reaches out along its handle");
+            assertEquals(0, later.getY(), 1.0E-3, "the scythe sweeps flat");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    /** The scythe's handle (the hoe sprite's diagonal) as the transformation turns it. */
+    private static Vector handle(ItemDisplay scythe) {
+        return turned(scythe, (float) Math.sqrt(0.5), (float) Math.sqrt(0.5), 0);
+    }
+
+    @Test
+    void reaperSlashCutsAcrossTheBlow() {
+        try (Scenario s = Scenario.ffa("reaper")) {
+            s.place(s.enemy, 3.5, 3.5, 225);
+            s.enemy.setHealth(10);
+            s.aimAt(s.owner, s.enemy);
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(2);
+            List<BlockDisplay> slash = blocks(s, Material.BLACK_CONCRETE);
+            assertEquals(1, slash.size(), "the execution slash");
+            assertUnrotated(s);
+            Vector blow = s.enemy.getLocation().toVector().subtract(s.owner.getLocation().toVector()).setY(0);
+            Vector bar = turned(slash.getFirst(), 1, 0, 0).setY(0);
+            assertTrue(bar.length() > 0.5, "the bar lies mostly flat");
+            assertEquals(0, bar.normalize().dot(blow.normalize()), 1.0E-3, "the bar crosses the line of the blow");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ghostSpecterAndAfterimageFaceTheirWay() {
+        try (Scenario s = Scenario.ffa("ghost")) {
+            s.place(s.enemy, 3.5, 4.5, 225);
+            s.place(s.enemy2, -10.5, -10.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            Vector look = s.owner.getLocation().getDirection().setY(0);
+            s.assertSucceeded(s.active(), "공포");
+            assertUnrotated(s);
+            Vector head = new Vector();
+            List<BlockDisplay> shroud = blocks(s, Material.WHITE_STAINED_GLASS);
+            assertEquals(2, shroud.size(), "the specter's shroud and head");
+            for (BlockDisplay glass : shroud) {
+                assertSameDirection(look, turned(glass, 0, 0, 1), "the specter faces the scream");
+                head.add(center(glass));
+            }
+            head.multiply(0.5);
+            for (BlockDisplay face : blocks(s, Material.BLACK_CONCRETE)) {
+                assertTrue(center(face).subtract(head).dot(look.clone().normalize()) > 0.1,
+                        "eyes and mouth are on the front of the specter");
+            }
+            s.ticks(s.paramTicks("fear_duration") + 10);
+            assertEquals(0, displays(s), "the specter and the fear mark are gone");
+
+            s.place(s.owner, 0.5, 0.5, 45);
+            s.owner.setBodyYaw(45);
+            s.melee(s.enemy, s.owner, 4);
+            List<BlockDisplay> image = blocks(s, Material.WHITE_STAINED_GLASS);
+            assertEquals(2, image.size(), "the afterimage");
+            assertUnrotated(s);
+            for (BlockDisplay part : image) {
+                assertSameDirection(yawVector(45), turned(part, 0, 0, 1), "the afterimage stands like the ghost");
+            }
+            ticksWithinBudget(s, 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomSwarmFliesHeadFirstAroundTheOwner() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            s.place(s.enemy, 0.5, 11.0, 180);
+            s.place(s.enemy2, 11.0, 0.5, 90);
+            s.assertSucceeded(s.ultimate(), "불면의 밤");
+            s.ticks(14);
+            assertUnrotated(s);
+            Location owner = s.owner.getLocation();
+            int orbiting = 0;
+            for (BlockDisplay body : blocks(s, Material.BLUE_CONCRETE)) {
+                Vector radial = body.getLocation().toVector().subtract(owner.toVector());
+                double height = radial.getY();
+                radial.setY(0);
+                if (Math.abs(radial.length() - 2.6) > 0.15 || Math.abs(height - 4.5) > 0.4) {
+                    continue; // swooping
+                }
+                orbiting++;
+                Vector heading = turned(body, 0, 0, 1);
+                assertEquals(0, heading.getY(), 1.0E-3, "an orbiting phantom flies level");
+                assertEquals(0, heading.normalize().dot(radial.normalize()), 0.05, "and along its circle");
+            }
+            assertTrue(orbiting >= 3, "the free phantoms circle overhead: " + orbiting);
+            ticksWithinBudget(s, 160);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomReticleLiesFlatWhereverTheGazeFalls() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 20.5, 0.5, 90);
+            s.enemy.setRotation(180, 40);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "급강하");
+            boolean seen = false;
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                assertUnrotated(s);
+                for (BlockDisplay reticle : blocks(s, Material.CYAN_STAINED_GLASS)) {
+                    seen = true;
+                    assertEquals(0, turned(reticle, 0, 1, 0).angle(new Vector(0, 1, 0)), 1.0E-3,
+                            "the reticle lies flat on the ground");
+                }
+            }
+            assertTrue(seen, "a reticle was shown");
             s.finishClean();
         }
     }

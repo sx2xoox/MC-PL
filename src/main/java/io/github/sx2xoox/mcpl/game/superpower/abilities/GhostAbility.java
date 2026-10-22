@@ -115,8 +115,8 @@ public final class GhostAbility extends Ability {
     // active: terror
     /** Enemies this close to the ghost are always caught, whatever the angle. */
     private static final double POINT_BLANK = 1.3;
-    private static final long FLEE_PERIOD = 3;
-    private static final double FLEE_SPEED = 0.38;
+    private static final long FLEE_PERIOD = 2;
+    private static final double FLEE_SPEED = 0.34;
     private static final double FLEE_HOP = 0.12;
     private static final int SPECTER_LUNGE_TICKS = 6;
     private static final double SPECTER_LUNGE = 3.2;
@@ -217,21 +217,22 @@ public final class GhostAbility extends Ability {
             away = Motion.horizontalFacing(owner.getLocation()).multiply(-1);
         }
         Location at = owner.getLocation();
-        at.setYaw(owner.getBodyYaw());
-        at.setPitch(0);
+        // The afterimage stands the way the ghost's body faces; the turn is in the transformation only.
+        Quaternionf turn = turnOf(owner.getBodyYaw());
         BlockData glass = SHROUD_BLOCK.createBlockData();
         float scale = (float) Math.max(0.3, owner.getHeight() / 1.8);
         List<BlockDisplay> image = List.of(
-                Displays.block(ctx(), owner, at, glass, box(-0.27f, 0.05f, -0.15f, 0.54f, 1.3f, 0.3f, scale),
-                        AFTERIMAGE_FADE_TICKS + 6),
-                Displays.block(ctx(), owner, at, glass, box(-0.24f, 1.35f, -0.24f, 0.48f, 0.48f, 0.48f, scale),
+                Displays.block(ctx(), owner, at, glass,
+                        oriented(box(-0.27f, 0.05f, -0.15f, 0.54f, 1.3f, 0.3f, scale), turn), AFTERIMAGE_FADE_TICKS + 6),
+                Displays.block(ctx(), owner, at, glass,
+                        oriented(box(-0.24f, 1.35f, -0.24f, 0.48f, 0.48f, 0.48f, scale), turn),
                         AFTERIMAGE_FADE_TICKS + 6));
         Location drifted = at.clone().add(away.clone().multiply(AFTERIMAGE_DRIFT));
         for (BlockDisplay part : image) {
             part.setTeleportDuration(AFTERIMAGE_FADE_TICKS);
             ctx().runLater(owner, 1, () -> {
                 if (part.isValid()) {
-                    part.teleport(drifted);
+                    Displays.moveTo(part, drifted);
                     Displays.shrinkAway(ctx(), owner, part, AFTERIMAGE_FADE_TICKS);
                 }
             });
@@ -359,7 +360,7 @@ public final class GhostAbility extends Ability {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         TextDisplay mark = fear.mark;
         if (mark != null && mark.isValid()) {
-            mark.teleport(overHead(enemy).add(random.nextDouble(-0.07, 0.07), random.nextDouble(-0.05, 0.05),
+            Displays.moveTo(mark, overHead(enemy).add(random.nextDouble(-0.07, 0.07), random.nextDouble(-0.05, 0.05),
                     random.nextDouble(-0.07, 0.07)));
         }
         boolean shown = !(enemy instanceof Player hidden && !player().canSee(hidden));
@@ -368,9 +369,11 @@ public final class GhostAbility extends Ability {
             if (away.lengthSquared() < 1.0E-6) {
                 away = Motion.horizontalFacing(player().getLocation());
             }
-            boolean grounded = Motion.isGrounded(enemy) || enemy.isInWater();
-            double y = grounded ? FLEE_HOP : Math.min(0, enemy.getVelocity().getY());
-            Motion.push(enemy, away.multiply(FLEE_SPEED).setY(y), MAX_SPEED);
+            // Only from the ground: a player's server-side velocity is stale, so an airborne enemy is left to its
+            // own (client) fall instead of having its vertical motion overwritten.
+            if (Motion.isGrounded(enemy) || enemy.isInWater()) {
+                Motion.push(enemy, away.multiply(FLEE_SPEED).setY(FLEE_HOP), MAX_SPEED);
+            }
         }
         if (shown && run % FLEE_PERIOD == 0) {
             Location head = enemy.getLocation().add(0, enemy.getHeight() * 0.9, 0);
@@ -597,7 +600,7 @@ public final class GhostAbility extends Ability {
             shard.setTeleportDuration(SHARD_FLIGHT_TICKS);
             ctx().runLater(owner, 1, () -> {
                 if (shard.isValid()) {
-                    shard.teleport(body.clone().add(out));
+                    Displays.moveTo(shard, body.clone().add(out));
                     Displays.animate(shard, cube(size * 0.6f, new Quaternionf(tumble).rotateY(2.4f)),
                             SHARD_FLIGHT_TICKS);
                 }
@@ -622,15 +625,15 @@ public final class GhostAbility extends Ability {
         private final List<BlockDisplay> parts = new ArrayList<>();
         private final List<Transformation> shapes = new ArrayList<>();
         private final Location anchor;
+        /** The specter faces {@code facing}: a turn in its parts' transformations (the displays are unrotated). */
+        private final Quaternionf turn;
 
         Specter(Player owner, Location at, Vector facing, float scale, long lifetime) {
             this.owner = owner;
             this.anchor = at.clone();
             Vector flat = Motion.horizontal(facing);
-            if (flat.lengthSquared() > 1.0E-6) {
-                anchor.setDirection(flat);
-            }
-            anchor.setPitch(0);
+            this.turn = turnOf(flat.lengthSquared() > 1.0E-6
+                    ? (float) Math.toDegrees(Math.atan2(-flat.getX(), flat.getZ())) : 0);
             BlockData glass = SHROUD_BLOCK.createBlockData();
             BlockData dark = FACE_BLOCK.createBlockData();
             add(glass, box(-0.45f, -1.0f, -0.25f, 0.9f, 1.05f, 0.5f, 1), scale, lifetime);
@@ -641,7 +644,8 @@ public final class GhostAbility extends Ability {
         }
 
         private void add(BlockData data, Transformation shape, float scale, long lifetime) {
-            BlockDisplay part = Displays.block(ctx(), owner, anchor, data, scaled(shape, scale), lifetime);
+            BlockDisplay part = Displays.block(ctx(), owner, anchor, data, oriented(scaled(shape, scale), turn),
+                    lifetime);
             parts.add(part);
             shapes.add(shape);
         }
@@ -656,8 +660,8 @@ public final class GhostAbility extends Ability {
                         continue;
                     }
                     part.setTeleportDuration(ticks);
-                    part.teleport(to);
-                    Displays.animate(part, scaled(shapes.get(i), scale), ticks);
+                    Displays.moveTo(part, to);
+                    Displays.animate(part, oriented(scaled(shapes.get(i), scale), turn), ticks);
                 }
             });
         }
@@ -680,6 +684,18 @@ public final class GhostAbility extends Ability {
     private static Transformation scaled(Transformation shape, float scale) {
         return new Transformation(new Vector3f(shape.getTranslation()).mul(scale), new Quaternionf(),
                 new Vector3f(shape.getScale()).mul(scale), new Quaternionf());
+    }
+
+    /** Minecraft's turn for a yaw (degrees: 0 faces +Z, 90 faces -X), as a display transformation rotation. */
+    private static Quaternionf turnOf(float yaw) {
+        return new Quaternionf().rotateY((float) Math.toRadians(-yaw));
+    }
+
+    /** {@code local} (a shape in a frame where +Z is forward) turned by {@code turn} around the display's origin. */
+    private static Transformation oriented(Transformation local, Quaternionf turn) {
+        return new Transformation(new Quaternionf(turn).transform(new Vector3f(local.getTranslation())),
+                new Quaternionf(turn).mul(local.getLeftRotation()), new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /** A cube of edge {@code size} centered on the display's origin, rotated around its center. */

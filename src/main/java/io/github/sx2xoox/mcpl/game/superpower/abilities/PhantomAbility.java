@@ -144,9 +144,12 @@ public final class PhantomAbility extends Ability {
     private static final int RETURN_TICKS = 10;
     /** Small enough that sprinting away from the screech escapes the strike (walking does not). */
     private static final double SWOOP_HIT_RADIUS = 1.1;
-    private static final int FLAP_TICKS = 4;
-    private static final float WING_UP = 35;
-    private static final float WING_DOWN = -15;
+    /** Wing beat of a swarm phantom: the wings swing between {@code MID - SWING} and {@code MID + SWING} degrees. */
+    private static final int WING_BEAT_TICKS = 8;
+    private static final float WING_MID = 10;
+    private static final float WING_SWING = 25;
+    /** Each swarm move is interpolated over this many ticks (a little longer than the tick, so it never stalls). */
+    private static final int POSE_TICKS = 2;
     private static final int DISPERSE_TICKS = 10;
 
     private final LandingGuard landing = new LandingGuard();
@@ -382,12 +385,15 @@ public final class PhantomAbility extends Ability {
             Fx.sound(eye, Sound.ENTITY_PHANTOM_FLAP, 0.8f, 0.6f);
             Location point = divePoint();
             reticle = Displays.block(ctx(), owner, point.clone().add(0, 0.05, 0), RETICLE_BLOCK.createBlockData(),
-                    Displays.transform(0, 0, 0, 0.2f, 0.02f, 0.2f, 45, 0, 0), hover + 20L);
+                    reticlePose(0.2f, 45), hover + 20L);
             BlockDisplay mark = reticle;
             mark.setTeleportDuration(1);
             Displays.outline(mark, PALETTE.body());
-            Displays.animateNextTick(ctx(), owner, mark, Displays.transform(0, 0, 0, RETICLE_SIZE, 0.02f,
-                    RETICLE_SIZE, 45, 0, 0), Math.max(1, hover - 1));
+        }
+
+        /** The flat reticle square, {@code size} across, turned {@code yaw} degrees in its transformation. */
+        private Transformation reticlePose(float size, float yaw) {
+            return Displays.transform(0, 0, 0, size, 0.02f, size, yaw, 0, 0);
         }
 
         /** Hanging in the air: hold still and show where the dive would land (enemies can read it). */
@@ -396,9 +402,12 @@ public final class PhantomAbility extends Ability {
             Location point = divePoint();
             BlockDisplay mark = reticle;
             if (mark != null && mark.isValid()) {
-                Location at = point.clone().add(0, 0.05, 0);
-                at.setYaw((float) (run * 12));
-                mark.teleport(at);
+                // The reticle follows the gaze and turns; it is moved without taking any rotation from the point.
+                Displays.moveTo(mark, point.clone().add(0, 0.05, 0));
+                if (run > 0) {
+                    float size = RETICLE_SIZE * (float) Math.min(1.0, (run + 1) / (double) hover);
+                    Displays.animate(mark, reticlePose(Math.max(0.2f, size), 45 + run * 12), 1);
+                }
             }
             Location eye = owner.getEyeLocation();
             Vfx.line(ctx(), eye, point, 1.5, Particle.DUST_COLOR_TRANSITION, MEMBRANE, true);
@@ -616,19 +625,21 @@ public final class PhantomAbility extends Ability {
         @Nullable LivingEntity prey;
         Location from;
         Location aim;
-        boolean wingsUp;
+        int beat;
 
+        /** Spawns the phantom at {@code at}, heading where {@code at} looks (in its transformations only). */
         Bat(Player owner, int slot, Location at, long lifetime) {
             this.slot = slot;
             this.from = at.clone();
             this.aim = at.clone();
-            body = Displays.block(ctx(), owner, at, BODY_BLOCK.createBlockData(), box(-0.18f, -0.1f, -0.45f, 0.36f,
-                    0.2f, 0.9f), lifetime);
+            Quaternionf heading = headingOf(at);
+            body = Displays.block(ctx(), owner, at, BODY_BLOCK.createBlockData(), oriented(bodyShape(), heading),
+                    lifetime);
             BlockData membrane = WING_BLOCK.createBlockData();
-            leftWing = Displays.block(ctx(), owner, at, membrane, wing(true, WING_DOWN), lifetime);
-            rightWing = Displays.block(ctx(), owner, at, membrane, wing(false, WING_DOWN), lifetime);
+            leftWing = Displays.block(ctx(), owner, at, membrane, oriented(wing(true, WING_MID), heading), lifetime);
+            rightWing = Displays.block(ctx(), owner, at, membrane, oriented(wing(false, WING_MID), heading), lifetime);
             for (BlockDisplay part : parts()) {
-                part.setTeleportDuration(2);
+                part.setTeleportDuration(POSE_TICKS);
                 part.setViewRange(2.0f);
             }
         }
@@ -641,17 +652,20 @@ public final class PhantomAbility extends Ability {
             return body.isValid() && leftWing.isValid() && rightWing.isValid();
         }
 
+        /**
+         * Flies to {@code at}, heading where {@code at} looks, with the wings one step further in their beat. The
+         * displays keep yaw and pitch 0: the heading is applied in their transformations.
+         */
         void moveTo(Location at) {
+            beat++;
+            Quaternionf heading = headingOf(at);
+            float angle = WING_MID + WING_SWING * (float) Math.sin(beat * TAU / WING_BEAT_TICKS + slot);
             for (BlockDisplay part : parts()) {
-                part.teleport(at);
+                Displays.moveTo(part, at);
             }
-        }
-
-        void flap() {
-            wingsUp = !wingsUp;
-            float angle = wingsUp ? WING_UP : WING_DOWN;
-            Displays.animate(leftWing, wing(true, angle), FLAP_TICKS);
-            Displays.animate(rightWing, wing(false, angle), FLAP_TICKS);
+            Displays.animate(body, oriented(bodyShape(), heading), POSE_TICKS);
+            Displays.animate(leftWing, oriented(wing(true, angle), heading), POSE_TICKS);
+            Displays.animate(rightWing, oriented(wing(false, angle), heading), POSE_TICKS);
         }
     }
 
@@ -714,9 +728,6 @@ public final class PhantomAbility extends Ability {
                 }
                 fly(bat, tick);
                 swooping |= bat.flight != Flight.ORBIT;
-                if (tick % FLAP_TICKS == bat.slot % FLAP_TICKS) {
-                    bat.flap();
-                }
             }
             ambience(tick);
             return tick < duration || swooping;
@@ -870,7 +881,7 @@ public final class PhantomAbility extends Ability {
                         ThreadLocalRandom.current().nextDouble(-3, 3));
                 for (BlockDisplay part : bat.parts()) {
                     part.setTeleportDuration(DISPERSE_TICKS);
-                    part.teleport(away);
+                    Displays.moveTo(part, away);
                     Displays.shrinkAway(ctx(), owner, part, DISPERSE_TICKS);
                 }
             }
@@ -924,6 +935,27 @@ public final class PhantomAbility extends Ability {
     private static Transformation box(float x, float y, float z, float sx, float sy, float sz) {
         return new Transformation(new Vector3f(x, y, z), new Quaternionf(), new Vector3f(sx, sy, sz),
                 new Quaternionf());
+    }
+
+    /** The body of a swarm phantom in its own frame (+Z forward, +X left): a slim dark blue bar. */
+    private static Transformation bodyShape() {
+        return box(-0.18f, -0.1f, -0.45f, 0.36f, 0.2f, 0.9f);
+    }
+
+    /**
+     * The rotation that points a display's +Z where {@code at} looks, in Minecraft's convention (yaw 0 = +Z, 90 = -X;
+     * pitch positive = looking down), the same order the client applies an entity's own rotation in.
+     */
+    static Quaternionf headingOf(Location at) {
+        return new Quaternionf().rotateY((float) Math.toRadians(-at.getYaw()))
+                .rotateX((float) Math.toRadians(at.getPitch()));
+    }
+
+    /** {@code local} (a shape in a frame where +Z is forward) turned by {@code heading} around the display's origin. */
+    private static Transformation oriented(Transformation local, Quaternionf heading) {
+        return new Transformation(new Quaternionf(heading).transform(new Vector3f(local.getTranslation())),
+                new Quaternionf(heading).mul(local.getLeftRotation()), new Vector3f(local.getScale()),
+                new Quaternionf(local.getRightRotation()));
     }
 
     /** A wing of a swarm phantom, hinged at the body's side and raised by {@code angle} degrees. */

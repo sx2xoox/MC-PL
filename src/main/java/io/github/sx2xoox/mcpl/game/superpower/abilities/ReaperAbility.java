@@ -114,6 +114,7 @@ public final class ReaperAbility extends Ability {
     private static final double MARK_ABOVE = 0.9;
     private static final float MARK_SCYTHE_SCALE = 1.3f;
     private static final float MARK_SCYTHE_SPIN = 6;
+    private static final int MARK_GROW_TICKS = 6;
     private static final long KNELL_PERIOD = 20;
     private static final int SWING_TICKS = 3;
     private static final float SLASH_LENGTH = 2.6f;
@@ -237,11 +238,11 @@ public final class ReaperAbility extends Ability {
         }
 
         void start() {
-            Location chest = chest(startYaw);
-            ItemDisplay display = Displays.item(ctx(), owner, chest, new ItemStack(SCYTHE_ITEM), scythePose(0.3f),
-                    SPIN_TICKS + 12L);
+            Location chest = chest();
+            // The scythe's own rotation stays 0: the sweep lives in its transformation (see scythePose).
+            ItemDisplay display = Displays.item(ctx(), owner, chest, new ItemStack(SCYTHE_ITEM),
+                    scythePose(0.3f, startYaw), SPIN_TICKS + 12L);
             display.setTeleportDuration(1);
-            Displays.animateNextTick(ctx(), owner, display, scythePose(SCYTHE_SCALE), 2);
             scythe = display;
             // The wind-up: shadows pooling at the feet and a low whistle of the blade.
             Location feet = owner.getLocation().add(0, 0.08, 0);
@@ -259,18 +260,16 @@ public final class ReaperAbility extends Ability {
             float yaw = (float) (startYaw + swept);
             ItemDisplay display = scythe;
             if (display != null && display.isValid()) {
-                display.teleport(chest(yaw));
+                Displays.moveTo(display, chest());
+                Displays.animate(display, scythePose(SCYTHE_SCALE, yaw), 1);
             }
             cut(swept);
             drawSweep(yaw, tick);
             return true;
         }
 
-        private Location chest(float yaw) {
-            Location at = owner.getLocation().add(0, owner.getHeight() * CHEST, 0);
-            at.setYaw(yaw);
-            at.setPitch(0);
-            return at;
+        private Location chest() {
+            return owner.getLocation().add(0, owner.getHeight() * CHEST, 0);
         }
 
         /** Cuts every enemy in reach the blade has swept past by now. */
@@ -371,12 +370,16 @@ public final class ReaperAbility extends Ability {
     }
 
     /**
-     * The scythe lying flat at chest height, its handle pointing away from the reaper and the blade leading the turn:
-     * the hoe sprite is turned so its handle runs along +Y, laid down onto +Z and pushed out by
-     * {@link #SCYTHE_REACH}. The display's yaw then swings it around.
+     * The scythe lying flat at chest height, its handle pointing away from the reaper towards {@code yaw} and the
+     * blade leading the turn: the hoe sprite is turned so its handle runs along +Y, laid down onto +Z, turned to
+     * {@code yaw} (Minecraft's convention: 0 = +Z, 90 = -X) and pushed out by {@link #SCYTHE_REACH} that way. The
+     * display itself is never rotated.
      */
-    private static Transformation scythePose(float scale) {
-        return Displays.centered(0, 0, SCYTHE_REACH * scale / SCYTHE_SCALE, scale, scale, scale, 0, 90, 45);
+    static Transformation scythePose(float scale, float yaw) {
+        double angle = Math.toRadians(yaw);
+        float reach = SCYTHE_REACH * scale / SCYTHE_SCALE;
+        return Displays.centered((float) (-Math.sin(angle) * reach), 0, (float) (Math.cos(angle) * reach), scale,
+                scale, scale, yaw, 90, 45);
     }
 
     // ------------------------------------------------------------------ ultimate: mark of death
@@ -418,11 +421,10 @@ public final class ReaperAbility extends Ability {
 
         void start() {
             Location over = over();
-            ItemDisplay display = Displays.item(ctx(), owner, over, new ItemStack(SCYTHE_ITEM), hangingPose(0.1f),
+            ItemDisplay display = Displays.item(ctx(), owner, over, new ItemStack(SCYTHE_ITEM), hangingPose(0.1f, 0),
                     duration + SWING_TICKS + 12);
             display.setTeleportDuration(2);
             display.setViewRange(2.0f);
-            Displays.animateNextTick(ctx(), owner, display, hangingPose(MARK_SCYTHE_SCALE), 6);
             scythe = display;
             TextDisplay text = Displays.text(ctx(), owner, over.clone().add(0, 0.95, 0), labelText(duration), 0.8f,
                     duration + 4);
@@ -481,10 +483,7 @@ public final class ReaperAbility extends Ability {
         }
 
         private Location over() {
-            Location at = target.getLocation().add(0, target.getHeight() + MARK_ABOVE, 0);
-            at.setPitch(0);
-            at.setYaw(spin);
-            return at;
+            return target.getLocation().add(0, target.getHeight() + MARK_ABOVE, 0);
         }
 
         /** The scythe and the countdown hover over the victim; hidden while the victim is hidden from the reaper. */
@@ -494,11 +493,13 @@ public final class ReaperAbility extends Ability {
             Location over = over();
             ItemDisplay display = scythe;
             if (display != null && display.isValid()) {
-                display.teleport(over);
+                Displays.moveTo(display, over);
+                float grown = MARK_SCYTHE_SCALE * (float) Math.min(1.0, (tick + 1) / (double) MARK_GROW_TICKS);
+                Displays.animate(display, hangingPose(grown, spin), 1);
             }
             TextDisplay text = label;
             if (text != null && text.isValid()) {
-                text.teleport(over.clone().add(0, 0.95, 0));
+                Displays.moveTo(text, over.clone().add(0, 0.95, 0));
                 if (tick % 2 == 0) {
                     text.text(labelText(duration - tick - 1));
                 }
@@ -562,12 +563,9 @@ public final class ReaperAbility extends Ability {
             Location body = Fx.body(target);
             ItemDisplay display = scythe;
             if (display != null && display.isValid()) {
-                Location swingAt = body.clone();
-                swingAt.setYaw(spin);
-                swingAt.setPitch(0);
-                display.teleport(swingAt);
+                Displays.moveTo(display, body);
                 Displays.animate(display, Displays.centered(0, 0, 0, MARK_SCYTHE_SCALE * 1.4f,
-                        MARK_SCYTHE_SCALE * 1.4f, MARK_SCYTHE_SCALE * 1.4f, 0, 0, -35), SWING_TICKS);
+                        MARK_SCYTHE_SCALE * 1.4f, MARK_SCYTHE_SCALE * 1.4f, spin, 0, -35), SWING_TICKS);
                 ctx().runLater(owner, SWING_TICKS + 2, () -> {
                     if (display.isValid()) {
                         Displays.shrinkAway(ctx(), owner, display, 4);
@@ -646,9 +644,9 @@ public final class ReaperAbility extends Ability {
         }
     }
 
-    /** The scythe hanging over the victim, handle up and blade down, turning slowly with the display's yaw. */
-    private static Transformation hangingPose(float scale) {
-        return Displays.centered(0, 0, 0, scale, scale, scale, 0, 0, -135);
+    /** The scythe hanging over the victim, handle up and blade down, turned {@code yaw} degrees about the vertical. */
+    private static Transformation hangingPose(float scale, float yaw) {
+        return Displays.centered(0, 0, 0, scale, scale, scale, yaw, 0, -135);
     }
 
     // ------------------------------------------------------------------ visuals
@@ -659,27 +657,33 @@ public final class ReaperAbility extends Ability {
      */
     private void slash(Location at, Vector facing, float length, float rollDegrees, long delay) {
         Player owner = player();
-        Vector flat = Motion.horizontal(facing);
+        float yaw = yawOf(facing);
         Location anchor = at.clone();
-        if (flat.lengthSquared() > 1.0E-6) {
-            anchor.setDirection(flat);
-        }
-        anchor.setPitch(0);
         ctx().runLater(owner, Math.max(1, delay), () -> {
             if (!anchor.getWorld().equals(owner.getWorld())) {
                 return;
             }
+            // The bar runs along its own X axis, across the line of the blow; the turn is in the transformation.
             BlockDisplay bar = Displays.block(ctx(), owner, anchor, SLASH_BLOCK.createBlockData(),
-                    Displays.transform(0, 0, 0, length * 0.2f, SLASH_WIDTH, SLASH_WIDTH, 0, 0, rollDegrees),
+                    Displays.transform(0, 0, 0, length * 0.2f, SLASH_WIDTH, SLASH_WIDTH, yaw, 0, rollDegrees),
                     SLASH_HOLD_TICKS + SLASH_FADE_TICKS + 4);
             Displays.outline(bar, PALETTE.body());
             Displays.animateNextTick(ctx(), owner, bar, Displays.transform(0, 0, 0, length, SLASH_WIDTH, SLASH_WIDTH,
-                    0, 0, rollDegrees), 2);
+                    yaw, 0, rollDegrees), 2);
             ctx().runLater(owner, SLASH_HOLD_TICKS, () -> {
                 if (bar.isValid()) {
                     Displays.shrinkAway(ctx(), owner, bar, SLASH_FADE_TICKS);
                 }
             });
         });
+    }
+
+    /** Minecraft's yaw (degrees: 0 = +Z, 90 = -X) of the horizontal part of {@code direction}, 0 if it has none. */
+    static float yawOf(Vector direction) {
+        Vector flat = Motion.horizontal(direction);
+        if (flat.lengthSquared() < 1.0E-6) {
+            return 0;
+        }
+        return (float) Math.toDegrees(Math.atan2(-flat.getX(), flat.getZ()));
     }
 }

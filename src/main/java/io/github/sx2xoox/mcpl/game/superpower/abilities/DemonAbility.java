@@ -145,6 +145,7 @@ public final class DemonAbility extends Ability {
     private static final double PILLAR_PUSH = 0.85;
     private static final double PILLAR_LIFT = 0.6;
     private static final double SIGIL_SPIN = 9;
+    private static final int SIGIL_GROW = 6;
     private static final double SIGIL_GROUND_SEARCH = 3;
     // The gate in its own frame: +X is its left, +Y up, +Z faces the demon.
     private static final float GATE_HALF_WIDTH = 1.6f;
@@ -449,7 +450,7 @@ public final class DemonAbility extends Ability {
                 if (!flame.isValid()) {
                     continue;
                 }
-                flame.teleport(frontPoint(front, lateral(i)));
+                Displays.moveTo(flame, frontPoint(front, lateral(i)));
                 Displays.animate(flame, Displays.transform(0, 0, 0, width, height, width, 0, 0, 0), 1);
             }
         }
@@ -570,7 +571,11 @@ public final class DemonAbility extends Ability {
     }
 
     /** One pillar waiting to erupt: its sigil on the ground and the tick it erupts at. */
-    private record PendingPillar(Location mark, long eruptAt, BlockDisplay sigil) {
+    private record PendingPillar(Location mark, long eruptAt, BlockDisplay sigil, float spin) {
+    }
+
+    /** One part of the gate as a box in the gate's own frame (+X its left, +Y up, +Z facing the demon). */
+    private record GatePart(float x, float y, float z, float sx, float sy, float sz) {
     }
 
     /**
@@ -589,7 +594,9 @@ public final class DemonAbility extends Ability {
         private final int waves;
         private final long total;
         private final List<BlockDisplay> frame = new ArrayList<>();
-        private final List<Transformation> framePose = new ArrayList<>();
+        private final List<GatePart> frameParts = new ArrayList<>();
+        /** The gate's turn towards the demon: displays are never rotated themselves, only their transformation. */
+        private final Quaternionf turn;
         private final List<PendingPillar> pending = new ArrayList<>();
         private final Vector facing;
         private final Vector left;
@@ -608,6 +615,7 @@ public final class DemonAbility extends Ability {
             this.total = RISE_TICKS + (waves - 1) * interval + delay + PILLAR_HOLD_TICKS;
             this.facing = Motion.horizontalFacing(base);
             this.left = new Vector(facing.getZ(), 0, -facing.getX());
+            this.turn = new Quaternionf().rotateY((float) Math.toRadians(-base.getYaw()));
         }
 
         void open() {
@@ -646,30 +654,38 @@ public final class DemonAbility extends Ability {
             }
             BlockData brazier = FLAME_BLOCK.createBlockData();
             long life = total + CLOSE_TICKS + 10;
-            part(post, box(w - POST_WIDTH, 0, -d / 2, POST_WIDTH, h, d), life);
-            part(post, box(-w, 0, -d / 2, POST_WIDTH, h, d), life);
-            part(beam, box(-w - 0.15f, h - BEAM_HEIGHT, -d / 2 - 0.05f, 2 * w + 0.3f, BEAM_HEIGHT, d + 0.1f), life);
-            part(beam, box(-w - 0.1f, -0.05f, -d / 2 - 0.05f, 2 * w + 0.2f, 0.4f, d + 0.1f), life);
+            part(post, new GatePart(w - POST_WIDTH, 0, -d / 2, POST_WIDTH, h, d), life);
+            part(post, new GatePart(-w, 0, -d / 2, POST_WIDTH, h, d), life);
+            part(beam, new GatePart(-w - 0.15f, h - BEAM_HEIGHT, -d / 2 - 0.05f, 2 * w + 0.3f, BEAM_HEIGHT, d + 0.1f),
+                    life);
+            part(beam, new GatePart(-w - 0.1f, -0.05f, -d / 2 - 0.05f, 2 * w + 0.2f, 0.4f, d + 0.1f), life);
             float inner = w - POST_WIDTH;
             // The portal block model is a pane 4/16 thick in the middle of the block: centre it on the frame.
-            BlockDisplay fill = part(portal, box(-inner, 0.35f, -0.5f, 2 * inner, h - BEAM_HEIGHT - 0.35f, 1f), life);
+            BlockDisplay fill = part(portal, new GatePart(-inner, 0.35f, -0.5f, 2 * inner, h - BEAM_HEIGHT - 0.35f, 1f),
+                    life);
             Displays.outline(fill, PALETTE.body());
             float b = BRAZIER_SIZE;
-            part(brazier, box(w - POST_WIDTH / 2 - b / 2, h, -b / 2, b, b, b), life);
-            part(brazier, box(-w + POST_WIDTH / 2 - b / 2, h, -b / 2, b, b, b), life);
+            part(brazier, new GatePart(w - POST_WIDTH / 2 - b / 2, h, -b / 2, b, b, b), life);
+            part(brazier, new GatePart(-w + POST_WIDTH / 2 - b / 2, h, -b / 2, b, b, b), life);
         }
 
-        private BlockDisplay part(BlockData data, Transformation pose, long life) {
-            Vector3f t = pose.getTranslation();
-            Vector3f s = pose.getScale();
-            Transformation sunk = new Transformation(new Vector3f(t.x(), 0, t.z()), new Quaternionf(),
-                    new Vector3f(s.x(), 0.01f, s.z()), new Quaternionf());
-            BlockDisplay display = Displays.block(ctx(), owner, base, data, sunk, life);
+        private BlockDisplay part(BlockData data, GatePart part, long life) {
+            BlockDisplay display = Displays.block(ctx(), owner, base, data, pose(part, 0), life);
             display.setViewRange(2.0f);
-            Displays.animateNextTick(ctx(), owner, display, pose, RISE_TICKS);
+            Displays.animateNextTick(ctx(), owner, display, pose(part, 1), RISE_TICKS);
             frame.add(display);
-            framePose.add(pose);
+            frameParts.add(part);
             return display;
+        }
+
+        /**
+         * A gate part risen {@code rise} (0 = sunk flat into the ground, 1 = standing), turned to face the demon:
+         * the corner offset and the box are rotated by the gate's turn around the base.
+         */
+        private Transformation pose(GatePart part, float rise) {
+            Vector3f corner = new Vector3f(part.x(), part.y() * rise, part.z());
+            return new Transformation(new Quaternionf(turn).transform(corner), new Quaternionf(turn),
+                    new Vector3f(part.sx(), Math.max(0.01f, part.sy() * rise), part.sz()), new Quaternionf());
         }
 
         @Override
@@ -707,16 +723,11 @@ public final class DemonAbility extends Ability {
                 if (ground != null) {
                     mark.setY(ground);
                 }
-                mark.setPitch(0);
-                mark.setYaw(ThreadLocalRandom.current().nextFloat() * 90);
-                float size = (float) (params().num("pillar_radius") * 1.5);
+                float spin = ThreadLocalRandom.current().nextFloat() * 90;
                 BlockDisplay sigil = Displays.block(ctx(), owner, mark.clone().add(0, 0.03, 0), glass,
-                        Displays.transform(0, 0, 0, 0.1f, 0.02f, 0.1f, 0, 0, 0), delay + 4);
-                sigil.setTeleportDuration(1);
+                        sigilPose(0.1f, spin), delay + 4);
                 Displays.outline(sigil, PALETTE.body());
-                Displays.animateNextTick(ctx(), owner, sigil, Displays.transform(0, 0, 0, size, 0.02f, size, 0, 0, 0),
-                        (int) Math.min(6, delay));
-                pending.add(new PendingPillar(mark, ctx().currentTick() + delay, sigil));
+                pending.add(new PendingPillar(mark, ctx().currentTick() + delay, sigil, spin));
                 Fx.sound(mark, Sound.BLOCK_SCULK_CHARGE, 0.7f, 0.6f + Fx.jitter(0.1f));
                 Fx.sound(mark, Sound.ENTITY_GHAST_WARN, 0.25f, 1.6f + Fx.jitter(0.1f));
             }
@@ -734,11 +745,17 @@ public final class DemonAbility extends Ability {
                 Vfx.dot(Vfx.scatter(at, radiusNow * 0.7), Particle.SOUL_FIRE_FLAME, null, false);
             }
             BlockDisplay sigil = pillar.sigil();
-            if (sigil.isValid()) {
-                Location spun = sigil.getLocation();
-                spun.setYaw((float) (spun.getYaw() + SIGIL_SPIN));
-                sigil.teleport(spun);
+            long age = delay - remaining;
+            if (sigil.isValid() && age > 0) {
+                // The sigil grows in and keeps turning; the turn lives in its transformation, not in its rotation.
+                float size = (float) (params().num("pillar_radius") * 1.5 * Math.min(1.0, age / (double) SIGIL_GROW));
+                Displays.animate(sigil, sigilPose(Math.max(0.1f, size), (float) (pillar.spin() + age * SIGIL_SPIN)), 1);
             }
+        }
+
+        /** The flat crimson square of a sigil, {@code size} across, turned {@code yaw} degrees about its center. */
+        private Transformation sigilPose(float size, float yaw) {
+            return Displays.transform(0, 0, 0, size, 0.02f, size, yaw, 0, 0);
         }
 
         private void erupt(PendingPillar pillar) {
@@ -863,11 +880,7 @@ public final class DemonAbility extends Ability {
                 if (!part.isValid()) {
                     continue;
                 }
-                Transformation pose = framePose.get(i);
-                Vector3f t = pose.getTranslation();
-                Vector3f s = pose.getScale();
-                Displays.animate(part, new Transformation(new Vector3f(t.x(), 0, t.z()), new Quaternionf(),
-                        new Vector3f(s.x(), 0.01f, s.z()), new Quaternionf()), CLOSE_TICKS);
+                Displays.animate(part, pose(frameParts.get(i), 0), CLOSE_TICKS);
                 ctx().runLater(owner, CLOSE_TICKS, () -> {
                     if (part.isValid()) {
                         part.remove();
@@ -890,12 +903,6 @@ public final class DemonAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
-
-    /** A box in the display's own frame from corner {@code (x, y, z)} with size {@code (sx, sy, sz)}. */
-    private static Transformation box(float x, float y, float z, float sx, float sy, float sz) {
-        return new Transformation(new Vector3f(x, y, z), new Quaternionf(), new Vector3f(sx, sy, sz),
-                new Quaternionf());
-    }
 
     private static void ignite(LivingEntity target, long ticks) {
         if (ticks <= 0 || !target.isValid()) {
