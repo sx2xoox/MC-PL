@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.List;
+import java.util.function.IntConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -32,17 +33,22 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.sound.AudioExperience;
+import org.mockbukkit.mockbukkit.util.SpawnedParticle;
 
 /**
  * 특수 계열 (새 능력): 사냥꾼, 해적, 스피드스터. Every ability through a whole match, the owner dying in the middle of each
@@ -58,6 +64,16 @@ class RogueNewAbilitiesTest {
 
     static Stream<String> abilities() {
         return Stream.of("hunter", "pirate", "speedster");
+    }
+
+    /**
+     * {@link AbilityLifecycleTest} reads the ability registry in its static initializer, which starts a mock server of
+     * its own. The first use of its helpers below would happen inside a running scenario ("Already mocking") and break
+     * that class for the whole test JVM, so it is initialized here, before any scenario runs.
+     */
+    @BeforeAll
+    static void initializeSharedSweeps() {
+        assertTrue(AbilityLifecycleTest.abilities().findAny().isPresent());
     }
 
     /** The abilities whose ultimate the Gambler may borrow. */
@@ -121,8 +137,8 @@ class RogueNewAbilitiesTest {
                 .anyMatch(modifier -> modifier.getAmount() <= -1.0 + EPSILON);
     }
 
-    private static boolean slowed(Player player) {
-        return player.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers().stream()
+    private static boolean slowed(LivingEntity entity) {
+        return entity.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers().stream()
                 .anyMatch(modifier -> modifier.getAmount() < 0);
     }
 
@@ -1283,6 +1299,435 @@ class RogueNewAbilitiesTest {
                     s.world.setBlock(2, FlatWorld.FLOOR_Y + y, z, Material.AIR);
                 }
             }
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ audit regressions
+
+    /** How close to a stealthed enemy's body or head a particle or sound counts as drawn on it. */
+    private static final double MARK_REACH = 0.3;
+
+    /** The block and item displays of the abilities (text pop-ups excluded). */
+    private static List<Display> shapes(Scenario s) {
+        return entities(s, Display.class).stream().filter(display -> !(display instanceof TextDisplay)).toList();
+    }
+
+    /**
+     * Runs {@code ticks} ticks ({@code beforeTick} first in each) and fails if any particle or sound lands on
+     * {@code hidden}, an enemy hidden from the owner by stealth: at its body's middle (where hit flashes go) or over
+     * its head (where marks go), as it stood when the tick began. Run with world physics off, so it stays put.
+     */
+    private static void assertNothingDrawnOn(Scenario s, Player hidden, int ticks, IntConsumer beforeTick,
+                                             String what) {
+        for (int i = 0; i < ticks; i++) {
+            beforeTick.accept(i);
+            Location feet = hidden.getLocation();
+            List<Location> spots = List.of(feet.clone().add(0, hidden.getHeight() * 0.5, 0),
+                    feet.clone().add(0, hidden.getHeight() + 0.2, 0));
+            s.world.clearSpawnedParticles();
+            s.owner.clearSounds();
+            s.ticks(1);
+            for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
+                Location at = new Location(s.world, particle.x(), particle.y(), particle.z());
+                assertFalse(spots.stream().anyMatch(spot -> spot.distance(at) < MARK_REACH),
+                        what + ": " + particle.count() + " " + particle.particle() + " drawn on the stealthed enemy");
+            }
+            for (AudioExperience sound : s.owner.getHeardSounds()) {
+                assertFalse(spots.stream().anyMatch(spot -> spot.distance(sound.getLocation()) < MARK_REACH),
+                        what + ": " + sound.getSound() + " heard where the stealthed enemy hides");
+            }
+        }
+    }
+
+    /** A trapped enemy that slips into stealth is let go where it stood: the trap never follows it around. */
+    @Test
+    void hunterTrapLetsGoOfAVictimThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "곰덫");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 60, "the trap snapping");
+            s.ticks(2);
+            assertTrue(rooted(s.enemy), "held");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.place(s.enemy, 3.5, 4.5, 180); // shoved away, unseen
+            for (int i = 0; i < 6; i++) {
+                s.ticks(1);
+                for (Display part : shapes(s)) {
+                    assertTrue(part.getLocation().distance(s.enemy.getLocation()) > 2,
+                            "the trap stays where the enemy vanished: " + part.getLocation().toVector());
+                }
+            }
+            s.ticks(20);
+            assertTrue(shapes(s).isEmpty(), "and falls apart there");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
+    /** The trap vanishes with a fallen hunter, and so does its hold: nobody is left rooted by a trap that is gone. */
+    @Test
+    void hunterTrapLetsGoWhenTheHunterFalls() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "곰덫");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 60, "the trap snapping");
+            s.ticks(2);
+            assertTrue(rooted(s.enemy), "held");
+            s.killOwner(s.enemy2);
+            assertTrue(shapes(s).isEmpty(), "the trap is gone with the hunter");
+            assertFalse(rooted(s.enemy), "and the enemy walks free at once");
+            assertModifierFree(s.enemy, "freed from the trap");
+            s.finishMatch();
+            s.assertNoProblems();
+            s.assertCleanWorld();
+        }
+    }
+
+    /** An eliminated victim (a spectator now) is let go at once, the trap does not drift after it. */
+    @Test
+    void hunterTrapLetsGoOfAnEliminatedVictim() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "곰덫");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 60, "the trap snapping");
+            s.ticks(2);
+            s.session.eliminate(s.enemy, s.owner);
+            s.place(s.enemy, 3.5, 4.5, 180);
+            for (int i = 0; i < 6; i++) {
+                s.ticks(1);
+                for (Display part : shapes(s)) {
+                    assertTrue(part.getLocation().distance(s.enemy.getLocation()) > 2,
+                            "no trap drifts after a spectator: " + part.getLocation().toVector());
+                }
+            }
+            s.ticks(20);
+            assertTrue(shapes(s).isEmpty(), "the spent trap falls apart where it was");
+            s.finishClean();
+        }
+    }
+
+    /** The cannonball and the ghost ship's shells hurt a stealthed enemy all the same, but draw nothing on it. */
+    @Test
+    void pirateStrikesStealthedEnemiesWithoutDrawingOnThem() {
+        try (Scenario s = Scenario.ffa("pirate")) {
+            s.world.physics().setEnabled(false); // everyone stays put, so nothing is drawn where it moved to
+            s.place(s.enemy2, -10.5, 12.5, 180);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "대포알 through a stealthed enemy");
+            assertNothingDrawnOn(s, s.enemy, 30, i -> { }, "대포알");
+            assertEquals(s.param("ball_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "bowled over all the same");
+
+            // The ship shells the visible enemy; the stealthed one stands two blocks from it, inside every burst.
+            s.place(s.enemy2, 0.5, 6.5, 180);
+            s.place(s.enemy, 2.5, 6.5, 180);
+            s.aimAt(s.owner, s.enemy2);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "유령선 포격");
+            assertNothingDrawnOn(s, s.enemy, s.paramTicks("ult_duration") + 25, i -> { }, "유령선 포격");
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the shells hurt it all the same");
+            assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "and the aimed enemy");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    /** The dash and light speed strike a stealthed enemy all the same, but draw nothing on it. */
+    @Test
+    void speedsterStrikesStealthedEnemiesWithoutDrawingOnThem() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.world.physics().setEnabled(false);
+            s.place(s.enemy2, -10.5, 12.5, 180);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "질주 through a stealthed enemy");
+            assertNothingDrawnOn(s, s.enemy, 8, i -> { }, "질주");
+            assertEquals(s.param("dash_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "struck all the same");
+
+            // Light speed: the runner (and its afterimages after it) brush past the stealthed enemy.
+            s.place(s.owner, -6.5, 5.3, -90);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "광속");
+            assertNothingDrawnOn(s, s.enemy, 50, i -> {
+                if (i < 26) {
+                    s.place(s.owner, -6.5 + 0.6 * (i + 1), 5.3, -90);
+                }
+            }, "광속");
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "light speed strikes it all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    /** A stealthed enemy is never caught: the jaws clamped to its leg and the hunter's message would reveal it. */
+    @Test
+    void hunterTrapLetsAStealthedEnemyWalkOverIt() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 3.5);
+            s.assertSucceeded(s.active(), "곰덫");
+            s.ticks(40);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            run(s, s.enemy, 0.5, 8.5, 0.5, 1.5, 0.25);
+            s.ticks(2);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the trap does not bite what the hunter cannot see");
+            assertFalse(rooted(s.enemy), "nor hold it");
+            assertEquals(5, entities(s, Display.class).size(), "and stays set, where it was");
+            for (Display part : entities(s, Display.class)) {
+                assertEquals(3.5, part.getLocation().getZ(), 0.6, "never clamped to the hidden enemy's leg");
+            }
+
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            run(s, s.enemy, 0.5, 1.5, 0.5, 6.5, 0.25);
+            s.ticks(2);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "seen again, it is caught");
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    /** Traps thrown onto each other never stack: one bite and one hold, not one per trap. */
+    @Test
+    void hunterTrapsNeverStackOnOneSpot() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            int max = (int) s.param("trap_max");
+            for (int i = 0; i < max; i++) {
+                s.aimAtFloor(s.owner, 0.5 + 0.3 * i, 3.5);
+                s.readyActive();
+                s.assertSucceeded(s.active(), "trap " + (i + 1));
+                s.ticks(20);
+            }
+            s.ticks(20);
+            assertEquals(5, entities(s, Display.class).size(), "each trap took the one under it back");
+            run(s, s.enemy, 0.5, 8.5, 0.5, 3.5, 0.25);
+            s.ticks(2);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "one bite, not " + max);
+            s.ticks(s.paramTicks("trap_root") + 30);
+            assertNoDisplays(s, "the one trap is spent");
+            s.finishClean();
+        }
+    }
+
+    /** An enemy shoved from one trap onto the next is not caught again while held, nor the moment it is freed. */
+    @Test
+    void hunterHeldEnemyIsNotBittenByASecondTrap() {
+        try (Scenario s = Scenario.ffa("hunter")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 3.5);
+            s.assertSucceeded(s.active(), "trap A");
+            s.ticks(20);
+            s.aimAtFloor(s.owner, 3.0, 3.5);
+            s.readyActive();
+            s.assertSucceeded(s.active(), "trap B, 2.5 blocks away");
+            s.ticks(30);
+            assertEquals(10, entities(s, BlockDisplay.class).size() + entities(s, ItemDisplay.class).size(),
+                    "two traps are set");
+
+            run(s, s.enemy, 0.5, 9.5, 0.5, 3.5, 0.25);
+            s.ticks(1);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "trap A bites");
+            s.place(s.enemy, 3.0, 3.5, 180); // shoved onto trap B
+            s.ticks(2);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "trap B spares a held enemy");
+            s.h.tickUntil(() -> !rooted(s.enemy), s.paramTicks("trap_root") + 10, "the hold ending");
+            s.ticks(5);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON,
+                    "nor bites it the moment it is freed");
+            assertFalse(rooted(s.enemy), "it gets to step off");
+            run(s, s.enemy, 3.0, 3.5, 3.0, 8.5, 0.25);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "and walks away unharmed");
+
+            s.ticks(30);
+            run(s, s.enemy, 3.0, 8.5, 3.0, 3.5, 0.25);
+            s.ticks(1);
+            assertEquals(2 * s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "stepping in again is fair");
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
+    /** A trap that springs at the very end of its life holds to the end of the root, not vanishing halfway. */
+    @Test
+    void hunterTrapSprungAtTheEndOfItsLifeStaysClampedForTheWholeHold() {
+        try (Scenario s = Scenario.builder("hunter").param("trap_life", 3).param("trap_root", 3).start()) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 3.5);
+            s.assertSucceeded(s.active(), "곰덫");
+            // The trap lands after its flight (at least 4 ticks) and then lies for trap_life: step in just before.
+            s.ticks(s.paramTicks("trap_life") - 2);
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.ticks(1);
+            assertEquals(s.param("trap_damage"), s.damageTaken(s.enemy), EPSILON, "caught at the last moment");
+            s.ticks(s.paramTicks("trap_root") - 10);
+            assertTrue(rooted(s.enemy), "still held");
+            assertEquals(5, entities(s, BlockDisplay.class).size() + entities(s, ItemDisplay.class).size(),
+                    "the trap is still clamped to its legs");
+            s.ticks(40);
+            assertNoDisplays(s, "spent");
+            s.finishClean();
+        }
+    }
+
+    /** The hunt goes after players first (as its description says), then after summons and dummies. */
+    @Test
+    void hunterHuntsAPlayerBeforeAWeakerSummon() {
+        assertTrue(HunterAbility.INFO.ultimate().description().contains("플레이어 우선"),
+                "the description names the priority: " + HunterAbility.INFO.ultimate().description());
+        try (Scenario s = noGaugeGain(Scenario.builder("hunter")).start()) {
+            Wolf wolf = s.world.spawn(new Location(s.world, -2.5, FlatWorld.SURFACE, 3.5), Wolf.class);
+            s.ctx().summon(s.enemy, wolf);
+            wolf.setHealth(2);
+            s.assertSucceeded(s.ultimate(), "사냥 개시");
+            s.ticks(3);
+            assertTrue(slowed(s.enemy) || slowed(s.enemy2), "a player is the prey");
+            assertFalse(slowed(wolf), "not the weaker wolf");
+            s.ticks(s.paramTicks("hunt_duration") + 10);
+            wolf.remove();
+            s.finishClean();
+        }
+    }
+
+    /** A summon prey has no kill credit to give: the hunter's lethal hit is the successful hunt, heal included. */
+    @Test
+    void hunterKillingASummonPreyIsASuccessfulHunt() {
+        try (Scenario s = noGaugeGain(Scenario.builder("hunter")).start()) {
+            Wolf wolf = s.world.spawn(new Location(s.world, -2.5, FlatWorld.SURFACE, 3.5), Wolf.class);
+            s.ctx().summon(s.enemy, wolf);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.owner.setHealth(10);
+            s.assertSucceeded(s.ultimate(), "사냥 개시");
+            s.ticks(3);
+            assertTrue(slowed(wolf), "with no player in sight the summon is the prey");
+            s.melee(s.owner, wolf, 1000);
+            assertTrue(wolf.isDead() || !wolf.isValid(), "the prey fell");
+            assertEquals(10 + s.param("hunt_heal"), s.owner.getHealth(), EPSILON, "a successful hunt heals");
+            assertTrue(entities(s, TextDisplay.class).size() >= 2, "사냥 성공! pops up beside the prey marker");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(s.paramTicks("hunt_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    /** A wall just past the cannon's mouth: the ball would start inside it, so the cannon is not set up at all. */
+    @Test
+    void pirateCannonNeedsRoomForTheBallNotJustTheBarrel() {
+        try (Scenario s = Scenario.ffa("pirate")) {
+            s.place(s.owner, 0.5, 0.9, 0);
+            s.world.wallAlongX(-2, 2, 2, 2, Material.STONE);
+            ActivationResult blocked = s.active();
+            assertFalse(blocked.succeeded(), "the ball's way out is walled off");
+            assertEquals(0, s.ctx().cooldownRemaining(s.owner), EPSILON, "no cooldown spent");
+            assertNoDisplays(s, "no cannon");
+            s.world.wallAlongX(-2, 2, 2, 2, Material.AIR);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.finishClean();
+        }
+    }
+
+    /** A kill while the ghost ship sails reloads the cannon, and the plunder's coins never take the room it needs. */
+    @Test
+    void pirateReloadedCannonFiresWhileTheShipAndTheCoinsAreOut() {
+        try (Scenario s = noGaugeGain(Scenario.builder("pirate")).start()) {
+            s.place(s.enemy2, -10.5, 12.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "유령선 포격");
+            s.ticks(12);
+            s.session.eliminate(s.enemy2, s.owner);
+            assertEquals(1, entities(s, TextDisplay.class).size(), "약탈! over the pirate");
+            assertTrue(entities(s, ItemDisplay.class).size() > 2, "gold coins beside the soul lanterns");
+            s.assertSucceeded(s.active(), "the reloaded cannon fires at once");
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            assertNoDisplays(s, "ship, coins and cannon");
+            s.finishClean();
+        }
+    }
+
+    /** A second ghost ship (a refilled gauge) sinks the first instead of leaving it frozen in the sky. */
+    @Test
+    void pirateSecondGhostShipSinksTheFirst() {
+        try (Scenario s = Scenario.ffa("pirate")) {
+            s.place(s.enemy, 14.5, -12.5, 180);
+            s.place(s.enemy2, -14.5, -12.5, 180);
+            s.assertSucceeded(s.ultimate(), "유령선 포격");
+            s.ticks(2);
+            int ship = shipParts(s).size();
+            s.assertSucceeded(s.ultimate(), "유령선 포격 again");
+            s.ticks(20);
+            assertEquals(ship, shipParts(s).size(), "one ship: the first sank back into the mist");
+            assertEquals(2, entities(s, ItemDisplay.class).size(), "one pair of soul lanterns");
+            s.ticks(s.paramTicks("ult_duration") + 40);
+            assertNoDisplays(s, "every ship is gone");
+            s.finishClean();
+        }
+    }
+
+    /** Light speed's timed buffs end with the ability (the practice ability switch, revoked mid-run). */
+    @Test
+    void speedsterLosesLightSpeedWithItsAbility() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy, 14.5, 14.5, 180);
+            s.place(s.enemy2, -14.5, 14.5, 180);
+            s.assertSucceeded(s.ultimate(), "광속");
+            s.ticks(10);
+            assertTrue(speed(s.owner) > BASE_SPEED * 2, "light speed");
+            assertTrue(s.match.replaceAbility(s.owner, "dummy"), "switched to another ability");
+            assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "the next ability does not run at light speed");
+            assertEquals(1.0, s.owner.getAttribute(Attribute.FALL_DAMAGE_MULTIPLIER).getValue(), EPSILON,
+                    "and takes fall damage again");
+            assertModifierFree(s.owner, "after the switch");
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            assertNoDisplays(s, "afterimages");
+            s.finishClean();
+        }
+    }
+
+    /** Light speed borrowed by a Gambler ends with the gambler's ability too (the borrowed copy is never revoked). */
+    @Test
+    void speedsterLightSpeedBorrowedByAGamblerEndsWithTheGamblersAbility() {
+        try (Scenario s = gambler()) {
+            s.place(s.enemy, 14.5, 14.5, 180);
+            s.place(s.enemy2, -14.5, 14.5, 180);
+            s.assertSucceeded(borrow(s, "speedster"), "borrowed 광속");
+            s.ticks(10);
+            assertTrue(speed(s.owner) > BASE_SPEED * 2, "the gambler runs at light speed");
+            assertTrue(s.match.replaceAbility(s.owner, "dummy"), "switched to another ability");
+            assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "and runs at its own speed again");
+            assertModifierFree(s.owner, "after the switch");
+            s.ticks((int) s.ctx().paramsFor("speedster").ticks("ult_duration") + 20);
+            assertNoDisplays(s, "afterimages");
+            s.finishClean();
+        }
+    }
+
+    /** Light speed cast again while running starts afresh: the speed never multiplies with the old run's. */
+    @Test
+    void speedsterLightSpeedRecastNeverStacks() {
+        try (Scenario s = Scenario.ffa("speedster")) {
+            s.place(s.enemy, 14.5, 14.5, 180);
+            s.place(s.enemy2, -14.5, 14.5, 180);
+            s.assertSucceeded(s.ultimate(), "광속");
+            s.ticks(10);
+            s.assertSucceeded(s.ultimate(), "광속 again");
+            s.ticks(6);
+            assertEquals(BASE_SPEED * (1 + s.param("ult_speed") / 100), speed(s.owner), EPSILON, "one light speed");
+            assertEquals((int) s.param("ult_echoes"), entities(s, ItemDisplay.class).size(), "one set of afterimages");
+            s.ticks(s.paramTicks("ult_duration") + 80);
+            assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "and it ends");
+            assertModifierFree(s.owner, "light speed twice");
+            assertNoDisplays(s, "afterimages");
             s.finishClean();
         }
     }
