@@ -487,20 +487,15 @@ public final class VampireAbility extends Ability {
             }
             Player owner = player();
             Location at = owner.getLocation();
-            boolean flap = tick % FLAP_TICKS == 0;
-            boolean up = (tick / FLAP_TICKS) % 2 == 0;
             for (Bat bat : bats) {
                 Location spot = batSpot(at, bat, tick);
-                for (BlockDisplay part : List.of(bat.left(), bat.right(), bat.body())) {
-                    if (part.isValid()) {
-                        part.teleport(spot);
-                    }
-                }
-                if (flap) {
-                    float angle = up ? WING_UP : WING_DOWN;
-                    Displays.animate(bat.left(), wing(true, angle), FLAP_TICKS);
-                    Displays.animate(bat.right(), wing(false, angle), FLAP_TICKS);
-                }
+                // The displays keep yaw and pitch 0: the bat's heading and the flapping are in the transformation,
+                // turned with the same smoothing as the move (the displays' teleport duration).
+                float heading = headingOf(bat, tick);
+                float flap = flapAngle(tick + 1);
+                pose(bat.left(), spot, wing(true, flap, heading));
+                pose(bat.right(), spot, wing(false, flap, heading));
+                pose(bat.body(), spot, batBody(heading));
                 Vfx.dot(spot, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.8f), false);
             }
             if (tick % FEAST_MIST_PERIOD == 0) {
@@ -538,6 +533,14 @@ public final class VampireAbility extends Ability {
             owner.sendActionBar(Text.mm("<gray>피의 축제가 끝났습니다</gray>"));
         }
 
+        /** Moves one part of a bat to {@code spot} and turns it into {@code shape}. */
+        private void pose(BlockDisplay part, Location spot, Transformation shape) {
+            if (part.isValid()) {
+                Displays.moveTo(part, spot);
+                Displays.animate(part, shape, part.getTeleportDuration());
+            }
+        }
+
         /** A bat flies off outwards and upwards, shrinking away. */
         private void batLeaves(Player owner, Bat bat) {
             Location center = owner.getLocation();
@@ -546,13 +549,19 @@ public final class VampireAbility extends Ability {
             if (out.lengthSquared() < 1.0E-6) {
                 out = new Vector(1, 0, 0);
             }
-            Location away = from.clone().add(out.normalize().multiply(3)).add(0, 2.5, 0);
-            away.setDirection(away.toVector().subtract(from.toVector()));
-            away.setPitch(0);
-            for (BlockDisplay part : List.of(bat.left(), bat.right(), bat.body())) {
+            out.normalize();
+            Location away = from.clone().add(out.clone().multiply(3)).add(0, 2.5, 0);
+            float heading = yawOf(out);
+            Transformation[] shapes = {wing(true, WING_DOWN, heading), wing(false, WING_DOWN, heading),
+                    batBody(heading)};
+            List<BlockDisplay> parts = List.of(bat.left(), bat.right(), bat.body());
+            for (int i = 0; i < parts.size(); i++) {
+                BlockDisplay part = parts.get(i);
                 if (part.isValid()) {
                     part.setTeleportDuration(BAT_LEAVE_TICKS);
-                    part.teleport(away);
+                    Displays.moveTo(part, away);
+                    // Turns towards its way out while it shrinks away (the shrink keeps the new rotation).
+                    part.setTransformation(shapes[i]);
                     Displays.shrinkAway(ctx(), owner, part, BAT_LEAVE_TICKS);
                 }
             }
@@ -562,44 +571,72 @@ public final class VampireAbility extends Ability {
             return orbit(center, bat.phase(), bat.radius(), bat.height(), bat.turn(), tick);
         }
 
+        private float headingOf(Bat bat, long tick) {
+            return heading(bat.phase(), bat.turn(), tick);
+        }
+
         private Bat spawnBat(Player owner, double phase, double radius, double height, int turn) {
             long lifetime = duration + BAT_LEAVE_TICKS + 10;
             Location spot = orbit(owner.getLocation(), phase, radius, height, turn, 0);
+            float heading = heading(phase, turn, 0);
             BlockData membrane = Material.BLACK_CONCRETE.createBlockData();
-            BlockDisplay left = Displays.block(ctx(), owner, spot, membrane, wing(true, WING_DOWN), lifetime);
-            BlockDisplay right = Displays.block(ctx(), owner, spot, membrane, wing(false, WING_DOWN), lifetime);
+            BlockDisplay left = Displays.block(ctx(), owner, spot, membrane, wing(true, WING_DOWN, heading),
+                    lifetime);
+            BlockDisplay right = Displays.block(ctx(), owner, spot, membrane, wing(false, WING_DOWN, heading),
+                    lifetime);
             BlockDisplay body = Displays.block(ctx(), owner, spot, Material.REDSTONE_BLOCK.createBlockData(),
-                    Displays.transform(0, 0, 0, 0.11f, 0.1f, 0.2f, 0, 0, 0), lifetime);
+                    batBody(heading), lifetime);
             return new Bat(left, right, body, phase, radius, height, turn);
         }
     }
 
     /**
      * Where a bat flies {@code tick} ticks in: circling {@code center} ({@code turn} 1 or -1 picks the direction),
-     * bobbing, and facing its flight direction.
+     * bobbing. Without rotation: a bat's heading lives in its transformations.
      */
     private static Location orbit(Location center, double phase, double radius, double height, int turn, long tick) {
         double angle = phase + tick * BAT_SPEED * turn;
         double bob = Math.sin(tick * 0.25 + phase) * 0.2;
-        Location spot = center.clone().add(Math.cos(angle) * radius, height + bob, Math.sin(angle) * radius);
-        double dx = -Math.sin(angle) * turn;
-        double dz = Math.cos(angle) * turn;
-        spot.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
-        spot.setPitch(0);
-        return spot;
+        return Displays.unrotated(center.clone().add(Math.cos(angle) * radius, height + bob,
+                Math.sin(angle) * radius));
+    }
+
+    /** The yaw (degrees) a bat of {@link #orbit} flies towards {@code tick} ticks in: along its circle. */
+    private static float heading(double phase, int turn, long tick) {
+        double angle = phase + tick * BAT_SPEED * turn;
+        return yawOf(new Vector(-Math.sin(angle) * turn, 0, Math.cos(angle) * turn));
+    }
+
+    /** The wing angle {@code tick} ticks in: beating between {@link #WING_DOWN} and {@link #WING_UP}. */
+    private static float flapAngle(long tick) {
+        long cycle = 2L * FLAP_TICKS;
+        double phase = (double) Math.floorMod(tick, cycle) / FLAP_TICKS;
+        double up = phase <= 1 ? phase : 2 - phase;
+        return (float) (WING_DOWN + (WING_UP - WING_DOWN) * up);
+    }
+
+    /** The bat's little body, its long side along the heading {@code yaw} (degrees). */
+    private static Transformation batBody(float yaw) {
+        return Displays.transform(0, 0, 0, 0.11f, 0.1f, 0.2f, yaw, 0, 0);
     }
 
     /**
-     * One bat wing hinged at the entity origin along its flight axis (local z), spanning sideways (local x) and
-     * raised by {@code degrees} (positive lifts the wing tip).
+     * One bat wing hinged at the entity origin along the flight axis (the bat's local z, turned to {@code yaw}
+     * degrees), spanning sideways (local x) and raised by {@code degrees} (positive lifts the wing tip).
      */
-    private static Transformation wing(boolean left, float degrees) {
-        Quaternionf rotation = new Quaternionf().rotateZ((float) Math.toRadians(left ? -degrees : degrees));
+    private static Transformation wing(boolean left, float degrees, float yaw) {
+        Quaternionf heading = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
+        Quaternionf rotation = new Quaternionf(heading).rotateZ((float) Math.toRadians(left ? -degrees : degrees));
         // The unit block is moved so the hinge edge sits on the z axis, then rotated around it.
         Vector3f corner = new Vector3f(left ? -WING_SPAN : 0, -WING_THICKNESS / 2, -WING_CHORD / 2);
         Vector3f translation = rotation.transform(new Vector3f(corner));
         return new Transformation(translation, rotation, new Vector3f(WING_SPAN, WING_THICKNESS, WING_CHORD),
                 new Quaternionf());
+    }
+
+    /** The Minecraft yaw (degrees) of the horizontal part of {@code direction}. */
+    private static float yawOf(Vector direction) {
+        return (float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ()));
     }
 
     // ------------------------------------------------------------------ helpers

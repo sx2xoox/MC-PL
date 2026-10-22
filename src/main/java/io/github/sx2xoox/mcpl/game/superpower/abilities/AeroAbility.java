@@ -33,6 +33,8 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -104,6 +106,7 @@ public final class AeroAbility extends Ability {
     /** Speed lines around the leaping owner: x/y offsets in the owner's flight frame and their length. */
     private static final float[][] STREAKS = {{0.45f, -0.15f, 1.7f}, {-0.45f, -0.15f, 1.7f}, {0f, 0.55f, 1.3f}};
     private static final float STREAK_THICKNESS = 0.035f;
+    private static final int STREAK_GROW_TICKS = 3;
     /** Height fractions of the tornado's wind bands. */
     private static final double[] BAND_LEVELS = {0.15, 0.5, 0.85};
     /** Bars per wind band (a regular polygon). */
@@ -218,54 +221,59 @@ public final class AeroAbility extends Ability {
     }
 
     /**
-     * Crisp white speed lines around the leaping owner. The displays take the owner's flight direction (measured
-     * from its movement, since a player's server-side velocity is unreliable) as their own rotation, so their
-     * offsets stay beside and behind the owner whichever way it flies.
+     * Crisp white speed lines around the leaping owner. They follow the owner's flight direction (measured from its
+     * movement, since a player's server-side velocity is unreliable): their transformation turns them, and their
+     * offsets, along it, so they stay beside and behind the owner whichever way it flies. The displays themselves
+     * keep yaw and pitch 0.
      */
     private final class SpeedLines {
 
         private final List<BlockDisplay> streaks = new ArrayList<>();
+        private final long spawnTick;
         private Vector heading;
         private boolean faded;
 
         SpeedLines(Player owner, Vector velocity) {
             this.heading = velocity.clone();
+            this.spawnTick = ctx().currentTick();
             long lifetime = MAX_AIR_TICKS + 5;
             if (!reserveDisplays(STREAKS.length, lifetime)) {
                 return;
             }
-            Location at = frame(owner, heading);
+            Location at = chest(owner);
             for (float[] streak : STREAKS) {
-                BlockDisplay display = Displays.block(ctx(), owner, at, STREAK,
-                        Displays.transform(streak[0], streak[1], -streak[2] * 0.6f, STREAK_THICKNESS,
-                                STREAK_THICKNESS, 0.05f, 0, 0, 0), lifetime);
+                BlockDisplay display = Displays.block(ctx(), owner, at, STREAK, streakShape(streak, heading, 0.05f),
+                        lifetime);
                 display.setTeleportDuration(1);
-                Displays.animateNextTick(ctx(), owner, display, Displays.transform(streak[0], streak[1],
-                        -streak[2] * 0.6f, STREAK_THICKNESS, STREAK_THICKNESS, streak[2], 0, 0, 0), 3);
+                Displays.animateNextTick(ctx(), owner, display, streakShape(streak, heading, streak[2]),
+                        STREAK_GROW_TICKS);
                 streaks.add(display);
             }
         }
 
-        /** The owner's chest, rotated to face along {@code motion} (or the last real heading if it barely moved). */
-        private Location frame(Player owner, Vector motion) {
-            if (motion.lengthSquared() > 0.01) {
-                heading = motion.clone();
-            }
-            Location at = owner.getLocation().add(0, 1.0, 0);
-            at.setDirection(heading);
-            return at;
-        }
-
+        /** Moves the lines along with the owner and turns them along {@code motion} (if it moved noticeably). */
         void follow(Player owner, Vector motion) {
             if (faded || streaks.isEmpty()) {
                 return;
             }
-            Location at = frame(owner, motion);
-            for (BlockDisplay streak : streaks) {
+            if (motion.lengthSquared() > 0.01) {
+                heading = motion.clone();
+            }
+            Location at = chest(owner);
+            // Still growing in for the first ticks (re-aiming them must not cut the growth short).
+            float grown = Math.min(1f, (ctx().currentTick() - spawnTick) / (float) STREAK_GROW_TICKS);
+            for (int i = 0; i < streaks.size(); i++) {
+                BlockDisplay streak = streaks.get(i);
                 if (streak.isValid()) {
-                    streak.teleport(at);
+                    Displays.moveTo(streak, at);
+                    float[] spec = STREAKS[i];
+                    Displays.animate(streak, streakShape(spec, heading, Math.max(0.05f, spec[2] * grown)), 1);
                 }
             }
+        }
+
+        private Location chest(Player owner) {
+            return owner.getLocation().add(0, 1.0, 0);
         }
 
         void fade() {
@@ -279,6 +287,23 @@ public final class AeroAbility extends Ability {
                 }
             }
         }
+    }
+
+    /**
+     * One speed line of {@code length} lying along {@code heading}: {@code streak} gives its offset beside (x) and
+     * above (y) the owner in the flight frame, and it trails behind the owner.
+     */
+    private static Transformation streakShape(float[] streak, Vector heading, float length) {
+        Location aim = new Location(null, 0, 0, 0);
+        aim.setDirection(heading.lengthSquared() > 1.0E-8 ? heading : new Vector(0, 0, 1));
+        float yaw = aim.getYaw();
+        float pitch = aim.getPitch();
+        // The offset of a transformation is not rotated with the shape: turn it into the flight frame by hand.
+        Vector3f offset = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch))
+                .transform(new Vector3f(streak[0], streak[1], -streak[2] * 0.6f));
+        return Displays.transform(offset.x(), offset.y(), offset.z(), STREAK_THICKNESS, STREAK_THICKNESS, length,
+                yaw, pitch, 0);
     }
 
     /** A burst of wind at {@code center}: damages and blows away nearby enemies. */

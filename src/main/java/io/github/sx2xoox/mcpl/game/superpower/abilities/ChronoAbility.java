@@ -217,7 +217,9 @@ public final class ChronoAbility extends Ability {
             return ActivationResult.fail("되돌아갈 자리가 막혀 있습니다");
         }
         Location from = owner.getLocation();
-        Location to = new Location(moment.world(), moment.x(), moment.y(), moment.z(), from.getYaw(), from.getPitch());
+        Location to = feetOf(moment);
+        to.setYaw(from.getYaw());
+        to.setPitch(from.getPitch());
         double health = owner.getHealth();
         if (to.distanceSquared(from) < 0.5 * 0.5 && moment.health() <= health) {
             return ActivationResult.fail("되감아도 달라지는 것이 없습니다");
@@ -268,12 +270,26 @@ public final class ChronoAbility extends Ability {
             if (!moment.world().equals(owner.getWorld())) {
                 continue;
             }
-            Location feet = new Location(moment.world(), moment.x(), moment.y(), moment.z());
-            if (Spots.isSafe(ctx(), feet, body)) {
+            if (Spots.isSafe(ctx(), feetOf(moment), body)) {
                 return moment;
             }
         }
         return null;
+    }
+
+    /** Where a rewind to {@code moment} puts the feet: the recorded spot, {@link #onSurface}. */
+    private static Location feetOf(Moment moment) {
+        return onSurface(new Location(moment.world(), moment.x(), moment.y(), moment.z()));
+    }
+
+    /**
+     * {@code feet} (in place) lifted out of the floor if they reach a hair into it, so a replayed position stands
+     * exactly on the surface: a body put even a few thousandths of a block into the ground sinks on the client. Feet
+     * in the air (mid-jump) are left alone.
+     */
+    private static Location onSurface(Location feet) {
+        Spots.snapToGround(feet.getWorld(), feet, 0);
+        return feet;
     }
 
     private void rewindEffects(Player owner, Location from, Location to, List<Moment> path, boolean healed) {
@@ -430,7 +446,7 @@ public final class ChronoAbility extends Ability {
         enemy.setVelocity(new Vector());
 
         // The moment it stops: a pale flash and a gray-blue shell of motes hanging around the body.
-        Location pin = enemy.getLocation();
+        Location pin = onSurface(enemy.getLocation());
         World world = pin.getWorld();
         Location body = flat(pin.clone().add(0, enemy.getHeight() * 0.5, 0));
         world.spawnParticle(Particle.FLASH, body, 1, 0, 0, 0, 0, PALETTE.core(), true);
@@ -535,8 +551,8 @@ public final class ChronoAbility extends Ability {
         }
 
         /**
-         * Puts a displaced enemy back on its pin (if the spot is still free and inside the arena) and keeps the
-         * label and the clock above it.
+         * Puts a displaced enemy back on its pin (if the spot is still free, with the body not reaching into the
+         * floor, and inside the arena) and keeps the label and the clock above it.
          */
         private void hold(Frozen f) {
             LivingEntity entity = f.entity();
@@ -546,8 +562,9 @@ public final class ChronoAbility extends Ability {
                 Location back = f.pin().clone();
                 back.setYaw(now.getYaw());
                 back.setPitch(now.getPitch());
-                BoundingBox box = entity.getBoundingBox().shift(back.clone().subtract(now)).expand(-0.02);
-                if (!now.getWorld().hasCollisionsIn(box) && entity.teleport(back, TeleportCause.PLUGIN)) {
+                BoundingBox box = entity.getBoundingBox();
+                if (Spots.isFree(now.getWorld(), back, box.getWidthX(), box.getHeight())
+                        && entity.teleport(back, TeleportCause.PLUGIN)) {
                     entity.setVelocity(new Vector());
                 }
             }

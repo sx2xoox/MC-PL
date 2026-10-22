@@ -124,6 +124,8 @@ public final class TitanAbility extends Ability {
     private static final int ROCK_SINK_TICKS = 8;
     /** How far above and below a rock's spot the ground is searched. */
     private static final double ROCK_GROUND_SEARCH = 1.5;
+    /** A rock's display stands this far above the ground, so its position (and light) is in the open. */
+    private static final double ROCK_LIFT = 0.01;
     private static final long DUST_FALL_TICKS = 14;
     /** The dust storm while growing lasts a little longer than the growth itself. */
     private static final long STORM_TICKS = GROW_STEPS * GROW_INTERVAL + 6;
@@ -452,13 +454,20 @@ public final class TitanAbility extends Ability {
         for (int i = 0; i < count; i++) {
             double angle = phase + i * TAU / count + random.nextDouble(-0.15, 0.15);
             Location probe = center.clone().add(Math.cos(angle) * radius, ROCK_GROUND_SEARCH, Math.sin(angle) * radius);
+            if (!probe.getBlock().isPassable()) {
+                // The search would start inside a wall or a low ceiling, and a ray starting inside a block "hits"
+                // it right there: there is no open ground to find.
+                continue;
+            }
             RayTraceResult hit = world.rayTraceBlocks(probe, new Vector(0, -1, 0), ROCK_GROUND_SEARCH * 2,
                     FluidCollisionMode.NEVER, true);
             if (hit == null || hit.getHitBlock() == null) {
                 continue;
             }
             BlockData data = hit.getHitBlock().getType().isOccluding() ? hit.getHitBlock().getBlockData() : fallback;
-            Location spot = hit.getHitPosition().toLocation(world);
+            // Just above the surface: the rock is lit by the light at its own position, which would be black
+            // inside the ground block (a hit point can lie a hair below the face).
+            Location spot = hit.getHitPosition().toLocation(world).add(0, ROCK_LIFT, 0);
             rock(spot, data, (float) random.nextDouble(0.35, 0.65));
         }
     }

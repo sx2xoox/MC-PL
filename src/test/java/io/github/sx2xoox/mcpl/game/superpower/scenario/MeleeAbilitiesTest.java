@@ -5,10 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
@@ -16,13 +23,23 @@ import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
+import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
+import org.mockbukkit.mockbukkit.entity.DisplayMock;
 
 /** 근접 · 탱커 계열: 광전사, 거인, 수호자, 흡혈귀. */
 class MeleeAbilitiesTest {
@@ -37,6 +54,59 @@ class MeleeAbilitiesTest {
 
     private static long blockDisplays(Scenario s) {
         return s.world.getEntities().stream().filter(entity -> entity instanceof BlockDisplay).count();
+    }
+
+    private static List<ItemDisplay> itemDisplaysOf(Scenario s) {
+        return s.world.getEntities().stream().filter(ItemDisplay.class::isInstance).map(ItemDisplay.class::cast)
+                .toList();
+    }
+
+    private static List<BlockDisplay> blockDisplaysOf(Scenario s, @Nullable Material material) {
+        return s.world.getEntities().stream().filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                .filter(display -> material == null || display.getBlock().getMaterial() == material).toList();
+    }
+
+    /**
+     * A display must not carry a rotation of its own (it would turn the model on top of its transformation, like
+     * the sniper laser that pointed somewhere else on a real client).
+     */
+    private static void assertUnrotated(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    /**
+     * The display's transformation as one matrix, the way the client applies it. A test double that overrides
+     * {@code getTransformation()} keeps it faithfully; MockBukkit's own {@link DisplayMock} keeps only the composed
+     * matrix and hands back a wrongly decomposed rotation, so its matrix is read directly instead.
+     */
+    private static Matrix4f shapeOf(Display display) {
+        try {
+            if (display.getClass().getMethod("getTransformation").getDeclaringClass() != DisplayMock.class) {
+                Transformation shape = display.getTransformation();
+                return new Matrix4f().translation(shape.getTranslation()).rotate(shape.getLeftRotation())
+                        .scale(shape.getScale()).rotate(shape.getRightRotation());
+            }
+            Field matrix = DisplayMock.class.getDeclaredField("transformationMatrix");
+            matrix.setAccessible(true);
+            return new Matrix4f((Matrix4fc) matrix.get(display));
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("the display's transformation", e);
+        }
+    }
+
+    /** The unit direction a display's transformation turns the model's +z axis to. */
+    private static Vector forwardOf(Display display) {
+        Vector3f z = shapeOf(display).transformDirection(new Vector3f(0, 0, 1)).normalize();
+        return new Vector(z.x(), z.y(), z.z());
+    }
+
+    /** Feet exactly on the flat floor and a body that touches no block (a real client would sink otherwise). */
+    private static void assertOnSurface(Scenario s, LivingEntity entity, String what) {
+        Location at = entity.getLocation();
+        assertEquals(FlatWorld.SURFACE, at.getY(), 1.0E-6, what + " stands exactly on the floor: " + at);
+        BoundingBox box = entity.getBoundingBox();
+        assertTrue(Spots.isFree(s.world, at, box.getWidthX(), box.getHeight()), what + " is not inside a block");
     }
 
     /** Absorption hearts like a golden apple's (the max absorption is raised so they are not clamped away). */
@@ -93,6 +163,8 @@ class MeleeAbilitiesTest {
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "nobody behind the charge is hit");
             assertTrue(s.owner.getLocation().getZ() > 4, "the berserker charged forward");
             assertTrue(Math.abs(s.enemy.getLocation().getX() - 0.5) > 0.3, "the enemy is bowled aside");
+            assertOnSurface(s, s.owner, "the berserker after the charge");
+            assertOnSurface(s, s.enemy, "the bowled enemy after landing");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertFalse(s.active().succeeded(), "on cooldown");
             s.finishClean();
@@ -192,12 +264,54 @@ class MeleeAbilitiesTest {
             assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + 0.2 || s.enemy.getVelocity().getY() > 0,
                     "launched");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage for the titan");
+            assertOnSurface(s, s.owner, "the titan after the slam");
             assertTrue(blockDisplays(s) > 0, "rocks erupt from the ground");
             s.ticks(40);
             assertEquals(0, blockDisplays(s), "the rocks sank back and are gone");
             assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty() || s.damageTaken(s.enemy)
                     <= s.param("slam_damage") + 1, "a short hop at most");
             s.finishClean();
+        }
+    }
+
+    @Test
+    void titanSlamRocksStandInTheOpenNeverInsideBlocks() {
+        try (Scenario s = Scenario.ffa("titan")) {
+            s.place(s.enemy, -10.5, 10.5, 0);
+            s.place(s.enemy2, -10.5, -10.5, 0);
+            // A two block high wall east of the landing spot: the ground search for a rock starts inside it there.
+            wall(s, Material.STONE);
+            // Looking straight down: the titan leaps straight up and slams down where it stood.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, 90);
+            s.assertSucceeded(s.active(), "대지 강타");
+            s.tickUntilGrounded(s.owner, 120);
+            s.ticks(4);
+            List<BlockDisplay> rocks = blockDisplaysOf(s, null);
+            assertFalse(rocks.isEmpty(), "rocks erupt from the open ground");
+            for (BlockDisplay rock : rocks) {
+                // A rock is lit by the light at its own position: inside a block it would render black.
+                assertTrue(rock.getLocation().getBlock().isPassable(),
+                        "a rock stands in the open, not inside a block: " + rock.getLocation());
+            }
+            for (BlockDisplay rock : rocks) {
+                Location at = rock.getLocation();
+                assertTrue(at.getY() >= FlatWorld.SURFACE && at.getY() < FlatWorld.SURFACE + 0.05,
+                        "a rock sits on the floor: " + at);
+            }
+            s.ticks(40);
+            wall(s, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    /** Two block high blocks east of the titan (x 2 to 6, z -6 to 6). */
+    private static void wall(Scenario s, Material type) {
+        for (int x = 2; x <= 6; x++) {
+            for (int z = -6; z <= 6; z++) {
+                for (int y = 1; y <= 2; y++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + y, z, type);
+                }
+            }
         }
     }
 
@@ -322,6 +436,53 @@ class MeleeAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(20);
             assertEquals(0, displays(s), "the charge shield faded");
+            assertOnSurface(s, s.owner, "the guardian after the charge");
+            assertOnSurface(s, s.enemy, "the bashed enemy after landing");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void guardianChargeShieldFacesTheWayOfTheCharge() {
+        try (Scenario s = Scenario.ffa("guardian")) {
+            s.place(s.enemy, 10.5, 10.5, 0);
+            s.place(s.enemy2, 10.5, -10.5, 0);
+            // Charging west (yaw 90): a shield keeping the display's own +z would face south.
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.assertSucceeded(s.active(), "방패 돌격");
+            Vector west = new Vector(-1, 0, 0);
+            for (int step = 0; step < 3; step++) {
+                List<ItemDisplay> shields = itemDisplaysOf(s);
+                assertEquals(1, shields.size(), "the charge shield");
+                ItemDisplay shield = shields.getFirst();
+                assertUnrotated(shield, "charge shield after " + step + " tick(s)");
+                assertTrue(forwardOf(shield).dot(west) > 0.999, "the shield faces the charge: " + forwardOf(shield));
+                assertTrue(shield.getLocation().getX() < s.owner.getLocation().getX() - 0.5,
+                        "and leads it: " + shield.getLocation());
+                s.ticks(1);
+            }
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void guardianOrbitingShieldsFaceOutwards() {
+        try (Scenario s = Scenario.ffa("guardian")) {
+            s.assertSucceeded(s.ultimate(), "불굴");
+            for (int step = 0; step < 3; step++) {
+                s.ticks(1 + step);
+                List<ItemDisplay> shields = itemDisplaysOf(s);
+                assertEquals(3, shields.size(), "three orbiting shields");
+                for (ItemDisplay shield : shields) {
+                    assertUnrotated(shield, "orbiting shield");
+                    Vector out = shield.getLocation().toVector().subtract(s.owner.getLocation().toVector()).setY(0)
+                            .normalize();
+                    assertTrue(forwardOf(shield).dot(out) > 0.999, "a shield faces away from the guardian: "
+                            + forwardOf(shield) + " vs " + out);
+                }
+            }
+            s.ticks(s.paramTicks("ult_duration") + 10);
             s.finishClean();
         }
     }
@@ -420,6 +581,40 @@ class MeleeAbilitiesTest {
             s.ticks(2);
             assertEquals(6 + 5 * s.param("lifesteal") / 100, s.owner.getHealth(), EPSILON, "back to the passive");
             s.ticks(20);
+            assertEquals(0, blockDisplays(s), "the bats flew off");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void vampireBatsFlyHeadFirstAroundTheVampire() {
+        try (Scenario s = Scenario.ffa("vampire")) {
+            s.assertSucceeded(s.ultimate(), "피의 축제");
+            s.ticks(3);
+            List<BlockDisplay> bodies = blockDisplaysOf(s, Material.REDSTONE_BLOCK);
+            assertEquals(3, bodies.size(), "three bats");
+            Map<BlockDisplay, Location> before = new HashMap<>();
+            bodies.forEach(body -> before.put(body, body.getLocation()));
+            s.ticks(1);
+            Location center = s.owner.getLocation();
+            for (BlockDisplay body : bodies) {
+                assertUnrotated(body, "bat body");
+                Vector forward = forwardOf(body);
+                Vector radial = body.getLocation().toVector().subtract(center.toVector()).setY(0).normalize();
+                assertEquals(0, forward.getY(), 1.0E-6, "a bat flies level");
+                assertEquals(0, forward.dot(radial), 0.01, "a bat flies along its circle: " + forward);
+                Vector flown = body.getLocation().toVector().subtract(before.get(body).toVector()).setY(0);
+                assertTrue(forward.dot(flown.normalize()) > 0.9, "head first: " + forward + " vs " + flown);
+                // Both wings are hinged along the bat's flight axis.
+                List<BlockDisplay> wings = blockDisplaysOf(s, Material.BLACK_CONCRETE).stream()
+                        .filter(wing -> wing.getLocation().distance(body.getLocation()) < 1.0E-6).toList();
+                assertEquals(2, wings.size(), "two wings on each bat");
+                for (BlockDisplay wing : wings) {
+                    assertUnrotated(wing, "bat wing");
+                    assertTrue(forwardOf(wing).dot(forward) > 0.999, "a wing's hinge runs along the flight");
+                }
+            }
+            s.ticks(s.paramTicks("ult_duration") + 20);
             assertEquals(0, blockDisplays(s), "the bats flew off");
             s.finishClean();
         }

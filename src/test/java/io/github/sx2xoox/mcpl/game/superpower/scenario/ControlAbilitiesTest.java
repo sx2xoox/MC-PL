@@ -50,9 +50,69 @@ class ControlAbilitiesTest {
             assertTrue(distance < 3.5, "pulled in front of the owner: " + distance);
             assertTrue(s.enemy.getLocation().getZ() > s.owner.getLocation().getZ(), "in front, not behind");
             s.ticks(30);
+            // Never sunk into the floor. (The test physics lets a body with no velocity rest up to 0.01 above it.)
+            double y = s.enemy.getLocation().getY();
+            assertTrue(y >= FlatWorld.SURFACE - 1.0E-6 && y < FlatWorld.SURFACE + 0.01,
+                    "the pulled enemy stands on the floor again: " + s.enemy.getLocation());
+            assertFalse(s.world.hasCollisionsIn(s.enemy.getBoundingBox().expand(-1.0E-3)), "not inside a block");
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the pull itself does not hurt");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
+        }
+    }
+
+    @Test
+    void gravityTetherPointsAtThePulledEnemyWhereverTheOwnerLooks() {
+        try (Scenario s = Scenario.ffa("gravity")) {
+            // Off to the side and below eye height: the owner's yaw and pitch are far from 0.
+            s.place(s.enemy, 6.5, 10.5, 180);
+            s.place(s.enemy2, -10.5, -10.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "끌어당기기");
+            for (int step = 0; step < 3; step++) {
+                s.ticks(1);
+                java.util.List<BlockDisplay> tether = s.world.getEntities().stream()
+                        .filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                        .filter(display -> display.getBlock().getMaterial() == Material.AMETHYST_BLOCK).toList();
+                assertEquals(1, tether.size(), "the gravity tether");
+                BlockDisplay beam = tether.getFirst();
+                // The tether leaves the owner's hand (an eye location, with the owner's yaw and pitch): the display
+                // must not take that rotation on top of the beam's own.
+                assertEquals(0, beam.getLocation().getYaw(), 1.0E-3, "tether display yaw");
+                assertEquals(0, beam.getLocation().getPitch(), 1.0E-3, "tether display pitch");
+                Vector toTarget = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.5, 0).toVector()
+                        .subtract(beam.getLocation().toVector()).normalize();
+                Vector forward = gravityBeamDirection(beam);
+                assertTrue(forward.dot(toTarget) > 0.98, "the tether points at the pulled enemy: " + forward
+                        + " vs " + toTarget);
+            }
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The unit direction the beam display's transformation turns the model's +z axis to. A test double that
+     * overrides {@code getTransformation()} keeps it faithfully; MockBukkit's own {@code DisplayMock} keeps only the
+     * composed matrix and hands back a wrongly decomposed rotation, so its matrix is read directly instead.
+     */
+    private static Vector gravityBeamDirection(BlockDisplay beam) {
+        try {
+            Class<?> mock = org.mockbukkit.mockbukkit.entity.DisplayMock.class;
+            org.joml.Matrix4f matrix;
+            if (beam.getClass().getMethod("getTransformation").getDeclaringClass() != mock) {
+                org.bukkit.util.Transformation shape = beam.getTransformation();
+                matrix = new org.joml.Matrix4f().translation(shape.getTranslation()).rotate(shape.getLeftRotation())
+                        .scale(shape.getScale()).rotate(shape.getRightRotation());
+            } else {
+                java.lang.reflect.Field field = mock.getDeclaredField("transformationMatrix");
+                field.setAccessible(true);
+                matrix = new org.joml.Matrix4f((org.joml.Matrix4fc) field.get(beam));
+            }
+            org.joml.Vector3f z = matrix.transformDirection(new org.joml.Vector3f(0, 0, 1)).normalize();
+            return new Vector(z.x(), z.y(), z.z());
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("the display's transformation", e);
         }
     }
 

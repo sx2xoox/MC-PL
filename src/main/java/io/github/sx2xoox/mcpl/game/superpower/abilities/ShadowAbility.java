@@ -370,7 +370,10 @@ public final class ShadowAbility extends Ability {
         private int struck;
 
         Dance(Location origin, List<LivingEntity> targets, int strikes, double radius) {
+            // Home is replayed by a teleport: lifted out of the floor should the recorded feet reach a hair into
+            // it (a body put even a few thousandths of a block into the ground sinks on the client).
             this.origin = origin.clone();
+            Spots.snapToGround(this.origin.getWorld(), this.origin, 0);
             this.targets = targets;
             this.strikes = strikes;
             this.leash = Math.max(4, radius * DANCE_LEASH);

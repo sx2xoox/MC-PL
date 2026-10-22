@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
@@ -16,9 +17,11 @@ import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Arrow;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +38,23 @@ class MobilityAbilitiesTest {
     private static void assertNoDisplays(Scenario s) {
         assertTrue(s.world.getEntities().stream().noneMatch(Display.class::isInstance),
                 "displays left behind: " + s.world.getEntities());
+    }
+
+    /**
+     * Feet exactly on the flat floor and a body that touches no block. A real client sinks a player whose feet the
+     * server put even a few thousandths of a block into the ground ("half a block in the ground" after a skill).
+     */
+    private static void assertOnSurface(Scenario s, LivingEntity entity, String what) {
+        Location at = entity.getLocation();
+        assertEquals(FlatWorld.SURFACE, at.getY(), 1.0E-6, what + " stands exactly on the floor: " + at);
+        BoundingBox box = entity.getBoundingBox();
+        assertTrue(Spots.isFree(s.world, at, box.getWidthX(), box.getHeight()), what + " is not inside a block");
+    }
+
+    /** A grounded entity whose feet reach a hair into the floor, as a real client may report them. */
+    private static void placeSunk(Scenario s, LivingEntity entity, double x, double z, float yaw) {
+        entity.teleport(new Location(s.world, x, FlatWorld.SURFACE - 0.004, z, yaw, 0));
+        entity.setVelocity(new Vector());
     }
 
     // ------------------------------------------------------------------ 순간이동자 blink
@@ -75,6 +95,30 @@ class MobilityAbilitiesTest {
     }
 
     @Test
+    void blinkLandsExactlyOnTheFloorWhereverItLooks() {
+        try (Scenario s = Scenario.ffa("blink")) {
+            s.place(s.enemy, 12.5, 12.5, 0);
+            s.place(s.enemy2, -12.5, 12.5, 0);
+            // Straight ahead (the eye-level sample lands right on the floor face), down at the floor (a lifted
+            // sample snapped onto it) and diagonally (a sample inside the floor, then a lifted one).
+            float[][] looks = {{180, 0}, {180, 25}, {135, 10}};
+            for (float[] look : looks) {
+                String what = "the blinker (yaw " + look[0] + ", pitch " + look[1] + ")";
+                s.readyActive();
+                s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, look[0], look[1]);
+                s.assertSucceeded(s.active(), "점멸");
+                assertTrue(horizontalDistance(s.owner.getLocation(), new Location(s.world, 0.5, 0, 0.5)) > 1.4,
+                        what + " moved");
+                assertOnSurface(s, s.owner, what);
+                s.ticks(2);
+                assertOnSurface(s, s.owner, what + ", a moment later");
+            }
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void blinkAssaultLandsBehindTheAimedEnemyAndDoublesTheNextHitOnly() {
         try (Scenario s = Scenario.ffa("blink")) {
             s.aimAt(s.owner, s.enemy);
@@ -83,6 +127,7 @@ class MobilityAbilitiesTest {
             assertTrue(horizontalDistance(at, s.enemy.getLocation()) < 2.5, "next to the enemy");
             assertTrue(at.getZ() > s.enemy.getLocation().getZ(), "behind it (the enemy faces -z)");
             assertFalse(s.world.hasCollisionsIn(s.owner.getBoundingBox().expand(-0.01)));
+            assertOnSurface(s, s.owner, "the owner behind the enemy");
 
             s.melee(s.owner, s.enemy, 4);
             assertEquals(4 * s.param("empower_multiplier"), s.damageBy(s.owner, s.enemy), EPSILON, "empowered hit");
@@ -253,6 +298,31 @@ class MobilityAbilitiesTest {
     }
 
     @Test
+    void shadowDanceStepsAndTheWayHomeStandExactlyOnTheFloor() {
+        try (Scenario s = Scenario.ffa("shadow")) {
+            // Home is recorded with feet a hair in the floor (as a client may report them): the dance must still
+            // come back, standing on the surface.
+            placeSunk(s, s.owner, 0.5, 0.5, 0);
+            s.ticks(1);
+            s.assertSucceeded(s.ultimate(), "그림자 난무");
+            int strikes = (int) s.param("ult_strikes");
+            for (int step = 0; step < strikes; step++) {
+                s.ticks(step == 0 ? 1 : 6);
+                assertTrue(Math.min(horizontalDistance(s.owner.getLocation(), s.enemy.getLocation()),
+                        horizontalDistance(s.owner.getLocation(), s.enemy2.getLocation())) < 2.5,
+                        "step " + step + " is next to an enemy");
+                assertOnSurface(s, s.owner, "the dancer after step " + step);
+            }
+            s.ticks(6);
+            assertTrue(horizontalDistance(s.owner.getLocation(), new Location(s.world, 0.5, 0, 0.5)) < 0.1,
+                    "back home: " + s.owner.getLocation());
+            assertOnSurface(s, s.owner, "the dancer back home");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void borrowedShadowDanceNeverEndsInAFallForTheGambler() {
         // The gambler runs the dance on a borrowed instance that never gets ticks or damage hooks.
         try (Scenario s = Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 0).start()) {
@@ -292,6 +362,11 @@ class MobilityAbilitiesTest {
             assertEquals(s.param("pull_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "hooked");
             double distance = horizontalDistance(s.owner.getLocation(), s.enemy.getLocation());
             assertTrue(distance < 3.5, "pulled in to " + distance);
+            // Never sunk into the floor. (The test physics lets a body with no velocity rest up to 0.01 above it.)
+            double y = s.enemy.getLocation().getY();
+            assertTrue(y >= FlatWorld.SURFACE - 1.0E-6 && y < FlatWorld.SURFACE + 0.01,
+                    "the dragged enemy stands on the floor: " + s.enemy.getLocation());
+            assertFalse(s.world.hasCollisionsIn(s.enemy.getBoundingBox().expand(-1.0E-3)), "not inside a block");
             assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "no fall damage from the pull");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertNoDisplays(s);
@@ -341,6 +416,7 @@ class MobilityAbilitiesTest {
             assertTrue(s.owner.getLocation().getZ() > 7, "reeled toward the wall: " + s.owner.getLocation());
             s.tickUntilGrounded(s.owner, 200);
             s.ticks(5);
+            assertOnSurface(s, s.owner, "the reeled owner after landing");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage after the swing");
             s.place(s.owner, 0.5, 0.5, 0);
             s.world.wallAlongX(-3, 3, 12, 6, Material.AIR);
@@ -408,6 +484,41 @@ class MobilityAbilitiesTest {
 
     private static final double INFO_COOLDOWN =
             io.github.sx2xoox.mcpl.game.superpower.abilities.ChronoAbility.INFO.params().get("cooldown");
+
+    @Test
+    void chronoRewindStandsExactlyOnTheFloorEvenIfThePastFeetWereAHairInIt() {
+        try (Scenario s = Scenario.ffa("chrono")) {
+            // The recorded past: feet a hair in the floor, as a client may report them.
+            placeSunk(s, s.owner, 0.5, 0.5, 0);
+            s.ticks(80);
+            s.place(s.owner, 6.5, -6.5, 90);
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "되감기");
+            assertTrue(horizontalDistance(s.owner.getLocation(), new Location(s.world, 0.5, 0, 0.5)) < 0.1,
+                    "back where it stood: " + s.owner.getLocation());
+            assertOnSurface(s, s.owner, "the rewound owner");
+            s.ticks(10);
+            assertOnSurface(s, s.owner, "the rewound owner, a moment later");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void chronoTimeStopPinsADisplacedEnemyBackExactlyOnTheFloor() {
+        try (Scenario s = Scenario.ffa("chrono")) {
+            s.place(s.enemy2, 0.5, 18.5, 180);
+            placeSunk(s, s.enemy, 0.5, 4.5, 180);
+            s.ticks(1);
+            s.assertSucceeded(s.ultimate(), "시간 정지");
+            s.enemy.teleport(new Location(s.world, 2.5, FlatWorld.SURFACE, 4.5, 180, 0));
+            s.ticks(3);
+            assertTrue(horizontalDistance(s.enemy.getLocation(), new Location(s.world, 0.5, 0, 4.5)) < 0.1,
+                    "pinned back in place: " + s.enemy.getLocation());
+            assertOnSurface(s, s.enemy, "the pinned enemy");
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            s.finishClean();
+        }
+    }
 
     @Test
     void chronoRewindNeedsSomethingToUndo() {

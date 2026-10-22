@@ -246,6 +246,8 @@ public final class GrappleAbility extends Ability {
         private double lastDistance = Double.MAX_VALUE;
         private int stuckTicks;
         private float spin;
+        /** The velocity the drag last gave the victim. */
+        private Vector lastPull = new Vector();
 
         Hook(@Nullable LivingEntity victim, @Nullable Vector anchor, @Nullable BlockData anchorBlock) {
             this.victim = victim;
@@ -392,7 +394,9 @@ public final class GrappleAbility extends Ability {
             Location ownerFeet = owner.getLocation();
             Location victimFeet = victim.getLocation();
             if (victimFeet.distance(ownerFeet) <= PULL_STOP_DISTANCE || phaseTicks > PULL_TIMEOUT_TICKS) {
-                victim.setVelocity(new Vector(0, Math.min(0, victim.getVelocity().getY()), 0));
+                // Stop the drag but keep a fall going. A player's server-side velocity is stale (only its client
+                // knows the real one), so the drag's own last command stands in for it.
+                victim.setVelocity(new Vector(0, Math.min(0, lastPull.getY()), 0));
                 return false;
             }
             Vector forward = ownerFeet.getDirection().setY(0);
@@ -411,7 +415,8 @@ public final class GrappleAbility extends Ability {
                 // A little lift so ground friction and small steps do not stop the drag.
                 velocity.setY(Math.max(velocity.getY(), 0.12));
             }
-            victim.setVelocity(Motion.clamp(velocity, MAX_VELOCITY));
+            lastPull = Motion.clamp(velocity, MAX_VELOCITY);
+            victim.setVelocity(lastPull);
             victim.setFallDistance(0);
             headPosition = center(victim);
             moveHead();
