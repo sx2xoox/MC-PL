@@ -97,6 +97,15 @@ public abstract class Ability {
     /**
      * F key (swap hands), only called when the ultimate gauge is full.
      * Return {@link ActivationResult#fail(String)} to keep the gauge.
+     *
+     * <p><b>An ultimate never refills its own gauge.</b> Damage the owner deals as part of the ultimate does not
+     * charge the owner's gauge: damage dealt inside this method, in tasks it schedules through
+     * {@link AbilityContext#runLater}/{@link AbilityContext#runTimer} (and the tasks those schedule), in hooks
+     * triggered by those hits, and by entities it creates through {@link AbilityContext#track},
+     * {@link AbilityContext#summon} or {@link AbilityContext#tagProjectile} (for their whole lifetime). In addition,
+     * after a successful ultimate the owner's gauge earns nothing at all (damage dealt or taken, time) for
+     * {@code ultimate.recharge-delay-seconds}. {@link AbilityContext#addGauge} is never blocked. So schedule an
+     * ultimate's delayed parts through the context (never the raw Bukkit scheduler).
      */
     public abstract ActivationResult onUltimate();
 
@@ -111,14 +120,29 @@ public abstract class Ability {
     // ------------------------------------------------------------------ event hooks (owner only)
 
     /**
-     * The owner damages an enemy: melee, a projectile shot by the owner, or ability damage dealt through
-     * {@link AbilityContext#damage}. The damage may be modified with {@code event.setDamage(...)} or cancelled.
-     * Friendly fire has already been cancelled before this is called.
+     * The owner damages an enemy: melee, a projectile shot by the owner, ability damage dealt through
+     * {@link AbilityContext#damage}, or a hit by one of the owner's summons ({@link AbilityContext#summon}; then
+     * {@code event.getDamager()} is the summon, so check the damager if an effect is meant for the owner's own
+     * hits only). The damage may be modified with {@code event.setDamage(...)} or cancelled. Friendly fire has
+     * already been cancelled before this is called.
+     *
+     * <p>The victim's {@link #onTakeDamage} runs <b>after</b> this and may still cancel the hit (a dodge, a shield,
+     * a revive). Use this hook to change the damage; put on-hit side effects (poison, fire, slows, knockback,
+     * follow-up hits) in {@link #onDamageDealt}, which only runs for hits that landed.
      *
      * <p>Do not call {@link AbilityContext#damage} from here unconditionally: it fires this hook again. Guard
      * with {@link AbilityContext#isAbilityDamage()}.
      */
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
+    }
+
+    /**
+     * A hit routed to {@link #onDealDamage} landed: nothing cancelled it, including the victim's
+     * {@link #onTakeDamage}. Called with the final damage, before it is applied (the victim may die right after).
+     * The place for on-hit side effects. Read-only: do not modify or cancel the event. Deal follow-up damage
+     * later with {@link AbilityContext#runLater}, re-checking that the victim is still valid and alive.
+     */
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
     }
 
     /**

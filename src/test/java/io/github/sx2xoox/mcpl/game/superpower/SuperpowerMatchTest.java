@@ -42,6 +42,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerExpChangeEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -182,7 +183,7 @@ class SuperpowerMatchTest {
     // =================================================================== selection
 
     @Test
-    void choiceModeUsesTheMenuAndPicksOnClose() {
+    void choiceModeUsesTheMenuAndOnlyTheTimeoutPicksAtRandom() {
         h.settings().set("selection.mode", "CHOICE");
         List<TestPlayer> players = h.join(3);
         h.start();
@@ -201,16 +202,39 @@ class SuperpowerMatchTest {
         assertTrue(click.isCancelled(), "menu items cannot be taken");
         assertEquals(wanted, participant(match, picker).abilityId());
 
+        // The menu closes a tick after the pick: a second click in between must not take the other icons.
+        assertSame(menu, picker.getOpenInventory().getTopInventory().getHolder(), "still open this tick");
+        String other = menu.candidates().get(2);
+        InventoryClickEvent late = new InventoryClickEvent(picker.getOpenInventory(),
+                InventoryType.SlotType.CONTAINER, menu.slotOf(other), ClickType.LEFT, InventoryAction.PICKUP_ALL);
+        h.server.getPluginManager().callEvent(late);
+        assertTrue(late.isCancelled(), "a click on a stale menu is cancelled");
+        assertEquals(wanted, participant(match, picker).abilityId(), "a repeated pick changes nothing");
+
         TestPlayer closer = players.get(1);
         ChoiceMenu closerMenu = (ChoiceMenu) closer.getOpenInventory().getTopInventory().getHolder();
-        closer.closeInventory();
-        String auto = participant(match, closer).abilityId();
-        assertNotNull(auto, "closing the menu picks automatically");
-        assertTrue(closerMenu.candidates().contains(auto));
+        closer.closeInventory(InventoryCloseEvent.Reason.PLAYER);
+        assertNull(participant(match, closer).abilityId(), "closing the menu (ESC/E) does not pick");
+        h.ticks(25);
+        assertTrue(closer.getOpenInventory().getTopInventory().getHolder() instanceof ChoiceMenu reopened
+                && reopened.candidates().equals(closerMenu.candidates()), "the menu opens again with the same choices");
+        for (int i = 0; i < 2; i++) {
+            closer.closeInventory(InventoryCloseEvent.Reason.PLAYER);
+            h.ticks(25);
+        }
+        assertFalse(closer.getOpenInventory().getTopInventory().getHolder() instanceof ChoiceMenu,
+                "after a few closes it stays closed");
+        assertTrue(match.reopenMenu(closer), "/게임 능력 선택 opens it again");
+        assertTrue(closer.getOpenInventory().getTopInventory().getHolder() instanceof ChoiceMenu);
+        closer.closeInventory(InventoryCloseEvent.Reason.PLAYER);
 
         h.tickUntilPhase(MatchPhase.FIGHT);
+        String auto = participant(match, closer).abilityId();
+        assertNotNull(auto, "the timeout picks for players who closed the menu");
+        assertTrue(closerMenu.candidates().contains(auto));
         TestPlayer waiter = players.get(2);
         assertNotNull(participant(match, waiter).abilityId(), "the timeout picks for players who never chose");
+        assertFalse(match.reopenMenu(waiter), "nothing to pick in the fight");
         for (TestPlayer player : players) {
             assertNotNull(participant(match, player).ability());
         }

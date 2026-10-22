@@ -301,12 +301,9 @@ class RangedSupportAbilitiesTest {
     }
 
     @Test
-    @Disabled("BUG: summon hits are never routed to the summoner's onDealDamage, so wolf/golem damage is the "
-            + "difficulty-scaled vanilla damage instead of the advertised wolf_damage/golem_damage")
     void summonerWolfBitesDealTheAdvertisedDamage() {
-        // SummonerAbility#onDealDamage normalises a summon's hit to its param damage "regardless of vanilla
-        // randomness or difficulty", but MatchListener#attackerOf only resolves players and projectiles, so the
-        // hook is never called for a wolf or golem damager. On easy difficulty a 3-damage wolf bites for 2.5.
+        // Summon hits deal exactly the summon's attack damage (no difficulty scaling: on easy a 3-damage wolf would
+        // bite for 2.5) and are routed to the summoner's onDealDamage.
         try (Scenario s = Scenario.ffa("summoner")) {
             s.assertSucceeded(s.active(), "늑대 무리");
             Wolf wolf = entities(s, Wolf.class).getFirst();

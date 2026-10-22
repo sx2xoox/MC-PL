@@ -35,14 +35,18 @@ import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
 import io.github.sx2xoox.mcpl.game.superpower.ui.RevealAnimation;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Difficulty;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.Tag;
+import org.bukkit.World;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
@@ -66,6 +70,10 @@ public final class SuperpowerMatch implements GameInstance {
     /** Length of the short re-reveal after a reroll or an admin assignment. */
     static final int SHORT_REVEAL_TICKS = 24;
     static final int CHOICE_CANDIDATES = 3;
+    /** Delay before a CHOICE menu closed without a pick opens again. */
+    static final int MENU_REOPEN_TICKS = 20;
+    /** How often a CHOICE menu closed without a pick is reopened automatically ({@code /게임 능력 선택} always works). */
+    static final int MENU_AUTO_REOPENS = 2;
 
     /** Outcome of {@link #reroll(Player)}. */
     public enum RerollResult { OK, NOT_PARTICIPANT, WRONG_PHASE, WRONG_MODE, FORCED, NONE_LEFT, NO_OPTIONS }
@@ -93,6 +101,10 @@ public final class SuperpowerMatch implements GameInstance {
     private long revealHoldUntil = -1;
     private boolean started;
     private boolean stopped;
+    /** While the border damages everyone outside at once, deaths do not decide the match one by one. */
+    private boolean deferWinCheck;
+    /** Last prep countdown number shown (3, 2, 1). */
+    private int lastCountdown;
 
     public SuperpowerMatch(SuperpowerGame game, GameSession session) {
         this.game = game;
@@ -119,6 +131,11 @@ public final class SuperpowerMatch implements GameInstance {
         }
         ctx = new MatchContext(this);
         session.registerListener(new MatchListener(this));
+        World world = session.arena().center().getWorld();
+        if (world != null && world.getDifficulty() == Difficulty.PEACEFUL) {
+            logger().warning("The arena world is on Peaceful difficulty: summoned mobs (summoner wolves and golem) "
+                    + "cannot damage players there. Use Easy or harder for 초능력전쟁.");
+        }
         border = new BorderController(session, settings);
         hud = new MatchHud(this);
         session.spreadParticipants();
@@ -208,7 +225,9 @@ public final class SuperpowerMatch implements GameInstance {
                 guard.run(credited.abilityId, "onKill", () -> ability.onKill(player));
             }
         }
-        checkWinner();
+        if (!deferWinCheck) {
+            checkWinner();
+        }
     }
 
     @Override
@@ -371,6 +390,12 @@ public final class SuperpowerMatch implements GameInstance {
     private void beginPrep() {
         phase = MatchPhase.PREP;
         phaseTicks = 0;
+        lastCountdown = Integer.MAX_VALUE;
+        if (settings.prepTicks() <= 0) {
+            // No prep phase: nothing to announce (and no time to reroll).
+            beginFight();
+            return;
+        }
         int seconds = (settings.prepTicks() + 19) / 20;
         for (Participant participant : participants.values()) {
             Player player = participant.player();
@@ -383,10 +408,6 @@ public final class SuperpowerMatch implements GameInstance {
             }
             Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.2f);
         }
-        sendSpectatorSummary();
-        if (settings.prepTicks() <= 0) {
-            beginFight();
-        }
     }
 
     private void tickPrep() {
@@ -395,8 +416,9 @@ public final class SuperpowerMatch implements GameInstance {
             beginFight();
             return;
         }
-        if (left == 60 || left == 40 || left == 20) {
-            int seconds = (int) (left / 20);
+        int seconds = (int) ((left + 19) / 20);
+        if (seconds <= 3 && seconds < lastCountdown) {
+            lastCountdown = seconds;
             for (Player player : session.alivePlayers()) {
                 if (!reveals.containsKey(player.getUniqueId())) {
                     Feedback.title(player, messages.get("prep.countdown-title", Messages.tag("seconds", seconds)),
@@ -451,7 +473,11 @@ public final class SuperpowerMatch implements GameInstance {
         }
         session.title(messages.get("fight.title"), messages.get("fight.subtitle"));
         session.playSound(Sound.EVENT_RAID_HORN, 0.7f, 1.0f);
-        session.broadcast(messages.prefixed("fight.started"));
+        Component borderHint = border().shrinks() ? messages.get("fight.border-hint") : Component.empty();
+        session.broadcast(messages.prefixed(session.isTeamMode() ? "fight.started-teams" : "fight.started",
+                Messages.tag("border", borderHint)));
+        // Every ability is final now (rerolls and assignments end with the prep phase).
+        sendSpectatorSummary();
     }
 
     private Ability createAbility(String id, Player player) {
@@ -503,12 +529,18 @@ public final class SuperpowerMatch implements GameInstance {
         for (Participant participant : participants.values()) {
             Player player = participant.player();
             if (participant.ability != null && player != null && session.isInPlay(player)) {
-                addGauge(participant, perSecond);
+                addEarnedGauge(participant, perSecond);
             }
         }
         double damage = settings.borderDamagePerSecond();
-        for (Player player : session.alivePlayers()) {
-            if (border().isOutside(player.getLocation())) {
+        // Everyone outside is hit in the same moment: if the last players all die to it, that is a draw, not a win
+        // for whoever happens to be damaged last.
+        deferWinCheck = true;
+        try {
+            for (Player player : session.alivePlayers()) {
+                if (!session.isInPlay(player) || !border().isOutside(player.getLocation())) {
+                    continue;
+                }
                 player.sendActionBar(messages.get("border.outside"));
                 Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 0.5f);
                 context().borderDamage(player, damage);
@@ -516,6 +548,8 @@ public final class SuperpowerMatch implements GameInstance {
                     return;
                 }
             }
+        } finally {
+            deferWinCheck = false;
         }
         checkWinner();
     }
@@ -734,7 +768,7 @@ public final class SuperpowerMatch implements GameInstance {
         return player.isOnline() && player.getOpenInventory().getTopInventory() == menu.getInventory();
     }
 
-    /** The open choice menu of a viewer, if {@code top} is it. */
+    /** The choice menu currently offered to {@code player} (null once picked, closed or never opened). */
     @Nullable ChoiceMenu menuOf(Player player) {
         Participant participant = participants.get(player.getUniqueId());
         return participant == null ? null : participant.menu;
@@ -752,15 +786,52 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
-    void onMenuClosed(Player player, ChoiceMenu menu) {
+    /**
+     * The menu was closed without a pick. Nothing is decided here (only the timeout picks at random): the menu opens
+     * again a moment later, a limited number of times for closes by the player ({@code /게임 능력 선택} reopens it).
+     */
+    void onMenuClosed(Player player, ChoiceMenu menu, InventoryCloseEvent.Reason reason) {
         Participant participant = participants.get(player.getUniqueId());
         if (participant == null || participant.menu != menu) {
             return;
         }
         participant.menu = null;
-        if (!participant.chosen && phase == MatchPhase.SELECT && session.isAlive(participant.id())) {
-            choose(participant, randomCandidate(participant), true);
+        if (participant.chosen || phase != MatchPhase.SELECT || !session.isAlive(participant.id())) {
+            return;
         }
+        if (reason == InventoryCloseEvent.Reason.PLAYER && ++participant.menuCloses > MENU_AUTO_REOPENS) {
+            messages.send(player, "choice.closed");
+            return;
+        }
+        player.sendActionBar(messages.get("choice.reopening"));
+        session.runLater(MENU_REOPEN_TICKS, () -> reopenMenu(participant));
+    }
+
+    /**
+     * Opens the CHOICE menu again for a participant who has not picked yet ({@code /게임 능력 선택}).
+     *
+     * @return false if there is nothing to pick right now
+     */
+    public boolean reopenMenu(Player player) {
+        Participant participant = participants.get(player.getUniqueId());
+        return participant != null && reopenMenu(participant);
+    }
+
+    private boolean reopenMenu(Participant participant) {
+        Player player = participant.player();
+        if (stopped || player == null || participant.chosen || phase != MatchPhase.SELECT
+                || participant.candidates.isEmpty() || !session.isInPlay(player)) {
+            return false;
+        }
+        if (participant.menu != null && isViewing(player, participant.menu)) {
+            return true;
+        }
+        // Never take the screen from another open container (another plugin's menu, a chest).
+        if (player.getOpenInventory().getType() != InventoryType.CRAFTING) {
+            return false;
+        }
+        openMenu(participant, player);
+        return true;
     }
 
     // =================================================================== input
@@ -780,7 +851,13 @@ public final class SuperpowerMatch implements GameInstance {
             case INTRO, SELECT, REVEAL -> deny(player, messages.get("input.not-yet"));
             case PREP -> {
                 if (player.isSneaking() && settings.selectionMode() == SelectionMode.RANDOM) {
-                    reportReroll(player, reroll(player));
+                    RerollResult result = reroll(player);
+                    if (result == RerollResult.OK) {
+                        reportReroll(player, result);
+                    } else {
+                        // Holding right-click repeats the use every few ticks: the action bar, not chat.
+                        deny(player, messages.get(rerollMessageKey(result)));
+                    }
                 } else {
                     deny(player, messages.get(canReroll(participant) ? "input.prep-reroll" : "input.prep",
                             Messages.tag("seconds", Math.max(1, (settings.prepTicks() - phaseTicks + 19) / 20))));
@@ -868,7 +945,9 @@ public final class SuperpowerMatch implements GameInstance {
             return ActivationResult.fail("gauge");
         }
         String id = participant.abilityId;
-        ActivationResult result = guard.call(id, "onUltimate", ability::onUltimate);
+        // Everything the ultimate does, now or later, counts as the ultimate: it never refills the caster's gauge.
+        ActivationResult result = context().asUltimate(participant.id(),
+                () -> guard.call(id, "onUltimate", ability::onUltimate));
         if (result == null) {
             deny(player, messages.get("input.error"));
             return ActivationResult.fail("error");
@@ -877,7 +956,12 @@ public final class SuperpowerMatch implements GameInstance {
             deny(player, reason(result));
             return result;
         }
+        if (stopped || participant.ability != ability || !session.isInPlay(player)) {
+            // The ultimate ended the match (or killed its caster): no announcement over the results.
+            return result;
+        }
         participant.gauge.reset();
+        participant.gaugeLockedUntil = fightTicks + settings.ultimateLockTicks();
         syncXp(participant, player);
         AbilityInfo info = info(id);
         if (info != null) {
@@ -967,25 +1051,29 @@ public final class SuperpowerMatch implements GameInstance {
         return RerollResult.OK;
     }
 
-    /** Sends the Korean feedback for a reroll attempt. */
+    /** Sends the Korean feedback for a reroll attempt (chat, for the command). */
     public void reportReroll(Player player, RerollResult result) {
-        Participant participant = participants.get(player.getUniqueId());
-        switch (result) {
-            case OK -> {
-                messages.send(player, "reroll.done",
-                        Messages.tag("count", participant == null ? 0 : participant.rerollsLeft));
-                Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1f, 1.2f);
-            }
-            case NOT_PARTICIPANT -> messages.send(player, "reroll.not-participant");
-            case WRONG_MODE -> messages.send(player, "reroll.wrong-mode");
-            case WRONG_PHASE -> messages.send(player, "reroll.wrong-phase");
-            case FORCED -> messages.send(player, "reroll.forced");
-            case NONE_LEFT -> messages.send(player, "reroll.none-left");
-            case NO_OPTIONS -> messages.send(player, "reroll.no-options");
+        if (result == RerollResult.OK) {
+            Participant participant = participants.get(player.getUniqueId());
+            messages.send(player, "reroll.done",
+                    Messages.tag("count", participant == null ? 0 : participant.rerollsLeft));
+            Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1f, 1.2f);
+            return;
         }
-        if (result != RerollResult.OK) {
-            Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_BASS, 0.6f, 0.7f);
-        }
+        messages.send(player, rerollMessageKey(result));
+        Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_BASS, 0.6f, 0.7f);
+    }
+
+    private static String rerollMessageKey(RerollResult result) {
+        return switch (result) {
+            case OK -> "reroll.done";
+            case NOT_PARTICIPANT -> "reroll.not-participant";
+            case WRONG_MODE -> "reroll.wrong-mode";
+            case WRONG_PHASE -> "reroll.wrong-phase";
+            case FORCED -> "reroll.forced";
+            case NONE_LEFT -> "reroll.none-left";
+            case NO_OPTIONS -> "reroll.no-options";
+        };
     }
 
     /**
@@ -1037,6 +1125,23 @@ public final class SuperpowerMatch implements GameInstance {
     void addGauge(Player player, double amount) {
         Participant participant = participants.get(player.getUniqueId());
         if (participant != null && session.isAlive(participant.id())) {
+            addGauge(participant, amount);
+        }
+    }
+
+    /**
+     * Gauge earned by playing (damage dealt or taken, time alive): nothing while the post-ultimate lock runs
+     * ({@code ultimate.recharge-delay-seconds}). Explicit grants ({@link #addGauge(Player, double)}) are never locked.
+     */
+    void addEarnedGauge(Player player, double amount) {
+        Participant participant = participants.get(player.getUniqueId());
+        if (participant != null && session.isAlive(participant.id())) {
+            addEarnedGauge(participant, amount);
+        }
+    }
+
+    private void addEarnedGauge(Participant participant, double amount) {
+        if (!participant.isGaugeLocked(fightTicks)) {
             addGauge(participant, amount);
         }
     }
@@ -1342,6 +1447,7 @@ public final class SuperpowerMatch implements GameInstance {
             ctx.releaseOwner(participant.id());
         }
         participant.cooldown.reset();
+        participant.gaugeLockedUntil = 0;
         participant.silencedUntil = 0;
         participant.silenceShown = false;
         Player player = participant.player();
