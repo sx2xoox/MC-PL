@@ -64,7 +64,7 @@ public final class DemonAbility extends Ability {
                     "잃은 체력에 비례해 능력으로 주는 피해가 늘어납니다. 체력이 최대 체력의 {pact_floor}% 이하로 "
                             + "떨어지면 최대치인 {pact_max}%만큼 증가합니다.")
             .active("지옥불",
-                    "체력 {hellfire_cost}을 바쳐 바라보는 방향 {hellfire_range}블록 앞까지 원뿔 모양으로 영혼불 화염파를 "
+                    "체력을 {hellfire_cost} 바쳐 바라보는 방향 {hellfire_range}블록 앞까지 원뿔 모양으로 영혼불 화염파를 "
                             + "내뿜습니다. 닿은 적에게 {hellfire_damage} 피해를 주고 {hellfire_burn}초간 불태우며 살짝 "
                             + "밀어냅니다. 벽 너머로는 닿지 않고, 체력이 {hellfire_cost} 이하일 때는 쓸 수 없습니다.",
                     8)
@@ -727,9 +727,10 @@ public final class DemonAbility extends Ability {
             long remaining = Math.max(0, pillar.eruptAt() - ctx().currentTick());
             double radiusNow = params().num("pillar_radius") * (0.5 + 0.8 * remaining / delay);
             Location at = pillar.mark().clone().add(0, 0.1, 0);
-            Vfx.ring(ctx(), at, radiusNow, (int) Math.max(10, radiusNow * 9), tick * 0.25,
-                    Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.1f), true);
-            if (tick % 2 == 0) {
+            if (tick % 2 == 0 || remaining <= 2) {
+                Vfx.ring(ctx(), at, radiusNow, (int) Math.max(8, radiusNow * 7), tick * 0.25,
+                        Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.1f), true);
+            } else {
                 Vfx.dot(Vfx.scatter(at, radiusNow * 0.7), Particle.SOUL_FIRE_FLAME, null, false);
             }
             BlockDisplay sigil = pillar.sigil();

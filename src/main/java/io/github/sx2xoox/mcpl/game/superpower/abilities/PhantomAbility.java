@@ -140,9 +140,10 @@ public final class PhantomAbility extends Ability {
     private static final int GATHER_TICKS = 10;
     private static final int SWOOP_TICKS = 12;
     /** From this swoop tick on the phantom no longer follows its prey: it is committed to where the prey was. */
-    private static final int SWOOP_LOCK_TICK = 7;
+    private static final int SWOOP_LOCK_TICK = 6;
     private static final int RETURN_TICKS = 10;
-    private static final double SWOOP_HIT_RADIUS = 1.3;
+    /** Small enough that sprinting away from the screech escapes the strike (walking does not). */
+    private static final double SWOOP_HIT_RADIUS = 1.1;
     private static final int FLAP_TICKS = 4;
     private static final float WING_UP = 35;
     private static final float WING_DOWN = -15;
@@ -180,7 +181,7 @@ public final class PhantomAbility extends Ability {
 
     /** High in the air: nothing solid (or water) within {@code air_height} blocks below the feet. */
     private boolean isAloft(Player owner) {
-        if (owner.isInWater() || Motion.isGrounded(owner)) {
+        if (owner.isInWater() || owner.isClimbing() || Motion.isGrounded(owner)) {
             return false;
         }
         double height = Math.max(0, params().num("air_height"));

@@ -621,6 +621,24 @@ class SpiritNewAbilitiesTest {
     }
 
     @Test
+    void ghostTerrorNeverRevealsAStealthedEnemy() {
+        try (Scenario s = Scenario.ffa("ghost")) {
+            s.place(s.enemy2, 0.5, -4.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.h.hub.plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "공포");
+            assertEquals(0, s.enemy.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), EPSILON, "still terrified");
+            assertEquals(0, displays(s, TextDisplay.class), "no mark over a hidden enemy");
+            s.ticks(10);
+            assertTrue(s.enemy.getLocation().getZ() > 5.0, "still driven away: " + s.enemy.getLocation());
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy);
+            s.ticks(s.paramTicks("fear_duration") + 10);
+            assertEquals(0, displays(s));
+            s.finishClean();
+        }
+    }
+
+    @Test
     void ghostTerrorIsStoppedByWalls() {
         try (Scenario s = Scenario.ffa("ghost")) {
             s.aimAt(s.owner, s.enemy);

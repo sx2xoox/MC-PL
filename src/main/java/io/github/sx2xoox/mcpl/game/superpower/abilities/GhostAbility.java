@@ -321,6 +321,7 @@ public final class GhostAbility extends Ability {
         if (fear.mark != null && fear.mark.isValid()) {
             fear.mark.remove();
         }
+        fear.mark = null;
         long now = ctx().currentTick();
         fear.until = now + duration;
         // No blow lands: the attack damage drops to nothing while the terror lasts.
@@ -330,6 +331,12 @@ public final class GhostAbility extends Ability {
         if (slow > 0) {
             fear.modifiers.add(ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED, -slow,
                     Operation.MULTIPLY_SCALAR_1, duration));
+        }
+        long token = fear.until;
+        Loop.repeat(ctx(), owner, 1, 1, duration, run -> flee(enemy, fear, token, run), () -> calm(enemy, fear, token));
+        if (enemy instanceof Player hidden && !owner.canSee(hidden)) {
+            // Still terrified, but nothing over its head gives a stealthed enemy away.
+            return;
         }
         TextDisplay mark = Displays.text(ctx(), owner, overHead(enemy), Text.mm("<b><" + PALE + ">!</" + PALE + "></b>"),
                 0.4f, duration + 2);
@@ -342,8 +349,6 @@ public final class GhostAbility extends Ability {
         Vfx.cloud(ctx(), body, Particle.SOUL, 3, 0.25, 0.02, null, false);
         Fx.sound(body, Sound.ENTITY_VEX_CHARGE, 0.7f, 0.7f + Fx.jitter(0.08f));
         Fx.sound(body, Sound.ENTITY_SKELETON_AMBIENT, 0.4f, 1.8f + Fx.jitter(0.1f));
-        long token = fear.until;
-        Loop.repeat(ctx(), owner, 1, 1, duration, run -> flee(enemy, fear, token, run), () -> calm(enemy, fear, token));
     }
 
     /** One tick of terror: the enemy trembles, and is driven away from the ghost every few ticks. */
@@ -357,6 +362,7 @@ public final class GhostAbility extends Ability {
             mark.teleport(overHead(enemy).add(random.nextDouble(-0.07, 0.07), random.nextDouble(-0.05, 0.05),
                     random.nextDouble(-0.07, 0.07)));
         }
+        boolean shown = !(enemy instanceof Player hidden && !player().canSee(hidden));
         if (run % FLEE_PERIOD == 0) {
             Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(player().getLocation().toVector()));
             if (away.lengthSquared() < 1.0E-6) {
@@ -365,6 +371,8 @@ public final class GhostAbility extends Ability {
             boolean grounded = Motion.isGrounded(enemy) || enemy.isInWater();
             double y = grounded ? FLEE_HOP : Math.min(0, enemy.getVelocity().getY());
             Motion.push(enemy, away.multiply(FLEE_SPEED).setY(y), MAX_SPEED);
+        }
+        if (shown && run % FLEE_PERIOD == 0) {
             Location head = enemy.getLocation().add(0, enemy.getHeight() * 0.9, 0);
             Vfx.dot(head.clone().add(random.nextDouble(-0.25, 0.25), 0, random.nextDouble(-0.25, 0.25)),
                     Particle.FALLING_WATER, null, false);
