@@ -271,10 +271,11 @@ class SuperpowerMatchTest {
         List<TestPlayer> players = h.join(4);
         TestPlayer admin = players.getFirst();
         admin.setOp(true);
-        for (String id : List.of("pyro", "thunder", "frost", "aero", "blink", "shadow", "grapple", "chrono",
-                "berserker", "titan", "guardian", "vampire", "gravity", "earth", "venom", "mirror", "archer",
-                "bomber", "summoner", "healer")) {
-            h.game.abilities().setEnabled(h.game.registry(), id, false);
+        Set<String> keep = Set.of("pixie", "phoenix", "illusionist", "gambler");
+        for (var entry : h.game.registry().all()) {
+            if (!keep.contains(entry.info().id())) {
+                h.game.abilities().setEnabled(h.game.registry(), entry.info().id(), false);
+            }
         }
         assertTrue(h.server.dispatchCommand(admin, "게임 능력 지정 P2 도박사"));
         assertEquals("gambler", h.game.pendingAssignments().get(players.get(1).getUniqueId()));
