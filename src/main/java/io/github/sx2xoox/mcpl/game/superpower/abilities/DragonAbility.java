@@ -94,6 +94,13 @@ public final class DragonAbility extends Ability {
 
     // Passive
     private static final long SCALE_FX_COOLDOWN = 10;
+    private static final int SCALE_PLATES = 3;
+    private static final long SCALE_HOLD_TICKS = 4;
+    private static final int SCALE_FADE_TICKS = 5;
+    /** Every this many ticks a violet ember drifts up from the dragon's back. */
+    private static final long EMBER_PERIOD = 30;
+    /** Ticks the breath's inhale glow converges into the mouth before the stream reaches full strength. */
+    private static final int INHALE_TICKS = 4;
 
     // Breath
     /** Distance in front of the eyes where the breath leaves the mouth. */
@@ -190,6 +197,15 @@ public final class DragonAbility extends Ability {
         if (descending) {
             tickDescent(owner, tick);
         }
+        if (tick % EMBER_PERIOD == 0 && !flying) {
+            // The dragon's inner fire: a violet ember drifting up off its shoulders now and then.
+            Location shoulders = owner.getLocation().add(0, owner.getHeight() * 0.85, 0)
+                    .add(Motion.horizontalFacing(owner.getLocation()).multiply(-0.25));
+            Location ember = Vfx.scatter(shoulders, 0.25);
+            ember.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, ember, 1, 0, 0, 0, 0, PALETTE.fade(0.8f));
+            ember.getWorld().spawnParticle(Particle.DRAGON_BREATH, ember.getX(), ember.getY(), ember.getZ(), 0, 0, 1,
+                    0, 0.02, 1.0f);
+        }
     }
 
     // ------------------------------------------------------------------ passive: dragon scales
@@ -259,8 +275,49 @@ public final class DragonAbility extends Ability {
         Vfx.cloud(ctx(), at, Particle.ELECTRIC_SPARK, 3, 0.15, 0.05, null, false);
         if (hit == null) {
             Vfx.ring(ctx(), owner.getLocation().add(0, 0.2, 0), 0.6, 8, now * 0.3, Particle.DUST, EMBER, false);
+            Fx.sound(at, Sound.BLOCK_FIRE_EXTINGUISH, 0.5f, 1.5f + Fx.jitter(0.1f));
+        } else {
+            scalePlates(owner, at, body);
         }
         Fx.sound(at, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.8f, 0.7f + Fx.jitter(0.1f));
+        Fx.sound(at, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 0.4f, 1.6f + Fx.jitter(0.1f));
+    }
+
+    /**
+     * Where an arrow strikes, three overlapping violet scales flare up on the dragon's hide (thin glass plates facing
+     * the shot), flash and fade.
+     */
+    private void scalePlates(Player owner, Location at, Location body) {
+        long lifetime = SCALE_HOLD_TICKS + SCALE_FADE_TICKS + 3;
+        if (!reserveDisplays(SCALE_PLATES, lifetime)) {
+            return;
+        }
+        Vector out = at.toVector().subtract(body.toVector()).setY(0);
+        if (out.lengthSquared() < 1.0E-6) {
+            out = Motion.horizontalFacing(owner.getLocation());
+        }
+        out.normalize();
+        float yaw = (float) Math.toDegrees(Math.atan2(-out.getX(), out.getZ()));
+        Vector side = new Vector(out.getZ(), 0, -out.getX());
+        Location anchor = flat(at);
+        for (int i = 0; i < SCALE_PLATES; i++) {
+            double slot = i - (SCALE_PLATES - 1) / 2.0;
+            Vector offset = side.clone().multiply(slot * 0.2);
+            float lift = (float) (0.12 - Math.abs(slot) * 0.12);
+            float size = 0.32f - (float) Math.abs(slot) * 0.06f;
+            Transformation small = Displays.transform((float) offset.getX(), lift, (float) offset.getZ(), size * 0.3f,
+                    size * 0.3f, 0.02f, yaw, 0, 45);
+            Transformation flared = Displays.transform((float) offset.getX(), lift, (float) offset.getZ(), size,
+                    size, 0.02f, yaw, 0, 45);
+            BlockDisplay plate = Displays.block(ctx(), owner, anchor, i == 1 ? UPPER_MEMBRANE : LOWER_MEMBRANE, small,
+                    lifetime);
+            Displays.animateNextTick(ctx(), owner, plate, flared, 2);
+            ctx().runLater(owner, SCALE_HOLD_TICKS, () -> {
+                if (plate.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, plate, SCALE_FADE_TICKS);
+                }
+            });
+        }
     }
 
     // ------------------------------------------------------------------ active: dragon breath
@@ -275,6 +332,7 @@ public final class DragonAbility extends Ability {
         long interval = Math.max(1, params().ticks("breath_interval"));
         breathing = true;
         Location eye = owner.getEyeLocation();
+        inhale(owner, eye);
         Fx.sound(eye, Sound.ENTITY_ENDER_DRAGON_SHOOT, 1.0f, 0.8f + Fx.jitter(0.05f));
         Fx.sound(eye, Sound.ENTITY_ENDER_DRAGON_GROWL, 0.6f, 1.4f + Fx.jitter(0.05f));
         Fx.sound(eye, Sound.ITEM_FIRECHARGE_USE, 0.8f, 0.6f);
@@ -286,6 +344,50 @@ public final class DragonAbility extends Ability {
             afterglow(owner);
         });
         return ActivationResult.success();
+    }
+
+    /**
+     * The tell before the stream: violet motes rush in from all around into the dragon's maw, a ring tightens in
+     * front of it and the throat glows, so enemies in front see the breath coming.
+     */
+    private void inhale(Player owner, Location eye) {
+        Vector direction = eye.getDirection().normalize();
+        Location mouth = eye.clone().add(direction.clone().multiply(MOUTH_FORWARD)).subtract(0, 0.15, 0);
+        Vector side = direction.clone().crossProduct(new Vector(0, 1, 0));
+        if (side.lengthSquared() < 1.0E-6) {
+            side = new Vector(1, 0, 0);
+        }
+        side.normalize();
+        Vector up = side.clone().crossProduct(direction).normalize();
+        int motes = Vfx.n(ctx(), 10);
+        double phase = ThreadLocalRandom.current().nextDouble(TAU);
+        for (int i = 0; i < motes; i++) {
+            double angle = phase + i * TAU / motes;
+            Location from = mouth.clone().add(side.clone().multiply(Math.cos(angle) * 1.3))
+                    .add(up.clone().multiply(Math.sin(angle) * 1.3)).add(direction.clone().multiply(0.8));
+            Vfx.trail(from, mouth, i % 2 == 0 ? PALETTE.core() : PALETTE.body(), INHALE_TICKS, false);
+        }
+        Loop.repeat(ctx(), owner, 0, 1, INHALE_TICKS, run -> {
+            Location now = owner.getEyeLocation();
+            Vector look = now.getDirection().normalize();
+            Location front = now.add(look.clone().multiply(MOUTH_FORWARD + 0.6)).subtract(0, 0.15, 0);
+            double radius = 0.7 * (1 - (double) run / INHALE_TICKS) + 0.15;
+            Vector axisSide = look.clone().crossProduct(new Vector(0, 1, 0));
+            if (axisSide.lengthSquared() < 1.0E-6) {
+                axisSide = new Vector(1, 0, 0);
+            }
+            axisSide.normalize();
+            Vector axisUp = axisSide.clone().crossProduct(look).normalize();
+            int points = Vfx.n(ctx(), 10);
+            for (int i = 0; i < points; i++) {
+                double angle = run * 0.5 + i * TAU / points;
+                Vfx.dot(front.clone().add(axisSide.clone().multiply(Math.cos(angle) * radius))
+                                .add(axisUp.clone().multiply(Math.sin(angle) * radius)),
+                        Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.8f), false);
+            }
+            return true;
+        });
+        Fx.sound(eye, Sound.ENTITY_BREEZE_INHALE, 0.8f, 0.7f + Fx.jitter(0.05f));
     }
 
     /** One tick of breath: the cone of fire in front of the owner, and its damage every interval. */
@@ -341,7 +443,7 @@ public final class DragonAbility extends Ability {
         side.normalize();
         Vector up = side.clone().crossProduct(direction).normalize();
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        int streams = Vfx.n(ctx(), 7);
+        int streams = Vfx.n(ctx(), tick < INHALE_TICKS ? 3 : 7);
         for (int i = 0; i < streams; i++) {
             Vector ray = coneRay(direction, side, up, half * random.nextDouble(0.2, 1.0), random.nextDouble(TAU));
             world.spawnParticle(Particle.DRAGON_BREATH, mouth.getX(), mouth.getY(), mouth.getZ(), 0, ray.getX(),

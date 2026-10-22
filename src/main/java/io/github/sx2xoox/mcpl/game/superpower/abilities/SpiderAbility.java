@@ -45,6 +45,8 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -63,8 +65,8 @@ public final class SpiderAbility extends Ability {
             .color(TextColor.color(0xC0504D))
             .difficulty(2)
             .passive("거미 다리",
-                    "벽을 마주 보고 붙으면 초당 {climb_speed}블록 속도로 기어오르고, 웅크리면 벽에 매달립니다. "
-                            + "거미줄에 걸렸거나 묶인 적에게 주는 피해가 {web_bonus}% 늘어납니다.")
+                    "벽을 마주 보고 붙으면 초당 {climb_speed}블록 속도로 기어오르고, 웅크리면 거미줄을 걸고 벽에 "
+                            + "매달립니다. 거미줄이나 둥지에 걸린 적에게 주는 피해가 {web_bonus}% 늘어납니다.")
             .active("거미줄 발사",
                     "끈적한 거미줄 뭉치를 쏩니다(최대 {web_range}블록). 맞은 적은 {web_damage} 피해를 입고 "
                             + "{root_duration}초간 거미줄에 묶여 움직이거나 뛸 수 없습니다. 빗나가면 닿은 자리에 "
@@ -102,6 +104,11 @@ public final class SpiderAbility extends Ability {
     /** Speed pressing the climber against the wall, so the client keeps touching it. */
     private static final double WALL_PRESS = 0.06;
     private static final double LEDGE_HOP_UP = 0.36;
+    /** The cling thread is fixed this far above the spider's head, and spun anew if it would get longer than that. */
+    private static final double ANCHOR_HEIGHT = 0.9;
+    private static final double ANCHOR_MAX_LENGTH = 3.0;
+    private static final float ANCHOR_WIDTH = 0.035f;
+    private static final float TETHER_WIDTH = 0.045f;
     private static final double LEDGE_HOP_FORWARD = 0.18;
 
     // Web shot
@@ -120,6 +127,9 @@ public final class SpiderAbility extends Ability {
     private static final long NEST_CHECK_PERIOD = 5;
     private static final int SPIN_TICKS = 8;
     private static final int UNSPIN_TICKS = 8;
+    /** Size of the cobweb hub at the nest's center, as a share of the nest radius. */
+    private static final double HUB_SIZE = 0.4;
+    private static final long HUB_TURN_TICKS = 10;
 
     // ------------------------------------------------------------------ look: silk white, ash gray, eye red
     private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xF4F4F4, 0x9E9E9E, 0x6B0F1A);
@@ -135,6 +145,8 @@ public final class SpiderAbility extends Ability {
 
     private final Map<UUID, Long> boundUntil = new HashMap<>();
     private boolean wasClimbing;
+    private @Nullable BlockDisplay anchor;
+    private @Nullable Location anchorPoint;
     private long lastClimbFx = Long.MIN_VALUE / 2;
     private int liveDisplays;
     private @Nullable Nest nest;
@@ -148,6 +160,8 @@ public final class SpiderAbility extends Ability {
     public void onRevoke() {
         boundUntil.clear();
         wasClimbing = false;
+        anchor = null;
+        anchorPoint = null;
         nest = null;
     }
 
@@ -183,6 +197,7 @@ public final class SpiderAbility extends Ability {
                 Fx.sound(at, Sound.ENTITY_SPIDER_STEP, 0.6f, 1.2f + Fx.jitter(0.1f));
             }
             wasClimbing = false;
+            releaseAnchor(owner);
             return;
         }
         Vector press = facing.clone().multiply(WALL_PRESS);
@@ -191,12 +206,13 @@ public final class SpiderAbility extends Ability {
                 owner.setVelocity(press.setY(0));
                 owner.setFallDistance(0);
                 wasClimbing = true;
-                if (tick % 10 == 0) {
-                    clingFx(owner, facing);
-                }
+                cling(owner, facing, tick);
+            } else {
+                releaseAnchor(owner);
             }
             return;
         }
+        releaseAnchor(owner);
         double speed = Math.max(0, params().num("climb_speed")) / 20.0;
         if (speed <= 0) {
             return;
@@ -238,12 +254,48 @@ public final class SpiderAbility extends Ability {
         Fx.sound(hands, Sound.ENTITY_SPIDER_STEP, 0.4f, 1.1f + Fx.jitter(0.15f));
     }
 
-    /** Hanging from the wall: a silk anchor line stretched above the spider. */
-    private void clingFx(Player owner, Vector facing) {
-        Location top = owner.getLocation().add(0, owner.getHeight() + 0.6, 0)
-                .add(facing.clone().multiply(owner.getWidth() * 0.5));
-        Vfx.line(ctx(), top, owner.getLocation().add(0, owner.getHeight() * 0.8, 0), 5, Particle.DUST, SILK_FINE,
-                false);
+    /**
+     * Hanging from the wall: the spider fixes a silk thread to the wall above it and hangs from it. The thread (a thin
+     * block display) stays anchored where it was spun and follows the spider's back until it lets go.
+     */
+    private void cling(Player owner, Vector facing, long tick) {
+        Location back = owner.getLocation().add(0, owner.getHeight() * 0.8, 0);
+        if (anchorPoint == null || !anchorPoint.getWorld().equals(owner.getWorld())
+                || anchorPoint.distanceSquared(back) > ANCHOR_MAX_LENGTH * ANCHOR_MAX_LENGTH) {
+            releaseAnchor(owner);
+            Location point = owner.getLocation().add(0, owner.getHeight() + ANCHOR_HEIGHT, 0)
+                    .add(facing.clone().multiply(owner.getWidth() * 0.5 + 0.02));
+            point.setYaw(0);
+            point.setPitch(0);
+            anchorPoint = point;
+            anchor = Displays.block(ctx(), owner, point, THREAD, beamPose(back.toVector().subtract(point.toVector()),
+                    ANCHOR_WIDTH), 0);
+            Vfx.cloud(ctx(), point, Particle.DUST, 5, 0.08, 0, SILK, false);
+            Vfx.dot(point, Particle.WHITE_ASH, null, false);
+            Fx.sound(point, Sound.BLOCK_COBWEB_PLACE, 0.5f, 1.3f + Fx.jitter(0.1f));
+        }
+        Location point = anchorPoint;
+        BlockDisplay thread = anchor;
+        if (thread != null && thread.isValid()) {
+            Vector delta = back.toVector().subtract(point.toVector());
+            if (delta.lengthSquared() > 1.0E-4) {
+                Displays.animate(thread, beamPose(delta, ANCHOR_WIDTH), 1);
+            }
+        }
+        if (tick % 12 == 0) {
+            Vfx.dot(back, Particle.DUST, SILK_FINE, false);
+            Vfx.dot(point, Particle.DUST, SILK, false);
+        }
+    }
+
+    /** The spider lets go of its anchor thread: the thread snaps and shrinks back to the wall. */
+    private void releaseAnchor(Player owner) {
+        BlockDisplay thread = anchor;
+        anchor = null;
+        anchorPoint = null;
+        if (thread != null && thread.isValid()) {
+            Displays.shrinkAway(ctx(), owner, thread, 3);
+        }
     }
 
     // ------------------------------------------------------------------ passive: prey in the web
@@ -337,6 +389,8 @@ public final class SpiderAbility extends Ability {
         private final Location position;
         private final Vector velocity;
         private final @Nullable ItemDisplay glob;
+        /** The silk strand still joining the glob to the spider's hand for the first few ticks. */
+        private @Nullable BlockDisplay strand;
         private double remaining;
         private boolean done;
 
@@ -355,6 +409,14 @@ public final class SpiderAbility extends Ability {
                     : null;
             if (glob != null) {
                 glob.setTeleportDuration(1);
+            }
+            Location hand = flat(hand(player(), direction));
+            this.strand = reserveDisplays(1, STRAND_TICKS + 6)
+                    ? Displays.block(ctx(), player(), hand, THREAD,
+                    beamPose(direction.clone().multiply(0.3), TETHER_WIDTH), STRAND_TICKS + 6)
+                    : null;
+            if (strand != null) {
+                strand.setTeleportDuration(1);
             }
         }
 
@@ -402,11 +464,16 @@ public final class SpiderAbility extends Ability {
                 Displays.animate(glob, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, spin, spin * 0.6f, 0), 1);
             }
             Vfx.line(ctx(), from, position, 1.2, Particle.DUST, SILK, false);
-            if (tick < STRAND_TICKS) {
-                // The silk strand still connects the glob to the spider's hand.
-                Player owner = player();
-                Vfx.line(ctx(), hand(owner, velocity.clone().normalize()), position, 1.5, Particle.DUST, SILK_FINE,
-                        false);
+            BlockDisplay line = strand;
+            if (line != null && line.isValid()) {
+                if (tick + 1 < STRAND_TICKS) {
+                    // The silk strand still connects the glob to the spider's hand.
+                    Location hand = flat(hand(player(), velocity.clone().normalize()));
+                    line.teleport(hand);
+                    Displays.animate(line, beamPose(position.toVector().subtract(hand.toVector()), TETHER_WIDTH), 1);
+                } else {
+                    snapStrand();
+                }
             }
             if (tick % 3 == 0) {
                 Vfx.dot(from, Particle.WHITE_ASH, null, false);
@@ -425,6 +492,16 @@ public final class SpiderAbility extends Ability {
         private void removeGlob() {
             if (glob != null && glob.isValid()) {
                 glob.remove();
+            }
+            snapStrand();
+        }
+
+        /** The strand comes loose from the hand and shrinks away. */
+        private void snapStrand() {
+            BlockDisplay line = strand;
+            strand = null;
+            if (line != null && line.isValid()) {
+                Displays.shrinkAway(ctx(), player(), line, 3);
             }
         }
 
@@ -559,6 +636,7 @@ public final class SpiderAbility extends Ability {
         private final long duration;
         private final List<BlockDisplay> threads = new ArrayList<>();
         private final Map<UUID, Snare> snared = new HashMap<>();
+        private @Nullable ItemDisplay hub;
         private @Nullable NamespacedKey ownerSpeed;
         private long endTick;
         private final double phase = ThreadLocalRandom.current().nextDouble(TAU);
@@ -594,6 +672,9 @@ public final class SpiderAbility extends Ability {
                     bite(owner);
                 }
                 ambient(owner, tick);
+                if (tick % HUB_TURN_TICKS == 0) {
+                    turnHub(tick);
+                }
                 return true;
             }, this::unspin);
         }
@@ -625,6 +706,32 @@ public final class SpiderAbility extends Ability {
                             along.length() / 2, lifetime, 2 + r * 2));
                 }
             }
+            hub = spinHub(owner, lifetime);
+        }
+
+        /** The hub of the web: a big cobweb lying flat on the center, unfolding and then turning slowly. */
+        private @Nullable ItemDisplay spinHub(Player owner, long lifetime) {
+            if (!reserveDisplays(1, lifetime)) {
+                return null;
+            }
+            float size = (float) Math.min(3.0, radius * HUB_SIZE);
+            float yaw = (float) Math.toDegrees(phase);
+            ItemDisplay web = Displays.item(ctx(), owner, flat(center).add(0, 0.06, 0), new ItemStack(Material.COBWEB),
+                    Displays.centered(0, 0, 0, 0.1f, 0.1f, 0.1f, yaw, 90, 0), lifetime);
+            Displays.animateNextTick(ctx(), owner, web, Displays.centered(0, 0, 0, size, size, size, yaw + 30, 90,
+                    0), SPIN_TICKS);
+            return web;
+        }
+
+        /** Turns the hub a little further (called every {@link #HUB_TURN_TICKS}). */
+        private void turnHub(long tick) {
+            ItemDisplay web = hub;
+            if (web == null || !web.isValid() || tick < SPIN_TICKS) {
+                return;
+            }
+            float size = (float) Math.min(3.0, radius * HUB_SIZE);
+            float yaw = (float) Math.toDegrees(phase) + 30 + tick * 1.5f;
+            Displays.animate(web, Displays.centered(0, 0, 0, size, size, size, yaw, 90, 0), (int) HUB_TURN_TICKS);
         }
 
         /**
@@ -764,6 +871,11 @@ public final class SpiderAbility extends Ability {
                 }
             }
             threads.clear();
+            ItemDisplay web = hub;
+            hub = null;
+            if (web != null && web.isValid()) {
+                Displays.shrinkAway(ctx(), owner, web, UNSPIN_TICKS);
+            }
             center.getWorld().spawnParticle(Particle.BLOCK, center.clone().add(0, 0.3, 0), Vfx.n(ctx(), 20),
                     radius * 0.35, 0.1, radius * 0.35, 0.05, COBWEB);
             Vfx.ring(ctx(), center.clone().add(0, 0.15, 0), radius * 0.5, 16, phase, Particle.WHITE_ASH, null, false);
@@ -788,6 +900,15 @@ public final class SpiderAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** A thin beam from the display's location along {@code delta}, {@code width} thick. */
+    private static Transformation beamPose(Vector delta, float width) {
+        Vector3f direction = new Vector3f((float) delta.getX(), (float) delta.getY(), (float) delta.getZ());
+        float length = direction.length();
+        Quaternionf rotation = new Quaternionf().rotationTo(new Vector3f(0, 0, 1), direction.normalize());
+        Vector3f translation = rotation.transform(new Vector3f(-width / 2, -width / 2, 0));
+        return new Transformation(translation, rotation, new Vector3f(width, width, length), new Quaternionf());
+    }
 
     /** The ground right below {@code at} (within 3 blocks), null over the void. */
     private static @Nullable Location groundBelow(Location at) {

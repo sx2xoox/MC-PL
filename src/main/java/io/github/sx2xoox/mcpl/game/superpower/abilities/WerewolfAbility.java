@@ -112,6 +112,8 @@ public final class WerewolfAbility extends Ability {
     private static final long MAX_LEAP_TICKS = 40;
     /** Ticks after which a leap that never left the ground (blocked, laggy client) claws where it stands. */
     private static final long STUCK_TICKS = 6;
+    /** Most ticks a slow connection may add before a leap that never left the ground counts as stuck. */
+    private static final long MAX_LAG_TICKS = 8;
     private static final long LANDING_GUARD_TICKS = 80;
     private static final double CLAW_PUSH = 0.45;
     private static final double CLAW_LIFT = 0.25;
@@ -146,6 +148,17 @@ public final class WerewolfAbility extends Ability {
     private static final float SLASH_LENGTH = 1.15f;
     private static final float SLASH_WIDTH = 0.06f;
     private static final float SLASH_GAP = 0.22f;
+    private static final float RAKE_LENGTH = 1.5f;
+    /** Degrees the rake's blades lean at the start and the end of the sweep. */
+    private static final float RAKE_SWEEP = 55f;
+    private static final int RAKE_TICKS = 3;
+    private static final int RAKE_FADE_TICKS = 5;
+    /** Fewest ticks between two moonlit slash marks of the feral passive. */
+    private static final long FERAL_MARK_TICKS = 12;
+    private static final int FUR_TUFTS = 6;
+    private static final int TUFT_FLIGHT_TICKS = 10;
+    private static final BlockData[] FUR_BLOCKS = {Material.BROWN_WOOL.createBlockData(),
+            Material.BROWN_TERRACOTTA.createBlockData()};
     private static final float MOON_SCALE = 6.5f;
     private static final double MOON_HEIGHT = 1.4;
     private static final int HOWL_TICKS = 8;
@@ -158,6 +171,7 @@ public final class WerewolfAbility extends Ability {
     private boolean leaping;
     private @Nullable Beast beast;
     private int liveDisplays;
+    private long lastFeralMark = Long.MIN_VALUE / 2;
 
     @Override
     public AbilityInfo info() {
@@ -263,14 +277,21 @@ public final class WerewolfAbility extends Ability {
         }
     }
 
-    /** In beast form every claw strike (the owner's own melee hit) bleeds the victim and feeds the beast. */
+    /**
+     * The owner's own melee hits: in beast form every claw strike bleeds the victim and feeds the beast; otherwise
+     * the feral passive shows on the hit (gold claw glints, torn slashes under the moon).
+     */
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (beast == null || ctx().isAbilityDamage() || !player().equals(event.getDamager())) {
+        if (ctx().isAbilityDamage() || !player().equals(event.getDamager())) {
             return;
         }
         DamageCause cause = event.getCause();
         if (cause != DamageCause.ENTITY_ATTACK && cause != DamageCause.ENTITY_SWEEP_ATTACK) {
+            return;
+        }
+        if (beast == null) {
+            feralStrike(victim);
             return;
         }
         double dealt = Math.min(Math.max(0, event.getFinalDamage()), victim.getHealth() + victim.getAbsorptionAmount());
@@ -280,10 +301,31 @@ public final class WerewolfAbility extends Ability {
             feedVisual(victim);
         }
         bleed(victim);
-        clawMarks(victim, player().getLocation(), 0.8f);
+        clawMarks(victim, player().getLocation(), 0.8f, 3);
         Location body = Fx.body(victim);
         victim.getWorld().spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 8), 0.2, 0.3, 0.2, 0.12, BLOOD_BLOCK);
         Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.6f, 0.8f + Fx.jitter(0.1f));
+    }
+
+    /**
+     * The feral passive on a melee hit: a gold claw glint raking across the victim and a tuft of fur. Under the moon
+     * (full strength) the claws also tear two slashes across the victim, at most every {@link #FERAL_MARK_TICKS}.
+     */
+    private void feralStrike(LivingEntity victim) {
+        Player owner = player();
+        Location body = Fx.body(victim);
+        float yaw = owner.getLocation().getYaw();
+        Vfx.arc(ctx(), body.clone().add(0, 0.15, 0), victim.getWidth() * 0.5 + 0.35, yaw, 110, 9,
+                Particle.DUST_COLOR_TRANSITION, CLAW_ARC, false);
+        Vfx.cloud(ctx(), body, Particle.DUST, 3, 0.2, 0, FUR, false);
+        long now = ctx().currentTick();
+        if (feral < 2 || now - lastFeralMark < FERAL_MARK_TICKS) {
+            return;
+        }
+        lastFeralMark = now;
+        clawMarks(victim, owner.getLocation(), 0.7f, 2);
+        Vfx.dot(body, Particle.FLASH, PALETTE.core(), false);
+        Fx.sound(body, Sound.ENTITY_WOLF_GROWL, 0.5f, 0.8f + Fx.jitter(0.1f));
     }
 
     /** Blood motes flowing from the victim into the beast's chest. */
@@ -414,7 +456,7 @@ public final class WerewolfAbility extends Ability {
         landing.arm(ctx().currentTick(), LANDING_GUARD_TICKS);
 
         takeOff(start, flat, distance);
-        Pounce pounce = new Pounce(flat);
+        Pounce pounce = new Pounce(flat, STUCK_TICKS + lagTicks(owner));
         Loop.repeat(ctx(), owner, 1, 1, MAX_LEAP_TICKS, pounce::step, pounce::timeout);
         return ActivationResult.success();
     }
@@ -459,11 +501,14 @@ public final class WerewolfAbility extends Ability {
     /** One pounce in flight: claws whatever it crashes into, or the ground where it lands. */
     private final class Pounce {
         private final Vector flat;
+        /** A leap the server never sees leave the ground claws in place after this (more on a slow connection). */
+        private final long stuckAfter;
         private boolean airborne;
         private boolean done;
 
-        Pounce(Vector flat) {
+        Pounce(Vector flat, long stuckAfter) {
             this.flat = flat;
+            this.stuckAfter = stuckAfter;
         }
 
         boolean step(long tick) {
@@ -481,7 +526,7 @@ public final class WerewolfAbility extends Ability {
             boolean grounded = Motion.isGrounded(owner) || owner.isInWater() || owner.isClimbing();
             if (!grounded) {
                 airborne = true;
-            } else if (airborne || tick >= STUCK_TICKS) {
+            } else if (airborne || tick >= stuckAfter) {
                 finish(true);
                 return false;
             }
@@ -542,7 +587,7 @@ public final class WerewolfAbility extends Ability {
                 away = flat.clone();
             }
             Motion.push(enemy, away.normalize().multiply(CLAW_PUSH).setY(CLAW_LIFT), MAX_VELOCITY);
-            clawMarks(enemy, owner.getLocation(), 1.0f);
+            clawMarks(enemy, owner.getLocation(), 1.0f, 3);
             Location body = Fx.body(enemy);
             World world = body.getWorld();
             world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 14), 0.25, 0.35, 0.25, 0.15, BLOOD_BLOCK);
@@ -557,8 +602,9 @@ public final class WerewolfAbility extends Ability {
     }
 
     /**
-     * The swipe itself: three parallel arcs raking in front of the owner (white fading to gold), a puff of fur and
-     * the layered sound of claws and a snarl.
+     * The swipe itself: three white claw blades rake across in front of the owner (block displays sweeping from one
+     * side to the other), with three parallel arcs of white fading to gold, a puff of fur, torn-up ground and the
+     * layered sound of claws and a snarl.
      */
     private void clawSwipe(Player owner, Vector flat, double radius) {
         Location at = owner.getLocation();
@@ -569,6 +615,7 @@ public final class WerewolfAbility extends Ability {
             Vfx.arc(ctx(), level, radius * (0.6 + 0.12 * i), yaw, 130, 14, Particle.DUST_COLOR_TRANSITION, CLAW_ARC,
                     false);
         }
+        rake(owner, flat, yaw);
         Location body = Fx.body(owner);
         Vfx.cloud(ctx(), body, Particle.DUST, 6, 0.35, 0, FUR, false);
         BlockData ground = groundUnder(at);
@@ -583,10 +630,45 @@ public final class WerewolfAbility extends Ability {
     }
 
     /**
-     * Three white slashes torn across the victim, facing the attacker: they are drawn in two ticks, hang a moment
-     * and thin out. Falls back to particle lines when the display budget is spent.
+     * Three long claw blades in front of the owner's chest, tilted to one side, that sweep across to the other side
+     * in a few ticks and thin out: the shape of the swipe, readable from any angle.
      */
-    private void clawMarks(LivingEntity victim, Location from, float size) {
+    private void rake(Player owner, Vector flat, float yaw) {
+        long lifetime = RAKE_TICKS + RAKE_FADE_TICKS + 3;
+        if (!reserveDisplays(3, lifetime)) {
+            return;
+        }
+        Location at = Fx.body(owner).add(flat.clone().multiply(owner.getWidth() * 0.5 + 0.7));
+        at.setYaw(0);
+        at.setPitch(0);
+        Vector side = new Vector(flat.getZ(), 0, -flat.getX());
+        for (int i = -1; i <= 1; i++) {
+            Vector offset = side.clone().multiply(i * 0.28).add(flat.clone().multiply(Math.abs(i) * -0.12));
+            float length = RAKE_LENGTH * (i == 0 ? 1.0f : 0.85f);
+            Transformation from = Displays.transform((float) offset.getX(), 0.15f, (float) offset.getZ(),
+                    SLASH_WIDTH, length * 0.3f, 0.02f, yaw, 0, -RAKE_SWEEP);
+            Transformation across = Displays.transform((float) offset.getX(), -0.1f, (float) offset.getZ(),
+                    SLASH_WIDTH, length, 0.02f, yaw, 0, RAKE_SWEEP);
+            Transformation gone = Displays.transform((float) offset.getX(), -0.3f, (float) offset.getZ(), 0.004f,
+                    length * 1.05f, 0.004f, yaw, 0, RAKE_SWEEP + 10);
+            BlockDisplay blade = Displays.block(ctx(), owner, at, SLASH, from, lifetime);
+            Displays.animateNextTick(ctx(), owner, blade, across, RAKE_TICKS);
+            ctx().runLater(owner, RAKE_TICKS + 1, () -> {
+                Displays.animate(blade, gone, RAKE_FADE_TICKS);
+                ctx().runLater(owner, RAKE_FADE_TICKS, () -> {
+                    if (blade.isValid()) {
+                        blade.remove();
+                    }
+                });
+            });
+        }
+    }
+
+    /**
+     * {@code count} white slashes torn across the victim, facing the attacker: they are drawn in two ticks, hang a
+     * moment and thin out. Falls back to particle lines when the display budget is spent.
+     */
+    private void clawMarks(LivingEntity victim, Location from, float size, int count) {
         Location chest = Fx.body(victim).add(0, victim.getHeight() * 0.1, 0);
         Vector toward = from.toVector().subtract(chest.toVector()).setY(0);
         if (toward.lengthSquared() < 1.0E-6) {
@@ -600,9 +682,10 @@ public final class WerewolfAbility extends Ability {
         float yaw = (float) Math.toDegrees(Math.atan2(-toward.getX(), toward.getZ()));
         Vector side = new Vector(toward.getZ(), 0, -toward.getX());
         long lifetime = SLASH_DRAW_TICKS + SLASH_HOLD_TICKS + SLASH_FADE_TICKS + 2;
-        if (!reserveDisplays(3, lifetime)) {
-            for (int i = -1; i <= 1; i++) {
-                Location mid = at.clone().add(side.clone().multiply(i * SLASH_GAP * size));
+        double first = -(count - 1) / 2.0;
+        if (!reserveDisplays(count, lifetime)) {
+            for (int k = 0; k < count; k++) {
+                Location mid = at.clone().add(side.clone().multiply((first + k) * SLASH_GAP * size));
                 Location top = mid.clone().add(side.clone().multiply(0.25 * size)).add(0, 0.45 * size, 0);
                 Location bottom = mid.clone().subtract(side.clone().multiply(0.25 * size)).subtract(0, 0.45 * size, 0);
                 Vfx.line(ctx(), top, bottom, 8, Particle.DUST_COLOR_TRANSITION, CLAW_ARC, false);
@@ -611,9 +694,10 @@ public final class WerewolfAbility extends Ability {
         }
         Player owner = player();
         float roll = 28f;
-        for (int i = -1; i <= 1; i++) {
-            Vector offset = side.clone().multiply(i * SLASH_GAP * size);
-            float length = SLASH_LENGTH * size * (i == 0 ? 1.0f : 0.85f);
+        for (int k = 0; k < count; k++) {
+            double slot = first + k;
+            Vector offset = side.clone().multiply(slot * SLASH_GAP * size);
+            float length = SLASH_LENGTH * size * (Math.abs(slot) < 0.6 ? 1.0f : 0.85f);
             Transformation start = Displays.transform((float) offset.getX(), (float) offset.getY(),
                     (float) offset.getZ(), SLASH_WIDTH, 0.04f, 0.02f, yaw, 0, roll);
             Transformation drawn = Displays.transform((float) offset.getX(), (float) offset.getY(),
@@ -821,9 +905,40 @@ public final class WerewolfAbility extends Ability {
         if (ground != null) {
             Vfx.ring(ctx(), at.clone().add(0, 0.1, 0), 1.0, 8, 0, Particle.DUST_PILLAR, ground, true);
         }
+        furTufts(owner, body);
         Fx.sound(at, Sound.ENTITY_WOLF_BIG_GROWL, 1.4f, 0.55f);
         Fx.sound(at, Sound.ENTITY_RAVAGER_ROAR, 0.8f, 1.2f + Fx.jitter(0.05f));
         Fx.sound(at, Sound.ITEM_ARMOR_EQUIP_LEATHER, 1.0f, 0.6f);
+    }
+
+    /** Tufts of fur (small woolly block displays) burst off the changing body, tumble outwards and fall away. */
+    private void furTufts(Player owner, Location body) {
+        long lifetime = TUFT_FLIGHT_TICKS + 8;
+        if (!reserveDisplays(FUR_TUFTS, lifetime)) {
+            return;
+        }
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Location at = body.clone();
+        at.setYaw(0);
+        at.setPitch(0);
+        double phase = random.nextDouble(TAU);
+        for (int i = 0; i < FUR_TUFTS; i++) {
+            double angle = phase + i * TAU / FUR_TUFTS + random.nextDouble(-0.25, 0.25);
+            float size = (float) random.nextDouble(0.16, 0.26);
+            BlockDisplay tuft = Displays.block(ctx(), owner, at, FUR_BLOCKS[i % FUR_BLOCKS.length],
+                    Displays.scaled(size * 0.4f), lifetime);
+            tuft.setBrightness(null);
+            double reach = random.nextDouble(1.3, 2.1);
+            float spin = (float) random.nextDouble(180, 400);
+            Transformation out = Displays.transform((float) (Math.cos(angle) * reach), (float) random.nextDouble(-0.4,
+                    0.6), (float) (Math.sin(angle) * reach), size, size * 0.7f, size, spin, spin * 0.5f, 0);
+            Displays.animateNextTick(ctx(), owner, tuft, out, TUFT_FLIGHT_TICKS);
+            ctx().runLater(owner, TUFT_FLIGHT_TICKS + 1, () -> {
+                if (tuft.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, tuft, 6);
+                }
+            });
+        }
     }
 
     /**
@@ -905,6 +1020,11 @@ public final class WerewolfAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Ticks the server sees the owner's movement late: one round trip, capped (ping can read 0 after joining). */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / 50.0));
+    }
 
     /** True if a player at its current position has room above its head for a body of {@code scale}. */
     private static boolean hasHeadroom(Player player, double scale) {

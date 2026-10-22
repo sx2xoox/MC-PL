@@ -38,6 +38,7 @@ import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Frog;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BoundingBox;
@@ -100,6 +101,9 @@ public final class SlimeAbility extends Ability {
     // Bounce
     /** A bounce lower than this is not worth it (it only jiggles). */
     private static final double MIN_BOUNCE = 0.6;
+    private static final int PAD_TICKS = 22;
+    /** Fewest ticks between two jiggles of the elastic body when it is hit. */
+    private static final long JIGGLE_COOLDOWN = 8;
 
     // Little slimes
     private static final double SLIME_SCALE = 1.3;
@@ -150,6 +154,7 @@ public final class SlimeAbility extends Ability {
 
     private final List<LittleSlime> slimes = new ArrayList<>();
     private int liveDisplays;
+    private long lastJiggle = Long.MIN_VALUE / 2;
     private @Nullable King king;
 
     @Override
@@ -181,7 +186,13 @@ public final class SlimeAbility extends Ability {
 
     @Override
     public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled() || !Combat.isFall(event)) {
+        if (event.isCancelled()) {
+            return;
+        }
+        if (!Combat.isFall(event)) {
+            if (event instanceof EntityDamageByEntityEvent byEntity && event.getDamage() > 0) {
+                jiggle(byEntity);
+            }
             return;
         }
         event.setCancelled(true);
@@ -211,7 +222,55 @@ public final class SlimeAbility extends Ability {
             Location feet = owner.getLocation();
             Vfx.helix(ctx(), feet, 0.5, 1.4, 1, 2, 8, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), false);
             Fx.sound(feet, Sound.BLOCK_SLIME_BLOCK_FALL, 1.0f, 1.2f + Fx.jitter(0.1f));
+            Fx.sound(feet, Sound.ENTITY_SLIME_JUMP, 0.7f, 1.4f + Fx.jitter(0.1f));
         });
+        springPad(owner);
+    }
+
+    /**
+     * A pad of jelly springs out of the ground under the bounce: it squashes flat as the slime lands on it, shoots up
+     * as it is thrown back into the air, then seeps away.
+     */
+    private void springPad(Player owner) {
+        if (!reserveDisplays(1, PAD_TICKS + 2)) {
+            return;
+        }
+        float width = (float) (owner.getWidth() + 0.7);
+        Location ground = flat(owner.getLocation());
+        BlockDisplay pad = Displays.block(ctx(), owner, ground, SLIME_BLOCK, padShape(width * 1.2f, 0.12f),
+                PAD_TICKS + 2);
+        Displays.animateNextTick(ctx(), owner, pad, padShape(width * 0.85f, 0.55f), 3);
+        ctx().runLater(owner, 5, () -> Displays.animate(pad, padShape(width, 0.25f), 4));
+        ctx().runLater(owner, PAD_TICKS - 6, () -> Displays.shrinkAway(ctx(), owner, pad, 6));
+    }
+
+    /** A jelly slab {@code width} wide and {@code height} tall, standing on the ground. */
+    private static Transformation padShape(float width, float height) {
+        return Displays.transform(0, height / 2, 0, width, height, width, 0, 0, 0);
+    }
+
+    /**
+     * The elastic body soaks up a hit: the jelly jiggles on the side the blow came from and wobbles back (at most
+     * every {@link #JIGGLE_COOLDOWN} ticks).
+     */
+    private void jiggle(EntityDamageByEntityEvent event) {
+        long now = ctx().currentTick();
+        if (now - lastJiggle < JIGGLE_COOLDOWN) {
+            return;
+        }
+        lastJiggle = now;
+        Player owner = player();
+        Location chest = Fx.body(owner);
+        Vector toward = Motion.horizontal(event.getDamager().getLocation().toVector().subtract(chest.toVector()));
+        if (toward.lengthSquared() < 1.0E-6) {
+            toward = Motion.horizontalFacing(owner.getLocation());
+        }
+        Location side = chest.clone().add(toward.multiply(owner.getWidth() * 0.5 + 0.15));
+        World world = side.getWorld();
+        world.spawnParticle(Particle.ITEM_SLIME, side, Vfx.n(ctx(), 6), 0.15, 0.3, 0.15, 0.08);
+        world.spawnParticle(Particle.DUST, side, Vfx.n(ctx(), 5), 0.15, 0.3, 0.15, 0, GOO);
+        Vfx.ring(ctx(), chest, owner.getWidth() * 0.5 + 0.25, 10, now * 0.3, Particle.DUST, GOO_SMALL, false);
+        Fx.sound(side, Sound.ENTITY_SLIME_HURT, 0.5f, 1.3f + Fx.jitter(0.1f));
     }
 
     /** A slime landing: a ring of goo splashing out, jelly bits and a wet slap. */
