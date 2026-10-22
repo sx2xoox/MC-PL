@@ -288,7 +288,10 @@ public final class EarthAbility extends Ability {
                     (random.nextFloat() - 0.5f) * 1.2f,
                     (random.nextFloat() - 0.5f) * 0.5f);
             float peak = 1.1f + random.nextFloat() * 0.3f;
-            BlockDisplay display = ctx().track(player(), world.spawn(ground.getLocation(), BlockDisplay.class, d -> {
+            // Spawned in the air block above the ground (the pose lowers the cube back into place): clients light a
+            // display from the block at its position, and inside the solid ground block that is pitch black.
+            Location above = ground.getLocation().add(0, 1, 0);
+            BlockDisplay display = ctx().track(player(), world.spawn(above, BlockDisplay.class, d -> {
                 d.setPersistent(false);
                 d.setBlock(data);
                 d.setTransformation(chunkPose(size, tilt, BURIED_CENTER));
@@ -343,12 +346,13 @@ public final class EarthAbility extends Ability {
     }
 
     /**
-     * A cube of edge {@code size} whose centre sits at (0.5, {@code centerY}, 0.5) of its block, rotated by
-     * {@code tilt} around that centre. The block model spans 0..1, so the translation moves the rotated centre back.
+     * A cube of edge {@code size} whose centre sits at (0.5, {@code centerY}, 0.5) of its ground block, rotated by
+     * {@code tilt} around that centre. The display stands one block higher, in the air above the ground, and the
+     * block model spans 0..1, so the translation moves the rotated centre back down into place.
      */
     private static Transformation chunkPose(float size, Quaternionf tilt, float centerY) {
         Vector3f half = new Vector3f(size / 2, size / 2, size / 2).rotate(tilt);
-        Vector3f translation = new Vector3f(0.5f, centerY, 0.5f).sub(half);
+        Vector3f translation = new Vector3f(0.5f, centerY - 1f, 0.5f).sub(half);
         return new Transformation(translation, new Quaternionf(tilt), new Vector3f(size, size, size), new Quaternionf());
     }
 

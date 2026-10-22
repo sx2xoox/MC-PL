@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
@@ -51,7 +52,8 @@ public final class MirrorAbility extends Ability {
             .color(TextColor.color(0xC8F4FF))
             .difficulty(3)
             .passive("굴절",
-                    "받는 투사체 피해가 {projectile_reduction}% 줄어듭니다.")
+                    "투사체와 {ranged_distance}블록 이상 떨어진 적의 능력 공격으로 받는 피해가 "
+                            + "{projectile_reduction}% 줄어듭니다.")
             .active("반사막",
                     "{shield_duration}초간 거울 조각을 두릅니다. 받는 피해가 {shield_reduction}% 줄고, "
                             + "공격자에게 원래 피해의 {shield_reflect}%를 되돌려줍니다.",
@@ -61,6 +63,7 @@ public final class MirrorAbility extends Ability {
                             + "{ult_reflect}%를 공격자에게 되돌려줍니다.")
             .ultimateNotStandalone()
             .param("projectile_reduction", 25)
+            .param("ranged_distance", 6)
             .param("shield_duration", 3)
             .param("shield_reduction", 50)
             .param("shield_reflect", 60)
@@ -135,7 +138,7 @@ public final class MirrorAbility extends Ability {
         if (landing.absorb(event, now)) {
             return;
         }
-        if (isProjectile(event)) {
+        if (isRanged(event)) {
             double reduction = percent("projectile_reduction");
             if (reduction > 0) {
                 event.setDamage(event.getDamage() * (1 - reduction));
@@ -244,11 +247,19 @@ public final class MirrorAbility extends Ability {
         }
         Location ownerSpot = owner.getLocation();
         Location targetSpot = target.getLocation();
-        if (!target.getWorld().equals(owner.getWorld()) || !fits(owner, targetSpot) || !fits(target, ownerSpot)) {
+        if (!target.getWorld().equals(owner.getWorld())) {
             return ActivationResult.fail("위치를 바꿀 공간이 없습니다");
         }
         if (!ctx().isInsideArena(targetSpot) || !ctx().isInsideArena(ownerSpot)) {
             return ActivationResult.fail("자기장 밖으로는 위치를 바꿀 수 없습니다");
+        }
+        // The owner's destination gets the full teleport check (fit, hazards, ground below); the enemy only needs
+        // room, since it lands where the owner stood.
+        if (!Spots.isSafe(ctx(), targetSpot, Body.standing(owner))) {
+            return ActivationResult.fail("그곳으로는 위치를 바꿀 수 없습니다");
+        }
+        if (!fits(target, ownerSpot)) {
+            return ActivationResult.fail("위치를 바꿀 공간이 없습니다");
         }
 
         // The owner arrives facing the enemy; the enemy keeps its own facing and has to find the owner again.
@@ -407,6 +418,24 @@ public final class MirrorAbility extends Ability {
     /** A percentage param as a fraction in 0..1. */
     private double percent(String key) {
         return Math.clamp(params().num(key) / 100.0, 0.0, 1.0);
+    }
+
+    /**
+     * True for hits the refraction passive reduces: vanilla projectiles, and ability damage from an enemy at least
+     * {@code ranged_distance} blocks away. Ability "projectiles" (fireballs, ice spears, skill arrows, bolts) are
+     * delivered as magic damage from the caster, so the caster's distance is what tells them apart from melee.
+     */
+    private boolean isRanged(EntityDamageEvent event) {
+        if (isProjectile(event)) {
+            return true;
+        }
+        if (!ctx().isAbilityDamage()) {
+            return false;
+        }
+        LivingEntity attacker = attackerOf(event);
+        double min = Math.max(0, params().num("ranged_distance"));
+        return attacker != null && attacker.getWorld().equals(player().getWorld())
+                && attacker.getLocation().distanceSquared(player().getLocation()) >= min * min;
     }
 
     private static boolean isProjectile(EntityDamageEvent event) {

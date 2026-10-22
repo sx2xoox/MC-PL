@@ -419,6 +419,7 @@ public final class GravityAbility extends Ability {
             display.setTransformation(transformation);
         }
 
+        /** The pull is the black hole's crowd control, not knockback: it ignores knockback resistance by design. */
         private void suck() {
             for (LivingEntity enemy : ctx().enemiesNear(player(), center, radius)) {
                 Vector to = center.toVector().subtract(Fx.body(enemy).toVector());
@@ -493,8 +494,10 @@ public final class GravityAbility extends Ability {
                     double angle = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
                     away = new Vector(Math.cos(angle), 0, Math.sin(angle));
                 }
-                enemy.setVelocity(Motion.clamp(away.multiply(BLAST_PUSH).setY(BLAST_LIFT), MAX_SPEED));
-                markAirborne(enemy);
+                // The blast is knockback: resistant targets (giant Titan, Earth) are pushed less or not at all.
+                if (Motion.push(enemy, away.multiply(BLAST_PUSH).setY(BLAST_LIFT), MAX_SPEED)) {
+                    markAirborne(enemy);
+                }
             }
             if (hits > 0 && player().isOnline()) {
                 player().sendActionBar(Text.mm("<" + COLOR_TAG + ">블랙홀 붕괴 <white>" + hits + "명 적중!</white></"
