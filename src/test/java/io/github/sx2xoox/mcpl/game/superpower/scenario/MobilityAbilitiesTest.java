@@ -15,6 +15,7 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Arrow;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffectType;
@@ -30,6 +31,12 @@ class MobilityAbilitiesTest {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
     }
 
+    /** The skill's display entities (rifts, blades, chains, dials...) are all gone again. */
+    private static void assertNoDisplays(Scenario s) {
+        assertTrue(s.world.getEntities().stream().noneMatch(Display.class::isInstance),
+                "displays left behind: " + s.world.getEntities());
+    }
+
     // ------------------------------------------------------------------ 순간이동자 blink
 
     @Test
@@ -41,8 +48,10 @@ class MobilityAbilitiesTest {
             assertEquals(0.5 - s.param("distance"), at.getZ(), 0.6, "blinked " + s.param("distance") + " blocks");
             assertEquals(FlatWorld.SURFACE, at.getY(), 1.0E-6, "on the floor");
             assertEquals(180, at.getYaw(), 1.0E-3, "keeps looking the same way");
+            assertTrue(s.world.getEntities().stream().anyMatch(Display.class::isInstance), "the rifts open");
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            assertNoDisplays(s);
             s.finishClean();
         }
     }
@@ -238,6 +247,7 @@ class MobilityAbilitiesTest {
             assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "every enemy in range is cut");
             assertTrue(s.owner.getLocation().distance(home) < 0.1, "back home: " + s.owner.getLocation());
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            assertNoDisplays(s);
             s.finishClean();
         }
     }
@@ -284,6 +294,7 @@ class MobilityAbilitiesTest {
             assertTrue(distance < 3.5, "pulled in to " + distance);
             assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "no fall damage from the pull");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            assertNoDisplays(s);
             s.finishClean();
         }
     }
@@ -368,6 +379,7 @@ class MobilityAbilitiesTest {
             s.place(s.enemy, 0.5, 12.5, 180);
             s.ticks(10);
             assertEquals(12.5, s.enemy.getLocation().getZ(), 0.1, "free after the chains break");
+            assertNoDisplays(s);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
         }
@@ -429,6 +441,8 @@ class MobilityAbilitiesTest {
             assertFalse(s.ctx().isSilenced(s.enemy), "time flows again");
             assertTrue(s.enemy.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers().isEmpty());
             assertTrue(s.enemy.getAttribute(Attribute.GRAVITY).getModifiers().isEmpty());
+            s.ticks(20);
+            assertNoDisplays(s);
             s.finishClean();
         }
     }

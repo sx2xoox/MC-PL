@@ -431,12 +431,14 @@ public final class BlinkAbility extends Ability {
             }
         }
 
-        // Arrival: the twin rift opens around the new body, with a flash and a ripple over the ground.
-        rift(toBody, facing, 0.95f * scale, (float) height * 1.2f * scale, 0, 0, 1, ultimate ? 6 : 3,
+        // Arrival: the twin rift opens around the new body, with a flash and a ripple over the ground. The
+        // ultimate's rift opens at the target's back, facing it, ringed by a portal circle.
+        Vector arrival = ultimate ? to.getDirection() : facing;
+        rift(toBody, arrival, 0.95f * scale, (float) height * 1.2f * scale, 0, 0, 1, ultimate ? 6 : 3,
                 ultimate ? 10 : 7, ultimate);
         if (ultimate) {
-            verticalRing(toBody, facing, 1.25, 26, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), true);
-            verticalRing(toBody, facing, 1.55, 18, 0.2, Particle.DUST, PALETTE.dust(0.8f), true);
+            verticalRing(toBody, arrival, 1.25, 26, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.0f), true);
+            verticalRing(toBody, arrival, 1.55, 18, 0.2, Particle.DUST, PALETTE.dust(0.8f), true);
         }
         Vfx.burst(ctx(), toBody, PALETTE, 0.7 * scale, Particle.REVERSE_PORTAL, ultimate);
         Vfx.shockwave(ctx(), owner, flat(to.clone().add(0, 0.08, 0)), 0.3, 1.3 * scale, 5, Particle.DUST,
