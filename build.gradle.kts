@@ -31,7 +31,7 @@ java {
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = Charsets.UTF_8.name()
     options.release = 25
-    options.compilerArgs.addAll(listOf("-Xlint:all", "-Xlint:-serial", "-Xlint:-processing"))
+    options.compilerArgs.addAll(listOf("-Xlint:all", "-Xlint:-serial", "-Xlint:-processing", "-Xlint:-classfile"))
 }
 
 tasks.processResources {

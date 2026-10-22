@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.ability;
 import java.util.Collection;
 import java.util.List;
 
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
@@ -85,6 +86,12 @@ public interface AbilityContext {
     /**
      * Deals ability damage credited to {@code source} (kill feed, stats, ultimate gauge, kill credit) using
      * {@link DamageType#MAGIC} (ignores armor). Does nothing if {@code target} is not an enemy of {@code source}.
+     *
+     * <p>Ability damage ignores the target's invulnerability frames (rapid multi-hits all land) and applies
+     * <b>no vanilla knockback</b>: abilities push targets themselves with velocities when they want to.
+     * It is delivered as an {@link org.bukkit.event.entity.EntityDamageByEntityEvent} whose causing and direct
+     * entity is {@code source}, so it reaches the source's {@link Ability#onDealDamage} and the target's
+     * {@link Ability#onTakeDamage} hooks.
      */
     void damage(Player source, LivingEntity target, double amount);
 
@@ -105,6 +112,25 @@ public interface AbilityContext {
 
     /** Shortens a participant's remaining active cooldown by {@code seconds}. */
     void reduceCooldown(Player player, double seconds);
+
+    /** Seconds left on a participant's active cooldown, 0 when ready. */
+    double cooldownRemaining(Player player);
+
+    /**
+     * Prevents {@code target} from using their active and ultimate for {@code ticks} (the longer of an existing
+     * silence and the new one wins). The target sees a "침묵" indicator. Ignored for non-participants.
+     */
+    void silence(Player target, long ticks);
+
+    boolean isSilenced(Player player);
+
+    // ------------------------------------------------------------------ arena & messaging
+
+    /** True if {@code location} is inside the arena and the current (shrinking) border. Use it for teleport destinations. */
+    boolean isInsideArena(Location location);
+
+    /** Sends a prefixed message to everyone watching the match (participants and spectators). */
+    void announce(Component message);
 
     // ------------------------------------------------------------------ owner-scoped resources
 
