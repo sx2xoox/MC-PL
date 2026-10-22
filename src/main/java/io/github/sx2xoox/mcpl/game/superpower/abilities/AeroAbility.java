@@ -163,7 +163,7 @@ public final class AeroAbility extends Ability {
                 away = new Vector(Math.cos(angle), 0, Math.sin(angle));
             }
             away.normalize().multiply(PUSH_HORIZONTAL).setY(PUSH_VERTICAL);
-            enemy.setVelocity(Motion.clamp(away, MAX_VELOCITY));
+            Motion.push(enemy, away, MAX_VELOCITY);
         }
 
         Location puff = center.clone().add(0, 0.3, 0);

@@ -185,7 +185,7 @@ public final class ThunderAbility extends Ability {
             } else {
                 push.zero();
             }
-            enemy.setVelocity(Motion.clamp(push.setY(launch), MAX_VELOCITY));
+            Motion.push(enemy, push.setY(launch), MAX_VELOCITY);
         }
         if (hits > 0) {
             player().sendActionBar(Text.mm("<#FFE14D>⚡ 낙뢰 적중</#FFE14D> <gray>" + hits + "명</gray>"));

@@ -11,6 +11,7 @@ import java.util.List;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
@@ -19,7 +20,7 @@ import org.bukkit.damage.DamageType;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.junit.jupiter.api.Disabled;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
 /** 원소 계열: 화염술사, 뇌신, 빙결술사, 바람술사. */
@@ -40,6 +41,7 @@ class ElementalAbilitiesTest {
                     "every fireball bursts on the aimed enemy: " + hits);
             assertEquals(s.param("shots") * s.param("fireball_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
             assertTrue(s.enemy.getFireTicks() > 0, "the enemy burns");
+            assertTrue(s.enemy.getLocation().getZ() > 4.5 + 0.2, "the bursts nudge the enemy along the flight path");
             assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "the burst radius does not reach enemy2");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(80);
@@ -116,6 +118,22 @@ class ElementalAbilitiesTest {
             s.ticks(40);
             assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-3, "and lands again");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void thunderBoltLaunchRespectsKnockbackResistance() {
+        try (Scenario s = Scenario.ffa("thunder")) {
+            s.enemy.getAttribute(Attribute.KNOCKBACK_RESISTANCE).setBaseValue(1.0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낙뢰");
+            s.ticks(s.paramTicks("strike_delay") + 4);
+            assertEquals(s.param("damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the bolt still hurts");
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-3,
+                    "a knockback-immune enemy is not launched");
+            assertEquals(4.5, s.enemy.getLocation().getZ(), 1.0E-3, "nor pushed outwards");
+            s.enemy.getAttribute(Attribute.KNOCKBACK_RESISTANCE).setBaseValue(0.0);
             s.finishClean();
         }
     }
@@ -225,6 +243,49 @@ class ElementalAbilitiesTest {
     }
 
     @Test
+    void frostPrisonLeavesWindowsToAttackThrough() {
+        try (Scenario s = Scenario.ffa("frost")) {
+            s.assertSucceeded(s.ultimate(), "절대영도");
+            s.ticks(1);
+            Location feet = s.enemy.getLocation();
+            int x = feet.getBlockX();
+            int y = feet.getBlockY();
+            int z = feet.getBlockZ();
+            assertEquals(Material.LIGHT_BLUE_STAINED_GLASS, s.world.getBlockAt(x, y, z - 1).getType(),
+                    "a closed ring at foot level keeps the target in");
+            assertEquals(Material.AIR, s.world.getBlockAt(x, y + 1, z - 1).getType(), "a window at head height");
+            assertEquals(Material.PACKED_ICE, s.world.getBlockAt(x + 1, y + 1, z - 1).getType(), "corner pillars");
+            Location eye = s.owner.getEyeLocation();
+            Vector toHead = s.enemy.getEyeLocation().toVector().subtract(eye.toVector());
+            assertNull(s.world.rayTraceBlocks(eye, toHead.clone().normalize(), toHead.length(),
+                    FluidCollisionMode.NEVER, true), "the frozen enemy can be hit through the window");
+            s.ticks(s.paramTicks("ult_duration") + 2);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void frostPrisonNeverCentersAnEdgeStandingEnemyOverAHole() {
+        try (Scenario s = Scenario.ffa("frost")) {
+            // The enemy stands with its centre over a hole, held up by the block at x=0 under its left edge.
+            s.world.setBlock(1, FlatWorld.FLOOR_Y, 4, Material.AIR);
+            s.place(s.enemy, 1.2, 4.5, 180);
+            s.ticks(2);
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-3, "standing on the edge");
+            s.assertSucceeded(s.ultimate(), "절대영도");
+            s.ticks(1);
+            assertEquals(1.2, s.enemy.getLocation().getX(), 1.0E-3, "not moved over the hole");
+            assertEquals(Material.AIR, s.world.getBlockAt(1, FlatWorld.FLOOR_Y, 4).getType(),
+                    "no ice floor under a grounded enemy");
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-3,
+                    "the enemy does not drop into the hole when the ice melts");
+            s.world.setBlock(1, FlatWorld.FLOOR_Y, 4, Material.STONE);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void frostChillsMeleeAttackersAndIgnoresFreezing() {
         try (Scenario s = Scenario.ffa("frost")) {
             s.melee(s.enemy, s.owner, 2);
@@ -239,7 +300,6 @@ class ElementalAbilitiesTest {
     }
 
     @Test
-    @Disabled("BUG: Frost passive chills enemies on any ENTITY_ATTACK damage, incl. Venom's ability plague ticks")
     void frostOnlyChillsRealMeleeAttackers() {
         // Venom's plague deals ability damage with DamageType.WITHER from the venom player; Paper reports a WITHER
         // source with a direct entity as an EntityDamageByEntityEvent with cause ENTITY_ATTACK. Frost's passive
@@ -272,6 +332,24 @@ class ElementalAbilitiesTest {
             assertTrue(travelled > s.param("distance") * 0.5, "the owner dashed forward (" + travelled + ")");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage");
             s.ticks(10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aeroGustRespectsKnockbackResistance() {
+        try (Scenario s = Scenario.ffa("aero")) {
+            s.enemy.getAttribute(Attribute.KNOCKBACK_RESISTANCE).setBaseValue(1.0);
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, 30.5, 180);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, -15);
+            s.assertSucceeded(s.active(), "돌풍 도약");
+            assertEquals(s.param("damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the take-off gust hits");
+            s.ticks(3);
+            assertEquals(2.5, s.enemy.getLocation().getZ(), 1.0E-3, "but cannot move a knockback-immune enemy");
+            s.tickUntilGrounded(s.owner, 100);
+            s.ticks(10);
+            s.enemy.getAttribute(Attribute.KNOCKBACK_RESISTANCE).setBaseValue(0.0);
             s.finishClean();
         }
     }

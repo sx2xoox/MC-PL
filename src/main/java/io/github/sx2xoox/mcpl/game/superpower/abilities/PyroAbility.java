@@ -5,6 +5,7 @@ import java.util.function.LongPredicate;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -46,7 +47,7 @@ public final class PyroAbility extends Ability {
                     "불과 용암 같은 화염 피해를 받지 않습니다. 근접 공격한 적을 {melee_burn}초간 불태웁니다.")
             .active("화염구",
                     "화염구 {shots}발을 빠르게 연사합니다. 화염구가 터지면 반경 {fireball_radius}블록의 적에게 "
-                            + "{fireball_damage} 피해를 주고 {fireball_burn}초간 불태웁니다.",
+                            + "{fireball_damage} 피해를 주고 {fireball_burn}초간 불태우며, 마지막 화염구는 적을 밀쳐냅니다.",
                     8)
             .ultimate("불바다",
                     "{ult_duration}초간 나를 따라다니는 반경 {ult_radius}블록의 화염 소용돌이를 일으킵니다. "
@@ -57,10 +58,11 @@ public final class PyroAbility extends Ability {
             .param("fireball_radius", 1.5)
             .param("fireball_burn", 3)
             .param("fireball_range", 32)
+            .param("fireball_push", 0.4)
             .param("ult_duration", 6)
             .param("ult_radius", 6)
             .param("ult_interval", 0.5)
-            .param("ult_damage", 2)
+            .param("ult_damage", 1)
             .param("ult_burn", 2)
             .build();
 
@@ -73,6 +75,11 @@ public final class PyroAbility extends Ability {
     private static final long SHOT_INTERVAL_TICKS = 4;
     private static final int VORTEX_ARMS = 3;
     private static final int VORTEX_POINTS_PER_ARM = 7;
+    /** Vanilla deals burn damage whenever the remaining fire ticks are a multiple of this. */
+    private static final int BURN_PERIOD = 20;
+    /** Upward part of the fireball push, relative to its horizontal speed. */
+    private static final double PUSH_LIFT = 0.6;
+    private static final double MAX_PUSH = 1.5;
 
     private static final Particle.DustOptions EMBER = new Particle.DustOptions(Color.fromRGB(255, 96, 24), 1.5f);
     private static final Particle.DustTransition HEAT =
@@ -127,20 +134,20 @@ public final class PyroAbility extends Ability {
     @Override
     public ActivationResult onActive() {
         int shots = Math.max(1, params().integer("shots"));
-        launchFireball(0);
+        launchFireball(0, shots == 1);
         if (shots > 1) {
             Loop.repeat(ctx(), player(), SHOT_INTERVAL_TICKS, SHOT_INTERVAL_TICKS, shots - 1, shot -> {
-                launchFireball((int) shot + 1);
+                launchFireball((int) shot + 1, shot + 2 == shots);
                 return true;
             });
         }
         return ActivationResult.success();
     }
 
-    private void launchFireball(int index) {
+    private void launchFireball(int index, boolean last) {
         Location eye = player().getEyeLocation();
         Vector direction = eye.getDirection();
-        Fireball fireball = new Fireball(eye, direction);
+        Fireball fireball = new Fireball(eye, direction, last);
         long maxTicks = (long) Math.ceil(params().num("fireball_range") / FIREBALL_SPEED) + 2;
         Loop.repeat(ctx(), player(), 0, 1, maxTicks, fireball);
 
@@ -158,9 +165,11 @@ public final class PyroAbility extends Ability {
         private final Location position;
         private final Vector direction;
         private final ItemDisplay visual;
+        private final boolean last;
         private double remaining;
 
-        Fireball(Location eye, Vector direction) {
+        Fireball(Location eye, Vector direction, boolean last) {
+            this.last = last;
             this.world = eye.getWorld();
             this.position = eye.clone();
             this.direction = direction.clone().normalize();
@@ -228,9 +237,17 @@ public final class PyroAbility extends Ability {
             double radius = params().num("fireball_radius");
             double damage = params().num("fireball_damage");
             long burn = params().ticks("fireball_burn");
+            double push = params().num("fireball_push");
+            Vector shove = Motion.horizontal(direction).multiply(push).setY(push * PUSH_LIFT);
             for (LivingEntity enemy : ctx().enemiesNear(player(), at, radius)) {
                 Combat.hit(ctx(), player(), enemy, damage);
+                if (!Combat.isTargetable(ctx(), player(), enemy)) {
+                    continue;
+                }
                 ignite(enemy, burn);
+                if (last && push > 0) {
+                    Motion.push(enemy, shove, MAX_PUSH);
+                }
             }
             world.spawnParticle(Particle.FLAME, at, 22, 0.2, 0.2, 0.2, 0.12);
             world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 12, radius * 0.4, radius * 0.3, radius * 0.4, 0, HEAT);
@@ -347,14 +364,21 @@ public final class PyroAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Sets {@code target} on fire for at least {@code ticks}. */
+    /**
+     * Sets {@code target} on fire for at least {@code ticks}. A target that is already burning keeps its burn phase
+     * (vanilla burns every 20 fire ticks), so frequent refreshes extend the fire without speeding up its damage.
+     */
     private static void ignite(LivingEntity target, long ticks) {
         if (!target.isValid() || target.isDead() || ticks <= 0) {
             return;
         }
-        int fireTicks = (int) Math.min(Integer.MAX_VALUE, ticks);
-        if (target.getFireTicks() < fireTicks) {
+        int fireTicks = (int) Math.min(Integer.MAX_VALUE - BURN_PERIOD, ticks);
+        int current = target.getFireTicks();
+        if (current <= 0) {
             target.setFireTicks(fireTicks);
+        } else if (current < fireTicks) {
+            int periods = (fireTicks - current + BURN_PERIOD - 1) / BURN_PERIOD;
+            target.setFireTicks(current + periods * BURN_PERIOD);
         }
     }
 }

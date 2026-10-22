@@ -6,6 +6,8 @@ import java.util.function.LongPredicate;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -58,7 +60,7 @@ public final class FrostAbility extends Ability {
                     7)
             .ultimate("절대영도",
                     "반경 {ult_radius}블록 안의 적을 {ult_duration}초간 얼음 감옥에 가둬 완전히 얼립니다. "
-                            + "얼음이 깨질 때 {ult_damage} 피해를 줍니다.")
+                            + "얼음이 깨질 때 {ult_damage} 피해를 줍니다. 감옥의 창 사이로는 공격할 수 있습니다.")
             .param("chill_duration", 1.5)
             .param("spear_damage", 4)
             .param("freeze_duration", 2)
@@ -98,6 +100,10 @@ public final class FrostAbility extends Ability {
         }
         if (isFreezeDamage(event)) {
             event.setCancelled(true);
+            return;
+        }
+        // Ability damage (e.g. Venom's plague, reported as ENTITY_ATTACK) is not a melee attack.
+        if (ctx().isAbilityDamage()) {
             return;
         }
         DamageCause cause = event.getCause();
@@ -308,8 +314,8 @@ public final class FrostAbility extends Ability {
         if (ticks <= 0) {
             return;
         }
+        boolean grounded = imprison && centerInBlock(target);
         if (imprison) {
-            centerInBlock(target);
             target.setVelocity(new Vector());
         }
         ctx().addModifier(player(), target, Attribute.MOVEMENT_SPEED, -Math.min(1.0, Math.max(0.0, slow)),
@@ -322,7 +328,7 @@ public final class FrostAbility extends Ability {
             target.setFreezeTicks(overlay);
         }
         if (imprison) {
-            buildPrison(target, ticks);
+            buildPrison(target, ticks, grounded);
         }
 
         BlockDisplay ice = spawnIceShell(target, imprison);
@@ -370,28 +376,51 @@ public final class FrostAbility extends Ability {
 
     /**
      * Moves the target to the middle of its block column when that space is free (and inside the arena), so the
-     * prison fits around it.
+     * prison fits around it. A target standing on the ground is only moved if it would still stand on solid, safe
+     * ground there: an enemy at the edge of a block is never shifted over a hole or lava.
+     *
+     * @return whether the target was on the ground (it then needs no prison floor)
      */
-    private void centerInBlock(LivingEntity target) {
+    private boolean centerInBlock(LivingEntity target) {
+        boolean grounded = Motion.isGrounded(target);
         Location location = target.getLocation();
         double dx = location.getBlockX() + 0.5 - location.getX();
         double dz = location.getBlockZ() + 0.5 - location.getZ();
         if (Math.abs(dx) < 0.05 && Math.abs(dz) < 0.05) {
-            return;
+            return grounded;
         }
-        BoundingBox moved = target.getBoundingBox().shift(dx, 0, dz).expand(-0.01);
+        World world = target.getWorld();
+        BoundingBox moved = target.getBoundingBox().shift(dx, 0, dz);
         Location centered = location.clone().add(dx, 0, dz);
-        if (target.getWorld().hasCollisionsIn(moved) || !ctx().isInsideArena(centered)) {
-            return;
+        if (world.hasCollisionsIn(moved.clone().expand(-0.01)) || !ctx().isInsideArena(centered)
+                || (grounded && !isSupported(world, moved, centered))) {
+            return grounded;
         }
         target.teleport(centered);
+        return grounded;
     }
 
     /**
-     * Walls the target in with temporary ice: the 8 surrounding columns over its height, a roof, and a floor when
-     * it is airborne. Cells that are not replaceable or that overlap any living entity are skipped.
+     * True if a body with bounding box {@code box} and feet at {@code feet} would stand on a solid block (the same
+     * thin slab {@link Motion#isGrounded} checks) that is neither a fluid nor a hazard.
      */
-    private void buildPrison(LivingEntity target, long ticks) {
+    private static boolean isSupported(World world, BoundingBox box, Location feet) {
+        BoundingBox below = new BoundingBox(box.getMinX() + 0.05, box.getMinY() - 0.15, box.getMinZ() + 0.05,
+                box.getMaxX() - 0.05, box.getMinY() - 0.01, box.getMaxZ() - 0.05);
+        if (!world.hasCollisionsIn(below)) {
+            return false;
+        }
+        Block ground = feet.clone().subtract(0, 0.01, 0).getBlock();
+        Block body = feet.getBlock();
+        return !ground.isLiquid() && !Spots.isHazard(ground) && !body.isLiquid() && !Spots.isHazard(body);
+    }
+
+    /**
+     * Walls the target in with temporary ice: a closed ring at foot level, corner pillars up to its head (the gaps
+     * between them are windows to attack through), a roof, and a floor when it is airborne. Cells that are not
+     * replaceable or that overlap any living entity are skipped.
+     */
+    private void buildPrison(LivingEntity target, long ticks, boolean grounded) {
         World world = target.getWorld();
         BoundingBox box = target.getBoundingBox();
         int bx = (int) Math.floor(box.getCenterX());
@@ -404,16 +433,20 @@ public final class FrostAbility extends Ability {
         for (int y = bottom; y <= top; y++) {
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dz == 0) {
+                    boolean inside = dx == 0 && dz == 0;
+                    boolean corner = dx != 0 && dz != 0;
+                    boolean window = y != bottom && !corner;
+                    if (inside || window) {
                         continue;
                     }
-                    boolean corner = dx != 0 && dz != 0;
                     placeIce(world.getBlockAt(bx + dx, y, bz + dz), corner ? pillar : pane, ticks);
                 }
             }
         }
         placeIce(world.getBlockAt(bx, top + 1, bz), pillar, ticks);
-        placeIce(world.getBlockAt(bx, bottom - 1, bz), pillar, ticks);
+        if (!grounded) {
+            placeIce(world.getBlockAt(bx, bottom - 1, bz), pillar, ticks);
+        }
     }
 
     private void placeIce(Block block, BlockData data, long ticks) {
