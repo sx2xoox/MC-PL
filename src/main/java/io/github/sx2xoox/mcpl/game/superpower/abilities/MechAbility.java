@@ -96,7 +96,7 @@ public final class MechAbility extends Ability {
             .param("ult_scale", 1.3)
             .param("ult_armor", 25)
             .param("ult_melee", 30)
-            .param("punch_cooldown", 2.5)
+            .param("punch_cooldown", 3)
             .param("punch_range", 14)
             .param("punch_damage", 4)
             .build();

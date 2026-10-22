@@ -480,8 +480,9 @@ public final class AstronomerAbility extends Ability {
         private void telegraph(long left) {
             Location floor = spot.clone().add(0, 0.1, 0);
             double t = Math.min(1.0, (double) left / landTick);
+            // The landing ring is a telegraph victims must read, so it is visible from afar.
             Vfx.ring(ctx(), floor, radius, (int) Math.max(12, radius * 8), left * 0.05, Particle.DUST,
-                    STAR_DUST, false);
+                    STAR_DUST, true);
             Vfx.ring(ctx(), floor, Math.max(0.15, radius * t), 10, -left * 0.2, Particle.DUST_COLOR_TRANSITION,
                     GLOW_SMALL, false);
             if (left % 6 == 0) {
@@ -520,11 +521,11 @@ public final class AstronomerAbility extends Ability {
                 shell.teleport(plain(at));
                 Displays.animate(shell, cube(METEOR_SHELL_SIZE, new Quaternionf(rotation).conjugate()), 1);
             }
-            Vfx.line(ctx(), from, at, 3, Particle.DUST_COLOR_TRANSITION, GLOW_SMALL, true);
-            Vfx.dot(at, Particle.END_ROD, null, true);
+            Vfx.line(ctx(), from, at, 3, Particle.DUST_COLOR_TRANSITION, GLOW_SMALL, false);
+            Vfx.dot(at, Particle.END_ROD, null, false);
             World world = at.getWorld();
-            world.spawnParticle(Particle.FIREWORK, at, Vfx.n(ctx(), 2), 0.12, 0.12, 0.12, 0.02, null, true);
-            Vfx.trail(at, from.clone().add(Fx.jitter(0.3f), Fx.jitter(0.3f), Fx.jitter(0.3f)), STARDUST, 8, true);
+            world.spawnParticle(Particle.FIREWORK, at, Vfx.n(ctx(), 2), 0.12, 0.12, 0.12, 0.02);
+            Vfx.trail(at, from.clone().add(Fx.jitter(0.3f), Fx.jitter(0.3f), Fx.jitter(0.3f)), STARDUST, 8, false);
         }
 
         /** The meteor lands: every enemy around the spot is struck and tossed up a little. */
