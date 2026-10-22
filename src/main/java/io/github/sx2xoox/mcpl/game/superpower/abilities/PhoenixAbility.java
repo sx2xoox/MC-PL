@@ -10,11 +10,13 @@ import java.util.function.LongPredicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -29,15 +31,23 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
 
 /**
  * 불사조 — rises from its own ashes once per match, soars on wings of flame and, as the ultimate, dives forward as a
@@ -73,21 +83,50 @@ public final class PhoenixAbility extends Ability {
             .build();
 
     private static final String FLAME = "#FF7A1A";
-    private static final Color EMBER = Color.fromRGB(0xFF, 0xC2, 0x3A);
-    private static final Color BLAZE = Color.fromRGB(0xFF, 0x5A, 0x1A);
-    private static final Color CRIMSON = Color.fromRGB(0xC8, 0x1E, 0x1E);
-    private static final Particle.DustTransition WING_DUST = new Particle.DustTransition(EMBER, CRIMSON, 1.1f);
-    private static final Particle.DustTransition WING_EDGE = new Particle.DustTransition(BLAZE, EMBER, 0.8f);
-    private static final Particle.DustOptions ASH_DUST = new Particle.DustOptions(Color.fromRGB(0x5A, 0x4A, 0x40), 1.0f);
+
+    // ------------------------------------------------------------------ look: white-gold core, orange, crimson
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFF3B0, 0xFF9F1C, 0xE63946);
+    private static final Particle.DustTransition HEAT = PALETTE.glow(1.2f);
+    private static final Particle.DustTransition EMBER = PALETTE.fade(1.0f);
+    private static final Particle.DustTransition WING_CORE = PALETTE.glow(0.8f);
+    private static final Particle.DustTransition WING_EDGE = PALETTE.fade(1.1f);
+    private static final Particle.DustOptions ASH_DUST = new Particle.DustOptions(Color.fromRGB(0x4A, 0x3C, 0x36),
+            0.9f);
+    private static final BlockData SCORCH = Material.MAGMA_BLOCK.createBlockData();
 
     /**
-     * Wing outline in body space: x = distance out from the spine, y = height relative to the shoulders. Points run
-     * along the leading edge to the tip and back along the trailing feathers.
+     * Particle wing outline for the dash, in body space: x = distance out from the spine, y = height relative to the
+     * shoulders. Points run along the leading edge to the tip and back along the trailing feathers.
      */
     private static final double[][] WING = {
             {0.15, 0.05}, {0.35, 0.25}, {0.6, 0.45}, {0.9, 0.6}, {1.2, 0.62}, {1.45, 0.5},
             {1.25, 0.3}, {1.0, 0.12}, {0.75, -0.05}, {0.5, -0.2}, {0.3, -0.25}};
     private static final double SHOULDER_HEIGHT = 1.35;
+
+    /** Display wings of the leap: per side a fan of three glass feathers (yellow core, orange, crimson tip). */
+    private static final BlockData[] FEATHER_BLOCKS = {
+            Material.YELLOW_STAINED_GLASS.createBlockData(), Material.ORANGE_STAINED_GLASS.createBlockData(),
+            Material.RED_STAINED_GLASS.createBlockData()};
+    /** Fan angle of each feather (degrees, up is positive), its length and width on a full-size body. */
+    private static final float[] FEATHER_ROLL = {30f, 5f, -22f};
+    private static final float[] FEATHER_LENGTH = {1.0f, 1.25f, 0.85f};
+    private static final float[] FEATHER_WIDTH = {0.2f, 0.24f, 0.18f};
+    private static final float FEATHER_THICKNESS = 0.03f;
+    private static final float WING_ROOT_HEIGHT = 1.3f;
+    private static final float WING_ROOT_BACK = 0.22f;
+    private static final double GLIDE_SWEEP = 30;
+    private static final double GLIDE_SWEEP_AMPLITUDE = 18;
+    private static final double DIVE_SWEEP = 78;
+    private static final int WING_STEP_TICKS = 2;
+    private static final int WING_OPEN_TICKS = 4;
+    private static final int WING_FOLD_TICKS = 6;
+
+    // Rebirth visuals
+    private static final int PILLAR_TICKS = 14;
+    private static final double PILLAR_HEIGHT = 5;
+    private static final int REBIRTH_FEATHERS = 8;
+    private static final int FEATHER_FLIGHT_TICKS = 12;
+    private static final int SHOCKWAVE_TICKS = 6;
 
     // Leap
     private static final double LEAP_FORWARD = 0.45;
@@ -114,7 +153,11 @@ public final class PhoenixAbility extends Ability {
     private static final int DASH_LATENCY_TICKS = 6;
     /** After the dash, the landing is protected for at most this long (only the height the dash itself added). */
     private static final int DASH_LANDING_TICKS = 60;
-    private static final int SCORCH_TICKS = 24;
+    private static final int SCORCH_TICKS = 30;
+    /** Scorch marks (glowing magma decals) left on the ground along the path, at most this many. */
+    private static final int MAX_SCORCH_MARKS = 8;
+    private static final double SCORCH_SPACING = 2.0;
+    private static final double SCORCH_GROUND_SEARCH = 1.2;
 
     private boolean rebirthUsed;
     private long rebirthGraceUntil = -1;
@@ -124,10 +167,19 @@ public final class PhoenixAbility extends Ability {
     private boolean dived;
     private long leapStartTick;
     private long fallGraceUntil = -1;
+    private @Nullable FlameWings wings;
 
     @Override
     public AbilityInfo info() {
         return INFO;
+    }
+
+    @Override
+    public void onRevoke() {
+        if (wings != null) {
+            wings.remove();
+            wings = null;
+        }
     }
 
     // ------------------------------------------------------------------ passive: rebirth
@@ -177,22 +229,64 @@ public final class PhoenixAbility extends Ability {
         owner.setFallDistance(0);
         owner.playEffect(EntityEffect.PROTECTED_FROM_DEATH);
 
+        // Out of the ashes: a white-hot flash, a pillar of fire spiralling up and feathers bursting free.
         Location feet = owner.getLocation();
-        World world = feet.getWorld();
         Location body = feet.clone().add(0, owner.getHeight() * 0.5, 0);
-        world.spawnParticle(Particle.FLAME, body, 50, 0.3, 0.8, 0.3, 0.12);
-        world.spawnParticle(Particle.LAVA, body, 12, 0.4, 0.4, 0.4, 0);
-        world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 30, 0.5, 0.9, 0.5, 0, WING_DUST);
-        drawWings(owner, 0.25, 1.4);
+        Vfx.burst(ctx(), body, PALETTE, 1.2, Particle.FLAME, true);
+        Vfx.cloud(ctx(), feet.clone().add(0, 0.2, 0), Particle.LARGE_SMOKE, 8, 0.5, 0.02, null, false);
+        firePillar(feet);
+        featherBurst(body);
         Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.6f);
         Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.3f);
         Fx.sound(feet, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 0.8f);
+        Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.9f + Fx.jitter(0.05f));
         owner.sendActionBar(Text.mm("<" + FLAME + "><b>✹ 환생!</b></" + FLAME + "> <white>잿더미에서 되살아났습니다</white>"));
         ctx().announce(Text.mm("<" + FLAME + ">✹</" + FLAME + "> <white><player></white><gray>이(가) "
                 + "</gray><" + FLAME + ">불사조</" + FLAME + "><gray>의 힘으로 잿더미에서 되살아났습니다!</gray>",
                 Placeholder.unparsed("player", owner.getName())));
         // The shockwave is dealt a tick later, outside the damage event that triggered the rebirth.
         ctx().runLater(owner, 1, this::rebirthShockwave);
+    }
+
+    /** A double helix of flame that climbs out of the ground and narrows into a column of white heat. */
+    private void firePillar(Location feet) {
+        Location base = feet.clone();
+        Loop.repeat(ctx(), player(), 0, 1, PILLAR_TICKS, run -> {
+            double t = (double) (run + 1) / PILLAR_TICKS;
+            double height = PILLAR_HEIGHT * Math.min(1, t * 1.6);
+            double radius = 0.9 - 0.5 * t;
+            Vfx.helix(ctx(), base, radius, height, 1.25, 2, 10, run * 0.45, Particle.FLAME, null, true);
+            Vfx.helix(ctx(), base, radius * 0.75, height, 1.25, 2, 6, run * 0.45 + Math.PI / 2,
+                    Particle.DUST_COLOR_TRANSITION, HEAT, true);
+            if (run % 3 == 0) {
+                Vfx.line(ctx(), base.clone().add(0, 0.2, 0), base.clone().add(0, height, 0), 1.5, Particle.END_ROD,
+                        null, true);
+            }
+            return true;
+        });
+    }
+
+    /** Feathers (item displays) burst out of the flames, spin and fade. */
+    private void featherBurst(Location body) {
+        Player owner = player();
+        Location at = body.clone();
+        at.setYaw(0);
+        at.setPitch(0);
+        ItemStack feather = new ItemStack(Material.FEATHER);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        double base = random.nextDouble(Math.PI * 2);
+        for (int i = 0; i < REBIRTH_FEATHERS; i++) {
+            double angle = base + i * Math.PI * 2 / REBIRTH_FEATHERS;
+            float yaw = (float) Math.toDegrees(angle);
+            ItemDisplay display = Displays.item(ctx(), owner, at, feather,
+                    Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, yaw, 0, 0), FEATHER_FLIGHT_TICKS + 14);
+            double reach = 2.0 + random.nextDouble(0.8);
+            Transformation out = Displays.centered((float) (Math.cos(angle) * reach), (float) random.nextDouble(0.4,
+                    1.4), (float) (Math.sin(angle) * reach), 0.7f, 0.7f, 0.7f, -yaw + 90, random.nextInt(-30, 30),
+                    random.nextInt(140, 220));
+            Displays.animateNextTick(ctx(), owner, display, out, FEATHER_FLIGHT_TICKS);
+            ctx().runLater(owner, FEATHER_FLIGHT_TICKS + 1, () -> Displays.shrinkAway(ctx(), owner, display, 10));
+        }
     }
 
     private void rebirthShockwave() {
@@ -214,17 +308,22 @@ public final class PhoenixAbility extends Ability {
             }
             push.normalize().multiply(0.9).setY(0.4);
             enemy.setVelocity(Motion.clamp(enemy.getVelocity().add(push), MAX_VELOCITY));
-            enemy.getWorld().spawnParticle(Particle.FLAME, enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0),
-                    10, 0.25, 0.4, 0.25, 0.04);
+            Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.6, Particle.FLAME, false);
         }
         Fx.sound(center, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.7f);
         Fx.sound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.5f);
-        // An expanding ring of fire, one frame per tick.
-        Loop.repeat(ctx(), owner, 0, 1, 4, run -> {
-            double r = radius * (run + 1) / 4.0;
-            ring(center.clone().add(0, 0.2, 0), r, Math.max(8, (int) (r * 6)), Particle.FLAME, 0.02);
-            if (run == 3) {
-                center.getWorld().spawnParticle(Particle.LAVA, center, 8, radius / 3, 0.2, radius / 3, 0);
+        // A ring of fire racing out to the radius, a heat ring behind it, then embers rising where it passed.
+        Location ground = center.clone().add(0, 0.15, 0);
+        Vfx.shockwave(ctx(), owner, ground, 0.4, radius, SHOCKWAVE_TICKS, Particle.FLAME, null, true);
+        Vfx.shockwave(ctx(), owner, ground.clone().add(0, 0.2, 0), 0.2, radius * 0.85, SHOCKWAVE_TICKS,
+                Particle.DUST_COLOR_TRANSITION, EMBER, true);
+        Loop.repeat(ctx(), owner, SHOCKWAVE_TICKS, 3, 6, run -> {
+            for (int i = 0; i < Vfx.n(ctx(), 5); i++) {
+                Location at = Vfx.scatter(ground, radius);
+                at.getWorld().spawnParticle(Particle.SMALL_FLAME, at, 0, 0, 0.08, 0, 1);
+                if (i % 2 == 0) {
+                    Vfx.dot(at.add(0, 0.3, 0), Particle.WHITE_ASH, null, false);
+                }
             }
             return true;
         });
@@ -252,13 +351,20 @@ public final class PhoenixAbility extends Ability {
         dived = false;
         leapStartTick = ctx().currentTick();
 
+        // Launch: a burst of flame rushing out over the ground and a fiery updraft.
         Location feet = owner.getLocation();
-        World world = feet.getWorld();
-        world.spawnParticle(Particle.FLAME, feet.clone().add(0, 0.1, 0), 30, 0.4, 0.05, 0.4, 0.08);
-        ring(feet.clone().add(0, 0.1, 0), 1.2, 16, Particle.SMALL_FLAME, 0.01);
-        world.spawnParticle(Particle.LARGE_SMOKE, feet, 6, 0.3, 0.05, 0.3, 0.02);
+        Location ground = feet.clone().add(0, 0.1, 0);
+        Vfx.shockwave(ctx(), owner, ground, 0.3, 1.8, 4, Particle.FLAME, null, false);
+        Vfx.ring(ctx(), ground, 1.0, 14, 0, Particle.DUST_COLOR_TRANSITION, EMBER, false);
+        Vfx.helix(ctx(), feet, 0.5, 2.2, 1.0, 2, 8, 0, Particle.FLAME, null, false);
+        Vfx.cloud(ctx(), feet, Particle.LARGE_SMOKE, 5, 0.3, 0.02, null, false);
+        if (wings != null) {
+            wings.remove();
+        }
+        wings = new FlameWings(owner);
         Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.2f + Fx.jitter(0.1f));
         Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 0.8f, 0.9f + Fx.jitter(0.1f));
+        Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 0.5f, 1.4f + Fx.jitter(0.1f));
         owner.sendActionBar(Text.mm("<" + FLAME + ">✹ 화염 날개</" + FLAME + "> <gray>웅크리면 급강하</gray>"));
         return ActivationResult.success();
     }
@@ -267,11 +373,14 @@ public final class PhoenixAbility extends Ability {
     public void onTick(long tick) {
         if (leaping) {
             tickLeap(tick);
-        } else if (!rebirthUsed && tick % 30 == 0) {
-            // The tell that the rebirth is still available: embers drifting off the owner.
+        } else if (!rebirthUsed && tick % 20 == 0) {
+            // The tell that the rebirth is still available: a single ember drifting off the shoulders.
             Player owner = player();
-            Location head = owner.getLocation().add(0, owner.getHeight() * 0.8, 0);
-            owner.getWorld().spawnParticle(Particle.SMALL_FLAME, head, 2, 0.25, 0.3, 0.25, 0.01);
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            Location at = owner.getLocation().add(random.nextDouble(-0.3, 0.3), owner.getHeight() * 0.8,
+                    random.nextDouble(-0.3, 0.3));
+            at.getWorld().spawnParticle(Particle.SMALL_FLAME, at, 0, 0, 0.04, 0, 1);
+            Vfx.dot(at.add(0, 0.15, 0), Particle.DUST_COLOR_TRANSITION, WING_CORE, false);
         }
     }
 
@@ -295,18 +404,28 @@ public final class PhoenixAbility extends Ability {
             Vector velocity = owner.getVelocity();
             owner.setVelocity(Motion.clamp(new Vector(velocity.getX(), Math.min(velocity.getY(), DIVE_VELOCITY),
                     velocity.getZ()), MAX_VELOCITY));
+            Location body = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
+            Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.FLAME, false);
             Fx.sound(owner.getLocation(), Sound.ENTITY_PHANTOM_FLAP, 1.0f, 0.7f);
+            Fx.sound(owner.getLocation(), Sound.ENTITY_PHANTOM_SWOOP, 0.7f, 1.4f + Fx.jitter(0.1f));
+        }
+        if (wings != null && !wings.update(owner, tick, dived)) {
+            wings = null;
         }
         if (tick % 2 != 0) {
             return;
         }
+        // A tail of fire under the flier; a falling comet streak while diving.
         Location feet = owner.getLocation();
-        World world = feet.getWorld();
-        world.spawnParticle(Particle.FLAME, feet.clone().add(0, 0.2, 0), 3, 0.15, 0.15, 0.15, 0.01);
-        world.spawnParticle(Particle.SMALL_FLAME, feet.clone().add(0, 0.5, 0), 2, 0.2, 0.25, 0.2, 0.01);
-        if (!dived && tick % 4 == 0) {
-            double flap = 0.3 + 0.35 * (0.5 + 0.5 * Math.sin(tick * 0.5));
-            drawWings(owner, flap, 1.0);
+        if (dived) {
+            Vfx.line(ctx(), feet, feet.clone().add(0, 1.6, 0), 3, Particle.FLAME, null, false);
+            Vfx.dot(feet.clone().add(0, 0.8, 0), Particle.DUST_COLOR_TRANSITION, HEAT, false);
+        } else {
+            Vfx.dot(feet.clone().add(0, 0.2, 0), Particle.FLAME, null, false);
+            Vfx.dot(feet.clone().add(0, 0.45, 0), Particle.DUST_COLOR_TRANSITION, EMBER, false);
+            if (tick % 6 == 0) {
+                Vfx.dot(feet, Particle.SMALL_FLAME, null, false);
+            }
         }
         if (tick % 12 == 0 && !dived) {
             Fx.sound(feet, Sound.ENTITY_PHANTOM_FLAP, 0.4f, 1.3f + Fx.jitter(0.1f));
@@ -321,12 +440,23 @@ public final class PhoenixAbility extends Ability {
         if (glide != null && !glide.hasParticles() && glide.getAmplifier() == 0) {
             owner.removePotionEffect(PotionEffectType.SLOW_FALLING);
         }
-        Location feet = owner.getLocation();
+        if (wings != null) {
+            wings.fold();
+            wings = null;
+        }
+        Location ground = owner.getLocation().add(0, 0.15, 0);
         if (dived) {
-            ring(feet.clone().add(0, 0.15, 0), 1.6, 18, Particle.FLAME, 0.03);
-            Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 0.7f, 1.2f);
+            // The dive lands like a meteor: a flash, a ring of fire and a heat ring rushing out.
+            Vfx.burst(ctx(), ground.clone().add(0, 0.3, 0), PALETTE, 0.8, Particle.LAVA, false);
+            Vfx.shockwave(ctx(), owner, ground, 0.3, 2.2, 5, Particle.FLAME, null, false);
+            Vfx.shockwave(ctx(), owner, ground.clone().add(0, 0.1, 0), 0.2, 1.8, 5, Particle.DUST_COLOR_TRANSITION,
+                    EMBER, false);
+            Fx.sound(ground, Sound.ITEM_FIRECHARGE_USE, 0.7f, 1.2f);
+            Fx.sound(ground, Sound.ITEM_MACE_SMASH_GROUND, 0.6f, 1.3f + Fx.jitter(0.1f));
         } else {
-            feet.getWorld().spawnParticle(Particle.SMALL_FLAME, feet.clone().add(0, 0.1, 0), 10, 0.4, 0.05, 0.4, 0.02);
+            Vfx.ring(ctx(), ground, 0.7, 12, 0, Particle.SMALL_FLAME, null, false);
+            Vfx.ring(ctx(), ground.clone().add(0, 0.1, 0), 0.5, 8, 0.4, Particle.DUST_COLOR_TRANSITION, EMBER,
+                    false);
         }
     }
 
@@ -362,6 +492,7 @@ public final class PhoenixAbility extends Ability {
         private final Vector direction;
         private final int pushes;
         private final double speed;
+        private final double reach;
         private final double radius;
         private final Set<UUID> hit = new HashSet<>();
         private final List<Location> path = new ArrayList<>();
@@ -377,6 +508,7 @@ public final class PhoenixAbility extends Ability {
             this.direction = direction;
             this.pushes = Math.max(1, (int) Math.ceil(reach / DASH_SPEED));
             this.speed = reach / pushes;
+            this.reach = reach;
             this.radius = Math.max(0.5, params().num("dash_radius"));
             this.previous = owner.getLocation();
             this.startY = previous.getY();
@@ -385,14 +517,23 @@ public final class PhoenixAbility extends Ability {
 
         void start() {
             Location feet = owner.getLocation();
-            World world = feet.getWorld();
             Location body = feet.clone().add(0, owner.getHeight() * 0.5, 0);
-            world.spawnParticle(Particle.FLAME, body, 40, 0.4, 0.6, 0.4, 0.15);
-            world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 20, 0.5, 0.7, 0.5, 0, WING_DUST);
-            drawWings(owner, 0.15, 1.6);
+            // Telegraph: the path flares up for an instant, and sparks race ahead along it.
+            Location end = body.clone().add(direction.clone().multiply(reach));
+            Vfx.line(ctx(), body, end, 2, Particle.DUST_COLOR_TRANSITION, EMBER, true);
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            for (int i = 0; i < Vfx.n(ctx(), 4); i++) {
+                Location from = body.clone().add(random.nextDouble(-0.4, 0.4), random.nextDouble(-0.3, 0.3),
+                        random.nextDouble(-0.4, 0.4));
+                Vfx.trail(from, end, i % 2 == 0 ? PALETTE.core() : PALETTE.body(), pushes + 2, true);
+            }
+            // Ignition: a white-hot flash and the phoenix spreading its wings.
+            Vfx.burst(ctx(), body, PALETTE, 1.2, Particle.FLAME, true);
+            drawWings(owner, 0.15, 1.6, true);
             Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.7f);
             Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.5f);
             Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.8f);
+            Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_GROWL, 0.45f, 1.8f + Fx.jitter(0.05f));
             Loop.repeat(ctx(), owner, 0, 1, pushes + DASH_LATENCY_TICKS + DASH_LANDING_TICKS, this);
         }
 
@@ -416,7 +557,7 @@ public final class PhoenixAbility extends Ability {
             }
             Location now = owner.getLocation();
             sweep(previous, now);
-            trail(now);
+            trail(previous, now);
             previous = now;
             if (age == pushes + DASH_LATENCY_TICKS) {
                 finish(now);
@@ -472,21 +613,32 @@ public final class PhoenixAbility extends Ability {
                 }
                 Vector fling = side.multiply(0.6).add(direction.clone().multiply(0.4)).setY(0.45);
                 enemy.setVelocity(Motion.clamp(fling, MAX_VELOCITY));
-                Location at = enemy.getLocation().add(0, enemy.getHeight() * 0.5, 0);
-                enemy.getWorld().spawnParticle(Particle.FLAME, at, 16, 0.25, 0.4, 0.25, 0.08);
-                enemy.getWorld().spawnParticle(Particle.LAVA, at, 3, 0.2, 0.3, 0.2, 0);
+                Location at = Fx.body(enemy);
+                Vfx.burst(ctx(), at, PALETTE, 0.7, Particle.FLAME, true);
+                Vfx.cloud(ctx(), at, Particle.LAVA, 3, 0.2, 0, null, false);
                 Fx.sound(at, Sound.ENTITY_BLAZE_HURT, 0.8f, 1.2f + Fx.jitter(0.1f));
+                Fx.sound(at, Sound.ITEM_FIRECHARGE_USE, 0.6f, 1.5f + Fx.jitter(0.1f));
             }
         }
 
-        private void trail(Location feet) {
-            World world = feet.getWorld();
+        /** The blazing body: spread wings, a streak of fire back along the segment and heat motes streaming off. */
+        private void trail(Location from, Location feet) {
             Location body = feet.clone().add(0, owner.getHeight() * 0.5, 0);
-            world.spawnParticle(Particle.FLAME, body, 8, 0.3, 0.35, 0.3, 0.03);
-            world.spawnParticle(Particle.DUST_COLOR_TRANSITION, body, 4, 0.35, 0.4, 0.35, 0, WING_DUST);
             if (age <= pushes) {
-                drawWings(owner, 0.2 + 0.1 * Math.sin(age * 1.3), 1.4);
-                path.add(feet.clone().add(0, 0.15, 0));
+                Location back = from.clone().add(0, owner.getHeight() * 0.5, 0);
+                Vfx.line(ctx(), back, body, 2.5, Particle.FLAME, null, true);
+                Vfx.cloud(ctx(), body, Particle.DUST_COLOR_TRANSITION, 5, 0.3, 0, HEAT, true);
+                Vfx.cloud(ctx(), body.clone().add(direction.clone().multiply(0.6)), Particle.END_ROD, 2, 0.12, 0,
+                        null, true);
+                drawWings(owner, 0.2 + 0.1 * Math.sin(age * 1.3), 1.4, true);
+                Location wake = body.clone().subtract(direction.clone().multiply(3));
+                for (int side = -1; side <= 1; side += 2) {
+                    Vector out = new Vector(-direction.getZ(), 0, direction.getX()).multiply(side * 0.9);
+                    Vfx.trail(body.clone().add(out), wake.clone().add(out.multiply(1.6)), PALETTE.body(), 6, true);
+                }
+                path.add(feet.clone());
+            } else {
+                Vfx.cloud(ctx(), body, Particle.FLAME, 3, 0.25, 0.02, null, false);
             }
             if (age % 3 == 0) {
                 Fx.sound(feet, Sound.BLOCK_FIRE_AMBIENT, 0.8f, 1.4f + Fx.jitter(0.2f));
@@ -494,12 +646,14 @@ public final class PhoenixAbility extends Ability {
         }
 
         private void finish(Location feet) {
-            World world = feet.getWorld();
             Location body = feet.clone().add(0, owner.getHeight() * 0.5, 0);
-            world.spawnParticle(Particle.EXPLOSION, body, 1, 0, 0, 0, 0);
-            world.spawnParticle(Particle.FLAME, body, 30, 0.5, 0.5, 0.5, 0.12);
-            world.spawnParticle(Particle.LAVA, body, 6, 0.4, 0.3, 0.4, 0);
+            // The phoenix bursts into flame where it lands, then the path smoulders.
+            Vfx.burst(ctx(), body, PALETTE, 1.3, Particle.FLAME, true);
+            Vfx.dot(body, Particle.EXPLOSION, null, true);
+            Vfx.shockwave(ctx(), owner, feet.clone().add(0, 0.15, 0), 0.4, 2.6, 5, Particle.FLAME, null, true);
+            Vfx.cloud(ctx(), body, Particle.LAVA, 6, 0.4, 0, null, false);
             Fx.sound(feet, Sound.ENTITY_GENERIC_EXPLODE, 0.5f, 1.6f);
+            Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 0.8f, 0.6f + Fx.jitter(0.05f));
             if (!hit.isEmpty()) {
                 owner.sendActionBar(Text.mm("<" + FLAME + ">✹ 불사조 강림</" + FLAME + "> <white>" + hit.size()
                         + "명 적중</white>"));
@@ -508,17 +662,41 @@ public final class PhoenixAbility extends Ability {
         }
     }
 
-    /** Embers and ash linger along the path for a moment (visual only). */
+    /** Glowing scorch marks on the ground along the path, with embers and ash drifting off them (visual only). */
     private void scorch(List<Location> path) {
         if (path.isEmpty()) {
             return;
         }
-        Loop.repeat(ctx(), player(), 4, 4, SCORCH_TICKS / 4, run -> {
+        Player owner = player();
+        List<Location> ground = new ArrayList<>();
+        Location last = null;
+        for (Location point : path) {
+            if (last != null && last.distanceSquared(point) < SCORCH_SPACING * SCORCH_SPACING) {
+                continue;
+            }
+            last = point;
+            RayTraceResult floor = point.getWorld().rayTraceBlocks(point.clone().add(0, 0.2, 0),
+                    new Vector(0, -1, 0), SCORCH_GROUND_SEARCH, FluidCollisionMode.NEVER, true);
+            if (floor == null || ground.size() >= MAX_SCORCH_MARKS) {
+                continue;
+            }
+            Location mark = floor.getHitPosition().toLocation(point.getWorld()).add(0, 0.02, 0);
+            ground.add(mark);
+            float yaw = ThreadLocalRandom.current().nextFloat() * 90;
+            BlockDisplay decal = Displays.block(ctx(), owner, mark, SCORCH, Displays.transform(0, 0, 0, 0.2f, 0.02f,
+                    0.2f, yaw, 0, 0), SCORCH_TICKS + 12);
+            Displays.animateNextTick(ctx(), owner, decal, Displays.transform(0, 0, 0, 1.0f, 0.02f, 1.0f, yaw, 0, 0),
+                    4);
+            ctx().runLater(owner, SCORCH_TICKS, () -> Displays.shrinkAway(ctx(), owner, decal, 10));
+        }
+        Loop.repeat(ctx(), owner, 4, 4, SCORCH_TICKS / 4, run -> {
             boolean ash = run % 2 == 1;
             for (Location point : path) {
-                point.getWorld().spawnParticle(Particle.FLAME, point, 1, 0.3, 0.05, 0.3, 0.005);
+                Location at = point.clone().add(0, 0.15, 0);
+                at.getWorld().spawnParticle(Particle.SMALL_FLAME, at.getX(), at.getY(), at.getZ(), 0,
+                        ThreadLocalRandom.current().nextDouble(-0.01, 0.01), 0.05, 0, 1);
                 if (ash) {
-                    point.getWorld().spawnParticle(Particle.DUST, point, 1, 0.3, 0.05, 0.3, 0, ASH_DUST);
+                    Vfx.dot(at.add(0, 0.25, 0), Particle.DUST, ASH_DUST, false);
                 }
             }
             return true;
@@ -573,40 +751,141 @@ public final class PhoenixAbility extends Ability {
     // ------------------------------------------------------------------ visuals
 
     /**
-     * Draws a pair of flame wings behind the owner's back.
+     * Draws a pair of particle flame wings behind the owner's back (the dash moves too fast for displays to keep up):
+     * a white-gold leading edge, orange-to-crimson trailing feathers and flame at the tips.
      *
      * @param flap  how far the wings are swept back, in radians (0 = spread flat to the sides)
      * @param size  wing span multiplier on top of the owner's scale
+     * @param force visible from far away (the ultimate)
      */
-    private static void drawWings(Player owner, double flap, double size) {
-        double scale = Body.scaleOf(owner) * size;
+    private static void drawWings(Player owner, double flap, double size, boolean force) {
+        double bodyScale = Body.scaleOf(owner);
+        double scale = bodyScale * size;
         double yaw = Math.toRadians(owner.getBodyYaw());
         Vector right = new Vector(-Math.cos(yaw), 0, -Math.sin(yaw));
         Vector back = new Vector(Math.sin(yaw), 0, -Math.cos(yaw));
-        Location shoulder = owner.getLocation().add(0, SHOULDER_HEIGHT * Body.scaleOf(owner), 0)
-                .add(back.clone().multiply(0.2 * Body.scaleOf(owner)));
-        World world = owner.getWorld();
+        Location shoulder = owner.getLocation().add(0, SHOULDER_HEIGHT * bodyScale, 0)
+                .add(back.clone().multiply(0.2 * bodyScale));
         for (int side = -1; side <= 1; side += 2) {
             Vector out = right.clone().multiply(side * Math.cos(flap)).add(back.clone().multiply(Math.sin(flap)));
             for (int i = 0; i < WING.length; i++) {
                 double[] point = WING[i];
                 Location at = shoulder.clone().add(out.clone().multiply(point[0] * scale)).add(0, point[1] * scale, 0);
-                if (i == WING.length / 2) {
-                    world.spawnParticle(Particle.FLAME, at, 1, 0, 0, 0, 0);
+                if (i == 5) {
+                    Vfx.dot(at, Particle.FLAME, null, force);
                 }
-                world.spawnParticle(Particle.DUST_COLOR_TRANSITION, at, 1, 0, 0, 0, 0,
-                        i < 6 ? WING_EDGE : WING_DUST);
+                Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, i < 6 ? WING_CORE : WING_EDGE, force);
             }
         }
     }
 
-    private static void ring(Location center, double radius, int points, Particle particle, double speed) {
-        World world = center.getWorld();
-        double offset = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
-        for (int i = 0; i < points; i++) {
-            double angle = offset + Math.PI * 2 * i / points;
-            Location at = center.clone().add(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-            world.spawnParticle(particle, at, 1, 0, 0.05, 0, speed);
+    /**
+     * The leap's wings: per side a fan of three thin glass feathers (block displays) rooted between the shoulder
+     * blades. They follow the owner, beat slowly while gliding and fold back into a dive. Flames lick off the tips.
+     */
+    private final class FlameWings {
+        private final BlockDisplay[] feathers = new BlockDisplay[FEATHER_BLOCKS.length * 2];
+        private final float bodyScale;
+        private double phase;
+        private int age;
+
+        FlameWings(Player owner) {
+            this.bodyScale = (float) Body.scaleOf(owner);
+            Location at = anchor(owner);
+            Transformation folded = new Transformation(new Vector3f(0, WING_ROOT_HEIGHT * bodyScale, 0),
+                    new Quaternionf(), new Vector3f(0.001f), new Quaternionf());
+            for (int i = 0; i < feathers.length; i++) {
+                boolean left = i < FEATHER_BLOCKS.length;
+                int index = i % FEATHER_BLOCKS.length;
+                BlockDisplay feather = Displays.block(ctx(), owner, at, FEATHER_BLOCKS[index], folded,
+                        LEAP_TIMEOUT_TICKS + WING_FOLD_TICKS + 20);
+                Displays.animateNextTick(ctx(), owner, feather, feather(left, index, GLIDE_SWEEP, 1.0),
+                        WING_OPEN_TICKS);
+                feathers[i] = feather;
+            }
+        }
+
+        /** Follows the owner and beats; false (after removing itself) if the wings are gone. */
+        boolean update(Player owner, long tick, boolean diving) {
+            for (BlockDisplay feather : feathers) {
+                if (!feather.isValid() || feather.getWorld() != owner.getWorld()) {
+                    remove();
+                    return false;
+                }
+            }
+            Location at = anchor(owner);
+            for (BlockDisplay feather : feathers) {
+                feather.teleport(at);
+            }
+            phase += 0.35;
+            if (++age <= WING_OPEN_TICKS || tick % WING_STEP_TICKS != 0) {
+                return true;
+            }
+            double sweep = diving ? DIVE_SWEEP : GLIDE_SWEEP + GLIDE_SWEEP_AMPLITUDE * Math.sin(phase);
+            double spread = diving ? 0.35 : 1.0;
+            for (int i = 0; i < feathers.length; i++) {
+                boolean left = i < FEATHER_BLOCKS.length;
+                Transformation shape = feather(left, i % FEATHER_BLOCKS.length, sweep, spread);
+                Displays.animate(feathers[i], shape, WING_STEP_TICKS);
+                if (i % FEATHER_BLOCKS.length == 1) {
+                    flameAt(at, shape);
+                }
+            }
+            return true;
+        }
+
+        /** Flames and heat licking off the tip of the long middle feather. */
+        private void flameAt(Location at, Transformation shape) {
+            Vector3f tip = shape.getLeftRotation().transform(new Vector3f(shape.getScale().x(),
+                    shape.getScale().y() * 0.5f, 0)).add(shape.getTranslation());
+            double yaw = Math.toRadians(at.getYaw());
+            double x = tip.x() * Math.cos(yaw) - tip.z() * Math.sin(yaw);
+            double z = tip.x() * Math.sin(yaw) + tip.z() * Math.cos(yaw);
+            Location point = at.clone().add(x, tip.y(), z);
+            Vfx.dot(point, Particle.FLAME, null, false);
+            Vfx.dot(point, Particle.DUST_COLOR_TRANSITION, EMBER, false);
+        }
+
+        void fold() {
+            for (BlockDisplay feather : feathers) {
+                if (feather.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), feather, WING_FOLD_TICKS);
+                }
+            }
+        }
+
+        void remove() {
+            for (BlockDisplay feather : feathers) {
+                if (feather.isValid()) {
+                    feather.remove();
+                }
+            }
+        }
+
+        private Location anchor(Player owner) {
+            Location at = owner.getLocation();
+            at.setYaw(owner.getBodyYaw());
+            at.setPitch(0);
+            return at;
+        }
+
+        /**
+         * One feather in body space (local +Z = facing, +X = the owner's left): a long thin glass block rooted at the
+         * spine, fanned by its roll ({@code spread} narrows the fan) and swept back by {@code sweepDegrees}.
+         */
+        private Transformation feather(boolean left, int index, double sweepDegrees, double spread) {
+            float length = FEATHER_LENGTH[index] * bodyScale;
+            float width = FEATHER_WIDTH[index] * bodyScale;
+            float roll = (float) Math.toRadians(FEATHER_ROLL[index] * spread);
+            float sweep = (float) Math.toRadians(sweepDegrees);
+            Quaternionf rotation = left
+                    ? new Quaternionf().rotateY(sweep).rotateZ(roll)
+                    : new Quaternionf().rotateY(-sweep).rotateY((float) Math.PI).rotateZ(roll);
+            // Centre the feather's width on its axis, so it fans around the root instead of hanging off one edge.
+            Vector3f root = new Vector3f((left ? 0.08f : -0.08f) * bodyScale, WING_ROOT_HEIGHT * bodyScale,
+                    -WING_ROOT_BACK * bodyScale).add(rotation.transform(new Vector3f(0, -width / 2, 0)));
+            return new Transformation(root, rotation, new Vector3f(length, width, FEATHER_THICKNESS),
+                    new Quaternionf());
         }
     }
 
