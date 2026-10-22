@@ -202,6 +202,28 @@ class FlatWorldTest {
         victim.damage(7, DamageSource.builder(DamageType.MOB_ATTACK).withCausingEntity(wolf).withDirectEntity(wolf)
                 .build());
         assertEquals(20 - 4.5, victim.getHealth(), 1.0E-9, "easy difficulty: min(7/2+1, 7)");
+
+        TestPlayer other = h.join("O");
+        other.damage(4, DamageSource.builder(DamageType.MAGIC).withCausingEntity(victim).withDirectEntity(victim)
+                .build());
+        assertEquals(20 - 4, other.getHealth(), 1.0E-9, "a player's magic is not scaled");
+        other.setNoDamageTicks(0);
+        other.damage(10, DamageSource.builder(DamageType.EXPLOSION).build());
+        assertEquals(20 - 4 - 6, other.getHealth(), 1.0E-9, "explosions always scale: min(10/2+1, 10)");
+    }
+
+    @Test
+    void playersReportTheOptionsOfADefaultClient() {
+        TestPlayer p = h.join("P");
+        assertEquals(TestSkinParts.ALL, p.getClientOption(com.destroystokyo.paper.ClientOption.SKIN_PARTS).getRaw());
+        p.setClientSkinParts(0x7E);
+        com.destroystokyo.paper.SkinParts parts = p.getClientOption(com.destroystokyo.paper.ClientOption.SKIN_PARTS);
+        assertFalse(parts.hasCapeEnabled(), "no cape");
+        assertTrue(parts.hasHatsEnabled());
+        assertEquals(p.getMainHand(), p.getClientOption(com.destroystokyo.paper.ClientOption.MAIN_HAND));
+        Mannequin mannequin = world.spawn(at(0, 64, 0), Mannequin.class);
+        mannequin.setSkinParts(parts);
+        assertEquals(0x7E, mannequin.getSkinParts().getRaw(), "mannequins keep the skin layers they are given");
     }
 
     @Test

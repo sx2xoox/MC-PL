@@ -194,14 +194,14 @@ class SpecialAbilitiesTest {
     void illusionistDecoyLeavesALookAlikeAndVanishes() {
         try (Scenario s = illusionist()) {
             Location spot = s.owner.getLocation();
-            s.owner.setClientSkinParts(0x3E); // no cape
+            s.owner.setClientSkinParts(0x7E); // no cape
             s.assertSucceeded(s.active(), "분신");
             List<Mannequin> copies = copies(s);
             assertEquals(1, copies.size());
             Mannequin copy = copies.getFirst();
             assertTrue(horizontalDistance(copy.getLocation(), spot) < 0.01, "where the illusionist stood");
             assertEquals(s.owner.getName(), copy.getProfile().name(), "wears the owner's skin");
-            assertEquals(0x3E, copy.getSkinParts().getRaw(), "with the owner's skin layers");
+            assertEquals(0x7E, copy.getSkinParts().getRaw(), "with the owner's skin layers");
             assertEquals(Material.IRON_SWORD, copy.getEquipment().getItemInMainHand().getType(),
                     "and a real weapon instead of the ability item");
             assertEquals(Material.IRON_CHESTPLATE, copy.getEquipment().getChestplate().getType(), "and armor");
