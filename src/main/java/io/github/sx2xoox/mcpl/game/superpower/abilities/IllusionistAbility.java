@@ -824,9 +824,18 @@ public final class IllusionistAbility extends Ability {
 
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (stealth.isActive() && !event.isCancelled()) {
+        // Only the owner's own attacks give it away; hits routed from its summons (the copies) do not.
+        if (stealth.isActive() && !event.isCancelled() && isOwnHit(event)) {
             reveal(true);
         }
+    }
+
+    /** The owner's own hits: melee, its projectiles and its ability damage, but not its summons'. */
+    private boolean isOwnHit(EntityDamageByEntityEvent event) {
+        Player owner = player();
+        Entity damager = event.getDamager();
+        return owner.equals(damager)
+                || damager instanceof Projectile projectile && owner.equals(projectile.getShooter());
     }
 
     /** Enemy mobs chasing the owner turn on the nearest copy instead (or lose track). */

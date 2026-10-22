@@ -16,6 +16,7 @@ import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Mannequin;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.plugin.RegisteredListener;
@@ -304,6 +305,23 @@ class SpecialAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "lucky dodge");
             s.melee(s.owner, s.enemy, 3);
             assertEquals(3 * s.param("crit_multiplier"), s.damageBy(s.owner, s.enemy), EPSILON, "double damage");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void gamblerLuckNeverDoublesItsSummonsHits() {
+        try (Scenario s = Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 100).start()) {
+            // E.g. the golem of a borrowed 소환사 ultimate: its hits reach the gambler's hooks, but luck is personal.
+            Wolf wolf = s.world.spawn(s.owner.getLocation(), Wolf.class);
+            wolf.getAttribute(Attribute.ATTACK_DAMAGE).setBaseValue(4);
+            s.ctx().summon(s.owner, wolf);
+            double health = s.health(s.enemy);
+            s.melee(wolf, s.enemy, 4);
+            assertEquals(health - 4, s.health(s.enemy), EPSILON, "the summon's hit is not doubled");
+            s.melee(s.owner, s.enemy, 2);
+            assertEquals(health - 4 - 2 * s.param("crit_multiplier"), s.health(s.enemy), EPSILON,
+                    "the gambler's own hit is");
             s.finishClean();
         }
     }
