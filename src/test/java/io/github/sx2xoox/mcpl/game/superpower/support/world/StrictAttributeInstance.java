@@ -14,7 +14,8 @@ import org.jspecify.annotations.Nullable;
  * ({@code AttributeInstance#addPermanentModifier}: "Modifier is already applied on this attribute!"). MockBukkit
  * silently replaces it instead, which hid real-server errors.
  */
-@SuppressWarnings("deprecation")
+// The UUID overloads must be implemented although they are deprecated for removal.
+@SuppressWarnings({"deprecation", "removal"})
 public final class StrictAttributeInstance implements AttributeInstance {
 
     private final AttributeInstance delegate;
