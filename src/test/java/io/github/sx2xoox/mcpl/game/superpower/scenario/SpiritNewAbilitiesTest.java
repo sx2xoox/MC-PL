@@ -1119,7 +1119,9 @@ class SpiritNewAbilitiesTest {
     /**
      * Runs {@code ticks} ticks and fails if a particle of one of the {@code marks} types is spawned within
      * {@code reach} of {@code hidden}'s body (as it stood when the tick began: effects are drawn before anything
-     * moves), a trail is drawn to it, or (with {@code noGlowingDisplays}) a glowing display shows up at it.
+     * moves), a trail is drawn to it, anyone else hears a sound played there (a sound is heard from where it is
+     * played, so it tells where the enemy hides as well as a particle), or (with {@code noGlowingDisplays}) a glowing
+     * display shows up at it.
      */
     private static void assertNothingMarks(Scenario s, Entity hidden, double reach, int ticks, String what,
                                            boolean noGlowingDisplays, Particle... marks) {
@@ -1127,7 +1129,17 @@ class SpiritNewAbilitiesTest {
         for (int i = 0; i < ticks; i++) {
             Location at = hidden.getLocation().add(0, hidden.getHeight() * 0.5, 0);
             s.world.clearSpawnedParticles();
+            List<TestPlayer> listeners = s.all().stream().filter(player -> !player.equals(hidden)).toList();
+            for (TestPlayer listener : listeners) {
+                listener.clearSounds();
+            }
             s.ticks(1);
+            for (TestPlayer listener : listeners) {
+                for (AudioExperience sound : listener.getHeardSounds()) {
+                    assertFalse(sound.getLocation().distance(at) <= reach, what + ": " + listener.getName()
+                            + " hears " + sound.getSound() + " where the stealthed enemy hides");
+                }
+            }
             for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
                 double distance = Math.sqrt(Math.pow(particle.x() - at.getX(), 2)
                         + Math.pow(particle.y() - at.getY(), 2) + Math.pow(particle.z() - at.getZ(), 2));
@@ -1168,10 +1180,11 @@ class SpiritNewAbilitiesTest {
             s.place(s.enemy2, 8.5, -6.5, 0);
             // Nearly sealed: every ability hit also flares the contract's sigil on the victim.
             s.owner.setHealth(8);
-            s.aimAt(s.owner, s.enemy);
+            // Aimed beside it (still well inside the cone): the roar of the wave front along the aim is no giveaway.
+            s.aimAt(s.owner, s.enemy.getLocation().add(1.2, s.enemy.getHeight() * 0.6, 0));
             s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
             s.assertSucceeded(s.active(), "지옥불");
-            assertNothingMarks(s, s.enemy, 1.0, 20, "지옥불", Particle.FLASH, Particle.CRIMSON_SPORE);
+            assertNothingMarks(s, s.enemy, 0.8, 20, "지옥불", Particle.FLASH, Particle.CRIMSON_SPORE);
             assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the stealthed enemy is burned all the same");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(20);
@@ -1270,9 +1283,14 @@ class SpiritNewAbilitiesTest {
             s.ticks(10);
             // The victim slips into stealth before the knell ends.
             s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.enemy.clearSounds();
+            // Nobody else hears the knell or the blow where it hides.
             assertNothingMarks(s, s.enemy, 0.8, s.paramTicks("mark_duration"), "사신의 표식", true, Particle.FLASH,
                     Particle.SCULK_SOUL, Particle.SOUL);
             assertEquals(s.param("mark_base"), s.damageBy(s.owner, s.enemy), EPSILON, "the blow lands all the same");
+            long tolls = s.enemy.getHeardSounds().stream()
+                    .filter(sound -> sound.getSound().toLowerCase(Locale.ROOT).contains("bell")).count();
+            assertTrue(tolls >= 3, "the victim still hears the knell toll for it: " + tolls);
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(30);
             assertEquals(0, displays(s), "the mark is gone");
@@ -1362,6 +1380,44 @@ class SpiritNewAbilitiesTest {
         }
     }
 
+    /** Every text display shown to anyone (a view range of 0 is drawn by no client). */
+    private static List<TextDisplay> shownTexts(Scenario s) {
+        return s.world.getEntities().stream().filter(TextDisplay.class::isInstance).map(TextDisplay.class::cast)
+                .filter(text -> text.getViewRange() > 0).toList();
+    }
+
+    @Test
+    void ghostTerrorMarkHidesWithAnEnemyThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("ghost")) {
+            s.place(s.enemy2, 0.5, -4.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "공포");
+            s.ticks(2);
+            assertEquals(1, shownTexts(s).size(), "a trembling mark over the terrified enemy");
+            // The terrified enemy escapes into stealth, the natural answer to the terror.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.enemy2.hidePlayer(s.ctx().plugin(), s.enemy);
+            for (int i = 0; i < 20; i++) {
+                s.ticks(1);
+                assertEquals(List.of(), shownTexts(s), "a \"!\" shows where the stealthed enemy hides (tick " + i
+                        + ", the enemy at " + s.enemy.getLocation() + ")");
+            }
+            assertEquals(0, s.enemy.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), EPSILON, "still terrified");
+            // Seen again while still terrified: the mark is back over its head.
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.enemy2.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(1);
+            List<TextDisplay> shown = shownTexts(s);
+            assertEquals(1, shown.size(), "the mark is back");
+            Location head = s.enemy.getLocation().add(0, s.enemy.getHeight(), 0);
+            assertTrue(shown.getFirst().getLocation().distance(head) < 1.0,
+                    "over the enemy's head: " + shown.getFirst().getLocation() + " vs " + head);
+            s.ticks(s.paramTicks("fear_duration") + 10);
+            assertEquals(0, displays(s), "the mark is gone");
+            s.finishClean();
+        }
+    }
+
     @Test
     void phantomSwoopStrikesAStealthedEnemyWithoutMarkingIt() {
         try (Scenario s = Scenario.ffa("phantom")) {
@@ -1372,6 +1428,31 @@ class SpiritNewAbilitiesTest {
             assertNothingMarks(s, s.enemy2, 0.4, 30, "불면의 밤", Particle.FLASH);
             assertEquals(s.param("swoop_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
                     "the stealthed enemy is struck all the same");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(s.paramTicks("night_duration") + 40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void phantomSwoopOnAStealthedEnemyAloneSoundsLikeAMiss() {
+        try (Scenario s = Scenario.ffa("phantom")) {
+            // The stealthed enemy stands next to the hunted one, inside the point the phantom commits to.
+            s.place(s.enemy2, 1.3, 4.5, 180);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.assertSucceeded(s.ultimate(), "불면의 밤");
+            s.ticks(10 + 8);
+            // The hunted enemy steps aside after the screech: only the stealthed one is left to be struck.
+            Location point = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.5, 0);
+            s.place(s.enemy, 3.5, 4.5, 180);
+            s.enemy2.clearSounds();
+            assertNothingMarks(s, s.enemy2, 0.4, 8, "불면의 밤", Particle.FLASH, Particle.SQUID_INK);
+            assertEquals(s.param("swoop_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
+                    "the stealthed enemy is struck all the same");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the hunted enemy dodged");
+            assertTrue(s.enemy2.getHeardSounds().stream().anyMatch(sound -> sound.getSound().contains("phantom.flap")
+                            && sound.getLocation().distance(point) < 0.2),
+                    "to everyone around, the phantom snaps at empty air as if it missed");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
             s.ticks(s.paramTicks("night_duration") + 40);
             s.finishClean();

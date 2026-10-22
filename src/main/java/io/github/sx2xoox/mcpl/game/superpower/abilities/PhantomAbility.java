@@ -503,12 +503,13 @@ public final class PhantomAbility extends Ability {
             }
             Vector knock = side.multiply(DIVE_KNOCK_SIDE).add(flat.multiply(0.3)).setY(DIVE_KNOCK_UP);
             Motion.push(enemy, knock, MAX_SPEED);
-            Location at = Fx.body(enemy);
+            // A stealthed enemy is struck all the same, but nothing is drawn on it or played at it.
             if (isSeen(owner, enemy)) {
+                Location at = Fx.body(enemy);
                 Vfx.burst(ctx(), at, PALETTE, 0.6, Particle.SQUID_INK, false);
+                Fx.sound(at, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.8f + Fx.jitter(0.1f));
+                Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.7f, 0.8f + Fx.jitter(0.08f));
             }
-            Fx.sound(at, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.8f + Fx.jitter(0.1f));
-            Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.7f, 0.8f + Fx.jitter(0.08f));
         }
 
         /** A spear of night: a teal streak along the path and the membrane wings swept back. */
@@ -843,22 +844,27 @@ public final class PhantomAbility extends Ability {
             double damage = params().num("swoop_damage");
             int slow = (int) Math.min(Integer.MAX_VALUE, params().ticks("swoop_slow"));
             boolean any = false;
+            boolean shown = false;
             for (LivingEntity enemy : ctx().enemiesNear(owner, point, SWOOP_HIT_RADIUS)) {
                 any = true;
                 Combat.hit(ctx(), owner, enemy, damage);
                 if (Combat.isTargetable(ctx(), owner, enemy) && slow > 0) {
                     enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, slow, 0, false, true, true));
                 }
-                Location body = Fx.body(enemy);
+                // A stealthed enemy is struck all the same, but nothing is drawn on it or played at it.
                 if (isSeen(owner, enemy)) {
+                    shown = true;
+                    Location body = Fx.body(enemy);
                     Vfx.burst(ctx(), body, PALETTE, 0.5, Particle.SQUID_INK, true);
+                    Fx.sound(body, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.9f + Fx.jitter(0.1f));
                 }
-                Fx.sound(body, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.9f + Fx.jitter(0.1f));
             }
             if (any) {
                 strikes++;
-            } else {
-                // A miss: the phantom snaps at empty air.
+            }
+            if (!shown) {
+                // A miss (or a strike on a stealthed enemy alone, which looks and sounds the same to everyone around):
+                // the phantom snaps at empty air.
                 Vfx.cloud(ctx(), point, Particle.DUST, 4, 0.2, 0, NIGHT_DUST, false);
                 Fx.sound(point, Sound.ENTITY_PHANTOM_FLAP, 0.6f, 1.6f + Fx.jitter(0.1f));
             }

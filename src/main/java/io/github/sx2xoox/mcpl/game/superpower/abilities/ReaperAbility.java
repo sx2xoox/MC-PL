@@ -24,6 +24,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
+import org.bukkit.SoundCategory;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
@@ -134,7 +135,7 @@ public final class ReaperAbility extends Ability {
 
     /**
      * False for an enemy player hidden from the reaper by stealth: it is still hit, executed and drained, but nothing
-     * is drawn on it that would give its position away.
+     * is drawn on it or played at it that would give its position away.
      */
     private boolean isSeen(LivingEntity entity) {
         return !(entity instanceof Player hidden) || player().canSee(hidden);
@@ -320,7 +321,9 @@ public final class ReaperAbility extends Ability {
                 if (seen) {
                     cutFx(body);
                 } else {
-                    Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.8f, 0.7f + Fx.jitter(0.08f));
+                    // Only the reaper hears its blade bite, in its own ears: a sound at the body says where it hides.
+                    owner.playSound(owner, Sound.ENTITY_PLAYER_ATTACK_CRIT, SoundCategory.PLAYERS, 0.6f,
+                            0.7f + Fx.jitter(0.08f));
                 }
                 if (Combat.isTargetable(ctx(), owner, enemy) && to.length() > PULL_MIN_DISTANCE) {
                     Vector pull = Motion.horizontal(to).multiply(-PULL_SPEED).setY(PULL_LIFT);
@@ -579,8 +582,8 @@ public final class ReaperAbility extends Ability {
         private void knell(long tick) {
             Location body = Fx.body(target);
             float progress = (float) Math.min(1.0, (double) (tick + 1) / duration);
-            Fx.sound(body, Sound.BLOCK_BELL_USE, 1.0f, 0.5f + 0.25f * progress);
-            Fx.sound(body, Sound.BLOCK_BELL_RESONATE, 0.4f, 0.6f + 0.2f * progress);
+            toll(!hidden, body, Sound.BLOCK_BELL_USE, 1.0f, 0.5f + 0.25f * progress);
+            toll(!hidden, body, Sound.BLOCK_BELL_RESONATE, 0.4f, 0.6f + 0.2f * progress);
             if (!hidden) {
                 Vfx.shockwave(ctx(), owner, target.getLocation().add(0, 0.1, 0), 0.4, 1.4, 4,
                         Particle.DUST_COLOR_TRANSITION, SOUL_GLOW, true);
@@ -594,7 +597,8 @@ public final class ReaperAbility extends Ability {
             }
             double blow = blow();
             Location body = Fx.body(target);
-            // A victim in stealth still pays in full, but the blow draws nothing that would give its position away.
+            // A victim in stealth still pays in full, but the blow draws nothing, and sounds nowhere, that would give
+            // its position away.
             boolean seen = isSeen(target);
             ItemDisplay display = scythe;
             if (display != null && display.isValid() && !seen) {
@@ -627,10 +631,10 @@ public final class ReaperAbility extends Ability {
                 Vfx.shockwave(ctx(), owner, target.getLocation().add(0, 0.1, 0), 0.4, 2.6, 5, Particle.DUST,
                         ROBE_DUST, true);
             }
-            Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.2f, 0.5f);
-            Fx.sound(body, Sound.BLOCK_BELL_USE, 1.4f, 1.0f);
-            Fx.sound(body, Sound.ITEM_TRIDENT_THUNDER, 0.5f, 1.6f + Fx.jitter(0.05f));
-            Fx.sound(body, Sound.PARTICLE_SOUL_ESCAPE, 1.5f, 0.5f);
+            toll(seen, body, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.2f, 0.5f);
+            toll(seen, body, Sound.BLOCK_BELL_USE, 1.4f, 1.0f);
+            toll(seen, body, Sound.ITEM_TRIDENT_THUNDER, 0.5f, 1.6f + Fx.jitter(0.05f));
+            toll(seen, body, Sound.PARTICLE_SOUL_ESCAPE, 1.5f, 0.5f);
             if (killed) {
                 TextDisplay verdict = Displays.text(ctx(), owner, body.clone().add(0, 1.4, 0),
                         Text.mm("<b><" + SOUL_TAG + ">처형</" + SOUL_TAG + "></b>"), 0.6f, 24);
@@ -640,6 +644,22 @@ public final class ReaperAbility extends Ability {
             owner.sendActionBar(Text.mm("<" + SOUL_TAG + ">☠ 사신의 표식</" + SOUL_TAG + "> <white>"
                     + AbilityInfo.formatNumber(Math.round(blow * 10) / 10.0) + " 피해</white>"
                     + (killed ? " <" + SOUL_TAG + "><b>처형!</b></" + SOUL_TAG + ">" : "")));
+        }
+
+        /**
+         * Plays {@code sound} at the victim for everyone around ({@code aloud}), or, while the victim hides in
+         * stealth, only in the ears of the victim and the reaper: a bell tolling where nobody can be seen would show
+         * everyone where it hides.
+         */
+        private void toll(boolean aloud, Location at, Sound sound, float volume, float pitch) {
+            if (aloud) {
+                Fx.sound(at, sound, volume, pitch);
+                return;
+            }
+            owner.playSound(owner, sound, SoundCategory.PLAYERS, volume, pitch);
+            if (target instanceof Player victim && victim.isOnline()) {
+                victim.playSound(victim, sound, SoundCategory.PLAYERS, volume, pitch);
+            }
         }
 
         /** The victim fell before the knell ended: its soul rises and flows into the reaper. */

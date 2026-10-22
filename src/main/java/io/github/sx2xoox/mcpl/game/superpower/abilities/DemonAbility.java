@@ -393,13 +393,14 @@ public final class DemonAbility extends Ability {
                 ignite(enemy, burnTicks);
                 Vector push = Motion.horizontal(direction).multiply(WAVE_PUSH).setY(WAVE_LIFT);
                 Motion.push(enemy, push, MAX_SPEED);
-                Location body = Fx.body(enemy);
+                // A stealthed enemy burns all the same, but nothing is drawn on it or played at it.
                 if (isSeen(enemy)) {
+                    Location body = Fx.body(enemy);
                     Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.SOUL_FIRE_FLAME, false);
                     Vfx.cloud(ctx(), body, Particle.FLAME, 5, 0.25, 0.03, null, false);
+                    Fx.sound(body, Sound.ENTITY_BLAZE_HURT, 0.6f, 0.7f + Fx.jitter(0.1f));
+                    Fx.sound(body, Sound.ITEM_FIRECHARGE_USE, 0.5f, 1.4f + Fx.jitter(0.1f));
                 }
-                Fx.sound(body, Sound.ENTITY_BLAZE_HURT, 0.6f, 0.7f + Fx.jitter(0.1f));
-                Fx.sound(body, Sound.ITEM_FIRECHARGE_USE, 0.5f, 1.4f + Fx.jitter(0.1f));
             }
         }
 
@@ -577,7 +578,7 @@ public final class DemonAbility extends Ability {
 
     /**
      * False for an enemy player hidden from the demon by stealth: area hits still reach it, but no effect is drawn on
-     * it that would give its position away.
+     * it or played at it that would give its position away.
      */
     private boolean isSeen(LivingEntity entity) {
         return !(entity instanceof Player hidden) || player().canSee(hidden);
@@ -818,11 +819,12 @@ public final class DemonAbility extends Ability {
                     away = new Vector(Math.cos(angle), 0, Math.sin(angle));
                 }
                 Motion.push(enemy, away.multiply(PILLAR_PUSH).setY(PILLAR_LIFT), MAX_SPEED);
-                Location body = Fx.body(enemy);
+                // A stealthed enemy is struck all the same, but nothing is drawn on it or played at it.
                 if (isSeen(enemy)) {
+                    Location body = Fx.body(enemy);
                     Vfx.burst(ctx(), body, PALETTE, 0.7, Particle.SOUL_FIRE_FLAME, true);
+                    Fx.sound(body, Sound.ENTITY_BLAZE_HURT, 0.6f, 0.6f + Fx.jitter(0.1f));
                 }
-                Fx.sound(body, Sound.ENTITY_BLAZE_HURT, 0.6f, 0.6f + Fx.jitter(0.1f));
             }
         }
 

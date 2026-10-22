@@ -144,6 +144,8 @@ public final class GhostAbility extends Ability {
         long until;
         final List<NamespacedKey> modifiers = new ArrayList<>();
         @Nullable TextDisplay mark;
+        /** The mark's view range while the enemy is seen (it is 0 while the enemy hides in stealth). */
+        float markRange;
     }
 
     @Override
@@ -335,7 +337,7 @@ public final class GhostAbility extends Ability {
         }
         long token = fear.until;
         Loop.repeat(ctx(), owner, 1, 1, duration, run -> flee(enemy, fear, token, run), () -> calm(enemy, fear, token));
-        if (enemy instanceof Player hidden && !owner.canSee(hidden)) {
+        if (!isSeen(enemy)) {
             // Still terrified, but nothing over its head gives a stealthed enemy away.
             return;
         }
@@ -344,6 +346,7 @@ public final class GhostAbility extends Ability {
         mark.setTeleportDuration(1);
         Displays.animateNextTick(ctx(), owner, mark, Displays.centered(0, 0, 0, 1.6f, 1.6f, 1.6f, 0, 0, 0), 3);
         fear.mark = mark;
+        fear.markRange = mark.getViewRange();
 
         Location body = Fx.body(enemy);
         Vfx.cloud(ctx(), body, Particle.DUST_COLOR_TRANSITION, 10, 0.3, 0, CHILL, false);
@@ -358,12 +361,20 @@ public final class GhostAbility extends Ability {
             return false;
         }
         ThreadLocalRandom random = ThreadLocalRandom.current();
+        boolean shown = isSeen(enemy);
         TextDisplay mark = fear.mark;
         if (mark != null && mark.isValid()) {
-            Displays.moveTo(mark, overHead(enemy).add(random.nextDouble(-0.07, 0.07), random.nextDouble(-0.05, 0.05),
-                    random.nextDouble(-0.07, 0.07)));
+            // The "!" stays behind, unseen, while the enemy hides in stealth: one floating over thin air (or still
+            // following it) would show everyone where it hides. It comes back over its head when it is seen again.
+            if (shown) {
+                Displays.moveTo(mark, overHead(enemy).add(random.nextDouble(-0.07, 0.07),
+                        random.nextDouble(-0.05, 0.05), random.nextDouble(-0.07, 0.07)));
+            }
+            float range = shown ? fear.markRange : 0f;
+            if (mark.getViewRange() != range) {
+                mark.setViewRange(range);
+            }
         }
-        boolean shown = !(enemy instanceof Player hidden && !player().canSee(hidden));
         if (run % FLEE_PERIOD == 0) {
             Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(player().getLocation().toVector()));
             if (away.lengthSquared() < 1.0E-6) {
@@ -399,6 +410,11 @@ public final class GhostAbility extends Ability {
         if (mark != null && mark.isValid()) {
             Displays.shrinkAway(ctx(), player(), mark, 3);
         }
+    }
+
+    /** False for an enemy player hidden from the ghost by stealth: nothing may be drawn on it or played at it. */
+    private boolean isSeen(LivingEntity entity) {
+        return !(entity instanceof Player hidden) || player().canSee(hidden);
     }
 
     private static Location overHead(LivingEntity enemy) {
@@ -562,7 +578,7 @@ public final class GhostAbility extends Ability {
                         false, true, true));
             }
             // A stealthed enemy is hit and slowed all the same, but nothing drawn on it gives it away.
-            if (!(enemy instanceof Player hidden) || owner.canSee(hidden)) {
+            if (isSeen(enemy)) {
                 Location at = Fx.body(enemy);
                 Vfx.burst(ctx(), at, PALETTE, 0.6, Particle.SNOWFLAKE, true);
                 Vfx.trail(body, at, PALETTE.core(), 4, true);
