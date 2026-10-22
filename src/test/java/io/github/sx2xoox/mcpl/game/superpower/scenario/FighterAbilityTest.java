@@ -889,7 +889,10 @@ class FighterAbilityTest {
     /**
      * Players whose real position is their client's: every client tick each moves by the last velocity the server
      * sent it (then gravity, slow falling and drag, vanilla style, over a flat floor), and the server sees where it is
-     * {@code lag} ticks late. The harness's own physics is off while they run.
+     * {@code lag} ticks late. The server also falls with what it sees, like vanilla's
+     * {@code ServerPlayer#doCheckFallDamage}: each descent it hears adds to the fall distance (slow falling keeps it at
+     * zero, like the harness's own physics), and the move that lands charges fall damage for it. The harness's own
+     * physics is off while they run.
      */
     private static final class LaggyClients {
 
@@ -986,7 +989,28 @@ class FighterAbilityTest {
                 Location look = player.getLocation();
                 seen.setYaw(look.getYaw());
                 seen.setPitch(look.getPitch());
+                float fall = player.getFallDistance();
                 player.teleport(seen);
+                hear(seen.getY() - look.getY(), fall);
+            }
+
+            /** What the server makes of a move it hears that went {@code dy} up or down: the fall, and a landing. */
+            private void hear(double dy, float fallBefore) {
+                float fall = fallBefore;
+                if (player.hasPotionEffect(PotionEffectType.SLOW_FALLING)) {
+                    fall = 0;
+                } else if (dy < 0) {
+                    fall += (float) -dy;
+                }
+                if (player.getLocation().getY() <= FlatWorld.SURFACE + 1.0E-6 && fall > 0) {
+                    AttributeInstance safe = player.getAttribute(Attribute.SAFE_FALL_DISTANCE);
+                    int damage = (int) Math.ceil(fall - (safe != null ? safe.getValue() : 3.0));
+                    fall = 0;
+                    if (damage > 0) {
+                        player.damage(damage, DamageSource.builder(DamageType.FALL).build());
+                    }
+                }
+                player.setFallDistance(fall);
             }
         }
     }
@@ -1107,8 +1131,49 @@ class FighterAbilityTest {
             assertTrue(s.hitsOf(s.owner, DamageCause.FALL).isEmpty(), ping + " ms: no fall damage: " + s.hits());
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(s.paramTicks("crater_duration") + 40);
-            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), ping + " ms: the drive replaces the fall");
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), ping + " ms: the drive replaces the fall: "
+                    + s.hits());
             s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /**
+     * With no room beside it the piledriver drives the enemy down on the owner's shoulders, and the enemy drops the
+     * last couple of blocks off them after the impact. The impact lands where the lagging clients really are, while
+     * the server still has a round trip of their descent to hear: with the safety net gone and nothing keeping the
+     * fall at zero any more, the enemy took fall damage on top of the drive at 150 and 250 ms.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void piledriverOnTheShouldersOfLaggingPlayersReplacesTheFall(int ping) {
+        try (Scenario s = Scenario.ffa("fighter")) {
+            // A ceiling six blocks up with a single hole right above the owner: room to leap, none beside it.
+            int ceiling = FlatWorld.FLOOR_Y + 7;
+            slab(s.world, -4, 4, ceiling, -4, 6, Material.STONE);
+            s.world.setBlock(0, ceiling, 0, Material.AIR);
+            s.place(s.enemy, 0.5, 2.5, 180); // close enough to grab without a dash
+            s.place(s.enemy2, 12.5, 0.5, 270);
+            s.owner.setPing(ping);
+            s.enemy.setPing(ping);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "파일드라이버");
+            LaggyClients clients = new LaggyClients(s, ping / 50, s.owner, s.enemy);
+            double enemyTop = FlatWorld.SURFACE;
+            for (int i = 0; i < 60; i++) {
+                clients.tick();
+                enemyTop = Math.max(enemyTop, clients.at(s.enemy).getY());
+            }
+            Location down = clients.at(s.enemy);
+            clients.close();
+            assertTrue(enemyTop > ceiling, ping + " ms: carried up through the hole: " + enemyTop);
+            assertEquals(FlatWorld.SURFACE, down.getY(), 1.0E-3, ping + " ms: down on the floor");
+            assertEquals(s.param("ult_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    ping + " ms: driven down on the shoulders once");
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), ping + " ms: no fall damage on top: " + s.hits());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(s.paramTicks("crater_duration") + 20);
+            slab(s.world, -4, 4, ceiling, -4, 6, Material.AIR);
             s.finishClean();
         }
     }

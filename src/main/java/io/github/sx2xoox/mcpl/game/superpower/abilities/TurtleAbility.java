@@ -1,5 +1,6 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -128,6 +129,12 @@ public final class TurtleAbility extends Ability {
     private static final double WALL_PROBE_FEET = 0.3;
     /** Halvings that find where a step of the shell meets a block: to a thousandth of a block. */
     private static final int SLIDE_HALVINGS = 10;
+    /** What is left of a client's move that starts in a cobweb, powder snow or a berry bush (vanilla stuck speeds). */
+    private static final double WEB_STUCK = 0.25;
+    private static final double SNOW_STUCK = 0.9;
+    private static final double BERRY_STUCK = 0.8;
+    /** Vanilla shrinks a body by this much before looking for the blocks it is in. */
+    private static final double INSIDE_MARGIN = 1.0E-5;
     private static final long SPIN_GRACE_TICKS = 3;
     private static final double STALL_EPSILON = 0.08;
     private static final int STALL_LIMIT = 3;
@@ -167,6 +174,17 @@ public final class TurtleAbility extends Ability {
     private long lastBlockFeedback = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
 
     private record GiantRing(double elevation, int slots, float size, Material material, double openFront) {
+    }
+
+    /** A step sent to the spinning shell, and how much of it the shell could run as last reckoned. */
+    private static final class SpinStep {
+        private final Vector move;
+        private double run;
+
+        SpinStep(Vector move, double run) {
+            this.move = move;
+            this.run = run;
+        }
     }
 
     @Override
@@ -477,17 +495,20 @@ public final class TurtleAbility extends Ability {
      * When the shell runs into a wall (a block right in front of its body) or the arena border, it bounces off; the
      * distance travelled, the bounces and a timeout end it.
      *
-     * <p>The shell is followed by dead reckoning: its client moves by every velocity at once, while the server sees it
-     * there only a round trip later, so the shell really is where it started plus every step sent since, each cut
-     * short at the first block in its way. The distance is counted on those steps, and walls and enemies are met where
-     * that reckoned shell is: judged on the server's view, a lagging turtle slid on past its end, sat against a wall
-     * for a round trip before it bounced off, and bowled enemies over a round trip after it had rolled through them
-     * (by then they could have stepped aside, or into the trail it had long left). Should the server see the shell
-     * stopped against a wall the reckoning missed (knocked off its line), the reckoning starts again from there and
-     * the shell bounces off. Once the whole length is sent (or the last wall is reached) the shell brakes and the spin
-     * waits for the server to see it arrive. A real client often falls short of what it was sent (a lost velocity
-     * packet, a hit landing right after a push), so a shell that comes to rest with no wall in front is never bounced
-     * back off nothing: before the end it is pushed on, after it the spin is over.
+     * <p>The shell is followed where it really is. Its client moves by every velocity at once, while the server sees
+     * it there only a round trip later: judged on the server's view, a lagging turtle slid on past its end, sat
+     * against a wall for a round trip before it bounced off, and bowled enemies over a round trip after it had rolled
+     * through them (by then they could have stepped aside, or into the trail it had long left). So the shell is
+     * reckoned every tick from where the server sees it, moved on by the steps of the last round trip (sent, but not
+     * yet seen run), each as its client runs it: cut short at the first block in its way and held back by a cobweb it
+     * is caught in. Whatever else moved the shell (its player's own keys, a knockback, a lost velocity packet) is in
+     * the server's view a round trip later, so the reckoning is never further off than what that did within one round
+     * trip, and with no ping at all it is the server's view itself. The distance is counted on the steps as far as the
+     * shell could run them, and walls, the border and enemies are met where the reckoned shell is. Once the whole
+     * length is sent (or the last wall is reached) the shell brakes and the spin waits for the server to see it
+     * arrive. A real client often falls short of what it was sent (a lost velocity packet, a hit landing right after
+     * a push), so a shell that comes to rest with no wall in front is never bounced back off nothing: before the end
+     * it is pushed on, after it the spin is over.
      */
     private final class Spin implements LongPredicate {
 
@@ -502,9 +523,11 @@ public final class TurtleAbility extends Ability {
         private Location last;
         /** The path length the server has seen the shell slide. */
         private double traveled;
-        /** The path length the shell was sent and could run: the sum of its steps, each cut short at a wall. */
-        private double sent;
-        /** Where the shell really is (its client): where it started plus every step sent since. */
+        /** How far the shell ran the steps the server has already seen it run. */
+        private double settled;
+        /** The steps of the last round trip, oldest first: sent, but not yet seen run by the server. */
+        private final ArrayDeque<SpinStep> unseen = new ArrayDeque<>();
+        /** Where the shell really is (its client): where the server sees it, moved on by the steps it has yet to see. */
         private Location client;
         /** Where the reckoned shell was when enemies were last looked for. */
         private Location reached;
@@ -546,27 +569,56 @@ public final class TurtleAbility extends Ability {
         }
 
         /**
-         * Sends the next step: a full one, or exactly what is left of the distance. The reckoned shell runs it up to
-         * the first block in its way, and only what it could run counts.
+         * Sends the next step: a full one, or one that runs exactly what is left of the distance. Only what the shell
+         * could run of it counts (see {@link #sent()}).
          */
         private void push() {
-            double step = Math.min(SPIN_SPEED, distance - sent);
-            Vector run = slide(client, direction.clone().multiply(step));
-            sent += Math.hypot(run.getX(), run.getZ());
-            client.add(run);
-            owner.setVelocity(direction.clone().multiply(step).setY(SPIN_SINK));
+            double left = distance - sent();
+            send(direction.clone().multiply(Math.min(SPIN_SPEED, left / stuck(client))));
             owner.setFallDistance(0);
-            if (sent >= distance - 1.0E-6) {
+            if (sent() >= distance - 1.0E-6) {
                 coasting = 0;
             }
         }
 
-        /** The shell is stopped where the server sees it (against a wall): nothing sent is still on its way. */
-        private void resync(Location now) {
-            sent = traveled;
-            client = now.clone();
-            reached = now.clone();
-            coasting = -1;
+        /** Sends {@code move} to the shell, which its client runs right away: the reckoned shell runs it too. */
+        private void send(Vector move) {
+            Vector run = slide(client, move);
+            client.add(run);
+            remember(new SpinStep(move, Math.hypot(run.getX(), run.getZ())));
+            owner.setVelocity(move.clone().setY(SPIN_SINK));
+        }
+
+        /** Keeps {@code step} among the unseen ones; the oldest is seen by now (a round trip has passed). */
+        private void remember(SpinStep step) {
+            unseen.addLast(step);
+            while (unseen.size() > lag) {
+                settled += unseen.removeFirst().run;
+            }
+        }
+
+        /** The path length the shell was sent and could run: every step, cut short at a wall, held back in a web. */
+        private double sent() {
+            double sum = settled;
+            for (SpinStep step : unseen) {
+                sum += step.run;
+            }
+            return sum;
+        }
+
+        /**
+         * Where the shell really is: where the server sees it ({@code now}), moved on by every step it has yet to see
+         * the shell run, each as the client runs it from there. Only x and z are reckoned: the shell slides along the
+         * ground the server sees.
+         */
+        private void reckon(Location now) {
+            Location at = now.clone();
+            for (SpinStep step : unseen) {
+                Vector run = slide(at, step.move);
+                step.run = Math.hypot(run.getX(), run.getZ());
+                at.add(run);
+            }
+            client = at;
         }
 
         @Override
@@ -582,8 +634,7 @@ public final class TurtleAbility extends Ability {
                 moved = true;
             }
             last = now;
-            // Only x and z are reckoned: the shell slides along the ground the server sees.
-            client.setY(now.getY());
+            reckon(now);
             reached.setY(now.getY());
             // Whoever the shell rolled over since the last tick is bowled over: met where the shell really is.
             strike(reached, client);
@@ -593,30 +644,24 @@ public final class TurtleAbility extends Ability {
                 stalls = step < STALL_EPSILON && sinceBounce > lag + 2 ? stalls + 1 : 0;
                 stalled = stalls >= STALL_LIMIT;
             }
-            if (coasting >= 0 && traveled >= sent - CATCH_UP) {
-                return false; // the server has seen it get all the way there
+            if (coasting < 0 && sent() >= distance - 1.0E-6) {
+                coasting = 0; // re-reckoned, the steps already sent run the whole length after all
             }
-            if (sinceBounce > lag + 2 && wallAhead(now)) {
-                // The server sees the shell against a wall the reckoning missed (it was knocked off its line): it is
-                // really there, so the reckoning starts again from it and the shell bounces off.
-                if (traveled >= distance - CATCH_UP) {
-                    return false;
-                }
-                resync(now);
-                if (!bounce(now)) {
-                    return false;
-                }
-            } else if (coasting >= 0) {
-                if (stalled) {
-                    // All of it was sent and the shell came to rest short of the end with nothing in front: the
-                    // client lost some of the slide (a velocity packet overwritten, a hit right after a push).
+            if (coasting >= 0) {
+                if (traveled >= sent() - CATCH_UP || stalled) {
+                    // The server has seen it get all the way there, or come to rest short of the end with nothing
+                    // in front: the client lost some of the slide (a velocity packet overwritten, a hit right after a
+                    // push). Either way the spin is over.
                     return false;
                 }
                 if (coasting++ == 0) {
                     brake();
+                } else {
+                    remember(new SpinStep(new Vector(), 0)); // nothing sent this tick
                 }
                 return coasting <= MAX_LAG_TICKS + 1;
-            } else if (wallAhead(client)
+            }
+            if (wallAhead(client)
                     || !ctx().isInsideArena(client.clone().add(direction.clone().multiply(SPIN_SPEED * 2)))) {
                 // A wall right in front of where the shell really is (or the border ahead of it): it bounces off now,
                 // not a round trip later when the server sees it there.
@@ -634,7 +679,7 @@ public final class TurtleAbility extends Ability {
 
         private void brake() {
             braked = true;
-            owner.setVelocity(direction.clone().multiply(0.1).setY(SPIN_SINK));
+            send(direction.clone().multiply(0.1));
         }
 
         /**
@@ -658,17 +703,47 @@ public final class TurtleAbility extends Ability {
         }
 
         /**
-         * How far the shell standing at {@code at} really slides by the horizontal {@code move}: like a client, axis by
-         * axis (the longer first), each up to the first block in the way.
+         * How far the shell standing at {@code at} really slides by the horizontal {@code move}: like a client, held
+         * back when it starts in a cobweb ({@link #stuck}), then axis by axis (the longer first), each up to the first
+         * block in the way.
          */
         private Vector slide(Location at, Vector move) {
             World world = at.getWorld();
             BoundingBox box = shellBox(at);
-            boolean xFirst = Math.abs(move.getX()) >= Math.abs(move.getZ());
-            double first = free(world, box, xFirst ? move.getX() : 0, xFirst ? 0 : move.getZ());
+            double share = stuck(at);
+            double moveX = move.getX() * share;
+            double moveZ = move.getZ() * share;
+            boolean xFirst = Math.abs(moveX) >= Math.abs(moveZ);
+            double first = free(world, box, xFirst ? moveX : 0, xFirst ? 0 : moveZ);
             box.shift(xFirst ? first : 0, 0, xFirst ? 0 : first);
-            double second = free(world, box, xFirst ? 0 : move.getX(), xFirst ? move.getZ() : 0);
+            double second = free(world, box, xFirst ? 0 : moveX, xFirst ? moveZ : 0);
             return xFirst ? new Vector(first, 0, second) : new Vector(second, 0, first);
+        }
+
+        /**
+         * The share of a move the shell standing at {@code at} makes: a client whose body is in a cobweb, powder snow
+         * or a berry bush has its next move held back (vanilla's stuck speed), the stickiest of them counting.
+         */
+        private double stuck(Location at) {
+            BoundingBox box = owner.getBoundingBox();
+            double halfX = box.getWidthX() / 2 - INSIDE_MARGIN;
+            double halfZ = box.getWidthZ() / 2 - INSIDE_MARGIN;
+            double top = at.getY() + box.getHeight() - INSIDE_MARGIN;
+            World world = at.getWorld();
+            double share = 1;
+            for (int x = (int) Math.floor(at.getX() - halfX); x <= (int) Math.floor(at.getX() + halfX); x++) {
+                for (int y = (int) Math.floor(at.getY() + INSIDE_MARGIN); y <= (int) Math.floor(top); y++) {
+                    for (int z = (int) Math.floor(at.getZ() - halfZ); z <= (int) Math.floor(at.getZ() + halfZ); z++) {
+                        share = Math.min(share, switch (world.getBlockAt(x, y, z).getType()) {
+                            case COBWEB -> WEB_STUCK;
+                            case SWEET_BERRY_BUSH -> BERRY_STUCK;
+                            case POWDER_SNOW -> SNOW_STUCK;
+                            default -> 1.0;
+                        });
+                    }
+                }
+            }
+            return share;
         }
 
         /** The part of a move along one horizontal axis ({@code x} or {@code z}) that is free of blocks. */

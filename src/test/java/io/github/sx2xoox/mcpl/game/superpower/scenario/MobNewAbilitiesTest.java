@@ -23,6 +23,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.block.Block;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
@@ -49,6 +50,8 @@ class MobNewAbilitiesTest {
     private static final double BASE_JUMP = 0.42;
     /** The turtle's shell bounces off a wall from at most this far in front of it (its wall probe). */
     private static final double WALL_GAP = 0.3;
+    /** What a walking key adds to a player's motion every tick on the ground (vanilla's {@code moveRelative}). */
+    private static final double WALK_KEY = 0.13;
 
     private static long displays(Scenario s) {
         return s.world.getEntities().stream().filter(entity -> entity instanceof Display).count();
@@ -156,11 +159,14 @@ class MobNewAbilitiesTest {
      * ({@code Player#getVelocity} only returns what the server last sent): the client moves by exactly the velocities
      * it is sent, one per client tick, keeps its own motion in between (sliding to a halt like on the ground), is
      * stopped by blocks like a real one, and the server sees where it is {@code lag} ticks late. World physics must be
-     * off: this moves the player.
+     * off: this moves the player. Like a real client it may also add a movement key of its own to every move
+     * ({@link #hold}), and a cobweb it is in holds it back like vanilla's.
      */
     private static final class LaggyClient {
         /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
         private static final double MARK = 1.0E-9;
+        /** What is left of a move that starts in a cobweb (vanilla {@code WebBlock}); the motion is lost too. */
+        private static final Vector WEBBED = new Vector(0.25, 0.05, 0.25);
         private final Scenario s;
         private final TestPlayer player;
         private final Deque<Location> late = new ArrayDeque<>();
@@ -168,8 +174,10 @@ class MobNewAbilitiesTest {
         private final Vector velocity;
         private final Map<Integer, Function<Vector, @Nullable Vector>> interference = new HashMap<>();
         private final List<Vector> log = new ArrayList<>();
+        private final Vector input = new Vector();
         private Vector sent;
         private int ticks;
+        private boolean webbed;
 
         /** Starts with whatever velocity was already sent (by a skill used just now, outside a tick). */
         LaggyClient(Scenario s, TestPlayer player, int lag) {
@@ -204,9 +212,25 @@ class MobNewAbilitiesTest {
             return List.copyOf(log);
         }
 
+        /**
+         * The player holds a movement key: every client tick {@code key} is added to its motion before it moves, like
+         * vanilla's {@code moveRelative} (about 0.13 blocks a tick walking on the ground).
+         */
+        LaggyClient hold(Vector key) {
+            input.copy(key);
+            return this;
+        }
+
         /** One client tick with what it was sent so far, then one server tick, which may send something new. */
         void tick() {
-            at.add(blockedStep(velocity));
+            velocity.add(input);
+            Vector motion = velocity.clone();
+            if (webbed) {
+                motion.multiply(WEBBED);
+                velocity.zero();
+            }
+            at.add(blockedStep(motion));
+            webbed = inCobweb();
             boolean grounded = at.getY() <= FlatWorld.SURFACE;
             if (grounded) {
                 at.setY(FlatWorld.SURFACE);
@@ -259,6 +283,22 @@ class MobNewAbilitiesTest {
                 velocity.setZ(0);
             }
             return new Vector(dx, dy, dz);
+        }
+
+        /** Whether the player's body is in a cobweb now, which holds back its next move (vanilla's stuck speed). */
+        private boolean inCobweb() {
+            double half = player.getWidth() / 2 - 1.0E-5;
+            double top = at.getY() + player.getHeight() - 1.0E-5;
+            for (int x = (int) Math.floor(at.getX() - half); x <= (int) Math.floor(at.getX() + half); x++) {
+                for (int y = (int) Math.floor(at.getY() + 1.0E-5); y <= (int) Math.floor(top); y++) {
+                    for (int z = (int) Math.floor(at.getZ() - half); z <= (int) Math.floor(at.getZ() + half); z++) {
+                        if (s.world.getBlockAt(x, y, z).getType() == Material.COBWEB) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         /** The part of a move along one axis that is free of blocks, to a thousandth of a block. */
@@ -1355,6 +1395,130 @@ class MobNewAbilitiesTest {
             s.ticks(20);
             assertEquals(1.0, scale(s.owner), EPSILON, ping + " ms: back out of the shell");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The player steers its rolling shell with a key of its own, which the server never sends: it only sees where the
+     * shell went, a round trip late. Reckoned from the cast alone (every step sent added up), the shell was judged on
+     * the straight line it had long left, further off with every tick, even at 0 ms where the server's view is exact:
+     * it missed the enemy it rolled right through and bowled over one two blocks off its path. Re-reckoned from the
+     * server's view every tick, it is off by no more than what the key did within one round trip.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void turtleSpinMeetsEnemiesWhereItsPlayerSteersIt(int ping) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            Location through = new Location(s.world, 2.06, FlatWorld.SURFACE, 10.5); // where the steered shell rolls
+            Location aside = new Location(s.world, 0.3, FlatWorld.SURFACE, 11.5); // on the straight line it left
+            s.place(s.enemy, through.getX(), through.getZ(), 180);
+            s.place(s.enemy2, aside.getX(), aside.getZ(), 180);
+            s.owner.setPing(ping);
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            LaggyClient client = new LaggyClient(s, s.owner, ping / 50).hold(new Vector(WALK_KEY, 0, 0));
+            double closest = Double.MAX_VALUE;
+            double nearestAside = Double.MAX_VALUE;
+            for (int i = 0; i < 40; i++) {
+                client.tick();
+                closest = Math.min(closest, horizontalDistance(client.at(), through));
+                nearestAside = Math.min(nearestAside, horizontalDistance(client.at(), aside));
+            }
+            assertTrue(closest < 0.5 && nearestAside > 2.0, ping + " ms: the shell really rolls through one, "
+                    + "far past the other: " + closest + ", " + nearestAside);
+            assertEquals(s.param("spin_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    ping + " ms: the enemy the shell rolled through is bowled over");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON,
+                    ping + " ms: the one on the straight line the shell never rolled along is not");
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A cobweb on the way holds the shell back (a quarter of every move), which the steps sent never showed: reckoned
+     * from them, the shell rolled on through the web on the server's books, bowled over an enemy beyond it while the
+     * real shell was still caught three blocks short, and ended its spin blocks early. The web is now in the
+     * reckoning, and the server's view keeps it honest.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void turtleSpinCaughtInACobwebBowlsOverOnlyWhatItReaches(int ping) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            Block web = s.world.getBlockAt(0, (int) FlatWorld.SURFACE, 3);
+            web.setType(Material.COBWEB);
+            s.place(s.enemy, 0.5, 6.5, 180); // beyond the web
+            s.place(s.enemy2, 8.5, -6.5, 0);
+            s.owner.setPing(ping);
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            LaggyClient client = new LaggyClient(s, s.owner, ping / 50);
+            double length = 0;
+            int held = 0;
+            double hitAt = Double.NaN;
+            Location before = client.at();
+            for (int i = 0; i < 60; i++) {
+                client.tick();
+                double step = horizontalDistance(before, client.at());
+                length += step;
+                if (step > 0.05 && step < 0.3) {
+                    held++;
+                }
+                before = client.at();
+                if (Double.isNaN(hitAt) && s.damageBy(s.owner, s.enemy) > 0) {
+                    hitAt = client.at().getZ();
+                }
+            }
+            assertTrue(held >= 3, ping + " ms: the web held the shell back: " + held);
+            assertEquals(s.param("spin_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    ping + " ms: the enemy beyond the web is bowled over");
+            assertTrue(6.5 - hitAt < 1.3, ping + " ms: once the shell gets to it, not while it is still caught in the "
+                    + "web: the shell was at " + hitAt);
+            assertEquals(s.param("spin_distance"), length, 0.6,
+                    ping + " ms: the web slows the shell down, it still rolls its whole length");
+            web.setType(Material.AIR);
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The player holds its back key against the spin. Reckoned from the steps sent alone, the shell bounced off the
+     * wall a block short of it (where the steps said it was), even at 0 ms. Re-reckoned from the server's view, it is
+     * off by no more than what the key did within one round trip.
+     */
+    @ParameterizedTest(name = "{0} ms")
+    @ValueSource(ints = {0, 150, 250})
+    void turtleSpinHeldBackBouncesOffTheWallWhereItReallyIs(int ping) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.world.wallAlongX(-3, 3, 6, 3, Material.STONE);
+            s.place(s.enemy, 8.5, -6.5, 0);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            s.owner.setPing(ping);
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            double face = 6 - s.owner.getWidth() / 2; // where the shrunk turtle touches the wall
+            LaggyClient client = new LaggyClient(s, s.owner, ping / 50).hold(new Vector(0, 0, -WALK_KEY));
+            double deepest = client.at().getZ();
+            for (int i = 0; i < 50; i++) {
+                client.tick();
+                deepest = Math.max(deepest, client.at().getZ());
+            }
+            double slack = WALL_GAP + ping / 50 * WALK_KEY + 0.02;
+            assertTrue(deepest <= face + 1.0E-3, ping + " ms: never into the wall: " + deepest);
+            assertTrue(deepest > face - slack, ping + " ms: it bounces off the wall, not " + (face - deepest)
+                    + " short of it");
+            assertTrue(client.at().getZ() < s.owner.getWidth(), ping + " ms: it came back: " + client.at());
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(1.0, scale(s.owner), EPSILON, ping + " ms: back out of the shell");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.world.wallAlongX(-3, 3, 6, 3, Material.AIR);
             s.finishClean();
         }
     }

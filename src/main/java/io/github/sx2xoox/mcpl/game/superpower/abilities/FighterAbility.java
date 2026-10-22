@@ -193,6 +193,15 @@ public final class FighterAbility extends Ability {
     private static final double DRIFT_LIMIT = 7.0;
     /** Slow falling given to a held body as a safety net beyond the planned hold, so a lost grip never hurts it. */
     private static final long SAFETY_FALL_TICKS = 60;
+    /**
+     * After the impact a slammed body's fall stays at zero until the server has seen it on the ground this long (see
+     * {@link #guardImpact}), for at least a round trip and at most {@link #IMPACT_GUARD_TICKS} beyond one.
+     */
+    private static final int IMPACT_SETTLE_TICKS = 3;
+    private static final long IMPACT_GUARD_TICKS = 30;
+    /** The round trip is read from the ping, capped (ping can read 0 after joining, or spike). */
+    private static final long MAX_LAG_TICKS = 8;
+    private static final double MILLIS_PER_TICK = 50.0;
     private static final long LANDING_GRACE_TICKS = 160;
     private static final double REBOUND_BACK = 0.3;
     private static final double REBOUND_UP = 0.42;
@@ -640,6 +649,7 @@ public final class FighterAbility extends Ability {
             Location feet = held.location();
             target.setFallDistance(0);
             clearSafety(target);
+            guardImpact(target);
             Combat.hit(ctx(), owner, target, Math.max(0, params().num("suplex_damage")));
             if (Combat.isTargetable(ctx(), owner, target)) {
                 long stun = params().ticks("suplex_stun");
@@ -761,7 +771,8 @@ public final class FighterAbility extends Ability {
      *
      * <p>The held enemy is silenced while held and gets slow falling as a safety net, removed at the impact: if the
      * grip is lost in the air (the enemy dies or is carried off, the owner dies or is pushed away), it floats down
-     * instead of taking fall damage. The owner's landing is guarded by its own loop.
+     * instead of taking fall damage. The drive replaces its fall: from the impact on its fall stays at zero until the
+     * server has seen it land (see {@link #guardImpact}). The owner's landing is guarded by its own loop.
      */
     private final class Piledriver implements LongPredicate {
 
@@ -956,6 +967,7 @@ public final class FighterAbility extends Ability {
             Location point = drive == null ? ownerBody.location() : heldBody.location();
             clearSafety(target);
             target.setFallDistance(0);
+            guardImpact(target);
             owner.setFallDistance(0);
             Combat.hit(ctx(), owner, target, Math.max(0, params().num("ult_damage")));
             boolean knockedOut = isDown(target);
@@ -1597,6 +1609,32 @@ public final class FighterAbility extends Ability {
                 && effect.getAmplifier() == 0) {
             held.removePotionEffect(PotionEffectType.SLOW_FALLING);
         }
+    }
+
+    /**
+     * Keeps a body just slammed or driven into the ground from adding up a fall until the server has seen it come
+     * down. The impact lands where a lagging player's client already is (see {@link Reckoning}), while the server has
+     * yet to hear the last round trip of the descent: added up after the impact, with the safety net gone, that
+     * descent cost fall damage on top of the hit. So the body's fall distance stays at zero every tick for a round
+     * trip at least, and until the server has seen it on the ground for {@link #IMPACT_SETTLE_TICKS} (at most
+     * {@link #IMPACT_GUARD_TICKS} beyond the round trip).
+     */
+    private void guardImpact(LivingEntity body) {
+        long lag = body instanceof Player held ? lagTicks(held) : 0;
+        int[] grounded = {0};
+        Loop.repeat(ctx(), player(), 0, 1, lag + IMPACT_GUARD_TICKS, run -> {
+            if (!body.isValid() || body.isDead()) {
+                return false;
+            }
+            body.setFallDistance(0);
+            grounded[0] = Motion.isGrounded(body) || body.isInWater() ? grounded[0] + 1 : 0;
+            return run < lag || grounded[0] < IMPACT_SETTLE_TICKS;
+        });
+    }
+
+    /** Ticks the server hears a player's movement late: one round trip, capped. */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / MILLIS_PER_TICK));
     }
 
     /**
