@@ -164,15 +164,23 @@ final class MatchHud {
                     lines.add(messages.get("hud.active-cooldown",
                             Messages.tag("seconds", Format.number(participant.cooldown.remainingSeconds(now)))));
                 }
-                lines.add(participant.gauge.isFull() ? messages.get("hud.ultimate-ready")
-                        : messages.get("hud.ultimate", Messages.tag("percent", participant.gauge.level())));
+                if (participant.gauge.isFull()) {
+                    lines.add(messages.get("hud.ultimate-ready"));
+                } else if (participant.isGaugeLocked(now)) {
+                    lines.add(messages.get("hud.ultimate-locked",
+                            Messages.tag("seconds", seconds(participant.gaugeLockedUntil - now))));
+                } else {
+                    lines.add(messages.get("hud.ultimate", Messages.tag("percent", participant.gauge.level())));
+                }
             }
         }
         if (session.isTeamMode()) {
             MatchTeam team = session.teamOf(participant.id());
             if (team != null) {
                 lines.add(Component.empty());
-                lines.add(messages.get("hud.team", Messages.tag("team", team.displayName())));
+                // "팀 빨강", not "팀 빨강 팀" (displayName already ends with 팀).
+                lines.add(messages.get("hud.team",
+                        Messages.tag("team", Component.text(team.shortName(), team.color()))));
             }
         }
         if (match.phase() == MatchPhase.FIGHT) {

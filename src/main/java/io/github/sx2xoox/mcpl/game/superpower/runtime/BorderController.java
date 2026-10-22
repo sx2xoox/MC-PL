@@ -37,7 +37,8 @@ final class BorderController {
         border.setWarningDistance(5);
     }
 
-    private boolean shrinks() {
+    /** False when the final size is not smaller than the arena (the border never moves). */
+    boolean shrinks() {
         return finalSize < initialSize - 0.5;
     }
 

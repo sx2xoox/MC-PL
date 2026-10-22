@@ -28,6 +28,8 @@ public final class Participant {
     boolean granted;
 
     final UltimateGauge gauge = new UltimateGauge();
+    /** Fight tick until which the gauge earns nothing (set by a successful ultimate). */
+    long gaugeLockedUntil;
     final Cooldown cooldown = new Cooldown();
     long silencedUntil;
     boolean silenceShown;
@@ -36,6 +38,8 @@ public final class Participant {
     List<String> candidates = List.of();
     @Nullable ChoiceMenu menu;
     boolean chosen;
+    /** How often the player closed the menu without picking (it is reopened a limited number of times). */
+    int menuCloses;
 
     /** Session tick of the last right-click, to ignore the duplicate block+air interaction of one click. */
     long lastUseTick = -1;
@@ -82,5 +86,10 @@ public final class Participant {
 
     public boolean isSilenced(long now) {
         return silencedUntil > now;
+    }
+
+    /** True while the gauge earns nothing after an ultimate ({@code ultimate.recharge-delay-seconds}). */
+    public boolean isGaugeLocked(long now) {
+        return gaugeLockedUntil > now;
     }
 }
