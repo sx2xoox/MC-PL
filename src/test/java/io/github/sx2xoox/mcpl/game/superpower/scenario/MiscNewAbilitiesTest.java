@@ -19,6 +19,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
@@ -29,6 +30,7 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
@@ -600,6 +602,31 @@ class MiscNewAbilitiesTest {
     }
 
     @Test
+    void dimensionSafetyNetCountsAbsorptionHeartsOnlyOnce() {
+        try (Scenario s = Scenario.ffa("dimension")) {
+            s.place(s.enemy, 8.5, 12.5, 180);
+            s.ticks(20);
+            // Absorption hearts, as from a golden apple.
+            NamespacedKey apple = new NamespacedKey("test", "apple");
+            s.owner.getAttribute(Attribute.MAX_ABSORPTION).addModifier(new AttributeModifier(apple, 4,
+                    AttributeModifier.Operation.ADD_NUMBER, EquipmentSlotGroup.ANY));
+            s.owner.setHealth(10);
+            s.owner.setAbsorptionAmount(4);
+            assertEquals(4, s.owner.getAbsorptionAmount(), EPSILON);
+            // About 14 fall damage: the absorption hearts soak 4, the remaining 10 or more would kill the owner.
+            s.place(s.owner, 6.5, FlatWorld.SURFACE + 17, 6.5, 0, 0);
+            s.h.tickUntil(() -> s.owner.getLocation().getY() < FlatWorld.SURFACE + 0.5, 200, "the fall");
+            s.ticks(3);
+            assertTrue(s.session.isAlive(s.owner), "the net caught a fall that only absorption made look survivable");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, s.hits().toString());
+            assertTrue(horizontalDistance(s.owner.getLocation(), new Location(s.world, 0.5, 64, 0.5)) < 0.1,
+                    "back on the last safe ground: " + s.owner.getLocation());
+            s.owner.getAttribute(Attribute.MAX_ABSORPTION).removeModifier(apple);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void dimensionSafetyNetCatchesTheVoidAndPrefersTheExitGate() {
         try (Scenario s = Scenario.builder("dimension").param("rescue_charges", 2).start()) {
             s.place(s.enemy, 8.5, 12.5, 180);
@@ -645,6 +672,27 @@ class MiscNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(40);
             assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void dimensionCollapseNeverSwapsAnEnemyIntoTheAir() {
+        try (Scenario s = Scenario.ffa("dimension")) {
+            // enemy2 is high in the air (leaping, flying...): whoever takes its place lands on the ground below.
+            s.world.physics().setEnabled(false);
+            s.place(s.enemy2, 2.0, FlatWorld.SURFACE + 6, 6.5, 180, 0);
+            Location first = s.enemy.getLocation();
+            s.assertSucceeded(s.ultimate(), "차원 붕괴");
+            s.ticks(s.paramTicks("ult_delay") + 2);
+            assertTrue(horizontalDistance(s.enemy.getLocation(), new Location(s.world, 2.0, 64, 6.5)) < 0.1,
+                    "swapped to enemy2's spot: " + s.enemy.getLocation());
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), EPSILON, "but on the ground under it");
+            assertTrue(horizontalDistance(s.enemy2.getLocation(), first) < 0.1, "enemy2 took the enemy's spot");
+            assertEquals(FlatWorld.SURFACE, s.enemy2.getLocation().getY(), EPSILON);
+            s.world.physics().setEnabled(true);
+            s.ticks(40);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
         }
     }

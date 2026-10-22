@@ -71,9 +71,9 @@ public final class DimensionAbility extends Ability {
                             + "입구는 {gate_open}초간 열려 아군도 지나갈 수 있고, 웅크리고 쓰면 출구를 옮깁니다.",
                     12)
             .ultimate("차원 붕괴",
-                    "반경 {ult_radius}블록의 적을 차원의 틈에 가두고 {ult_delay}초 뒤 서로의 위치를 무작위로 뒤섞습니다(한 명이면 "
-                            + "무작위 지점으로). 휘말린 적은 {ult_damage} 피해를 입고 {ult_nausea}초간 멀미, {ult_slow}초간 구속 II에 "
-                            + "걸립니다.")
+                    "반경 {ult_radius}블록의 적에게 차원 표식을 새기고 {ult_delay}초 뒤 표식이 새겨진 적들의 위치를 무작위로 "
+                            + "뒤섞습니다(한 명이면 주변의 무작위 지점으로). 휘말린 적은 {ult_damage} 피해를 입고 "
+                            + "{ult_nausea}초간 멀미, {ult_slow}초간 구속 II에 걸립니다.")
             .param("rescue_charges", 1)
             .param("gate_duration", 45)
             .param("mark_cooldown", 1)
@@ -200,8 +200,8 @@ public final class DimensionAbility extends Ability {
             return;
         }
         Player owner = player();
-        boolean lethalFall = Combat.isFall(event)
-                && event.getFinalDamage() >= owner.getHealth() + owner.getAbsorptionAmount();
+        // The final damage already has the absorption hearts taken off: compare it with the health alone.
+        boolean lethalFall = Combat.isFall(event) && event.getFinalDamage() >= owner.getHealth();
         if ((lethalFall || isVoid(event)) && rescue(owner)) {
             event.setCancelled(true);
         }
@@ -924,8 +924,8 @@ public final class DimensionAbility extends Ability {
             }
             for (int i = 0; i < count; i++) {
                 LivingEntity enemy = caught.get(i);
-                Location spot = caught.get(order[i]).getLocation();
-                if (!Spots.isSafe(ctx(), spot, Body.standing(enemy))) {
+                Location spot = groundedSwapSpot(caught.get(order[i]).getLocation());
+                if (spot == null || !Spots.isSafe(ctx(), spot, Body.standing(enemy))) {
                     spot = randomSpot(enemy);
                 }
                 if (spot != null) {
@@ -933,6 +933,19 @@ public final class DimensionAbility extends Ability {
                 }
             }
             return destinations;
+        }
+
+        /**
+         * Another enemy's spot as a destination, lowered onto the ground below it: an enemy caught mid-jump, flying or
+         * leaping must not hand its height over (someone swapped into the air could fall to death, uncredited). Null
+         * if there is no ground close enough below.
+         */
+        private @Nullable Location groundedSwapSpot(Location spot) {
+            World world = spot.getWorld();
+            Spots.snapToGround(world, spot, RANDOM_SPOT_DROP);
+            BoundingBox below = new BoundingBox(spot.getX() - 0.25, spot.getY() - 0.15, spot.getZ() - 0.25,
+                    spot.getX() + 0.25, spot.getY() - 0.01, spot.getZ() + 0.25);
+            return world.hasCollisionsIn(below) || spot.getBlock().isLiquid() ? spot : null;
         }
 
         /** A random safe spot within the collapse, at least {@link #MIN_DISPLACEMENT} blocks from where it stands. */

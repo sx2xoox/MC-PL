@@ -106,6 +106,9 @@ public final class SpiderAbility extends Ability {
     private static final double WALL_PRESS = 0.06;
     private static final double LEDGE_HOP_UP = 0.36;
     private static final double LEDGE_HOP_FORWARD = 0.18;
+    /** The four horizontal directions a touched wall can lie in. */
+    private static final Vector[] SIDES = {new Vector(1, 0, 0), new Vector(-1, 0, 0), new Vector(0, 0, 1),
+            new Vector(0, 0, -1)};
     /** The cling thread is fixed this far above the spider's head, and spun anew if it would get longer than that. */
     private static final double ANCHOR_HEIGHT = 0.9;
     private static final double ANCHOR_MAX_LENGTH = 3.0;
@@ -146,6 +149,8 @@ public final class SpiderAbility extends Ability {
 
     private final Map<UUID, Long> boundUntil = new HashMap<>();
     private boolean wasClimbing;
+    /** The side of the wall the spider last climbed or hung on (horizontal unit vector), for the ledge hop. */
+    private @Nullable Vector lastWall;
     private @Nullable BlockDisplay anchor;
     private @Nullable Location anchorPoint;
     private long lastClimbFx = Long.MIN_VALUE / 2;
@@ -161,6 +166,7 @@ public final class SpiderAbility extends Ability {
     public void onRevoke() {
         boundUntil.clear();
         wasClimbing = false;
+        lastWall = null;
         anchor = null;
         anchorPoint = null;
         nest = null;
@@ -179,7 +185,8 @@ public final class SpiderAbility extends Ability {
 
     /**
      * Climbs a wall the owner faces and touches, like a vanilla spider: up while it keeps facing the wall, hanging
-     * still while sneaking. Topping out hops the owner onto the ledge.
+     * still while sneaking. A hanging spider may look around freely (down at its prey, over its shoulder) as long as
+     * it still touches the wall. Topping out hops the owner onto the ledge.
      */
     private void climb(Player owner, long tick) {
         GameMode mode = owner.getGameMode();
@@ -190,24 +197,31 @@ public final class SpiderAbility extends Ability {
         }
         Location at = owner.getLocation();
         Vector facing = Motion.horizontalFacing(at);
+        boolean sneaking = owner.isSneaking();
+        if (sneaking && wasClimbing && !Motion.isGrounded(owner)) {
+            Vector side = wallSide(owner, facing);
+            if (side != null) {
+                hang(owner, side, tick);
+                return;
+            }
+        }
         boolean wall = at.getPitch() <= MAX_CLIMB_PITCH && touchesWall(owner, facing);
         if (!wall) {
-            if (wasClimbing && !owner.isSneaking() && !Motion.isGrounded(owner)) {
-                // Topped out: hop over the ledge.
-                owner.setVelocity(facing.clone().multiply(LEDGE_HOP_FORWARD).setY(LEDGE_HOP_UP));
+            Vector side = lastWall;
+            if (wasClimbing && side != null && !sneaking && !Motion.isGrounded(owner)) {
+                // Topped out: hop over the ledge, onto the wall it climbed whichever way it looks now.
+                owner.setVelocity(side.clone().multiply(LEDGE_HOP_FORWARD).setY(LEDGE_HOP_UP));
                 Fx.sound(at, Sound.ENTITY_SPIDER_STEP, 0.6f, 1.2f + Fx.jitter(0.1f));
             }
             wasClimbing = false;
+            lastWall = null;
             releaseAnchor(owner);
             return;
         }
-        Vector press = facing.clone().multiply(WALL_PRESS);
-        if (owner.isSneaking()) {
+        if (sneaking) {
             if (!Motion.isGrounded(owner)) {
-                owner.setVelocity(press.setY(0));
-                owner.setFallDistance(0);
-                wasClimbing = true;
-                cling(owner, facing, tick);
+                Vector side = wallSide(owner, facing);
+                hang(owner, side != null ? side : facing, tick);
             } else {
                 releaseAnchor(owner);
             }
@@ -218,13 +232,24 @@ public final class SpiderAbility extends Ability {
         if (speed <= 0) {
             return;
         }
-        owner.setVelocity(press.setY(Math.min(speed, 1.0)));
+        owner.setVelocity(facing.clone().multiply(WALL_PRESS).setY(Math.min(speed, 1.0)));
         owner.setFallDistance(0);
         wasClimbing = true;
+        Vector side = wallSide(owner, facing);
+        lastWall = side != null ? side : facing.clone();
         if (tick - lastClimbFx >= 6) {
             lastClimbFx = tick;
             climbFx(owner, facing);
         }
+    }
+
+    /** Hangs still against the wall on {@code side}, pressed to it, from a silk thread. */
+    private void hang(Player owner, Vector side, long tick) {
+        owner.setVelocity(side.clone().multiply(WALL_PRESS).setY(0));
+        owner.setFallDistance(0);
+        wasClimbing = true;
+        lastWall = side.clone();
+        cling(owner, side, tick);
     }
 
     /**
@@ -234,9 +259,25 @@ public final class SpiderAbility extends Ability {
     private static boolean touchesWall(Player owner, Vector facing) {
         double ex = Math.abs(facing.getX()) >= WALL_AXIS ? Math.signum(facing.getX()) : 0;
         double ez = Math.abs(facing.getZ()) >= WALL_AXIS ? Math.signum(facing.getZ()) : 0;
-        if (ex == 0 && ez == 0) {
-            return false;
+        return (ex != 0 || ez != 0) && touches(owner, ex, ez);
+    }
+
+    /** The side of a wall the body touches, the one closest to {@code facing} first; null if it touches none. */
+    private static @Nullable Vector wallSide(Player owner, Vector facing) {
+        Vector best = null;
+        double bestDot = Double.NEGATIVE_INFINITY;
+        for (Vector side : SIDES) {
+            double dot = side.dot(facing);
+            if (dot > bestDot && touches(owner, side.getX(), side.getZ())) {
+                best = side;
+                bestDot = dot;
+            }
         }
+        return best == null ? null : best.clone();
+    }
+
+    /** True if the body (without its lowest part) touches a solid block when reaching out along (ex, ez). */
+    private static boolean touches(Player owner, double ex, double ez) {
         BoundingBox box = owner.getBoundingBox();
         BoundingBox probe = new BoundingBox(box.getMinX(), box.getMinY() + Math.min(0.3, box.getHeight() * 0.2),
                 box.getMinZ(), box.getMaxX(), box.getMaxY() - 0.1, box.getMaxZ());
