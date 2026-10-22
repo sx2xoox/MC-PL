@@ -416,6 +416,19 @@ public final class MatchContext implements AbilityContext {
     }
 
     @Override
+    public void addEarnedGauge(Player player, double amount) {
+        // Like gauge from damage: an ultimate never refills its own gauge, and the post-ultimate lock drops it.
+        if (amount > 0 && !isUltimateOrigin(player.getUniqueId())) {
+            match.addEarnedGauge(player, amount);
+        }
+    }
+
+    @Override
+    public boolean isGaugeLocked(Player player) {
+        return match.isGaugeLocked(player);
+    }
+
+    @Override
     public double gauge(Player player) {
         return match.gauge(player);
     }

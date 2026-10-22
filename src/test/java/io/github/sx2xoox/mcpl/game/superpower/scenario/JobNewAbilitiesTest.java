@@ -629,6 +629,60 @@ class JobNewAbilitiesTest {
     }
 
     @Test
+    void anglerLuckWaitsOutTheRechargeDelayAfterAnUltimate() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.world.setBlock(2, FlatWorld.FLOOR_Y + 1, 1, Material.WATER);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "대어");
+            int lock = (int) s.match.settings().ultimateLockTicks();
+            assertTrue(lock >= 100, "the default recharge delay spans several luck periods: " + lock);
+            s.world.clearSpawnedParticles();
+            s.ticks(lock - 1);
+            assertEquals(0, s.participant(s.owner).gauge(), EPSILON,
+                    "by the water, but the sea's luck charges nothing during the recharge delay");
+            assertTrue(s.world.getSpawnedParticles().stream()
+                    .noneMatch(particle -> particle.particle() == Particle.DOLPHIN), "and shows no charging sparkle");
+
+            s.ticks(11);
+            double before = s.participant(s.owner).gauge();
+            s.ticks(100);
+            double charged = 5 * (s.match.settings().gaugePerSecond() + s.param("luck_gauge"));
+            assertEquals(charged, s.participant(s.owner).gauge() - before, EPSILON,
+                    "after the delay the luck charges again on top of time");
+            s.world.setBlock(2, FlatWorld.FLOOR_Y + 1, 1, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anglerCatchChargesNothingDuringTheRechargeDelay() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.place(s.enemy, -9.5, -6.5, 0);
+            s.place(s.enemy2, 0.5, 9.5, 180);
+            s.aimAt(s.owner, s.enemy2);
+            s.assertSucceeded(s.ultimate(), "대어");
+            long used = s.match.fightTicks();
+            s.ticks(s.paramTicks("ult_warning") + 50);
+            assertTrue(s.damageBy(s.owner, s.enemy2) > 0, "the big catch landed");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "far from the big catch");
+            assertEquals(0, s.participant(s.owner).gauge(), EPSILON, "the ultimate does not refill itself");
+
+            s.place(s.enemy2, 7.5, -6.5, 0);
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "낚아채기");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 20, "the bobber hooks the enemy");
+            assertTrue(s.match.fightTicks() - used < s.match.settings().ultimateLockTicks(),
+                    "still within the recharge delay");
+            assertEquals(0, s.participant(s.owner).gauge(), EPSILON,
+                    "a catch during the recharge delay charges nothing, like the hit's own damage");
+            s.ticks(60);
+            assertVisualsGone(s, "after the line was reeled in");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void anglerBigCatchBreachesUnderTheEnemiesThenBellyFlopsOnThem() {
         try (Scenario s = Scenario.ffa("angler")) {
             s.aimAt(s.owner, s.enemy);

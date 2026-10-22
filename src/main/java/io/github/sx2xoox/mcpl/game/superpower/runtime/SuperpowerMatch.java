@@ -1231,6 +1231,12 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
+    /** True while a participant's gauge earns nothing after an ultimate ({@code ultimate.recharge-delay-seconds}). */
+    boolean isGaugeLocked(Player player) {
+        Participant participant = participants.get(player.getUniqueId());
+        return participant != null && participant.isGaugeLocked(fightTicks);
+    }
+
     void addGauge(Participant participant, double amount) {
         boolean filled = participant.gauge.add(amount);
         Player player = participant.player();

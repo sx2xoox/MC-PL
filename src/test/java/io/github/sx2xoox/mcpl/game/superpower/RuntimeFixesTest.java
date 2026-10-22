@@ -117,6 +117,36 @@ class RuntimeFixesTest {
         }
     }
 
+    /** Earns gauge through {@code addEarnedGauge} from tasks its active and its ultimate schedule. */
+    static final class EarnerAbility extends Ability {
+
+        static final AbilityInfo INFO = AbilityInfo.builder("earner", "벌이꾼", Material.GOLD_NUGGET)
+                .passive("없음", "아무 일도 하지 않습니다.")
+                .active("벌이", "잠시 뒤 게이지를 법니다.", 5)
+                .ultimate("뒷벌이", "한참 뒤 게이지를 벌려고 합니다.")
+                .build();
+        static final double EARNING = 10;
+        static final long ACTIVE_DELAY = 5;
+        static final long ULTIMATE_DELAY = 40;
+
+        @Override
+        public AbilityInfo info() {
+            return INFO;
+        }
+
+        @Override
+        public ActivationResult onActive() {
+            ctx().runLater(player(), ACTIVE_DELAY, () -> ctx().addEarnedGauge(player(), EARNING));
+            return ActivationResult.success();
+        }
+
+        @Override
+        public ActivationResult onUltimate() {
+            ctx().runLater(player(), ULTIMATE_DELAY, () -> ctx().addEarnedGauge(player(), EARNING));
+            return ActivationResult.success();
+        }
+    }
+
     /** Cancels every hit it takes from an entity. */
     static final class DodgerAbility extends Ability {
 
@@ -234,6 +264,53 @@ class RuntimeFixesTest {
         assertEquals(charged + 12, ctx.gauge(caster), EPSILON, "other summons charge as usual (4% per damage)");
         melee(caster, victim, 2);
         assertEquals(charged + 20, ctx.gauge(caster), EPSILON, "melee charges again after the lock");
+    }
+
+    @Test
+    void earnedGaugeWaitsOutTheRechargeLockAndNeverComesFromTheOwnUltimate() {
+        h.settings().set(SuperpowerSettings.ULTIMATE_LOCK, 1);
+        h.settings().set(SuperpowerSettings.GAUGE_SECOND, 0);
+        h.registerDummy();
+        register(EarnerAbility.INFO, EarnerAbility::new);
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = h.startFight();
+        TestPlayer caster = players.get(0);
+        TestPlayer other = players.get(1);
+        assertTrue(match.replaceAbility(caster, "earner"));
+        assertTrue(match.replaceAbility(other, "dummy"));
+        MatchContext ctx = match.context();
+        match.setGauge(caster, 0);
+        match.setGauge(other, 0);
+
+        assertFalse(ctx.isGaugeLocked(caster), "nothing is locked before an ultimate");
+        ctx.addEarnedGauge(caster, 10);
+        assertEquals(10, ctx.gauge(caster), EPSILON, "earned gauge lands like a grant outside the lock");
+        ctx.addEarnedGauge(caster, -4);
+        ctx.addEarnedGauge(caster, Double.NaN);
+        assertEquals(10, ctx.gauge(caster), EPSILON, "non-positive and non-finite earnings are ignored");
+
+        match.setGauge(caster, 100);
+        assertTrue(match.useUltimate(caster).succeeded());
+        assertTrue(ctx.isGaugeLocked(caster), "the ultimate starts the recharge delay");
+        assertFalse(ctx.isGaugeLocked(other), "only for its caster");
+        ctx.addEarnedGauge(caster, 10);
+        assertEquals(0, ctx.gauge(caster), EPSILON, "nothing is earned during the recharge delay");
+        ctx.addEarnedGauge(other, 10);
+        assertEquals(10, ctx.gauge(other), EPSILON, "the others earn as usual");
+        ctx.addGauge(caster, 5);
+        assertEquals(5, ctx.gauge(caster), EPSILON, "explicit grants are never locked");
+
+        h.ticks((int) match.settings().ultimateLockTicks());
+        assertFalse(ctx.isGaugeLocked(caster), "the recharge delay is over");
+        ctx.addEarnedGauge(caster, 10);
+        assertEquals(15, ctx.gauge(caster), EPSILON, "earning resumes after the recharge delay");
+
+        h.ticks((int) EarnerAbility.ULTIMATE_DELAY);
+        assertEquals(15, ctx.gauge(caster), EPSILON, "the ultimate's own delayed code never earns gauge");
+
+        assertTrue(match.useActive(caster).succeeded());
+        h.ticks((int) EarnerAbility.ACTIVE_DELAY + 1);
+        assertEquals(15 + EarnerAbility.EARNING, ctx.gauge(caster), EPSILON, "the active's delayed code earns");
     }
 
     @Test

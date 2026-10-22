@@ -311,13 +311,22 @@ public final class AstronomerAbility extends Ability {
         }
     }
 
-    /** A meteor of the active struck an enemy: one more star lights up; a full constellation pays out gauge. */
+    /**
+     * A meteor of the active struck an enemy: one more star lights up; a full constellation pays out gauge. The stars
+     * are gauge earned by hitting, so a hit during the recharge delay after an ultimate lights none (the stars lit
+     * before it stay).
+     */
     private void addStar() {
         int needed = starsNeeded();
         if (!granted || needed <= 0) {
             return;
         }
         Player owner = player();
+        if (ctx().isGaugeLocked(owner)) {
+            owner.sendActionBar(Text.mm("<" + PALE + ">✦ 별자리</" + PALE + "> <gray>궁극기 재충전 대기 중에는 별이 "
+                    + "켜지지 않습니다</gray>"));
+            return;
+        }
         long tick = ctx().currentTick();
         int index = Math.min(stars, CROWN.length - 1);
         Location point = starPoint(owner, index, tick);
@@ -361,7 +370,7 @@ public final class AstronomerAbility extends Ability {
         Fx.sound(head, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.0f, 1.2f);
         double gauge = Math.max(0, params().num("constellation_gauge"));
         if (gauge > 0) {
-            ctx().addGauge(owner, gauge);
+            ctx().addEarnedGauge(owner, gauge);
         }
         owner.sendActionBar(Text.mm("<" + PALE + "><b>✦ 별자리 완성!</b></" + PALE + "> <white>궁극기 +"
                 + AbilityInfo.formatNumber(gauge) + "%</white>"));
