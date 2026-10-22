@@ -56,10 +56,13 @@ import org.jspecify.annotations.Nullable;
  * ultimate hangs a giant watch over the hypnotist whose chime sends everyone around into a dream that turns into a
  * nightmare the moment they wake.
  *
- * <p>Sleep is soft crowd control: a sleeper cannot move, jump or deal melee damage and sees nothing, but any damage
- * wakes it at once (the hypnotist's own waking blow hits harder), and a woken enemy cannot be put back to sleep for a
- * moment. Sleep runs on its own owner-scoped loops and wakes by watching the sleeper's health, so the ultimate needs no
- * grant, ticks or hooks and the gambler may borrow it (without the waking-blow bonus, which is a hook).
+ * <p>Sleep is soft crowd control: a sleeper cannot move, jump, deal melee damage or use its abilities (silence) and sees
+ * nothing, but any damage wakes it at once (the hypnotist's own waking blow hits harder), and a woken enemy cannot be put
+ * back to sleep for a moment. The silence cannot be lifted early, so it lasts the sleep's planned time even when the
+ * sleeper is woken sooner. A second hypnosis turns a sleep into a dream but never chains it: a sleeper wakes at the
+ * latest the longest single sleep it was given after it first fell asleep (the 3 s crowd-control bound). Sleep runs on
+ * its own owner-scoped loops and wakes by watching the sleeper's health, so the ultimate needs no grant, ticks or hooks
+ * and the gambler may borrow it (without the waking-blow bonus, which is a hook).
  *
  * <p>Look: hypnotic violet and gold. The pocket watch (a clock item) swings on a thin gold chain in front of the
  * hypnotist's face while enchanting glyphs spiral into it; the wave rolls out as violet rings with a gold spiral turning
@@ -79,15 +82,16 @@ public final class HypnotistAbility extends Ability {
             .active("최면",
                     "{channel_time}초간 회중시계를 흔든 뒤 앞쪽 {cone_range}블록 부채꼴({cone_angle}°)로 최면파를 보냅니다. "
                             + "닿은 적은 {sleep_duration}초간 잠들어 움직이거나 근접 공격으로 피해를 줄 수 없고 앞이 보이지 "
-                            + "않지만, 피해를 받으면 곧바로 깨어납니다. 내가 깨우는 일격은 {wake_bonus} 추가 피해를 주고, 깨어난 "
-                            + "적은 {sleep_immunity}초 동안 다시 잠들지 않습니다. 시계를 흔드는 동안 공격받거나 아무도 잠들지 "
-                            + "않으면 쿨타임이 절반만 돕니다.",
+                            + "않으며, 그동안 능력도 쓸 수 없습니다(일찍 깨어나도 침묵은 남음). 피해를 받으면 곧바로 깨어나고, "
+                            + "내가 깨우는 일격은 {wake_bonus} 추가 피해를 주며, 깨어난 적은 {sleep_immunity}초 동안 다시 "
+                            + "잠들지 않습니다. 이미 잠든 적에게 다시 걸면 처음 잠든 때부터 셉니다. 시계를 흔드는 동안 "
+                            + "공격받거나 아무도 잠들지 않으면 쿨타임이 절반만 돕니다.",
                     11)
             .ultimate("집단 최면",
                     "머리 위에 거대한 회중시계를 띄워 {ult_windup}초간 째깍입니다. 시계가 울리면 반경 {ult_radius}블록 "
-                            + "안에서 시계가 보이는 적이 모두 {ult_sleep}초간 깊은 잠에 빠져 꿈을 꿉니다(피해를 받으면 깨어남). "
-                            + "꿈에서 깨는 순간 악몽이 덮쳐 {nightmare_damage} 피해를 받고 {nightmare_nausea}초간 멀미에 "
-                            + "걸립니다.")
+                            + "안에서 시계가 보이는 적이 모두 {ult_sleep}초간 깊은 잠에 빠져 꿈을 꿉니다(능력을 쓸 수 없고, "
+                            + "피해를 받으면 깨어남). 꿈에서 깨는 순간 악몽이 덮쳐 {nightmare_damage} 피해를 받고 "
+                            + "{nightmare_nausea}초간 멀미에 걸립니다.")
             .param("drowsy_max", 3)
             .param("drowsy_duration", 6)
             .param("drowsy_interval", 0.5)
@@ -168,6 +172,12 @@ public final class HypnotistAbility extends Ability {
     private static final float BUBBLE_SIZE = 0.55f;
     private static final float DREAM_SCALE = 0.32f;
     private static final long NIGHTMARE_BURST = 5;
+    /**
+     * The client only warps the view while more than this many ticks of nausea are left (it fades the warp out over the
+     * last 3 s), so the nightmare's nausea lasts this much longer than the dizziness it stands for: a nausea of 3 s or
+     * less never shows at all.
+     */
+    private static final long NAUSEA_LEAD = 60;
     /** Sleep never outlasts this, whatever the configured numbers (a safety bound for the sleep loop). */
     private static final long MAX_SLEEP_TICKS = 20 * 30;
     private static final double REST_FALL = -Motion.GRAVITY * Motion.DRAG;
@@ -659,8 +669,9 @@ public final class HypnotistAbility extends Ability {
     }
 
     /**
-     * Puts {@code victim} to sleep for {@code ticks} (a dream if {@code dream}). An enemy already asleep sleeps on for
-     * the longer of the two and starts dreaming if this sleep is a dream.
+     * Puts {@code victim} to sleep for {@code ticks} (a dream if {@code dream}). An enemy already asleep starts dreaming
+     * if this sleep is a dream, and sleeps on until the longer of the two sleeps counted from when it first fell
+     * asleep: a second hypnosis never chains the crowd control past the longest single sleep.
      *
      * @return whether the victim is asleep now
      */
@@ -693,8 +704,9 @@ public final class HypnotistAbility extends Ability {
     }
 
     /**
-     * One sleeping enemy: rooted (no walking, no jumping), its melee harmless and its eyes closed (blindness), until any
-     * damage wakes it or the time is up. Health is watched every tick, so every source of damage wakes it.
+     * One sleeping enemy: rooted (no walking, no jumping), its melee harmless, its abilities silenced and its eyes
+     * closed (blindness), until any damage wakes it or the time is up. Health is watched every tick, so every source of
+     * damage wakes it.
      */
     private final class Sleeper implements LongPredicate {
 
@@ -702,6 +714,9 @@ public final class HypnotistAbility extends Ability {
         private final LivingEntity victim;
         private final List<NamespacedKey> modifiers = new ArrayList<>();
         private final Material dreamItem;
+        /** When it fell asleep; it sleeps at most {@link #longest} from then, however often it is hypnotised. */
+        private final long asleepSince;
+        private long longest;
         private long endTick;
         private boolean dream;
         private double lastHealth;
@@ -714,7 +729,9 @@ public final class HypnotistAbility extends Ability {
         Sleeper(Player owner, LivingEntity victim, long ticks, boolean dream) {
             this.owner = owner;
             this.victim = victim;
-            this.endTick = ctx().currentTick() + ticks;
+            this.asleepSince = ctx().currentTick();
+            this.longest = ticks;
+            this.endTick = asleepSince + ticks;
             this.dream = dream;
             this.lastHealth = victim.getHealth() + victim.getAbsorptionAmount();
             this.dreamItem = DREAMS[ThreadLocalRandom.current().nextInt(DREAMS.length)];
@@ -734,6 +751,7 @@ public final class HypnotistAbility extends Ability {
                 victim.setVelocity(new Vector(0, Math.min(0, victim.getVelocity().getY()), 0));
             }
             closeEyes();
+            silence();
             hidden = isHiddenFromOwner(victim);
             if (dream) {
                 startDream();
@@ -742,15 +760,27 @@ public final class HypnotistAbility extends Ability {
             Loop.repeat(ctx(), owner, 1, 1, MAX_SLEEP_TICKS + 1, this, () -> wake(Wake.TIMEOUT));
         }
 
-        /** Sleeps on for at least {@code ticks} more; a dream turns this sleep into a dream. */
+        /**
+         * Hypnotised again while asleep: a dream turns this sleep into a dream, and it sleeps on until {@code ticks}
+         * after it first fell asleep if that is later (never {@code ticks} from now: that would chain the sleep).
+         */
         void extend(long ticks, boolean nowDreaming) {
-            endTick = Math.max(endTick, ctx().currentTick() + ticks);
+            longest = Math.max(longest, ticks);
+            endTick = Math.max(endTick, asleepSince + longest);
             closeEyes();
+            silence();
             if (nowDreaming && !dream) {
                 dream = true;
                 startDream();
             }
             fallFx();
+        }
+
+        /** No skills while asleep: a sleeper would otherwise blink, charge or fly out of its sleep. */
+        private void silence() {
+            if (victim instanceof Player sleeper) {
+                ctx().silence(sleeper, Math.max(1, endTick - ctx().currentTick()));
+            }
         }
 
         @Override
@@ -969,7 +999,7 @@ public final class HypnotistAbility extends Ability {
                 long nausea = params().ticks("nightmare_nausea");
                 if (nausea > 0 && Combat.isTargetable(ctx(), owner, victim)) {
                     victim.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA,
-                            (int) Math.min(Integer.MAX_VALUE, nausea), 0, false, true, true));
+                            (int) Math.min(Integer.MAX_VALUE, nausea + NAUSEA_LEAD), 0, false, true, true));
                 }
             });
             ctx().runLater(owner, NIGHTMARE_BURST, () -> {

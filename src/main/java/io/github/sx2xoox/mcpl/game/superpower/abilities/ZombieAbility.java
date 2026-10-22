@@ -3,7 +3,6 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +24,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.DyedItemColor;
+import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
@@ -43,9 +43,9 @@ import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.damage.DamageType;
-import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Zombie;
@@ -63,18 +63,24 @@ import org.jspecify.annotations.Nullable;
 /**
  * 좀비 — patient zero. Its melee hits infect (rot damage and a stiff gait, passed on once to enemies standing close),
  * the active lunges at an enemy and bites it (feeding on enemies already infected), and the ultimate is the outbreak:
- * a groan infects every enemy around, then zombies claw out of the ground at the feet of every infected enemy and hunt
- * their hosts, their bites infecting again.
+ * a groan infects every enemy around, the infection boils inside every infected enemy and bursts out of it as a zombie
+ * wearing that enemy's own face, which hunts its host; their bites infect again, and a slain double bursts into
+ * contagion.
+ *
+ * <p>Unlike the necromancer's legion (undead raised from the ground that fight for 15 s), the outbreak's dead are the
+ * hosts' own infection: they are born out of the infected enemies, look like them, chase only them, and punish killing
+ * them by spreading the infection.
  *
  * <p>The ultimate is built on the infection (its hosts, the extra zombies for enemies that were already sick and the
  * zombies' infecting bites, which are hooks), so the gambler never borrows it. The zombies are the owner's summons
  * (credited, never touching the owner's allies); on Peaceful, where mobs cannot hurt players, they bite through the
- * ability instead. They never burn in daylight, never turn into drowned and leave nothing behind.
+ * ability instead. They never burn in daylight (a head keeps the sun off), never turn into drowned and leave nothing
+ * behind. A host that slipped into stealth before its double burst out of it gives no zombie (nothing shows where it is).
  *
  * <p>Look: rotten green and blood red. Infected enemies wear a sickly green biohazard mark and drip green rot, every
  * contagion jumps as a stream of green motes, the bite clamps a pair of bone-white jaws shut on the victim in a spray of
- * blood, and the outbreak cracks the ground open around the hosts, where rotting green arms reach out of the dirt before
- * the dead climb out.
+ * blood, and in the outbreak the hosts' marks swell while green veins crawl over them to a quickening heartbeat, until
+ * their doubles burst out in a spray of green rot.
  */
 public final class ZombieAbility extends Ability {
 
@@ -93,10 +99,13 @@ public final class ZombieAbility extends Ability {
                             + "절반만 돕니다.",
                     8)
             .ultimate("좀비 아포칼립스",
-                    "땅을 울리는 신음과 함께 반경 {ult_radius}블록의 적을 모두 감염시킵니다. {rise_delay}초 뒤 "
-                            + "{horde_range}블록 안의 감염된 적마다 발치에서 좀비가 {zombies_per}마리씩(원래 감염돼 있던 적에게서는 "
-                            + "{zombies_infected}마리, 모두 합쳐 최대 {max_zombies}마리) 기어 나와 {zombie_duration}초간 그 적을 "
-                            + "쫓습니다. 좀비(체력 {zombie_health}, 공격력 {zombie_damage})에게 물린 적은 다시 감염됩니다.")
+                    "땅을 울리는 신음과 함께 반경 {ult_radius}블록의 적을 모두 감염시킵니다. {rise_delay}초 동안 감염이 "
+                            + "끓어오른 뒤 {horde_range}블록 안의 감염된 적마다 그 적의 얼굴을 한 좀비가 몸에서 "
+                            + "{zombies_per}마리씩(원래 감염돼 있던 적에게서는 {zombies_infected}마리, 모두 합쳐 최대 "
+                            + "{max_zombies}마리) 터져 나와 {zombie_duration}초간 그 적을 쫓습니다(놓치면 {chase_range}블록 "
+                            + "안의 다른 적). 좀비(체력 {zombie_health}, 공격력 {zombie_damage}, 일반 좀비의 {zombie_speed}% "
+                            + "속도)에게 물린 적은 다시 감염되고, 쓰러진 좀비는 터지며 {spread_radius}블록 안의 감염되지 않은 "
+                            + "적을 {spread_duration}초간 감염시킵니다.")
             .ultimateNotStandalone()
             .param("infect_duration", 5)
             .param("infect_damage", 0.5)
@@ -115,8 +124,11 @@ public final class ZombieAbility extends Ability {
             .param("zombies_infected", 2)
             .param("max_zombies", 6)
             .param("zombie_duration", 10)
+            .param("chase_range", 16)
             .param("zombie_health", 12)
             .param("zombie_damage", 3)
+            .param("zombie_speed", 130)
+            .param("zombie_bite_interval", 1)
             .build();
 
     private static final String ROT = "#6FA84A";
@@ -139,11 +151,10 @@ public final class ZombieAbility extends Ability {
     private static final Particle.DustOptions GRAVE_DUST = new Particle.DustOptions(Color.fromRGB(0x3B2A1A), 1.2f);
 
     /** Block types of the visuals; block data is created on use (it needs a running server). */
-    private static final Material ARM_BLOCK = Material.GREEN_TERRACOTTA;
-    private static final Material HAND_BLOCK = Material.LIME_TERRACOTTA;
-    private static final Material CRACK_BLOCK = Material.COARSE_DIRT;
     private static final Material BLOOD_BLOCK = Material.REDSTONE_BLOCK;
-    private static final Material DIRT_BLOCK = Material.ROOTED_DIRT;
+    /** Green gore: what a double bursts out of its host in, and what it falls apart into. */
+    private static final Material ROT_BLOCK = Material.SLIME_BLOCK;
+    private static final Material ROT_POWDER = Material.LIME_CONCRETE_POWDER;
 
     /** Display entities one zombie keeps alive at most at once (extra visuals fall back to particles). */
     private static final int MAX_DISPLAYS = 24;
@@ -177,14 +188,14 @@ public final class ZombieAbility extends Ability {
     // ultimate: the outbreak
     private static final double ZOMBIE_WIDTH = 0.6;
     private static final double ZOMBIE_HEIGHT = 1.95;
-    private static final double ZOMBIE_SPEED = 0.3;
+    /** The movement speed attribute of a plain zombie: {@code zombie_speed} is a share of it. */
+    private static final double PLAIN_ZOMBIE_SPEED = 0.23;
     private static final long CONTROL_PERIOD = 5;
-    private static final double CHASE_RANGE = 16;
     private static final double STRIKE_REACH = 0.8;
-    private static final long STRIKE_TICKS = 20;
     private static final double[] SPAWN_ANGLES = {0, 60, -60, 120, -120, 180, 30, -30, 90, -90, 150, -150};
     private static final double[] SPAWN_DISTANCES = {1.3, 1.9};
-    private static final int ARMS_PER_HOST = 2;
+    private static final long BOIL_PERIOD = 2;
+    private static final float SWOLLEN_MARK = 1.6f;
     private static final TextColor NAME_COLOR = TextColor.color(0x6FA84A);
 
     private final Map<UUID, Infection> infections = new HashMap<>();
@@ -195,6 +206,11 @@ public final class ZombieAbility extends Ability {
     private boolean lunging;
     /** True while a zombie bites through the ability (Peaceful), so the hit counts as the zombie's bite. */
     private boolean zombieBite;
+    /**
+     * Set once the ability is revoked. A rot can end the match from inside the infection loop (the kill runs the death
+     * synchronously, the match ends and revokes the zombie), and the loop must stop there.
+     */
+    private boolean revoked;
 
     @Override
     public AbilityInfo info() {
@@ -203,6 +219,7 @@ public final class ZombieAbility extends Ability {
 
     @Override
     public void onRevoke() {
+        revoked = true;
         infections.clear();
         horde.clear();
         hordeIds.clear();
@@ -295,19 +312,22 @@ public final class ZombieAbility extends Ability {
         Player owner = player();
         long now = ctx().currentTick();
         List<LivingEntity> spreadTo = new ArrayList<>();
-        for (Iterator<Infection> it = infections.values().iterator(); it.hasNext(); ) {
-            Infection infection = it.next();
+        // A snapshot: a rot that kills can end the match and revoke the zombie (clearing the map) mid-loop.
+        for (Infection infection : List.copyOf(infections.values())) {
             LivingEntity victim = infection.victim;
             boolean gone = !Combat.isTargetable(ctx(), owner, victim);
             // The last rot falls on the moment the infection ends: 5 seconds of infection rot 5 times.
             if (!gone && now >= infection.nextRot && infection.nextRot <= infection.expires) {
                 infection.nextRot += DOT_PERIOD;
                 rot(infection);
+                if (revoked) {
+                    return;
+                }
                 gone = !Combat.isTargetable(ctx(), owner, victim);
             }
             if (gone || now >= infection.expires) {
                 cure(infection);
-                it.remove();
+                infections.remove(victim.getUniqueId(), infection);
                 continue;
             }
             follow(infection);
@@ -324,7 +344,7 @@ public final class ZombieAbility extends Ability {
                 World world = body.getWorld();
                 world.spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 2), 0.25, 0.4, 0.25, 0, ROT_SMALL);
                 Vfx.dot(body.clone().add(Fx.jitter(0.25f), -0.2, Fx.jitter(0.25f)), Particle.FALLING_DUST,
-                        Material.LIME_CONCRETE_POWDER.createBlockData(), false);
+                        ROT_POWDER.createBlockData(), false);
             }
         }
         for (LivingEntity next : spreadTo) {
@@ -363,6 +383,12 @@ public final class ZombieAbility extends Ability {
     private void contagionFx(LivingEntity from, LivingEntity to) {
         Location a = Fx.body(from);
         Location b = Fx.body(to);
+        if (isHiddenFromOwner(from)) {
+            // The stream would start at a carrier that slipped into stealth: only the one that caught it shows.
+            Vfx.cloud(ctx(), b, Particle.DUST_COLOR_TRANSITION, 6, 0.25, 0, GLOW_SMALL, false);
+            Fx.sound(b, Sound.ENTITY_ZOMBIE_INFECT, 0.7f, 1.3f + Fx.jitter(0.1f));
+            return;
+        }
         for (int i = 0; i < Vfx.n(ctx(), 4); i++) {
             Vfx.trail(a.clone().add(0, 0.15 * i - 0.2, 0), b, i % 2 == 0 ? PALETTE.body() : PALETTE.core(), 8 + i,
                     false);
@@ -728,7 +754,7 @@ public final class ZombieAbility extends Ability {
             }
             planned.put(host, want);
             total += want;
-            crack(host);
+            boil(host);
         }
         long delay = Math.max(1, params().ticks("rise_delay"));
         ctx().runLater(owner, delay, () -> {
@@ -738,82 +764,67 @@ public final class ZombieAbility extends Ability {
         });
     }
 
-    /** The ground cracks open at the host's feet and rotting arms reach out of the dirt (the telegraph). */
-    private void crack(LivingEntity host) {
+    /**
+     * The telegraph: the infection boils inside the host for the rise delay. Its biohazard mark swells, green veins
+     * crawl over its body, a ring of rot closes in on it and a heartbeat quickens. Nothing is drawn while the host is
+     * hidden from the zombie.
+     */
+    private void boil(LivingEntity host) {
         Player owner = player();
-        Location feet = host.getLocation();
-        Spots.snapToGround(feet.getWorld(), feet, 2);
-        Location ground = Displays.unrotated(feet.add(0, 0.02, 0));
         long delay = Math.max(1, params().ticks("rise_delay"));
-        if (room(1 + ARMS_PER_HOST * 2)) {
-            BlockDisplay crack = keep(Displays.block(ctx(), owner, ground, CRACK_BLOCK.createBlockData(),
-                    Displays.transform(0, 0, 0, 0.1f, 0.02f, 0.1f, ThreadLocalRandom.current().nextFloat() * 90, 0, 0),
-                    delay + 20));
-            Displays.animateNextTick(ctx(), owner, crack, Displays.transform(0, 0, 0, 1.9f, 0.04f, 1.9f,
-                    ThreadLocalRandom.current().nextFloat() * 90, 0, 0), (int) Math.min(10, delay));
-            ctx().runLater(owner, delay + 8, () -> {
-                if (crack.isValid()) {
-                    Displays.shrinkAway(ctx(), owner, crack, 8);
-                }
-            });
-            double phase = ThreadLocalRandom.current().nextDouble(TAU);
-            for (int i = 0; i < ARMS_PER_HOST; i++) {
-                double angle = phase + i * TAU / ARMS_PER_HOST;
-                Location base = ground.clone().add(Math.cos(angle) * 0.7, 0, Math.sin(angle) * 0.7);
-                arm(base, (float) Math.toDegrees(Math.atan2(Math.cos(angle), -Math.sin(angle))), delay);
-            }
+        Infection infection = infections.get(host.getUniqueId());
+        TextDisplay mark = infection == null ? null : infection.mark;
+        if (mark != null && mark.isValid()) {
+            Displays.animate(mark, Displays.centered(0, 0.2f, 0, SWOLLEN_MARK, SWOLLEN_MARK, SWOLLEN_MARK, 0, 0, 0),
+                    (int) Math.min(10, delay));
+            ctx().runLater(owner, delay + 2, () -> Displays.animate(mark,
+                    Displays.centered(0, 0, 0, MARK_SCALE, MARK_SCALE, MARK_SCALE, 0, 0, 0), 4));
         }
-        if (isHiddenFromOwner(host)) {
-            return;
-        }
-        Loop.repeat(ctx(), owner, 0, 3, Math.max(1, delay / 3), run -> {
-            if (!host.isValid()) {
+        long runs = Math.max(1, delay / BOIL_PERIOD);
+        Loop.repeat(ctx(), owner, 0, BOIL_PERIOD, runs, run -> {
+            if (!host.isValid() || host.isDead()) {
                 return false;
             }
-            Location at = host.getLocation().add(0, 0.1, 0);
-            Vfx.ring(ctx(), at, 1.1 - 0.15 * run, 12, run * 0.5, Particle.DUST_COLOR_TRANSITION, GLOW, true);
-            World world = at.getWorld();
-            world.spawnParticle(Particle.BLOCK, at, Vfx.n(ctx(), 6), 0.6, 0.05, 0.6, 0.1, DIRT_BLOCK.createBlockData());
+            if (isHiddenFromOwner(host)) {
+                return true;
+            }
+            double progress = (run + 1.0) / runs;
+            Location body = Fx.body(host);
+            Vfx.ring(ctx(), body.clone().add(0, -0.3, 0), 1.2 - 0.8 * progress, 12, run * 0.6,
+                    Particle.DUST_COLOR_TRANSITION, GLOW, true);
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            for (int i = 0; i < Vfx.n(ctx(), 2); i++) {
+                Vector out = new Vector(random.nextGaussian(), random.nextGaussian() * 0.6, random.nextGaussian());
+                if (out.lengthSquared() > 1.0E-6) {
+                    Location from = body.clone().add(out.clone().normalize().multiply(0.15));
+                    Vfx.line(ctx(), from, from.clone().add(out.normalize().multiply(0.35 + 0.2 * progress)), 8,
+                            Particle.DUST, ROT_SMALL, true);
+                }
+            }
             if (run % 2 == 0) {
-                Fx.sound(at, Sound.BLOCK_ROOTED_DIRT_BREAK, 0.9f, 0.6f + Fx.jitter(0.1f));
+                body.getWorld().spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 3), 0.2, 0.3, 0.2, 0.05,
+                        ROT_BLOCK.createBlockData());
+            }
+            long beat = progress < 0.5 ? 4 : 2;
+            if (run % beat == 0) {
+                Fx.sound(body, Sound.ENTITY_WARDEN_HEARTBEAT, 0.9f, 0.9f + 0.4f * (float) progress);
             }
             return true;
         });
-        Fx.sound(feet, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 0.5f, 0.6f);
+        Fx.sound(host.getLocation(), Sound.ENTITY_ZOMBIE_VILLAGER_CONVERTED, 0.5f, 0.6f);
     }
 
-    /** A rotting arm (forearm and hand) bursting up out of the ground, leaning towards the host, then sinking. */
-    private void arm(Location base, float yaw, long hold) {
-        Player owner = player();
-        BlockDisplay forearm = keep(Displays.block(ctx(), owner, base, ARM_BLOCK.createBlockData(),
-                Displays.transform(0, 0, 0, 0.18f, 0.01f, 0.18f, yaw, 15, 0), hold + 16));
-        BlockDisplay hand = keep(Displays.block(ctx(), owner, base, HAND_BLOCK.createBlockData(),
-                Displays.transform(0, 0, 0, 0.24f, 0.01f, 0.12f, yaw, 15, 0), hold + 16));
-        Displays.animateNextTick(ctx(), owner, forearm, Displays.transform(0, 0.3f, 0, 0.18f, 0.6f, 0.18f, yaw, 25, 0),
-                4);
-        Displays.animateNextTick(ctx(), owner, hand, Displays.transform(0, 0.68f, 0.12f, 0.26f, 0.2f, 0.14f, yaw, 40,
-                0), 4);
-        ctx().runLater(owner, 5, () -> {
-            // Grasping: the hand clenches back and forth.
-            Displays.animate(hand, Displays.transform(0, 0.62f, 0.18f, 0.24f, 0.16f, 0.16f, yaw, 65, 0), 4);
-        });
-        ctx().runLater(owner, Math.max(6, hold), () -> {
-            for (BlockDisplay part : new BlockDisplay[] {forearm, hand}) {
-                if (part.isValid()) {
-                    Displays.shrinkAway(ctx(), owner, part, 8);
-                }
-            }
-        });
-    }
-
-    /** Zombies climb out next to {@code host} (as many as fit), each one a summon hunting that host. */
+    /**
+     * The infection bursts out of {@code host} as zombies wearing its face (as many as fit next to it), each a summon
+     * hunting that host. A host that slipped into stealth meanwhile gives none: they would show where it is.
+     */
     private void rise(Player owner, LivingEntity host, int count) {
-        if (!host.isValid() || host.isDead()) {
+        if (!host.isValid() || host.isDead() || isHiddenFromOwner(host)) {
             return;
         }
         List<Location> spots = spawnSpots(host, count);
         for (Location spot : spots) {
-            Zombie zombie = raise(owner, spot);
+            Zombie zombie = raise(owner, host, spot);
             if (zombie == null) {
                 continue;
             }
@@ -821,11 +832,13 @@ public final class ZombieAbility extends Ability {
             horde.add(walker);
             hordeIds.add(zombie.getUniqueId());
             walker.start();
-            emerge(spot);
+            burstOut(host, spot);
         }
         if (!spots.isEmpty()) {
-            Fx.sound(host.getLocation(), Sound.ENTITY_ZOMBIE_AMBIENT, 1.2f, 0.7f + Fx.jitter(0.1f));
-            Fx.sound(host.getLocation(), Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 0.8f, 0.8f);
+            Location body = Fx.body(host);
+            Fx.sound(body, Sound.ENTITY_ZOMBIE_AMBIENT, 1.2f, 0.7f + Fx.jitter(0.1f));
+            Fx.sound(body, Sound.ENTITY_SLIME_SQUISH, 1.0f, 0.5f);
+            Fx.sound(body, Sound.ENTITY_ZOMBIE_INFECT, 1.0f, 0.6f);
         }
     }
 
@@ -864,19 +877,20 @@ public final class ZombieAbility extends Ability {
         return spots;
     }
 
-    /** Spawns one zombie at {@code at} as the owner's summon. Null if it did not spawn. */
-    private @Nullable Zombie raise(Player owner, Location at) {
+    /** Spawns one zombie wearing {@code host}'s face at {@code at} as the owner's summon. Null if it did not spawn. */
+    private @Nullable Zombie raise(Player owner, LivingEntity host, Location at) {
         double health = Math.max(1, params().num("zombie_health"));
         double damage = Math.max(0, params().num("zombie_damage"));
+        double speed = PLAIN_ZOMBIE_SPEED * Math.max(0, params().num("zombie_speed")) / 100.0;
         boolean peaceful = at.getWorld().getDifficulty() == Difficulty.PEACEFUL;
         Consumer<Zombie> setup = spawned -> {
             spawned.setPersistent(false);
             setBase(spawned, Attribute.MAX_HEALTH, health);
             setBase(spawned, Attribute.ATTACK_DAMAGE, damage);
-            setBase(spawned, Attribute.MOVEMENT_SPEED, ZOMBIE_SPEED);
+            setBase(spawned, Attribute.MOVEMENT_SPEED, speed);
             spawned.setHealth(Math.min(health, Combat.maxHealth(spawned)));
             spawned.setAdult();
-            dress(spawned.getEquipment());
+            dress(spawned.getEquipment(), host);
             if (peaceful) {
                 // Monsters are discarded on Peaceful the tick they spawn unless told otherwise.
                 spawned.setDespawnInPeacefulOverride(TriState.FALSE);
@@ -893,22 +907,37 @@ public final class ZombieAbility extends Ability {
     }
 
     /**
-     * Empty hands and a blood-stained cap: unbreakable, since any helmet keeps a zombie from burning in daylight.
-     * Nothing drops.
+     * Empty hands and the host's own face: a player's (or mannequin's) head, otherwise a blood-stained cap. Anything on
+     * its head keeps a zombie from burning in daylight (a head never wears out, the cap is unbreakable). Nothing drops.
      */
-    private static void dress(@Nullable EntityEquipment equipment) {
+    private static void dress(@Nullable EntityEquipment equipment, LivingEntity host) {
         if (equipment == null) {
             return;
         }
         equipment.clear();
-        ItemStack cap = ItemStack.of(Material.LEATHER_HELMET);
-        cap.setData(DataComponentTypes.DYED_COLOR, DyedItemColor.dyedItemColor(CAP_COLOR));
-        cap.setData(DataComponentTypes.UNBREAKABLE);
-        equipment.setHelmet(cap, true);
+        equipment.setHelmet(faceOf(host), true);
         for (EquipmentSlot slot : new EquipmentSlot[] {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
                 EquipmentSlot.FEET, EquipmentSlot.HAND, EquipmentSlot.OFF_HAND}) {
             equipment.setDropChance(slot, 0f);
         }
+    }
+
+    /** The host's head for its double: a player's skin, a mannequin's profile, otherwise a blood-stained cap. */
+    private static ItemStack faceOf(LivingEntity host) {
+        if (host instanceof Player player) {
+            ItemStack head = ItemStack.of(Material.PLAYER_HEAD);
+            head.setData(DataComponentTypes.PROFILE, ResolvableProfile.resolvableProfile(player.getPlayerProfile()));
+            return head;
+        }
+        if (host instanceof Mannequin mannequin) {
+            ItemStack head = ItemStack.of(Material.PLAYER_HEAD);
+            head.setData(DataComponentTypes.PROFILE, mannequin.getProfile());
+            return head;
+        }
+        ItemStack cap = ItemStack.of(Material.LEATHER_HELMET);
+        cap.setData(DataComponentTypes.DYED_COLOR, DyedItemColor.dyedItemColor(CAP_COLOR));
+        cap.setData(DataComponentTypes.UNBREAKABLE);
+        return cap;
     }
 
     private static void setBase(LivingEntity entity, Attribute attribute, double value) {
@@ -922,19 +951,48 @@ public final class ZombieAbility extends Ability {
         }
     }
 
-    /** A zombie climbing out: dirt bursting up and grave dust. */
-    private void emerge(Location spot) {
+    /**
+     * A double bursting out of its host: a spray of green rot and blood from the host's body, a stream of rot to where
+     * the double stands, and a sickly cloud around it as it takes shape.
+     */
+    private void burstOut(LivingEntity host, Location spot) {
         World world = spot.getWorld();
-        Location ground = spot.clone().add(0, 0.15, 0);
-        world.spawnParticle(Particle.BLOCK, ground, Vfx.n(ctx(), 18), 0.4, 0.1, 0.4, 0.2, DIRT_BLOCK.createBlockData());
-        BlockData floor = spot.clone().subtract(0, 0.3, 0).getBlock().getBlockData();
-        if (floor.getMaterial().isSolid()) {
-            world.spawnParticle(Particle.BLOCK, ground, Vfx.n(ctx(), 10), 0.4, 0.1, 0.4, 0.2, floor);
+        Location from = Fx.body(host);
+        Location to = spot.clone().add(0, 1.0, 0);
+        world.spawnParticle(Particle.BLOCK, from, Vfx.n(ctx(), 14), 0.25, 0.35, 0.25, 0.25,
+                ROT_BLOCK.createBlockData());
+        world.spawnParticle(Particle.BLOCK, from, Vfx.n(ctx(), 6), 0.2, 0.3, 0.2, 0.15, BLOOD_BLOCK.createBlockData());
+        for (int i = 0; i < Vfx.n(ctx(), 3); i++) {
+            Vfx.trail(from.clone().add(0, 0.2 * i - 0.2, 0), to, i % 2 == 0 ? PALETTE.body() : PALETTE.core(), 6 + i,
+                    true);
         }
         Vfx.helix(ctx(), spot, 0.5, ZOMBIE_HEIGHT, 1.0, 2, 8, 0, Particle.DUST_COLOR_TRANSITION, GLOW, true);
-        Vfx.cloud(ctx(), spot.clone().add(0, 1.0, 0), Particle.SNEEZE, 8, 0.3, 0.03, null, false);
-        Fx.sound(spot, Sound.BLOCK_ROOTED_DIRT_BREAK, 1.2f, 0.6f);
+        Vfx.cloud(ctx(), to, Particle.SNEEZE, 8, 0.3, 0.03, null, false);
+        Vfx.cloud(ctx(), to, Particle.FALLING_DUST, 6, 0.3, 0, ROT_POWDER.createBlockData(), false);
         Fx.sound(spot, Sound.ENTITY_HUSK_CONVERTED_TO_ZOMBIE, 0.8f, 0.8f + Fx.jitter(0.1f));
+    }
+
+    /**
+     * A slain double bursts into contagion: every visible enemy within the spread radius (not infected yet) catches a
+     * short infection that does not spread on.
+     */
+    private void contagionBurst(Location at) {
+        Player owner = player();
+        Location body = at.clone().add(0, 1.0, 0);
+        World world = body.getWorld();
+        world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 16), 0.3, 0.5, 0.3, 0.2, ROT_BLOCK.createBlockData());
+        Vfx.sphere(ctx(), body, 0.7, 16, Particle.DUST_COLOR_TRANSITION, GLOW, true);
+        Vfx.cloud(ctx(), body, Particle.SNEEZE, 10, 0.4, 0.04, null, true);
+        Fx.sound(body, Sound.ENTITY_SLIME_DEATH, 1.0f, 0.6f + Fx.jitter(0.05f));
+        Fx.sound(body, Sound.ENTITY_ZOMBIE_DEATH, 0.8f, 0.7f + Fx.jitter(0.1f));
+        double radius = Math.max(0, params().num("spread_radius"));
+        for (LivingEntity enemy : ctx().enemiesNear(owner, body, radius)) {
+            if (isInfected(enemy) || isHiddenFromOwner(enemy) || !Spots.clearPath(body, Fx.body(enemy))) {
+                continue;
+            }
+            Vfx.trail(body, Fx.body(enemy), PALETTE.body(), 8, true);
+            infect(enemy, params().ticks("spread_duration"), false);
+        }
     }
 
     /** One risen zombie and the controller task that keeps it hunting its host until its time runs out. */
@@ -965,7 +1023,12 @@ public final class ZombieAbility extends Ability {
             if (!mob.isValid() || mob.isDead()) {
                 forget();
                 dismissed = true;
-                crumble(mob.getLocation());
+                if (mob.getHealth() <= 0) {
+                    // Slain (a mob removed by other means keeps its health): it bursts into contagion.
+                    contagionBurst(mob.getLocation());
+                } else {
+                    crumble(mob.getLocation());
+                }
                 return false;
             }
             long left = expiresAt - ctx().currentTick();
@@ -1003,7 +1066,7 @@ public final class ZombieAbility extends Ability {
             if (current != null && isValidTarget(current)) {
                 return current;
             }
-            for (LivingEntity candidate : ctx().enemiesNear(player(), mob.getLocation(), CHASE_RANGE)) {
+            for (LivingEntity candidate : ctx().enemiesNear(player(), mob.getLocation(), chaseRange())) {
                 if (!isHiddenFromOwner(candidate)) {
                     return candidate;
                 }
@@ -1011,10 +1074,16 @@ public final class ZombieAbility extends Ability {
             return null;
         }
 
+        /** A target it keeps chasing: a visible enemy up to 1.5 times the chase range away (it does not give up early). */
         private boolean isValidTarget(LivingEntity target) {
+            double keep = chaseRange() * 1.5;
             return Combat.isTargetable(ctx(), player(), target) && !isHiddenFromOwner(target)
                     && target.getWorld().equals(mob.getWorld())
-                    && target.getLocation().distanceSquared(mob.getLocation()) <= CHASE_RANGE * CHASE_RANGE * 2.25;
+                    && target.getLocation().distanceSquared(mob.getLocation()) <= keep * keep;
+        }
+
+        private double chaseRange() {
+            return Math.max(1, params().num("chase_range"));
         }
 
         /**
@@ -1030,7 +1099,7 @@ public final class ZombieAbility extends Ability {
             if (now < nextStrike) {
                 return;
             }
-            nextStrike = now + STRIKE_TICKS;
+            nextStrike = now + Math.max(1, params().ticks("zombie_bite_interval"));
             zombieBite = true;
             try {
                 Combat.hit(ctx(), player(), target, Math.max(0, params().num("zombie_damage")), DamageType.MOB_ATTACK);
@@ -1039,10 +1108,13 @@ public final class ZombieAbility extends Ability {
             }
         }
 
+        /** "감염된 (host)" for a player host (its name as a component, never parsed), "감염자" otherwise. */
         private void updateName(long ticksLeft) {
             long seconds = Math.max(0, (ticksLeft + 19) / 20);
-            mob.customName(Component.text("감염자", NAME_COLOR)
-                    .append(Component.text(" " + seconds + "초", NamedTextColor.GRAY)));
+            Component name = host instanceof Player player
+                    ? Component.text("감염된 ", NAME_COLOR).append(player.name().colorIfAbsent(NAME_COLOR))
+                    : Component.text("감염자", NAME_COLOR);
+            mob.customName(name.append(Component.text(" " + seconds + "초", NamedTextColor.GRAY)));
         }
 
         private void forget() {
@@ -1067,11 +1139,11 @@ public final class ZombieAbility extends Ability {
         }
     }
 
-    /** A zombie falling apart: rotten flesh, grave dirt and a last groan. */
+    /** A double whose time is up falling apart: green rot, grave dust and a last groan. */
     private void crumble(Location at) {
         World world = at.getWorld();
         Location body = at.clone().add(0, 0.9, 0);
-        world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 12), 0.25, 0.5, 0.25, 0.1, DIRT_BLOCK.createBlockData());
+        world.spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 12), 0.25, 0.5, 0.25, 0.1, ROT_BLOCK.createBlockData());
         Vfx.sphere(ctx(), body, 0.5, 12, Particle.DUST_COLOR_TRANSITION, FADE, false);
         Vfx.cloud(ctx(), at.clone().add(0, 0.2, 0), Particle.DUST, 6, 0.3, 0, GRAVE_DUST, false);
         Fx.sound(at, Sound.ENTITY_ZOMBIE_DEATH, 0.8f, 0.8f + Fx.jitter(0.1f));

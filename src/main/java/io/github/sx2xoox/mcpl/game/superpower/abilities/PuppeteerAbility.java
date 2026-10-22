@@ -1,5 +1,6 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,6 +34,8 @@ import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier.Operation;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
@@ -57,11 +60,13 @@ import org.jspecify.annotations.Nullable;
  * wherever the puppeteer looks, clapped together on the beat and finally dashed against the floor.
  *
  * <p>The control strings are crowd control, not knockback: the puppet's velocity is set every tick (resistance does not
- * help) and its own walking and jumping are switched off. The puppet copies the puppeteer's movement (the change of its
- * position on the server each tick), never a velocity read back from a player (stale on a server), and a jump is
- * replayed by its own predicted arc. The show steers its dolls along a planned path with damped corrections (a
- * player's position on the server trails its client), hangs them under a slow-falling safety net and lets them go if
- * they get stuck. Neither needs a grant, ticks or hooks: the gambler may borrow the show (threads only widen its reach).
+ * help), its own walking and jumping are switched off and it cannot use its abilities (silence), like every doll of the
+ * show. The puppet copies the puppeteer's movement (the change of its position on the server each tick), never a
+ * velocity read back from a player (stale on a server), a jump is replayed by its own predicted arc, and a step that
+ * would walk it into lava, fire or off a ledge is not copied. The show steers its dolls along a planned path: a player
+ * doll by dead reckoning (its position on the server trails its client by the ping, and correcting by that lagging
+ * position swung the dolls by blocks), hangs them under a slow-falling safety net and lets them go if they stray from
+ * the path. Neither needs a grant, ticks or hooks: the gambler may borrow the show (threads only widen its reach).
  *
  * <p>Look: wood and crimson thread. Threads are drawn from the puppeteer's fingers to every threaded enemy, sagging
  * while slack and pulled straight and bright when they tug. A controlled puppet wears a little wooden control cross
@@ -80,16 +85,16 @@ public final class PuppeteerAbility extends Ability {
             .active("꼭두각시",
                     "조준한 적(없으면 실에 엮인 가장 가까운 적, {puppet_range}블록 이내)에게 조종 실을 걸어 {attach_damage} "
                             + "피해를 주고, {puppet_duration}초간 내 움직임(걷기·점프)을 그대로 따라 하게 만듭니다. 조종당하는 "
-                            + "적은 스스로 움직일 수 없고, 벽에 부딪히면 {bump_damage} 피해(최대 {bump_max}번)를 받으며, 조종이 "
-                            + "끝나면 실이 끊어지며 {snap_damage} 피해를 받습니다. 실에 엮인 적은 {thread_bonus}초 더 오래 "
-                            + "조종합니다.",
+                            + "적은 스스로 움직이거나 능력을 쓸 수 없고(용암·불이나 낭떠러지로는 끌려가지 않습니다), 벽에 "
+                            + "부딪히면 {bump_damage} 피해(최대 {bump_max}번)를 받으며, 조종이 끝나면 실이 끊어지며 "
+                            + "{snap_damage} 피해를 받습니다. 실에 엮인 적은 {thread_bonus}초 더 오래 조종합니다.",
                     12)
             .ultimate("인형극",
                     "거대한 십자 조종대를 띄우고 {ult_windup}초 뒤 반경 {ult_radius}블록 안의 적(실에 엮인 적은 "
-                            + "{thread_reach}블록)을 실로 매달아 {lift_height}블록 들어 올립니다. {show_duration}초 동안 매달린 "
-                            + "적들은 내가 바라보는 쪽으로 끌려다니며 {clap_interval}초마다 서로 맞부딪혀(혼자면 바닥에 "
-                            + "내리꽂혀) {clap_damage} 피해를 받고, 공연이 끝나면 바닥에 내동댕이쳐져 {finale_damage} 피해를 "
-                            + "받습니다.")
+                            + "{thread_reach}블록, 최대 {max_dolls}명)을 실로 매달아 {lift_height}블록 들어 올립니다. 매달린 "
+                            + "적은 능력을 쓸 수 없고, {show_duration}초 동안 내가 바라보는 쪽으로(초당 {stage_speed}블록) "
+                            + "끌려다니며 {clap_interval}초마다 서로 맞부딪혀(혼자면 바닥에 내리꽂혀) {clap_damage} 피해를 "
+                            + "받다가, 마지막 박자에 바닥에 내동댕이쳐져 {finale_damage} 피해를 받습니다.")
             .param("thread_duration", 8)
             .param("leash_range", 10)
             .param("leash_slow", 25)
@@ -103,8 +108,10 @@ public final class PuppeteerAbility extends Ability {
             .param("ult_windup", 0.6)
             .param("ult_radius", 9)
             .param("thread_reach", 16)
+            .param("max_dolls", 6)
             .param("lift_height", 2.5)
             .param("show_duration", 2)
+            .param("stage_speed", 2.8)
             .param("clap_interval", 0.5)
             .param("clap_damage", 1.5)
             .param("finale_damage", 3)
@@ -153,6 +160,12 @@ public final class PuppeteerAbility extends Ability {
     private static final double BUMP_PROBE = 0.3;
     private static final double BUMP_MIN_SPEED = 0.08;
     private static final long BUMP_GAP = 10;
+    /** How many copied steps ahead the puppet's way is checked for lava, fire and drops. */
+    private static final int STEP_LOOKAHEAD = 3;
+    /** The deepest drop the puppet is walked down (a fall of more than 3 blocks would hurt it). */
+    private static final double MAX_STEP_DOWN = 2.0;
+    /** Extra drop allowed while the puppet is in the air, at most the height of a jump. */
+    private static final double JUMP_ALLOWANCE = 1.3;
     private static final float CROSS_LENGTH = 0.75f;
     private static final float CROSS_DEPTH = 0.5f;
     private static final float CROSS_WIDTH = 0.07f;
@@ -166,10 +179,8 @@ public final class PuppeteerAbility extends Ability {
     private static final long FINALE_TICKS = 4;
     private static final double SLOT_RADIUS = 1.3;
     private static final double CLAP_RADIUS = 0.33;
-    private static final double STAGE_SPEED = 0.14;
     private static final double STAGE_MIN_DISTANCE = 2.0;
     private static final int GROUND_SEARCH = 8;
-    private static final double STEER_GAIN = 0.5;
     private static final double STRAY_DISTANCE = 3.5;
     private static final long STRAY_TICKS = 10;
     private static final long SAFETY_FALL_TICKS = 60;
@@ -178,7 +189,6 @@ public final class PuppeteerAbility extends Ability {
     private static final float GIANT_WIDTH = 0.2f;
     private static final float KNOB_SIZE = 0.26f;
     private static final double GIANT_ABOVE = 3.4;
-    private static final int MAX_DOLLS = 6;
 
     private final Map<UUID, Thread> threads = new HashMap<>();
     private final Set<UUID> onStage = new HashSet<>();
@@ -417,6 +427,10 @@ public final class PuppeteerAbility extends Ability {
                     0));
             modifiers.add(ctx().addModifier(owner, victim, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1,
                     0));
+            if (victim instanceof Player puppet) {
+                // No blink, charge or flight out of the strings.
+                ctx().silence(puppet, ticks);
+            }
             float yaw = owner.getLocation().getYaw();
             if (!isHiddenFromOwner(victim) && room(4)) {
                 BlockData wood = WOOD_BLOCK.createBlockData();
@@ -457,8 +471,7 @@ public final class PuppeteerAbility extends Ability {
                 flat = new Vector();
             }
             flat = Motion.clamp(flat, MAX_COPY);
-            if (flat.lengthSquared() > 1.0E-8
-                    && !ctx().isInsideArena(victim.getLocation().add(flat.clone().multiply(3)))) {
+            if (flat.lengthSquared() > 1.0E-8 && !isSafeWay(flat)) {
                 flat = new Vector();
             }
             double speed = flat.length();
@@ -491,6 +504,51 @@ public final class PuppeteerAbility extends Ability {
             return true;
         }
 
+        /**
+         * True if the puppet may be walked {@code flat} per tick for the next few ticks: inside the arena, never into
+         * lava or fire, never off a ledge it would get hurt falling from. Walls are fine: the puppet slams into them.
+         */
+        private boolean isSafeWay(Vector flat) {
+            Location feet = victim.getLocation();
+            for (int i = 1; i <= STEP_LOOKAHEAD; i++) {
+                Location ahead = feet.clone().add(flat.clone().multiply(i));
+                if (!ctx().isInsideArena(ahead) || !isSafeFooting(ahead)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private boolean isSafeFooting(Location feet) {
+            World world = feet.getWorld();
+            // The ray starts above the feet: one that starts on a block's face reports a hit inside it.
+            Location from = feet.clone().add(0, 0.5, 0);
+            double reach = 0.5 + MAX_STEP_DOWN + (airborne ? JUMP_ALLOWANCE : 0);
+            RayTraceResult ground = world.rayTraceBlocks(from, new Vector(0, -1, 0), reach, FluidCollisionMode.ALWAYS,
+                    true);
+            if (ground == null) {
+                return false;
+            }
+            Block floor = ground.getHitBlock();
+            if (floor != null && (Spots.isHazard(floor) || Spots.isHazard(floor.getRelative(BlockFace.UP)))) {
+                return false;
+            }
+            // Fire and lava burn whatever part of the body touches them.
+            double half = victim.getWidth() / 2;
+            int bottom = (int) Math.floor(feet.getY() + 0.01);
+            int top = (int) Math.floor(feet.getY() + victim.getHeight());
+            for (int x = (int) Math.floor(feet.getX() - half); x <= (int) Math.floor(feet.getX() + half); x++) {
+                for (int z = (int) Math.floor(feet.getZ() - half); z <= (int) Math.floor(feet.getZ() + half); z++) {
+                    for (int y = bottom; y <= top; y++) {
+                        if (Spots.isHazard(world.getBlockAt(x, y, z))) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
         /** Walked into a wall: the puppet slams into it (a few times at most). */
         private void checkBump(Vector direction) {
             int max = Math.max(0, params().integer("bump_max"));
@@ -508,6 +566,10 @@ public final class PuppeteerAbility extends Ability {
             bumps++;
             lastBump = now;
             Combat.hit(ctx(), owner, victim, Math.max(0, params().num("bump_damage")));
+            if (isHiddenFromOwner(victim)) {
+                // The slam would show where a puppet that slipped into stealth is.
+                return;
+            }
             Location face = Fx.body(victim).add(direction.clone().multiply(victim.getWidth() * 0.5 + 0.1));
             Vfx.cloud(ctx(), face, Particle.CRIT, 10, 0.2, 0.3, null, false);
             Vfx.cloud(ctx(), face, Particle.DUST, 6, 0.2, 0, SAWDUST, false);
@@ -519,6 +581,9 @@ public final class PuppeteerAbility extends Ability {
         }
 
         private void jumpFx() {
+            if (isHiddenFromOwner(victim)) {
+                return;
+            }
             Location feet = victim.getLocation().add(0, 0.05, 0);
             Vfx.ring(ctx(), feet, 0.45, 8, 0, Particle.DUST, SAWDUST, false);
             Fx.sound(feet, Sound.BLOCK_WOOD_STEP, 0.8f, 1.4f + Fx.jitter(0.1f));
@@ -645,10 +710,11 @@ public final class PuppeteerAbility extends Ability {
     private List<LivingEntity> audience(Player owner, Location strings) {
         double radius = Math.max(1, params().num("ult_radius"));
         double reach = Math.max(radius, params().num("thread_reach"));
+        int max = Math.max(1, params().integer("max_dolls"));
         Location eye = owner.getEyeLocation();
         List<LivingEntity> found = new ArrayList<>();
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), reach)) {
-            if (found.size() >= MAX_DOLLS || isHiddenFromOwner(enemy)) {
+            if (found.size() >= max || isHiddenFromOwner(enemy)) {
                 continue;
             }
             double distance = enemy.getLocation().distance(owner.getLocation());
@@ -663,18 +729,19 @@ public final class PuppeteerAbility extends Ability {
         return found;
     }
 
-    /** One hung enemy: its slot on the stage, the path it was steered along and the modifiers that hold it. */
+    /** One hung enemy: where it was caught, where it is reckoned to be and the modifiers that hold it. */
     private static final class Doll {
         final LivingEntity victim;
         final List<NamespacedKey> modifiers = new ArrayList<>();
         final Location origin;
-        @Nullable Location planned;
+        final Reckoning at;
         int stray;
         boolean released;
 
         Doll(LivingEntity victim) {
             this.victim = victim;
             this.origin = victim.getLocation();
+            this.at = new Reckoning(victim);
         }
     }
 
@@ -692,12 +759,18 @@ public final class PuppeteerAbility extends Ability {
         private final List<Doll> dolls = new ArrayList<>();
         private final BlockDisplay[] cross = new BlockDisplay[2];
         private final BlockDisplay[] knobs = new BlockDisplay[4];
+        private final double stageSpeed;
         private List<LivingEntity> audience = List.of();
         private Location stage;
         private double floorY;
         private double hover;
         private float yaw;
         private float jerk;
+        /** The cross as last posed (where it hangs, its size and tilt): the strings hang from its knobs. */
+        private Location poseAt;
+        private float poseScale;
+        private float posePitch;
+        private float poseRoll;
 
         Show(Player owner) {
             this.owner = owner;
@@ -705,8 +778,10 @@ public final class PuppeteerAbility extends Ability {
             this.showTicks = Math.max(1, params().ticks("show_duration"));
             this.clapTicks = Math.max(CLAP_TICKS + 1, params().ticks("clap_interval"));
             this.lift = Math.max(0.5, params().num("lift_height"));
+            this.stageSpeed = Math.max(0, params().num("stage_speed")) / 20.0;
             this.stage = owner.getLocation();
             this.yaw = owner.getLocation().getYaw();
+            this.poseAt = stage.clone();
         }
 
         void start(List<LivingEntity> first) {
@@ -777,7 +852,7 @@ public final class PuppeteerAbility extends Ability {
             poseCross(crossAt, (float) progress, 0, 0);
             if (tick % 2 == 0) {
                 for (LivingEntity enemy : audience) {
-                    if (!Combat.isTargetable(ctx(), owner, enemy)) {
+                    if (!Combat.isTargetable(ctx(), owner, enemy) || isHiddenFromOwner(enemy)) {
                         continue;
                     }
                     Location head = enemy.getLocation().add(0, enemy.getHeight(), 0);
@@ -826,6 +901,10 @@ public final class PuppeteerAbility extends Ability {
                 // A safety net: should the show stop without the finale, the dolls float down instead of dropping.
                 enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,
                         (int) Math.min(Integer.MAX_VALUE, safety), 0, true, false, false));
+                if (enemy instanceof Player held) {
+                    // A doll on its strings cannot cast (no blink or charge off the stage) until the curtain call.
+                    ctx().silence(held, HOIST_TICKS + showTicks + FINALE_TICKS);
+                }
                 onStage.add(enemy.getUniqueId());
                 dolls.add(doll);
                 Location waist = waist(enemy);
@@ -856,7 +935,10 @@ public final class PuppeteerAbility extends Ability {
             drawStrings(t);
             if (t == 0) {
                 for (Doll doll : dolls) {
-                    Vfx.cloud(ctx(), doll.victim.getLocation().add(0, 0.1, 0), Particle.CLOUD, 6, 0.3, 0.03, null, true);
+                    if (!isHiddenFromOwner(doll.victim)) {
+                        Vfx.cloud(ctx(), doll.victim.getLocation().add(0, 0.1, 0), Particle.CLOUD, 6, 0.3, 0.03, null,
+                                true);
+                    }
                 }
                 Fx.sound(stage, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.0f, 0.6f);
             }
@@ -916,10 +998,16 @@ public final class PuppeteerAbility extends Ability {
             double damage = Math.max(0, params().num("clap_damage"));
             Location middle = stage.clone();
             middle.setY(lone ? floorY + 0.2 : floorY + hover + 0.9);
+            boolean seen = false;
             for (Doll doll : dolls) {
                 if (!doll.released) {
                     Combat.hit(ctx(), owner, doll.victim, damage);
+                    seen |= !isHiddenFromOwner(doll.victim);
                 }
+            }
+            if (!seen) {
+                // Nothing to see: every doll slipped into stealth, and the clap would show where they are.
+                return;
             }
             Vfx.dot(middle, Particle.FLASH, PALETTE.core(), true);
             Vfx.cloud(ctx(), middle, Particle.CRIT, 16, 0.4, 0.4, null, true);
@@ -954,7 +1042,10 @@ public final class PuppeteerAbility extends Ability {
             if (length < 0.05) {
                 return;
             }
-            Vector step = want.multiply(Math.min(STAGE_SPEED, length) / length);
+            if (stageSpeed <= 0) {
+                return;
+            }
+            Vector step = want.multiply(Math.min(stageSpeed, length) / length);
             Location next = stage.clone().add(step);
             Location body = stage.clone();
             body.setY(floorY + hover + 0.9);
@@ -999,6 +1090,9 @@ public final class PuppeteerAbility extends Ability {
                     continue;
                 }
                 Combat.hit(ctx(), owner, doll.victim, damage);
+                if (isHiddenFromOwner(doll.victim)) {
+                    continue;
+                }
                 Location feet = doll.victim.getLocation();
                 World world = feet.getWorld();
                 Vfx.shockwave(ctx(), owner, feet.clone().add(0, 0.1, 0), 0.3, 1.5, 4, Particle.DUST_COLOR_TRANSITION,
@@ -1060,20 +1154,25 @@ public final class PuppeteerAbility extends Ability {
                 victim.setVelocity(new Vector(0, REST_FALL, 0));
                 victim.setFallDistance(0);
             }
+            if (isHiddenFromOwner(victim)) {
+                return;
+            }
             Location waist = waist(victim);
             Vfx.cloud(ctx(), waist, Particle.DUST_COLOR_TRANSITION, 8, 0.3, 0, FADE, false);
             Fx.sound(waist, Sound.BLOCK_TRIPWIRE_DETACH, 0.8f, 0.9f + Fx.jitter(0.1f));
         }
 
-        /** Steers one doll along the planned path with damped correction; a doll stuck far off its path is let go. */
+        /**
+         * Steers one doll to {@code next} on its path, from where it is reckoned to be (a player by dead reckoning, see
+         * {@link Reckoning}); a doll that strays far off its path (pushed or teleported away) is let go.
+         */
         private void steer(Doll doll, Location next) {
             LivingEntity victim = doll.victim;
             if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(next.getWorld())) {
                 release(doll);
                 return;
             }
-            Location planned = doll.planned;
-            if (planned != null && victim.getLocation().distance(planned) > STRAY_DISTANCE) {
+            if (doll.at.observe() > STRAY_DISTANCE) {
                 if (++doll.stray > STRAY_TICKS) {
                     release(doll);
                     return;
@@ -1081,39 +1180,37 @@ public final class PuppeteerAbility extends Ability {
             } else {
                 doll.stray = 0;
             }
-            Vector current = victim.getLocation().toVector();
-            Vector velocity = planned == null ? next.toVector().subtract(current)
-                    : next.toVector().subtract(planned.toVector())
-                            .add(planned.toVector().subtract(current).multiply(STEER_GAIN));
-            victim.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+            doll.at.send(Motion.clamp(next.toVector().subtract(doll.at.position()), MAX_SPEED));
             victim.setFallDistance(0);
-            doll.planned = next.clone();
         }
 
-        /** Strings from the cross's knobs to every doll's head and hands. */
+        /** Strings from the cross's red knobs (as it is posed now) to every doll's head, and a slack one to its waist. */
         private void drawStrings(long t) {
             if (t % 2 != 0) {
                 return;
             }
-            Location crossAt = crossSpot(jerk * 0.02);
-            Quaternionf turn = crossRotation(yaw, jerk, 0);
+            Quaternionf turn = crossRotation(yaw, posePitch, poseRoll);
             for (int i = 0; i < dolls.size(); i++) {
                 if (dolls.get(i).released || isHiddenFromOwner(dolls.get(i).victim)) {
                     continue;
                 }
                 LivingEntity victim = dolls.get(i).victim;
                 Location head = victim.getLocation().add(0, victim.getHeight(), 0);
-                Location knob = tip(crossAt, turn, i % 2 == 0 ? GIANT_LENGTH / 2 : -GIANT_LENGTH / 2, 0,
-                        i % 4 < 2 ? GIANT_DEPTH / 2 : -GIANT_DEPTH / 2);
+                Vector3f end = knobEnd(i % knobs.length).mul(poseScale);
+                Location knob = tip(poseAt, turn, end.x(), end.y(), end.z());
                 Vfx.line(ctx(), knob, head, 2.5, Particle.DUST, STRING, true);
-                Vfx.line(ctx(), crossAt, waist(victim), 1.5, Particle.DUST, SLACK, true);
+                Vfx.line(ctx(), poseAt, waist(victim), 1.5, Particle.DUST, SLACK, true);
             }
             if (t % 6 == 0) {
-                drawThread(hand(owner), crossAt, true, t);
+                drawThread(hand(owner), poseAt, true, t);
             }
         }
 
         private void poseCross(Location at, float scale, float pitch, float roll) {
+            poseAt = at.clone();
+            poseScale = scale;
+            posePitch = pitch;
+            poseRoll = roll;
             for (int i = 0; i < 2; i++) {
                 BlockDisplay bar = cross[i];
                 if (bar != null && bar.isValid()) {
@@ -1294,14 +1391,119 @@ public final class PuppeteerAbility extends Ability {
     /** One of the four red knobs at the giant cross's ends. */
     private static Transformation knobPose(int index, float scale, float yaw, float pitch, float roll) {
         Quaternionf turn = crossRotation(yaw, pitch, roll);
-        Vector3f end = switch (index) {
+        Vector3f center = new Quaternionf(turn).transform(knobEnd(index).mul(scale));
+        float size = KNOB_SIZE * Math.max(0.1f, scale);
+        return Displays.transform(center.x(), center.y(), center.z(), size, size, size, yaw, pitch, roll);
+    }
+
+    /** The end of a bar of the giant cross where knob {@code index} sits, in the cross's own (unturned) frame. */
+    private static Vector3f knobEnd(int index) {
+        return switch (index) {
             case 0 -> new Vector3f(GIANT_LENGTH / 2, 0, 0);
             case 1 -> new Vector3f(-GIANT_LENGTH / 2, 0, 0);
             case 2 -> new Vector3f(0, 0, GIANT_DEPTH / 2);
             default -> new Vector3f(0, 0, -GIANT_DEPTH / 2);
         };
-        Vector3f center = new Quaternionf(turn).transform(end.mul(scale));
-        float size = KNOB_SIZE * Math.max(0.1f, scale);
-        return Displays.transform(center.x(), center.y(), center.z(), size, size, size, yaw, pitch, roll);
+    }
+
+    /**
+     * Where a steered body is. Any entity but a player is moved by the server itself, so its own position is exact. A
+     * player moves on its own client, which the server hears from only a round trip later: correcting by that lagging
+     * position is a delayed correction that overshoots and swings the body by blocks once the ping reaches a few ticks.
+     * A player is therefore tracked by dead reckoning (like the magnet's pull): where it was caught plus every velocity
+     * sent to it since, each step cut short where a block would stop the client.
+     */
+    private static final class Reckoning {
+        /** Reckoned positions kept to compare the lagging server position with: a second of round trip. */
+        private static final int TRAIL = 20;
+        /**
+         * Share of the drift seen on the server that is taken into the reckoning per tick. The server shows the effect
+         * of a nudge only a round trip later, so it must stay small: a correction delayed by d ticks settles while its
+         * gain is below about pi / (2d + 1), and 0.05 settles up to a ping of about 1.5 s.
+         */
+        private static final double DRIFT_GAIN = 0.05;
+        private static final double MAX_NUDGE = 0.1;
+        private final LivingEntity body;
+        private final Vector at;
+        private final ArrayDeque<Vector> trail = new ArrayDeque<>();
+
+        Reckoning(LivingEntity body) {
+            this.body = body;
+            this.at = body.getLocation().toVector();
+            trail.addLast(at.clone());
+        }
+
+        /** Where the body is: for a player, where it will be once it has followed every velocity sent so far. */
+        Vector position() {
+            if (!(body instanceof Player)) {
+                at.copy(body.getLocation().toVector());
+            }
+            return at.clone();
+        }
+
+        /** Sends {@code velocity} to the body; a player's reckoning moves with it, up to the first block in the way. */
+        void send(Vector velocity) {
+            body.setVelocity(velocity);
+            if (body instanceof Player) {
+                at.add(blockedStep(velocity));
+            } else {
+                at.copy(body.getLocation().toVector()).add(velocity);
+            }
+            trail.addLast(at.clone());
+            while (trail.size() > TRAIL) {
+                trail.removeFirst();
+            }
+        }
+
+        /**
+         * How far the body (as the server sees it) is from where it should be. Anything but a player is compared with
+         * where the last velocity should have taken it. A player's server position is one of the places it was
+         * reckoned to be lately, a round trip late, so it is compared with the nearest of those; what is left is real
+         * drift (a knockback, its own air control), which nudges the reckoning slowly towards it.
+         */
+        double observe() {
+            Vector seen = body.getLocation().toVector();
+            if (!(body instanceof Player)) {
+                return seen.distance(trail.getLast());
+            }
+            Vector nearest = trail.getLast();
+            double best = Double.MAX_VALUE;
+            for (Vector place : trail) {
+                double distance = seen.distance(place);
+                if (distance < best) {
+                    best = distance;
+                    nearest = place;
+                }
+            }
+            if (best < STRAY_DISTANCE) {
+                at.add(Motion.clamp(seen.subtract(nearest).multiply(DRIFT_GAIN), MAX_NUDGE));
+            }
+            return best;
+        }
+
+        /** The step a client takes with {@code velocity}: like vanilla, axis by axis (y first) up to the first block. */
+        private Vector blockedStep(Vector velocity) {
+            double half = body.getWidth() / 2 - 1.0E-3;
+            BoundingBox box = new BoundingBox(at.getX() - half, at.getY() + 1.0E-3, at.getZ() - half,
+                    at.getX() + half, at.getY() + body.getHeight() - 1.0E-3, at.getZ() + half);
+            double dy = sweep(box, 0, velocity.getY(), 0);
+            box.shift(0, dy, 0);
+            double dx = sweep(box, velocity.getX(), 0, 0);
+            box.shift(dx, 0, 0);
+            double dz = sweep(box, 0, 0, velocity.getZ());
+            return new Vector(dx, dy, dz);
+        }
+
+        /** How much of a move along one axis is free (in quarters): the moved length along that axis. */
+        private double sweep(BoundingBox box, double x, double y, double z) {
+            World world = body.getWorld();
+            for (int quarters = 4; quarters > 0; quarters--) {
+                double f = quarters / 4.0;
+                if (!world.hasCollisionsIn(box.clone().shift(x * f, y * f, z * f))) {
+                    return (x + y + z) * f;
+                }
+            }
+            return 0;
+        }
     }
 }

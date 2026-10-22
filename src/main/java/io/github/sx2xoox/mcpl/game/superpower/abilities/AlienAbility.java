@@ -1,8 +1,11 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -34,12 +37,16 @@ import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -48,15 +55,21 @@ import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * 외계인 — a visitor from space. Its telepathy feels hidden enemies nearby (shown to the alien alone) and hits them
- * harder, the active fires a green ray gun that follows the aim and burns hotter the longer it stays on one target, and
- * the ultimate calls down a flying saucer that hunts the nearest enemy, beams it up, probes it and drops it far away.
+ * 외계인 — a visitor from space. Its telepathy reads the minds of hidden enemies nearby and of whoever just attacked it
+ * (shown to the alien alone) and hits them harder, the active fires a green ray gun that follows the aim and burns
+ * hotter the longer it stays on one target, and the ultimate calls down a flying saucer that hunts the nearest enemy,
+ * beams it up, probes it and drops it far away.
  *
- * <p>The saucer's tractor beam is crowd control: abductees are steered along a planned path with damped corrections (a
- * player's position on the server trails its client), hang under a slow-falling safety net, cannot walk, and are let go
- * if they get stuck. Their landing hurts through the ability (vanilla fall damage is switched off for the drop), and the
- * drop spot must have safe ground inside the arena. The ultimate needs no grant, ticks or hooks, so the gambler may
- * borrow it.
+ * <p>The telepathy works in every match: besides the rare stealthed enemy, every enemy that strikes the alien opens its
+ * mind for a few seconds, so the alien hits back harder and a thread of thought points it to an attacker that ducks out
+ * of sight.
+ *
+ * <p>The saucer's tractor beam is crowd control: abductees cannot walk or use their abilities (silence), hang under a
+ * slow-falling safety net and are steered along a planned path. A player abductee is steered by dead reckoning: its
+ * position on the server trails its client by the ping, and correcting by that lagging position swung it about and
+ * carried it blocks past the end of the path the saucer had checked. An abductee that strays from the path is let go.
+ * Their landing hurts through the ability (vanilla fall damage is switched off for the drop), and the drop spot must
+ * have safe ground inside the arena. The ultimate needs no grant, ticks or hooks, so the gambler may borrow it.
  *
  * <p>Look: alien green and saucer silver. The alien wears two bobbing antennae with glowing green tips (hidden from its
  * own view) that pulse when it senses someone; sensed enemies show green brainwave rings and a thread of thought that
@@ -71,8 +84,9 @@ public final class AlienAbility extends Ability {
             .color(TextColor.color(0x7CFF4F))
             .difficulty(2)
             .passive("텔레파시",
-                    "{sense_range}블록 안에 숨은 적(은신·투명)이 있으면 나에게만 보이는 초록 뇌파로 위치를 느낍니다. "
-                            + "텔레파시로 느낀 적에게 주는 피해가 {sense_bonus}% 증가합니다.")
+                    "{sense_range}블록 안의 숨은 적(은신·투명)과 {link_duration}초 안에 나를 공격한 적의 생각을 읽어, "
+                            + "나에게만 보이는 초록 뇌파로 위치를 느낍니다. 텔레파시로 느낀 적에게 주는 피해가 "
+                            + "{sense_bonus}% 증가합니다.")
             .active("광선총",
                     "{ray_duration}초간 시선을 따라 움직이는 녹색 광선을 쏩니다({ray_range}블록, 벽과 처음 맞은 적에서 "
                             + "멈춤). 광선에 닿은 적은 {ray_interval}초마다 {ray_damage} 피해를 입고, 같은 적을 계속 맞힐수록 "
@@ -81,11 +95,12 @@ public final class AlienAbility extends Ability {
             .ultimate("UFO 납치",
                     "조준한 곳({ult_range}블록 이내) 상공에 UFO를 부릅니다. {ufo_arrive}초 뒤 내려온 UFO는 {hunt_duration}초간 "
                             + "주변 {hunt_radius}블록 안의 가장 가까운 적을 쫓으며(초당 {ufo_speed}블록) 반경 {beam_radius}블록의 "
-                            + "견인 광선을 비춥니다. 광선에 닿은 적은 끌려 올라가 {probe_duration}초간 붙잡힌 채 "
-                            + "{probe_interval}초마다 {probe_damage} 피해를 받고, 내가 바라보는 쪽으로 최대 {carry_distance}블록 "
-                            + "실려 간 뒤 떨어져 {drop_damage} 피해를 받습니다.")
+                            + "견인 광선을 비춥니다. 광선에 닿은 적(최대 {max_abductees}명)은 끌려 올라가 능력을 쓸 수 없게 "
+                            + "되고, {probe_duration}초간 붙잡힌 채 {probe_interval}초마다 {probe_damage} 피해를 받은 뒤 내가 "
+                            + "바라보는 쪽으로 최대 {carry_distance}블록 실려 가 떨어지며 {drop_damage} 피해를 받습니다.")
             .param("sense_range", 16)
-            .param("sense_bonus", 20)
+            .param("link_duration", 4)
+            .param("sense_bonus", 15)
             .param("ray_duration", 1)
             .param("ray_range", 18)
             .param("ray_interval", 0.2)
@@ -98,6 +113,7 @@ public final class AlienAbility extends Ability {
             .param("hunt_radius", 10)
             .param("ufo_speed", 4.8)
             .param("beam_radius", 2.2)
+            .param("max_abductees", 3)
             .param("probe_duration", 1)
             .param("probe_interval", 0.5)
             .param("probe_damage", 1.5)
@@ -168,9 +184,7 @@ public final class AlienAbility extends Ability {
     private static final long DROP_TICKS = 14;
     private static final long LEAVE_TICKS = 14;
     private static final double DROP_SPEED = 1.0;
-    private static final int MAX_ABDUCTEES = 3;
     private static final double SLOT_RADIUS = 0.7;
-    private static final double STEER_GAIN = 0.5;
     private static final double STRAY_DISTANCE = 3.5;
     private static final long STRAY_TICKS = 10;
     private static final long SAFETY_FALL_TICKS = 60;
@@ -181,8 +195,14 @@ public final class AlienAbility extends Ability {
 
     private final List<Display> live = new ArrayList<>();
     private final Set<UUID> sensed = new HashSet<>();
+    /** Enemies whose minds are open to the alien because they attacked it, and until when. */
+    private final Map<UUID, Link> links = new HashMap<>();
     private final BlockDisplay[] antennae = new BlockDisplay[4];
     private float antennaPulse;
+
+    /** An attacker's open mind: who it is and until when the alien reads it. */
+    private record Link(LivingEntity enemy, long until) {
+    }
 
     @Override
     public AbilityInfo info() {
@@ -213,6 +233,7 @@ public final class AlienAbility extends Ability {
     @Override
     public void onRevoke() {
         sensed.clear();
+        links.clear();
         for (BlockDisplay part : antennae) {
             if (part != null && part.isValid()) {
                 part.remove();
@@ -228,11 +249,49 @@ public final class AlienAbility extends Ability {
         return enemy.isInvisible() || enemy.hasPotionEffect(PotionEffectType.INVISIBILITY);
     }
 
-    /** A hidden enemy close enough for the alien's telepathy. */
+    /** True while the mind of {@code enemy}, which attacked the alien, is open to it. */
+    private boolean isLinked(LivingEntity enemy) {
+        Link link = links.get(enemy.getUniqueId());
+        return link != null && ctx().currentTick() < link.until();
+    }
+
+    /** A hidden enemy, or one whose mind is open, close enough for the alien's telepathy. */
     private boolean isSensed(LivingEntity enemy) {
         Player owner = player();
-        return isHidden(enemy) && enemy.getWorld().equals(owner.getWorld())
+        return (isHidden(enemy) || isLinked(enemy)) && enemy.getWorld().equals(owner.getWorld())
                 && enemy.getLocation().distance(owner.getLocation()) <= Math.max(0, params().num("sense_range"));
+    }
+
+    /** An enemy that strikes the alien opens its mind to it for a while (its summons and arrows count as it). */
+    @Override
+    public void onTakeDamage(EntityDamageEvent event) {
+        if (event.isCancelled() || event.getFinalDamage() <= 0 || !(event instanceof EntityDamageByEntityEvent hit)) {
+            return;
+        }
+        Player owner = player();
+        Entity damager = hit.getDamager();
+        LivingEntity attacker = ctx().resolveAttacker(damager);
+        if (attacker == null && damager instanceof Projectile projectile
+                && projectile.getShooter() instanceof LivingEntity shooter) {
+            attacker = shooter;
+        }
+        if (attacker == null && damager instanceof LivingEntity living) {
+            attacker = living;
+        }
+        long ticks = params().ticks("link_duration");
+        if (attacker == null || attacker.equals(owner) || ticks <= 0 || !ctx().isEnemy(owner, attacker)) {
+            return;
+        }
+        boolean fresh = !isLinked(attacker);
+        links.put(attacker.getUniqueId(), new Link(attacker, ctx().currentTick() + ticks));
+        if (fresh && attacker.getWorld().equals(owner.getWorld())) {
+            // Only the alien hears and sees the mind opening: a chime and a thread of thought to the attacker.
+            Location ear = owner.getEyeLocation();
+            owner.playSound(ear, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, SoundCategory.PLAYERS, 0.6f, 1.9f);
+            owner.spawnParticle(Particle.TRAIL, headTop(owner).add(0, 0.3, 0), 1, 0, 0, 0, 0,
+                    new Particle.Trail(Fx.body(attacker), PALETTE.body(), 12));
+            antennaPulse = 1f;
+        }
     }
 
     /** Telepathy hits harder: sensed hidden enemies take more of every hit the alien deals. */
@@ -254,16 +313,23 @@ public final class AlienAbility extends Ability {
         if (tick % SENSE_PERIOD != 0) {
             return;
         }
+        long clock = ctx().currentTick();
+        links.values().removeIf(link -> clock >= link.until() || !Combat.isTargetable(ctx(), owner, link.enemy()));
         double range = Math.max(0, params().num("sense_range"));
         Set<UUID> now = new HashSet<>();
         int fresh = 0;
+        int hidden = 0;
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), range)) {
-            if (!isHidden(enemy)) {
+            boolean stealthed = isHidden(enemy);
+            if (!stealthed && !isLinked(enemy)) {
                 continue;
             }
             now.add(enemy.getUniqueId());
-            if (!sensed.contains(enemy.getUniqueId())) {
-                fresh++;
+            if (stealthed) {
+                hidden++;
+                if (!sensed.contains(enemy.getUniqueId())) {
+                    fresh++;
+                }
             }
             brainwave(owner, enemy, tick);
         }
@@ -272,7 +338,7 @@ public final class AlienAbility extends Ability {
             owner.playSound(ear, Sound.BLOCK_AMETHYST_BLOCK_CHIME, SoundCategory.PLAYERS, 0.8f, 1.8f);
             owner.playSound(ear, Sound.BLOCK_BEACON_POWER_SELECT, SoundCategory.PLAYERS, 0.4f, 2.0f);
             owner.sendActionBar(Text.mm("<" + GREEN + ">◉ 텔레파시</" + GREEN + "> <gray>숨은 적</gray> <white>"
-                    + now.size() + "명</white><gray> 감지</gray>"));
+                    + hidden + "명</white><gray> 감지</gray>"));
         }
         if (!now.isEmpty()) {
             antennaPulse = 1f;
@@ -647,12 +713,12 @@ public final class AlienAbility extends Ability {
         return Displays.unrotated(at);
     }
 
-    /** One enemy in the tractor beam: where it was caught, the path it was steered along and what holds it. */
+    /** One enemy in the tractor beam: where it was caught, where it is reckoned to be and what holds it. */
     private static final class Abductee {
         final LivingEntity victim;
         final Location origin;
+        final Reckoning at;
         final List<NamespacedKey> modifiers = new ArrayList<>();
-        @Nullable Location planned;
         int stray;
         boolean released;
         boolean dropping;
@@ -661,6 +727,7 @@ public final class AlienAbility extends Ability {
         Abductee(LivingEntity victim) {
             this.victim = victim;
             this.origin = victim.getLocation();
+            this.at = new Reckoning(victim);
         }
     }
 
@@ -837,8 +904,9 @@ public final class AlienAbility extends Ability {
             List<LivingEntity> found = new ArrayList<>();
             Location ground = center.clone();
             ground.setY(floorY);
+            int max = Math.max(1, params().integer("max_abductees"));
             for (LivingEntity enemy : ctx().enemiesNear(owner, ground, beamRadius + 3)) {
-                if (found.size() >= MAX_ABDUCTEES || isHidden(enemy)) {
+                if (found.size() >= max || isHidden(enemy)) {
                     continue;
                 }
                 Location at = enemy.getLocation();
@@ -883,6 +951,10 @@ public final class AlienAbility extends Ability {
                         Operation.MULTIPLY_SCALAR_1, 0));
                 enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING,
                         (int) Math.min(Integer.MAX_VALUE, safety), 0, true, false, false));
+                if (enemy instanceof Player held) {
+                    // No blink, charge or flight out of the beam until the saucer lets go.
+                    ctx().silence(held, LIFT_TICKS + probeTicks + maxCarryTicks());
+                }
                 taken.add(abductee);
                 Location body = Fx.body(enemy);
                 Vfx.cloud(ctx(), body, Particle.DUST_COLOR_TRANSITION, 10, 0.3, 0, GLOW, true);
@@ -912,7 +984,7 @@ public final class AlienAbility extends Ability {
             pose(center, 1f);
             drawShaft(tick);
             for (Abductee abductee : taken) {
-                if (!abductee.released && t % 2 == 0) {
+                if (!abductee.released && t % 2 == 0 && !isHidden(abductee.victim)) {
                     Vfx.helix(ctx(), abductee.victim.getLocation(), 0.55, abductee.victim.getHeight(), 1.0, 2, 6,
                             tick * 0.5, Particle.DUST_COLOR_TRANSITION, GLOW_SMALL, true);
                 }
@@ -1070,7 +1142,10 @@ public final class AlienAbility extends Ability {
                     crash(victim);
                 } else {
                     waiting = true;
-                    Vfx.dot(victim.getLocation().add(0, victim.getHeight() + 0.2, 0), Particle.DUST, GREEN_DUST, true);
+                    if (!isHidden(victim)) {
+                        Vfx.dot(victim.getLocation().add(0, victim.getHeight() + 0.2, 0), Particle.DUST, GREEN_DUST,
+                                true);
+                    }
                 }
             }
             if (!waiting) {
@@ -1084,6 +1159,10 @@ public final class AlienAbility extends Ability {
                 return;
             }
             Combat.hit(ctx(), owner, victim, Math.max(0, params().num("drop_damage")));
+            if (isHidden(victim)) {
+                // The crater would show where an abductee that slipped into stealth came down.
+                return;
+            }
             Location feet = victim.getLocation().add(0, 0.1, 0);
             Vfx.dot(Fx.body(victim), Particle.FLASH, PALETTE.core(), true);
             Vfx.shockwave(ctx(), owner, feet, 0.3, 2.0, 5, Particle.DUST_COLOR_TRANSITION, GLOW, true);
@@ -1146,15 +1225,17 @@ public final class AlienAbility extends Ability {
             }
         }
 
-        /** Steers one abductee along its planned path with damped correction; a stuck one is let go. */
+        /**
+         * Steers one abductee to {@code next} on its path, from where it is reckoned to be (a player by dead
+         * reckoning, see {@link Reckoning}); one that strays far off its path (pushed or teleported away) is let go.
+         */
         private void steer(Abductee abductee, Location next) {
             LivingEntity victim = abductee.victim;
             if (!Combat.isTargetable(ctx(), owner, victim) || !victim.getWorld().equals(next.getWorld())) {
                 letGo(abductee);
                 return;
             }
-            Location planned = abductee.planned;
-            if (planned != null && victim.getLocation().distance(planned) > STRAY_DISTANCE) {
+            if (abductee.at.observe() > STRAY_DISTANCE) {
                 if (++abductee.stray > STRAY_TICKS) {
                     letGo(abductee);
                     if (victim.isValid() && !victim.isDead()) {
@@ -1165,13 +1246,8 @@ public final class AlienAbility extends Ability {
             } else {
                 abductee.stray = 0;
             }
-            Vector current = victim.getLocation().toVector();
-            Vector velocity = planned == null ? next.toVector().subtract(current)
-                    : next.toVector().subtract(planned.toVector())
-                            .add(planned.toVector().subtract(current).multiply(STEER_GAIN));
-            victim.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+            abductee.at.send(Motion.clamp(next.toVector().subtract(abductee.at.position()), MAX_SPEED));
             victim.setFallDistance(0);
-            abductee.planned = next.clone();
         }
 
         /** Where abductee {@code i} hangs under the saucer (its feet), turning slowly around the beam. */
@@ -1268,6 +1344,107 @@ public final class AlienAbility extends Ability {
     }
 
     // ================================================================== helpers
+
+    /**
+     * Where a steered body is. Any entity but a player is moved by the server itself, so its own position is exact. A
+     * player moves on its own client, which the server hears from only a round trip later: correcting by that lagging
+     * position is a delayed correction that overshoots and swings the body by blocks once the ping reaches a few ticks.
+     * A player is therefore tracked by dead reckoning (like the magnet's pull): where it was caught plus every velocity
+     * sent to it since, each step cut short where a block would stop the client.
+     */
+    private static final class Reckoning {
+        /** Reckoned positions kept to compare the lagging server position with: a second of round trip. */
+        private static final int TRAIL = 20;
+        /**
+         * Share of the drift seen on the server that is taken into the reckoning per tick. The server shows the effect
+         * of a nudge only a round trip later, so it must stay small: a correction delayed by d ticks settles while its
+         * gain is below about pi / (2d + 1), and 0.05 settles up to a ping of about 1.5 s.
+         */
+        private static final double DRIFT_GAIN = 0.05;
+        private static final double MAX_NUDGE = 0.1;
+        private final LivingEntity body;
+        private final Vector at;
+        private final ArrayDeque<Vector> trail = new ArrayDeque<>();
+
+        Reckoning(LivingEntity body) {
+            this.body = body;
+            this.at = body.getLocation().toVector();
+            trail.addLast(at.clone());
+        }
+
+        /** Where the body is: for a player, where it will be once it has followed every velocity sent so far. */
+        Vector position() {
+            if (!(body instanceof Player)) {
+                at.copy(body.getLocation().toVector());
+            }
+            return at.clone();
+        }
+
+        /** Sends {@code velocity} to the body; a player's reckoning moves with it, up to the first block in the way. */
+        void send(Vector velocity) {
+            body.setVelocity(velocity);
+            if (body instanceof Player) {
+                at.add(blockedStep(velocity));
+            } else {
+                at.copy(body.getLocation().toVector()).add(velocity);
+            }
+            trail.addLast(at.clone());
+            while (trail.size() > TRAIL) {
+                trail.removeFirst();
+            }
+        }
+
+        /**
+         * How far the body (as the server sees it) is from where it should be. Anything but a player is compared with
+         * where the last velocity should have taken it. A player's server position is one of the places it was
+         * reckoned to be lately, a round trip late, so it is compared with the nearest of those; what is left is real
+         * drift (a knockback, its own air control), which nudges the reckoning slowly towards it.
+         */
+        double observe() {
+            Vector seen = body.getLocation().toVector();
+            if (!(body instanceof Player)) {
+                return seen.distance(trail.getLast());
+            }
+            Vector nearest = trail.getLast();
+            double best = Double.MAX_VALUE;
+            for (Vector place : trail) {
+                double distance = seen.distance(place);
+                if (distance < best) {
+                    best = distance;
+                    nearest = place;
+                }
+            }
+            if (best < STRAY_DISTANCE) {
+                at.add(Motion.clamp(seen.subtract(nearest).multiply(DRIFT_GAIN), MAX_NUDGE));
+            }
+            return best;
+        }
+
+        /** The step a client takes with {@code velocity}: like vanilla, axis by axis (y first) up to the first block. */
+        private Vector blockedStep(Vector velocity) {
+            double half = body.getWidth() / 2 - 1.0E-3;
+            BoundingBox box = new BoundingBox(at.getX() - half, at.getY() + 1.0E-3, at.getZ() - half,
+                    at.getX() + half, at.getY() + body.getHeight() - 1.0E-3, at.getZ() + half);
+            double dy = sweep(box, 0, velocity.getY(), 0);
+            box.shift(0, dy, 0);
+            double dx = sweep(box, velocity.getX(), 0, 0);
+            box.shift(dx, 0, 0);
+            double dz = sweep(box, 0, 0, velocity.getZ());
+            return new Vector(dx, dy, dz);
+        }
+
+        /** How much of a move along one axis is free (in quarters): the moved length along that axis. */
+        private double sweep(BoundingBox box, double x, double y, double z) {
+            World world = body.getWorld();
+            for (int quarters = 4; quarters > 0; quarters--) {
+                double f = quarters / 4.0;
+                if (!world.hasCollisionsIn(box.clone().shift(x * f, y * f, z * f))) {
+                    return (x + y + z) * f;
+                }
+            }
+            return 0;
+        }
+    }
 
     /** The top of the floor under {@code at}, searching down from {@code fromY}; NaN if there is none in reach. */
     private static double groundY(Location at, double fromY) {

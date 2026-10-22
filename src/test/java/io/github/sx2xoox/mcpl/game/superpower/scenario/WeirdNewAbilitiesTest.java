@@ -2,20 +2,30 @@ package io.github.sx2xoox.mcpl.game.superpower.scenario;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Deque;
 import java.util.List;
 import java.util.stream.Stream;
 
+import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Particle;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -27,13 +37,19 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockbukkit.mockbukkit.util.SpawnedParticle;
 
 /** 정신·기묘 계열 (new): 최면술사, 인형술사, 외계인, 좀비. */
 class WeirdNewAbilitiesTest {
@@ -95,6 +111,125 @@ class WeirdNewAbilitiesTest {
     private static void assertUnrotated(Entity display, String what) {
         assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
         assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    /** The middle of a block display's (scaled, rotated) block, in world coordinates. */
+    private static Vector centerOf(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        Vector3f half = rotationOf(display).transform(new Vector3f(t.getScale()).mul(0.5f));
+        Vector3f translation = t.getTranslation();
+        return display.getLocation().toVector().add(new Vector(translation.x() + half.x(),
+                translation.y() + half.y(), translation.z() + half.z()));
+    }
+
+    /**
+     * Every particle the world spawned since it was last cleared within {@code radius} of {@code at} that anybody but
+     * the owner can see (the alien's telepathy draws for the alien alone).
+     */
+    private static List<SpawnedParticle> particlesNear(Scenario s, Vector at, double radius) {
+        return s.world.getSpawnedParticles().stream()
+                .filter(p -> p.receivers() == null || p.receivers().stream().anyMatch(r -> !r.equals(s.owner)))
+                .filter(p -> at.distance(new Vector(p.x(), p.y(), p.z())) <= radius)
+                .toList();
+    }
+
+    /** The middle of a body. */
+    private static Vector bodyOf(Entity entity) {
+        return entity.getLocation().toVector().add(new Vector(0, entity.getHeight() / 2, 0));
+    }
+
+    /** Hides {@code enemy} from the owner, as a stealth skill does. */
+    private static void stealth(Scenario s, Player enemy) {
+        s.owner.hidePlayer(s.ctx().plugin(), enemy);
+    }
+
+    /**
+     * Real clients against what the server knows of them, for the real-client bugs a plain world simulation hides. A
+     * real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server last
+     * sent it): each client keeps its own velocity (gravity, drag, ground friction) until the server sends a new one,
+     * and the server sees each client's position {@code lag} ticks late. World physics must be off: this moves the
+     * players.
+     */
+    private static final class LaggingClients {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final List<Client> clients = new ArrayList<>();
+
+        LaggingClients(Scenario s, int lag, TestPlayer... players) {
+            this.s = s;
+            for (TestPlayer player : players) {
+                clients.add(new Client(player, lag));
+            }
+        }
+
+        /** Where {@code player} really is (its client). */
+        Location at(TestPlayer player) {
+            for (Client client : clients) {
+                if (client.player.equals(player)) {
+                    return client.at.clone();
+                }
+            }
+            throw new IllegalArgumentException(player.getName());
+        }
+
+        /**
+         * One server tick, then one client tick of every player with the velocity the server last set during it (a
+         * server sends a player's velocity once per tick, after the plugins ran).
+         */
+        void tick() {
+            s.ticks(1);
+            for (Client client : clients) {
+                client.step();
+            }
+        }
+
+        private static final class Client {
+            private final TestPlayer player;
+            private final Deque<Location> late = new ArrayDeque<>();
+            private final Location at;
+            private final Vector velocity = new Vector();
+            private Vector marked = new Vector();
+
+            Client(TestPlayer player, int lag) {
+                this.player = player;
+                this.at = player.getLocation();
+                for (int i = 0; i < lag; i++) {
+                    late.addLast(at.clone());
+                }
+                mark(new Vector());
+            }
+
+            void step() {
+                Vector now = player.getVelocity();
+                if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                        || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                    velocity.copy(now);
+                    mark(now);
+                }
+                at.add(velocity);
+                boolean grounded = at.getY() <= FlatWorld.SURFACE;
+                if (grounded) {
+                    at.setY(FlatWorld.SURFACE);
+                }
+                double vy = (velocity.getY() - 0.08) * 0.98;
+                double friction = grounded ? 0.546 : 0.91;
+                velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                        .setZ(velocity.getZ() * friction);
+                late.addLast(at.clone());
+                Location seen = late.removeFirst();
+                Location look = player.getLocation();
+                seen.setYaw(look.getYaw());
+                seen.setPitch(look.getPitch());
+                player.teleport(seen);
+                player.setVelocity(marked);
+            }
+
+            private void mark(Vector sent) {
+                marked = sent.clone().setX(sent.getX() + MARK);
+                player.setVelocity(marked);
+            }
+        }
     }
 
     // ================================================================== every ability
@@ -654,17 +789,92 @@ class WeirdNewAbilitiesTest {
     }
 
     @Test
-    void hypnotistMassHypnosisOutlastsAnActiveSleep() {
+    void hypnotistMassHypnosisTurnsAnActiveSleepIntoADreamWithoutChainingIt() {
         try (Scenario s = Scenario.ffa("hypnotist")) {
-            hypnotise(s);
+            hypnotise(s); // the enemy fell asleep about 2 ticks ago
             assertTrue(isAsleep(s.enemy));
             s.assertSucceeded(s.ultimate(), "집단 최면 on a sleeper");
-            s.ticks(s.paramTicks("ult_windup") + s.paramTicks("ult_sleep") - 10);
+            s.ticks(s.paramTicks("ult_windup") + 4);
             assertTrue(isAsleep(s.enemy), "the dream carries on the sleep");
+            assertEquals(1, entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.WHITE_STAINED_GLASS)
+                    .filter(d -> Math.hypot(d.getLocation().getX() - s.enemy.getLocation().getX(),
+                            d.getLocation().getZ() - s.enemy.getLocation().getZ()) < 0.5).count(), "and it dreams");
+            // Asleep since the wave: it may sleep ult_sleep from then, never ult_sleep from the chime on top of that.
+            s.ticks(s.paramTicks("ult_sleep") - s.paramTicks("ult_windup") - 4 - 12);
+            assertTrue(isAsleep(s.enemy), "still dreaming");
             assertNotNull(s.enemy.getPotionEffect(PotionEffectType.BLINDNESS));
-            s.ticks(20);
-            assertTrue(isAwake(s.enemy));
+            s.ticks(16);
+            assertTrue(isAwake(s.enemy), "woken " + s.param("ult_sleep") + " s after it first fell asleep");
             assertEquals(s.param("nightmare_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "one nightmare");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hypnotistSleepNeverChainsPastTheLongestSleep() {
+        try (Scenario s = Scenario.ffa("hypnotist")) {
+            s.assertSucceeded(s.ultimate(), "집단 최면");
+            s.ticks(s.paramTicks("ult_windup") + 1);
+            assertTrue(isAsleep(s.enemy), "dreaming");
+            // Near the end of the dream the hypnotist swings the watch at the dreamer again.
+            s.ticks(s.paramTicks("ult_sleep") - s.paramTicks("channel_time") - 12);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "최면 on a dreamer");
+            s.ticks(s.paramTicks("channel_time") + 2);
+            assertTrue(isAsleep(s.enemy), "still dreaming when the wave reaches it");
+            s.ticks(12);
+            assertTrue(isAwake(s.enemy), "the wave does not make it sleep on past " + s.param("ult_sleep") + " s");
+            assertEquals(s.param("nightmare_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the nightmare comes on time");
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A real client only warps the view while more than this many ticks of nausea are left, and fades the warp out
+     * over them: nausea of 3 seconds or less shows nothing at all (the mycologist audit).
+     */
+    private static final int CLIENT_NAUSEA_FADE = 60;
+
+    @Test
+    void hypnotistNightmareNauseaLastsLongEnoughForTheClientToShowIt() {
+        try (Scenario s = Scenario.ffa("hypnotist")) {
+            s.assertSucceeded(s.ultimate(), "집단 최면");
+            s.ticks(s.paramTicks("ult_windup") + 5);
+            s.melee(s.enemy2, s.enemy, 1);
+            s.ticks(2);
+            PotionEffect nausea = s.enemy.getPotionEffect(PotionEffectType.NAUSEA);
+            assertNotNull(nausea, "the nightmare leaves it sick");
+            assertTrue(nausea.getDuration() - CLIENT_NAUSEA_FADE >= s.paramTicks("nightmare_nausea") - 2,
+                    "the view warps for nightmare_nausea on a real client: " + nausea.getDuration());
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hypnotistSleepersCannotUseTheirAbilities() {
+        try (Scenario s = Scenario.ffa("hypnotist")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            hypnotise(s);
+            assertTrue(isAsleep(s.enemy));
+            assertTrue(s.ctx().isSilenced(s.enemy), "a sleeper cannot cast (no blink or charge out of the sleep)");
+            assertFalse(s.ctx().isSilenced(s.enemy2), "enemy2 is awake");
+            s.ticks(s.paramTicks("sleep_duration"));
+            assertTrue(isAwake(s.enemy));
+            assertFalse(s.ctx().isSilenced(s.enemy), "the silence ends with the sleep");
+
+            s.ticks(s.paramTicks("sleep_immunity") + 2);
+            s.layout();
+            s.assertSucceeded(s.ultimate(), "집단 최면");
+            s.ticks(s.paramTicks("ult_windup") + 2);
+            for (TestPlayer enemy : s.enemies()) {
+                assertTrue(s.ctx().isSilenced(enemy), enemy.getName() + " dreams and cannot cast");
+            }
+            s.ticks(s.paramTicks("ult_sleep") + 2);
+            for (TestPlayer enemy : s.enemies()) {
+                assertFalse(s.ctx().isSilenced(enemy), enemy.getName() + " woke up");
+            }
             s.finishClean();
         }
     }
@@ -998,6 +1208,234 @@ class WeirdNewAbilitiesTest {
         }
     }
 
+    @ParameterizedTest(name = "lag {0}")
+    @ValueSource(ints = {3, 8})
+    void puppeteerShowHoldsLaggingDollsSteadyAndLetsNoneGo(int lag) {
+        try (Scenario s = Scenario.ffa("puppeteer")) {
+            s.world.physics().setEnabled(false);
+            // The server sees the hung players lag ticks late (150 / 400 ms): steering by those positions swung them
+            // up and down by blocks and slammed them into the floor.
+            LaggingClients clients = new LaggingClients(s, lag, s.enemy, s.enemy2);
+            s.assertSucceeded(s.ultimate(), "인형극");
+            int windup = s.paramTicks("ult_windup");
+            int showEnd = windup + 8 + s.paramTicks("show_duration");
+            double hover = FlatWorld.SURFACE + s.param("lift_height");
+            double worst = 0;
+            for (int i = 1; i <= showLength(s) + 10; i++) {
+                clients.tick();
+                if (i > windup + 12 && i <= showEnd) {
+                    for (TestPlayer doll : s.enemies()) {
+                        worst = Math.max(worst, Math.abs(clients.at(doll).getY() - hover));
+                    }
+                }
+            }
+            assertTrue(worst < 0.4, "the dolls dangle at " + s.param("lift_height") + " blocks, off by " + worst);
+            double expected = claps(s) * s.param("clap_damage") + s.param("finale_damage");
+            for (TestPlayer doll : s.enemies()) {
+                assertEquals(expected, s.damageBy(s.owner, doll), EPSILON, doll.getName() + " was never let go");
+                assertEquals(FlatWorld.SURFACE, clients.at(doll).getY(), 1.0E-6, "dashed down onto the floor");
+            }
+            s.world.physics().setEnabled(true);
+            s.layout();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void puppeteerPuppetsAndDollsCannotUseTheirAbilities() {
+        try (Scenario s = Scenario.ffa("puppeteer")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "꼭두각시");
+            s.ticks(2);
+            assertTrue(s.ctx().isSilenced(s.enemy), "a puppet cannot cast its way out of the strings");
+            assertFalse(s.ctx().isSilenced(s.enemy2));
+            s.ticks(s.paramTicks("puppet_duration") + 2);
+            assertFalse(s.ctx().isSilenced(s.enemy), "free again");
+
+            s.layout();
+            s.assertSucceeded(s.ultimate(), "인형극");
+            s.ticks(s.paramTicks("ult_windup") + 4);
+            for (TestPlayer doll : s.enemies()) {
+                assertEquals(0, speed(doll), EPSILON, doll.getName() + " is hung");
+                assertTrue(s.ctx().isSilenced(doll), doll.getName() + " cannot cast while it dangles");
+            }
+            s.ticks(showLength(s) + 2);
+            for (TestPlayer doll : s.enemies()) {
+                assertFalse(s.ctx().isSilenced(doll), doll.getName() + " is free after the show");
+            }
+            s.finishClean();
+        }
+    }
+
+    private static boolean isPuppetString(SpawnedParticle particle) {
+        return particle.particle() == Particle.DUST && particle.data() instanceof Particle.DustOptions dust
+                && dust.getColor().asRGB() == 0xF2E6D8 && Math.abs(dust.getSize() - 0.45f) < 1.0E-3;
+    }
+
+    @Test
+    void puppeteerShowStringsHangFromTheCrossKnobs() {
+        try (Scenario s = Scenario.ffa("puppeteer")) {
+            s.assertSucceeded(s.ultimate(), "인형극");
+            s.ticks(s.paramTicks("ult_windup") + 8 + 6);
+            List<SpawnedParticle> strings = List.of();
+            for (int i = 0; i < 4 && strings.isEmpty(); i++) {
+                s.world.clearSpawnedParticles();
+                s.ticks(1);
+                strings = s.world.getSpawnedParticles().stream().filter(WeirdNewAbilitiesTest::isPuppetString).toList();
+            }
+            assertFalse(strings.isEmpty(), "the dolls hang on strings");
+            int tied = 0;
+            for (BlockDisplay knob : blocks(s, Material.RED_WOOL)) {
+                Vector center = centerOf(knob);
+                if (strings.stream().anyMatch(p -> center.distance(new Vector(p.x(), p.y(), p.z())) < 0.15)) {
+                    tied++;
+                }
+            }
+            assertEquals(2, tied, "each doll's string runs from a red knob of the swaying cross");
+            s.ticks(showLength(s));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void puppeteerShowTextCountsTheLastBeatAsTheFinale() {
+        try (Scenario s = Scenario.ffa("puppeteer")) {
+            String text = s.ctx().registry().get("puppeteer").info().ultimate().description();
+            assertTrue(text.contains("마지막 박자"), "the last beat is the finale, not a clap: " + text);
+            int beats = (int) Math.round(s.param("show_duration") / s.param("clap_interval"));
+            assertEquals(beats - 1, claps(s), "every beat but the last claps");
+            s.place(s.enemy2, 0.5, -15.5, 0);
+            s.assertSucceeded(s.ultimate(), "인형극");
+            s.ticks(showLength(s) + 4);
+            assertEquals(beats - 1, s.hitsBy(s.owner, s.enemy).stream()
+                    .filter(hit -> Math.abs(hit.damage() - s.param("clap_damage")) < EPSILON).count(), "claps");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void puppeteerShowHangsAtMostMaxDolls() {
+        try (Scenario s = Scenario.builder("puppeteer").param("max_dolls", 1).start()) {
+            s.assertSucceeded(s.ultimate(), "인형극");
+            s.ticks(s.paramTicks("ult_windup") + 12);
+            long hung = s.enemies().stream()
+                    .filter(enemy -> enemy.getLocation().getY() > FlatWorld.SURFACE + s.param("lift_height") * 0.6)
+                    .count();
+            assertEquals(1, hung, "at most " + s.param("max_dolls") + " doll");
+            s.ticks(showLength(s) + 4);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void puppeteerNeverWalksItsPuppetIntoLavaOrOffALedge() {
+        try (Scenario s = Scenario.builder("puppeteer").param("puppet_duration", 4).start()) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            // A deep pit east of the puppet, beside the puppeteer's own (solid) path.
+            for (int x = 2; x <= 3; x++) {
+                for (int z = 2; z <= 7; z++) {
+                    for (int y = FlatWorld.FLOOR_Y - 5; y <= FlatWorld.FLOOR_Y; y++) {
+                        s.world.setBlock(x, y, z, Material.AIR);
+                    }
+                }
+            }
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "꼭두각시");
+            for (int i = 0; i < 40; i++) {
+                step(s.owner, 0.2, 0, 0);
+                s.ticks(1);
+            }
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-6,
+                    "the puppet stops at the edge: " + s.enemy.getLocation());
+            assertTrue(s.enemy.getLocation().getX() < 2, "and never steps out over it");
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "no fall");
+            s.ticks(20);
+            for (int x = 2; x <= 3; x++) {
+                for (int z = 2; z <= 7; z++) {
+                    for (int y = FlatWorld.FLOOR_Y - 5; y <= FlatWorld.FLOOR_Y; y++) {
+                        s.world.setBlock(x, y, z, Material.STONE);
+                    }
+                }
+            }
+
+            // A lava channel at floor level.
+            s.layout();
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            for (int z = 2; z <= 7; z++) {
+                s.world.setBlock(2, FlatWorld.FLOOR_Y, z, Material.LAVA);
+            }
+            s.readyActive();
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "꼭두각시");
+            for (int i = 0; i < 40; i++) {
+                step(s.owner, 0.2, 0, 0);
+                s.ticks(1);
+                assertFalse(FlatWorld.isIn(s.enemy, Material.LAVA), "never walked into the lava: "
+                        + s.enemy.getLocation());
+            }
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-6, "still on the floor");
+            s.ticks(20);
+            for (int z = 2; z <= 7; z++) {
+                s.world.setBlock(2, FlatWorld.FLOOR_Y, z, Material.STONE);
+            }
+            s.layout();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void puppeteerDrawsNothingOnAPuppetThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.builder("puppeteer").param("puppet_duration", 4).start()) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.world.wallAlongX(2, 2, 4, 3, Material.STONE);
+            s.world.wallAlongX(2, 2, 5, 3, Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "꼭두각시");
+            s.ticks(2);
+            stealth(s, s.enemy);
+            s.clearHits();
+            for (int i = 0; i < 60; i++) {
+                s.world.clearSpawnedParticles();
+                step(s.owner, 0.2, 0, 0);
+                if (i == 3) {
+                    step(s.owner, 0, 0.42, 0); // a jump
+                }
+                s.ticks(1);
+                List<SpawnedParticle> near = particlesNear(s, bodyOf(s.enemy), 1.3);
+                assertTrue(near.isEmpty(), "tick " + i + ": nothing is drawn on the hidden puppet: " + near);
+                assertTrue(entities(s, TextDisplay.class).isEmpty(), "tick " + i + ": no '쿵!' over the hidden puppet");
+            }
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "it still slams into the wall");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.world.wallAlongX(2, 2, 4, 3, Material.AIR);
+            s.world.wallAlongX(2, 2, 5, 3, Material.AIR);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void puppeteerShowDrawsNothingOnADollThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("puppeteer")) {
+            s.place(s.enemy2, 0.5, -15.5, 0);
+            s.assertSucceeded(s.ultimate(), "인형극 for one");
+            s.ticks(s.paramTicks("ult_windup") + 2);
+            assertEquals(0, speed(s.enemy), EPSILON, "hung");
+            stealth(s, s.enemy);
+            for (int i = 0; i < showLength(s) + 6; i++) {
+                s.world.clearSpawnedParticles();
+                s.ticks(1);
+                List<SpawnedParticle> near = particlesNear(s, bodyOf(s.enemy), 1.2);
+                assertTrue(near.isEmpty(), "tick " + i + ": nothing is drawn on the hidden doll: " + near);
+            }
+            assertEquals(claps(s) * s.param("clap_damage") + s.param("finale_damage"), s.damageBy(s.owner, s.enemy),
+                    EPSILON, "the show goes on unseen");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 외계인 alien
 
     private static boolean isAntenna(Display display) {
@@ -1256,6 +1694,116 @@ class WeirdNewAbilitiesTest {
         }
     }
 
+    @ParameterizedTest(name = "lag {0}")
+    @ValueSource(ints = {3, 8})
+    void alienUfoCarriesALaggingAbducteeExactlyAsFarAsPlanned(int lag) {
+        try (Scenario s = Scenario.ffa("alien")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.world.physics().setEnabled(false);
+            // The server sees the abductee lag ticks late (150 / 400 ms): steering by that position carried it blocks
+            // past the end of the path the saucer had checked, or let it go as a stray.
+            LaggingClients clients = new LaggingClients(s, lag, s.enemy, s.enemy2);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "UFO 납치");
+            double startZ = s.enemy.getLocation().getZ();
+            double carry = s.param("carry_distance");
+            double far = startZ;
+            double high = 0;
+            for (int i = 0; i < abductionLength(s) + 30; i++) {
+                clients.tick();
+                far = Math.max(far, clients.at(s.enemy).getZ());
+                high = Math.max(high, clients.at(s.enemy).getY());
+            }
+            assertTrue(high > FlatWorld.SURFACE + 2, "beamed up: " + high);
+            assertTrue(far <= startZ + carry + 0.3, "never carried past the planned drop: " + (far - startZ));
+            assertTrue(far >= startZ + carry - 0.5, "but all the way: " + (far - startZ));
+            assertEquals(FlatWorld.SURFACE, clients.at(s.enemy).getY(), 1.0E-6, "dropped onto the floor");
+            int probes = (int) Math.floor(s.param("probe_duration") / s.param("probe_interval") + 1.0E-9);
+            assertEquals(probes * s.param("probe_damage") + s.param("drop_damage"), s.damageBy(s.owner, s.enemy),
+                    EPSILON, "held all the way to the drop: " + s.hits());
+            s.world.physics().setEnabled(true);
+            s.layout();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void alienAbducteesCannotUseTheirAbilities() {
+        try (Scenario s = Scenario.ffa("alien")) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "UFO 납치");
+            s.ticks(s.paramTicks("ufo_arrive") + 6);
+            assertEquals(0, speed(s.enemy), EPSILON, "caught");
+            assertTrue(s.ctx().isSilenced(s.enemy), "an abductee cannot cast its way out of the beam");
+            assertFalse(s.ctx().isSilenced(s.enemy2), "enemy2 was not caught");
+            s.ticks(abductionLength(s) + 20);
+            assertFalse(s.ctx().isSilenced(s.enemy), "free after the drop");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void alienUfoTakesAtMostMaxAbductees() {
+        try (Scenario s = Scenario.builder("alien").param("max_abductees", 1).start()) {
+            s.place(s.enemy2, 1.5, 5.5, 180); // in the beam beside the aimed enemy
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "UFO 납치");
+            s.ticks(s.paramTicks("ufo_arrive") + 15);
+            long taken = s.enemies().stream().filter(enemy -> enemy.getLocation().getY() > FlatWorld.SURFACE + 0.5)
+                    .count();
+            assertEquals(1, taken, "at most " + s.param("max_abductees") + " abductee");
+            s.ticks(abductionLength(s) + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void alienTelepathyReadsTheMindOfWhoeverAttacksIt() {
+        try (Scenario s = Scenario.ffa("alien")) {
+            double bonus = 1 + s.param("sense_bonus") / 100;
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4, s.damageBy(s.owner, s.enemy), EPSILON, "a visible enemy that left the alien alone");
+            s.melee(s.enemy, s.owner, 1); // it strikes the alien: its mind is open now
+            s.ticks(1);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4 * bonus, s.damageBy(s.owner, s.enemy), EPSILON, "the attacker is felt and hit harder");
+            s.melee(s.owner, s.enemy2, 4);
+            assertEquals(4, s.damageBy(s.owner, s.enemy2), EPSILON, "enemy2 never attacked");
+
+            s.ticks(s.paramTicks("link_duration") + 2);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4, s.damageBy(s.owner, s.enemy), EPSILON, "the link fades after " + s.param("link_duration")
+                    + " s");
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void alienDrawsNothingOnAnAbducteeThatSlipsIntoStealth() {
+        try (Scenario s = Scenario.ffa("alien")) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "UFO 납치");
+            s.ticks(s.paramTicks("ufo_arrive") + 6);
+            assertEquals(0, speed(s.enemy), EPSILON, "caught");
+            stealth(s, s.enemy);
+            // The beam lets go (the safety net goes), then it falls and crashes down: all of it unseen.
+            s.h.tickUntil(() -> !s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), 120, "the drop");
+            for (int i = 0; i < 24; i++) {
+                s.world.clearSpawnedParticles();
+                s.ticks(1);
+                List<SpawnedParticle> near = particlesNear(s, bodyOf(s.enemy), 2.0);
+                assertTrue(near.isEmpty(), "tick " + i + ": nothing is drawn on the hidden abductee: " + near);
+            }
+            assertTrue(s.damageBy(s.owner, s.enemy) >= s.param("drop_damage"), "the crash still hurts");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 좀비 zombie
 
     private static List<org.bukkit.entity.Zombie> zombies(Scenario s) {
@@ -1384,13 +1932,12 @@ class WeirdNewAbilitiesTest {
                 assertTrue(isInfected(s, enemy), enemy.getName() + " caught the outbreak");
             }
             assertEquals(BASE_SPEED, speed(s.ally()), EPSILON, "the ally is spared");
-            assertTrue(zombies(s).isEmpty(), "the dead rise after the warning");
-            assertTrue(blocks(s, Material.GREEN_TERRACOTTA).size() >= 2, "rotting arms reach out of the ground");
-            for (Display display : entities(s, Display.class)) {
-                assertUnrotated(display, "display " + display.getType());
-            }
-            for (BlockDisplay forearm : blocks(s, Material.GREEN_TERRACOTTA)) {
-                assertTrue(forearm.getLocation().getY() < 64.1, "the arms grow out of the floor");
+            assertTrue(zombies(s).isEmpty(), "the dead burst out after the warning");
+            List<TextDisplay> marks = entities(s, TextDisplay.class);
+            assertEquals(2, marks.size(), "a biohazard mark over each host");
+            for (TextDisplay mark : marks) {
+                assertUnrotated(mark, "mark");
+                assertTrue(mark.getTransformation().getScale().x() > 1, "the mark swells while the infection boils");
             }
             s.ticks(s.paramTicks("rise_delay") + 2);
             List<org.bukkit.entity.Zombie> risen = zombies(s);
@@ -1401,13 +1948,13 @@ class WeirdNewAbilitiesTest {
                 assertEquals(s.param("zombie_health"), zombie.getHealth(), EPSILON);
                 assertEquals(s.param("zombie_damage"), zombie.getAttribute(Attribute.ATTACK_DAMAGE).getValue(),
                         EPSILON);
-                assertEquals(Material.LEATHER_HELMET, zombie.getEquipment().getHelmet().getType(),
-                        "a cap keeps it from burning in the sun");
+                assertEquals(Material.PLAYER_HEAD, zombie.getEquipment().getHelmet().getType(),
+                        "its host's face, which also keeps it from burning in the sun");
                 assertEquals(64, zombie.getLocation().getY(), 1.0E-6, "standing on the floor");
                 assertTrue(s.world.getBlockAt(zombie.getLocation()).isPassable(), "not inside a block");
                 double nearest = Math.min(zombie.getLocation().distance(s.enemy.getLocation()),
                         zombie.getLocation().distance(s.enemy2.getLocation()));
-                assertTrue(nearest < 2.5, "it climbed out next to its host: " + nearest);
+                assertTrue(nearest < 2.5, "it burst out next to its host: " + nearest);
             }
             s.ticks(6);
             for (org.bukkit.entity.Zombie zombie : risen) {
@@ -1427,7 +1974,7 @@ class WeirdNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.ally()), EPSILON);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.ticks(s.paramTicks("infect_duration") + 10);
-            assertNoDisplays(s, "arms, cracks and marks");
+            assertNoDisplays(s, "jaws and marks");
             s.finishClean();
         }
     }
@@ -1516,6 +2063,108 @@ class WeirdNewAbilitiesTest {
                     s.world.setBlock(x, y, 6, Material.AIR);
                 }
             }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void zombieRotThatWinsTheMatchEndsItWithoutAnError() {
+        try (Scenario s = Scenario.ffa("zombie")) {
+            s.session.eliminate(s.enemy2, null);
+            s.melee(s.owner, s.enemy, 1);
+            s.enemy.getAttribute(Attribute.MAX_HEALTH).removeModifier(Scenario.TANK);
+            s.enemy.setHealth(0.2);
+            // The rot kills the last enemy: the match ends (and the zombie is revoked) in the middle of the rot loop.
+            s.ticks(s.paramTicks("infect_duration") + 10);
+            assertNotEquals(GameState.RUNNING, s.session.state(), "the rot won the match");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void zombieDeadWearTheirHostsFaceAndBurstIntoContagionWhenSlain() {
+        try (Scenario s = Scenario.ffa("zombie")) {
+            s.place(s.enemy2, 6.5, 6.5, 180);
+            s.assertSucceeded(s.ultimate(), "좀비 아포칼립스");
+            s.ticks(s.paramTicks("rise_delay") + 2);
+            List<org.bukkit.entity.Zombie> risen = zombies(s);
+            assertEquals(2, risen.size(), "one infected double per host");
+            for (org.bukkit.entity.Zombie zombie : risen) {
+                TestPlayer host = s.enemies().stream()
+                        .min(Comparator.comparingDouble(e -> e.getLocation().distance(zombie.getLocation())))
+                        .orElseThrow();
+                ItemStack head = zombie.getEquipment().getHelmet();
+                assertEquals(Material.PLAYER_HEAD, head.getType(), "the dead wear their host's face");
+                // MockBukkit drops the profile component; a server keeps it (as the hexer's doll head does).
+                ResolvableProfile profile = head.getData(DataComponentTypes.PROFILE);
+                if (profile != null) {
+                    assertEquals(host.getName(), profile.name(), "the face of the host it burst out of");
+                }
+            }
+
+            s.ticks(s.paramTicks("infect_duration") + 10);
+            assertFalse(isInfected(s, s.enemy2), "the outbreak's infection wore off");
+            org.bukkit.entity.Zombie double2 = risen.stream()
+                    .min(Comparator.comparingDouble(z -> z.getLocation().distance(s.enemy2.getLocation())))
+                    .orElseThrow();
+            s.place(s.enemy2, double2.getLocation().getX() + 1.2, double2.getLocation().getZ(), 90);
+            s.melee(s.enemy2, double2, 100);
+            s.ticks(8);
+            assertTrue(isInfected(s, s.enemy2), "a slain double bursts into contagion");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(s.paramTicks("zombie_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void zombieDeadMoveAtTheirConfiguredSpeed() {
+        try (Scenario s = Scenario.builder("zombie").param("zombie_speed", 200).start()) {
+            s.assertSucceeded(s.ultimate(), "좀비 아포칼립스");
+            s.ticks(s.paramTicks("rise_delay") + 2);
+            assertFalse(zombies(s).isEmpty());
+            for (org.bukkit.entity.Zombie zombie : zombies(s)) {
+                assertEquals(0.23 * 2, zombie.getAttribute(Attribute.MOVEMENT_SPEED).getBaseValue(), 1.0E-9,
+                        "twice a plain zombie's pace");
+            }
+            s.ticks(s.paramTicks("zombie_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void zombieRaisesNoDeadBesideAHostThatSlippedIntoStealth() {
+        try (Scenario s = Scenario.ffa("zombie")) {
+            s.place(s.enemy2, 6.5, 6.5, 180);
+            s.assertSucceeded(s.ultimate(), "좀비 아포칼립스");
+            stealth(s, s.enemy); // during the rise delay
+            s.ticks(s.paramTicks("rise_delay") + 2);
+            assertFalse(zombies(s).isEmpty(), "enemy2 still gets its double");
+            for (org.bukkit.entity.Zombie zombie : zombies(s)) {
+                assertTrue(zombie.getLocation().distance(s.enemy.getLocation()) > 3,
+                        "nothing climbs out beside the hidden host: " + zombie.getLocation());
+            }
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(s.paramTicks("zombie_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void zombieDrawsNoContagionFromAHiddenCarrier() {
+        try (Scenario s = Scenario.ffa("zombie")) {
+            s.place(s.enemy2, 2.3, 5.5, 180); // within the spread radius
+            s.melee(s.owner, s.enemy, 2);
+            stealth(s, s.enemy);
+            for (int i = 0; i < s.paramTicks("spread_interval") + 10; i++) {
+                s.world.clearSpawnedParticles();
+                s.ticks(1);
+                List<SpawnedParticle> near = particlesNear(s, bodyOf(s.enemy), 0.8);
+                assertTrue(near.isEmpty(), "tick " + i + ": nothing is drawn on the hidden carrier: " + near);
+            }
+            assertTrue(isInfected(s, s.enemy2), "the infection still jumps");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.finishClean();
         }
     }
