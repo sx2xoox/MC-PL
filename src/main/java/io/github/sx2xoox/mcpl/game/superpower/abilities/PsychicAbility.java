@@ -65,8 +65,8 @@ public final class PsychicAbility extends Ability {
             .color(TextColor.color(0xE040FB))
             .difficulty(2)
             .passive("정신 교란",
-                    "나를 공격한 적의 정신을 흐트러뜨립니다. 그 적은 액티브 쿨타임이 끝나는 순간 {disrupt_delay}초간 "
-                            + "침묵해 다음 스킬이 늦어집니다(같은 적은 {disrupt_cooldown}초마다).")
+                    "나를 공격한 적의 정신을 흐트러뜨립니다. 그 적은 액티브 쿨타임이 끝나는 순간(이미 끝났다면 곧바로) "
+                            + "{disrupt_delay}초간 침묵해 다음 스킬이 늦어집니다(같은 적은 {disrupt_cooldown}초마다).")
             .active("염동 투척",
                     "조준한 적({throw_range}블록 이내)을 들어 올려 {throw_damage} 피해를 주고, {lift_time}초 뒤 내가 "
                             + "바라보는 방향으로 {throw_distance}블록 내던집니다. 날아가다 벽이나 다른 적과 부딪히면 부딪힌 "
@@ -107,6 +107,8 @@ public final class PsychicAbility extends Ability {
     private static final long CLEANUP_PERIOD = 200;
     /** Hard lifetime of the mark over a disrupted attacker (it pops much earlier, when its cooldown ends). */
     private static final long GLYPH_MAX_TICKS = 600;
+    /** Marks shown at once; further disrupted attackers only get the crackling static (display budget). */
+    private static final int MAX_GLYPHS = 8;
 
     // active
     private static final double LIFT_HEIGHT = 1.6;
@@ -135,6 +137,8 @@ public final class PsychicAbility extends Ability {
 
     /** Attackers whose minds are scrambled, by player id. */
     private final Map<UUID, Disruption> disruptions = new HashMap<>();
+    /** The throw in progress, if any. */
+    private @Nullable Throw throwing;
 
     private static final class Disruption {
         boolean armed;
@@ -152,6 +156,12 @@ public final class PsychicAbility extends Ability {
     public void onRevoke() {
         // The glyphs are tracked displays: they are removed with the ability.
         disruptions.clear();
+        Throw current = throwing;
+        throwing = null;
+        if (current != null) {
+            // The grip is gone with the psychic: a target in mid-throw must not sail on with the throw's speed.
+            current.letGo();
+        }
     }
 
     // ------------------------------------------------------------------ passive: mind disruption
@@ -182,11 +192,14 @@ public final class PsychicAbility extends Ability {
         if (disruption.glyph != null && disruption.glyph.isValid()) {
             disruption.glyph.remove();
         }
-        TextDisplay glyph = Displays.text(ctx(), owner, glyphPoint(attacker),
-                Text.mm("<b><gradient:#FFD6F5:#E040FB:#5E1A8C>✺</gradient></b>"), 0.1f, GLYPH_MAX_TICKS);
-        glyph.setTeleportDuration((int) DISRUPT_PERIOD);
-        Displays.animateNextTick(ctx(), owner, glyph, glyphPose(0.75f, 0), 4);
-        disruption.glyph = glyph;
+        disruption.glyph = null;
+        if (shownGlyphs() < MAX_GLYPHS) {
+            TextDisplay glyph = Displays.text(ctx(), owner, glyphPoint(attacker),
+                    Text.mm("<b><gradient:#FFD6F5:#E040FB:#5E1A8C>✺</gradient></b>"), 0.1f, GLYPH_MAX_TICKS);
+            glyph.setTeleportDuration((int) DISRUPT_PERIOD);
+            Displays.animateNextTick(ctx(), owner, glyph, glyphPose(0.75f, 0), 4);
+            disruption.glyph = glyph;
+        }
         owner.sendActionBar(Text.mm("<" + MAGENTA + ">✺ 정신 교란</" + MAGENTA + "> <white>" + attacker.getName()
                 + "</white>"));
     }
@@ -233,6 +246,16 @@ public final class PsychicAbility extends Ability {
                 staticFx(attacker, tick);
             }
         }
+    }
+
+    private int shownGlyphs() {
+        int shown = 0;
+        for (Disruption disruption : disruptions.values()) {
+            if (disruption.glyph != null && disruption.glyph.isValid()) {
+                shown++;
+            }
+        }
+        return shown;
     }
 
     private static Location glyphPoint(Player attacker) {
@@ -292,6 +315,10 @@ public final class PsychicAbility extends Ability {
         if (target == null) {
             return ActivationResult.fail("조준한 곳에 적이 없습니다");
         }
+        Throw previous = throwing;
+        if (previous != null) {
+            previous.letGo();
+        }
         new Throw(target).begin();
         return ActivationResult.success();
     }
@@ -305,23 +332,39 @@ public final class PsychicAbility extends Ability {
     /**
      * The throw: the target is lifted into a bubble for the lift time, then hurled along the psychic's horizontal
      * view, crunching into the first wall or enemy in its way.
+     *
+     * <p>A thrown player moves on its own client, and the server only learns where it is a moment later. So a player
+     * is steered by the throw's own reckoning of where the velocities it sent have put it, never by the server's
+     * lagging view: the lift does not overshoot on a laggy connection, and walls and other enemies are checked along
+     * the throw's own path, so a crunch near the end of the throw is not missed. Mobs and mannequins move on the
+     * server itself, so for them the server's view is exact and is used as is.
      */
     private final class Throw implements LongPredicate {
 
         private final LivingEntity target;
+        /** A player: it moves on its own client, so the server sees it late. */
+        private final boolean clientDriven;
         private final long liftTicks;
         private final ItemDisplay[] shards = new ItemDisplay[SHARDS];
         private @Nullable BlockDisplay bubble;
         private @Nullable Location hold;
+        /** Where the lift's velocities have put the target so far (its client follows them exactly). */
+        private @Nullable Vector reckoned;
         private Vector direction = new Vector(0, 0, 1);
         private double distance;
         private double traveled;
         private boolean slammed;
+        private boolean flying;
+        private boolean over;
+        /** Horizontal center of the target when it was released: the start of the throw's path. */
+        private double launchX;
+        private double launchZ;
         /** Where the target was on the previous tick, to notice a teleport out of the grip. */
         private @Nullable Location last;
 
         Throw(LivingEntity target) {
             this.target = target;
+            this.clientDriven = target instanceof Player;
             this.liftTicks = Math.max(1, params().ticks("lift_time"));
         }
 
@@ -339,6 +382,7 @@ public final class PsychicAbility extends Ability {
                 return;
             }
             hold = target.getLocation().add(0, headroom(), 0);
+            reckoned = target.getLocation().toVector();
             long life = liftTicks + flightBudget() + 12;
             float width = (float) (target.getWidth() + 0.5);
             float height = (float) (target.getHeight() + 0.4);
@@ -351,7 +395,26 @@ public final class PsychicAbility extends Ability {
                         Displays.centered(0, 0, 0, 0.45f, 0.45f, 0.45f, 0, 0, 45), life);
                 shards[i].setTeleportDuration(1);
             }
+            throwing = this;
             Loop.repeat(ctx(), owner, 1, 1, liftTicks + flightBudget(), this, this::finish);
+        }
+
+        /**
+         * The psychic lets go before the throw ended (it fell, or threw again): a target in flight stops where it is
+         * instead of sailing on with the throw's speed.
+         */
+        void letGo() {
+            if (over) {
+                return;
+            }
+            over = true;
+            if (throwing == this) {
+                throwing = null;
+            }
+            if (flying && target.isValid() && !target.isDead()) {
+                target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+                target.setFallDistance(0);
+            }
         }
 
         /** How high the target can be lifted without bumping its head. */
@@ -372,7 +435,7 @@ public final class PsychicAbility extends Ability {
         @Override
         public boolean test(long tick) {
             Player owner = player();
-            if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
+            if (over || !Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
                 return false;
             }
             Location now = target.getLocation();
@@ -395,8 +458,12 @@ public final class PsychicAbility extends Ability {
         /** Held in the air: steered to the hold point while a dotted arrow shows where it will be thrown. */
         private void lift(long tick) {
             Location point = hold == null ? target.getLocation() : hold;
-            Vector to = point.toVector().subtract(target.getLocation().toVector());
-            target.setVelocity(Motion.clamp(to.multiply(0.4), 0.6));
+            Vector at = clientDriven && reckoned != null ? reckoned : target.getLocation().toVector();
+            Vector velocity = Motion.clamp(point.toVector().subtract(at).multiply(0.4), 0.6);
+            if (reckoned != null) {
+                reckoned.add(velocity);
+            }
+            target.setVelocity(velocity);
             target.setFallDistance(0);
             follow(tick);
             Location body = Fx.body(target);
@@ -442,6 +509,10 @@ public final class PsychicAbility extends Ability {
             double wanted = Math.max(0, params().num("throw_distance"));
             double reach = Spots.arenaReach(ctx(), target.getLocation(), direction, wanted + ARENA_MARGIN);
             distance = Math.clamp(reach - ARENA_MARGIN, 0, wanted);
+            Vector from = clientDriven && reckoned != null ? reckoned : target.getLocation().toVector();
+            launchX = from.getX();
+            launchZ = from.getZ();
+            flying = distance > 0.05;
             Location body = Fx.body(target);
             Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.WITCH, false);
             Vfx.trail(hand(player()), body, PALETTE.body(), 3, false);
@@ -464,19 +535,20 @@ public final class PsychicAbility extends Ability {
                 return false;
             }
             double speed = Math.min(FLIGHT_SPEED, remaining);
-            BoundingBox box = target.getBoundingBox();
+            BoundingBox box = onPath();
             BoundingBox next = box.clone().shift(direction.getX() * speed, 0, direction.getZ() * speed);
             // The probe skips the feet, so sliding over the floor or a small step never counts as a wall.
             BoundingBox probe = new BoundingBox(next.getMinX() + 0.05, next.getMinY() + 0.6, next.getMinZ() + 0.05,
                     next.getMaxX() - 0.05, next.getMaxY() - 0.05, next.getMaxZ() - 0.05);
             if (world.hasCollisionsIn(probe)) {
-                wallSlam();
+                wallSlam(box);
                 return false;
             }
             BoundingBox reach = next.clone().expand(0.3);
-            for (LivingEntity other : ctx().enemiesNear(player(), Fx.body(target), 2.5)) {
+            Location nextCenter = new Location(world, next.getCenterX(), next.getCenterY(), next.getCenterZ());
+            for (LivingEntity other : ctx().enemiesNear(player(), nextCenter, 2.5)) {
                 if (!other.equals(target) && other.getBoundingBox().overlaps(reach)) {
-                    bodySlam(other);
+                    bodySlam(other, box);
                     return false;
                 }
             }
@@ -515,7 +587,25 @@ public final class PsychicAbility extends Ability {
             }
         }
 
+        /**
+         * The target's hitbox where the throw has carried it so far. For a player: the start of the path plus the
+         * distance flown, at its current height (it only sinks slowly, and never below the floor). For a mob, which
+         * the server moves itself: its hitbox.
+         */
+        private BoundingBox onPath() {
+            BoundingBox live = target.getBoundingBox();
+            if (!clientDriven) {
+                return live;
+            }
+            double halfX = live.getWidthX() / 2;
+            double halfZ = live.getWidthZ() / 2;
+            double x = launchX + direction.getX() * traveled;
+            double z = launchZ + direction.getZ() * traveled;
+            return new BoundingBox(x - halfX, live.getMinY(), z - halfZ, x + halfX, live.getMaxY(), z + halfZ);
+        }
+
         private void land() {
+            flying = false;
             target.setVelocity(direction.clone().multiply(0.2).setY(Math.min(0, target.getVelocity().getY())));
             target.setFallDistance(0);
             Location feet = target.getLocation().add(0, 0.1, 0);
@@ -524,11 +614,12 @@ public final class PsychicAbility extends Ability {
         }
 
         /** Crunch into a wall: hurt and stagger the target, the wall's face bursts. */
-        private void wallSlam() {
+        private void wallSlam(BoundingBox box) {
             slammed = true;
+            flying = false;
             Player owner = player();
-            Location body = Fx.body(target);
-            Location contact = body.clone().add(direction.clone().multiply(target.getWidth() * 0.5 + 0.2));
+            Location body = bodyOf(target.getWorld(), box);
+            Location contact = body.clone().add(direction.clone().multiply(box.getWidthX() * 0.5 + 0.2));
             Block block = contact.getBlock();
             if (block.isPassable()) {
                 block = contact.clone().add(direction.clone().multiply(0.5)).getBlock();
@@ -550,10 +641,11 @@ public final class PsychicAbility extends Ability {
         }
 
         /** Crunch into another enemy: both are hurt and staggered, the other is knocked on. */
-        private void bodySlam(LivingEntity other) {
+        private void bodySlam(LivingEntity other, BoundingBox box) {
             slammed = true;
+            flying = false;
             Player owner = player();
-            Location contact = Fx.body(target).add(Fx.body(other)).multiply(0.5);
+            Location contact = bodyOf(target.getWorld(), box).add(Fx.body(other)).multiply(0.5);
             impactFx(contact);
             Fx.sound(contact, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 0.7f + Fx.jitter(0.1f));
             Fx.sound(contact, Sound.ENTITY_ZOMBIE_ATTACK_WOODEN_DOOR, 0.6f, 1.2f + Fx.jitter(0.1f));
@@ -598,6 +690,17 @@ public final class PsychicAbility extends Ability {
 
         /** The loop ended by itself: the bubble bursts and the shards fly apart. */
         void finish() {
+            if (!over) {
+                over = true;
+                if (throwing == this) {
+                    throwing = null;
+                }
+                if (flying && target.isValid() && !target.isDead()) {
+                    // The grip broke mid-flight (the target slipped away or the throw ran out of time): it must
+                    // not sail on with the throw's speed.
+                    target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+                }
+            }
             Player owner = player();
             if (bubble != null && bubble.isValid()) {
                 Location at = Fx.body(target);
@@ -807,6 +910,11 @@ public final class PsychicAbility extends Ability {
     private static Transformation box(float width, float bottom, float height) {
         return new Transformation(new Vector3f(-width / 2, bottom, -width / 2), new Quaternionf(),
                 new Vector3f(width, height, width), new Quaternionf());
+    }
+
+    /** The middle of {@code box}. */
+    private static Location bodyOf(World world, BoundingBox box) {
+        return new Location(world, box.getCenterX(), box.getCenterY(), box.getCenterZ());
     }
 
     private static Transformation crownPose(float scale) {

@@ -112,6 +112,11 @@ public final class DragonAbility extends Ability {
     // Flight
     private static final double DEFAULT_FLY_SPEED = 0.1;
     private static final double MAX_VELOCITY = 2.5;
+    /**
+     * A flying player has no gravity, but its client multiplies the vertical speed by this every tick, so an upward
+     * kick of {@code v} rises {@code v / (1 - drag)} blocks.
+     */
+    private static final double FLIGHT_VERTICAL_DRAG = 0.6;
     private static final int SLOW_FALL_REFRESH_TICKS = 40;
     private static final long MAX_DESCENT_TICKS = 30 * 20;
     private static final long FALL_GRACE_TICKS = 10;
@@ -512,7 +517,8 @@ public final class DragonAbility extends Ability {
         float speed = (float) Math.clamp(DEFAULT_FLY_SPEED * params().num("fly_speed") / 100.0, 0.02, 0.2);
         owner.setAllowFlight(true);
         owner.setFlySpeed(speed);
-        double lift = Motion.launchSpeed(Math.max(0, params().num("take_off_height")));
+        // The kick lands while the owner already flies, so it follows flight physics, not a jump arc under gravity.
+        double lift = Math.max(0, params().num("take_off_height")) * (1 - FLIGHT_VERTICAL_DRAG);
         Vector velocity = owner.getVelocity();
         owner.setVelocity(Motion.clamp(new Vector(velocity.getX(), Math.max(velocity.getY(), lift),
                 velocity.getZ()), MAX_VELOCITY));
