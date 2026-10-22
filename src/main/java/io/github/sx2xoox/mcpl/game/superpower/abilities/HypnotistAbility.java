@@ -172,12 +172,6 @@ public final class HypnotistAbility extends Ability {
     private static final float BUBBLE_SIZE = 0.55f;
     private static final float DREAM_SCALE = 0.32f;
     private static final long NIGHTMARE_BURST = 5;
-    /**
-     * The client only warps the view while more than this many ticks of nausea are left (it fades the warp out over the
-     * last 3 s), so the nightmare's nausea lasts this much longer than the dizziness it stands for: a nausea of 3 s or
-     * less never shows at all.
-     */
-    private static final long NAUSEA_LEAD = 60;
     /** Sleep never outlasts this, whatever the configured numbers (a safety bound for the sleep loop). */
     private static final long MAX_SLEEP_TICKS = 20 * 30;
     private static final double REST_FALL = -Motion.GRAVITY * Motion.DRAG;
@@ -996,10 +990,8 @@ public final class HypnotistAbility extends Ability {
                     return;
                 }
                 Combat.hit(ctx(), owner, victim, Math.max(0, params().num("nightmare_damage")));
-                long nausea = params().ticks("nightmare_nausea");
-                if (nausea > 0 && Combat.isTargetable(ctx(), owner, victim)) {
-                    victim.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA,
-                            (int) Math.min(Integer.MAX_VALUE, nausea + NAUSEA_LEAD), 0, false, true, true));
+                if (Combat.isTargetable(ctx(), owner, victim)) {
+                    Fx.nausea(victim, params().ticks("nightmare_nausea"));
                 }
             });
             ctx().runLater(owner, NIGHTMARE_BURST, () -> {

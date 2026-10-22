@@ -133,8 +133,6 @@ public final class PsychicAbility extends Ability {
     private static final float CAMERA_PITCH = 12;
     private static final int MAX_CROWNS = 12;
     private static final ItemStack CROWN = ItemStack.of(Material.BRAIN_CORAL);
-    /** Nausea needs a moment to warp the view, so it outlasts the collapse a little. */
-    private static final int NAUSEA_EXTRA_TICKS = 40;
 
     /** Attackers whose minds are scrambled, by player id. */
     private final Map<UUID, Disruption> disruptions = new HashMap<>();
@@ -763,7 +761,6 @@ public final class PsychicAbility extends Ability {
             Player owner = player();
             scream(owner);
             double damage = params().num("ult_damage");
-            int nausea = (int) Math.min(Integer.MAX_VALUE, duration + NAUSEA_EXTRA_TICKS);
             Location head = owner.getEyeLocation().add(0, 0.3, 0);
             for (LivingEntity victim : victims) {
                 Combat.hit(ctx(), owner, victim, damage);
@@ -773,7 +770,7 @@ public final class PsychicAbility extends Ability {
                 if (!Combat.isTargetable(ctx(), owner, victim)) {
                     continue;
                 }
-                victim.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
+                Fx.nausea(victim, duration);
                 if (victim instanceof Player player) {
                     ctx().silence(player, duration);
                     player.playSound(player, Sound.ENTITY_ELDER_GUARDIAN_CURSE, SoundCategory.PLAYERS, 0.7f, 1.4f);

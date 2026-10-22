@@ -38,8 +38,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
-import org.bukkit.potion.PotionEffect;
-import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -566,10 +564,7 @@ public final class HackerAbility extends Ability {
             if (!Combat.isTargetable(ctx(), owner, target)) {
                 return;
             }
-            int nausea = (int) Math.min(Integer.MAX_VALUE, params().ticks("glitch_nausea"));
-            if (nausea > 0) {
-                target.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
-            }
+            Fx.nausea(target, params().ticks("glitch_nausea"));
             glitchBurst(Fx.body(target), 0.7, true);
             Fx.sound(Fx.body(target), Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.9f);
             if (hops > 0) {
@@ -882,7 +877,7 @@ public final class HackerAbility extends Ability {
             List<LivingEntity> inRange = ctx().enemiesNear(owner, center, radius);
             double damage = params().num("ult_damage");
             long silence = params().ticks("ult_silence");
-            int nausea = (int) Math.min(Integer.MAX_VALUE, params().ticks("ult_nausea"));
+            long nausea = params().ticks("ult_nausea");
             int crashed = 0;
             for (LivingEntity target : targets) {
                 TextDisplay bar = bars.remove(target.getUniqueId());
@@ -912,9 +907,7 @@ public final class HackerAbility extends Ability {
                     }
                     screenNoise(victim, silence);
                 }
-                if (nausea > 0) {
-                    target.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, nausea, 0, false, true, true));
-                }
+                Fx.nausea(target, nausea);
                 if (isVisible(target)) {
                     crashFx(target, bar, silence, drain);
                 } else {

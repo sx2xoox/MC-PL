@@ -9,10 +9,16 @@ import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.jspecify.annotations.Nullable;
 
-/** Sounds, particles and countdown text shared by the ability visuals. */
+/** Sounds, particles, countdown text and the nausea screen warp shared by the ability visuals. */
 public final class Fx {
+
+    /** The client stops warping the view once this many or fewer ticks of nausea are left (see {@link #nausea}). */
+    private static final int NAUSEA_CLIENT_FADE = 60;
 
     private Fx() {
     }
@@ -46,6 +52,22 @@ public final class Fx {
             world.spawnParticle(particle, center.getX() + Math.cos(angle) * radius, center.getY(),
                     center.getZ() + Math.sin(angle) * radius, 1, 0, 0, 0, 0, data);
         }
+    }
+
+    /**
+     * Gives {@code entity} nausea (level I, with particles and icon) that keeps a real client's view warping for
+     * {@code ticks}. The vanilla client only builds the nausea screen warp while the effect has MORE than 60 ticks
+     * left; once 60 or fewer remain it fades the warp out within a second. So the effect is applied 60 ticks longer
+     * than {@code ticks}: always use this instead of a bare {@link PotionEffectType#NAUSEA} effect, which never shows
+     * at all when it is 3 s or shorter. A longer nausea the entity already has is kept. Does nothing when
+     * {@code ticks <= 0}.
+     */
+    public static void nausea(LivingEntity entity, long ticks) {
+        if (ticks <= 0) {
+            return;
+        }
+        int duration = (int) Math.min(Integer.MAX_VALUE, Math.min(ticks, Integer.MAX_VALUE) + NAUSEA_CLIENT_FADE);
+        entity.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, duration, 0, false, true, true));
     }
 
     /** {@code ticks} as seconds with one decimal, rounded up ({@code 41 -> "2.1"}, {@code 40 -> "2"}). */
