@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -27,6 +29,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -448,6 +451,122 @@ class NatureNewAbilitiesTest {
             }
             s.ticks(80);
             s.finishClean();
+        }
+    }
+
+    /**
+     * A rider with a 150 ms ping (three ticks): its client runs three pushes ahead of the position the server knows.
+     * The steering adds those pushes to predict where the client is; steered by the stale position instead (as with
+     * a ping that reads 0), the rider shot far ahead of the wave and swung back and forth along it.
+     */
+    @Test
+    void hydroWaveCarriesARiderWithA150MsPingSmoothlyOnItsFace() {
+        try (Scenario s = Scenario.ffa("hydro")) {
+            s.place(s.enemy2, 12.5, -6.5, 0);
+            s.world.physics().setEnabled(false);
+            s.enemy.setPing(150);
+            RealClient client = new RealClient(s, s.enemy, 3);
+            s.assertSucceeded(s.ultimate(), "해일");
+            double speed = s.param("wave_speed") / 20; // blocks per tick
+            double previousFront = Double.NaN;
+            double previousZ = client.at().getZ();
+            int rolling = 0;
+            for (int i = 0; i < 40; i++) {
+                client.tick();
+                List<org.bukkit.entity.BlockDisplay> body = displaysOf(s, org.bukkit.entity.BlockDisplay.class)
+                        .stream().filter(display -> display.getBlock().getMaterial() == Material.BLUE_STAINED_GLASS)
+                        .toList();
+                double front = body.isEmpty() ? Double.NaN : body.getFirst().getLocation().getZ();
+                double z = client.at().getZ();
+                boolean riding = s.damageBy(s.owner, s.enemy) > 0;
+                if (riding && Math.abs(front - previousFront - speed) < 1.0E-6) {
+                    rolling++;
+                    // The rider's spot is RIDE_AHEAD (0.7) ahead of the front, and the client is a tick ahead of it.
+                    assertTrue(z - front < 0.7 + speed + 0.2,
+                            "the rider stays on the face of the wave, not far ahead of it: " + (z - front));
+                    assertTrue(z - previousZ < speed + 0.1,
+                            "it is carried at the wave's speed, not flung: " + (z - previousZ) + " per tick");
+                }
+                previousFront = front;
+                previousZ = z;
+            }
+            assertTrue(rolling > 15, "the rider rode the rolling wave: " + rolling + " ticks");
+            assertEquals(s.param("wave_damage") + s.param("crash_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "swept up and smashed when the wave broke");
+            assertTrue(client.at().getZ() > s.param("wave_distance") - 3, "carried along: " + client.at());
+            s.world.physics().setEnabled(true);
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.ticks(40);
+            assertVisualsGone(s, "after the wave");
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A player's real client against what the server knows of it, for the real-client bugs a plain world simulation
+     * hides. A real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server
+     * last sent it): the client keeps its own velocity (gravity, drag, ground friction) until the server sends a new
+     * one, and the server sees the client's position {@code lag} ticks late. World physics must be off: this moves the
+     * player.
+     */
+    private static final class RealClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final Deque<Location> late = new ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector marked = new Vector();
+
+        RealClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+            mark(new Vector());
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /**
+         * One server tick, then one client tick with the velocity the server last set during it (a server sends a
+         * player's velocity once per tick, after the plugins ran).
+         */
+        void tick() {
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                velocity.copy(now);
+                mark(now);
+            }
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+            player.setVelocity(marked);
+        }
+
+        private void mark(Vector sent) {
+            marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
         }
     }
 

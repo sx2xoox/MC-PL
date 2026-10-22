@@ -78,14 +78,18 @@ public final class GuardianAbility extends Ability {
     // Shield charge
     private static final double BASH_SPEED = 0.95;
     private static final double BASH_SINK = -0.08;
+    /** The little forward glide left after the bash. */
+    private static final double BASH_GLIDE = 0.05;
     private static final double CONTACT_RADIUS = 1.0;
     /** Ticks before stall detection starts (the client needs a moment to pick up the new velocity). */
     private static final long BASH_GRACE_TICKS = 3;
     private static final double STALL_EPSILON = 0.1;
     /** Ticks in a row without movement that end the charge; three, so one late movement packet does not. */
     private static final int STALL_LIMIT = 3;
-    /** Most ticks a slow connection may add to the grace period and the charge length. */
+    /** Most ticks a slow connection may add to the grace period and the charge's time limit. */
     private static final long MAX_LAG_TICKS = 8;
+    /** How far ahead the charge looks for ground; it stops at the edge of the void or a lava pit. */
+    private static final double VOID_LOOKAHEAD = BASH_SPEED + 0.6;
     private static final double MILLIS_PER_TICK = 50.0;
     private static final double KNOCK_FORWARD = 1.5;
     private static final double KNOCK_AWAY = 0.35;
@@ -243,6 +247,9 @@ public final class GuardianAbility extends Ability {
             return ActivationResult.fail("자기장 밖으로는 돌격할 수 없습니다");
         }
         World world = start.getWorld();
+        if (!Spots.hasGroundBelow(world, start.clone().add(direction.clone().multiply(VOID_LOOKAHEAD)))) {
+            return ActivationResult.fail("앞이 낭떠러지입니다");
+        }
         // The server sees the owner move only a round trip after the velocity is sent: wait that long for the
         // first movement before calling the charge stalled, and give the charge that much more time.
         long lag = lagTicks(owner);
@@ -256,9 +263,17 @@ public final class GuardianAbility extends Ability {
         Fx.sound(start, Sound.ITEM_ARMOR_EQUIP_IRON, 1.0f, 0.8f + Fx.jitter(0.05f));
         Fx.sound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.8f, 0.7f + Fx.jitter(0.05f));
         Fx.sound(start, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 0.8f + Fx.jitter(0.1f));
-        owner.setVelocity(direction.clone().multiply(BASH_SPEED).setY(BASH_SINK));
         owner.setFallDistance(0);
+        // Cut short by the border: the charge ends dead still there, without a glide.
+        boolean bordered = distance < Math.max(1, params().num("bash_distance")) - 1.0E-6;
 
+        // How far the charge has been sent so far: the sum of the steps of the velocities sent to the guardian. Its
+        // client moves by exactly these at once, while the server sees it there only a round trip later, so the
+        // charge's length is measured on what was sent (the server's view would let it run on past its end, and
+        // past the border it was measured against). The first step goes out with the first run of the loop: a
+        // velocity set right now would only be replaced by it before the server sends it on.
+        double[] sent = {0};
+        boolean[] edge = {false};
         Location[] last = {start};
         int[] stalls = {0};
         boolean[] moved = {false};
@@ -270,8 +285,7 @@ public final class GuardianAbility extends Ability {
             // Lead by one tick of travel: the server position trails the moving player.
             Displays.moveTo(shield, shieldSpot(owner, direction, BASH_SPEED));
             Location front = now.clone().add(direction.clone().multiply(0.8)).add(0, owner.getHeight() * 0.5, 0);
-            if (!ctx().enemiesNear(owner, front, CONTACT_RADIUS).isEmpty()
-                    || horizontalDistance(start, now) >= distance - 0.2) {
+            if (!ctx().enemiesNear(owner, front, CONTACT_RADIUS).isEmpty() || sent[0] >= distance - 0.2) {
                 return false;
             }
             if (!moved[0] && horizontalDistance(start, now) >= STALL_EPSILON) {
@@ -284,13 +298,24 @@ public final class GuardianAbility extends Ability {
                 }
             }
             last[0] = now;
-            owner.setVelocity(direction.clone().multiply(BASH_SPEED).setY(BASH_SINK));
+            // Never into the void (or a lava pit): the charge pulls up at the edge, looking ahead of where the steps
+            // already sent are carrying the guardian (the server sees it behind that).
+            Location ahead = start.clone().add(direction.clone().multiply(sent[0] + VOID_LOOKAHEAD));
+            ahead.setY(now.getY());
+            if (!Spots.hasGroundBelow(world, ahead)) {
+                edge[0] = true;
+                return false;
+            }
+            // The last step is only as long as what is left, so the charge ends exactly at its end.
+            double step = Math.min(BASH_SPEED, distance - sent[0]);
+            sent[0] += step;
+            owner.setVelocity(direction.clone().multiply(step).setY(BASH_SINK));
             owner.setFallDistance(0);
             bashTrail(owner, now, direction);
             return true;
         }, () -> {
             bashing = false;
-            bash(direction, shield);
+            bash(direction, shield, !bordered && !edge[0]);
         });
         return ActivationResult.success();
     }
@@ -319,11 +344,14 @@ public final class GuardianAbility extends Ability {
         world.spawnParticle(Particle.CLOUD, at.clone().add(0, 0.1, 0), 1, 0.1, 0.02, 0.1, 0.01);
     }
 
-    /** The shield's impact at the end of the charge: hits every enemy in a short frontal area. */
-    private void bash(Vector direction, ItemDisplay shield) {
+    /**
+     * The shield's impact at the end of the charge: hits every enemy in a short frontal area. The guardian glides on
+     * a little, unless the charge stopped at the border or at an edge.
+     */
+    private void bash(Vector direction, ItemDisplay shield, boolean glide) {
         Player owner = player();
         Location at = owner.getLocation();
-        owner.setVelocity(direction.clone().multiply(0.05).setY(BASH_SINK));
+        owner.setVelocity(direction.clone().multiply(glide ? BASH_GLIDE : 0).setY(BASH_SINK));
 
         double radius = Math.max(0.5, params().num("bash_radius"));
         double damage = Math.max(0, params().num("bash_damage"));

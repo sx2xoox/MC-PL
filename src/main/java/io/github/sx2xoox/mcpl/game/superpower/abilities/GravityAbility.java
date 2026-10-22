@@ -326,6 +326,11 @@ public final class GravityAbility extends Ability {
     /**
      * The gravity pull: a thin amethyst tether wound with a violet double helix drags the target to the owner, who
      * then lands with a small shockwave and a sinking pressure ring for the duration of the slow.
+     *
+     * <p>A player target is steered by where it will be once it has followed every pull sent so far (dead reckoning),
+     * not by its position on the server: that trails the player's client by its ping, and steering by it kept pulling
+     * a target that was already there, yanking it past the drop point into (or through) the owner. Any other entity
+     * is moved by the server itself, so its own position is exact.
      */
     private final class Pull implements LongPredicate {
 
@@ -335,10 +340,16 @@ public final class GravityAbility extends Ability {
         private boolean arrived;
         /** The velocity the pull last gave the target. */
         private Vector lastVelocity = new Vector();
+        /** Where the target is horizontally once it has followed every pull sent so far. */
+        private double x;
+        private double z;
 
         Pull(LivingEntity target, long slowTicks) {
             this.target = target;
             this.slowTicks = slowTicks;
+            Location at = target.getLocation();
+            this.x = at.getX();
+            this.z = at.getZ();
         }
 
         void cast() {
@@ -375,7 +386,12 @@ public final class GravityAbility extends Ability {
             if (!Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(owner.getWorld())) {
                 return false;
             }
-            Vector to = pullDestination(owner).toVector().subtract(target.getLocation().toVector());
+            Location at = target.getLocation();
+            if (!(target instanceof Player)) {
+                x = at.getX();
+                z = at.getZ();
+            }
+            Vector to = pullDestination(owner).toVector().subtract(new Vector(x, at.getY(), z));
             double distance = to.length();
             if (distance <= PULL_ARRIVE_DISTANCE || tick >= PULL_MAX_TICKS - 1) {
                 arrive();
@@ -387,6 +403,8 @@ public final class GravityAbility extends Ability {
             boolean grounded = Motion.isGrounded(target) || target.isInWater();
             velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.22 : 0.0));
             lastVelocity = Motion.clamp(velocity, MAX_SPEED);
+            x += lastVelocity.getX();
+            z += lastVelocity.getZ();
             target.setVelocity(lastVelocity);
             target.setFallDistance(0);
             drawTether(tick);

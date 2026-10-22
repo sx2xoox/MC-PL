@@ -37,7 +37,8 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
  *     player's;</li>
  *     <li>line of sight through block ray tracing ({@link RayTracing#hasLineOfSight}), body yaw and
  *     {@link #isInLava()} in a {@link FlatWorld};</li>
- *     <li>the client options a default client reports ({@link #getClientOption}).</li>
+ *     <li>the client options a default client reports ({@link #getClientOption}) and a settable ping
+ *     ({@link #setPing}, 0 by default).</li>
  * </ul>
  */
 public final class TestPlayer extends PlayerMock implements Hurtable {
@@ -53,6 +54,7 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
     private @Nullable Float bodyYaw;
     private double lastHurt;
     private int skinParts = TestSkinParts.ALL;
+    private int ping;
 
     public TestPlayer(ServerMock server, String name) {
         super(server, name);
@@ -130,6 +132,22 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
     /** Sets the skin layers the client reports (raw bits, see {@link TestSkinParts}). */
     public void setClientSkinParts(int raw) {
         this.skinParts = raw;
+    }
+
+    /**
+     * Sets the ping (round trip, in milliseconds) the server reports for this player, as a lagging connection would
+     * (0 by default, like a local client).
+     */
+    public void setPing(int millis) {
+        if (millis < 0) {
+            throw new IllegalArgumentException("ping < 0");
+        }
+        this.ping = millis;
+    }
+
+    @Override
+    public int getPing() {
+        return ping;
     }
 
     /** The options of a default Korean client: right-handed, full chat, the skin layers set here (all by default). */

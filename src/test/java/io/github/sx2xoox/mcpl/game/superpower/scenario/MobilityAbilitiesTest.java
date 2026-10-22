@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
@@ -371,6 +374,101 @@ class MobilityAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertNoDisplays(s);
             s.finishClean();
+        }
+    }
+
+    @Test
+    void grappleHookDropsALaggingPlayerInFrontOfTheOwner() {
+        try (Scenario s = Scenario.ffa("grapple")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 12.5, -6.5, 0);
+            s.world.physics().setEnabled(false);
+            // The server sees the dragged player three ticks late (a round trip of about 150 ms): steering by that
+            // position kept dragging a player that had long arrived, through the owner and out behind it.
+            s.enemy.setPing(150);
+            RealClient client = new RealClient(s, s.enemy, 3);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "갈고리");
+            for (int i = 0; i < 40; i++) {
+                client.tick();
+            }
+            s.world.physics().setEnabled(true);
+            assertEquals(s.param("pull_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "hooked");
+            double ahead = client.at().getZ() - s.owner.getLocation().getZ();
+            assertTrue(ahead > 1.0, "the player is dropped in front of the owner, not in or behind it: " + ahead);
+            assertTrue(ahead < 9.0 - 3, "but it was dragged in: " + ahead);
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.ticks(20);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A player's real client against what the server knows of it, for the real-client bugs a plain world simulation
+     * hides. A real server never reads a player's motion back ({@code Player#getVelocity} only returns what the server
+     * last sent it): the client keeps its own velocity (gravity, drag, ground friction) until the server sends a new
+     * one, and the server sees the client's position {@code lag} ticks late. World physics must be off: this moves the
+     * player.
+     */
+    private static final class RealClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final Deque<Location> late = new ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector marked = new Vector();
+
+        RealClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+            mark(new Vector());
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /**
+         * One server tick, then one client tick with the velocity the server last set during it (a server sends a
+         * player's velocity once per tick, after the plugins ran).
+         */
+        void tick() {
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                velocity.copy(now);
+                mark(now);
+            }
+            at.add(velocity);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+            player.setVelocity(marked);
+        }
+
+        private void mark(Vector sent) {
+            marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
         }
     }
 

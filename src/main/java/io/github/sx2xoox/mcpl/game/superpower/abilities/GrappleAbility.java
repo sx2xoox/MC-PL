@@ -248,6 +248,14 @@ public final class GrappleAbility extends Ability {
         private float spin;
         /** The velocity the drag last gave the victim. */
         private Vector lastPull = new Vector();
+        /**
+         * Where the dragged victim is horizontally once it has followed every drag sent so far. A player victim is
+         * steered by this (dead reckoning), not by its position on the server: that trails the player's client by its
+         * ping, and steering by it kept dragging a victim that was already there, past the drop point into the owner.
+         * Any other entity is moved by the server itself, so its own position is exact.
+         */
+        private double pullX;
+        private double pullZ;
 
         Hook(@Nullable LivingEntity victim, @Nullable Vector anchor, @Nullable BlockData anchorBlock) {
             this.victim = victim;
@@ -342,6 +350,9 @@ public final class GrappleAbility extends Ability {
                 if (victim instanceof Player caught) {
                     caught.sendActionBar(Text.mm("<" + COLOR_TAG + ">⛓ 갈고리에 걸렸습니다!</" + COLOR_TAG + ">"));
                 }
+                Location caughtAt = victim.getLocation();
+                pullX = caughtAt.getX();
+                pullZ = caughtAt.getZ();
                 phase = Phase.PULL;
             } else {
                 if (anchorBlock != null && !anchorBlock.getMaterial().isAir()) {
@@ -393,10 +404,13 @@ public final class GrappleAbility extends Ability {
             }
             Location ownerFeet = owner.getLocation();
             Location victimFeet = victim.getLocation();
-            if (victimFeet.distance(ownerFeet) <= PULL_STOP_DISTANCE || phaseTicks > PULL_TIMEOUT_TICKS) {
-                // Stop the drag but keep a fall going. A player's server-side velocity is stale (only its client
-                // knows the real one), so the drag's own last command stands in for it.
-                victim.setVelocity(new Vector(0, Math.min(0, lastPull.getY()), 0));
+            if (!(victim instanceof Player)) {
+                pullX = victimFeet.getX();
+                pullZ = victimFeet.getZ();
+            }
+            Vector victimAt = new Vector(pullX, victimFeet.getY(), pullZ);
+            if (victimAt.distance(ownerFeet.toVector()) <= PULL_STOP_DISTANCE || phaseTicks > PULL_TIMEOUT_TICKS) {
+                halt(victim);
                 return false;
             }
             Vector forward = ownerFeet.getDirection().setY(0);
@@ -405,9 +419,10 @@ public final class GrappleAbility extends Ability {
             } else {
                 forward.normalize().multiply(PULL_GOAL_DISTANCE);
             }
-            Vector toGoal = ownerFeet.toVector().add(forward).subtract(victimFeet.toVector());
+            Vector toGoal = ownerFeet.toVector().add(forward).subtract(victimAt);
             double distance = toGoal.length();
             if (distance < 0.6 || isStuck(distance)) {
+                halt(victim);
                 return false;
             }
             Vector velocity = toGoal.multiply(Math.min(PULL_MAX_SPEED, distance * 0.5 + 0.3) / distance);
@@ -416,6 +431,8 @@ public final class GrappleAbility extends Ability {
                 velocity.setY(Math.max(velocity.getY(), 0.12));
             }
             lastPull = Motion.clamp(velocity, MAX_VELOCITY);
+            pullX += lastPull.getX();
+            pullZ += lastPull.getZ();
             victim.setVelocity(lastPull);
             victim.setFallDistance(0);
             headPosition = center(victim);
@@ -429,6 +446,14 @@ public final class GrappleAbility extends Ability {
                 Vfx.trail(headPosition.toLocation(world), hand.toLocation(world), PALETTE.core(), 4, false);
             }
             return true;
+        }
+
+        /**
+         * Ends the drag where the victim is, but keeps a fall going. A player's server-side velocity is stale (only its
+         * client knows the real one), so the drag's own last command stands in for it.
+         */
+        private void halt(LivingEntity dragged) {
+            dragged.setVelocity(new Vector(0, Math.min(0, lastPull.getY()), 0));
         }
 
         /** True after several ticks without progress. The first ticks are ignored: player motion lags by ping. */
