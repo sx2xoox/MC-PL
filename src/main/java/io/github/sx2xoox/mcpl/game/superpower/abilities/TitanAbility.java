@@ -275,11 +275,14 @@ public final class TitanAbility extends Ability {
             }
             lastY[0] = now.getY();
             if (diving[0]) {
-                telegraph(now, tick);
+                telegraph(now, tick, true);
                 diveStreaks(now);
             } else if (tick % 2 == 0) {
                 world.spawnParticle(Particle.DUST_COLOR_TRANSITION, now.clone().add(0, 0.3, 0), Vfx.n(ctx(), 2),
                         0.25, 0.2, 0.25, 0, PALETTE.fade(1.4f));
+                if (airborne[0]) {
+                    telegraph(now, tick, false);
+                }
             }
             return true;
         }, () -> {
@@ -308,10 +311,11 @@ public final class TitanAbility extends Ability {
     }
 
     /**
-     * Marks the slam area on the ground below the diving owner so everyone sees where it will land: a turning
-     * pale gold ring at the slam radius and a counter-turning inner ring.
+     * Marks the slam area on the ground below the owner so everyone sees where it will land: while rising, a faint
+     * dust ring follows the titan like a shadow; once it dives, a turning pale gold ring at the slam radius and a
+     * counter-turning inner ring, visible from afar.
      */
-    private void telegraph(Location from, long tick) {
+    private void telegraph(Location from, long tick, boolean diving) {
         World world = from.getWorld();
         RayTraceResult hit = world.rayTraceBlocks(from, new Vector(0, -1, 0), 40, FluidCollisionMode.ALWAYS, true);
         if (hit == null) {
@@ -319,6 +323,11 @@ public final class TitanAbility extends Ability {
         }
         Location ground = hit.getHitPosition().toLocation(world).add(0, 0.12, 0);
         double radius = Math.max(0.5, params().num("slam_radius"));
+        if (!diving) {
+            Vfx.ring(ctx(), ground, radius, (int) Math.max(10, radius * 3), tick * 0.1, Particle.DUST,
+                    PALETTE.dust(0.9f), false);
+            return;
+        }
         Vfx.ring(ctx(), ground, radius, (int) Math.max(16, radius * 6), tick * 0.25, Particle.DUST, WARNING_DUST,
                 true);
         Vfx.ring(ctx(), ground, radius * 0.5, (int) Math.max(8, radius * 3), -tick * 0.25,
@@ -470,6 +479,8 @@ public final class TitanAbility extends Ability {
                 pitch, roll);
         BlockDisplay rock = Displays.block(ctx(), owner, spot, data, buried,
                 ROCK_HOLD_TICKS + ROCK_SINK_TICKS + 2);
+        // Torn-up ground, not magic: lit like the ground around it.
+        rock.setBrightness(null);
         Displays.animateNextTick(ctx(), owner, rock, raised, ROCK_RISE_TICKS);
         ctx().runLater(owner, ROCK_HOLD_TICKS, () -> Displays.animate(rock, sunk, ROCK_SINK_TICKS));
     }

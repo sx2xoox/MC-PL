@@ -242,7 +242,7 @@ public final class VampireAbility extends Ability {
             Fx.sound(target.getLocation(), Sound.ENTITY_PHANTOM_BITE, 0.7f, 0.8f + Fx.jitter(0.1f));
             // The mark: a blood ring under the victim and a burst at its chest.
             Vfx.ring(ctx(), target.getLocation().add(0, 0.1, 0), target.getWidth() * 0.5 + 0.45, 16, 0,
-                    Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.1f), true);
+                    Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.1f), false);
             Vfx.burst(ctx(), chest(target), PALETTE, 0.5, Particle.DAMAGE_INDICATOR, false);
             long duration = Math.max(1, params().ticks("drain_duration"));
             Loop.repeat(ctx(), player(), 1, 1, duration, this::tick, this::finish);
@@ -455,7 +455,8 @@ public final class VampireAbility extends Ability {
             ThreadLocalRandom random = ThreadLocalRandom.current();
             double start = random.nextDouble(TAU);
             for (int i = 0; i < BATS; i++) {
-                bats.add(spawnBat(owner, start + i * TAU / BATS, 1.1 + 0.25 * i, 1.45 + 0.3 * i, i % 2 == 0 ? 1 : -1));
+                // Above head height, so the bats never flap across the vampire's own view.
+                bats.add(spawnBat(owner, start + i * TAU / BATS, 1.0 + 0.3 * i, 2.0 + 0.3 * i, i % 2 == 0 ? 1 : -1));
             }
             Loop.repeat(ctx(), owner, 1, 1, duration, this::tick, () -> end(owner));
         }
@@ -574,8 +575,8 @@ public final class VampireAbility extends Ability {
     }
 
     /**
-     * Where a bat flies {@code tick} ticks in: circling {@code center} ({@code turn} 1 counter-clockwise, -1
-     * clockwise seen from above), bobbing, and facing its flight direction.
+     * Where a bat flies {@code tick} ticks in: circling {@code center} ({@code turn} 1 or -1 picks the direction),
+     * bobbing, and facing its flight direction.
      */
     private static Location orbit(Location center, double phase, double radius, double height, int turn, long tick) {
         double angle = phase + tick * BAT_SPEED * turn;
