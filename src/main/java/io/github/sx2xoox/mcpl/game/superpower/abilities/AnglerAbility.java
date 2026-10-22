@@ -133,10 +133,10 @@ public final class AnglerAbility extends Ability {
     private static final int GROUND_SNAP = 8;
     private static final float FISH_SCALE = 1.9f;
     private static final long LEAP_TICKS = 22;
-    private static final double LEAP_HEIGHT = 6.5;
-    private static final double LEAP_START_BACK = 2.2;
+    private static final double LEAP_HEIGHT = 6.0;
+    private static final double LEAP_START_BACK = 3.2;
     private static final double LEAP_START_DEPTH = 1.6;
-    private static final double LEAP_END_FORWARD = 0.6;
+    private static final double LEAP_END_FORWARD = 1.2;
     /** Height of the fish's middle above the ground when it lies flat (half its scaled body height). */
     private static final double FISH_REST_HEIGHT = 0.6 * FISH_SCALE;
     private static final double ERUPT_LIFT = 2.0;
