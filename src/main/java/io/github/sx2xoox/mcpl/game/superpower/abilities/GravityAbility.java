@@ -333,6 +333,8 @@ public final class GravityAbility extends Ability {
         private final long slowTicks;
         private @Nullable BlockDisplay tether;
         private boolean arrived;
+        /** The velocity the pull last gave the target. */
+        private Vector lastVelocity = new Vector();
 
         Pull(LivingEntity target, long slowTicks) {
             this.target = target;
@@ -384,7 +386,8 @@ public final class GravityAbility extends Ability {
             // Small hops keep the target off the ground (no ground friction) without launching it.
             boolean grounded = Motion.isGrounded(target) || target.isInWater();
             velocity.setY(Math.clamp(to.getY() * 0.3, -0.6, 0.6) + (grounded ? 0.22 : 0.0));
-            target.setVelocity(Motion.clamp(velocity, MAX_SPEED));
+            lastVelocity = Motion.clamp(velocity, MAX_SPEED);
+            target.setVelocity(lastVelocity);
             target.setFallDistance(0);
             drawTether(tick);
             return true;
@@ -395,7 +398,8 @@ public final class GravityAbility extends Ability {
             Location body = Fx.body(target);
             Vector delta = body.toVector().subtract(hand.toVector());
             if (tether != null && tether.isValid() && delta.lengthSquared() > 1.0E-4) {
-                tether.teleport(hand);
+                // The hand carries the owner's yaw and pitch: a teleport there would turn the beam a second time.
+                Displays.moveTo(tether, hand);
                 Displays.animate(tether, beamPose(delta, TETHER_WIDTH), 1);
             }
             helix(body, hand, tick * 0.55);
@@ -437,7 +441,9 @@ public final class GravityAbility extends Ability {
 
         private void arrive() {
             arrived = true;
-            target.setVelocity(new Vector(0, Math.min(0, target.getVelocity().getY()), 0));
+            // Stop the drag but keep a fall going. A player's server-side velocity is stale (only its client knows
+            // the real one), so the pull's own last command stands in for it.
+            target.setVelocity(new Vector(0, Math.min(0, lastVelocity.getY()), 0));
             target.setFallDistance(0);
             if (slowTicks > 0) {
                 int duration = (int) Math.min(Integer.MAX_VALUE, slowTicks);

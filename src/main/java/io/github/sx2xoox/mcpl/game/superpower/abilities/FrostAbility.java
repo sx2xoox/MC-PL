@@ -86,6 +86,8 @@ public final class FrostAbility extends Ability {
     private static final double SAMPLE_STEP = 0.45;
     /** Ticks of the shockwave ring expanding from the owner when the ultimate is cast. */
     private static final int SHOCKWAVE_TICKS = 8;
+    /** A grounded prisoner moved to the middle of its block is put on the ground at most this far below. */
+    private static final double CENTER_GROUND_SNAP = 0.2;
 
     // Visuals
     private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xFFFFFF, 0xBFF4FF, 0x4FC3F7);
@@ -100,6 +102,8 @@ public final class FrostAbility extends Ability {
     private static final float SPEAR_LENGTH = 1.5f;
     private static final float SHEATH_THICKNESS = 0.27f;
     private static final float SHEATH_LENGTH = 1.05f;
+    /** How far the sheath's middle sits ahead of the core's middle, along the flight. */
+    private static final float SHEATH_LEAD = 0.12f;
     /** Degrees the spear core rolls per tick (the sheath turns the other way, slower). */
     private static final float SPEAR_SPIN = 40f;
     private static final int SPEAR_CRYSTALS = 4;
@@ -221,6 +225,9 @@ public final class FrostAbility extends Ability {
         private final World world;
         private final Location position;
         private final Vector direction;
+        /** The flight direction as a Minecraft yaw and pitch (degrees), for the displays' transformations. */
+        private final float yaw;
+        private final float pitch;
         private final BlockDisplay core;
         private final @Nullable BlockDisplay sheath;
         private double remaining;
@@ -230,14 +237,16 @@ public final class FrostAbility extends Ability {
             this.direction = direction.clone().normalize();
             this.position = eye.clone();
             this.position.setDirection(this.direction);
+            this.yaw = position.getYaw();
+            this.pitch = position.getPitch();
             this.remaining = params().num("spear_range");
             long lifetime = (long) Math.ceil(remaining / SPEAR_SPEED) + 6;
-            // The display's own yaw and pitch point it along the flight; its transformation only rolls it.
+            // The displays keep yaw and pitch 0: their transformation points them along the flight and rolls them.
             Location spawn = this.position.clone().add(this.direction.clone().multiply(1.2)).subtract(0, 0.15, 0);
-            this.core = Displays.block(ctx(), player(), spawn, PACKED_ICE, coreShape(45), lifetime);
+            this.core = Displays.block(ctx(), player(), spawn, PACKED_ICE, coreShape(yaw, pitch, 45), lifetime);
             core.setTeleportDuration(1);
             this.sheath = reserveDisplays(1, lifetime)
-                    ? Displays.block(ctx(), player(), spawn, SHEATH, sheathShape(0), lifetime) : null;
+                    ? Displays.block(ctx(), player(), spawn, SHEATH, sheathShape(yaw, pitch, 0), lifetime) : null;
             if (sheath != null) {
                 sheath.setTeleportDuration(1);
             }
@@ -281,12 +290,12 @@ public final class FrostAbility extends Ability {
         /** Moves the drilling spear and leaves a trail of glowing rime and snow. */
         private void fly(Location from, long tick) {
             if (core.isValid()) {
-                core.teleport(position);
-                Displays.animate(core, coreShape(45 + SPEAR_SPIN * (tick + 1)), 1);
+                Displays.moveTo(core, position);
+                Displays.animate(core, coreShape(yaw, pitch, 45 + SPEAR_SPIN * (tick + 1)), 1);
             }
             if (sheath != null && sheath.isValid()) {
-                sheath.teleport(position);
-                Displays.animate(sheath, sheathShape(-SPEAR_SPIN * 0.5f * (tick + 1)), 1);
+                Displays.moveTo(sheath, position);
+                Displays.animate(sheath, sheathShape(yaw, pitch, -SPEAR_SPIN * 0.5f * (tick + 1)), 1);
             }
             Vfx.line(ctx(), from, position, 1.4, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.8f), false);
             Vector back = direction.clone().multiply(-1);
@@ -318,15 +327,21 @@ public final class FrostAbility extends Ability {
         }
     }
 
-    /** The spear's thin ice core, rolled {@code roll} degrees around its long axis (45 shows a diamond profile). */
-    private static Transformation coreShape(float roll) {
-        return Displays.transform(0, 0, 0, SPEAR_THICKNESS, SPEAR_THICKNESS, SPEAR_LENGTH, 0, 0, roll % 360f);
+    /**
+     * The spear's thin ice core pointing along {@code yaw}/{@code pitch} (degrees, Minecraft convention), rolled
+     * {@code roll} degrees around its long axis (45 shows a diamond profile).
+     */
+    private static Transformation coreShape(float yaw, float pitch, float roll) {
+        return Displays.transform(0, 0, 0, SPEAR_THICKNESS, SPEAR_THICKNESS, SPEAR_LENGTH, yaw, pitch, roll % 360f);
     }
 
-    /** The translucent glass sheath around the spear's head, rolled {@code roll} degrees. */
-    private static Transformation sheathShape(float roll) {
-        return Displays.transform(0, 0, 0.12f, SHEATH_THICKNESS, SHEATH_THICKNESS, SHEATH_LENGTH, 0, 0,
-                roll % 360f);
+    /** The translucent glass sheath around the spear's head (a little ahead of the core), rolled {@code roll}. */
+    private static Transformation sheathShape(float yaw, float pitch, float roll) {
+        // The offset of a transformation is not rotated with the shape: point it along the flight by hand.
+        Vector3f lead = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch)).transform(new Vector3f(0, 0, SHEATH_LEAD));
+        return Displays.transform(lead.x(), lead.y(), lead.z(), SHEATH_THICKNESS, SHEATH_THICKNESS, SHEATH_LENGTH,
+                yaw, pitch, roll % 360f);
     }
 
     /** Ice breaking at {@code at}: a cold flash, ice fragments, a bloom of snow and a ring of rime. */
@@ -633,7 +648,8 @@ public final class FrostAbility extends Ability {
     /**
      * Moves the target to the middle of its block column when that space is free (and inside the arena), so the
      * prison fits around it. A target standing on the ground is only moved if it would still stand on solid, safe
-     * ground there: an enemy at the edge of a block is never shifted over a hole or lava.
+     * ground there: an enemy at the edge of a block is never shifted over a hole or lava. A grounded target is put
+     * exactly on the surface (a body that reaches into the floor sinks on the client).
      *
      * @return whether the target was on the ground (it then needs no prison floor)
      */
@@ -646,9 +662,13 @@ public final class FrostAbility extends Ability {
             return grounded;
         }
         World world = target.getWorld();
-        BoundingBox moved = target.getBoundingBox().shift(dx, 0, dz);
+        BoundingBox box = target.getBoundingBox();
         Location centered = location.clone().add(dx, 0, dz);
-        if (world.hasCollisionsIn(moved.clone().expand(-0.01)) || !ctx().isInsideArena(centered)
+        if (grounded) {
+            Spots.snapToGround(world, centered, CENTER_GROUND_SNAP);
+        }
+        BoundingBox moved = box.clone().shift(centered.toVector().subtract(location.toVector()));
+        if (!Spots.isFree(world, centered, box.getWidthX(), box.getHeight()) || !ctx().isInsideArena(centered)
                 || (grounded && !isSupported(world, moved, centered))) {
             return grounded;
         }

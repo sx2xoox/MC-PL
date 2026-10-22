@@ -247,9 +247,9 @@ public final class GuardianAbility extends Ability {
         // first movement before calling the charge stalled, and give the charge that much more time.
         long lag = lagTicks(owner);
         long maxTicks = (long) Math.ceil(distance / BASH_SPEED) + 6 + lag;
+        float facing = yawOf(direction);
         ItemDisplay shield = Displays.item(ctx(), owner, shieldSpot(owner, direction, 0), new ItemStack(Material.SHIELD),
-                Displays.centered(0, 0, 0, CHARGE_SHIELD_SCALE, CHARGE_SHIELD_SCALE, CHARGE_SHIELD_SCALE, 0, 0, 0),
-                maxTicks + CHARGE_SHIELD_SPARE_TICKS);
+                shieldPose(CHARGE_SHIELD_SCALE, facing), maxTicks + CHARGE_SHIELD_SPARE_TICKS);
         shield.setTeleportDuration(1);
         bashing = true;
 
@@ -267,10 +267,8 @@ public final class GuardianAbility extends Ability {
             if (!now.getWorld().equals(world)) {
                 return false;
             }
-            if (shield.isValid()) {
-                // Lead by one tick of travel: the server position trails the moving player.
-                shield.teleport(shieldSpot(owner, direction, BASH_SPEED));
-            }
+            // Lead by one tick of travel: the server position trails the moving player.
+            Displays.moveTo(shield, shieldSpot(owner, direction, BASH_SPEED));
             Location front = now.clone().add(direction.clone().multiply(0.8)).add(0, owner.getHeight() * 0.5, 0);
             if (!ctx().enemiesNear(owner, front, CONTACT_RADIUS).isEmpty()
                     || horizontalDistance(start, now) >= distance - 0.2) {
@@ -357,9 +355,8 @@ public final class GuardianAbility extends Ability {
         }
 
         if (shield.isValid()) {
-            shield.teleport(shieldSpot(owner, direction, 0));
-            float pop = CHARGE_SHIELD_SCALE * 1.35f;
-            Displays.animate(shield, Displays.centered(0, 0, 0, pop, pop, pop, 0, 0, 0), 3);
+            Displays.moveTo(shield, shieldSpot(owner, direction, 0));
+            Displays.animate(shield, shieldPose(CHARGE_SHIELD_SCALE * 1.35f, yawOf(direction)), 3);
             ctx().runLater(owner, 4, () -> {
                 if (shield.isValid()) {
                     Displays.shrinkAway(ctx(), owner, shield, FADE_TICKS);
@@ -418,13 +415,18 @@ public final class GuardianAbility extends Ability {
         });
     }
 
-    /** Where the charge shield floats: {@code lead} blocks beyond the front of the owner's chest, facing forward. */
+    /** Where the charge shield floats: {@code lead} blocks beyond the front of the owner's chest. */
     private static Location shieldSpot(Player owner, Vector direction, double lead) {
-        Location spot = owner.getLocation().add(direction.clone().multiply(0.9 + lead))
-                .add(0, owner.getHeight() * 0.5, 0);
-        spot.setDirection(direction);
-        spot.setPitch(0);
-        return spot;
+        return Displays.unrotated(owner.getLocation().add(direction.clone().multiply(0.9 + lead))
+                .add(0, owner.getHeight() * 0.5, 0));
+    }
+
+    /**
+     * A shield item of {@code scale} facing {@code yaw} (degrees, Minecraft convention). The display itself keeps
+     * yaw and pitch 0; its transformation turns the shield.
+     */
+    private static Transformation shieldPose(float scale, float yaw) {
+        return Displays.centered(0, 0, 0, scale, scale, scale, yaw, 0, 0);
     }
 
     // ------------------------------------------------------------------ ultimate: indomitable
@@ -469,8 +471,7 @@ public final class GuardianAbility extends Ability {
 
             for (int slot = 0; slot < SHIELD_COUNT; slot++) {
                 ItemDisplay display = Displays.item(ctx(), owner, orbitSpot(owner, slot, 0),
-                        new ItemStack(Material.SHIELD), Displays.centered(0, 0, 0, ORBIT_SHIELD_SCALE,
-                                ORBIT_SHIELD_SCALE, ORBIT_SHIELD_SCALE, 0, 0, 0),
+                        new ItemStack(Material.SHIELD), shieldPose(ORBIT_SHIELD_SCALE, orbitYaw(slot, 0)),
                         duration + FADE_TICKS + 10);
                 shields.add(new Orbiter(display, slot));
             }
@@ -500,8 +501,12 @@ public final class GuardianAbility extends Ability {
         private boolean tick(long tick) {
             Player owner = player();
             for (Orbiter orbiter : shields) {
-                if (orbiter.display().isValid()) {
-                    orbiter.display().teleport(orbitSpot(owner, orbiter.slot(), tick));
+                ItemDisplay display = orbiter.display();
+                if (display.isValid()) {
+                    Displays.moveTo(display, orbitSpot(owner, orbiter.slot(), tick));
+                    // Turned with the same smoothing as the move (the display's teleport duration).
+                    Displays.animate(display, shieldPose(ORBIT_SHIELD_SCALE, orbitYaw(orbiter.slot(), tick)),
+                            display.getTeleportDuration());
                 }
             }
             dome.follow(owner);
@@ -632,7 +637,11 @@ public final class GuardianAbility extends Ability {
             Fx.sound(owner.getLocation(), Sound.BLOCK_GLASS_PLACE, 1.0f, 1.2f + Fx.jitter(0.1f));
         }
 
-        /** Keeps the dome on the guardian and turns it a little. */
+        /**
+         * Keeps the dome on the guardian and turns it a little. Unlike every other display of this ability, the
+         * plates deliberately take the anchor's yaw: it spins the whole dome around the guardian, on top of the
+         * plate poses, which are laid out relative to the anchor (see {@link #plateNormal}).
+         */
         void follow(Player owner) {
             spin = (spin + DOME_SPIN) % 360;
             Location anchor = anchor(owner);
@@ -758,17 +767,23 @@ public final class GuardianAbility extends Ability {
         return Displays.transform(x, y, z, size, size, PLATE_THICKNESS, yaw, (float) -elevation, 0);
     }
 
-    /** Position and facing of one orbiting shield, {@code tick} ticks into the ultimate. */
+    /** Position of one orbiting shield, {@code tick} ticks into the ultimate. */
     private static Location orbitSpot(Player owner, int slot, long tick) {
-        Location center = owner.getLocation();
-        double angle = tick * ORBIT_SPEED + slot * (TAU / SHIELD_COUNT);
+        double angle = orbitAngle(slot, tick);
         double radius = owner.getWidth() * 0.5 + 0.9;
-        double dx = Math.cos(angle);
-        double dz = Math.sin(angle);
-        Location spot = center.clone().add(dx * radius, owner.getHeight() * 0.45, dz * radius);
-        spot.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
-        spot.setPitch(0);
-        return spot;
+        return Displays.unrotated(owner.getLocation().add(Math.cos(angle) * radius, owner.getHeight() * 0.45,
+                Math.sin(angle) * radius));
+    }
+
+    /** The yaw (degrees) an orbiting shield faces: outwards, away from the guardian. */
+    private static float orbitYaw(int slot, long tick) {
+        double angle = orbitAngle(slot, tick);
+        return (float) Math.toDegrees(Math.atan2(-Math.cos(angle), Math.sin(angle)));
+    }
+
+    /** The angle (radians, from +x towards +z) of one orbiting shield around the guardian. */
+    private static double orbitAngle(int slot, long tick) {
+        return tick * ORBIT_SPEED + slot * (TAU / SHIELD_COUNT);
     }
 
     // ------------------------------------------------------------------ helpers

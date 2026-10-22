@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
 import java.util.List;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -17,12 +19,20 @@ import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.mockbukkit.mockbukkit.entity.DisplayMock;
 
 /** 원소 계열: 화염술사, 뇌신, 빙결술사, 바람술사. */
 class ElementalAbilitiesTest {
@@ -33,6 +43,66 @@ class ElementalAbilitiesTest {
     private static void assertVisualsGone(Scenario s, String when) {
         long displays = s.world.getEntities().stream().filter(entity -> entity instanceof Display).count();
         assertEquals(0, displays, "no display entity is left " + when);
+    }
+
+    /** The block displays of {@code material} in the world. */
+    private static List<BlockDisplay> blockDisplays(Scenario s, Material material) {
+        return s.world.getEntities().stream().filter(BlockDisplay.class::isInstance).map(BlockDisplay.class::cast)
+                .filter(display -> display.getBlock().getMaterial() == material).toList();
+    }
+
+    /**
+     * A display must not carry a rotation of its own (it would turn the model on top of its transformation, like
+     * the sniper laser that pointed somewhere else on a real client).
+     */
+    private static void assertUnrotated(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+    }
+
+    /**
+     * The display's transformation as one matrix, the way the client applies it. A test double that overrides
+     * {@code getTransformation()} keeps it faithfully; MockBukkit's own {@link DisplayMock} keeps only the composed
+     * matrix and hands back a wrongly decomposed rotation, so its matrix is read directly instead.
+     */
+    private static Matrix4f shapeOf(Display display) {
+        try {
+            if (display.getClass().getMethod("getTransformation").getDeclaringClass() != DisplayMock.class) {
+                Transformation shape = display.getTransformation();
+                return new Matrix4f().translation(shape.getTranslation()).rotate(shape.getLeftRotation())
+                        .scale(shape.getScale()).rotate(shape.getRightRotation());
+            }
+            Field matrix = DisplayMock.class.getDeclaredField("transformationMatrix");
+            matrix.setAccessible(true);
+            return new Matrix4f((Matrix4fc) matrix.get(display));
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("the display's transformation", e);
+        }
+    }
+
+    /** Where a display's transformation turns the model's +z axis (its length is the model's z scale). */
+    private static Vector3f zAxisOf(Display display) {
+        return shapeOf(display).transformDirection(new Vector3f(0, 0, 1));
+    }
+
+    /** The unit direction a display's transformation turns the model's +z axis to. */
+    private static Vector forwardOf(Display display) {
+        Vector3f z = zAxisOf(display).normalize();
+        return new Vector(z.x(), z.y(), z.z());
+    }
+
+    /** The middle of a block display's (rotated, scaled) block, relative to the display's location. */
+    private static Vector centerOffset(BlockDisplay display) {
+        Vector3f center = shapeOf(display).transformPosition(new Vector3f(0.5f));
+        return new Vector(center.x(), center.y(), center.z());
+    }
+
+    /** Feet exactly on the flat floor and a body that touches no block (a real client would sink otherwise). */
+    private static void assertOnSurface(Scenario s, LivingEntity entity, String what) {
+        Location at = entity.getLocation();
+        assertEquals(FlatWorld.SURFACE, at.getY(), 1.0E-6, what + " stands exactly on the floor: " + at);
+        BoundingBox box = entity.getBoundingBox();
+        assertTrue(Spots.isFree(s.world, at, box.getWidthX(), box.getHeight()), what + " is not inside a block");
     }
 
     // ------------------------------------------------------------------ 화염술사 pyro
@@ -135,6 +205,38 @@ class ElementalAbilitiesTest {
     }
 
     @Test
+    void thunderBoltSegmentsRunDownToTheStruckSpot() {
+        try (Scenario s = Scenario.ffa("thunder")) {
+            s.place(s.owner, 0.5, 0.5, 30);
+            s.place(s.enemy, -3.5, 7.5, 180);
+            s.place(s.enemy2, 10.5, -10.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            Location struck = s.enemy.getLocation();
+            s.assertSucceeded(s.active(), "낙뢰");
+            s.ticks(s.paramTicks("strike_delay"));
+            List<BlockDisplay> segments = blockDisplays(s, Material.WHITE_CONCRETE);
+            assertFalse(segments.isEmpty(), "the bolt is drawn with display segments");
+            Location lowest = null;
+            for (BlockDisplay segment : segments) {
+                assertUnrotated(segment, "bolt segment");
+                Vector down = forwardOf(segment);
+                assertTrue(down.getY() < -0.6, "a bolt segment runs down from the sky: " + down);
+                // The segment is centered on its display: its lower end is half its length further down (the
+                // length includes the bolt's thickness).
+                float half = (zAxisOf(segment).length() - 0.09f) / 2;
+                Location end = segment.getLocation().add(down.clone().multiply(half));
+                if (lowest == null || end.getY() < lowest.getY()) {
+                    lowest = end;
+                }
+            }
+            assertNotNull(lowest);
+            assertTrue(lowest.distance(struck) < 0.05, "the bolt ends on the struck spot: " + lowest);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void thunderBoltLaunchRespectsKnockbackResistance() {
         try (Scenario s = Scenario.ffa("thunder")) {
             s.enemy.getAttribute(Attribute.KNOCKBACK_RESISTANCE).setBaseValue(1.0);
@@ -227,6 +329,52 @@ class ElementalAbilitiesTest {
             assertTrue(s.enemy.getAttribute(Attribute.JUMP_STRENGTH).getModifiers().isEmpty());
             s.ticks(10);
             assertVisualsGone(s, "after the thaw");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void frostSpearPointsAlongItsFlightWhereverTheOwnerAims() {
+        try (Scenario s = Scenario.ffa("frost")) {
+            // Aimed off to the side and a little down, so the aim has both a yaw and a pitch.
+            s.place(s.enemy, 8.5, 9.5, 225);
+            s.place(s.enemy2, -10.5, -10.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            Vector aim = s.owner.getEyeLocation().getDirection();
+            s.assertSucceeded(s.active(), "얼음창");
+            for (int step = 0; step < 2; step++) {
+                List<BlockDisplay> core = blockDisplays(s, Material.PACKED_ICE);
+                List<BlockDisplay> sheath = blockDisplays(s, Material.LIGHT_BLUE_STAINED_GLASS);
+                assertEquals(1, core.size(), "the spear's core is flying");
+                assertEquals(1, sheath.size(), "with its glass sheath");
+                for (BlockDisplay part : List.of(core.getFirst(), sheath.getFirst())) {
+                    String what = part.getBlock().getMaterial() + " after " + step + " tick(s)";
+                    assertUnrotated(part, what);
+                    assertTrue(forwardOf(part).dot(aim) > 0.999, what + " points along the flight: "
+                            + forwardOf(part) + " vs " + aim);
+                }
+                assertEquals(0, centerOffset(core.getFirst()).length(), 1.0E-4, "the core is centered");
+                assertTrue(centerOffset(sheath.getFirst()).subtract(aim.clone().multiply(0.12)).length() < 1.0E-3,
+                        "the sheath sits a little ahead of the core, along the flight");
+                s.ticks(1);
+            }
+            s.ticks(30);
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "and still hits");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void frostPrisonCentersAnEnemyExactlyOnTheFloor() {
+        try (Scenario s = Scenario.ffa("frost")) {
+            // An off-centre enemy whose feet reach a hair into the floor (as a real client may report them).
+            s.place(s.enemy, 0.8, FlatWorld.SURFACE - 0.004, 4.2, 180, 0);
+            s.ticks(1);
+            s.assertSucceeded(s.ultimate(), "절대영도");
+            assertEquals(0.5, s.enemy.getLocation().getX(), 1.0E-6, "centered in its block column");
+            assertEquals(4.5, s.enemy.getLocation().getZ(), 1.0E-6);
+            assertOnSurface(s, s.enemy, "the centered enemy");
+            s.ticks(s.paramTicks("ult_duration") + 20);
             s.finishClean();
         }
     }
@@ -348,6 +496,41 @@ class ElementalAbilitiesTest {
             double travelled = s.owner.getLocation().getZ() - 0.5;
             assertTrue(travelled > s.param("distance") * 0.5, "the owner dashed forward (" + travelled + ")");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage");
+            s.ticks(10);
+            assertVisualsGone(s, "after the landing");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aeroSpeedLinesTrailAlongTheLeapAndTheOwnerLandsOnTheFloor() {
+        try (Scenario s = Scenario.ffa("aero")) {
+            s.place(s.enemy, 10.5, 10.5, 0);
+            s.place(s.enemy2, 10.5, -10.5, 0);
+            // Leaping west (yaw 90) and a little upwards: the lines must not keep the display's +z (south).
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 90, -15);
+            s.assertSucceeded(s.active(), "돌풍 도약");
+            s.ticks(3);
+            Location before = s.owner.getLocation();
+            s.ticks(1);
+            Vector motion = s.owner.getLocation().toVector().subtract(before.toVector());
+            assertTrue(motion.getX() < -0.3, "flying west: " + motion);
+            s.ticks(1);
+            // The speed lines were turned this tick along the last tick's movement.
+            List<BlockDisplay> lines = blockDisplays(s, Material.WHITE_CONCRETE);
+            assertEquals(3, lines.size(), "three speed lines");
+            Vector heading = motion.clone().normalize();
+            Location chest = s.owner.getLocation().add(0, 1.0, 0);
+            for (BlockDisplay line : lines) {
+                assertUnrotated(line, "speed line");
+                assertTrue(forwardOf(line).dot(heading) > 0.999, "a speed line lies along the flight: "
+                        + forwardOf(line) + " vs " + heading);
+                Vector middle = line.getLocation().toVector().add(centerOffset(line))
+                        .subtract(chest.toVector());
+                assertTrue(middle.dot(heading) < -0.5, "and trails behind the owner: " + middle);
+            }
+            s.tickUntilGrounded(s.owner, 100);
+            assertOnSurface(s, s.owner, "the landed owner");
             s.ticks(10);
             assertVisualsGone(s, "after the landing");
             s.finishClean();
