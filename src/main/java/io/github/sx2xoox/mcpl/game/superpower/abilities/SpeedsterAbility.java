@@ -133,9 +133,8 @@ public final class SpeedsterAbility extends Ability {
 
     // active: chained dash
     private static final int DASH_TICKS = 4;
-    private static final double DASH_LIFT = 0.08;
     /** The speed left after a dash, so the runner neither stops dead nor slides on. */
-    private static final double DASH_EXIT = 0.25;
+    private static final double DASH_EXIT = 0.15;
     private static final double SAMPLE_STEP = 0.5;
     private static final double SHOVE_SIDE = 0.45;
     private static final double SHOVE_UP = 0.25;
@@ -441,7 +440,8 @@ public final class SpeedsterAbility extends Ability {
                     finishFx();
                     return false;
                 }
-                owner.setVelocity(Motion.clamp(direction.clone().multiply(speed).setY(DASH_LIFT), MAX_SPEED));
+                // Level: a dash started mid-jump skims straight on instead of rising or dropping.
+                owner.setVelocity(Motion.clamp(direction.clone().multiply(speed), MAX_SPEED));
                 owner.setFallDistance(0);
                 strike(tick);
                 streak(tick);
