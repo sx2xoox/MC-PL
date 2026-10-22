@@ -20,6 +20,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import org.bukkit.Location;
 import org.bukkit.Registry;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -159,6 +160,23 @@ class GamblerJackpotTest {
                     .findFirst()
                     .ifPresent(modifier -> fail(id + ": " + player.getName() + " kept " + modifier.getKey()
                             + " on " + attribute.getKey()));
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("standalone")
+    void borrowedUltimateNeverHarmsTheGamblersAlly(String id) {
+        try (Scenario s = Scenario.builder("gambler").teams().param("dodge_chance", 0).param("crit_chance", 0)
+                .start()) {
+            s.crossfireAlly();
+            s.aimAt(s.owner, s.enemy);
+            Location allyStart = s.ally().getLocation();
+            s.clearHits();
+            s.assertSucceeded(borrow(s, id), "borrowed " + id);
+            AbilityLifecycleTest.watchAlly(s, allyStart, 300);
+            assertModifierFree(s.ally(), id);
+            s.assertNoProblems();
+            s.finishClean();
         }
     }
 
