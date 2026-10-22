@@ -118,7 +118,10 @@ public final class AnglerAbility extends Ability {
     private static final double HOOK_RADIUS = 0.35;
     private static final long TUG_TICKS = 3;
     private static final long REEL_TICKS = 12;
-    /** Gentle pull back onto the planned arc, so a drifting target does not wander off it. */
+    /**
+     * Gentle pull back onto the planned arc for server-driven targets (mobs). Players are steered open-loop: their
+     * server position trails their client by the ping, and correcting towards it would overshoot.
+     */
     private static final double REEL_CORRECTION = 0.3;
     /** Where the catch lands: this far in front of the angler, towards where it came from. */
     private static final double LAND_DISTANCE = 2.2;
@@ -474,8 +477,8 @@ public final class AnglerAbility extends Ability {
         }
 
         /**
-         * One tick of the reel. The velocity follows the planned curve (its own next step plus a gentle correction), so
-         * a lagging client position never makes it overshoot.
+         * One tick of the reel. The velocity is the planned curve's own next step (see {@link #REEL_CORRECTION}), so a
+         * lagging client position never makes it overshoot.
          */
         private boolean reel() {
             LivingEntity target = hooked;
@@ -491,8 +494,9 @@ public final class AnglerAbility extends Ability {
             // Where the catch should be now, and where it should be after this tick's move.
             Vector planned = arc((double) (t - 1) / REEL_TICKS);
             Vector next = arc((double) t / REEL_TICKS);
+            double correction = target instanceof Player ? 0 : REEL_CORRECTION;
             Vector velocity = next.clone().subtract(planned)
-                    .add(planned.clone().subtract(target.getLocation().toVector()).multiply(REEL_CORRECTION));
+                    .add(planned.clone().subtract(target.getLocation().toVector()).multiply(correction));
             target.setVelocity(Motion.clamp(velocity, MAX_SPEED));
             target.setFallDistance(0);
             Location body = Fx.body(target);
