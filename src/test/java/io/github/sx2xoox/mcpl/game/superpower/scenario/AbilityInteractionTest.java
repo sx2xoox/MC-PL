@@ -9,8 +9,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -155,6 +157,47 @@ class AbilityInteractionTest {
                         + modifier.getKey());
             }
         }
+    }
+
+    // ------------------------------------------------------------------ the match ends mid-skill
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("abilities")
+    void matchWonWhileSkillsAreInFlightCleansUp(String id) {
+        try (Scenario s = AbilityLifecycleTest.start(Scenario.builder(id), id)) {
+            s.ticks(40);
+            castBoth(s);
+            s.finishMatch();
+            s.assertNoProblems();
+            s.assertCleanWorld();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("abilities")
+    void matchStoppedByAnAdminWhileSkillsAreInFlightCleansUp(String id) {
+        try (Scenario s = AbilityLifecycleTest.start(Scenario.builder(id), id)) {
+            s.ticks(40);
+            castBoth(s);
+            for (TestPlayer target : s.targets()) {
+                target.getAttribute(Attribute.MAX_HEALTH).removeModifier(Scenario.TANK);
+            }
+            assertTrue(s.h.hub.games().stop(Component.text("test")), "an admin stops the match");
+            assertEquals(GameState.CLOSED, s.session.state(), "stopped and restored right away");
+            s.ticks(100);
+            s.assertNoProblems();
+            s.assertCleanWorld();
+        }
+    }
+
+    /** The active, a few ticks, then the ultimate: both still running afterwards. */
+    private static void castBoth(Scenario s) {
+        AbilityLifecycleTest.prepareActive(s);
+        s.assertSucceeded(s.active(), s.abilityId + " active");
+        s.ticks(3);
+        AbilityLifecycleTest.prepareUltimate(s);
+        s.assertSucceeded(s.ultimate(), s.abilityId + " ultimate");
+        s.ticks(5);
     }
 
     // ------------------------------------------------------------------ owner leaves mid-skill
