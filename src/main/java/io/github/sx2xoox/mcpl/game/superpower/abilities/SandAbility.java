@@ -114,6 +114,11 @@ public final class SandAbility extends Ability {
 
     // passive
     private static final long PASSIVE_PERIOD = 5;
+    /**
+     * How far below the feet sand still counts. A jump must not take the speed bonus away: a movement speed modifier
+     * toggling on every hop also pulses the client's field of view.
+     */
+    private static final int SAND_REACH = 2;
     private static final long CRUMBLE_TICKS = 8;
 
     // active: sandstorm
@@ -192,8 +197,27 @@ public final class SandAbility extends Ability {
         }
     }
 
+    /** True if the first solid ground at most {@link #SAND_REACH} blocks below the owner's feet is sand. */
     private static boolean isOnSand(Player owner) {
-        Material below = owner.getLocation().subtract(0, 0.2, 0).getBlock().getType();
+        Location feet = owner.getLocation();
+        World world = feet.getWorld();
+        int x = feet.getBlockX();
+        int z = feet.getBlockZ();
+        int top = Math.min((int) Math.floor(feet.getY() - 0.2), world.getMaxHeight() - 1);
+        int bottom = Math.max(world.getMinHeight(), top - SAND_REACH);
+        for (int y = top; y >= bottom; y--) {
+            Block block = world.getBlockAt(x, y, z);
+            if (block.isLiquid()) {
+                return false;
+            }
+            if (!block.isPassable()) {
+                return isSand(block.getType());
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSand(Material below) {
         Tag<Material> sand = Tag.SAND;
         if (sand != null && sand.isTagged(below)) {
             return true;

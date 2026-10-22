@@ -222,6 +222,39 @@ class CreatureNewAbilitiesTest {
     }
 
     @Test
+    void spiderHangingFromAWallCanLookAroundWithoutLettingGo() {
+        try (Scenario s = Scenario.ffa("spider")) {
+            s.world.wallAlongX(-2, 2, 2, 6, Material.STONE);
+            s.place(s.owner, 0.5, 1.7, 0);
+            s.ticks(20);
+            s.owner.setSneaking(true);
+            s.ticks(2);
+            double hanging = s.owner.getLocation().getY();
+            assertTrue(hanging > FlatWorld.SURFACE + 1.5, "high up the wall: " + hanging);
+
+            // Looking down at its prey...
+            org.bukkit.Location look = s.owner.getLocation();
+            look.setPitch(80);
+            s.owner.teleport(look);
+            s.ticks(10);
+            assertEquals(hanging, s.owner.getLocation().getY(), 0.1, "still hanging while looking down");
+            // ...and over its shoulder.
+            look = s.owner.getLocation();
+            look.setYaw(180);
+            look.setPitch(0);
+            s.owner.teleport(look);
+            s.ticks(10);
+            assertEquals(hanging, s.owner.getLocation().getY(), 0.1, "still hanging with its back to the wall");
+            assertEquals(0, s.owner.getFallDistance(), 1.0E-6);
+
+            s.owner.setSneaking(false);
+            s.tickUntilGrounded(s.owner, 80);
+            s.world.wallAlongX(-2, 2, 2, 6, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void spiderWebShotBindsTheEnemyInATemporaryCobweb() {
         try (Scenario s = Scenario.ffa("spider")) {
             s.place(s.enemy2, 0.5, -9.5, 0);

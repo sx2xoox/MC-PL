@@ -429,6 +429,35 @@ class NatureNewAbilitiesTest {
         }
     }
 
+    @Test
+    void hydroWaveFlankBreaksAtTheBorderEvenWhenItsMiddleHasRoom() {
+        try (Scenario s = Scenario.builder("hydro").configure(h -> {
+            h.settings().set("border.start-delay-seconds", 0);
+            h.settings().set("border.shrink-seconds", 0);
+            h.settings().set("border.final-diameter", 30);
+        }).start()) {
+            s.ticks(41);
+            Location center = s.session.arena().center();
+            double cx = center.getX();
+            double cz = center.getZ();
+            // A diagonal wave near the border's +x edge: its right flank runs into the border long before its middle.
+            s.place(s.owner, cx + 8, cz, -45);
+            s.place(s.enemy, cx + 12.5, cz - 0.5, 135);
+            s.place(s.enemy2, cx - 10, cz - 10, 0);
+            s.healAll();
+            s.clearHits();
+            assertTrue(s.ctx().isInsideArena(s.enemy.getLocation()), "the enemy starts inside");
+            s.assertSucceeded(s.ultimate(), "해일");
+            s.ticks(80);
+            assertEquals(s.param("wave_damage") + s.param("crash_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "swept by the flank and smashed where it broke");
+            assertTrue(s.ctx().isInsideArena(s.enemy.getLocation()),
+                    "the flank never carries its rider out of the arena: " + s.enemy.getLocation());
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON);
+            s.finishClean();
+        }
+    }
+
     // ------------------------------------------------------------------ 용암술사 magma
 
     @Test
@@ -601,6 +630,47 @@ class NatureNewAbilitiesTest {
     }
 
     @Test
+    void druidPhotosynthesisKeepsWorkingThroughJumps() {
+        try (Scenario s = Scenario.ffa("druid")) {
+            s.world.setBlock(0, FlatWorld.FLOOR_Y, 0, Material.GRASS_BLOCK);
+            // Held at the top of a jump: one block over the grass.
+            s.world.physics().setEnabled(false);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1, 0.5, 0, 0);
+            s.owner.setHealth(10);
+            s.ticks(s.paramTicks("regen_interval") * 2 + 10);
+            assertTrue(s.owner.getHealth() >= 10 + s.param("regen_amount"),
+                    "hopping over grass still heals: " + s.owner.getHealth());
+
+            s.world.setBlock(0, FlatWorld.FLOOR_Y, 0, Material.STONE);
+            double health = s.owner.getHealth();
+            s.ticks(s.paramTicks("regen_interval") * 2 + 10);
+            assertEquals(health, s.owner.getHealth(), EPSILON, "hopping over stone does not");
+            s.world.physics().setEnabled(true);
+            s.tickUntilGrounded(s.owner, 100);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void druidRootsBreakOutOfTheGroundUnderAJumpingEnemy() {
+        try (Scenario s = Scenario.ffa("druid")) {
+            s.world.physics().setEnabled(false);
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE + 1.1, 4.5, 180, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "덩굴 속박");
+            s.ticks(s.paramTicks("snare_delay") + 2);
+            assertEquals(s.param("snare_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "caught mid-jump");
+            assertTrue(s.world.getEntities().stream().filter(entity -> entity instanceof Display)
+                            .allMatch(entity -> entity.getLocation().getY() < FlatWorld.SURFACE + 0.1),
+                    "the roots grow from the ground, not from the air");
+            s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("root_duration") + 20);
+            assertVisualsGone(s, "after the roots let go");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void druidGroveHealsTheTeamWhileItsThornsSlowAndPrickEnemies() {
         try (Scenario s = Scenario.teams("druid")) {
             s.place(s.ally(), 2.5, 0.5, 0);
@@ -693,6 +763,28 @@ class NatureNewAbilitiesTest {
             s.world.setBlock(0, FlatWorld.FLOOR_Y, 0, Material.STONE);
             s.ticks(6);
             assertEquals(base, speed(s.owner), 1.0E-9);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sandSpeedHoldsThroughJumpsOverSand() {
+        try (Scenario s = Scenario.ffa("sand")) {
+            double base = baseSpeed(s.owner);
+            double fast = base * (1 + s.param("sand_speed") / 100);
+            s.world.setBlock(0, FlatWorld.FLOOR_Y, 0, Material.SAND);
+            s.ticks(6);
+            assertEquals(fast, speed(s.owner), 1.0E-9, "fast on sand");
+            // Every hop must not drop the bonus (a toggling speed modifier pulses the player's field of view).
+            s.world.physics().setEnabled(false);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1.2, 0.5, 0, 0);
+            s.ticks(11);
+            assertEquals(fast, speed(s.owner), 1.0E-9, "still fast at the top of a jump");
+            s.world.physics().setEnabled(true);
+            s.tickUntilGrounded(s.owner, 100);
+            s.world.setBlock(0, FlatWorld.FLOOR_Y, 0, Material.STONE);
+            s.ticks(6);
+            assertEquals(base, speed(s.owner), 1.0E-9, "off the sand");
             s.finishClean();
         }
     }
