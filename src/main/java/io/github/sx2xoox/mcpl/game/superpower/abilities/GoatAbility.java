@@ -119,6 +119,8 @@ public final class GoatAbility extends Ability {
     private static final int STALL_LIMIT = 3;
     private static final long MAX_LAG_TICKS = 8;
     private static final double MILLIS_PER_TICK = 50.0;
+    /** The charge is over once the server has seen the goat this close to the end of what it was sent. */
+    private static final double CATCH_UP = 0.3;
     private static final double KNOCK_UP = 0.42;
     /** Ticks a knocked-back enemy flies before it is low and slow enough to land (vanilla air drag 0.91). */
     private static final int KNOCK_AIR_TICKS = 11;
@@ -354,22 +356,61 @@ public final class GoatAbility extends Ability {
             if (distance < 1) {
                 ramming = false;
                 stumble(start);
+                dropHorns();
                 return;
             }
             long lag = lagTicks(owner);
-            long maxTicks = (long) Math.ceil(distance / RAM_SPEED) + 6 + lag;
+            long maxTicks = (long) Math.ceil(distance / RAM_SPEED) + 6 + lag + MAX_LAG_TICKS + 2;
             landing.arm(ctx().currentTick(), maxTicks + RAM_LANDING_TICKS);
             Fx.sound(start, Sound.ENTITY_GOAT_LONG_JUMP, 1.0f, 0.8f + Fx.jitter(0.05f));
             Fx.sound(start, Sound.ENTITY_HORSE_GALLOP, 0.9f, 1.2f + Fx.jitter(0.1f));
             Fx.sound(start, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.6f, 0.6f + Fx.jitter(0.05f));
-            owner.setVelocity(direction.clone().multiply(RAM_SPEED).setY(RAM_SINK));
-            owner.setFallDistance(0);
+            Charge run = new Charge(start, distance, lag);
+            run.push();
+            Loop.repeat(ctx(), owner, 0, 1, maxTicks, run, run::end);
+        }
 
-            Location[] last = {start};
-            int[] stalls = {0};
-            boolean[] moved = {false};
-            LivingEntity[] struck = {null};
-            Loop.repeat(ctx(), owner, 0, 1, maxTicks, tick -> {
+        /**
+         * One charge. Its length is measured on the steps sent to the goat, not on where the server sees it: the client
+         * moves by every velocity at once, while the server sees it there only a round trip later, so measuring the
+         * server's view let a lagging goat run on for a block or more per tick of ping. Once the whole length is sent
+         * the goat brakes, and the charge keeps looking for a victim until the server has seen it arrive.
+         */
+        private final class Charge implements LongPredicate {
+
+            private final Location start;
+            private final double distance;
+            private final long lag;
+            /** The sum of the steps sent so far. */
+            private double sent;
+            private Location last;
+            private int stalls;
+            private boolean moved;
+            private boolean braked;
+            /** Ticks since the whole length was sent, -1 before. */
+            private long coasting = -1;
+            private @Nullable LivingEntity struck;
+
+            Charge(Location start, double distance, long lag) {
+                this.start = start;
+                this.distance = distance;
+                this.lag = lag;
+                this.last = start;
+            }
+
+            /** Sends the next step: a full one, or exactly what is left. */
+            void push() {
+                double step = Math.min(RAM_SPEED, distance - sent);
+                sent += step;
+                owner.setVelocity(direction.clone().multiply(step).setY(RAM_SINK));
+                owner.setFallDistance(0);
+                if (sent >= distance - 1.0E-6) {
+                    coasting = 0;
+                }
+            }
+
+            @Override
+            public boolean test(long tick) {
                 Location now = owner.getLocation();
                 if (!now.getWorld().equals(start.getWorld())) {
                     return false;
@@ -378,37 +419,50 @@ public final class GoatAbility extends Ability {
                 Location front = now.clone().add(direction.clone().multiply(0.7)).add(0, owner.getHeight() * 0.5, 0);
                 List<LivingEntity> contact = ctx().enemiesNear(owner, front, CONTACT_RADIUS);
                 if (!contact.isEmpty()) {
-                    struck[0] = contact.getFirst();
+                    struck = contact.getFirst();
                     return false;
                 }
-                if (horizontalDistance(start, now) >= distance - 0.2) {
-                    return false;
+                double covered = horizontalDistance(start, now);
+                double step = horizontalDistance(last, now);
+                last = now;
+                if (!moved && covered >= STALL_EPSILON) {
+                    moved = true;
                 }
-                if (!moved[0] && horizontalDistance(start, now) >= STALL_EPSILON) {
-                    moved[0] = true;
-                }
-                if (moved[0] || tick >= RAM_GRACE_TICKS + lag) {
-                    stalls[0] = horizontalDistance(last[0], now) < STALL_EPSILON ? stalls[0] + 1 : 0;
-                    if (stalls[0] >= STALL_LIMIT) {
+                if (moved || tick >= RAM_GRACE_TICKS + lag) {
+                    stalls = step < STALL_EPSILON ? stalls + 1 : 0;
+                    if (stalls >= STALL_LIMIT) {
                         return false;
                     }
                 }
-                last[0] = now;
-                owner.setVelocity(direction.clone().multiply(RAM_SPEED).setY(RAM_SINK));
-                owner.setFallDistance(0);
+                if (coasting >= 0) {
+                    if (coasting++ == 0) {
+                        brake();
+                    }
+                    return covered < sent - CATCH_UP && coasting <= MAX_LAG_TICKS + 1;
+                }
+                push();
                 streak(now, tick);
                 return true;
-            }, () -> {
+            }
+
+            private void brake() {
+                braked = true;
+                owner.setVelocity(direction.clone().multiply(0.1).setY(RAM_SINK));
+            }
+
+            void end() {
                 ramming = false;
-                LivingEntity hit = struck[0];
+                LivingEntity hit = struck;
                 if (hit != null && Combat.isTargetable(ctx(), owner, hit)) {
                     impact(hit);
                 } else {
-                    owner.setVelocity(direction.clone().multiply(0.1).setY(RAM_SINK));
+                    if (!braked) {
+                        brake();
+                    }
                     stumble(owner.getLocation());
                 }
                 dropHorns();
-            });
+            }
         }
 
         /** One tick of the charge: dust kicked up behind, speed lines streaming back. */

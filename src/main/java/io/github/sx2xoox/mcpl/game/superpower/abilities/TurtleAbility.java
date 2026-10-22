@@ -131,6 +131,8 @@ public final class TurtleAbility extends Ability {
     private static final int STALL_LIMIT = 3;
     private static final long MAX_LAG_TICKS = 8;
     private static final double MILLIS_PER_TICK = 50.0;
+    /** The spin is over once the server has seen the shell this close to the end of what it was sent. */
+    private static final double CATCH_UP = 0.3;
     private static final double KNOCK_SIDE = 0.8;
     private static final double KNOCK_FORWARD = 0.5;
     private static final double KNOCK_UP = 0.4;
@@ -472,6 +474,12 @@ public final class TurtleAbility extends Ability {
      * The spin: the turtle shrinks into its shell and slides along, velocity-driven (the client resolves collisions).
      * When the shell runs into a wall (a block right in front of its body) or the arena border, it bounces off; the
      * distance travelled, the bounces and a timeout end it.
+     *
+     * <p>The distance is measured on the steps sent to the turtle, not on where the server sees it: the client moves
+     * by every velocity at once, while the server sees it there only a round trip later, so measuring the server's
+     * view let a lagging turtle slide on for most of a block per tick of ping. A wall pins the shell, so there the
+     * server's view is exact and the count is re-synced to it. Once the whole length is sent the shell brakes, and the
+     * spin keeps bowling over whoever it reached until the server has seen it arrive.
      */
     private final class Spin implements LongPredicate {
 
@@ -484,10 +492,18 @@ public final class TurtleAbility extends Ability {
         private final Set<UUID> hit = new HashSet<>();
         private @Nullable NamespacedKey shrinkKey;
         private Location last;
+        /** The path length the server has seen the shell slide. */
         private double traveled;
+        /** The path length sent to the shell so far (the sum of its steps). */
+        private double sent;
+        /** Where the client is sliding to: every step sent added up (re-synced where a wall pins the shell). */
+        private Location client;
         private int bounced;
         private int stalls;
         private boolean moved;
+        private boolean braked;
+        /** Ticks since the whole length was sent, -1 before. */
+        private long coasting = -1;
         /** Ticks since the last bounce; starts high, so a wall right in front bounces the shell at once. */
         private long sinceBounce = 100;
 
@@ -497,8 +513,9 @@ public final class TurtleAbility extends Ability {
             this.distance = Math.max(1, params().num("spin_distance"));
             this.bounces = Math.max(0, params().integer("spin_bounces"));
             this.lag = lagTicks(owner);
-            this.maxTicks = (long) Math.ceil(distance / SPIN_SPEED) + 8 + lag * (bounces + 1);
+            this.maxTicks = (long) Math.ceil(distance / SPIN_SPEED) + 8 + lag * (bounces + 1) + MAX_LAG_TICKS + 2;
             this.last = owner.getLocation();
+            this.client = last.clone();
         }
 
         void start() {
@@ -517,9 +534,23 @@ public final class TurtleAbility extends Ability {
             Loop.repeat(ctx(), owner, 0, 1, maxTicks, this, this::stop);
         }
 
+        /** Sends the next step: a full one, or exactly what is left of the distance. */
         private void push() {
-            owner.setVelocity(direction.clone().multiply(SPIN_SPEED).setY(SPIN_SINK));
+            double step = Math.min(SPIN_SPEED, distance - sent);
+            sent += step;
+            client.add(direction.clone().multiply(step));
+            owner.setVelocity(direction.clone().multiply(step).setY(SPIN_SINK));
             owner.setFallDistance(0);
+            if (sent >= distance - 1.0E-6) {
+                coasting = 0;
+            }
+        }
+
+        /** The shell is stopped where the server sees it (against a wall): nothing sent is still on its way. */
+        private void resync(Location now) {
+            sent = traveled;
+            client = now.clone();
+            coasting = -1;
         }
 
         @Override
@@ -535,23 +566,39 @@ public final class TurtleAbility extends Ability {
                 moved = true;
             }
             strike(last, now);
-            if (traveled >= distance) {
-                return false;
+            last = now;
+            boolean stalled = false;
+            if (moved || tick >= SPIN_GRACE_TICKS + lag) {
+                stalls = step < STALL_EPSILON && sinceBounce > lag + 2 ? stalls + 1 : 0;
+                stalled = stalls >= STALL_LIMIT;
             }
-            if (wallAhead(now) || !ctx().isInsideArena(now.clone().add(direction.clone().multiply(SPIN_SPEED * 2)))) {
+            if (wallAhead(now) || stalled) {
+                if (traveled >= distance - CATCH_UP) {
+                    return false; // it got all the way there
+                }
+                resync(now);
                 if (!bounce(now)) {
                     return false;
                 }
-            } else if (moved || tick >= SPIN_GRACE_TICKS + lag) {
-                stalls = step < STALL_EPSILON && sinceBounce > lag + 2 ? stalls + 1 : 0;
-                if (stalls >= STALL_LIMIT && !bounce(now)) {
+            } else if (coasting >= 0) {
+                if (coasting++ == 0) {
+                    brake();
+                }
+                return traveled < sent - CATCH_UP && coasting <= MAX_LAG_TICKS + 1;
+            } else if (!ctx().isInsideArena(client.clone().add(direction.clone().multiply(SPIN_SPEED * 2)))) {
+                // The border is checked ahead of the client, which is ahead of what the server sees.
+                if (!bounce(now)) {
                     return false;
                 }
             }
-            last = now;
             push();
             trail(now, tick);
             return true;
+        }
+
+        private void brake() {
+            braked = true;
+            owner.setVelocity(direction.clone().multiply(0.1).setY(SPIN_SINK));
         }
 
         /** A block right in front of the shell at body height (the feet are skipped, so steps never count). */
@@ -674,7 +721,9 @@ public final class TurtleAbility extends Ability {
             if (spin == this) {
                 spin = null;
             }
-            owner.setVelocity(direction.clone().multiply(0.1).setY(SPIN_SINK));
+            if (!braked) {
+                brake();
+            }
             shell.endSpin();
             growBack(0);
             Location feet = owner.getLocation();
