@@ -4,19 +4,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 /** 마크 몹 계열 (새 능력): 크리퍼, 셜커, 염소, 거북이. */
@@ -52,6 +64,63 @@ class MobNewAbilitiesTest {
 
     private static double knockbackResistance(Player player) {
         return player.getAttribute(Attribute.KNOCKBACK_RESISTANCE).getValue();
+    }
+
+    /**
+     * Every display alive keeps yaw and pitch 0: on a real client a display's own rotation turns its model on top of
+     * its transformation, so all orientation must live in the transformation.
+     */
+    private static void assertUnrotated(Scenario s, String what) {
+        for (Entity entity : s.world.getEntities()) {
+            if (entity instanceof Display display) {
+                assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
+                assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
+            }
+        }
+    }
+
+    /** The center of a display's model relative to the display's location (the unit cube's center for blocks). */
+    private static Vector modelCenter(Display display) {
+        Transformation pose = display.getTransformation();
+        Vector3f half = display instanceof BlockDisplay ? new Vector3f(0.5f) : new Vector3f();
+        // These abilities never set a right rotation; the display mock reports a bogus one (see leftRotation).
+        Vector3f center = half.mul(pose.getScale());
+        leftRotation(display).transform(center).add(pose.getTranslation());
+        return new Vector(center.x(), center.y(), center.z());
+    }
+
+    /** Whether the display mock hands back rotations inverted (calibrated once, see {@link #leftRotation}). */
+    private static @Nullable Boolean invertedReadBack;
+
+    /**
+     * The left rotation a client would apply to {@code display}. MockBukkit's display mock stores the matrix and, when
+     * read back, reports its rotation conjugated (inverted) as both the left and the right rotation; this calibrates
+     * once against a probe display and undoes the inversion.
+     */
+    private static Quaternionf leftRotation(Display display) {
+        if (invertedReadBack == null) {
+            World world = display.getWorld();
+            BlockDisplay probe = world.spawn(new Location(world, 0.5, 200, 0.5), BlockDisplay.class);
+            Quaternionf set = new Quaternionf().rotateY(1.0f);
+            probe.setTransformation(new Transformation(new Vector3f(), set, new Vector3f(1), new Quaternionf()));
+            invertedReadBack = probe.getTransformation().getLeftRotation().y() * set.y() < 0;
+            probe.remove();
+        }
+        Quaternionf rotation = new Quaternionf(display.getTransformation().getLeftRotation());
+        return invertedReadBack ? rotation.conjugate() : rotation;
+    }
+
+    /** The horizontal unit vector a Minecraft yaw faces (yaw 0 = +Z, 90 = -X). */
+    private static Vector facing(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+    }
+
+    /** Feet exactly on the flat world's surface and a body that touches no block. */
+    private static void assertStanding(Scenario s, LivingEntity entity, String what) {
+        assertEquals(FlatWorld.SURFACE, entity.getLocation().getY(), 1.0E-6, what + " stands on the surface");
+        assertTrue(Spots.isFree(s.world, entity.getLocation(), entity.getWidth(), entity.getHeight()),
+                what + " is not inside a block");
     }
 
     /** Exactly what {@code GamblerAbility#fireBorrowed} does. */
@@ -90,6 +159,7 @@ class MobNewAbilitiesTest {
             int fuse = s.paramTicks("fuse");
             s.ticks(fuse - 4);
             assertTrue(scale(s.owner) > 1.05, "the creeper swells up: " + scale(s.owner));
+            assertUnrotated(s, "fuse bubble");
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "still hissing");
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 10, "the blast");
 
@@ -98,8 +168,12 @@ class MobNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "enemy2 is far away");
             assertEquals(s.param("blast_damage") * s.param("self_damage") / 100, s.damageTaken(s.owner), EPSILON,
                     "the creeper takes a part of its own blast");
-            s.ticks(10);
+            s.ticks(2);
+            assertUnrotated(s, "blast shell, crater and debris");
+            s.ticks(8);
             assertTrue(s.enemy.getLocation().getZ() > 4.0, "the enemy was blown away: " + s.enemy.getLocation());
+            s.tickUntilGrounded(s.enemy, 60);
+            assertStanding(s, s.enemy, "the blown-away enemy");
             assertEquals(1.0, scale(s.owner), EPSILON, "back to its normal size");
             assertEquals(BASE_SPEED, speed(s.owner), EPSILON);
 
@@ -153,6 +227,7 @@ class MobNewAbilitiesTest {
             assertEquals(1, itemDisplays(s), "a pinch of gunpowder circles the creeper per third of the charge");
             s.ticks(s.paramTicks("charge_time") / 2 + 2);
             assertEquals(3, itemDisplays(s), "fully packed");
+            assertUnrotated(s, "gunpowder (it tumbles in its transformation)");
             s.owner.setSneaking(false);
 
             s.assertSucceeded(s.active(), "자폭");
@@ -191,9 +266,11 @@ class MobNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "the lightning is only a show");
 
             s.assertSucceeded(s.active(), "자폭");
+            s.ticks(2);
+            assertUnrotated(s, "charged aura and fuse bubble");
             assertEquals(0, s.ctx().cooldownRemaining(s.owner), EPSILON, "no cooldown while charged");
             assertEquals(BASE_SPEED, speed(s.owner), EPSILON, "no slow while charged");
-            s.ticks(s.paramTicks("ult_fuse") + 2);
+            s.ticks(s.paramTicks("ult_fuse"));
             double radius = s.param("blast_radius") + s.param("ult_radius");
             double multiplier = 1 + s.param("ult_damage") / 100;
             double one = creeperBlast(s, 1.7, radius, multiplier);
@@ -246,6 +323,14 @@ class MobNewAbilitiesTest {
             assertEquals(0, jump(s.owner), EPSILON, "or jump");
             assertEquals(1, knockbackResistance(s.owner), EPSILON, "or be knocked back");
             assertEquals(2, blockDisplays(s), "the two halves of the shell");
+            assertUnrotated(s, "shell");
+            for (Entity entity : s.world.getEntities()) {
+                if (entity instanceof BlockDisplay half) {
+                    Vector center = modelCenter(half);
+                    assertEquals(0, center.getX(), 1.0E-3, "the shell is centered on the shulker");
+                    assertEquals(0, center.getZ(), 1.0E-3, "the shell is centered on the shulker");
+                }
+            }
 
             s.melee(s.enemy, s.owner, 10);
             assertEquals(10 * (1 - s.param("shell_reduction") / 100), s.damageTaken(s.owner), EPSILON);
@@ -273,6 +358,8 @@ class MobNewAbilitiesTest {
             s.ticks(10);
             s.assertSucceeded(s.active(), "유도탄 (fired from the shut shell)");
             assertFalse(s.active().succeeded(), "on cooldown");
+            s.ticks(3);
+            assertUnrotated(s, "bullets and shell");
             double total = s.param("bullet_count") * s.param("bullet_damage");
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) >= total - EPSILON, 100, "both bullets hit");
             assertEquals(total, s.damageBy(s.owner, s.enemy), EPSILON);
@@ -323,6 +410,7 @@ class MobNewAbilitiesTest {
             s.assertSucceeded(s.ultimate(), "셜커 요새");
             s.ticks(10);
             assertTrue(blockDisplays(s) >= 3 * s.param("turret_count"), "turrets rise around the shulker");
+            assertUnrotated(s, "turrets");
             s.ticks(s.paramTicks("ult_duration") + s.paramTicks("bullet_life") + 20);
             double enemies = s.damageBy(s.owner, s.enemy) + s.damageBy(s.owner, s.enemy2);
             assertTrue(enemies >= 2 * s.param("ult_damage"), "the turrets keep hitting: " + enemies);
@@ -432,6 +520,9 @@ class MobNewAbilitiesTest {
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 30, "the ram");
             assertEquals(s.param("ram_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
             s.ticks(25);
+            assertStanding(s, s.owner, "the goat after its charge");
+            s.tickUntilGrounded(s.enemy, 60);
+            assertStanding(s, s.enemy, "the rammed enemy");
             assertTrue(s.enemy.getLocation().getZ() > 4.5 + s.param("ram_knockback") * 0.6,
                     "sent flying: " + s.enemy.getLocation());
             assertEquals(s.param("ram_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "no wall, no extra pain");
@@ -441,6 +532,38 @@ class MobNewAbilitiesTest {
             assertEquals(BASE_SPEED, speed(s.owner), EPSILON);
             s.ticks(20);
             assertEquals(0, displays(s), "the horns are put away");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void goatHornsPointWhereTheGoatChargesWithoutRotatingTheDisplays() {
+        try (Scenario s = Scenario.ffa("goat")) {
+            // Facing west (-X), where no enemy stands: the display rotation would show here.
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 6.5, 9.5, 180);
+            Vector forward = facing(90);
+            Vector left = new Vector(0, 0, 1);
+            s.assertSucceeded(s.active(), "박치기");
+            s.ticks(s.paramTicks("ram_windup") - 1);
+            assertUnrotated(s, "horns");
+            List<ItemDisplay> horns = s.world.getEntities().stream().filter(ItemDisplay.class::isInstance)
+                    .map(ItemDisplay.class::cast).toList();
+            assertEquals(2, horns.size(), "two horns");
+            for (ItemDisplay horn : horns) {
+                Vector offset = modelCenter(horn);
+                assertTrue(offset.dot(forward) > 0.1, "the horn sits in front of the head: " + offset);
+                assertTrue(offset.getY() > 0.05, "above the eyes, out of the goat's view: " + offset);
+            }
+            double sides = modelCenter(horns.get(0)).dot(left) * modelCenter(horns.get(1)).dot(left);
+            assertTrue(sides < 0, "one horn on each side of the head");
+            s.ticks(30);
+            assertTrue(s.owner.getLocation().getX() < -3, "it charged west: " + s.owner.getLocation());
+            assertStanding(s, s.owner, "the goat after its charge");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(20);
+            assertEquals(0, displays(s));
             s.finishClean();
         }
     }
@@ -459,6 +582,8 @@ class MobNewAbilitiesTest {
             s.ticks(30);
             assertEquals(both, s.damageBy(s.owner, s.enemy), EPSILON, "rammed and slammed into the wall, once");
             assertTrue(s.enemy.getLocation().getZ() < 7, "it did not pass through the wall");
+            s.tickUntilGrounded(s.enemy, 60);
+            assertStanding(s, s.enemy, "the enemy slammed into the wall");
             s.world.wallAlongX(-3, 3, 7, 4, Material.AIR);
             s.ticks(20);
             assertEquals(0, displays(s));
@@ -488,6 +613,8 @@ class MobNewAbilitiesTest {
             s.assertSucceeded(s.ultimate(), "산사태");
             s.ticks(s.paramTicks("slide_delay") - 2);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the horn first, the rocks after");
+            s.ticks(4);
+            assertUnrotated(s, "horn and boulders");
             s.ticks(120);
             double damage = s.damageBy(s.owner, s.enemy);
             double waves = damage / s.param("boulder_damage");
@@ -496,6 +623,9 @@ class MobNewAbilitiesTest {
             assertTrue(waves <= s.param("slide_waves") + EPSILON, "at most every wave");
             assertTrue(s.damageBy(s.owner, s.enemy2) >= s.param("boulder_damage"), "enemy2 too");
             assertTrue(s.enemy.getLocation().getZ() > 4.5 + 3, "carried down the slope: " + s.enemy.getLocation());
+            s.tickUntilGrounded(s.enemy, 60);
+            assertStanding(s, s.enemy, "the swept enemy");
+            assertStanding(s, s.enemy2, "the other swept enemy");
             assertEquals(0, s.damageTaken(s.ally()), EPSILON, "the ally is never hit");
             assertEquals(allyZ, s.ally().getLocation().getZ(), 1.0E-3, "or moved");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
@@ -551,6 +681,28 @@ class MobNewAbilitiesTest {
     // ================================================================== 거북이 turtle
 
     @Test
+    void turtleShellSitsOnItsBackWhicheverWayItTurns() {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            for (float yaw : new float[] {90, -135, 0}) {
+                s.place(s.owner, 0.5, 0.5, yaw);
+                s.ticks(5);
+                assertUnrotated(s, "back shell at yaw " + yaw);
+                assertEquals(3, blockDisplays(s));
+                for (Entity entity : s.world.getEntities()) {
+                    if (entity instanceof BlockDisplay plate) {
+                        Vector offset = modelCenter(plate).add(plate.getLocation().toVector())
+                                .subtract(s.owner.getLocation().toVector());
+                        assertTrue(offset.clone().setY(0).dot(facing(yaw)) < -0.1,
+                                "the plate is on the turtle's back at yaw " + yaw + ": " + offset);
+                        assertTrue(offset.getY() > 0.8 && offset.getY() < 1.5, "at back height: " + offset);
+                    }
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
     void turtleShellTakesTheStingOutOfHitsFromBehind() {
         try (Scenario s = Scenario.ffa("turtle")) {
             s.ticks(5);
@@ -584,6 +736,7 @@ class MobNewAbilitiesTest {
             assertFalse(s.active().succeeded(), "on cooldown");
             assertEquals(0.65, scale(s.owner), EPSILON, "pulled into the shell");
             s.ticks(2);
+            assertUnrotated(s, "spinning shell (it whirls in its transformation)");
             s.melee(s.enemy2, s.owner, 10);
             assertEquals(10 * (1 - s.param("spin_reduction") / 100), s.damageTaken(s.owner), EPSILON,
                     "the spinning shell takes less damage");
@@ -592,6 +745,9 @@ class MobNewAbilitiesTest {
             s.ticks(40);
             assertEquals(s.param("spin_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "hit once");
             assertTrue(Math.abs(s.enemy.getLocation().getX() - 0.5) > 1.0, "bowled aside: " + s.enemy.getLocation());
+            assertStanding(s, s.owner, "the turtle after its spin");
+            s.tickUntilGrounded(s.enemy, 60);
+            assertStanding(s, s.enemy, "the bowled enemy");
             assertTrue(s.owner.getLocation().getZ() > 8, "the shell slid on: " + s.owner.getLocation());
             assertEquals(1.0, scale(s.owner), EPSILON, "back out of the shell");
             assertEquals(10 * (1 - s.param("spin_reduction") / 100), s.damageTaken(s.owner), EPSILON,
@@ -612,6 +768,9 @@ class MobNewAbilitiesTest {
             assertEquals(s.param("spin_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "it bounced off the wall and into the enemy behind it");
             assertTrue(s.owner.getLocation().getZ() < 0, "it came back: " + s.owner.getLocation());
+            assertStanding(s, s.owner, "the turtle after the ricochet");
+            s.tickUntilGrounded(s.enemy, 60);
+            assertStanding(s, s.enemy, "the enemy hit by the ricochet");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON);
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertEquals(1.0, scale(s.owner), EPSILON);
@@ -646,6 +805,7 @@ class MobNewAbilitiesTest {
             assertEquals(BASE_SPEED * (1 - s.param("ult_slow") / 100), speed(s.owner), EPSILON, "heavy");
             assertEquals(1, knockbackResistance(s.owner), EPSILON, "unmovable");
             assertTrue(blockDisplays(s) >= 12, "a giant shell: " + blockDisplays(s));
+            assertUnrotated(s, "giant shell");
 
             s.melee(s.enemy, s.owner, 10);
             assertEquals(10 * (1 - s.param("ult_reduction") / 100), s.damageTaken(s.owner), EPSILON,
@@ -668,6 +828,50 @@ class MobNewAbilitiesTest {
             assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "no thorns after the ultimate");
             s.finishClean();
         }
+    }
+
+    @Test
+    void turtleGiantShellOpensWhereTheTurtleLooksAndTurnsWithIt() {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 6.5, 9.5, 180);
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.assertSucceeded(s.ultimate(), "거대 등껍질");
+            s.ticks(20);
+            assertGiantShellFaces(s, 90);
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.ticks(4);
+            assertGiantShellFaces(s, -90);
+            s.ticks(s.paramTicks("ult_duration"));
+            s.finishClean();
+        }
+    }
+
+    /** The giant shell's plates keep yaw 0, the flanks leave the front (where the turtle looks) open. */
+    private static void assertGiantShellFaces(Scenario s, float yaw) {
+        assertUnrotated(s, "giant shell at yaw " + yaw);
+        Vector front = facing(yaw);
+        int flanks = 0;
+        int behind = 0;
+        for (Entity entity : s.world.getEntities()) {
+            if (!(entity instanceof BlockDisplay plate)) {
+                continue;
+            }
+            Vector offset = modelCenter(plate).add(plate.getLocation().toVector())
+                    .subtract(s.owner.getLocation().toVector());
+            Vector flat = offset.clone().setY(0);
+            if (offset.getY() < 0.9 || flat.lengthSquared() < 0.25) {
+                continue; // the low rim runs all the way round, the cap sits on top
+            }
+            flanks++;
+            double cos = flat.normalize().dot(front);
+            assertTrue(cos < Math.cos(Math.toRadians(35)), "the shell is open in front at yaw " + yaw + ": " + offset);
+            if (cos < -0.5) {
+                behind++;
+            }
+        }
+        assertTrue(flanks >= 5, "the flanks of the giant shell: " + flanks);
+        assertTrue(behind >= 2, "the shell covers the turtle's back: " + behind);
     }
 
     @Test
