@@ -122,8 +122,8 @@ public final class ThunderAbility extends Ability {
     // ------------------------------------------------------------------ passive: static shock
 
     @Override
-    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (event.isCancelled() || ctx().isAbilityDamage() || event.getCause() != DamageCause.ENTITY_ATTACK
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() || event.getCause() != DamageCause.ENTITY_ATTACK
                 || !player().equals(event.getDamager()) || !ctx().isEnemy(player(), victim)) {
             return;
         }

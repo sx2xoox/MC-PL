@@ -132,9 +132,8 @@ public final class PyroAbility extends Ability {
     }
 
     @Override
-    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (event.isCancelled() || ctx().isAbilityDamage() || !player().equals(event.getDamager())
-                || !ctx().isEnemy(player(), victim)) {
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() || !player().equals(event.getDamager()) || !ctx().isEnemy(player(), victim)) {
             return;
         }
         DamageCause cause = event.getCause();
