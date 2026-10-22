@@ -236,7 +236,7 @@ public final class PsychicAbility extends Ability {
             }
             TextDisplay glyph = disruption.glyph;
             if (glyph != null && glyph.isValid()) {
-                glyph.teleport(glyphPoint(attacker));
+                Displays.moveTo(glyph, glyphPoint(attacker));
                 if (tick % (DISRUPT_PERIOD * 2) == 0) {
                     // A slow wobble, as if the thought kept slipping.
                     Displays.animate(glyph, glyphPose(0.75f, (float) Math.sin(tick * 0.2) * 25), 4);
@@ -569,8 +569,9 @@ public final class PsychicAbility extends Ability {
         /** The bubble and the shards follow the target. */
         private void follow(long tick) {
             Location feet = target.getLocation();
-            if (bubble != null && bubble.isValid()) {
-                bubble.teleport(feet);
+            if (bubble != null) {
+                // Not the target's own rotation: looking up or down would tip the bubble off its body.
+                Displays.moveTo(bubble, feet);
             }
             Location body = Fx.body(target);
             double radius = target.getWidth() * 0.5 + 0.55;
@@ -582,7 +583,9 @@ public final class PsychicAbility extends Ability {
                 double angle = tick * 0.45 + i * Math.PI * 2 / SHARDS;
                 Location at = body.clone().add(Math.cos(angle) * radius, Math.sin(tick * 0.3 + i * 2) * 0.35,
                         Math.sin(angle) * radius);
+                // The shards turn as they circle, upright whichever way the target looks.
                 at.setYaw((float) Math.toDegrees(angle));
+                at.setPitch(0);
                 shard.teleport(at);
             }
         }

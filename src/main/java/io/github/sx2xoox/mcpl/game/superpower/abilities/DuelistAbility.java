@@ -109,6 +109,8 @@ public final class DuelistAbility extends Ability {
     /** How close to the wall (inside) a duellist gets before the wall pushes it back. */
     private static final double WALL_MARGIN = 0.7;
     private static final double WALL_PUSH = 0.55;
+    /** The little hop of a wall push, so ground friction does not swallow it. */
+    private static final double WALL_HOP = 0.12;
     /** A duellist found this far outside the wall (a teleport, a launch) is brought back in. */
     private static final double ESCAPE_DISTANCE = 1.5;
     private static final double REPEL_PUSH = 0.9;
@@ -581,10 +583,18 @@ public final class DuelistAbility extends Ability {
                 bringBack(duelist, offset, distance);
                 return;
             }
-            Vector velocity = duelist.getVelocity();
-            double outward = -velocity.clone().setY(0).dot(inward);
-            Vector push = velocity.clone().add(inward.clone().multiply(WALL_PUSH + Math.max(0, outward)));
-            push.setY(Math.max(velocity.getY(), 0.12));
+            Vector push;
+            if (duelist instanceof Player) {
+                // A player's velocity on the server is only the last one sent to it (its client moves it), and the
+                // server keeps seeing it at the wall for a round trip: a push built on that would pile up tick after
+                // tick and fling it across the ring. The push replaces whatever its client was doing anyway.
+                push = inward.clone().multiply(WALL_PUSH).setY(WALL_HOP);
+            } else {
+                Vector velocity = duelist.getVelocity();
+                double outward = -velocity.clone().setY(0).dot(inward);
+                push = velocity.clone().add(inward.clone().multiply(WALL_PUSH + Math.max(0, outward)));
+                push.setY(Math.max(velocity.getY(), WALL_HOP));
+            }
             duelist.setVelocity(Motion.clamp(push, 1.2));
             flashPanel(at, false);
         }

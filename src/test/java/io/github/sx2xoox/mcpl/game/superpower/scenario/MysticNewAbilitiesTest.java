@@ -41,7 +41,10 @@ import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -62,6 +65,34 @@ class MysticNewAbilitiesTest {
 
     private static long displays(Scenario s) {
         return s.world.getEntities().stream().filter(Display.class::isInstance).count();
+    }
+
+    private static <T extends Entity> List<T> entities(Scenario s, Class<T> type) {
+        return s.world.getEntities().stream().filter(type::isInstance).map(type::cast).toList();
+    }
+
+    /**
+     * A display must carry no rotation of its own: its model is turned by its transformation, and a yaw or pitch of
+     * the entity would turn it a second time on a real client.
+     */
+    private static void assertUnturned(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": the display's own yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": the display's own pitch");
+    }
+
+    /**
+     * Where the model's local +z points in the world (with the display itself unturned). MockBukkit 4.118 hands the
+     * left rotation back conjugated (in the right rotation's slot too); a faithful test double returns it as it was
+     * set, with no right rotation (none of these poses has one).
+     */
+    private static Vector modelForward(Display display) {
+        Transformation pose = display.getTransformation();
+        Quaternionf rotation = pose.getLeftRotation();
+        if (Math.abs(pose.getRightRotation().w()) < 1 - 1.0E-6) {
+            rotation.conjugate();
+        }
+        Vector3f z = rotation.transform(new Vector3f(0, 0, 1));
+        return new Vector(z.x(), z.y(), z.z());
     }
 
     /** A hit with no attacker at all (a stand-in for any damage the victim takes from somewhere else). */
@@ -374,6 +405,29 @@ class MysticNewAbilitiesTest {
     }
 
     @Test
+    void lightShaftsShootWhereTheHeraldLooks() {
+        try (Scenario s = Scenario.ffa("light")) {
+            s.place(s.enemy, 3.5, 5.5, 180); // off to the side: the herald's yaw and pitch are far from 0
+            s.aimAt(s.owner, s.enemy);
+            Vector look = s.owner.getEyeLocation().getDirection();
+            s.assertSucceeded(s.active(), "섬광");
+            List<BlockDisplay> shafts = entities(s, BlockDisplay.class);
+            assertEquals(5, shafts.size(), "five shafts of light");
+            double half = Math.toRadians(s.param("flash_angle") / 2);
+            boolean straight = false;
+            for (BlockDisplay shaft : shafts) {
+                assertUnturned(shaft, "shaft");
+                double cos = modelForward(shaft).dot(look);
+                assertTrue(cos > Math.cos(half), "every shaft shoots into the cone: " + cos);
+                straight |= cos > 0.9999;
+            }
+            assertTrue(straight, "the main shaft runs straight along the view");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void lightJudgmentSmitesEnemiesAndHealsAlliesAfterTheWarning() {
         try (Scenario s = Scenario.teams("light")) {
             s.crossfireAlly();
@@ -545,6 +599,39 @@ class MysticNewAbilitiesTest {
             s.ticks(s.paramTicks("ult_silence"));
             assertFalse(s.ctx().isSilenced(s.enemy), "the silence wears off");
             assertEquals(0, displays(s), "the sculk sinks away");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sonicShardsSpawnTurnedTowardsTheChestAndTheSculkSlidesFlatOverTheGround() {
+        try (Scenario s = Scenario.ffa("sonic")) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "음파 폭발");
+            Location eye = s.owner.getEyeLocation();
+            Location chest = eye.clone().add(eye.getDirection().normalize().multiply(0.6)).subtract(0, 0.3, 0);
+            List<ItemDisplay> shards = entities(s, ItemDisplay.class);
+            assertEquals(3, shards.size(), "three echo shards");
+            for (ItemDisplay shard : shards) {
+                // The shards are turned by their own rotation (their pose only scales them): from the start.
+                Vector toChest = chest.toVector().subtract(shard.getLocation().toVector()).normalize();
+                double cos = shard.getLocation().getDirection().dot(toChest);
+                assertTrue(cos > 0.95, "a shard faces the chest it spirals into: " + cos);
+            }
+            s.ticks(40);
+
+            // Shrieking in mid-jump, turned: the sculk patches still slide over the ground, unturned.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 1.0, 0.5, 70, 0);
+            s.assertSucceeded(s.ultimate(), "어둠의 장막");
+            s.ticks(12);
+            List<BlockDisplay> patches = entities(s, BlockDisplay.class).stream()
+                    .filter(display -> display.getBlock().getMaterial() == Material.SCULK).toList();
+            assertEquals(10, patches.size(), "sculk patches slide out with the wave");
+            for (BlockDisplay patch : patches) {
+                assertUnturned(patch, "sculk patch");
+                assertEquals(FlatWorld.SURFACE + 0.03, patch.getLocation().getY(), EPSILON, "on the ground");
+            }
+            s.ticks(60);
             s.finishClean();
         }
     }
@@ -773,6 +860,27 @@ class MysticNewAbilitiesTest {
             assertEquals(4.5, s.enemy.getLocation().getZ(), 0.5, "not thrown either");
             assertEquals(s.param("throw_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
             assertEquals(0, displays(s), "the bubble burst");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void psychicBubbleStaysUprightWhereverTheTargetLooks() {
+        try (Scenario s = Scenario.ffa("psychic")) {
+            s.place(s.enemy2, -10.5, 0.5, 0);
+            s.place(s.enemy, 0.5, FlatWorld.SURFACE, 4.5, 30, 60); // turned and looking down at its feet
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "염동 투척");
+            for (int tick = 0; tick < 4; tick++) {
+                s.ticks(1);
+                List<BlockDisplay> bubbles = entities(s, BlockDisplay.class);
+                assertEquals(1, bubbles.size(), "the bubble");
+                assertUnturned(bubbles.getFirst(), "bubble");
+                for (ItemDisplay shard : entities(s, ItemDisplay.class)) {
+                    assertEquals(0, shard.getLocation().getPitch(), 1.0E-3, "the shards circle upright");
+                }
+            }
+            s.ticks(60);
             s.finishClean();
         }
     }
@@ -1035,6 +1143,30 @@ class MysticNewAbilitiesTest {
             }
             assertEquals(0, displays(s), "the chains break");
             s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hexerLashesShootStraightAtTheBoundEnemies() {
+        try (Scenario s = Scenario.ffa("hexer")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 40, 20); // turned and looking down
+            s.place(s.enemy, 3.5, 5.5, 180);
+            s.assertSucceeded(s.ultimate(), "영혼 사슬");
+            List<BlockDisplay> lashes = entities(s, BlockDisplay.class).stream()
+                    .filter(display -> display.getBlock().getMaterial() == Material.VERDANT_FROGLIGHT).toList();
+            assertEquals(2, lashes.size(), "a lash to each bound enemy");
+            for (BlockDisplay lash : lashes) {
+                assertUnturned(lash, "lash");
+                double best = -1;
+                for (TestPlayer target : s.enemies()) {
+                    Vector toBody = target.getLocation().add(0, target.getHeight() * 0.5, 0).toVector()
+                            .subtract(lash.getLocation().toVector()).normalize();
+                    best = Math.max(best, modelForward(lash).dot(toBody));
+                }
+                assertTrue(best > 0.999, "the lash points at a bound enemy: " + best);
+            }
+            s.ticks(s.paramTicks("ult_duration") + 10);
             s.finishClean();
         }
     }

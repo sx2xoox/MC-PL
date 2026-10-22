@@ -36,6 +36,8 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -286,10 +288,11 @@ public final class LancerAbility extends Ability {
             // Thrown from inside the lancer like a real throw, so a hugging enemy is not skipped.
             this.point = eye.toVector().subtract(new Vector(0, 0.2, 0));
             Location at = placement();
+            Aim aim = Aim.of(heading);
             long lifetime = (long) Math.ceil(range / THROW_SPEED) + TURN_TICKS + MAX_RETURN_TICKS + 10;
             for (int i = 0; i < SPEAR_PARTS.length; i++) {
                 parts[i] = Displays.block(ctx(), player(), at, SPEAR_PARTS[i].material().createBlockData(),
-                        pose(SPEAR_PARTS[i], 1f, 0), lifetime);
+                        pose(SPEAR_PARTS[i], 1f, 0, aim), lifetime);
                 parts[i].setTeleportDuration(1);
             }
         }
@@ -349,9 +352,7 @@ public final class LancerAbility extends Ability {
             }
             Location place = shaken.clone().subtract(heading.clone().multiply(POINT));
             for (BlockDisplay part : parts) {
-                if (part.isValid()) {
-                    part.teleport(oriented(place, heading));
-                }
+                Displays.moveTo(part, place);
             }
             if (phaseTicks % 2 == 0) {
                 Vfx.ring(ctx(), at, 0.35, 8, phaseTicks * 0.5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f),
@@ -412,20 +413,20 @@ public final class LancerAbility extends Ability {
         }
 
         private void move() {
-            Location place = point.toLocation(world).subtract(heading.clone().multiply(POINT));
-            Location at = oriented(place, heading);
+            Location place = placement();
+            Aim aim = Aim.of(heading);
             for (int i = 0; i < parts.length; i++) {
                 BlockDisplay part = parts[i];
                 if (part.isValid()) {
-                    part.teleport(at);
-                    Displays.animate(part, pose(SPEAR_PARTS[i], 1f, spin), 1);
+                    Displays.moveTo(part, place);
+                    Displays.animate(part, pose(SPEAR_PARTS[i], 1f, spin, aim), 1);
                 }
             }
         }
 
         /** Where the displays stand (the spear's center) for the current point and heading. */
         private Location placement() {
-            return oriented(point.toLocation(world).subtract(heading.clone().multiply(POINT)), heading);
+            return point.toLocation(world).subtract(heading.clone().multiply(POINT));
         }
 
         private void catchSpear(Player owner, boolean caught) {
@@ -540,8 +541,16 @@ public final class LancerAbility extends Ability {
         private final List<LivingEntity> skewered = new ArrayList<>();
         private final Set<UUID> struck = new HashSet<>();
         private final BlockDisplay[] spear = new BlockDisplay[SPEAR_PARTS.length];
+        /** The charge spear points along the charge (its facing lives in the parts' transformations). */
+        private final Aim aim;
         private final long lag = lagTicks(player());
         private @Nullable Location start;
+        /**
+         * How far the charge has been sent so far: the sum of the steps of the velocities sent to the lancer. Its
+         * client moves by exactly these at once, while the server sees it there only a round trip later, so the
+         * charge's length is measured on what was sent (the server's view would let it run on past its end).
+         */
+        private double sent;
         private Location last;
         private int stalls;
         private boolean moved;
@@ -554,13 +563,14 @@ public final class LancerAbility extends Ability {
         Charge(Vector direction, double distance) {
             this.direction = direction;
             this.distance = distance;
+            this.aim = Aim.of(direction);
             Player owner = player();
             this.last = owner.getLocation();
             long lifetime = WINDUP_TICKS + (long) Math.ceil(distance / CHARGE_SPEED) + MAX_LAG_TICKS + 30;
-            Location at = oriented(spearSpot(owner, -0.6), direction);
+            Location at = spearSpot(owner, -0.6);
             for (int i = 0; i < SPEAR_PARTS.length; i++) {
                 spear[i] = Displays.block(ctx(), owner, at, SPEAR_PARTS[i].material().createBlockData(),
-                        pose(SPEAR_PARTS[i], 0.3f, 0), lifetime);
+                        pose(SPEAR_PARTS[i], 0.3f, 0, aim), lifetime);
                 spear[i].setTeleportDuration(1);
             }
             windupCast(owner);
@@ -612,7 +622,8 @@ public final class LancerAbility extends Ability {
             // Still never past the arena border, from where the charge really begins.
             distance = Spots.arenaReach(ctx(), start, direction, distance);
             bordered = distance < Math.max(1, params().num("ult_distance")) - 1.0E-6;
-            owner.setVelocity(direction.clone().multiply(Math.min(CHARGE_SPEED, distance)).setY(CHARGE_SINK));
+            sent = Math.min(CHARGE_SPEED, distance);
+            owner.setVelocity(direction.clone().multiply(sent).setY(CHARGE_SINK));
             owner.setFallDistance(0);
             Location chest = start.clone().add(0, owner.getHeight() * 0.55, 0);
             World world = chest.getWorld();
@@ -630,8 +641,7 @@ public final class LancerAbility extends Ability {
             if (begin == null || !now.getWorld().equals(begin.getWorld())) {
                 return false;
             }
-            double travelled = horizontalDistance(begin, now);
-            if (travelled >= distance - 0.2) {
+            if (sent >= distance - 0.2) {
                 return false;
             }
             if (!moved && horizontalDistance(begin, now) >= STALL_EPSILON) {
@@ -644,13 +654,17 @@ public final class LancerAbility extends Ability {
                 }
             }
             last = now;
-            // Never into the void (or a lava pit): the charge pulls up at the edge.
-            if (!Spots.hasGroundBelow(now.getWorld(), now.clone().add(direction.clone().multiply(VOID_LOOKAHEAD)))) {
+            // Never into the void (or a lava pit): the charge pulls up at the edge, looking ahead of where the steps
+            // already sent are carrying the lancer (the server sees it behind that).
+            Location ahead = begin.clone().add(direction.clone().multiply(sent + VOID_LOOKAHEAD));
+            ahead.setY(now.getY());
+            if (!Spots.hasGroundBelow(now.getWorld(), ahead)) {
                 edge = true;
                 return false;
             }
             // The last step is only as long as what is left, so the charge ends exactly at its end.
-            double step = Math.min(CHARGE_SPEED, distance - travelled);
+            double step = Math.min(CHARGE_SPEED, distance - sent);
+            sent += step;
             owner.setVelocity(direction.clone().multiply(step).setY(CHARGE_SINK));
             owner.setFallDistance(0);
 
@@ -756,8 +770,8 @@ public final class LancerAbility extends Ability {
                 if (!part.isValid()) {
                     continue;
                 }
-                part.teleport(oriented(spearSpot(owner, 1.6), direction));
-                Displays.animate(part, pose(SPEAR_PARTS[i], CHARGE_SPEAR_SCALE * 1.2f, 0), 3);
+                Displays.moveTo(part, spearSpot(owner, 1.6));
+                Displays.animate(part, pose(SPEAR_PARTS[i], CHARGE_SPEAR_SCALE * 1.2f, 0, aim), 3);
                 ctx().runLater(owner, 4, () -> {
                     if (part.isValid()) {
                         Displays.shrinkAway(ctx(), owner, part, 5);
@@ -832,12 +846,12 @@ public final class LancerAbility extends Ability {
 
         /** Moves the charge spear {@code lead} blocks ahead of the chest, at {@code scale}, turned {@code roll}. */
         private void placeSpear(Player owner, double lead, float scale, float roll) {
-            Location at = oriented(spearSpot(owner, lead), direction);
+            Location at = spearSpot(owner, lead);
             for (int i = 0; i < spear.length; i++) {
                 BlockDisplay part = spear[i];
                 if (part.isValid()) {
-                    part.teleport(at);
-                    Displays.animate(part, pose(SPEAR_PARTS[i], scale, roll % 360f), 1);
+                    Displays.moveTo(part, at);
+                    Displays.animate(part, pose(SPEAR_PARTS[i], scale, roll % 360f, aim), 1);
                 }
             }
         }
@@ -887,22 +901,43 @@ public final class LancerAbility extends Ability {
         return landed;
     }
 
-    /** One spear part at {@code scale}, rolled {@code roll} degrees about the spear's length. */
-    private static Transformation pose(Part part, float scale, float roll) {
-        return Displays.transform(0, 0, part.offset() * scale, part.width() * scale, part.thickness() * scale,
-                part.length() * scale, 0, 0, (roll + part.twist()) % 360f);
+    /** One spear part at {@code scale}, rolled {@code roll} degrees about the spear's length, along {@code aim}. */
+    private static Transformation pose(Part part, float scale, float roll, Aim aim) {
+        return aim.box(part.offset() * scale, part.width() * scale, part.thickness() * scale, part.length() * scale,
+                (roll + part.twist()) % 360f);
     }
 
-    /** A copy of {@code at} turned to face {@code direction} (display entities rotate with their location). */
-    private static Location oriented(Location at, Vector direction) {
-        Location copy = at.clone();
-        if (direction.lengthSquared() > 1.0E-8 && Double.isFinite(direction.lengthSquared())) {
-            copy.setDirection(direction);
-        } else {
-            copy.setYaw(0);
-            copy.setPitch(0);
+    /**
+     * A direction as Minecraft yaw and pitch (degrees), for display transformations: the displays themselves keep
+     * yaw and pitch 0 (their own rotation would turn the model on top of its transformation, see
+     * {@link Displays#moveTo}), so the spear carries its facing in its transformation.
+     */
+    private record Aim(float yaw, float pitch) {
+
+        /** The yaw and pitch {@code direction} points along (as {@link Location#setDirection}), 0/0 for none. */
+        static Aim of(Vector direction) {
+            double x = direction.getX();
+            double z = direction.getZ();
+            double horizontal = Math.sqrt(x * x + z * z);
+            if (!(direction.lengthSquared() > 1.0E-8) || !Double.isFinite(direction.lengthSquared())) {
+                return new Aim(0, 0);
+            }
+            if (horizontal < 1.0E-9) {
+                return new Aim(0, direction.getY() > 0 ? -90 : 90);
+            }
+            return new Aim((float) Math.toDegrees(Math.atan2(-x, z)),
+                    (float) Math.toDegrees(Math.atan(-direction.getY() / horizontal)));
         }
-        return copy;
+
+        /**
+         * A block display box of {@code (sx, sy, sz)} whose local +z points along this aim, rolled {@code roll} degrees
+         * about it and centered {@code forward} blocks along it from the display's origin.
+         */
+        Transformation box(float forward, float sx, float sy, float sz, float roll) {
+            Vector3f offset = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                    .rotateX((float) Math.toRadians(pitch)).transform(new Vector3f(0, 0, forward));
+            return Displays.transform(offset.x(), offset.y(), offset.z(), sx, sy, sz, yaw, pitch, roll);
+        }
     }
 
     private static float yawOf(Vector direction) {

@@ -46,6 +46,34 @@ class NatureNewAbilitiesTest {
         return s.world.getEntities().stream().filter(entity -> entity instanceof Display).count();
     }
 
+    private static <T extends Display> java.util.List<T> displaysOf(Scenario s, Class<T> type) {
+        return s.world.getEntities().stream().filter(type::isInstance).map(type::cast).toList();
+    }
+
+    /**
+     * A display must carry no rotation of its own: its model is turned by its transformation, and a yaw or pitch of
+     * the entity would turn it a second time on a real client.
+     */
+    private static void assertUnturned(Display display, String what) {
+        assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": the display's own yaw");
+        assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": the display's own pitch");
+    }
+
+    /**
+     * Where the model's local +z points in the world (with the display itself unturned). MockBukkit 4.118 hands the
+     * left rotation back conjugated (in the right rotation's slot too); a faithful test double returns it as it was
+     * set, with no right rotation (none of these poses has one).
+     */
+    private static org.bukkit.util.Vector modelForward(Display display) {
+        org.bukkit.util.Transformation pose = display.getTransformation();
+        org.joml.Quaternionf rotation = pose.getLeftRotation();
+        if (Math.abs(pose.getRightRotation().w()) < 1 - 1.0E-6) {
+            rotation.conjugate();
+        }
+        org.joml.Vector3f z = rotation.transform(new org.joml.Vector3f(0, 0, 1));
+        return new org.bukkit.util.Vector(z.x(), z.y(), z.z());
+    }
+
     /** Every visual display entity has a bounded lifetime: none is left once the effect is over. */
     private static void assertVisualsGone(Scenario s, String when) {
         assertEquals(0, displays(s), "no display entity is left " + when);
@@ -747,6 +775,53 @@ class NatureNewAbilitiesTest {
         try (Scenario s = Scenario.builder("sand").param("dodge_chance", 0).start()) {
             s.melee(s.enemy, s.owner, 4);
             assertEquals(4, s.damageTaken(s.owner), EPSILON, "no dodge at 0%");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sandStormStreaksFlyPointFirstAlongTheCone() {
+        try (Scenario s = Scenario.ffa("sand")) {
+            // Facing east: a streak left in the display's own default facing (south) would be caught.
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.place(s.enemy, 4.5, 0.5, 90);
+            s.place(s.enemy2, -6.5, 6.5, 0);
+            org.bukkit.util.Vector east = new org.bukkit.util.Vector(1, 0, 0);
+            double spread = Math.toRadians(s.param("storm_angle") / 2 + 12);
+            s.assertSucceeded(s.active(), "모래 폭풍");
+            for (int tick = 0; tick < 3; tick++) {
+                java.util.List<org.bukkit.entity.BlockDisplay> streaks =
+                        displaysOf(s, org.bukkit.entity.BlockDisplay.class);
+                assertEquals(5, streaks.size(), "sand streaks race out");
+                for (org.bukkit.entity.BlockDisplay streak : streaks) {
+                    assertUnturned(streak, "streak");
+                    assertTrue(modelForward(streak).dot(east) > Math.cos(spread),
+                            "a streak flies point first out along the cone: " + modelForward(streak));
+                }
+                s.ticks(1);
+            }
+            s.ticks(30);
+            assertVisualsGone(s, "after the storm");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sandCrumbleSilhouetteFacesWhereTheOwnerFaces() {
+        try (Scenario s = Scenario.builder("sand").param("dodge_chance", 100).start()) {
+            s.place(s.owner, 0.5, 0.5, -90); // facing east
+            s.place(s.enemy, 1.5, 0.5, 90);
+            s.melee(s.enemy, s.owner, 4);
+            java.util.List<org.bukkit.entity.BlockDisplay> ghosts = displaysOf(s, org.bukkit.entity.BlockDisplay.class);
+            assertEquals(1, ghosts.size(), "a sand silhouette");
+            org.bukkit.entity.BlockDisplay ghost = ghosts.getFirst();
+            assertUnturned(ghost, "silhouette");
+            // A thin slab, its depth along the owner's facing.
+            assertEquals(1, modelForward(ghost).dot(new org.bukkit.util.Vector(1, 0, 0)), 1.0E-4,
+                    "the silhouette faces where the owner faces");
+            assertEquals(FlatWorld.SURFACE, ghost.getLocation().getY(), EPSILON, "standing where the owner stands");
+            s.ticks(12);
+            assertVisualsGone(s, "after the sand silhouette crumbled");
             s.finishClean();
         }
     }

@@ -41,6 +41,8 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -121,6 +123,9 @@ public final class BladeAbility extends Ability {
     private static final long MAX_DIVE_TICKS = 16;
     private static final long PLANTED_TICKS = 14;
     private static final int FADE_TICKS = 5;
+    /** The swords appear at this size and grow to full size over {@link #GROW_TICKS}. */
+    private static final float SPAWN_SCALE = 0.1f;
+    private static final int GROW_TICKS = 6;
     private static final double HALO_RADIUS = 1.5;
     private static final double HALO_HEIGHT = 2.7;
     private static final double HALO_SPIN = 0.07;
@@ -239,9 +244,7 @@ public final class BladeAbility extends Ability {
             travelled[0] += advance;
             crescent(to, direction, roll, 1.0f, false);
             for (BlockDisplay part : blade) {
-                if (part.isValid()) {
-                    part.teleport(oriented(to, direction));
-                }
+                Displays.moveTo(part, to);
             }
             if (wall != null) {
                 waveBreak(to, direction);
@@ -264,17 +267,13 @@ public final class BladeAbility extends Ability {
             return new BlockDisplay[0]; // the crescent of particles alone still reads as the wave
         }
         Player owner = player();
-        Location at = oriented(start, direction);
-        BlockDisplay sheet = display(at, GLASS, Displays.transform(0, 0, 0.35f, 0.4f, 0.03f, 0.12f, 0, 0, roll),
-                lifetime);
-        BlockDisplay edge = display(at, CORE, Displays.transform(0, 0, 0.42f, 0.3f, 0.02f, 0.03f, 0, 0, roll),
-                lifetime);
+        Aim aim = Aim.of(direction);
+        BlockDisplay sheet = display(start, GLASS, aim.box(0.35f, 0.4f, 0.03f, 0.12f, roll), lifetime);
+        BlockDisplay edge = display(start, CORE, aim.box(0.42f, 0.3f, 0.02f, 0.03f, roll), lifetime);
         sheet.setTeleportDuration(1);
         edge.setTeleportDuration(1);
-        Displays.animateNextTick(ctx(), owner, sheet, Displays.transform(0, 0, 0.35f, 1.9f, 0.03f, 0.18f, 0, 0, roll),
-                2);
-        Displays.animateNextTick(ctx(), owner, edge, Displays.transform(0, 0, 0.45f, 1.6f, 0.02f, 0.04f, 0, 0, roll),
-                2);
+        Displays.animateNextTick(ctx(), owner, sheet, aim.box(0.35f, 1.9f, 0.03f, 0.18f, roll), 2);
+        Displays.animateNextTick(ctx(), owner, edge, aim.box(0.45f, 1.6f, 0.02f, 0.04f, roll), 2);
         return new BlockDisplay[] {sheet, edge};
     }
 
@@ -467,20 +466,17 @@ public final class BladeAbility extends Ability {
         if (length < 0.2f || !roomFor(2)) {
             return;
         }
-        Location middle = oriented(from.clone().add(delta.clone().multiply(0.5)), delta);
+        Location middle = from.clone().add(delta.clone().multiply(0.5));
+        Aim aim = Aim.of(delta);
         float roll = Fx.jitter(12);
         long life = 14;
-        BlockDisplay sheet = display(middle, GLASS,
-                Displays.transform(0, 0, -length / 2 + 0.05f, 0.34f, 0.03f, 0.1f, 0, 0, roll), life);
-        BlockDisplay core = display(middle, CORE,
-                Displays.transform(0, 0, -length / 2 + 0.05f, 0.06f, 0.035f, 0.1f, 0, 0, roll), life);
-        Displays.animateNextTick(ctx(), owner, sheet, Displays.transform(0, 0, 0, 0.34f, 0.03f, length, 0, 0, roll),
-                2);
-        Displays.animateNextTick(ctx(), owner, core, Displays.transform(0, 0, 0, 0.06f, 0.035f, length, 0, 0, roll),
-                2);
+        BlockDisplay sheet = display(middle, GLASS, aim.box(-length / 2 + 0.05f, 0.34f, 0.03f, 0.1f, roll), life);
+        BlockDisplay core = display(middle, CORE, aim.box(-length / 2 + 0.05f, 0.06f, 0.035f, 0.1f, roll), life);
+        Displays.animateNextTick(ctx(), owner, sheet, aim.box(0, 0.34f, 0.03f, length, roll), 2);
+        Displays.animateNextTick(ctx(), owner, core, aim.box(0, 0.06f, 0.035f, length, roll), 2);
         ctx().runLater(owner, 6, () -> {
-            Displays.animate(sheet, Displays.transform(0, 0, 0.2f, 0.001f, 0.001f, length * 1.05f, 0, 0, roll), 6);
-            Displays.animate(core, Displays.transform(0, 0, 0.2f, 0.001f, 0.001f, length * 1.05f, 0, 0, roll), 6);
+            Displays.animate(sheet, aim.box(0.2f, 0.001f, 0.001f, length * 1.05f, roll), 6);
+            Displays.animate(core, aim.box(0.2f, 0.001f, 0.001f, length * 1.05f, roll), 6);
         });
     }
 
@@ -491,19 +487,17 @@ public final class BladeAbility extends Ability {
     private void crossCut(LivingEntity enemy, Vector direction, int index) {
         Player owner = player();
         Location body = Fx.body(enemy);
-        Location at = oriented(body, direction);
+        Aim aim = Aim.of(direction);
         float tilt = 38 + Fx.jitter(10);
         float first = index % 2 == 0 ? tilt : -tilt;
         float[] rolls = roomFor(4) ? new float[] {first, -first} : new float[0];
         for (float roll : rolls) {
             for (boolean core : new boolean[] {false, true}) {
                 float depth = core ? 0.04f : 0.16f;
-                BlockDisplay part = display(at, core ? CORE : GLASS,
-                        Displays.transform(0, 0, 0, 0.3f, 0.03f, depth, 0, 0, roll), 12);
+                BlockDisplay part = display(body, core ? CORE : GLASS, aim.box(0, 0.3f, 0.03f, depth, roll), 12);
                 Displays.animateNextTick(ctx(), owner, part,
-                        Displays.transform(0, 0, 0, 2.0f, core ? 0.035f : 0.03f, depth, 0, 0, roll), 2);
-                ctx().runLater(owner, 5, () -> Displays.animate(part,
-                        Displays.transform(0, 0, 0, 2.3f, 0.001f, 0.001f, 0, 0, roll), 5));
+                        aim.box(0, 2.0f, core ? 0.035f : 0.03f, depth, roll), 2);
+                ctx().runLater(owner, 5, () -> Displays.animate(part, aim.box(0, 2.3f, 0.001f, 0.001f, roll), 5));
             }
         }
         World world = body.getWorld();
@@ -544,7 +538,10 @@ public final class BladeAbility extends Ability {
 
     private enum Phase { HOVER, AIM, DIVE, PLANTED, GONE }
 
-    /** One spectral sword: three block displays sharing one location and facing (+z is the point). */
+    /**
+     * One spectral sword: three block displays sharing one location and facing (+z is the point). The facing lives in
+     * the parts' transformations; the displays themselves are never turned.
+     */
     private final class Sword {
 
         private final BlockDisplay[] parts = new BlockDisplay[SWORD_PARTS.length];
@@ -557,34 +554,37 @@ public final class BladeAbility extends Ability {
         private long phaseTicks;
         private long diveTicks;
         private float roll;
+        private float scale = SPAWN_SCALE;
 
         Sword(Location spawn, int slot, long lifetime) {
             this.slot = slot;
             this.center = spawn.clone();
             this.aim = spawn.clone();
             this.roll = ThreadLocalRandom.current().nextFloat() * 180f;
-            Location at = oriented(spawn, facing);
+            Aim pointing = Aim.of(facing);
             for (int i = 0; i < SWORD_PARTS.length; i++) {
-                parts[i] = display(at, SWORD_PARTS[i].material(), pose(SWORD_PARTS[i], 0.1f, roll), lifetime);
+                parts[i] = display(spawn, SWORD_PARTS[i].material(), pose(SWORD_PARTS[i], scale, roll, pointing),
+                        lifetime);
                 parts[i].setTeleportDuration(1);
             }
         }
 
-        void grow() {
-            for (int i = 0; i < parts.length; i++) {
-                Displays.animate(parts[i], pose(SWORD_PARTS[i], 1f, roll), 6);
-            }
-        }
-
+        /**
+         * Moves the sword (smoothly, over one tick) and turns its point towards {@code newFacing}; a new sword grows
+         * a little with every move until it is full size.
+         */
         void place(Location newCenter, Vector newFacing) {
             center = newCenter;
             if (newFacing.lengthSquared() > 1.0E-8) {
                 facing = newFacing.clone().normalize();
             }
-            Location at = oriented(center, facing);
-            for (BlockDisplay part : parts) {
+            scale = Math.min(1f, scale + (1f - SPAWN_SCALE) / GROW_TICKS);
+            Aim pointing = Aim.of(facing);
+            for (int i = 0; i < parts.length; i++) {
+                BlockDisplay part = parts[i];
                 if (part.isValid()) {
-                    part.teleport(at);
+                    Displays.moveTo(part, center);
+                    Displays.animate(part, pose(SWORD_PARTS[i], scale, roll, pointing), 1);
                 }
             }
         }
@@ -646,7 +646,6 @@ public final class BladeAbility extends Ability {
             for (int i = 0; i < count; i++) {
                 swords.add(new Sword(chest, i, lifetime));
             }
-            ctx().runLater(owner, 1, () -> swords.forEach(Sword::grow));
 
             world.spawnParticle(Particle.FLASH, chest, 1, 0, 0, 0, 0, PALETTE.core(), true);
             Vfx.helix(ctx(), at, 0.7, owner.getHeight() + 1.4, 1.5, 3, 14, phase0, Particle.DUST_COLOR_TRANSITION,
@@ -916,10 +915,13 @@ public final class BladeAbility extends Ability {
         return !(enemy instanceof Player player) || owner.canSee(player);
     }
 
-    /** The pose of one sword part at {@code scale} (1 = full size), rolled {@code roll} degrees about its length. */
-    private static Transformation pose(Part part, float scale, float roll) {
-        return Displays.transform(0, 0, part.offset() * scale, part.width() * scale, part.thickness() * scale,
-                part.length() * scale, 0, 0, roll);
+    /**
+     * The pose of one sword part at {@code scale} (1 = full size), rolled {@code roll} degrees about its length and
+     * pointing along {@code aim}.
+     */
+    private static Transformation pose(Part part, float scale, float roll, Aim aim) {
+        return aim.box(part.offset() * scale, part.width() * scale, part.thickness() * scale, part.length() * scale,
+                roll);
     }
 
     /**
@@ -951,16 +953,37 @@ public final class BladeAbility extends Ability {
         }
     }
 
-    /** A copy of {@code at} turned to face {@code direction} (display entities rotate with their location). */
-    private static Location oriented(Location at, Vector direction) {
-        Location copy = at.clone();
-        if (direction.lengthSquared() > 1.0E-8 && Double.isFinite(direction.lengthSquared())) {
-            copy.setDirection(direction);
-        } else {
-            copy.setYaw(0);
-            copy.setPitch(0);
+    /**
+     * A direction as Minecraft yaw and pitch (degrees), for display transformations: the displays themselves keep
+     * yaw and pitch 0 (their own rotation would turn the model on top of its transformation, see
+     * {@link Displays#moveTo}), so every blade, cut and sword carries its facing in its transformation.
+     */
+    private record Aim(float yaw, float pitch) {
+
+        /** The yaw and pitch {@code direction} points along (as {@link Location#setDirection}), 0/0 for none. */
+        static Aim of(Vector direction) {
+            double x = direction.getX();
+            double z = direction.getZ();
+            double horizontal = Math.sqrt(x * x + z * z);
+            if (!(direction.lengthSquared() > 1.0E-8) || !Double.isFinite(direction.lengthSquared())) {
+                return new Aim(0, 0);
+            }
+            if (horizontal < 1.0E-9) {
+                return new Aim(0, direction.getY() > 0 ? -90 : 90);
+            }
+            return new Aim((float) Math.toDegrees(Math.atan2(-x, z)),
+                    (float) Math.toDegrees(Math.atan(-direction.getY() / horizontal)));
         }
-        return copy;
+
+        /**
+         * A block display box of {@code (sx, sy, sz)} whose local +z points along this aim, rolled {@code roll} degrees
+         * about it and centered {@code forward} blocks along it from the display's origin.
+         */
+        Transformation box(float forward, float sx, float sy, float sz, float roll) {
+            Vector3f offset = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                    .rotateX((float) Math.toRadians(pitch)).transform(new Vector3f(0, 0, forward));
+            return Displays.transform(offset.x(), offset.y(), offset.z(), sx, sy, sz, yaw, pitch, roll);
+        }
     }
 
     private static Vector safeNormal(Vector vector) {

@@ -362,7 +362,8 @@ public final class EngineerAbility extends Ability {
             double t = (double) (run + 1) / flight;
             Location at = start.clone().add(path.clone().multiply(t)).add(0, 4 * arc * t * (1 - t), 0);
             if (item.isValid()) {
-                item.teleport(at);
+                // Not the engineer's rotation (the arc starts at its eyes): the kit tumbles by its pose alone.
+                Displays.moveTo(item, at);
                 Displays.animate(item, Displays.centered(0, 0, 0, 0.45f, 0.45f, 0.45f, run * 30f, run * 45f, 0), 1);
             }
             Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, SPARK, false);
@@ -672,7 +673,13 @@ public final class EngineerAbility extends Ability {
             Fx.sound(body, Sound.ENTITY_ARROW_HIT, 0.5f, 1.6f + Fx.jitter(0.15f));
             if (Combat.isTargetable(ctx(), player(), enemy)) {
                 Vector push = Motion.horizontal(body.toVector().subtract(muzzle.toVector())).multiply(SHOT_PUSH);
-                Motion.push(enemy, enemy.getVelocity().add(push), 1.0);
+                if (!(enemy instanceof Player)) {
+                    Motion.push(enemy, enemy.getVelocity().add(push), 1.0);
+                } else if (Motion.isGrounded(enemy)) {
+                    // A player's server-side velocity is only the last one sent to it: adding to it would pile every
+                    // shot's nudge onto the previous ones. A player in mid-air is left alone (its fall is unknown).
+                    Motion.push(enemy, push, 1.0);
+                }
             }
         }
     }
@@ -859,8 +866,8 @@ public final class EngineerAbility extends Ability {
             }
             // A slight flicker of the core width keeps the beam alive.
             float flicker = 1f + 0.18f * (float) Math.sin(firing * 1.7);
-            core.teleport(lensAt);
-            sheath.teleport(lensAt);
+            Displays.moveTo(core, lensAt);
+            Displays.moveTo(sheath, lensAt);
             Displays.animate(core, beamPose(delta, BEAM_CORE_WIDTH * flicker), 1);
             Displays.animate(sheath, beamPose(delta, BEAM_SHEATH_WIDTH), 1);
             drawBeam(firing, lensAt, end, length);
