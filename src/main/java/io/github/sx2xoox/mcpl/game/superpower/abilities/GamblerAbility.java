@@ -372,12 +372,14 @@ public final class GamblerAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** Every other registered ability whose ultimate works on a freshly bound instance. */
+    /**
+     * Every other ability enabled for this match (abilities.yml) whose ultimate works on a freshly bound instance.
+     */
     private List<AbilityRegistry.Entry> jackpotPool() {
         List<AbilityRegistry.Entry> pool = new ArrayList<>();
         for (AbilityRegistry.Entry entry : ctx().registry().all()) {
             AbilityInfo info = entry.info();
-            if (info.ultimateStandalone() && !info.id().equals(INFO.id())) {
+            if (info.ultimateStandalone() && !info.id().equals(INFO.id()) && ctx().isEnabled(info.id())) {
                 pool.add(entry);
             }
         }

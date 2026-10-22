@@ -40,6 +40,14 @@ public interface AbilityContext {
     /** Effective params of any registered ability (used to run a borrowed ability). */
     AbilityParams paramsFor(String abilityId);
 
+    /**
+     * Whether {@code abilities.yml} enables the ability for this match (the settings the match started with, the
+     * same ones assignment uses). Abilities that pick other abilities at random (the Gambler) must skip disabled ones.
+     */
+    default boolean isEnabled(String abilityId) {
+        return true;
+    }
+
     /** Ticks since the fight began. */
     long currentTick();
 

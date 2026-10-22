@@ -11,7 +11,6 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
-import io.github.sx2xoox.mcpl.game.superpower.support.world.MockEntities;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
@@ -22,7 +21,6 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.plugin.RegisteredListener;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /** 특수 계열: 요정, 불사조, 환영술사, 도박사 (도박사의 잭팟은 {@link GamblerJackpotTest}). */
@@ -158,6 +156,25 @@ class SpecialAbilitiesTest {
     }
 
     @Test
+    void phoenixUpwardDashLandsWithoutFallDamage() {
+        try (Scenario s = Scenario.ffa("phoenix")) {
+            // Aimed steeply up: the dash rises several blocks and ends in mid-air.
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, -40);
+            s.assertSucceeded(s.ultimate(), "불사조 강림");
+            double peak = FlatWorld.SURFACE;
+            for (int i = 0; i < 30; i++) {
+                s.ticks(1);
+                peak = Math.max(peak, s.owner.getLocation().getY());
+            }
+            assertTrue(peak > FlatWorld.SURFACE + 4, "the dash rose to " + peak);
+            s.tickUntilGrounded(s.owner, 200);
+            s.ticks(5);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "the landing is protected");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void phoenixDashNeedsRoomAhead() {
         try (Scenario s = Scenario.ffa("phoenix")) {
             s.world.wallAlongX(-2, 3, 2, 3, org.bukkit.Material.STONE);
@@ -170,11 +187,9 @@ class SpecialAbilitiesTest {
     // ------------------------------------------------------------------ 환영술사 illusionist
 
     @Test
-    @Disabled("BUG: illusionist copies never spawn on Paper: dress() calls EntityEquipment#setDropChance on a "
-            + "Mannequin, which is not a Mob, so the spawn throws and both skills fail")
     void illusionistDecoyAppearsOnPaper() {
         // CraftEntityEquipment#setDropChance: Preconditions.checkArgument(entity instanceof Mob, "Cannot set drop
-        // chance for non-Mob entity"). The spawn consumer throws, spawnCopy catches it (FINE log) and returns null.
+        // chance for non-Mob entity"). The copies must be dressed without drop chances, or the spawn throws.
         try (Scenario s = Scenario.ffa("illusionist")) {
             ActivationResult decoy = s.active();
             s.assertSucceeded(decoy, "분신");
@@ -183,11 +198,9 @@ class SpecialAbilitiesTest {
         }
     }
 
-    /** The illusionist scenarios below run as if its drop-chance bug were fixed. */
+    /** The illusionist scenarios below run like on Paper (drop chances on a mannequin fail). */
     private static Scenario illusionist() {
-        Scenario s = Scenario.ffa("illusionist");
-        MockEntities.TestMannequin.ignoreDropChances = true;
-        return s;
+        return Scenario.ffa("illusionist");
     }
 
     @Test

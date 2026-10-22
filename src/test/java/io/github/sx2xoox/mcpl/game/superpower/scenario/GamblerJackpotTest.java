@@ -29,7 +29,6 @@ import org.bukkit.entity.IronGolem;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.potion.PotionEffectType;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -229,8 +228,6 @@ class GamblerJackpotTest {
     }
 
     @Test
-    @Disabled("BUG: the gambler's jackpot borrows ultimates of abilities disabled in abilities.yml "
-            + "(GamblerAbility#jackpotPool uses registry().all(), not the match's enabled abilities)")
     void jackpotOnlyBorrowsEnabledAbilities() {
         try (Scenario s = Scenario.builder("gambler").param("dodge_chance", 0).param("crit_chance", 0)
                 .configure(h -> {

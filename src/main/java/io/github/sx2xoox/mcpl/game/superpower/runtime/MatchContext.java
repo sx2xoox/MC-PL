@@ -125,6 +125,11 @@ public final class MatchContext implements AbilityContext {
     }
 
     @Override
+    public boolean isEnabled(String abilityId) {
+        return match.abilities().isEnabled(abilityId);
+    }
+
+    @Override
     public long currentTick() {
         return match.fightTicks();
     }

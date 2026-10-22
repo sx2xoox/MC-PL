@@ -492,7 +492,7 @@ public final class IllusionistAbility extends Ability {
         try {
             body = at.getWorld().spawn(at, Mannequin.class, mannequin -> dress(mannequin, owner, at));
         } catch (RuntimeException e) {
-            ctx().plugin().getLogger().log(Level.FINE, "Could not spawn an illusionist copy", e);
+            ctx().plugin().getLogger().log(Level.WARNING, "Could not spawn an illusionist copy", e);
             return null;
         }
         if (!body.isValid()) {
@@ -524,16 +524,16 @@ public final class IllusionistAbility extends Ability {
         // Several copies spawn close together; they should not shove each other (or the owner) around.
         mannequin.setCollidable(false);
 
+        // No drop chances: a mannequin is not a Mob (Paper rejects them), and copies are summons, whose death drops
+        // the match clears anyway.
         EntityEquipment equipment = mannequin.getEquipment();
         EntityEquipment worn = owner.getEquipment();
         for (EquipmentSlot slot : new EquipmentSlot[] {
                 EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET,
                 EquipmentSlot.OFF_HAND}) {
             equipment.setItem(slot, copyOf(worn.getItem(slot)));
-            equipment.setDropChance(slot, 0f);
         }
         equipment.setItem(EquipmentSlot.HAND, weaponOf(owner));
-        equipment.setDropChance(EquipmentSlot.HAND, 0f);
     }
 
     /** Copies hold a real weapon rather than the ability item the owner just used. */

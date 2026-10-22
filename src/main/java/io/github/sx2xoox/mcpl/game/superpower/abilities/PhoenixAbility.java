@@ -11,6 +11,7 @@ import java.util.function.LongPredicate;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.LandingGuard;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
@@ -111,6 +112,8 @@ public final class PhoenixAbility extends Ability {
     private static final double WALL_MARGIN = 0.7;
     /** Extra ticks after the last push during which hits are still checked (client latency). */
     private static final int DASH_LATENCY_TICKS = 6;
+    /** After the dash, the landing is protected for at most this long (only the height the dash itself added). */
+    private static final int DASH_LANDING_TICKS = 60;
     private static final int SCORCH_TICKS = 24;
 
     private boolean rebirthUsed;
@@ -331,8 +334,8 @@ public final class PhoenixAbility extends Ability {
 
     /**
      * Velocity based (the client resolves collisions, so the owner can never be pushed through a wall) and
-     * self-contained: it only uses owner-scoped tasks and resets the fall distance itself, so it also works when
-     * borrowed by the Gambler.
+     * self-contained: it only uses owner-scoped tasks and protects its own landing (the fall distance the dash added),
+     * so it also works when borrowed by the Gambler.
      */
     @Override
     public ActivationResult onUltimate() {
@@ -362,8 +365,12 @@ public final class PhoenixAbility extends Ability {
         private final double radius;
         private final Set<UUID> hit = new HashSet<>();
         private final List<Location> path = new ArrayList<>();
+        private final double startY;
+        /** Falls are only counted below this height after the dash (the lower of its start and end). */
+        private double landingY;
         private Location previous;
         private int age;
+        private long groundedTicks;
 
         Dash(Player owner, Vector direction, double reach) {
             this.owner = owner;
@@ -372,6 +379,8 @@ public final class PhoenixAbility extends Ability {
             this.speed = reach / pushes;
             this.radius = Math.max(0.5, params().num("dash_radius"));
             this.previous = owner.getLocation();
+            this.startY = previous.getY();
+            this.landingY = startY;
         }
 
         void start() {
@@ -384,7 +393,7 @@ public final class PhoenixAbility extends Ability {
             Fx.sound(feet, Sound.ENTITY_BLAZE_SHOOT, 1.0f, 0.7f);
             Fx.sound(feet, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.5f);
             Fx.sound(feet, Sound.ITEM_FIRECHARGE_USE, 1.0f, 0.8f);
-            Loop.repeat(ctx(), owner, 0, 1, pushes + DASH_LATENCY_TICKS, this);
+            Loop.repeat(ctx(), owner, 0, 1, pushes + DASH_LATENCY_TICKS + DASH_LANDING_TICKS, this);
         }
 
         @Override
@@ -393,6 +402,9 @@ public final class PhoenixAbility extends Ability {
                 return false;
             }
             age++;
+            if (age > pushes + DASH_LATENCY_TICKS) {
+                return protectLanding();
+            }
             owner.setFallDistance(0);
             if (age <= pushes) {
                 Vector velocity = direction.clone().multiply(speed);
@@ -406,10 +418,28 @@ public final class PhoenixAbility extends Ability {
             sweep(previous, now);
             trail(now);
             previous = now;
-            if (age >= pushes + DASH_LATENCY_TICKS) {
+            if (age == pushes + DASH_LATENCY_TICKS) {
                 finish(now);
+                // An upward dash ends high in the air: forgive the fall back down to where it started (or to where
+                // it ended, if that is lower), but not a drop below it, e.g. off a cliff.
+                landingY = Math.min(startY, now.getY());
+            }
+            return true;
+        }
+
+        /**
+         * Runs every tick after the dash until the owner has settled on the ground: the fall distance only counts
+         * what lies below {@link #landingY}. Self-contained, so a Gambler-borrowed dash is protected too.
+         */
+        private boolean protectLanding() {
+            if (owner.isGliding()) {
                 return false;
             }
+            owner.setFallDistance((float) Math.max(0, landingY - owner.getY()));
+            if (Motion.isGrounded(owner) || owner.isInWater()) {
+                return ++groundedTicks < LandingGuard.SETTLE_TICKS;
+            }
+            groundedTicks = 0;
             return true;
         }
 
