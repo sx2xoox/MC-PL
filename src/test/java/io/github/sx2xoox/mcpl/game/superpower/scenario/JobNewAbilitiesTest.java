@@ -1204,4 +1204,38 @@ class JobNewAbilitiesTest {
             s.finishClean();
         }
     }
+
+    // ================================================================== stealthed enemies are never given away
+
+    @Test
+    void anglerBobberPassesThroughAStealthedEnemy() {
+        try (Scenario s = Scenario.ffa("angler")) {
+            s.place(s.enemy2, 6.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "낚아채기");
+            s.ticks(40);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "a stealthed enemy is not hooked");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            assertVisualsGone(s, "after the miss");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void chefPanHitsAStealthedEnemyWithoutMarkingIt() {
+        try (Scenario s = Scenario.ffa("chef")) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 0.5, -6.5, 0);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.active(), "프라이팬");
+            assertEquals(s.param("pan_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the swing still lands");
+            s.ticks(2);
+            assertTrue(entities(s, TextDisplay.class).isEmpty(), "no sign or star over the hidden enemy");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(20);
+            assertVisualsGone(s, "after the swing");
+            s.finishClean();
+        }
+    }
 }

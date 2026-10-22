@@ -364,6 +364,10 @@ public final class AnglerAbility extends Ability {
             double best = limit;
             Location middle = bobber.clone().add(step.clone().multiply(0.5));
             for (LivingEntity enemy : ctx().enemiesNear(owner, middle, length * 0.5 + 2)) {
+                if (enemy instanceof Player hidden && !owner.canSee(hidden)) {
+                    // A stealthed enemy is not hooked: the line would give its position away.
+                    continue;
+                }
                 BoundingBox box = enemy.getBoundingBox().expand(HOOK_RADIUS);
                 double distance;
                 if (box.contains(bobber.toVector())) {

@@ -361,7 +361,11 @@ public final class ChefAbility extends Ability {
         for (LivingEntity target : targets) {
             Combat.hit(ctx(), owner, target, damage);
             Location body = Fx.body(target);
-            contact = contact == null ? body : contact;
+            // A stealthed enemy is hit all the same, but no sign or star is drawn over it to give it away.
+            boolean shown = visibleTo(owner, target);
+            if (shown && contact == null) {
+                contact = body;
+            }
             if (!Combat.isTargetable(ctx(), owner, target)) {
                 continue;
             }
@@ -373,7 +377,12 @@ public final class ChefAbility extends Ability {
             if (stun > 0) {
                 ctx().addModifier(owner, target, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1, stun);
                 ctx().addModifier(owner, target, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1, stun);
-                dizzy(owner, target, stun);
+                if (shown) {
+                    dizzy(owner, target, stun);
+                }
+            }
+            if (!shown) {
+                continue;
             }
             World world = body.getWorld();
             world.spawnParticle(Particle.FLASH, body, 1, 0, 0, 0, 0, PALETTE.core());
