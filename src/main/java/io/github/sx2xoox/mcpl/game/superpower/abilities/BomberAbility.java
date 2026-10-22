@@ -38,6 +38,7 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TNTPrimed;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.tag.DamageTypeTags;
@@ -141,6 +142,9 @@ public final class BomberAbility extends Ability {
     /** Cancels the fall damage of the landing after a blast jump. */
     private final LandingGuard blastJump = new LandingGuard();
     private long blastJumpTick;
+    /** The target of the blast hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     @Override
     public AbilityInfo info() {
@@ -173,6 +177,13 @@ public final class BomberAbility extends Ability {
         Vfx.sphere(ctx(), body, 0.65, 14, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.8f), false);
         Vfx.cloud(ctx(), body, Particle.WHITE_SMOKE, 4, 0.3, 0.02, null, false);
         Fx.sound(body, Sound.ITEM_ARMOR_EQUIP_NETHERITE, 0.7f, 1.3f + Fx.jitter(0.1f));
+    }
+
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() && victim.equals(pendingTarget)) {
+            landed = true;
+        }
     }
 
     @Override
@@ -631,8 +642,9 @@ public final class BomberAbility extends Ability {
             }
             double distance = Math.min(radius, distanceToBox(center, target.getBoundingBox()));
             double proximity = 1 - distance / radius;
-            Combat.hit(ctx(), player(), target, minDamage + (maxDamage - minDamage) * proximity);
-            if (target.isValid() && !target.isDead()) {
+            // The blast only throws targets it actually hit (not one that dodged or blocked it).
+            if (blastHit(target, minDamage + (maxDamage - minDamage) * proximity) && target.isValid()
+                    && !target.isDead()) {
                 knockback(center, target, proximity);
             }
         }
@@ -717,6 +729,24 @@ public final class BomberAbility extends Ability {
             Vfx.dot(Vfx.scatter(ground, spread), Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.8f), false);
             return true;
         });
+    }
+
+    /**
+     * Deals blast damage and tells whether it landed. Without damage there is nothing to dodge, so the blast still
+     * throws a valid enemy.
+     */
+    private boolean blastHit(LivingEntity target, double damage) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target);
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
     }
 
     private void knockback(Location center, LivingEntity target, double proximity) {

@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.superpower.scenario;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,6 +13,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.enchantments.Enchantment;
@@ -27,7 +29,6 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /** 원거리 · 소환 · 지원 계열: 궁수, 폭탄마, 소환사, 치유사. */
@@ -130,6 +131,18 @@ class RangedSupportAbilitiesTest {
             s.ticks(60);
             assertTrue(entities(s, Arrow.class).isEmpty(), "rain arrows are cleaned up");
             s.finishClean();
+        }
+    }
+
+    @Test
+    void archerBowShotsDoNotOutliveTheMatch() {
+        try (Scenario s = Scenario.ffa("archer")) {
+            // A plain bow shot into the floor behind the archer: no ability code runs when a bow is released.
+            Arrow shot = s.world.spawnArrow(s.owner.getEyeLocation().add(0, 0, -0.8), new Vector(0, -1, -1), 1.5f, 0);
+            shot.setShooter(s.owner);
+            s.ticks(30);
+            assertTrue(shot.isValid(), "the arrow stays in the arena during the fight");
+            s.finishClean(); // and is removed with the match instead of being left behind
         }
     }
 
@@ -296,6 +309,28 @@ class RangedSupportAbilitiesTest {
     }
 
     @Test
+    void summonerPackLeavesStealthedEnemiesAlone() {
+        try (Scenario s = Scenario.ffa("summoner")) {
+            s.assertSucceeded(s.active(), "늑대 무리");
+            List<Wolf> wolves = entities(s, Wolf.class);
+            s.melee(s.owner, s.enemy, 1); // the enemy becomes the pack's focus
+            s.ticks(10);
+            assertTrue(wolves.stream().allMatch(wolf -> s.enemy.equals(wolf.getTarget())), "the focus is hunted");
+
+            // Stealth hides a player from every enemy player, the summoner included.
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(10);
+            for (Wolf wolf : wolves) {
+                assertNotEquals(s.enemy, wolf.getTarget(), "a stealthed enemy is neither chased nor bitten");
+            }
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(10);
+            assertTrue(wolves.stream().anyMatch(wolf -> s.enemy.equals(wolf.getTarget())), "hunted again when seen");
+            s.finishClean();
+        }
+    }
+
+    @Test
     void summonerWolfBitesDealTheAdvertisedDamage() {
         // Summon hits deal exactly the summon's attack damage (no difficulty scaling: on easy a 3-damage wolf would
         // bite for 2.5) and are routed to the summoner's onDealDamage.
@@ -335,6 +370,25 @@ class RangedSupportAbilitiesTest {
             assertEquals(0, s.ally().getFireTicks(), "extinguished");
             assertEquals(s.maxHealth(s.owner), s.owner.getHealth(), EPSILON, "the healer heals itself too");
             assertEquals(10, s.enemy.getHealth(), EPSILON, "enemies are not healed");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void healerLightKeepsTheFrostOverlayOfAnAbilityFreeze() {
+        try (Scenario s = Scenario.teams("healer")) {
+            // An enemy ability freezes the ally (a movement modifier the light cannot lift) with a frost overlay.
+            s.ctx().addModifier(s.enemy, s.ally(), Attribute.MOVEMENT_SPEED, -0.8,
+                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, 60);
+            s.ally().setFreezeTicks(100);
+            s.ally().setHealth(10);
+            // The healer only shivers from the cold.
+            s.owner.setFreezeTicks(100);
+            s.owner.setHealth(15);
+            s.assertSucceeded(s.active(), "치유의 빛");
+            assertEquals(10 + s.param("light_heal"), s.ally().getHealth(), EPSILON);
+            assertTrue(s.ally().getFreezeTicks() > 0, "the overlay stays while the freeze holds");
+            assertEquals(0, s.owner.getFreezeTicks(), "plain cold is cleansed");
             s.finishClean();
         }
     }

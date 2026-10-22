@@ -155,6 +155,9 @@ public final class ArcherAbility extends Ability {
     private final Set<UUID> bowShots = new HashSet<>();
     private @Nullable NamespacedKey itemKey;
     private long regenProgress;
+    /** The target of the ability hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     @Override
     public AbilityInfo info() {
@@ -262,22 +265,57 @@ public final class ArcherAbility extends Ability {
 
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (ctx().isAbilityDamage() || !(event.getDamager() instanceof AbstractArrow arrow)) {
-            return;
-        }
-        UUID id = arrow.getUniqueId();
-        if (volleyArrows.containsKey(id) || rainArrows.containsKey(id)) {
+        if (!isBowShot(event)) {
             return;
         }
         double bonus = params().num("arrow_bonus") / 100.0;
         if (bonus != 0) {
             event.setDamage(Math.max(0, event.getDamage() * (1 + bonus)));
         }
-        // Marksman hit: a small green ring snaps around the target and white sparks fly.
-        Location body = victim.getLocation().add(0, victim.getHeight() * 0.6, 0);
-        Vfx.ring(ctx(), body, 0.5, 10, ThreadLocalRandom.current().nextDouble(Math.PI), Particle.DUST_COLOR_TRANSITION,
-                PALETTE.glow(0.7f), false);
-        Vfx.cloud(ctx(), body, Particle.ENCHANTED_HIT, 6, 0.25, 0.15, null, false);
+    }
+
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage()) {
+            if (victim.equals(pendingTarget)) {
+                landed = true;
+            }
+            return;
+        }
+        if (isBowShot(event)) {
+            // Marksman hit: a small green ring snaps around the target and white sparks fly.
+            Location body = victim.getLocation().add(0, victim.getHeight() * 0.6, 0);
+            Vfx.ring(ctx(), body, 0.5, 10, ThreadLocalRandom.current().nextDouble(Math.PI),
+                    Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
+            Vfx.cloud(ctx(), body, Particle.ENCHANTED_HIT, 6, 0.25, 0.15, null, false);
+        }
+    }
+
+    /** A plain arrow from the archer's bow (not an ability arrow, not ability damage). */
+    private boolean isBowShot(EntityDamageByEntityEvent event) {
+        if (ctx().isAbilityDamage() || !(event.getDamager() instanceof AbstractArrow arrow)) {
+            return false;
+        }
+        UUID id = arrow.getUniqueId();
+        return !volleyArrows.containsKey(id) && !rainArrows.containsKey(id);
+    }
+
+    /**
+     * Deals an ability arrow's damage as arrow damage (so projectile dodges and reflections apply) and tells whether
+     * it landed: on-hit effects (shove, impact, hit sound) only follow a hit nothing cancelled.
+     */
+    private boolean arrowHit(LivingEntity target, double damage) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target); // nothing to dodge
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage, DamageType.ARROW);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
     }
 
     private ItemStack createBow() {
@@ -427,11 +465,12 @@ public final class ArcherAbility extends Ability {
         if (volley != null && !volley.struck.add(target.getUniqueId())) {
             damage *= Math.max(0, params().num("volley_overlap")) / 100.0;
         }
+        if (!arrowHit(target, damage)) {
+            return;
+        }
         arrowImpact(target.getLocation().add(0, target.getHeight() * 0.6, 0));
         player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.5f,
                 1.0f + Fx.jitter(0.1f));
-        Combat.hit(ctx(), player(), target, damage, DamageType.ARROW);
-
         if (target.isValid() && !target.isDead()) {
             Vector push = flight.setY(0);
             if (push.lengthSquared() > 1.0E-4) {
@@ -645,10 +684,11 @@ public final class ArcherAbility extends Ability {
                     continue;
                 }
                 lastHit.put(target.getUniqueId(), now);
-                arrowImpact(target.getLocation().add(0, target.getHeight() * 0.6, 0));
-                player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.4f,
-                        1.1f + Fx.jitter(0.1f));
-                Combat.hit(ctx(), player(), target, damage, DamageType.ARROW);
+                if (arrowHit(target, damage)) {
+                    arrowImpact(target.getLocation().add(0, target.getHeight() * 0.6, 0));
+                    player().playSound(player(), Sound.ENTITY_ARROW_HIT_PLAYER, SoundCategory.PLAYERS, 0.4f,
+                            1.1f + Fx.jitter(0.1f));
+                }
             }
         }
     }

@@ -55,6 +55,8 @@ import org.jspecify.annotations.Nullable;
  * <p>Every summon is driven by its own owner-scoped controller task (targeting, following, lifetime, name tag), so
  * the ultimate also works when borrowed. The owner's own hits mark a focus target that every summon switches to.
  * Summons never pick a player the owner cannot see (stealth), so hiding abilities keep working against the pack.
+ * A summon's melee hit deals its attack damage attribute, set from the params (the match applies it exactly); on
+ * Peaceful, where vanilla mob attacks never hurt players, the controller strikes for the summon instead.
  *
  * <p>Visuals: every summon rises from a turning circle of glowing runes (text displays in the enchanting-table
  * alphabet) with arcane motes flowing in; summons are circled by soul wisps; a fresh focus target is marked with a
@@ -145,6 +147,9 @@ public final class SummonerAbility extends Ability {
     private long focusMarkedAt = -FOCUS_MARK_TICKS;
     /** True while a summon's own (Peaceful) strike is dealt, so it does not count as the owner's hit. */
     private boolean summonStrike;
+    /** The target of the ability hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
 
     @Override
     public AbilityInfo info() {
@@ -187,19 +192,18 @@ public final class SummonerAbility extends Ability {
         focus = null;
     }
 
+    /**
+     * A hit of the owner landed: its victim becomes the pack's focus. Summon hits deal their attack damage attribute
+     * (set from the params) by themselves and never move the focus.
+     */
     @Override
-    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        Entity damager = event.getDamager();
-        Summon summon = find(damager);
-        if (summon != null) {
-            // Keep summon hits at their advertised strength regardless of vanilla randomness or difficulty.
-            if (!ctx().isAbilityDamage()) {
-                event.setDamage(summon.damage);
-            }
-            return;
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() && victim.equals(pendingTarget)) {
+            landed = true;
         }
-        if (summonStrike) {
-            return; // a summon's own strike is not the owner's attack: it must not turn the whole pack
+        Entity damager = event.getDamager();
+        if (summonStrike || find(damager) != null) {
+            return; // a summon's own attack is not the owner's: it must not turn the whole pack
         }
         if (damager.equals(player()) || (damager instanceof Projectile projectile
                 && player().equals(projectile.getShooter()))) {
@@ -370,8 +374,7 @@ public final class SummonerAbility extends Ability {
         Fx.sound(spot, Sound.BLOCK_RESPAWN_ANCHOR_SET_SPAWN, 1.0f, 0.8f + Fx.jitter(0.05f));
 
         for (LivingEntity target : ctx().enemiesNear(player(), spot, radius)) {
-            Combat.hit(ctx(), player(), target, damage);
-            if (!target.isValid() || target.isDead()) {
+            if (!hit(target, damage, DamageType.MAGIC) || !target.isValid() || target.isDead()) {
                 continue;
             }
             Vector away = target.getLocation().toVector().subtract(spot.toVector()).setY(0);
@@ -503,10 +506,14 @@ public final class SummonerAbility extends Ability {
                 mob.playEffect(EntityEffect.ENTITY_ATTACK);
             }
             summonStrike = true;
+            boolean hurt;
             try {
-                Combat.hit(ctx(), player(), target, damage, DamageType.MOB_ATTACK);
+                hurt = hit(target, damage, DamageType.MOB_ATTACK);
             } finally {
                 summonStrike = false;
+            }
+            if (!hurt) {
+                return;
             }
             Location body = Fx.body(target);
             Vfx.cloud(ctx(), body, Particle.DUST_COLOR_TRANSITION, 5, 0.25, 0, (spirit ? SPIRIT : PALETTE).glow(0.8f),
@@ -569,6 +576,24 @@ public final class SummonerAbility extends Ability {
             mob.customName(Component.text(player().getName() + "의 " + label, spirit ? SPIRIT_COLOR : NAME_COLOR)
                     .append(Component.text(" " + seconds + "초", NamedTextColor.GRAY)));
         }
+    }
+
+    /**
+     * Deals ability damage and tells whether it landed: on-hit effects only follow a hit nothing cancelled. Without
+     * damage there is nothing to dodge, so the effects follow whenever the target is still a valid enemy.
+     */
+    private boolean hit(LivingEntity target, double damage, DamageType type) {
+        if (!(damage > 0)) {
+            return Combat.isTargetable(ctx(), player(), target);
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage, type);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
     }
 
     private @Nullable Summon find(Entity entity) {
