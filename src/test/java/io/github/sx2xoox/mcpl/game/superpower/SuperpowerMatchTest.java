@@ -59,7 +59,7 @@ class SuperpowerMatchTest {
 
     @BeforeEach
     void setUp() {
-        h = new MatchHarness();
+        h = MatchHarness.flat();
     }
 
     @AfterEach
@@ -137,7 +137,7 @@ class SuperpowerMatchTest {
             h.ticks(30);
             assertEquals(GameState.RUNNING, session.state(), "the match survives " + id);
         }
-        System.out.println("[smoke] ability failures isolated by the guard: " + match.errors().totalFailures());
+        assertEquals(0, match.errors().totalFailures(), "on the flat test world every ability runs without errors");
 
         for (TestPlayer player : players) {
             player.getAttribute(Attribute.MAX_HEALTH).removeModifier(tank);
