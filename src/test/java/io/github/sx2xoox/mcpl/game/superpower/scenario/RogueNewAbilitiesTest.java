@@ -37,6 +37,8 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Transformation;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -1029,9 +1031,22 @@ class RogueNewAbilitiesTest {
 
     // ------------------------------------------------------------------ real-client regressions
 
+    /**
+     * The left rotation of a display's transformation. MockBukkit (4.118) stores the transformation as a matrix and,
+     * reading it back, conjugates the extracted rotation in place: it returns the inverse as both the left and the
+     * right rotation. These abilities never set a right rotation, so a non-identity one means the readback is
+     * conjugated, and it is undone here (a fixed MockBukkit returns an identity right rotation and is used as is).
+     */
+    private static Quaternionf leftRotation(Display display) {
+        Transformation transformation = display.getTransformation();
+        Quaternionf left = transformation.getLeftRotation();
+        Quaternionf right = transformation.getRightRotation();
+        return Math.abs(Math.abs(right.w()) - 1) > 1.0E-5 ? left.conjugate() : left;
+    }
+
     /** The world direction of a display's local {@code axis} (its transformation only; the entity must be unrotated). */
     private static Vector3f axisOf(Display display, float x, float y, float z) {
-        return display.getTransformation().getLeftRotation().transform(new Vector3f(x, y, z)).normalize();
+        return leftRotation(display).transform(new Vector3f(x, y, z)).normalize();
     }
 
     private static void assertUnrotated(Display display, String what) {
@@ -1084,8 +1099,7 @@ class RogueNewAbilitiesTest {
             for (BlockDisplay bar : entities(s, BlockDisplay.class)) {
                 Vector3f along = axisOf(bar, 0, 0, 1);
                 Vector3f center = new Vector3f(bar.getTransformation().getTranslation())
-                        .add(bar.getTransformation().getLeftRotation().transform(new Vector3f(bar.getTransformation()
-                                .getScale()).mul(0.5f)));
+                        .add(leftRotation(bar).transform(new Vector3f(bar.getTransformation().getScale()).mul(0.5f)));
                 center.y = 0;
                 assertTrue(Math.abs(along.y()) < 1.0E-3, "a reticle bar lies flat");
                 assertTrue(Math.abs(along.dot(new Vector3f(center).normalize())) < 0.05,
