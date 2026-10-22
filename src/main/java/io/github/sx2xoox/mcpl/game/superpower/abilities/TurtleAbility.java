@@ -479,7 +479,9 @@ public final class TurtleAbility extends Ability {
      * by every velocity at once, while the server sees it there only a round trip later, so measuring the server's
      * view let a lagging turtle slide on for most of a block per tick of ping. A wall pins the shell, so there the
      * server's view is exact and the count is re-synced to it. Once the whole length is sent the shell brakes, and the
-     * spin keeps bowling over whoever it reached until the server has seen it arrive.
+     * spin keeps bowling over whoever it reached until the server has seen it arrive. A real client often falls short
+     * of what it was sent (a lost velocity packet, a hit landing right after a push), so a shell that comes to rest
+     * then with no wall in front has simply ended its spin: only a wall bounces it back.
      */
     private final class Spin implements LongPredicate {
 
@@ -572,7 +574,13 @@ public final class TurtleAbility extends Ability {
                 stalls = step < STALL_EPSILON && sinceBounce > lag + 2 ? stalls + 1 : 0;
                 stalled = stalls >= STALL_LIMIT;
             }
-            if (wallAhead(now) || stalled) {
+            boolean wall = wallAhead(now);
+            if (stalled && !wall && coasting >= 0) {
+                // All of it was sent and the shell came to rest short of the end with nothing in front: the client
+                // lost some of the slide (a velocity packet overwritten, a hit right after a push). It ends here.
+                return false;
+            }
+            if (wall || stalled) {
                 if (traveled >= distance - CATCH_UP) {
                     return false; // it got all the way there
                 }

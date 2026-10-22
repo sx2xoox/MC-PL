@@ -5,8 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
@@ -156,7 +160,10 @@ class MobNewAbilitiesTest {
         private final Deque<Location> late = new ArrayDeque<>();
         private final Location at;
         private final Vector velocity;
+        private final Map<Integer, Function<Vector, @Nullable Vector>> interference = new HashMap<>();
+        private final List<Vector> log = new ArrayList<>();
         private Vector sent;
+        private int ticks;
 
         /** Starts with whatever velocity was already sent (by a skill used just now, outside a tick). */
         LaggyClient(Scenario s, TestPlayer player, int lag) {
@@ -173,6 +180,22 @@ class MobNewAbilitiesTest {
         /** Where the player really is (its client). */
         Location at() {
             return at.clone();
+        }
+
+        /**
+         * What reaches the client of the velocity the server sends during server tick {@code tick} (0-based, counted
+         * from this client's first tick): {@code what} maps it to the velocity the client really takes, or to null
+         * when the packet is lost (two velocity packets in one client tick: the first is overwritten, so the client
+         * keeps sliding on its own motion).
+         */
+        LaggyClient interfere(int tick, Function<Vector, @Nullable Vector> what) {
+            interference.put(tick, what);
+            return this;
+        }
+
+        /** Every velocity the server sent during this client's ticks, in order. */
+        List<Vector> sentVelocities() {
+            return List.copyOf(log);
         }
 
         /** One client tick with what it was sent so far, then one server tick, which may send something new. */
@@ -200,8 +223,14 @@ class MobNewAbilitiesTest {
             if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
                     || Double.compare(now.getZ(), marked.getZ()) != 0) {
                 sent = now.clone();
-                velocity.copy(now);
+                log.add(now.clone());
+                Function<Vector, @Nullable Vector> what = interference.get(ticks);
+                Vector taken = what == null ? now.clone() : what.apply(now.clone());
+                if (taken != null) {
+                    velocity.copy(taken);
+                }
             }
+            ticks++;
         }
     }
 
@@ -1022,6 +1051,58 @@ class MobNewAbilitiesTest {
             s.ticks(20);
             assertEquals(1.0, scale(s.owner), EPSILON, "back out of the shell");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A real client often covers less than it was sent: a velocity packet is lost (two arrive in one client tick and
+     * the first is overwritten), or a hit handled after the spin's push in the same tick knocks the turtle back
+     * (vanilla knockback halves the motion and pushes away from the attacker). Once the whole length is sent the shell
+     * must just come to rest short of its end, not take that stop for a wall and bounce back off nothing.
+     */
+    @Test
+    void turtleSpinNeverBouncesOffNothingWhenTheClientFallsShort() {
+        Function<Vector, @Nullable Vector> lost = velocity -> null;
+        assertSpinNeverTurnsBack(0, Map.of(4, lost, 8, lost), "two lost packets");
+        assertSpinNeverTurnsBack(3, Map.of(4, lost, 8, lost), "two lost packets, seen three ticks late");
+        assertSpinNeverTurnsBack(0, Map.of(6, MobNewAbilitiesTest::knockedBackFromTheFront),
+                "a hit from the front right after a push");
+    }
+
+    /** Vanilla {@code LivingEntity#knockback} of strength 0.4 on a grounded player hit by someone in front (+Z). */
+    private static Vector knockedBackFromTheFront(Vector velocity) {
+        return new Vector(velocity.getX() / 2, Math.min(0.4, velocity.getY() / 2 + 0.4), velocity.getZ() / 2 - 0.4);
+    }
+
+    private static void assertSpinNeverTurnsBack(int lag, Map<Integer, Function<Vector, @Nullable Vector>> trouble,
+            String what) {
+        try (Scenario s = Scenario.ffa("turtle")) {
+            s.place(s.enemy, 8.5, -6.5, 0);
+            s.place(s.enemy2, -8.5, -6.5, 0);
+            Location start = s.owner.getLocation();
+            Vector ahead = facing(start.getYaw());
+            assertEquals(1, ahead.getZ(), EPSILON, "the turtle spins off to +Z (the front knockback assumes it)");
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "껍질 회전");
+            LaggyClient client = new LaggyClient(s, s.owner, lag);
+            trouble.forEach(client::interfere);
+            double farthest = 0;
+            for (int i = 0; i < 50; i++) {
+                client.tick();
+                farthest = Math.max(farthest, client.at().toVector().subtract(start.toVector()).dot(ahead));
+            }
+            for (Vector sent : client.sentVelocities()) {
+                assertTrue(sent.dot(ahead) > -EPSILON, what + ": the shell was never sent back (no wall): "
+                        + client.sentVelocities());
+            }
+            double reached = client.at().toVector().subtract(start.toVector()).dot(ahead);
+            assertEquals(farthest, reached, 0.05, what + ": the shell rests where it got to, it did not slide back");
+            assertTrue(reached > s.param("spin_distance") - 2, what + ": it still slid most of its length: " + reached);
+            s.world.physics().setEnabled(true);
+            s.ticks(20);
+            assertEquals(1.0, scale(s.owner), EPSILON, what + ": back out of the shell");
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, what);
             s.finishClean();
         }
     }
