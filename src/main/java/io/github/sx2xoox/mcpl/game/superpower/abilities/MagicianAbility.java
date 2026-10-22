@@ -78,7 +78,7 @@ public final class MagicianAbility extends Ability {
                     "조준한 적({ult_range}블록 이내)에게 커튼을 내려 {ult_hold}초간 묶어 둡니다. 커튼이 걷히면 적은 "
                             + "사라져 {ult_min_distance}~{ult_max_distance}블록 떨어진 무작위 안전한 곳의 허공에서 "
                             + "떨어지며 {ult_damage} 피해를 입고 {ult_blind}초간 앞이 보이지 않습니다. 나는 커다란 모자 "
-                            + "속으로 사라져 {ult_stealth}초간 적의 눈에 보이지 않습니다.")
+                            + "속으로 사라져 {ult_stealth}초간 적의 눈에 보이지 않습니다. 공격하면 모습이 드러납니다.")
             // The vanishing needs onRevoke to show the owner again, and the attack hooks to break it.
             .ultimateNotStandalone()
             .param("dodge_chance", 20)
@@ -184,14 +184,18 @@ public final class MagicianAbility extends Ability {
     @Override
     public void onTick(long tick) {
         long now = ctx().currentTick();
+        // Vanished under the hat, the magician shows nothing at all: no glint gives the hidden hand away.
+        boolean hidden = stealth.isActive();
         if (!readyShown && now >= dodgeReady) {
             readyShown = true;
             Player owner = player();
             owner.playSound(owner, Sound.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 0.7f, 1.7f);
             owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">손재주 <" + GOLD_TAG + ">준비</" + GOLD_TAG + "></"
                     + COLOR_TAG + ">"));
-            Vfx.cloud(ctx(), hand(owner), Particle.DUST_COLOR_TRANSITION, 4, 0.12, 0, GOLD_GLOW, false);
-        } else if (readyShown && tick % READY_SPARKLE_PERIOD == 0) {
+            if (!hidden) {
+                Vfx.cloud(ctx(), hand(owner), Particle.DUST_COLOR_TRANSITION, 4, 0.12, 0, GOLD_GLOW, false);
+            }
+        } else if (readyShown && !hidden && tick % READY_SPARKLE_PERIOD == 0) {
             // While a dodge is ready, gold motes flicker at the fingertips.
             Location at = hand(player());
             Vfx.dot(at, Particle.DUST, GOLD_DUST, false);
@@ -231,12 +235,21 @@ public final class MagicianAbility extends Ability {
         readyShown = false;
         Location from = owner.getLocation();
         Location threat = attacker.getWorld().equals(owner.getWorld()) ? attacker.getLocation() : from;
-        dodgeFx(from);
+        if (stealth.isActive()) {
+            // Vanished under the hat: the dodge is silent, cards or a "회피!" would show where the magician hides.
+            owner.playSound(owner, Sound.ITEM_BOOK_PAGE_TURN, SoundCategory.PLAYERS, 0.8f, 1.4f);
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">손재주 — <b>회피!</b></" + COLOR_TAG + ">"));
+        } else {
+            dodgeFx(from);
+        }
         // Step aside on the next tick, outside the damage event of whoever attacked.
         ctx().runLater(owner, 1, () -> sidestep(threat));
     }
 
-    /** The magician reappears a step to the side of the attack (or behind it, or stays put if there is no room). */
+    /**
+     * The magician reappears a step to the side of the attack (or behind it, or stays put if there is no room). The
+     * step dodges the attack, not gravity: a fall it interrupts goes on counting.
+     */
     private void sidestep(Location threat) {
         Player owner = player();
         if (!owner.isOnline() || !ctx().isAlive(owner) || owner.isInsideVehicle()) {
@@ -265,8 +278,12 @@ public final class MagicianAbility extends Ability {
             }
             spot.setYaw(feet.getYaw());
             spot.setPitch(feet.getPitch());
+            float fall = owner.getFallDistance();
             owner.teleport(spot);
-            owner.setFallDistance(0);
+            owner.setFallDistance(fall);
+            if (stealth.isActive()) {
+                return;
+            }
             Location arrival = Fx.body(owner);
             Vfx.trail(Fx.body(owner).subtract(option.clone().multiply(distance)), arrival, PALETTE.body(), 4, false);
             Vfx.cloud(ctx(), arrival, Particle.ENCHANT, 10, 0.3, 0.6, null, false);
@@ -699,6 +716,8 @@ public final class MagicianAbility extends Ability {
         private final List<BlockDisplay> curtain = new ArrayList<>();
         private final List<BlockDisplay> trim = new ArrayList<>();
         private final BlockDisplay[] hat = new BlockDisplay[3];
+        /** Where the giant hat came down: it lifts off there, wherever the vanished magician has gone since. */
+        private @Nullable Location coverSpot;
         private float hatSpin;
         private boolean revealed;
 
@@ -879,6 +898,7 @@ public final class MagicianAbility extends Ability {
         /** The giant hat drops over the magician. */
         private void coverOwner() {
             Location feet = flat(owner.getLocation());
+            coverSpot = feet;
             for (int i = 0; i < hat.length; i++) {
                 BlockDisplay part = hat[i];
                 if (part != null && part.isValid()) {
@@ -900,9 +920,12 @@ public final class MagicianAbility extends Ability {
             Stealth.dropAggro(ctx(), owner, 16);
         }
 
-        /** The hat lifts off and vanishes in a puff, doves flying out of it. */
+        /**
+         * The hat lifts off and vanishes in a puff, doves flying out of it. It lifts where it came down: following the
+         * magician, who has vanished by now, would show everyone where it went.
+         */
         private void liftHat() {
-            Location feet = flat(owner.getLocation());
+            Location feet = coverSpot != null ? coverSpot.clone() : flat(owner.getLocation());
             Location above = feet.clone().add(0, 2.2, 0);
             for (BlockDisplay part : hat) {
                 if (part == null || !part.isValid()) {

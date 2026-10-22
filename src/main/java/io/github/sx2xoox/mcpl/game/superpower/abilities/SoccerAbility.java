@@ -665,10 +665,24 @@ public final class SoccerAbility extends Ability {
             for (int i = (int) (tick / 2 % stride); i < points.size(); i += stride) {
                 Vfx.dot(points.get(i).toLocation(world), Particle.DUST_COLOR_TRANSITION, EMBER_FADE, true);
             }
-            if (target != null && target.isValid()) {
-                Vfx.ring(ctx(), target.getLocation().add(0, 0.1, 0), 0.9, 14, tick * 0.3,
+            LivingEntity aimed = aimed();
+            if (aimed != null) {
+                Vfx.ring(ctx(), aimed.getLocation().add(0, 0.1, 0), 0.9, 14, tick * 0.3,
                         Particle.DUST_COLOR_TRANSITION, EMBER, true);
             }
+        }
+
+        /**
+         * The aimed enemy while the kick may still curve towards it: alive, in this world and not hidden from the
+         * owner. An enemy that slips into stealth during the wind-up is let go (no ring, no curve into it), so the
+         * kick never gives its hiding place away.
+         */
+        private @Nullable LivingEntity aimed() {
+            LivingEntity aimed = target;
+            if (aimed == null || !aimed.isValid() || !aimed.getWorld().equals(world)) {
+                return null;
+            }
+            return aimed instanceof Player victim && !owner.canSee(victim) ? null : aimed;
         }
 
         private void kickFx(Location at) {
@@ -817,8 +831,8 @@ public final class SoccerAbility extends Ability {
             Location startSpot = kickSpot(feet, facing);
             Vector start = startSpot.toVector();
             Vector end;
-            LivingEntity aimed = target;
-            if (aimed != null && aimed.isValid() && aimed.getWorld().equals(world)) {
+            LivingEntity aimed = aimed();
+            if (aimed != null) {
                 end = Fx.body(aimed).toVector();
             } else {
                 Location eye = owner.getEyeLocation();

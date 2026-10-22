@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -14,6 +15,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.BatterAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.ClownAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.MagicianAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.SoccerAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
@@ -43,6 +45,7 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.util.SpawnedParticle;
 
 /**
  * 무대 · 스포츠 계열: 마술사, 광대, 축구선수, 야구선수. Each ability through a whole match, the owner dying in the
@@ -50,6 +53,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  * the mechanics of every passive, active and ultimate.
  */
 class ShowNewAbilitiesTest {
+
+    static {
+        // AbilityLifecycleTest (whose watchAlly is used below) lists the abilities in its static initializer with a
+        // harness of its own, which MockBukkit refuses while a scenario of this class is running. Initialize it now,
+        // while nothing is mocked, so this class also runs on its own or first.
+        AbilityLifecycleTest.abilities();
+    }
 
     private static final double EPSILON = 1.0E-6;
 
@@ -163,6 +173,39 @@ class ShowNewAbilitiesTest {
 
     private static double horizontalDistance(Location a, Location b) {
         return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+
+    /** Particles spawned (since the last clear) within {@code radius} of {@code feet}, up to head height. */
+    private static List<SpawnedParticle> particlesAround(Scenario s, Location feet, double radius) {
+        return s.world.getSpawnedParticles().stream()
+                .filter(p -> Math.hypot(p.x() - feet.getX(), p.z() - feet.getZ()) < radius
+                        && p.y() > feet.getY() - 0.5 && p.y() < feet.getY() + 2.5)
+                .toList();
+    }
+
+    /** Particles spawned (since the last clear) on a horizontal ring of {@code radius} around {@code center}. */
+    private static List<SpawnedParticle> ringAround(Scenario s, Location center, double radius) {
+        return s.world.getSpawnedParticles().stream()
+                .filter(p -> Math.abs(p.y() - center.getY()) < 0.06
+                        && Math.abs(Math.hypot(p.x() - center.getX(), p.z() - center.getZ()) - radius) < 1.0E-3)
+                .toList();
+    }
+
+    /** Ticks through a launched {@code target}'s flight until it is back on the ground; returns its highest feet. */
+    private static double flight(Scenario s, Player target, int max) {
+        Entity body = target; // the entity flag (Player#isOnGround is deprecated: the client reports it)
+        double peak = target.getLocation().getY();
+        for (int i = 0; i < max && (i < 10 || !body.isOnGround()); i++) {
+            s.ticks(1);
+            peak = Math.max(peak, target.getLocation().getY());
+        }
+        s.ticks(3);
+        return peak;
+    }
+
+    /** The home run landings credited to the batter (fall damage dealt as its attack). */
+    private static List<Scenario.Hit> creditedFalls(Scenario s, Player victim) {
+        return s.hitsBy(s.owner, victim).stream().filter(hit -> hit.type() == DamageType.FALL).toList();
     }
 
     /** Exactly what {@code GamblerAbility#fireBorrowed} does. */
@@ -1073,6 +1116,283 @@ class ShowNewAbilitiesTest {
                 assertTrue(axis(panel, 0, 1, 0).getY() > 0.99, "and hangs straight down");
             }
             s.ticks(80);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ audit regressions: hidden is hidden
+
+    @Test
+    void magicianVanishedUnderTheHatShowsNoGlint() {
+        try (Scenario s = Scenario.builder("magician").param("ult_stealth", 4).start()) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "사라지는 마술");
+            s.ticks(s.paramTicks("ult_hold") + 30); // the curtain, the hat and the doves are gone
+            assertFalse(s.enemy2.canSee(s.owner), "vanished");
+            s.world.clearSpawnedParticles();
+            s.ticks(40); // twice the period of the ready sleight of hand's glint
+            assertFalse(s.enemy2.canSee(s.owner), "still vanished");
+            List<SpawnedParticle> near = particlesAround(s, s.owner.getLocation(), 1.5);
+            assertTrue(near.isEmpty(), "nothing gives the vanished magician away: " + near);
+            s.ticks(60);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void magicianDodgesSilentlyWhileVanished() {
+        try (Scenario s = Scenario.builder("magician").param("dodge_chance", 100).param("ult_stealth", 4).start()) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "사라지는 마술");
+            s.ticks(s.paramTicks("ult_hold") + 30);
+            assertFalse(s.enemy2.canSee(s.owner), "vanished");
+            assertNoDisplays(s);
+            Location before = s.owner.getLocation();
+            s.world.clearSpawnedParticles();
+            s.clearHits();
+            s.ctx().damage(s.enemy2, s.owner, 4); // a blind area hit finds the hidden magician
+            s.ticks(2);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "still a dodge");
+            assertEquals(s.param("dodge_distance"), horizontalDistance(before, s.owner.getLocation()), 0.05,
+                    "still a step aside");
+            assertEquals(0, displays(s), "no cards and no 회피! over the hidden magician: " + s.world.getEntities());
+            List<SpawnedParticle> near = particlesAround(s, before, 3);
+            assertTrue(near.isEmpty(), "no puff, no trail: " + near);
+            assertFalse(s.enemy2.canSee(s.owner), "still vanished");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void magicianHatLiftsWhereItCameDown() {
+        try (Scenario s = Scenario.ffa("magician")) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            Location cover = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "사라지는 마술");
+            s.ticks(s.paramTicks("ult_hold") + 2); // the giant hat came down over the magician
+            s.place(s.owner, -3.5, 4.5, 0); // who slips away under it while it vanishes
+            s.ticks(4); // the hat lifts off
+            assertFalse(s.enemy2.canSee(s.owner), "vanished");
+            List<Display> hat = new ArrayList<>(displaysOf(s, Material.BLACK_CONCRETE));
+            hat.addAll(displaysOf(s, Material.RED_CONCRETE));
+            assertEquals(3, hat.size(), "the hat is lifting off");
+            for (Display part : hat) {
+                assertTrue(horizontalDistance(cover, part.getLocation()) < 0.01,
+                        "the hat lifts where it came down, not over the hidden magician: " + part.getLocation());
+            }
+            s.ticks(40);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void magicianDescriptionSaysAnAttackEndsTheVanish() {
+        assertTrue(MagicianAbility.INFO.ultimate().description().contains("공격하면 모습이 드러납니다"),
+                MagicianAbility.INFO.ultimate().description());
+    }
+
+    @Test
+    void magicianSidestepDodgesTheHitNotTheFall() {
+        try (Scenario s = Scenario.builder("magician").param("dodge_chance", 100).start()) {
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 16, 0.5, 0, 0);
+            s.ticks(12);
+            assertTrue(s.owner.getFallDistance() > 3, "falling: " + s.owner.getFallDistance());
+            s.ctx().damage(s.enemy, s.owner, 2); // hit on the way down: dodged with a step aside
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(2);
+            assertEquals(0, s.damageBy(s.enemy, s.owner), EPSILON, "the hit was dodged");
+            List<Scenario.Hit> falls = s.hitsOf(s.owner, DamageCause.FALL);
+            assertEquals(1, falls.size(), "the landing still hurts: " + s.hits());
+            assertEquals(16 - 3, falls.getFirst().damage(), 0.5, "the whole fall counts");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void soccerBananaKickLetsGoOfATargetThatVanishes() {
+        try (Scenario s = Scenario.ffa("soccer")) {
+            s.place(s.enemy, 0.5, 10.5, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "바나나킥");
+            s.ticks(1);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy); // the target slips into stealth during the wind-up
+            s.world.clearSpawnedParticles();
+            s.ticks(40);
+            List<SpawnedParticle> ring = ringAround(s, s.enemy.getLocation().add(0, 0.1, 0), 0.9);
+            assertTrue(ring.isEmpty(), "no ring marks the hidden enemy: " + ring);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "and the kick no longer curves into it: " + s.hits());
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(60);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void batterHomeRunNeverTracesAHiddenEnemy() {
+        try (Scenario s = Scenario.ffa("batter")) {
+            s.place(s.enemy, -1.0, 3.0, 180);
+            s.place(s.enemy2, 2.0, 3.0, 180);
+            s.assertSucceeded(s.ultimate(), "만루 홈런");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2); // slips into stealth during the wind-up
+            s.ticks(s.paramTicks("ult_windup"));
+            assertEquals(s.param("ult_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "the bat still connects");
+            s.world.clearSpawnedParticles();
+            List<Location> path = new ArrayList<>();
+            path.add(Fx.body(s.enemy2));
+            for (int i = 0; i < 80; i++) {
+                s.ticks(1);
+                path.add(Fx.body(s.enemy2));
+            }
+            assertTrue(path.stream().anyMatch(at -> at.getY() > FlatWorld.SURFACE + 3), "launched: " + path);
+            assertEquals(FlatWorld.SURFACE, s.enemy2.getLocation().getY(), EPSILON, "landed");
+            for (SpawnedParticle particle : s.world.getSpawnedParticles()) {
+                for (Location at : path) {
+                    assertTrue(Math.abs(particle.x() - at.getX()) > 0.05 || Math.abs(particle.y() - at.getY()) > 0.05
+                            || Math.abs(particle.z() - at.getZ()) > 0.05,
+                            "a particle traces the hidden enemy's flight: " + particle);
+                }
+            }
+            List<SpawnedParticle> landing = particlesAround(s, s.enemy2.getLocation(), 1.2);
+            assertTrue(landing.isEmpty(), "nothing marks where it landed: " + landing);
+            assertEquals(1, creditedFalls(s, s.enemy2).size(), "its landing is still the batter's: " + s.hits());
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.ticks(20);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void batterFastballLeavesNoStarsOverAHiddenEnemy() {
+        try (Scenario s = Scenario.ffa("batter")) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "강속구");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy); // slips into stealth with the ball on its way
+            s.world.clearSpawnedParticles();
+            s.ticks(20);
+            assertEquals(s.param("fastball_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the ball still hits");
+            Location crown = s.enemy.getLocation().add(0, s.enemy.getHeight() + 0.2, 0);
+            List<SpawnedParticle> stars = s.world.getSpawnedParticles().stream()
+                    .filter(p -> Math.abs(p.y() - crown.getY()) < 0.1
+                            && Math.hypot(p.x() - crown.getX(), p.z() - crown.getZ()) < 1.5)
+                    .toList();
+            assertTrue(stars.isEmpty(), "no stars circle the hidden head: " + stars);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(20);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ audit regressions: real falls and real pings
+
+    @Test
+    void batterHomeRunLandingKeepsTheVictimsSofterFalls() {
+        // The grapple's passive breaks its falls (fall damage multiplier 50%): a home run landing is no exception.
+        try (Scenario s = Scenario.builder("batter").enemyAbility("grapple").start()) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            double multiplier = s.enemy.getAttribute(Attribute.FALL_DAMAGE_MULTIPLIER).getValue();
+            assertTrue(multiplier < 0.9, "the grapple breaks its falls: " + multiplier);
+            s.assertSucceeded(s.ultimate(), "만루 홈런");
+            s.ticks(s.paramTicks("ult_windup"));
+            double height = flight(s, s.enemy, 120) - FlatWorld.SURFACE;
+            List<Scenario.Hit> falls = creditedFalls(s, s.enemy);
+            assertEquals(1, falls.size(), "the landing is the batter's: " + s.hits());
+            assertEquals(Math.min(s.param("ult_fall_max"), (height - 3) * multiplier), falls.getFirst().damage(), 0.35,
+                    "softened like any fall of the grapple");
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "no uncredited fall damage: " + s.hits());
+            s.ticks(20);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void batterHomeRunLandingAfterASlowFallDoesNotHurt() {
+        // Slow falling ends every fall (the phoenix's glide, a potion): there is nothing to credit.
+        try (Scenario s = Scenario.ffa("batter")) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.enemy.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 20 * 20, 0));
+            s.assertSucceeded(s.ultimate(), "만루 홈런");
+            s.ticks(s.paramTicks("ult_windup"));
+            double height = flight(s, s.enemy, 200) - FlatWorld.SURFACE;
+            assertTrue(height > 3, "launched: " + height);
+            assertTrue(s.session.isAlive(s.enemy));
+            assertTrue(creditedFalls(s, s.enemy).isEmpty(), "a slow fall does not hurt: " + s.hits());
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), s.hits().toString());
+            s.ticks(20);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void batterHomeRunCreditsTheLandingOfALaggyEnemy() {
+        try (Scenario s = Scenario.ffa("batter")) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 14.5, 0.5, 270);
+            s.assertSucceeded(s.ultimate(), "만루 홈런");
+            s.ticks(s.paramTicks("ult_windup") - 1);
+            // The enemy's client is a long ping away: the server sees it take off only a few ticks after the swing.
+            s.world.physics().setEnabled(false);
+            s.ticks(7);
+            assertEquals(s.param("ult_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the swing connects");
+            assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), EPSILON, "not seen off the ground yet");
+            s.world.physics().setEnabled(true);
+            double height = flight(s, s.enemy, 120) - FlatWorld.SURFACE;
+            assertTrue(height > s.param("ult_height") * 0.8, "sky-high: " + height);
+            assertEquals(1, creditedFalls(s, s.enemy).size(), "the landing is the batter's: " + s.hits());
+            assertTrue(s.hitsOf(s.enemy, DamageCause.FALL).isEmpty(), "no uncredited fall damage: " + s.hits());
+            s.ticks(20);
+            assertNoDisplays(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void clownCannonWaitsForALaggyClientBeforeTheFirework() {
+        try (Scenario s = Scenario.ffa("clown")) {
+            s.place(s.enemy, 0.5, 10.5, 180);
+            s.place(s.enemy2, 0.5, -2.0, 0); // a bystander right behind the cannon
+            s.aimAt(s.owner, s.enemy);
+            Location cannon = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "서커스 대포");
+            s.ticks(s.paramTicks("ult_windup") - 1);
+            // The clown's client is a long ping away: the server sees the shot leave the cannon only some ticks after
+            // it fired. (This world drops the velocities sent in between, so here the clown comes down short.)
+            s.world.physics().setEnabled(false);
+            s.ticks(6);
+            s.world.physics().setEnabled(true);
+            Location[] boom = {null};
+            s.h.tickUntil(() -> {
+                if (boom[0] == null && textDisplays(s) > 0) {
+                    boom[0] = s.owner.getLocation(); // "펑!"
+                }
+                return boom[0] != null;
+            }, 100, "the firework");
+            assertTrue(horizontalDistance(cannon, boom[0]) > 3,
+                    "the firework goes off where the clown came down, not in the cannon: " + boom[0]);
+            assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "nothing went off at the cannon: " + s.hits());
+            settle(s, s.owner);
+            s.ticks(30);
+            assertTrue(s.hitsOf(s.owner, DamageCause.FALL).isEmpty(), "no fall damage: " + s.hits());
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertNoDisplays(s);
             s.finishClean();
         }

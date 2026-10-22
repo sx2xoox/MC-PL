@@ -137,6 +137,8 @@ public final class ClownAbility extends Ability {
     private static final int FLIGHT_MIN_TICKS = 14;
     private static final int FLIGHT_MAX_TICKS = 32;
     private static final int LANDING_WAIT_TICKS = 24;
+    /** Squared distance from the cannon past which the server has surely seen the shot leave it. */
+    private static final double LEFT_CANNON_DISTANCE_SQUARED = 0.25;
     private static final double MIN_ARC = 3;
     private static final double MAX_ARC = 8;
     private static final double GROUND_SEARCH = 12;
@@ -562,6 +564,8 @@ public final class ClownAbility extends Ability {
         private long landedTick = -1;
         private int groundedTicks;
         private int stuckTicks;
+        /** The server has seen the owner leave the cannon (positions arrive a ping late). */
+        private boolean leftCannon;
         private @Nullable Location lastSeen;
 
         Cannon(Player owner, Location landing) {
@@ -632,10 +636,15 @@ public final class ClownAbility extends Ability {
             confetti(flown);
             Location now = owner.getLocation();
             boolean grounded = Motion.isGrounded(owner) || owner.isInWater();
+            // The server sees the owner's client a ping late: until it has seen the shot leave the cannon, standing
+            // still is lag, neither a landing nor being stuck.
+            if (!leftCannon && (!grounded || now.distanceSquared(start) > LEFT_CANNON_DISTANCE_SQUARED)) {
+                leftCannon = true;
+            }
             Location seen = lastSeen;
-            stuckTicks = seen != null && seen.distanceSquared(now) < 0.01 ? stuckTicks + 1 : 0;
+            stuckTicks = leftCannon && seen != null && seen.distanceSquared(now) < 0.01 ? stuckTicks + 1 : 0;
             lastSeen = now;
-            if (flown >= 3 && (grounded && flown >= flightTicks / 2 || stuckTicks >= 4)
+            if (leftCannon && flown >= 3 && (grounded && flown >= flightTicks / 2 || stuckTicks >= 4)
                     || flown >= flightTicks + LANDING_WAIT_TICKS) {
                 landedTick = tick;
                 firework(now);
