@@ -177,17 +177,28 @@ public final class GravityAbility extends Ability {
 
     // ------------------------------------------------------------------ passive: weightless strike
 
+    /** The air bonus: only changes the damage, since the victim may still cancel the hit. */
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (event.isCancelled() || ctx().isAbilityDamage() || !player().equals(event.getDamager())
-                || event.getCause() != DamageCause.ENTITY_ATTACK || !ctx().isEnemy(player(), victim)) {
+        if (event.isCancelled() || !isOwnMelee(event, victim)) {
+            return;
+        }
+        Juggle juggle = juggles.get(victim.getUniqueId());
+        if (juggle != null && isJuggled(juggle, victim)) {
+            double bonus = Math.max(0, params().num("air_bonus")) / 100.0;
+            event.setDamage(event.getDamage() * (1 + bonus));
+        }
+    }
+
+    /** The hit landed: count the combo and lift the victim. */
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (!isOwnMelee(event, victim)) {
             return;
         }
         long now = ctx().currentTick();
         Juggle juggle = juggles.computeIfAbsent(victim.getUniqueId(), id -> new Juggle());
-        if (now < juggle.airborneUntil && !(Motion.isGrounded(victim) || victim.isInWater())) {
-            double bonus = Math.max(0, params().num("air_bonus")) / 100.0;
-            event.setDamage(event.getDamage() * (1 + bonus));
+        if (isJuggled(juggle, victim)) {
             juggle.combo++;
             comboFeedback(victim, juggle);
         } else {
@@ -199,6 +210,17 @@ public final class GravityAbility extends Ability {
             // Vanilla knockback is applied after this event; lift on the next tick so it is not overwritten.
             ctx().runLater(player(), 1, () -> lift(victim, height));
         }
+    }
+
+    /** The owner's own melee swing at an enemy (not ability damage, projectiles or summon bites). */
+    private boolean isOwnMelee(EntityDamageByEntityEvent event, LivingEntity victim) {
+        return !ctx().isAbilityDamage() && player().equals(event.getDamager())
+                && event.getCause() == DamageCause.ENTITY_ATTACK && ctx().isEnemy(player(), victim);
+    }
+
+    /** True while a lifted enemy is still in the air within its juggle window. */
+    private boolean isJuggled(Juggle juggle, LivingEntity victim) {
+        return ctx().currentTick() < juggle.airborneUntil && !(Motion.isGrounded(victim) || victim.isInWater());
     }
 
     private void lift(LivingEntity victim, double height) {

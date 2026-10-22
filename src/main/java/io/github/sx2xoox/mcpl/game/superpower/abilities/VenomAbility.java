@@ -154,10 +154,11 @@ public final class VenomAbility extends Ability {
         }
     }
 
+    /** The hit landed (a dodged or blocked swing poisons nobody). */
     @Override
-    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
         DamageCause cause = event.getCause();
-        if (event.isCancelled() || ctx().isAbilityDamage() || !player().equals(event.getDamager())
+        if (ctx().isAbilityDamage() || !player().equals(event.getDamager())
                 || cause != DamageCause.ENTITY_ATTACK && cause != DamageCause.ENTITY_SWEEP_ATTACK
                 || !ctx().isEnemy(player(), victim)) {
             return;
