@@ -350,7 +350,10 @@ public final class ChefAbility extends Ability {
     public ActivationResult onActive() {
         Player owner = player();
         List<LivingEntity> targets = panTargets(owner);
-        if (targets.isEmpty()) {
+        // Only enemies the cook can see make the pan swing: going off (and on cooldown) when the only one in reach is
+        // stealthed would tell the cook that someone hidden stands right in front. Once it swings, it hits them all.
+        int seen = (int) targets.stream().filter(target -> visibleTo(owner, target)).count();
+        if (seen == 0) {
             return ActivationResult.fail("프라이팬이 닿는 곳에 적이 없습니다");
         }
         Vector facing = Motion.horizontalFacing(owner.getLocation());
@@ -391,7 +394,7 @@ public final class ChefAbility extends Ability {
             Vfx.ring(ctx(), body, 0.7, 14, 0, Particle.DUST_COLOR_TRANSITION, WARM, false);
         }
         if (contact != null) {
-            ding(owner, contact, targets.size());
+            ding(owner, contact, seen);
             friedEgg(owner, contact, facing);
         }
         return ActivationResult.success();
@@ -549,7 +552,10 @@ public final class ChefAbility extends Ability {
         });
     }
 
-    /** A gold star circling the stunned head for the length of the stun. */
+    /**
+     * A gold star circling the stunned head for the length of the stun; it fades if the target slips into stealth
+     * (the stun goes on), so it never marks where a hidden player is.
+     */
     private void dizzy(Player owner, LivingEntity target, long ticks) {
         TextDisplay star = null;
         if (hasDisplayRoom()) {
@@ -561,7 +567,7 @@ public final class ChefAbility extends Ability {
         TextDisplay shown = star;
         double phase = ThreadLocalRandom.current().nextDouble(Math.PI * 2);
         Loop.repeat(ctx(), owner, 0, 1, ticks, run -> {
-            if (!target.isValid() || target.isDead()) {
+            if (!target.isValid() || target.isDead() || !visibleTo(owner, target)) {
                 return false;
             }
             double angle = phase + run * 0.7;

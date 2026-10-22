@@ -121,7 +121,6 @@ public final class BeekeeperAbility extends Ability {
     // ------------------------------------------------------------------ passive: honey drop
     private static final int HONEY_FALL_TICKS = 5;
     private static final double HONEY_DROP_HEIGHT = 1.1;
-    private static final long HONEY_CHECK_PERIOD = 5;
     private static final long HONEY_DRIP_PERIOD = 9;
 
     // ------------------------------------------------------------------ active: swarm
@@ -145,6 +144,8 @@ public final class BeekeeperAbility extends Ability {
     private static final long LOCK_ON_TICKS = 5;
     private static final long BUZZ_SOUND_PERIOD = 18;
     private static final long HIVE_TICKS = 12;
+    /** Vanilla Poison I hurts once per this many ticks, counted on the effect's remaining duration. */
+    private static final int POISON_PERIOD = 25;
     private static final int[] DEFLECT_DEGREES = {50, -50, 100, -100, 150, -150};
     private static final double[] DETOUR_SIDE = {2, -2, 4, -4, 6, -6};
     private static final double[] DETOUR_UP = {0, 2.5, 4.5};
@@ -191,7 +192,7 @@ public final class BeekeeperAbility extends Ability {
 
     @Override
     public void onTick(long tick) {
-        if (honeyKey == null || tick % HONEY_CHECK_PERIOD != 0) {
+        if (honeyKey == null) {
             return;
         }
         Player owner = player();
@@ -1152,16 +1153,34 @@ public final class BeekeeperAbility extends Ability {
         return !(entity instanceof Player player) || owner.canSee(player);
     }
 
-    /** Poison I for {@code ticks}, unless a longer poison is already running. */
+    /**
+     * Poison I for about {@code ticks} more. A fresh poison lasts exactly {@code ticks}. A running Poison I is
+     * extended in whole {@link #POISON_PERIOD} steps, to the length closest to {@code ticks} (never shortened):
+     * vanilla hurts whenever the remaining duration is a multiple of that period, so resetting it to a fresh duration
+     * on every sting (every 0.5 s) would make the poison hurt on every sting instead of every 1.25 s, and rounding the
+     * extension up would leave up to a whole period of extra poison after every sting (a few bees landing a tick
+     * apart would each add one). So the poison keeps its pace and ends within half a period of {@code ticks} after
+     * the last sting. A stronger or endless poison is left alone.
+     */
     private static void poison(LivingEntity target, long ticks) {
         if (ticks <= 0) {
             return;
         }
-        int duration = (int) Math.min(Integer.MAX_VALUE, ticks);
+        int wanted = (int) Math.min(Integer.MAX_VALUE / 2, ticks);
         PotionEffect current = target.getPotionEffect(PotionEffectType.POISON);
-        if (current == null || current.getAmplifier() == 0 && current.getDuration() < duration) {
-            target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, duration, 0, false, true, true));
+        int duration = wanted;
+        if (current != null && current.getDuration() > 0) {
+            if (current.getAmplifier() != 0 || current.isInfinite() || current.getDuration() >= wanted) {
+                return;
+            }
+            int left = current.getDuration();
+            int periods = (int) Math.round((wanted - left) / (double) POISON_PERIOD);
+            if (periods <= 0) {
+                return;
+            }
+            duration = left + periods * POISON_PERIOD;
         }
+        target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, duration, 0, false, true, true));
     }
 
     /** A hexagon of particles (honeycomb cell) facing {@code normal} around {@code center}. */

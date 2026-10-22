@@ -392,10 +392,15 @@ public final class FarmerAbility extends Ability {
                 }
                 reaped.add(enemy.getUniqueId());
                 boolean tip = sweetBand > 0 && distance >= radius - sweetBand;
+                // A stealthed enemy is reaped all the same, but not counted on the action bar: the count would tell
+                // the farmer that someone hidden stands in the cut.
+                boolean seen = visible(owner, enemy);
                 Combat.hit(ctx(), owner, enemy, damage + (tip ? sweetBonus : 0));
-                struck++;
-                if (tip) {
-                    sweet++;
+                if (seen) {
+                    struck++;
+                    if (tip) {
+                        sweet++;
+                    }
                 }
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
@@ -406,7 +411,10 @@ public final class FarmerAbility extends Ability {
                 Motion.push(enemy, swing.multiply(REAP_PUSH).add(away.multiply(REAP_PUSH * 0.5)).setY(REAP_LIFT),
                         MAX_SPEED);
                 bleed(enemy);
-                impact(enemy, tip);
+                if (seen) {
+                    // Nothing is drawn on a stealthed enemy to give it away.
+                    impact(enemy, tip);
+                }
             }
         }
 
@@ -472,6 +480,10 @@ public final class FarmerAbility extends Ability {
                     return false;
                 }
                 Combat.hit(ctx(), owner, target, Math.max(0, params().num("bleed_damage")));
+                if (!visible(owner, target)) {
+                    // Bleeding on in stealth, without a trail of blood that would show where it goes.
+                    return true;
+                }
                 Location body = Fx.body(target);
                 body.getWorld().spawnParticle(Particle.BLOCK, body, Vfx.n(ctx(), 4), 0.2, 0.3, 0.2, 0,
                         BLOOD_BLOCK.createBlockData());
@@ -710,7 +722,10 @@ public final class FarmerAbility extends Ability {
             }
         }
 
-        /** Two tall ripe wheat stalks crossed around the enemy's legs for the length of the bind. */
+        /**
+         * Two tall ripe wheat stalks crossed around the enemy's legs for the length of the bind. They wither where they
+         * stand if the enemy slips into stealth (it stays bound): following it would show where it is pushed to.
+         */
         private void bind(LivingEntity enemy) {
             Location feet = enemy.getLocation();
             feet.setYaw(0);
@@ -724,7 +739,7 @@ public final class FarmerAbility extends Ability {
                 stalks.add(stalk);
             }
             Loop.repeat(ctx(), owner, 1, 1, root, run -> {
-                if (!enemy.isValid() || enemy.isDead()) {
+                if (!enemy.isValid() || enemy.isDead() || !visible(owner, enemy)) {
                     return false;
                 }
                 Location at = enemy.getLocation();
@@ -932,18 +947,25 @@ public final class FarmerAbility extends Ability {
             pumpkins.clear();
         }
 
-        /** A jack o'lantern that sprouts, rolls (spinning about its axle) at its target and bursts. */
+        /**
+         * A jack o'lantern that sprouts, rolls (spinning about its axle) at its target and bursts. A target that slips
+         * into stealth is lost: the pumpkin rolls on to where it last saw it and bursts there, never following (or
+         * bursting on) the hidden player.
+         */
         private final class Pumpkin {
 
             private final BlockDisplay display;
             private final LivingEntity target;
             private final Location pos;
+            /** Where the target was last seen; the pumpkin's goal. */
+            private final Location lastSeen;
             private long age;
             private double spin;
             private float yaw;
 
             Pumpkin(Location at, LivingEntity target) {
                 this.target = target;
+                this.lastSeen = target.getLocation();
                 this.pos = at.clone();
                 this.pos.setYaw(0);
                 this.pos.setPitch(0);
@@ -977,8 +999,11 @@ public final class FarmerAbility extends Ability {
                     burst();
                     return true;
                 }
-                Location goal = target.getLocation();
-                Vector toward = goal.toVector().subtract(pos.toVector()).setY(0);
+                if (visible(owner, target)) {
+                    Location now = target.getLocation();
+                    lastSeen.set(now.getX(), now.getY(), now.getZ());
+                }
+                Vector toward = lastSeen.toVector().subtract(pos.toVector()).setY(0);
                 double distance = toward.length();
                 if (distance <= PUMPKIN_REACH + target.getWidth() / 2 || age > PUMPKIN_SPROUT_TICKS + PUMPKIN_MAX_ROLL) {
                     burst();
