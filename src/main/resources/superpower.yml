@@ -78,6 +78,44 @@ border:
 result:
   time-limit: "제한 시간 종료 · 킬 수 → 남은 체력 순으로 결정"
 
+# ── 능력 연습 (/게임 능력 연습) ──────────────────────────────
+practice:
+  name: "<gradient:#7bd88f:#4fc3f7><bold>능력 연습</bold></gradient>"
+  description:
+    - "혼자서도 초능력을 시험해 보는 연습 모드입니다. 앞에 훈련용 허수아비가 섭니다."
+    - "죽어도 그 자리에서 다시 시작하고, <white>/게임 중지</white> 전까지 계속됩니다."
+    - "<click:suggest_command:'/게임 능력 연습 '><hover:show_text:'<gray>클릭하여 입력'><white>/게임 능력 연습 [능력]</white></hover></click> <gray>나만 참가 · <white>/게임 시작 연습</white> <gray>모두 참가"
+  dummy-name: "<yellow>훈련용 허수아비"
+  dummy-health: "<red>❤ <white><health></white><gray> / <max>"
+  # 허수아비가 맞을 때 뜨는 숫자 (<amount> = 피해량)
+  damage-number: "<red><bold>-<amount>"
+  title: "<gradient:#7bd88f:#4fc3f7><bold>능력 연습</bold></gradient>"
+  subtitle: "<gray>우클릭 <white>액티브</white> <dark_gray>·</dark_gray> F <white>궁극기</white> <dark_gray>·</dark_gray> 허수아비를 공격해 보세요"
+  started: "<green>능력 연습을 시작합니다!</green> <gray>앞에 허수아비 <white><count></white>개가 섰습니다. 쿨타임 <cooldown><gray>. <white>/게임 능력</white><gray>에서 연습 명령어를 확인하세요."
+  respawned: "<gray>다시 시작합니다. 킷과 능력을 새로 받았습니다."
+  state-on: "<green>켜짐"
+  state-off: "<yellow>꺼짐"
+  random: "<gray>무작위 능력"
+  everyone-left: "연습 참가자가 모두 나갔습니다"
+  starting: "<green>능력 연습을 준비합니다</green> <dark_gray>·</dark_gray> <ability> <gray>(끝내려면 <white>/게임 중지</white>)"
+  queued: "<gray>연습이 시작되면 <ability><gray>(으)로 시작합니다."
+  real-match: "<red>지금은 진짜 경기 중입니다. <gray>연습 명령어는 능력 연습(<white>/게임 능력 연습</white>) 중에만 쓸 수 있습니다."
+  no-session: "<red>진행 중인 능력 연습이 없습니다. <gray><white>/게임 능력 연습 [능력]</white>으로 시작하세요."
+  not-started: "<red>능력 연습이 아직 시작되지 않았습니다. <gray>잠시 후 다시 시도하세요."
+  not-now: "<red>지금은 쓸 수 없습니다. <gray>다시 살아난 뒤에 시도하세요."
+  not-running: "<red>능력 연습이 끝나는 중입니다."
+  not-participant: "<red>능력 연습에 참가 중일 때만 쓸 수 있습니다. <gray><white>/게임 능력 연습</white>으로 참가하세요."
+  join-failed: "<red>능력 연습에 참가하지 못했습니다."
+  start-admin-only: "<red>능력 연습은 관리자만 시작할 수 있습니다. <gray>진행 중인 연습에는 누구나 참가할 수 있습니다."
+  failed: "<red>능력을 바꾸지 못했습니다. <gray>(관리자: 콘솔 로그 확인)"
+  usage-switch: "<gray>사용법: <white>/게임 능력 변경 \\<능력 이름 또는 id></white> <dark_gray>(예: 화염술사, pyro)"
+  switched: "<green>능력을 <ability><green>(으)로 바꿨습니다."
+  charged: "<gold>궁극기 게이지를 100%로 채웠습니다. <yellow>F</yellow><gold> 키로 발동하세요."
+  cooldown-current: "<gray>연습 쿨타임: <state> <dark_gray>· 바꾸기: <white>/게임 능력 쿨타임 \\<켜기|끄기>"
+  cooldown-on: "<white><player></white><gray>님이 액티브 쿨타임을 <green>켰습니다</green>."
+  cooldown-off: "<white><player></white><gray>님이 액티브 쿨타임을 <yellow>껐습니다</yellow>. 액티브를 바로 다시 쓸 수 있습니다."
+  dummies-placed: "<gray>허수아비 <white><count></white>개를 앞에 세웠습니다."
+
 # ── 입력 피드백 (액션바) ─────────────────────────────────────
 input:
   not-yet: "<gray>아직 능력을 쓸 수 없습니다"
@@ -123,10 +161,12 @@ bossbar:
   border-shrinking: "<red>자기장 축소 중</red> <white><time>"
   final: "<gold>최종 자기장</gold> <dark_gray>·</dark_gray> <gray>남은 시간 <white><time>"
   final-unlimited: "<gold>최종 자기장"
+  practice: "<green>능력 연습</green> <dark_gray>·</dark_gray> <gray>쿨타임 <cooldown> <dark_gray>·</dark_gray> <gray>끝내기 <white>/게임 중지"
 
 # ── 사이드바 ─────────────────────────────────────────────────
 hud:
   title: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient>"
+  title-practice: "<gradient:#7bd88f:#4fc3f7><bold>능력 연습</bold></gradient>"
   alive: "<gray>생존자 <white><count>명"
   alive-teams: "<gray>생존 팀 <white><teams></white> <dark_gray>(<count>명)"
   kills: "<gray>내 킬 <red><kills>"
@@ -157,9 +197,12 @@ command:
     - " <click:suggest_command:'/게임 능력 정보 '><hover:show_text:'<gray>클릭하여 입력'><#a78bfa>/게임 능력 정보 \\<능력></#a78bfa></hover></click> <dark_gray>-</dark_gray> <gray>능력 설명"
     - " <click:suggest_command:'/게임 능력 리롤'><hover:show_text:'<gray>클릭하여 입력'><#a78bfa>/게임 능력 리롤</#a78bfa></hover></click> <dark_gray>-</dark_gray> <gray>준비 시간에 능력 다시 뽑기"
     - " <click:suggest_command:'/게임 능력 선택'><hover:show_text:'<gray>클릭하여 입력'><#a78bfa>/게임 능력 선택</#a78bfa></hover></click> <dark_gray>-</dark_gray> <gray>닫은 능력 선택 창 다시 열기"
+    - " <click:suggest_command:'/게임 능력 연습 '><hover:show_text:'<gray>클릭하여 입력'><#7bd88f>/게임 능력 연습 [능력]</#7bd88f></hover></click> <dark_gray>-</dark_gray> <gray>허수아비로 능력 연습 (시작은 관리자, 참가는 누구나)"
+    - " <click:suggest_command:'/게임 능력 변경 '><hover:show_text:'<gray>클릭하여 입력'><#7bd88f>/게임 능력 변경 \\<능력></#7bd88f></hover></click> <dark_gray>·</dark_gray> <click:suggest_command:'/게임 능력 충전'><hover:show_text:'<gray>클릭하여 입력'><#7bd88f>충전</#7bd88f></hover></click> <dark_gray>·</dark_gray> <click:suggest_command:'/게임 능력 허수아비'><hover:show_text:'<gray>클릭하여 입력'><#7bd88f>허수아비 [개수]</#7bd88f></hover></click> <dark_gray>-</dark_gray> <gray>연습 중: 능력 바꾸기, 궁극기 충전, 허수아비 다시 세우기"
   help-admin:
     - " <click:suggest_command:'/게임 능력 지정 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 능력 지정 \\<플레이어> \\<능력></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>다음/현재 경기 능력 지정"
     - " <click:suggest_command:'/게임 능력 선택방식 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 능력 선택방식 \\<RANDOM|CHOICE></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>능력 배정 방식"
+    - " <click:suggest_command:'/게임 능력 쿨타임 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 능력 쿨타임 \\<켜기|끄기></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>연습 중 액티브 쿨타임 켜기/끄기"
   usage-info: "<gray>사용법: <white>/게임 능력 정보 \\<능력 이름 또는 id></white> <dark_gray>(예: 화염술사, pyro)"
   usage-assign: "<gray>사용법: <white>/게임 능력 지정 \\<플레이어> \\<능력></white> <dark_gray>(예: /게임 능력 지정 Steve 화염술사)"
   list-header: "<gradient:#a78bfa:#f472b6><bold>초능력 목록</bold></gradient> <gray><count>종 <dark_gray>(사용 중 <enabled>종)"

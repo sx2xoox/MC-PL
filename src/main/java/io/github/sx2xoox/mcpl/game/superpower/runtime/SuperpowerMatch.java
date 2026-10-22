@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +14,7 @@ import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import io.github.sx2xoox.mcpl.core.game.DeathOutcome;
 import io.github.sx2xoox.mcpl.core.game.GameInstance;
 import io.github.sx2xoox.mcpl.core.game.GameResult;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
@@ -20,6 +22,7 @@ import io.github.sx2xoox.mcpl.core.game.MatchTeam;
 import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.superpower.PracticeSettings;
 import io.github.sx2xoox.mcpl.game.superpower.SelectionMode;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerSettings;
@@ -43,8 +46,12 @@ import org.bukkit.SoundCategory;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.Tag;
 import org.bukkit.World;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.EquipmentSlot;
@@ -60,6 +67,11 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>All ability code runs through the {@link AbilityGuard}: an exception in any hook is logged with the ability id
  * and never escapes into the hub or affects other players.
+ *
+ * <p><b>Practice</b> ({@code /게임 능력 연습}, {@link #isPractice()}): the same match machinery with the fight starting
+ * right away (requested or random ability, no reveal, prep phase, border shrink, time limit or win check), training
+ * dummies ({@link TrainingDummies}) in front of every player, respawning instead of elimination, ability switching,
+ * a gauge refill and a cooldown toggle. It ends with {@code /게임 중지} or when every player left.
  */
 public final class SuperpowerMatch implements GameInstance {
 
@@ -81,6 +93,9 @@ public final class SuperpowerMatch implements GameInstance {
     /** Outcome of {@link #assign(Player, String)}. */
     public enum AssignResult { APPLIED, NOT_STARTED, NOT_PARTICIPANT, TOO_LATE }
 
+    /** Outcome of the practice actions ({@link #switchAbility}, {@link #chargeUltimate}, {@link #placeDummies}). */
+    public enum PracticeResult { OK, NOT_PRACTICE, NOT_STARTED, NOT_PARTICIPANT, UNKNOWN_ABILITY, FAILED }
+
     private final SuperpowerGame game;
     private final GameSession session;
     private final Messages messages;
@@ -90,6 +105,12 @@ public final class SuperpowerMatch implements GameInstance {
     private final Map<UUID, Participant> participants = new LinkedHashMap<>();
     private final Map<UUID, RevealAnimation> reveals = new LinkedHashMap<>();
     private final Map<UUID, String> forced = new LinkedHashMap<>();
+    private final boolean practice;
+    /** Practice: where each player stands for its dummies and respawns. */
+    private final Map<UUID, Location> homes = new HashMap<>();
+    private @Nullable PracticeSettings practiceSettings;
+    private @Nullable TrainingDummies dummies;
+    private boolean cooldownsEnabled = true;
     private AbilityConfig.Snapshot abilities;
     private SuperpowerSettings settings;
     private @Nullable MatchContext ctx;
@@ -107,7 +128,16 @@ public final class SuperpowerMatch implements GameInstance {
     private int lastCountdown;
 
     public SuperpowerMatch(SuperpowerGame game, GameSession session) {
+        this(game, session, false);
+    }
+
+    /**
+     * @param practice true for a practice session ({@code /게임 능력 연습}); its settings come from
+     *                 {@code games.superpower} ({@link SuperpowerSettings#forPractice()}) and {@code games.practice}
+     */
+    public SuperpowerMatch(SuperpowerGame game, GameSession session, boolean practice) {
         this.game = game;
+        this.practice = practice;
         this.session = session;
         this.messages = game.messages();
         this.guard = new AbilityGuard(session.plugin().getLogger());
@@ -123,9 +153,11 @@ public final class SuperpowerMatch implements GameInstance {
     @Override
     public void start() {
         started = true;
-        settings = SuperpowerSettings.read(session.gameConfig(), logger());
+        settings = practice
+                ? SuperpowerSettings.read(game.hub().config().gameSection(SuperpowerGame.ID), logger()).forPractice()
+                : SuperpowerSettings.read(session.gameConfig(), logger());
         abilities = game.abilities().snapshot();
-        if (abilities.enabledIds().isEmpty()) {
+        if (!practice && abilities.enabledIds().isEmpty()) {
             session.abort(messages.get("match.no-abilities"));
             return;
         }
@@ -138,6 +170,10 @@ public final class SuperpowerMatch implements GameInstance {
         }
         border = new BorderController(session, settings);
         hud = new MatchHud(this);
+        if (practice) {
+            startPractice();
+            return;
+        }
         session.spreadParticipants();
         for (Player player : session.alivePlayers()) {
             Participant participant = new Participant(player);
@@ -203,6 +239,9 @@ public final class SuperpowerMatch implements GameInstance {
             reveals.remove(participant.id());
             revoke(participant);
         }
+        if (dummies != null) {
+            dummies.remove(player.getUniqueId());
+        }
     }
 
     @Override
@@ -261,6 +300,9 @@ public final class SuperpowerMatch implements GameInstance {
                 }
             }
             reveals.clear();
+            if (dummies != null) {
+                dummies.dispose();
+            }
         } finally {
             if (ctx != null) {
                 ctx.dispose();
@@ -450,14 +492,10 @@ public final class SuperpowerMatch implements GameInstance {
             if (player == null || id == null || !session.isInPlay(player)) {
                 continue;
             }
-            Ability ability = guard.call(id, "bind", () -> createAbility(id, player));
-            if (ability == null) {
+            if (!bind(participant, player, context)) {
                 messages.send(player, "fight.ability-error");
                 continue;
             }
-            participant.ability = ability;
-            context.openScope(participant.id());
-            ensureAbilityItem(participant, player);
             bound.add(participant);
         }
         for (Participant participant : bound) {
@@ -478,6 +516,36 @@ public final class SuperpowerMatch implements GameInstance {
                 Messages.tag("border", borderHint)));
         // Every ability is final now (rerolls and assignments end with the prep phase).
         sendSpectatorSummary();
+    }
+
+    /** Creates and binds the participant's ability (not granted yet); false if that failed. */
+    private boolean bind(Participant participant, Player player, MatchContext context) {
+        String id = participant.abilityId;
+        if (id == null) {
+            return false;
+        }
+        Ability ability = guard.call(id, "bind", () -> createAbility(id, player));
+        if (ability == null) {
+            return false;
+        }
+        participant.ability = ability;
+        context.openScope(participant.id());
+        ensureAbilityItem(participant, player);
+        return true;
+    }
+
+    /** Binds and grants the participant's ability right away (practice, ability switch); false if that failed. */
+    private boolean bindAndGrant(Participant participant, Player player) {
+        if (!bind(participant, player, context())) {
+            return false;
+        }
+        Ability ability = participant.ability;
+        if (ability == null) {
+            return false;
+        }
+        participant.granted = true;
+        guard.run(participant.abilityId, "onGrant", ability::onGrant);
+        return true;
     }
 
     private Ability createAbility(String id, Player player) {
@@ -511,6 +579,9 @@ public final class SuperpowerMatch implements GameInstance {
         }
         if (now % 5 == 0) {
             refreshSilences();
+        }
+        if (dummies != null && now % TrainingDummies.MAINTAIN_PERIOD == 0) {
+            dummies.tick(now);
         }
         if (now % 20 == 0) {
             secondTick();
@@ -567,6 +638,13 @@ public final class SuperpowerMatch implements GameInstance {
 
     private void checkWinner() {
         if (stopped || !session.isRunning()) {
+            return;
+        }
+        if (practice) {
+            // No winner in practice: it only ends with /게임 중지 or when every player left.
+            if (session.aliveIds().isEmpty()) {
+                session.abort(messages.get("practice.everyone-left"));
+            }
             return;
         }
         if (session.isTeamMode()) {
@@ -914,9 +992,12 @@ public final class SuperpowerMatch implements GameInstance {
             return result;
         }
         if (participant.ability == ability && session.isInPlay(player)) {
-            Double multiplier = guard.call(id, "cooldownMultiplier", ability::cooldownMultiplier);
-            participant.cooldown.start(fightTicks, params(id).cooldownSeconds(), multiplier == null ? 1.0 : multiplier);
-            showCooldown(participant, player);
+            if (cooldownsEnabled) {
+                Double multiplier = guard.call(id, "cooldownMultiplier", ability::cooldownMultiplier);
+                participant.cooldown.start(fightTicks, params(id).cooldownSeconds(),
+                        multiplier == null ? 1.0 : multiplier);
+                showCooldown(participant, player);
+            }
             // A quiet cue only: abilities show their own action-bar feedback, which must not be overwritten.
             Feedback.play(player, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.4f, 1.6f);
         }
@@ -1090,6 +1171,10 @@ public final class SuperpowerMatch implements GameInstance {
         }
         if (participant == null || !session.isAlive(target)) {
             return AssignResult.NOT_PARTICIPANT;
+        }
+        if (practice) {
+            return switchAbility(target, abilityId) == PracticeResult.OK ? AssignResult.APPLIED
+                    : AssignResult.NOT_PARTICIPANT;
         }
         switch (phase) {
             case INTRO -> {
@@ -1328,6 +1413,278 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
+    // =================================================================== practice
+
+    /** Practice start: every player keeps its spot, gets the kit and its ability and the fight begins right away. */
+    private void startPractice() {
+        PracticeSettings options = PracticeSettings.read(session.gameConfig());
+        practiceSettings = options;
+        cooldownsEnabled = options.cooldowns();
+        TrainingDummies created = new TrainingDummies(this, options);
+        dummies = created;
+        session.registerListener(created);
+        List<Player> players = session.alivePlayers();
+        for (Player player : players) {
+            Participant participant = new Participant(player);
+            participants.put(participant.id(), participant);
+            enterPractice(participant, player);
+        }
+        phase = MatchPhase.FIGHT;
+        phaseTicks = 0;
+        fightTicks = 0;
+        for (Player player : players) {
+            Participant participant = participants.get(player.getUniqueId());
+            if (participant != null) {
+                grantPractice(participant, player);
+            }
+            if (stopped) {
+                return;
+            }
+        }
+        session.title(messages.get("practice.title"), messages.get("practice.subtitle"));
+        session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 0.7f, 1.4f);
+        if (hud != null) {
+            hud.update();
+        }
+    }
+
+    /** A player enters the practice (start or late join): into the arena, kit, ability picked, XP bar. */
+    private void enterPractice(Participant participant, Player player) {
+        Location at = player.getLocation();
+        if (!session.arena().contains(at) || border().isOutside(at)) {
+            player.setFallDistance(0f);
+            player.teleport(session.safeSpot(session.arena().center()));
+        }
+        homes.put(participant.id(), player.getLocation());
+        giveKit(player);
+        participant.abilityId = practiceAbility(participant.id());
+        participant.forced = true;
+        participant.rerollsLeft = 0;
+        syncXp(participant, player);
+    }
+
+    /** Binds and grants the practice ability, tells the player and places its dummies. */
+    private void grantPractice(Participant participant, Player player) {
+        if (!bindAndGrant(participant, player)) {
+            messages.send(player, "fight.ability-error");
+        }
+        AbilityInfo info = info(participant.abilityId);
+        if (info != null) {
+            sendSummary(player, info, params(info));
+        }
+        messages.send(player, "practice.started", Messages.tag("count", practiceOptions().dummyCount()),
+                Messages.tag("cooldown", cooldownState()));
+        TrainingDummies training = dummies;
+        if (training != null && session.isInPlay(player)) {
+            training.place(player, practiceOptions().dummyCount());
+        }
+    }
+
+    /** The ability requested with {@code /게임 능력 연습 <능력>}, or a random one. */
+    private String practiceAbility(UUID player) {
+        String requested = game.takePracticeRequest(player);
+        if (requested != null && info(requested) != null) {
+            return requested;
+        }
+        List<String> pool = abilities.enabledIds();
+        if (pool.isEmpty()) {
+            pool = new ArrayList<>();
+            for (AbilityRegistry.Entry entry : game.registry().all()) {
+                pool.add(entry.info().id());
+            }
+        }
+        return pool.get(session.random().nextInt(pool.size()));
+    }
+
+    private PracticeSettings practiceOptions() {
+        if (practiceSettings == null) {
+            throw new IllegalStateException("Not a practice session");
+        }
+        return practiceSettings;
+    }
+
+    private Component cooldownState() {
+        return messages.get(cooldownsEnabled ? "practice.state-on" : "practice.state-off");
+    }
+
+    /** Practice: death is not the end, the player comes back at its spot (onRespawn re-equips). */
+    @Override
+    public DeathOutcome onDeath(Player victim, @Nullable Player killer, PlayerDeathEvent event) {
+        if (!practice) {
+            return DeathOutcome.eliminate();
+        }
+        Participant participant = participants.get(victim.getUniqueId());
+        if (participant != null) {
+            revoke(participant);
+        }
+        if (killer != null && phase == MatchPhase.FIGHT) {
+            Participant credited = participants.get(killer.getUniqueId());
+            Ability ability = credited == null ? null : credited.ability;
+            if (ability != null && session.isInPlay(killer)) {
+                guard.run(credited.abilityId, "onKill", () -> ability.onKill(victim));
+            }
+        }
+        Location home = homes.get(victim.getUniqueId());
+        return DeathOutcome.respawn(home != null && home.getWorld() != null ? home
+                : session.safeSpot(session.arena().center()));
+    }
+
+    /** Practice: back from a death with a fresh kit and the same ability (bound again). */
+    @Override
+    public void onRespawn(Player player) {
+        Participant participant = participants.get(player.getUniqueId());
+        if (!practice || participant == null || stopped || participant.abilityId == null) {
+            return;
+        }
+        player.getInventory().clear();
+        player.setItemOnCursor(null);
+        giveKit(player);
+        if (!bindAndGrant(participant, player)) {
+            messages.send(player, "fight.ability-error");
+        }
+        syncXp(participant, player);
+        messages.send(player, "practice.respawned");
+    }
+
+    /**
+     * Practice: players who ask with {@code /게임 능력 연습} join the running practice, and so do practicing players
+     * coming back after quitting. Anyone else (e.g. someone logging in) watches, as in every match.
+     */
+    @Override
+    public boolean allowLateJoin(Player player, boolean rejoining) {
+        boolean asked = game.takePracticeJoin(player.getUniqueId());
+        return practice && started && !stopped && (asked || rejoining);
+    }
+
+    @Override
+    public void onLateJoin(Player player) {
+        if (!practice || ctx == null || stopped) {
+            return;
+        }
+        Participant participant = participants.computeIfAbsent(player.getUniqueId(), id -> new Participant(player));
+        enterPractice(participant, player);
+        grantPractice(participant, player);
+    }
+
+    /** True for a practice session ({@code /게임 능력 연습}). */
+    public boolean isPractice() {
+        return practice;
+    }
+
+    /** True once {@link #start()} ran (false while the hub counts down). */
+    public boolean hasStarted() {
+        return started && !stopped;
+    }
+
+    /** Practice: whether active skills go on cooldown. */
+    public boolean cooldownsEnabled() {
+        return cooldownsEnabled;
+    }
+
+    private PracticeResult practiceCheck(Player player) {
+        if (!practice) {
+            return PracticeResult.NOT_PRACTICE;
+        }
+        if (!started || stopped || phase != MatchPhase.FIGHT) {
+            return PracticeResult.NOT_STARTED;
+        }
+        if (participants.get(player.getUniqueId()) == null || !session.isInPlay(player)) {
+            return PracticeResult.NOT_PARTICIPANT;
+        }
+        return PracticeResult.OK;
+    }
+
+    /** Practice: swaps the player's ability (old one revoked, new one bound and granted) and heals them. */
+    public PracticeResult switchAbility(Player player, String abilityId) {
+        PracticeResult check = practiceCheck(player);
+        if (check != PracticeResult.OK) {
+            return check;
+        }
+        AbilityInfo info = info(abilityId);
+        if (info == null) {
+            return PracticeResult.UNKNOWN_ABILITY;
+        }
+        if (!replaceAbility(player, abilityId)) {
+            return PracticeResult.FAILED;
+        }
+        if (session.isInPlay(player)) {
+            player.setHealth(MatchContext.maxHealth(player));
+            player.setFireTicks(0);
+        }
+        Participant participant = participants.get(player.getUniqueId());
+        if (participant != null) {
+            syncXp(participant, player);
+        }
+        sendSummary(player, info, params(info));
+        return PracticeResult.OK;
+    }
+
+    /** Practice: fills the player's ultimate gauge (and lifts the post-ultimate lock). */
+    public PracticeResult chargeUltimate(Player player) {
+        PracticeResult check = practiceCheck(player);
+        if (check != PracticeResult.OK) {
+            return check;
+        }
+        Participant participant = participants.get(player.getUniqueId());
+        if (participant == null) {
+            return PracticeResult.NOT_PARTICIPANT;
+        }
+        participant.gaugeLockedUntil = 0;
+        if (participant.gauge.isFull()) {
+            syncXp(participant, player);
+        } else {
+            addGauge(participant, UltimateGauge.MAX - participant.gauge.value());
+        }
+        return PracticeResult.OK;
+    }
+
+    /** Practice: turns active cooldowns on or off for everyone (off also clears the running ones). */
+    public PracticeResult setCooldownsEnabled(boolean enabled) {
+        if (!practice) {
+            return PracticeResult.NOT_PRACTICE;
+        }
+        cooldownsEnabled = enabled;
+        if (!enabled && started) {
+            for (Participant participant : participants.values()) {
+                participant.cooldown.reset();
+                Player player = participant.player();
+                if (player != null && session.isInPlay(player)) {
+                    showCooldown(participant, player);
+                }
+            }
+        }
+        return PracticeResult.OK;
+    }
+
+    /** Practice: places {@code count} fresh dummies in front of the player (its respawn spot moves there too). */
+    public PracticeResult placeDummies(Player player, int count) {
+        PracticeResult check = practiceCheck(player);
+        TrainingDummies training = dummies;
+        if (check != PracticeResult.OK || training == null) {
+            return check == PracticeResult.OK ? PracticeResult.FAILED : check;
+        }
+        homes.put(player.getUniqueId(), player.getLocation());
+        return training.place(player, count) > 0 ? PracticeResult.OK : PracticeResult.FAILED;
+    }
+
+    /** Practice: the live training dummies placed for {@code player} (empty outside practice). */
+    public List<Mannequin> dummiesOf(Player player) {
+        TrainingDummies training = dummies;
+        return training == null ? List.of() : training.of(player.getUniqueId());
+    }
+
+    /** Practice: true for a live training dummy of this session. */
+    public boolean isDummy(@Nullable Entity entity) {
+        TrainingDummies training = dummies;
+        return training != null && training.isDummy(entity);
+    }
+
+    /** Live training dummies (enemy candidates), empty outside practice. */
+    List<LivingEntity> liveDummies() {
+        TrainingDummies training = dummies;
+        return training == null ? List.of() : training.live();
+    }
+
     // =================================================================== accessors
 
     SuperpowerGame game() {
@@ -1456,24 +1813,26 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
-    /** Used by tests and debugging: replaces the bound ability of a fighting participant (revoke, bind, grant). */
+    /**
+     * Replaces the bound ability of a fighting participant (revoke, bind, grant): the practice ability switch, tests
+     * and debugging. The damage the player had taken stays the same, so a passive that changed max health (the
+     * titan's bonus, the pixie's penalty) neither leaves its clamped health behind nor hands out free health.
+     */
     public boolean replaceAbility(Player player, String abilityId) {
         Participant participant = participants.get(player.getUniqueId());
-        if (participant == null || phase != MatchPhase.FIGHT || !session.isInPlay(player) || info(abilityId) == null) {
+        if (stopped || participant == null || phase != MatchPhase.FIGHT || !session.isInPlay(player)
+                || info(abilityId) == null) {
             return false;
         }
+        double missing = Math.max(0.0, MatchContext.maxHealth(player) - player.getHealth());
         revoke(participant);
         participant.abilityId = abilityId;
-        Ability ability = guard.call(abilityId, "bind", () -> createAbility(abilityId, player));
-        if (ability == null) {
-            return false;
+        boolean bound = bindAndGrant(participant, player);
+        if (!player.isDead() && session.isInPlay(player)) {
+            double max = MatchContext.maxHealth(player);
+            player.setHealth(Math.max(Math.min(1.0, max), Math.min(max, max - missing)));
         }
-        participant.ability = ability;
-        context().openScope(participant.id());
-        ensureAbilityItem(participant, player);
-        participant.granted = true;
-        guard.run(abilityId, "onGrant", ability::onGrant);
-        return true;
+        return bound;
     }
 
     /** Sets the gauge of a participant (tests/debugging); triggers the "ready" notification when it fills. */

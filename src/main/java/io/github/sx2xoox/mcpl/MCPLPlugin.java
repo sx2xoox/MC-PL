@@ -29,7 +29,10 @@ public class MCPLPlugin extends JavaPlugin {
 
     /** Registers the built-in mini-games. Add new modes here. */
     private void registerGames(GameManager games) {
-        games.register(new SuperpowerGame(hub));
+        SuperpowerGame superpower = new SuperpowerGame(hub);
+        games.register(superpower);
+        // 능력 연습 (solo practice of the superpower abilities); not in the default rotation.
+        games.register(superpower.practice());
     }
 
     @Override

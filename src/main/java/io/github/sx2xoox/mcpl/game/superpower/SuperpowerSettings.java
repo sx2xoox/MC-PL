@@ -89,6 +89,18 @@ public record SuperpowerSettings(
         kit = List.copyOf(kit);
     }
 
+    /**
+     * These settings for a practice session ({@code /게임 능력 연습}): no reveal, prep phase or rerolls, no time limit
+     * and a border that never shrinks. Kit, gauge, effects and the ability item stay as configured, so abilities
+     * behave and look exactly like in a real match.
+     */
+    public SuperpowerSettings forPractice() {
+        return new SuperpowerSettings(SelectionMode.RANDOM, 0, 0, choiceTicks, 0, 0, kit, gaugePerDamageDealt,
+                gaugePerDamageTaken, gaugePerSecond, announceUltimates, ultimateLockTicks, borderDelayTicks,
+                borderShrinkTicks, Double.MAX_VALUE, borderDamagePerSecond, showAbilityInKillFeed, abilityItemMaterial,
+                particleScale);
+    }
+
     /** The kit as fresh copies, safe to put into an inventory. */
     public List<ItemStack> kitCopy() {
         List<ItemStack> copy = new ArrayList<>(kit.size());
