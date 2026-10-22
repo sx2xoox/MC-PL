@@ -121,9 +121,9 @@ public final class GrappleAbility extends Ability {
     private static final double LINK_LENGTH = 0.9;
     /** Chain links are this much thicker than the block model, so they read on a stream. */
     private static final float LINK_THICKNESS = 1.5f;
-    private static final int HOOK_LINKS = 14;
-    /** All ultimate chains together use at most this many links (2 to 6 per chain). */
-    private static final int BIND_LINKS = 18;
+    private static final int HOOK_LINKS = 12;
+    /** All ultimate chains together use about this many links (2 to 6 per chain). */
+    private static final int BIND_LINKS = 12;
     private static final double MAX_SAG = 1.4;
     /** The ultimate's chains need this long to reach their targets. */
     private static final long CHAIN_SHOOT_TICKS = 3;

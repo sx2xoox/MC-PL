@@ -536,7 +536,6 @@ public final class BlinkAbility extends Ability {
                     ItemStack.of(Material.AMETHYST_SHARD), Displays.centered(0, 0, 0, 0.01f, 0.01f, 0.01f, 0, 0, 0),
                     duration + 5);
             shard.setBillboard(Display.Billboard.CENTER);
-            Displays.outline(shard, PALETTE.body());
             Displays.animateNextTick(ctx(), owner, shard, Displays.centered(0, 0, 0, 0.5f, 0.5f, 0.5f, 0, 0, 0), 4);
             shards.add(shard);
         }

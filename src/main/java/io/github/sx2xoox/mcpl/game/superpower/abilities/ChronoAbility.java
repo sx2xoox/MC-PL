@@ -465,7 +465,7 @@ public final class ChronoAbility extends Ability {
     private record Frozen(LivingEntity entity, Location pin, TextDisplay label, @Nullable ItemDisplay clock,
                           List<NamespacedKey> modifiers) {
 
-        /** Removes the label and the still clock. */
+        /** Removes the label and the still clock at once. */
         void removeDisplays() {
             if (label.isValid()) {
                 label.remove();
@@ -592,10 +592,23 @@ public final class ChronoAbility extends Ability {
 
         private void resume() {
             for (Frozen f : frozen) {
-                f.removeDisplays();
                 LivingEntity entity = f.entity();
                 if (!Combat.isTargetable(ctx(), player(), entity)) {
+                    f.removeDisplays();
                     continue;
+                }
+                if (f.label().isValid()) {
+                    f.label().remove();
+                }
+                // The still clock starts again: one quick turn as it shrinks away.
+                ItemDisplay clock = f.clock();
+                if (clock != null && clock.isValid()) {
+                    Displays.animate(clock, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, 0, 0, 140), 3);
+                    ctx().runLater(player(), 3, () -> {
+                        if (clock.isValid()) {
+                            Displays.shrinkAway(ctx(), player(), clock, 4);
+                        }
+                    });
                 }
                 // Time flows again: the shell breaks into light.
                 Location body = flat(entity.getLocation().add(0, entity.getHeight() * 0.5, 0));
