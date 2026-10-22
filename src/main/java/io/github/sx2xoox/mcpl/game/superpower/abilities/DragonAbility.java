@@ -148,7 +148,7 @@ public final class DragonAbility extends Ability {
     private static final int WING_FOLD_TICKS = 8;
 
     private final LandingGuard landing = new LandingGuard();
-    private long lastScaleFx = Long.MIN_VALUE;
+    private long lastScaleFx = Long.MIN_VALUE / 2;
     private boolean breathing;
     private boolean flying;
     private boolean descending;

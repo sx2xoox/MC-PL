@@ -20,9 +20,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import net.kyori.adventure.text.format.TextColor;
-import net.kyori.adventure.util.TriState;
 import org.bukkit.Color;
-import org.bukkit.Difficulty;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -39,7 +37,7 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Slime;
+import org.bukkit.entity.Frog;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BoundingBox;
@@ -104,12 +102,17 @@ public final class SlimeAbility extends Ability {
     private static final double MIN_BOUNCE = 0.6;
 
     // Little slimes
-    private static final int SLIME_SIZE = 1;
-    private static final double SLIME_SCALE = 1.6;
-    /** Width of a little slime at {@link #SLIME_SCALE} (vanilla size-1 slimes are 0.52 wide). */
-    private static final double SLIME_WIDTH = 0.52 * SLIME_SCALE;
+    private static final double SLIME_SCALE = 1.3;
+    /** Hitbox width of a little slime: its carrier (a frog, 0.5 wide) at {@link #SLIME_SCALE}. */
+    private static final double SLIME_WIDTH = 0.5 * SLIME_SCALE;
+    private static final float JELLY_SIZE = 0.62f;
+    private static final float EYE_WIDTH = 0.1f;
+    private static final float EYE_HEIGHT = 0.13f;
+    private static final float EYE_GAP = 0.13f;
+    /** Height of the eyes on the jelly, as a share of its height. */
+    private static final float EYE_LEVEL = 0.62f;
     private static final double SPAWN_DISTANCE = 1.6;
-    private static final long CONTROL_PERIOD = 2;
+    private static final long CONTROL_PERIOD = 1;
     private static final long HOP_INTERVAL = 12;
     private static final double HOP_UP = 0.42;
     private static final double AIR_DRAG = 0.91;
@@ -139,6 +142,7 @@ public final class SlimeAbility extends Ability {
     private static final Particle.DustOptions GOLD = new Particle.DustOptions(Color.fromRGB(0xFFD54F), 0.8f);
     private static final BlockData SLIME_BLOCK = Material.SLIME_BLOCK.createBlockData();
     private static final BlockData LIME_GLASS = Material.LIME_STAINED_GLASS.createBlockData();
+    private static final BlockData EYE = Material.BLACK_CONCRETE.createBlockData();
     private static final int MAX_DISPLAYS = 24;
     private static final int SPLASH_CUBES = 8;
     private static final int CUBE_FLIGHT_TICKS = 7;
@@ -240,12 +244,12 @@ public final class SlimeAbility extends Ability {
         for (int i = 0; i < count; i++) {
             double angle = count == 1 ? 0 : -50 + 100.0 * i / (count - 1);
             Location spot = findSpot(origin, angle);
-            Slime body = spawnSlime(spot);
+            Frog body = spawnCarrier(spot);
             if (body == null) {
                 continue;
             }
             spawned++;
-            LittleSlime slime = new LittleSlime(body, lifetime, aimed);
+            LittleSlime slime = new LittleSlime(body, lifetime, aimed, spot.getYaw());
             slimes.add(slime);
             slime.start();
             Location blob = spot.clone().add(0, 0.4, 0);
@@ -309,48 +313,94 @@ public final class SlimeAbility extends Ability {
         return self;
     }
 
-    private @Nullable Slime spawnSlime(Location at) {
+    /**
+     * The little slime's body: an invisible, silent frog (a small hitbox enemies can hit and kill, with physics but
+     * no AI of its own) wearing a jelly body made of display entities.
+     */
+    private @Nullable Frog spawnCarrier(Location at) {
         double health = Math.max(1, params().num("slime_health"));
-        boolean peaceful = at.getWorld().getDifficulty() == Difficulty.PEACEFUL;
-        Slime slime = at.getWorld().spawn(at, Slime.class, spawned -> {
+        Frog frog = at.getWorld().spawn(at, Frog.class, spawned -> {
             spawned.setPersistent(false);
-            spawned.setSize(SLIME_SIZE);
-            spawned.setWander(false);
-            // The controller drives every hop: no vanilla AI goals, physics only.
+            spawned.setInvisible(true);
+            spawned.setSilent(true);
+            // The controller drives every hop: no vanilla AI (frogs would eat small slimes), physics only.
             spawned.setAware(false);
-            if (peaceful) {
-                // Vanilla removes slimes on Peaceful right away.
-                spawned.setDespawnInPeacefulOverride(TriState.FALSE);
-            }
             setBase(spawned, Attribute.SCALE, SLIME_SCALE);
             setBase(spawned, Attribute.MAX_HEALTH, health);
             spawned.setHealth(Math.min(health, Combat.maxHealth(spawned)));
         });
-        if (!slime.isValid()) {
+        if (!frog.isValid()) {
             return null;
         }
-        ctx().summon(player(), slime);
-        return slime;
+        ctx().summon(player(), frog);
+        return frog;
     }
 
-    /** One little slime and the controller that hops it after its prey until it bursts or its time runs out. */
+    /**
+     * One little slime: its carrier, its jelly body (a translucent slime cube with two dark eyes that stretches when
+     * it hops and squashes when it lands) and the controller that hops it after its prey until it bursts, melts or is
+     * killed.
+     */
     private final class LittleSlime {
-        private final Slime body;
+        private final Frog body;
         private final long expiresAt;
+        private final @Nullable BlockDisplay jelly;
+        private final @Nullable BlockDisplay leftEye;
+        private final @Nullable BlockDisplay rightEye;
         private @Nullable LivingEntity prey;
         private long nextHop;
         private boolean gone;
+        private boolean airborne;
+        private double lastHealth;
+        private float yaw;
+        private int squash;
+        private int stretch;
+        private float shownX = -1;
+        private float shownY = -1;
+        private Location lastSeen;
 
-        LittleSlime(Slime body, long lifetime, @Nullable LivingEntity prey) {
+        LittleSlime(Frog body, long lifetime, @Nullable LivingEntity prey, float yaw) {
             this.body = body;
             this.expiresAt = ctx().currentTick() + lifetime;
             this.prey = prey;
-            this.nextHop = ctx().currentTick() + 2 + ThreadLocalRandom.current().nextInt(4);
+            this.yaw = yaw;
+            this.nextHop = ctx().currentTick() + 3 + ThreadLocalRandom.current().nextInt(5);
+            this.lastHealth = body.getHealth();
+            this.lastSeen = body.getLocation();
+            Player owner = player();
+            long skinLife = lifetime + 12;
+            int parts = reserveDisplays(3, skinLife) ? 3 : reserveDisplays(1, skinLife) ? 1 : 0;
+            Location at = skinAnchor();
+            this.jelly = parts > 0 ? Displays.block(ctx(), owner, at, SLIME_BLOCK, jellyShape(0.2f, 0.2f), skinLife)
+                    : null;
+            this.leftEye = parts > 1 ? Displays.block(ctx(), owner, at, EYE, eyeShape(true, 0.2f, 0.2f), skinLife)
+                    : null;
+            this.rightEye = parts > 1 ? Displays.block(ctx(), owner, at, EYE, eyeShape(false, 0.2f, 0.2f), skinLife)
+                    : null;
+            if (jelly == null) {
+                // No budget left for a jelly body: show the carrier itself rather than an invisible enemy.
+                body.setInvisible(false);
+            }
+            for (BlockDisplay part : skin()) {
+                part.setTeleportDuration(1);
+            }
+            // Pops out of the owner: grows from a blob into a full slime.
+            stretch = 3;
+        }
+
+        private List<BlockDisplay> skin() {
+            List<BlockDisplay> parts = new ArrayList<>(3);
+            for (BlockDisplay part : new BlockDisplay[] {jelly, leftEye, rightEye}) {
+                if (part != null) {
+                    parts.add(part);
+                }
+            }
+            return parts;
         }
 
         void start() {
-            long runs = (expiresAt - ctx().currentTick()) / CONTROL_PERIOD + 1;
-            Loop.repeat(ctx(), player(), CONTROL_PERIOD, CONTROL_PERIOD, runs, this::control, () -> pop(false));
+            long runs = expiresAt - ctx().currentTick() + 1;
+            Loop.repeat(ctx(), player(), 1, CONTROL_PERIOD, runs, this::control, () -> pop(false));
         }
 
         private boolean control(long run) {
@@ -358,15 +408,20 @@ public final class SlimeAbility extends Ability {
                 return false;
             }
             if (!body.isValid() || body.isDead()) {
-                gone = true;
-                slimes.remove(this);
+                killed();
                 return false;
             }
+            lastSeen = body.getLocation();
             long now = ctx().currentTick();
             if (now >= expiresAt) {
                 return false;
             }
             Player owner = player();
+            double health = body.getHealth();
+            if (health < lastHealth - 1.0E-3) {
+                hurt();
+            }
+            lastHealth = health;
             BoundingBox reach = body.getBoundingBox().expand(CONTACT_GAP);
             for (LivingEntity enemy : ctx().enemiesNear(owner, Fx.body(body), 2.0)) {
                 if (enemy.getBoundingBox().overlaps(reach)) {
@@ -374,14 +429,18 @@ public final class SlimeAbility extends Ability {
                     return false;
                 }
             }
-            LivingEntity target = chooseTarget(owner);
             boolean grounded = Motion.isGrounded(body) || body.isInWater();
+            if (grounded && airborne) {
+                land();
+            }
+            airborne = !grounded;
             if (grounded && now >= nextHop) {
-                hop(owner, target);
+                hop(owner, chooseTarget(owner));
                 nextHop = now + HOP_INTERVAL;
-            } else if (!grounded && run % 2 == 0) {
+            } else if (airborne && run % 3 == 0) {
                 Vfx.dot(Fx.body(body), Particle.DUST, GOO_SMALL, false);
             }
+            follow(run);
             return true;
         }
 
@@ -417,8 +476,9 @@ public final class SlimeAbility extends Ability {
                     && owner.getLocation().distanceSquared(from) > FOLLOW_DISTANCE * FOLLOW_DISTANCE) {
                 goal = owner.getLocation();
             } else {
-                // Idle: a little hop on the spot.
+                // Idle: a little bounce on the spot.
                 body.setVelocity(new Vector(0, HOP_UP * 0.6, 0));
+                stretch = 2;
                 return;
             }
             Vector flat = goal.toVector().subtract(from.toVector()).setY(0);
@@ -432,13 +492,80 @@ public final class SlimeAbility extends Ability {
             long air = airTicks(HOP_UP);
             double speed = stride * (1 - AIR_DRAG) / (1 - Math.pow(AIR_DRAG, air));
             body.setVelocity(Motion.clamp(flat.clone().multiply(speed).setY(HOP_UP), MAX_VELOCITY));
-            float yaw = (float) Math.toDegrees(Math.atan2(-flat.getX(), flat.getZ()));
+            yaw = (float) Math.toDegrees(Math.atan2(-flat.getX(), flat.getZ()));
             body.setRotation(yaw, 0);
+            stretch = 3;
             Location feet = from.clone().add(0, 0.05, 0);
             feet.getWorld().spawnParticle(Particle.ITEM_SLIME, feet, Vfx.n(ctx(), 4), 0.2, 0.02, 0.2, 0.05);
             Vfx.ring(ctx(), feet, SLIME_WIDTH * 0.6, 6, ThreadLocalRandom.current().nextDouble(TAU), Particle.DUST,
                     GOO_SMALL, false);
             Fx.sound(from, Sound.ENTITY_SLIME_JUMP_SMALL, 0.6f, 1.1f + Fx.jitter(0.15f));
+        }
+
+        /** Touch-down: the jelly squashes flat for a moment with a soft squelch. */
+        private void land() {
+            squash = 3;
+            Location feet = body.getLocation().add(0, 0.05, 0);
+            Vfx.ring(ctx(), feet, SLIME_WIDTH * 0.7, 6, ThreadLocalRandom.current().nextDouble(TAU), Particle.DUST,
+                    GOO_SMALL, false);
+            Fx.sound(feet, Sound.ENTITY_SLIME_SQUISH_SMALL, 0.5f, 1.2f + Fx.jitter(0.15f));
+        }
+
+        /** Something hit the little slime: it wobbles and spits goo. */
+        private void hurt() {
+            squash = 2;
+            Location center = Fx.body(body);
+            Vfx.cloud(ctx(), center, Particle.ITEM_SLIME, 6, 0.25, 0.05, null, false);
+            Fx.sound(center, Sound.ENTITY_SLIME_HURT_SMALL, 0.8f, 1.0f + Fx.jitter(0.15f));
+        }
+
+        /** The jelly body follows its carrier and plays its squash-and-stretch. */
+        private void follow(long run) {
+            Location at = skinAnchor();
+            float sx;
+            float sy;
+            if (squash > 0) {
+                squash--;
+                sx = 1.3f;
+                sy = 0.62f;
+            } else if (stretch > 0) {
+                stretch--;
+                sx = 0.8f;
+                sy = 1.3f;
+            } else if (airborne) {
+                sx = 0.92f;
+                sy = 1.1f;
+            } else {
+                // Breathing jiggle while it waits for the next hop.
+                double wobble = Math.sin(run * 0.6) * 0.04;
+                sx = (float) (1 + wobble);
+                sy = (float) (1 - wobble);
+            }
+            boolean reshape = Math.abs(sx - shownX) > 1.0E-3 || Math.abs(sy - shownY) > 1.0E-3;
+            shownX = sx;
+            shownY = sy;
+            if (jelly != null && jelly.isValid()) {
+                jelly.teleport(at);
+                if (reshape) {
+                    Displays.animate(jelly, jellyShape(sx, sy), 2);
+                }
+            }
+            for (boolean left : new boolean[] {true, false}) {
+                BlockDisplay eye = left ? leftEye : rightEye;
+                if (eye != null && eye.isValid()) {
+                    eye.teleport(at);
+                    if (reshape) {
+                        Displays.animate(eye, eyeShape(left, sx, sy), 2);
+                    }
+                }
+            }
+        }
+
+        private Location skinAnchor() {
+            Location at = body.getLocation();
+            at.setYaw(yaw);
+            at.setPitch(0);
+            return at;
         }
 
         /** The slime is done: it bursts in a splash of goo ({@code burst}) or just melts away. */
@@ -448,19 +575,60 @@ public final class SlimeAbility extends Ability {
             }
             gone = true;
             slimes.remove(this);
-            if (!body.isValid()) {
-                return;
+            Location center = body.isValid() ? Fx.body(body) : lastSeen.clone().add(0, 0.3, 0);
+            if (body.isValid()) {
+                body.remove();
             }
-            Location center = Fx.body(body);
-            body.remove();
             if (burst) {
+                removeSkin(0);
                 burst(center);
             } else {
+                removeSkin(6);
                 Vfx.cloud(ctx(), center, Particle.ITEM_SLIME, 8, 0.25, 0.05, null, false);
                 Vfx.cloud(ctx(), center, Particle.DUST, 5, 0.2, 0, GOO_SMALL, false);
                 Fx.sound(center, Sound.ENTITY_SLIME_DEATH_SMALL, 0.6f, 1.2f + Fx.jitter(0.1f));
             }
         }
+
+        /** An enemy killed the little slime: it splatters harmlessly. */
+        private void killed() {
+            gone = true;
+            slimes.remove(this);
+            removeSkin(0);
+            Location center = lastSeen.clone().add(0, 0.3, 0);
+            center.getWorld().spawnParticle(Particle.BLOCK, center, Vfx.n(ctx(), 10), 0.25, 0.2, 0.25, 0.1,
+                    SLIME_BLOCK);
+            Vfx.cloud(ctx(), center, Particle.ITEM_SLIME, 10, 0.3, 0.08, null, false);
+            Fx.sound(center, Sound.ENTITY_SLIME_DEATH_SMALL, 0.9f, 0.9f + Fx.jitter(0.1f));
+        }
+
+        private void removeSkin(int fadeTicks) {
+            for (BlockDisplay part : skin()) {
+                if (!part.isValid()) {
+                    continue;
+                }
+                if (fadeTicks > 0) {
+                    Displays.shrinkAway(ctx(), player(), part, fadeTicks);
+                } else {
+                    part.remove();
+                }
+            }
+        }
+    }
+
+    /** The jelly cube, {@code sx} wide and {@code sy} tall (relative), standing on the carrier's feet. */
+    private static Transformation jellyShape(float sx, float sy) {
+        float width = JELLY_SIZE * sx;
+        float height = JELLY_SIZE * sy;
+        return Displays.transform(0, height / 2, 0, width, height, width, 0, 0, 0);
+    }
+
+    /** One eye on the jelly's front face (local +Z is the facing), following the jelly's squash and stretch. */
+    private static Transformation eyeShape(boolean left, float sx, float sy) {
+        float width = JELLY_SIZE * sx;
+        float height = JELLY_SIZE * sy;
+        return Displays.transform((left ? EYE_GAP : -EYE_GAP) * sx, height * EYE_LEVEL, width / 2 + 0.012f,
+                EYE_WIDTH * sx, EYE_HEIGHT * sy, 0.02f, 0, 0, 0);
     }
 
     /** A little slime bursts: every enemy around takes damage and gets stuck in goo for a moment. */
@@ -546,7 +714,7 @@ public final class SlimeAbility extends Ability {
         private long airTicks;
         private double peakY;
         private double lastY;
-        private long lastSlam = Long.MIN_VALUE;
+        private long lastSlam = Long.MIN_VALUE / 2;
         private int squash;
 
         King(double baseScale) {

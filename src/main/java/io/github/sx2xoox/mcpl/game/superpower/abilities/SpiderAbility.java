@@ -135,7 +135,7 @@ public final class SpiderAbility extends Ability {
 
     private final Map<UUID, Long> boundUntil = new HashMap<>();
     private boolean wasClimbing;
-    private long lastClimbFx = Long.MIN_VALUE;
+    private long lastClimbFx = Long.MIN_VALUE / 2;
     private int liveDisplays;
     private @Nullable Nest nest;
 
