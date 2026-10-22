@@ -36,6 +36,7 @@ import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
@@ -71,13 +72,13 @@ public final class OctopusAbility extends Ability {
             .difficulty(2)
             .passive("먹물",
                     "적에게 공격받으면 {ink_chance}% 확률로 먹물을 뿜어 {ink_stealth}초간 적의 눈에서 사라지고 이동 속도가 "
-                            + "{ink_speed}% 빨라집니다. 공격하면 모습이 드러나며, 한 번 뿜은 뒤 {ink_cooldown}초 동안은 다시 "
-                            + "뿜지 않습니다.")
+                            + "{ink_speed}% 빨라집니다. 공격이 적중하면 모습이 드러나며, 한 번 뿜은 뒤 {ink_cooldown}초 동안은 "
+                            + "다시 뿜지 않습니다.")
             .active("먹물 발사",
                     "바라보는 방향으로 먹물 덩어리를 쏩니다({shot_range}블록). 처음 맞은 적이나 벽·땅에서 터져 반경 "
                             + "{splash_radius}블록의 적에게 {shot_damage} 피해를 주고 {shot_blind}초간 실명시키며, "
-                            + "{puddle_duration}초간 반경 {puddle_radius}블록의 미끄러운 먹물 웅덩이를 남깁니다. 웅덩이 위의 "
-                            + "적은 이동 속도가 {puddle_slow}% 느려지고, 움직이면 미끄러집니다.",
+                            + "{puddle_duration}초간 반경 {puddle_radius}블록의 미끄러운 먹물 웅덩이를 남깁니다. 웅덩이를 딛고 "
+                            + "선 적은 이동 속도가 {puddle_slow}% 느려지고, 걸으면 발이 옆으로 미끄러져 휘청입니다.",
                     9)
             .ultimate("크라켄",
                     "발밑에 반경 {kraken_radius}블록의 먹물 바다를 펼치고, {kraken_delay}초 뒤 촉수 {tentacles}개가 "
@@ -89,11 +90,11 @@ public final class OctopusAbility extends Ability {
             .param("ink_speed", 30)
             .param("ink_cooldown", 10)
             .param("shot_range", 20)
-            .param("splash_radius", 2)
+            .param("splash_radius", 1.5)
             .param("shot_damage", 4)
-            .param("shot_blind", 1.5)
-            .param("puddle_duration", 5)
-            .param("puddle_radius", 2.5)
+            .param("shot_blind", 2)
+            .param("puddle_duration", 4)
+            .param("puddle_radius", 3)
             .param("puddle_slow", 30)
             .param("kraken_radius", 7)
             .param("kraken_delay", 0.75)
@@ -106,7 +107,6 @@ public final class OctopusAbility extends Ability {
             .build();
 
     private static final String COLOR_TAG = "#B07CF0";
-    private static final String CORAL_TAG = "#FF8F7A";
     private static final double TAU = Math.PI * 2;
 
     // ------------------------------------------------------------------ look
@@ -129,8 +129,16 @@ public final class OctopusAbility extends Ability {
     private static final float[] TENTACLE_WIDTHS = {0.55f, 0.42f, 0.28f};
     /** Where the segments' joints sit on the tentacle's curve (0 = root, 1 = tip). */
     private static final double[] JOINTS = {0, 0.4, 0.72, 1};
+    /** A slimmer tentacle of two segments (root and sucker tip), used when the display budget is short. */
+    private static final Material[] SHORT_TENTACLE_BLOCKS = {Material.PURPLE_CONCRETE, Material.BRAIN_CORAL_BLOCK};
+    private static final float[] SHORT_TENTACLE_WIDTHS = {0.55f, 0.34f};
+    private static final double[] SHORT_JOINTS = {0, 0.55, 1};
 
     private static final double MAX_SPEED = 2.0;
+    /** At most this many of this octopus's displays are alive at once (the kraken's tentacles come first). */
+    private static final int DISPLAY_BUDGET = 24;
+    private static final long MAX_LAG_TICKS = 8;
+    private static final double MILLIS_PER_TICK = 50.0;
 
     // ------------------------------------------------------------------ passive: ink cloud
     private static final double AGGRO_RANGE = 24;
@@ -152,8 +160,9 @@ public final class OctopusAbility extends Ability {
     private static final long PUDDLE_EFFECT_PERIOD = 2;
     /** Moving more than this in one effect period counts as moving (and makes the enemy skid). */
     private static final double SLIP_MIN_STEP = 0.1;
-    private static final double SLIP_PUSH = 0.55;
-    private static final double SLIP_TWIST_DEGREES = 30;
+    /** A skid throws the feet sideways, off the line the enemy walks, and robs a little of its stride. */
+    private static final double SLIP_SIDE = 0.35;
+    private static final double SLIP_BACK = 0.15;
     private static final long SLIP_COOLDOWN = 12;
     private static final int PUDDLE_GROW_TICKS = 5;
     private static final int PUDDLE_FADE_TICKS = 10;
@@ -180,11 +189,13 @@ public final class OctopusAbility extends Ability {
     private static final double LASH_LIFT = 0.3;
     /** A held enemy dragged further than this from where the tentacle holds it slips free. */
     private static final double HOLD_LEASH = 2.5;
-    private static final double STEER_GAIN = 0.5;
     private static final double ROOT_DEPTH = 0.45;
+    /** Size of the probe that makes sure a ground ray does not start inside a block. */
+    private static final double PROBE_SIZE = 0.1;
     private static final float ANCHOR_LIFT = 0.05f;
 
     private final Stealth stealth = new Stealth();
+    private final List<Display> live = new ArrayList<>();
     private long nextInk = Long.MIN_VALUE / 2; // "/ 2": now - this must not overflow
     private @Nullable Puddle puddle;
     private @Nullable Kraken kraken;
@@ -202,6 +213,18 @@ public final class OctopusAbility extends Ability {
         reveal(Reveal.REVOKE);
         puddle = null;
         kraken = null;
+        live.clear();
+    }
+
+    /** How many more displays fit in this octopus's display budget. */
+    private int room() {
+        live.removeIf(display -> !display.isValid());
+        return Math.max(0, DISPLAY_BUDGET - live.size());
+    }
+
+    private <T extends Display> T keep(T display) {
+        live.add(display);
+        return display;
     }
 
     // ------------------------------------------------------------------ passive: ink cloud
@@ -272,13 +295,14 @@ public final class OctopusAbility extends Ability {
 
         Location center = chest.clone();
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        for (int i = 0; i < CLOUD_PUFFS; i++) {
+        int puffs = Math.min(CLOUD_PUFFS, room());
+        for (int i = 0; i < puffs; i++) {
             Quaternionf turn = new Quaternionf().rotateXYZ(random.nextFloat() * 6.28f, random.nextFloat() * 6.28f,
                     random.nextFloat() * 6.28f);
             Location at = center.clone().add(random.nextDouble(-0.3, 0.3), random.nextDouble(-0.2, 0.3),
                     random.nextDouble(-0.3, 0.3));
-            BlockDisplay puff = Displays.block(ctx(), owner, at, CLOUD_GLASS.createBlockData(), cubePose(0.3f, turn),
-                    CLOUD_TICKS + 4);
+            BlockDisplay puff = keep(Displays.block(ctx(), owner, at, CLOUD_GLASS.createBlockData(),
+                    cubePose(0.3f, turn), CLOUD_TICKS + 4));
             float size = 1.3f + 0.25f * i;
             Displays.animateNextTick(ctx(), owner, puff, cubePose(size, new Quaternionf(turn).rotateY(0.6f)), 6);
             ctx().runLater(owner, 8 + 2L * i, () -> {
@@ -300,10 +324,10 @@ public final class OctopusAbility extends Ability {
         });
     }
 
-    /** Attacking from the ink shows the octopus again. */
+    /** A hit landed from the ink shows the octopus again (a dodged or blocked one does not). */
     @Override
-    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (!event.isCancelled() && stealth.isActive()) {
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (stealth.isActive()) {
             reveal(Reveal.ATTACK);
         }
     }
@@ -400,12 +424,14 @@ public final class OctopusAbility extends Ability {
             Vector direction = velocity.clone().normalize();
             Location muzzle = position.clone().add(direction.clone().multiply(0.6)).subtract(0, 0.25, 0);
             long life = (long) Math.ceil(range / SHOT_SPEED) + SHOT_EXTRA_TICKS + 4;
-            ItemDisplay display = Displays.item(ctx(), owner, muzzle, new ItemStack(BLOB_ITEM),
-                    Displays.centered(0, 0, 0, 0.3f, 0.3f, 0.3f, 0, 0, 0), life);
-            display.setTeleportDuration(1);
-            blob = display;
-            Displays.animateNextTick(ctx(), owner, display, Displays.centered(0, 0, 0, 0.75f, 0.75f, 0.75f,
-                    yawOf(direction), 0, 0), 2);
+            if (room() >= 1) {
+                ItemDisplay display = keep(Displays.item(ctx(), owner, muzzle, new ItemStack(BLOB_ITEM),
+                        Displays.centered(0, 0, 0, 0.3f, 0.3f, 0.3f, 0, 0, 0), life));
+                display.setTeleportDuration(1);
+                blob = display;
+                Displays.animateNextTick(ctx(), owner, display, Displays.centered(0, 0, 0, 0.75f, 0.75f, 0.75f,
+                        yawOf(direction), 0, 0), 2);
+            }
             world.spawnParticle(Particle.SQUID_INK, muzzle, Vfx.n(ctx(), 10), 0.12, 0.12, 0.12, 0.08);
             world.spawnParticle(Particle.DUST, muzzle, Vfx.n(ctx(), 8), 0.15, 0.15, 0.15, 0, INK);
             Vfx.dot(muzzle, Particle.FLASH, PALETTE.body(), false);
@@ -562,11 +588,15 @@ public final class OctopusAbility extends Ability {
         long slowUntil;
         @Nullable Location last;
         long nextSlip;
+        /** Whether the enemy stood on the ink at the previous check. */
+        boolean grounded;
     }
 
     /**
-     * A slick ink puddle: an octagon of flat black plates with a bubbling purple rim. Enemies standing in it are
-     * slowed, and every move they make skids them further than they meant to go. One puddle at a time.
+     * A slick ink puddle: an eight-pointed star of flat black plates (its points reach the puddle's edge) with a
+     * bubbling purple rim on the edge. Enemies standing in it are slowed, and walking makes their feet slip out
+     * sideways: the skid throws them off their line and robs them of a little ground, it never carries them on. One
+     * puddle at a time.
      */
     private final class Puddle implements LongPredicate {
 
@@ -586,14 +616,16 @@ public final class OctopusAbility extends Ability {
         }
 
         void start() {
-            for (int i = 0; i < plates.length; i++) {
+            int count = Math.min(plates.length, room());
+            for (int i = 0; i < count; i++) {
                 float yaw = 45f * i;
                 float lift = 0.015f + 0.006f * i;
-                BlockDisplay plate = Displays.block(ctx(), owner, center, PUDDLE_BLOCK.createBlockData(),
-                        Displays.transform(0, lift, 0, 0.2f, 0.01f, 0.2f, yaw, 0, 0), life + PUDDLE_FADE_TICKS + 6);
+                BlockDisplay plate = keep(Displays.block(ctx(), owner, center, PUDDLE_BLOCK.createBlockData(),
+                        Displays.transform(0, lift, 0, 0.2f, 0.01f, 0.2f, yaw, 0, 0), life + PUDDLE_FADE_TICKS + 6));
                 plate.setBrightness(null);
-                // Two squares turned 45° apart make an octagon; this side keeps it close to the puddle's radius.
-                float size = (float) (radius * 1.84);
+                // Two squares turned 45° apart make an eight-pointed star whose points (the squares' corners) touch
+                // the puddle's edge: the ink never looks bigger than the area that slows.
+                float size = (float) (radius * Math.sqrt(2));
                 Displays.animateNextTick(ctx(), owner, plate, Displays.transform(0, lift, 0, size, 0.01f, size, yaw, 0,
                         0), PUDDLE_GROW_TICKS);
                 plates[i] = plate;
@@ -637,17 +669,24 @@ public final class OctopusAbility extends Ability {
                 }
                 Location last = slip.last;
                 slip.last = feet.clone();
-                if (last == null || now < slip.nextSlip || !last.getWorld().equals(feet.getWorld())) {
+                // Only feet planted on the ink slip (seen on the ground at this check and the one before): a jump
+                // is never cut short by a skid.
+                boolean planted = Motion.isGrounded(enemy);
+                boolean wasPlanted = slip.grounded;
+                slip.grounded = planted;
+                if (last == null || now < slip.nextSlip || !last.getWorld().equals(feet.getWorld()) || !planted
+                        || !wasPlanted) {
                     continue;
                 }
                 Vector moved = feet.toVector().subtract(last.toVector()).setY(0);
                 if (moved.length() < SLIP_MIN_STEP) {
                     continue;
                 }
-                // The step goes on further than meant, veering off a little: the ink gives no grip.
-                double twist = Math.toRadians(ThreadLocalRandom.current().nextDouble(-SLIP_TWIST_DEGREES,
-                        SLIP_TWIST_DEGREES));
-                Vector skid = moved.normalize().rotateAroundY(twist).multiply(SLIP_PUSH).setY(0.04);
+                // The ink gives no grip: the feet slip out to one side and the stride is lost, never carried on.
+                Vector heading = moved.normalize();
+                double side = ThreadLocalRandom.current().nextBoolean() ? 1 : -1;
+                Vector skid = new Vector(-heading.getZ(), 0, heading.getX()).multiply(SLIP_SIDE * side)
+                        .subtract(heading.multiply(SLIP_BACK));
                 if (Motion.push(enemy, skid, MAX_SPEED)) {
                     slip.nextSlip = now + SLIP_COOLDOWN;
                     skidFx(enemy, skid);
@@ -676,7 +715,7 @@ public final class OctopusAbility extends Ability {
             World world = center.getWorld();
             Location surface = center.clone().add(0, 0.06, 0);
             if (tick % 4 == 0) {
-                Vfx.ring(ctx(), surface, radius * 0.92, (int) Math.min(30, Math.max(12, radius * 7)), tick * 0.05,
+                Vfx.ring(ctx(), surface, radius, (int) Math.min(30, Math.max(12, radius * 7)), tick * 0.05,
                         Particle.DUST_COLOR_TRANSITION, RIM, false);
             }
             ThreadLocalRandom random = ThreadLocalRandom.current();
@@ -742,7 +781,16 @@ public final class OctopusAbility extends Ability {
             return ActivationResult.fail("발밑에 먹물 바다를 펼칠 땅이 없습니다");
         }
         double radius = Math.max(1, params().num("kraken_radius"));
-        if (ctx().enemiesNear(owner, ground, radius).isEmpty()) {
+        // Only enemies the octopus can see count: the tentacles never seize a hidden one (that would show where it
+        // hides), and a kraken that answers "someone is there" would give it away just the same.
+        boolean prey = false;
+        for (LivingEntity enemy : ctx().enemiesNear(owner, ground, radius)) {
+            if (!(enemy instanceof Player hidden && !owner.canSee(hidden))) {
+                prey = true;
+                break;
+            }
+        }
+        if (!prey) {
             return ActivationResult.fail("반경 " + AbilityInfo.formatNumber(radius) + "블록 안에 적이 없습니다");
         }
         Kraken fresh = new Kraken(owner, ground, radius);
@@ -878,6 +926,7 @@ public final class OctopusAbility extends Ability {
                 Location base = groundUnder(feet.clone().add(inward.clone().multiply(GRAB_BASE_OFFSET)).add(0, 1.2, 0),
                         3.0);
                 if (base == null) {
+                    // A wall or pillar right beside the prey: the tentacle bursts out under its feet instead.
                     base = groundUnder(feet.clone().add(0, 0.5, 0), 3.0);
                 }
                 if (base == null) {
@@ -891,12 +940,21 @@ public final class OctopusAbility extends Ability {
                 Location spot = center.clone().add(Math.cos(angle) * radius * FREE_RING, 1.5,
                         Math.sin(angle) * radius * FREE_RING);
                 Location base = groundUnder(spot, 4.0);
+                if (base == null) {
+                    base = groundUnder(spot.clone().subtract(0, 1.0, 0), 3.0); // under a low ceiling
+                }
                 if (base != null) {
                     tentacles.add(new Tentacle(base, outwardOf(base), null));
                 }
             }
-            for (Tentacle tentacle : tentacles) {
-                tentacle.spawn();
+            // The tentacles share what is left of the display budget: three segments each while it lasts (the
+            // seizing ones first), two for the rest.
+            int left = room();
+            for (int i = 0; i < tentacles.size(); i++) {
+                int rest = tentacles.size() - i - 1;
+                int segments = left - 3 >= 2 * rest ? 3 : left - 2 >= 2 * rest ? 2 : Math.max(0, Math.min(2, left));
+                left -= segments;
+                tentacles.get(i).spawn(segments);
             }
             Fx.sound(center, Sound.ENTITY_PLAYER_SPLASH_HIGH_SPEED, 1.4f, 0.6f);
             Fx.sound(center, Sound.ENTITY_ELDER_GUARDIAN_AMBIENT, 1.0f, 0.6f);
@@ -994,9 +1052,14 @@ public final class OctopusAbility extends Ability {
         // -------------------------------------------------------------- one tentacle
 
         /**
-         * One tentacle: three block displays anchored just above its base (lit by the air there), each drawn as a
-         * box between two joints of a quadratic curve from below the ground to the tip. All of its pose lives in the
-         * transformations; the displays themselves never move or turn.
+         * One tentacle: three (or, on a tight display budget, two) block displays anchored just above its base (lit
+         * by the air there), each drawn as a box between two joints of a quadratic curve from below the ground to the
+         * tip. All of its pose lives in the transformations; the displays themselves never move or turn.
+         *
+         * <p>A seized player moves on its own client and the server sees it a ping late, so it is steered by where
+         * the velocities sent to it have put it (dead reckoning), never by the server's lagging view: steering by
+         * that would keep pushing a body that is already there and fling it past the hold. A mob moves on the server,
+         * whose view of it is exact.
          */
         private final class Tentacle {
 
@@ -1005,13 +1068,16 @@ public final class OctopusAbility extends Ability {
             private final Vector outward;
             private final Vector side;
             private final double sway;
-            private final BlockDisplay[] segments = new BlockDisplay[TENTACLE_BLOCKS.length];
+            private BlockDisplay[] segments = new BlockDisplay[0];
+            private double[] jointsAt = JOINTS;
             private @Nullable LivingEntity prey;
             private final boolean seizing;
             private @Nullable Location preyStart;
             private double preyGround;
             private double lift;
             private @Nullable Location planned;
+            /** Where the velocities sent to a seized player have put it (its client follows them). */
+            private @Nullable Vector reckoned;
             private double slamFrom;
 
             Tentacle(Location base, Vector outward, @Nullable LivingEntity prey) {
@@ -1024,12 +1090,16 @@ public final class OctopusAbility extends Ability {
                 this.seizing = prey != null;
             }
 
-            void spawn() {
+            void spawn(int count) {
                 long life = end + 6;
+                boolean full = count >= TENTACLE_BLOCKS.length;
+                Material[] blocks = full ? TENTACLE_BLOCKS : SHORT_TENTACLE_BLOCKS;
+                jointsAt = full ? JOINTS : SHORT_JOINTS;
+                segments = new BlockDisplay[Math.min(count, blocks.length)];
                 for (int i = 0; i < segments.length; i++) {
-                    BlockDisplay segment = Displays.block(ctx(), owner, anchor, TENTACLE_BLOCKS[i].createBlockData(),
+                    BlockDisplay segment = keep(Displays.block(ctx(), owner, anchor, blocks[i].createBlockData(),
                             new Transformation(new Vector3f(0, -0.5f, 0), new Quaternionf(), new Vector3f(0.01f),
-                                    new Quaternionf()), life);
+                                    new Quaternionf()), life));
                     segment.setBrightness(null);
                     segment.setViewRange(1.6f);
                     segments[i] = segment;
@@ -1059,7 +1129,11 @@ public final class OctopusAbility extends Ability {
                 Location ground = groundUnder(start.clone().add(0, 0.3, 0), 6.0);
                 preyGround = ground != null ? ground.getY() : start.getY();
                 lift = headroom(enemy, start);
+                reckoned = start.toVector();
                 enemy.setFallDistance(0);
+                // A safety net while held: should the tentacle let go in the air (the octopus fell, the prey
+                // slipped free), it floats down instead of taking a fall.
+                holdSafely(enemy, impact + 4);
                 Location body = Fx.body(enemy);
                 Vfx.burst(ctx(), body, PALETTE, 0.6, Particle.SQUID_INK, true);
                 Fx.sound(body, Sound.ENTITY_SLIME_SQUISH, 1.0f, 0.5f + Fx.jitter(0.05f));
@@ -1101,7 +1175,7 @@ public final class OctopusAbility extends Ability {
                 }
                 if (!Combat.isTargetable(ctx(), owner, enemy) || !enemy.getWorld().equals(world) || slipped(enemy)) {
                     prey = null;
-                    return;
+                    return; // its safety net stays on: it floats down
                 }
                 double y;
                 if (e < LIFT_TICKS) {
@@ -1122,7 +1196,7 @@ public final class OctopusAbility extends Ability {
                     return;
                 }
                 Location next = new Location(world, start.getX(), y, start.getZ());
-                steer(enemy, planned, next);
+                steer(enemy, next);
                 planned = next;
                 if (e % 3 == 0) {
                     Location waist = next.clone().add(0, enemy.getHeight() * 0.45, 0);
@@ -1131,14 +1205,31 @@ public final class OctopusAbility extends Ability {
                 }
             }
 
-            /** True when the held enemy got away from the tentacle (a teleport or a dash). */
+            /**
+             * Steers the held body to {@code next}: a player from where the velocities sent so far have put it, a mob
+             * from where the server sees it.
+             */
+            private void steer(LivingEntity enemy, Location next) {
+                Vector from = enemy instanceof Player && reckoned != null ? reckoned : enemy.getLocation().toVector();
+                Vector velocity = Motion.clamp(next.toVector().subtract(from), MAX_SPEED);
+                reckoned = from.clone().add(velocity);
+                enemy.setVelocity(velocity);
+                enemy.setFallDistance(0);
+            }
+
+            /**
+             * True when the held enemy got away from the tentacle (a teleport or a dash). A player's server position
+             * trails the hold by up to its ping, so it gets that much more leash.
+             */
             private boolean slipped(LivingEntity enemy) {
                 Location at = planned;
                 if (at == null) {
                     return false;
                 }
                 Location now = enemy.getLocation();
-                return horizontalDistance(now, at) > HOLD_LEASH || Math.abs(now.getY() - at.getY()) > HOLD_LEASH + 1;
+                long lag = enemy instanceof Player player ? lagTicks(player) : 0;
+                return horizontalDistance(now, at) > HOLD_LEASH + 0.3 * lag
+                        || Math.abs(now.getY() - at.getY()) > HOLD_LEASH + 1 + 1.5 * lag;
             }
 
             private void slamCue(LivingEntity enemy) {
@@ -1149,6 +1240,7 @@ public final class OctopusAbility extends Ability {
 
             private void slam(LivingEntity enemy) {
                 prey = null;
+                clearSafety(enemy);
                 enemy.setFallDistance(0);
                 Combat.hit(ctx(), owner, enemy, params().num("slam_damage"));
                 Location feet = enemy.getLocation();
@@ -1188,11 +1280,14 @@ public final class OctopusAbility extends Ability {
                 }
             }
 
-            /** The lashing tentacle's tip lands here. */
+            /** The lashing tentacle's tip lands here (short of a wall in its way: then on its own base). */
             Location lashPoint() {
                 Location point = base.clone().add(outward.clone().multiply(LASH_LENGTH));
                 Location ground = groundUnder(point.clone().add(0, 1.2, 0), 3.0);
-                return ground != null ? ground : point;
+                if (ground == null) {
+                    ground = groundUnder(point.clone().add(0, 0.3, 0), 2.0);
+                }
+                return ground != null ? ground : base.clone();
             }
 
             private void pose(long e, int interpolation) {
@@ -1204,7 +1299,8 @@ public final class OctopusAbility extends Ability {
                     }
                     Vector from = joints[i].toVector().subtract(anchor.toVector());
                     Vector delta = joints[i + 1].toVector().subtract(joints[i].toVector());
-                    Displays.animate(segment, segmentPose(from, delta, TENTACLE_WIDTHS[i]), interpolation);
+                    float width = jointsAt == JOINTS ? TENTACLE_WIDTHS[i] : SHORT_TENTACLE_WIDTHS[i];
+                    Displays.animate(segment, segmentPose(from, delta, width), interpolation);
                 }
             }
 
@@ -1250,9 +1346,9 @@ public final class OctopusAbility extends Ability {
                 } else {
                     growth = 1;
                 }
-                Location[] joints = new Location[JOINTS.length];
-                for (int i = 0; i < JOINTS.length; i++) {
-                    Location point = bezier(root, control, tip, JOINTS[i]);
+                Location[] joints = new Location[jointsAt.length];
+                for (int i = 0; i < jointsAt.length; i++) {
+                    Location point = bezier(root, control, tip, jointsAt[i]);
                     joints[i] = root.clone().add(point.toVector().subtract(root.toVector()).multiply(growth));
                 }
                 return joints;
@@ -1272,17 +1368,24 @@ public final class OctopusAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
-    /**
-     * Steers a held body to {@code next}: the step from the last planned spot plus a share of the gap between that
-     * spot and where the server sees the body (a player's server position lags its client, so the plan leads).
-     */
-    private static void steer(LivingEntity entity, @Nullable Location planned, Location next) {
-        Vector current = entity.getLocation().toVector();
-        Vector velocity = planned == null ? next.toVector().subtract(current)
-                : next.toVector().subtract(planned.toVector())
-                        .add(planned.toVector().subtract(current).multiply(STEER_GAIN));
-        entity.setVelocity(Motion.clamp(velocity, MAX_SPEED));
-        entity.setFallDistance(0);
+    /** Slow falling as a safety net for a held body, removed with {@link #clearSafety} when it is slammed down. */
+    private static void holdSafely(LivingEntity held, long holdTicks) {
+        int ticks = (int) Math.min(Integer.MAX_VALUE, holdTicks + 60);
+        held.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, ticks, 0, true, false, false));
+    }
+
+    /** Removes the safety net of {@link #holdSafely}, never a slow falling the body got elsewhere. */
+    private static void clearSafety(LivingEntity held) {
+        PotionEffect effect = held.getPotionEffect(PotionEffectType.SLOW_FALLING);
+        if (effect != null && effect.isAmbient() && !effect.hasParticles() && !effect.hasIcon()
+                && effect.getAmplifier() == 0) {
+            held.removePotionEffect(PotionEffectType.SLOW_FALLING);
+        }
+    }
+
+    /** Ticks the server sees a player's movement late: one round trip, capped (ping can read 0 after joining). */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / MILLIS_PER_TICK));
     }
 
     private static void removeClosest(List<Double> angles, double angle) {
@@ -1302,10 +1405,14 @@ public final class OctopusAbility extends Ability {
 
     /**
      * The ground under {@code point}: the top of the first solid block at most {@code maxDrop} blocks below it, or
-     * null. The probe starts a little above the point (a ray starting on a face reports a hit inside the block).
+     * null. The probe starts a little above the point (a ray starting on a face reports a hit inside the block), and
+     * there is no ground to find from a point inside a block (a wall, a pillar, a low ceiling): null too.
      */
     private static @Nullable Location groundUnder(Location point, double maxDrop) {
         Location from = point.clone().add(0, 0.05, 0);
+        if (!Spots.isFree(point.getWorld(), from, PROBE_SIZE, PROBE_SIZE)) {
+            return null;
+        }
         RayTraceResult ground = point.getWorld().rayTraceBlocks(from, new Vector(0, -1, 0), maxDrop + 0.05,
                 FluidCollisionMode.NEVER, true);
         if (ground == null) {
@@ -1359,7 +1466,7 @@ public final class OctopusAbility extends Ability {
     }
 
     /** Minecraft's yaw (degrees: 0 = +Z, 90 = -X) of the horizontal part of {@code direction}, 0 if it has none. */
-    static float yawOf(Vector direction) {
+    private static float yawOf(Vector direction) {
         Vector flat = Motion.horizontal(direction);
         if (flat.lengthSquared() < 1.0E-6) {
             return 0;

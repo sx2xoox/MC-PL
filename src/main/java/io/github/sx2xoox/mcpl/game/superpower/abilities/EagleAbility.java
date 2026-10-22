@@ -42,15 +42,25 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * 독수리 — a bird of prey. From up high its keen eyes pick out every enemy below (they glow, and the eagle strikes
- * them harder); it swoops onto an enemy, snatches it and carries it off before dropping it; and as the ultimate it
- * seizes one enemy, soars high into the sky, circles while choosing where to strike, then dives and slams it into the
- * ground among its friends.
+ * them harder); it glides into an enemy, clutches it and carries it off to drop it wherever it likes — the higher the
+ * drop, the harder the landing; and as the ultimate it seizes one enemy and takes to the sky with it, flying wherever
+ * it looks until it dives and drives its prey into the ground, harder the higher it dived from.
+ *
+ * <p>Unlike a wrestler's slam, the sky king's flight is the eagle's own to steer: where it carries its prey, how high
+ * it climbs (and so how hard it hits) and when it dives. Its prey is not helpless either: it keeps its skills, and
+ * enough damage on the eagle — from the prey struggling or from its friends — makes the eagle let go.
  *
  * <p>Look: sky blue and golden brown. The eagle grows broad brown wings with dark primaries and a white tail fan that
  * flap as it glides (beating faster when it climbs, swept back in a dive), shedding feathers and streaks of wind. The
- * prey dangles under its talons in a ring of sky-blue light. For the ultimate a golden reticle on the ground shows
- * everyone where the dive will land, the dive is a falling streak of light, and the impact bursts in feathers, dust, a
- * shockwave and cracks in the ground. Spotted enemies glow, and only the eagle sees the golden sights around them.
+ * prey dangles under its talons in a ring of sky-blue light. During the sky king's flight a golden reticle on the
+ * ground shows everyone where the dive will land, the dive is a falling streak of light, and the impact bursts in
+ * feathers, dust, a shockwave and cracks in the ground. Spotted enemies glow, and only the eagle sees the golden sights
+ * around them. The wings are hidden from the eagle itself (they would sit in its own view).
+ *
+ * <p>Both bodies of a flight follow a planned path. A player moves on its own client, which follows the velocities
+ * it is sent exactly, while the server sees it a ping late: players are steered by where the velocities sent to them
+ * have put them (dead reckoning), never by the server's lagging view, which would overshoot on any real connection.
+ * Mobs move on the server itself, whose view of them is exact.
  */
 public final class EagleAbility extends Ability {
 
@@ -58,38 +68,41 @@ public final class EagleAbility extends Ability {
             .color(TextColor.color(0x7CC8FF))
             .difficulty(3)
             .passive("매의 눈",
-                    "나보다 {eye_height}블록 이상 낮은 곳에 있는 {eye_range}블록 안의 적은 내 눈에 띄어 발광하고, 그 적에게 "
-                            + "주는 모든 피해가 {eye_bonus}% 늘어납니다.")
-            .active("낚아채기",
+                    "나보다 {eye_height}블록 이상 낮은 곳에 있고 내 눈에 보이는 {eye_range}블록 안의 적은 발광하고, 그 적에게 "
+                            + "주는 피해가 {eye_bonus}% 늘어납니다. 땅에 부딪히는 피해에는 적용되지 않습니다.")
+            .active("움켜쥐기",
                     "바라보는 방향(조준한 적이 있으면 그 적)으로 최대 {snatch_range}블록 활강합니다. 도중에 부딪힌 적을 움켜쥐어 "
-                            + "{snatch_damage} 피해를 주고, 함께 {carry_height}블록 높이로 날아올라 바라보는 방향으로 "
-                            + "{carry_time}초간 실어 나른 뒤 떨어뜨립니다. 떨어진 적은 땅에 부딪혀 {drop_damage} 피해를 입고 "
-                            + "{drop_slow}초간 구속됩니다. 아무도 잡지 못하면 쿨타임이 {miss_refund}% 돌아오며, 이 비행으로는 "
-                            + "낙하 피해를 받지 않습니다.",
-                    9)
+                            + "{snatch_damage} 피해를 주고, {carry_height}블록 높이로 들어 올려 바라보는 쪽으로 최대 "
+                            + "{carry_time}초간 실어 나른 뒤 놓습니다(웅크리면 바로 놓음). 떨어진 적은 땅에 부딪혀 떨어진 높이 "
+                            + "1블록마다 {drop_per_block} 피해(최대 {drop_max})를 입습니다. 이 비행으로는 낙하 피해를 받지 "
+                            + "않습니다.",
+                    8)
             .ultimate("하늘의 제왕",
-                    "조준한 적(없으면 가장 가까운 적, {ult_range}블록 이내)에게 날아가 움켜쥐고 {ult_height}블록 높이로 "
-                            + "솟구쳐 {ult_circle}초간 하늘을 선회합니다. 그동안 바라보는 땅(선회 지점에서 {dive_reach}블록 "
-                            + "이내)에 낙하 지점이 표시되고, 선회가 끝나면 그곳으로 급강하해 적을 내리꽂아 {ult_damage} 피해를 "
-                            + "주며 반경 {impact_radius}블록의 다른 적에게 {impact_damage} 피해를 주고 띄웁니다. 붙잡힌 적은 "
-                            + "능력을 쓸 수 없고, 나는 낙하 피해를 받지 않습니다.")
+                    "조준한 적(없으면 가장 가까운 적, {ult_range}블록 이내)에게 날아가 움켜쥐고 {ult_height}블록 솟구친 뒤, "
+                            + "최대 {flight_time}초간 적을 매단 채 바라보는 방향으로 초당 {flight_speed}블록씩 날아다닙니다. "
+                            + "웅크리거나 시간이 다 되면 바라보는 땅(표시됨, {dive_reach}블록 이내)으로 급강하해 적을 "
+                            + "내리꽂아, 급강하한 높이 1블록마다 {dive_per_block} 피해(최대 {dive_max})를 주고 반경 "
+                            + "{impact_radius}블록의 다른 적에게 {impact_damage} 피해를 주며 튕겨 냅니다. 적을 매단 동안 내가 "
+                            + "{break_damage} 피해를 받으면 놓쳐 버리며, 나는 낙하 피해를 받지 않습니다.")
             .param("eye_height", 3)
             .param("eye_range", 32)
             .param("eye_bonus", 15)
             .param("snatch_range", 10)
             .param("snatch_damage", 3)
             .param("carry_height", 4)
-            .param("carry_time", 0.8)
-            .param("drop_damage", 3)
-            .param("drop_slow", 1)
-            .param("miss_refund", 50)
+            .param("carry_time", 1.2)
+            .param("drop_per_block", 0.75)
+            .param("drop_max", 6)
             .param("ult_range", 16)
-            .param("ult_height", 9)
-            .param("ult_circle", 1)
-            .param("dive_reach", 12)
-            .param("ult_damage", 8)
-            .param("impact_radius", 3.5)
-            .param("impact_damage", 4)
+            .param("ult_height", 5)
+            .param("flight_time", 2.5)
+            .param("flight_speed", 9)
+            .param("dive_reach", 10)
+            .param("dive_per_block", 0.8)
+            .param("dive_max", 10)
+            .param("impact_radius", 3)
+            .param("impact_damage", 3)
+            .param("break_damage", 8)
             .build();
 
     private static final String COLOR_TAG = "#7CC8FF";
@@ -115,7 +128,6 @@ public final class EagleAbility extends Ability {
     private static final Material FEATHER = Material.FEATHER;
 
     private static final double MAX_SPEED = 2.4;
-    private static final double STEER_GAIN = 0.5;
     private static final long MAX_LAG_TICKS = 8;
     private static final double MILLIS_PER_TICK = 50.0;
 
@@ -132,31 +144,38 @@ public final class EagleAbility extends Ability {
     private static final float SHOULDER_BACK = 0.2f;
     private static final float SHOULDER_SIDE = 0.12f;
 
-    // ------------------------------------------------------------------ active: snatch
+    // ------------------------------------------------------------------ active: clutch
     private static final double GLIDE_SPEED = 1.0;
     private static final double MIN_PITCH_Y = -0.57; // about 35° down
     private static final double MAX_PITCH_Y = 0.42; // about 25° up
     private static final double HOMING = 0.35;
     private static final double GRAB_REACH = 1.3;
     private static final double HANG_GAP = 0.15;
-    private static final double CARRY_SPEED = 0.3;
+    private static final double CARRY_SPEED = 0.35;
     private static final double CARRY_TURN = 0.25;
+    /** The clutched prey is lifted to the carry height over this many ticks, then carried level. */
+    private static final int CARRY_LIFT_TICKS = 8;
     private static final double LIFT_STEP = 0.5;
-    private static final long DROP_WATCH_TICKS = 60;
+    private static final long DROP_WATCH_TICKS = 100;
     private static final double ESCAPE_LEASH = 3.5;
     private static final double DRIFT_LIMIT = 8.0;
-    private static final long LANDING_GRACE_TICKS = 200;
+    /** A player's server position trails its plan by up to its ping: this much more leash per tick of lag. */
+    private static final double DRIFT_PER_LAG_TICK = 2.5;
+    private static final long LANDING_GRACE_TICKS = 300;
 
     // ------------------------------------------------------------------ ultimate: king of the sky
     private static final double SWOOP_SPEED = 1.4;
     private static final double ULT_GRAB_REACH = 1.7;
-    private static final int RISE_TICKS = 12;
+    private static final int RISE_TICKS = 10;
     private static final int DIVE_TICKS = 7;
     private static final int MAX_DIVE_TICKS = 16;
     /** A dive of {@code n} ticks moves about {@code 2 / n} of its length in its last tick: keep that under the cap. */
     private static final double DIVE_STEP = 1.1;
-    private static final double ORBIT_RADIUS = 2.0;
-    private static final int ORBIT_EASE = 5;
+    /** The flight climbs at most this steeply (sine of the pitch) and glides down at most this steeply. */
+    private static final double FLIGHT_MAX_CLIMB = 0.57;
+    private static final double FLIGHT_MAX_SINK = 0.8;
+    /** The flight never takes the prey higher than this above where it was seized. */
+    private static final double MAX_ALTITUDE = 14;
     private static final double MARKER_RANGE = 48;
     private static final double IMPACT_PUSH = 0.8;
     private static final double IMPACT_LIFT = 0.6;
@@ -164,9 +183,11 @@ public final class EagleAbility extends Ability {
     private static final int CRACKS = 5;
     private static final long CRACK_TICKS = 34;
 
-    private @Nullable Snatch snatch;
+    private @Nullable Clutch clutch;
     private @Nullable Sovereign sovereign;
     private int lastSpotted;
+    /** Set while the eagle's prey hits the ground: those hits are the ground's, not the hawk's eye's. */
+    private boolean groundHit;
 
     @Override
     public AbilityInfo info() {
@@ -175,13 +196,16 @@ public final class EagleAbility extends Ability {
 
     @Override
     public void onRevoke() {
-        snatch = null;
+        clutch = null;
         sovereign = null;
     }
 
     // ------------------------------------------------------------------ passive: hawk's eye
 
-    /** True when {@code enemy} is far enough below the eagle (and within range) to be spotted. */
+    /**
+     * True when {@code enemy} is spotted: far enough below the eagle, within range, visible to it and in its line of
+     * sight. Spotted enemies glow, and only they take the eagle's bonus damage.
+     */
     private boolean spotted(LivingEntity enemy) {
         Player owner = player();
         if (!enemy.getWorld().equals(owner.getWorld()) || enemy instanceof Player hidden && !owner.canSee(hidden)) {
@@ -190,7 +214,7 @@ public final class EagleAbility extends Ability {
         double gap = owner.getLocation().getY() - enemy.getLocation().getY();
         double range = Math.max(0, params().num("eye_range"));
         return gap >= params().num("eye_height") && owner.getLocation().distanceSquared(enemy.getLocation())
-                <= range * range;
+                <= range * range && owner.hasLineOfSight(enemy);
     }
 
     @Override
@@ -202,7 +226,7 @@ public final class EagleAbility extends Ability {
         int count = 0;
         double range = Math.max(0, params().num("eye_range"));
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), range)) {
-            if (!spotted(enemy) || !owner.hasLineOfSight(enemy)) {
+            if (!spotted(enemy)) {
                 continue;
             }
             count++;
@@ -213,7 +237,7 @@ public final class EagleAbility extends Ability {
         if (count > lastSpotted) {
             owner.playSound(owner.getLocation(), Sound.ENTITY_PHANTOM_AMBIENT, 0.5f, 1.7f);
         }
-        if (count > 0 && sovereign == null && snatch == null) {
+        if (count > 0 && sovereign == null && clutch == null) {
             owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">◉ 매의 눈</" + GOLD_TAG + "> <white>" + count
                     + "명 포착</white> <gray>+" + AbilityInfo.formatNumber(params().num("eye_bonus")) + "%</gray>"));
         }
@@ -236,7 +260,7 @@ public final class EagleAbility extends Ability {
 
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (event.isCancelled() || !ctx().isEnemy(player(), victim) || !spotted(victim)) {
+        if (groundHit || event.isCancelled() || !ctx().isEnemy(player(), victim) || !spotted(victim)) {
             return;
         }
         double bonus = Math.max(0, params().num("eye_bonus")) / 100.0;
@@ -247,7 +271,7 @@ public final class EagleAbility extends Ability {
 
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (!spotted(victim)) {
+        if (groundHit || !spotted(victim)) {
             return;
         }
         Location body = Fx.body(victim);
@@ -255,11 +279,22 @@ public final class EagleAbility extends Ability {
         Vfx.dot(body, Particle.DUST_COLOR_TRANSITION, GOLD_FADE, false);
     }
 
+    /** A hit on the eagle's prey as it meets the ground (a drop, a dive): never boosted by the hawk's eye. */
+    private void groundHit(LivingEntity victim, double damage) {
+        groundHit = true;
+        try {
+            Combat.hit(ctx(), player(), victim, damage);
+        } finally {
+            groundHit = false;
+        }
+    }
+
     // ------------------------------------------------------------------ wings
 
     /**
      * The eagle's wings and tail: five plates (two per wing, one tail fan) standing at the owner's feet, with every
-     * bit of their pose — the shoulder, the flap, the sweep and the owner's facing — in their transformations.
+     * bit of their pose — the shoulder, the flap, the sweep and the owner's facing — in their transformations. They
+     * are hidden from the eagle itself.
      */
     private final class Wings {
 
@@ -283,6 +318,9 @@ public final class EagleAbility extends Ability {
                         platePose(i, yaw, 0, 0.6f, 0.15f), lifetime);
                 plate.setBrightness(null);
                 plate.setTeleportDuration(1);
+                // The wings stand at the eagle's shoulders, right around its own camera: everyone but the eagle
+                // sees them.
+                owner.hideEntity(ctx().plugin(), plate);
                 plates[i] = plate;
             }
         }
@@ -363,28 +401,57 @@ public final class EagleAbility extends Ability {
         return new Transformation(translation, rotation, size, new Quaternionf());
     }
 
-    // ------------------------------------------------------------------ active: snatch
+    // ------------------------------------------------------------------ steering
+
+    /**
+     * A body moved along a planned path. A player is steered from where the velocities sent to it have put it (its
+     * client follows them exactly, while the server sees it a ping late); a mob from where the server sees it (it
+     * moves on the server, whose view of it is exact). Never by a player's lagging server position: steering by that
+     * keeps pushing a body that is already there and flings it past the plan.
+     */
+    private static final class Steered {
+
+        private final LivingEntity body;
+        private Vector at;
+
+        Steered(LivingEntity body) {
+            this.body = body;
+            this.at = body.getLocation().toVector();
+        }
+
+        /** Sends the body the step to {@code next} (capped), keeping its fall distance at zero. */
+        void toward(Location next) {
+            Vector from = body instanceof Player ? at : body.getLocation().toVector();
+            Vector velocity = Motion.clamp(next.toVector().subtract(from), MAX_SPEED);
+            at = from.clone().add(velocity);
+            body.setVelocity(velocity);
+            body.setFallDistance(0);
+        }
+    }
+
+    // ------------------------------------------------------------------ active: clutch
 
     @Override
     public ActivationResult onActive() {
         if (sovereign != null) {
-            return ActivationResult.fail("하늘을 선회하는 중입니다");
+            return ActivationResult.fail("하늘을 나는 중입니다");
         }
-        Snatch running = snatch;
+        Clutch running = clutch;
         if (running != null) {
             running.abort();
         }
-        Snatch fresh = new Snatch(player());
-        snatch = fresh;
+        Clutch fresh = new Clutch(player());
+        clutch = fresh;
         fresh.start();
         return ActivationResult.success();
     }
 
     /**
-     * The snatch: a low glide along the aim (bending towards an aimed enemy), and if it runs into an enemy, a carry —
-     * the pair climbs and flies on along the eagle's view — and a drop that hurts when the prey hits the ground.
+     * The clutch: a low glide along the aim (bending towards an aimed enemy), and if it runs into an enemy, a carry —
+     * the prey is lifted and flown on along the eagle's view — and a drop where the eagle lets go (a sneak, or the
+     * carry is over). The prey is hurt where it lands, more the further it fell. Without prey it is just a glide.
      */
-    private final class Snatch implements LongPredicate {
+    private final class Clutch implements LongPredicate {
 
         private final Player owner;
         private final World world;
@@ -392,18 +459,22 @@ public final class EagleAbility extends Ability {
         private final double distance;
         private final long carryTicks;
         private final Wings wings;
+        private final Steered eagle;
         private Vector direction;
         private Location planned;
         private double flown;
         private @Nullable LivingEntity prey;
-        private @Nullable Location preyPlanned;
+        private @Nullable Steered held;
+        private Location preyPlanned;
         private Location preyStart;
         private Vector carryDirection = new Vector();
         private double lift;
         private long carryStart = -1;
+        /** A sneak lets go, but only one pressed after the eagle took hold (not one already held). */
+        private boolean sneakArmed;
         private boolean ended;
 
-        Snatch(Player owner) {
+        Clutch(Player owner) {
             this.owner = owner;
             this.world = owner.getWorld();
             double range = Math.max(1, params().num("snatch_range"));
@@ -411,10 +482,12 @@ public final class EagleAbility extends Ability {
             Location feet = owner.getLocation();
             this.direction = initialDirection(owner, aimed);
             this.distance = Spots.arenaReach(ctx(), feet, direction, range);
-            this.carryTicks = Math.max(4, params().ticks("carry_time"));
+            this.carryTicks = Math.max(1, params().ticks("carry_time"));
             this.planned = feet.clone();
+            this.preyPlanned = feet.clone();
             this.preyStart = feet.clone();
             this.wings = new Wings(owner, 1.0f);
+            this.eagle = new Steered(owner);
         }
 
         void start() {
@@ -430,14 +503,17 @@ public final class EagleAbility extends Ability {
             if (ended || !owner.getWorld().equals(world)) {
                 return false;
             }
-            if (owner.getLocation().distance(planned) > DRIFT_LIMIT) {
+            if (owner.getLocation().distance(planned) > DRIFT_LIMIT + DRIFT_PER_LAG_TICK * lagTicks(owner)) {
                 return false; // carried off by something else (a teleport, a pull)
             }
-            LivingEntity held = prey;
-            if (held == null) {
+            if (!owner.isSneaking()) {
+                sneakArmed = true;
+            }
+            LivingEntity target = prey;
+            if (target == null) {
                 return glide(tick);
             }
-            return carry(held, tick - carryStart);
+            return carry(target, tick - carryStart);
         }
 
         private boolean glide(long tick) {
@@ -464,7 +540,7 @@ public final class EagleAbility extends Ability {
                 }
                 next = over;
             }
-            steer(owner, planned, next);
+            eagle.toward(next);
             planned = next;
             flown += step;
             wings.follow(0.9, 0.6);
@@ -495,8 +571,11 @@ public final class EagleAbility extends Ability {
                 return; // it fell to the talons; the glide goes on
             }
             prey = enemy;
+            held = new Steered(enemy);
             carryStart = tick + 1;
             preyStart = enemy.getLocation();
+            preyPlanned = preyStart.clone();
+            sneakArmed = !owner.isSneaking();
             carryDirection = Motion.horizontal(direction);
             if (carryDirection.lengthSquared() < 1.0E-6) {
                 carryDirection = Motion.horizontalFacing(owner.getLocation());
@@ -505,7 +584,8 @@ public final class EagleAbility extends Ability {
             holdSafely(enemy, carryTicks);
             enemy.setFallDistance(0);
             grabFx(enemy);
-            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>낚아채기!</b></" + COLOR_TAG + ">"));
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>움켜쥐기!</b></" + COLOR_TAG + "> <gray>웅크리면 "
+                    + "놓습니다</gray>"));
         }
 
         /** How high the pair can climb: the prey with the eagle on top must fit all the way up. */
@@ -520,11 +600,15 @@ public final class EagleAbility extends Ability {
             return 0;
         }
 
-        private boolean carry(LivingEntity held, long c) {
-            Location heldPlan = preyPlanned;
-            if (!Combat.isTargetable(ctx(), owner, held) || !held.getWorld().equals(world)
-                    || heldPlan != null && horizontalDistance(held.getLocation(), heldPlan) > ESCAPE_LEASH + lagSlack(held)) {
-                release(false);
+        private boolean carry(LivingEntity target, long c) {
+            Steered steered = held;
+            if (steered == null || !Combat.isTargetable(ctx(), owner, target) || !target.getWorld().equals(world)
+                    || horizontalDistance(target.getLocation(), preyPlanned) > ESCAPE_LEASH + lagSlack(target)) {
+                release();
+                return false;
+            }
+            if (c >= 1 && sneakArmed && owner.isSneaking()) {
+                release(); // let go right here
                 return false;
             }
             // The eagle steers the carry with its view.
@@ -533,74 +617,72 @@ public final class EagleAbility extends Ability {
             if (carryDirection.lengthSquared() < 1.0E-6) {
                 carryDirection = look;
             }
-            Location from = heldPlan != null ? heldPlan : preyStart;
-            double s = (c + 1.0) / carryTicks;
+            Location from = preyPlanned;
+            double s = Math.min(1.0, (c + 1.0) / CARRY_LIFT_TICKS);
             double y = preyStart.getY() + lift * (1 - (1 - s) * (1 - s));
             Location next = from.clone().add(carryDirection.clone().multiply(CARRY_SPEED));
             next.setY(y);
-            if (!stackFits(held, next)) {
+            if (!carryFits(target, next)) {
                 next = from.clone();
                 next.setY(y);
-                if (!stackFits(held, next)) {
+                if (!carryFits(target, next)) {
                     next = from.clone();
                 }
             }
-            Location ownerNext = next.clone().add(0, held.getHeight() + HANG_GAP, 0);
+            Location ownerNext = next.clone().add(0, target.getHeight() + HANG_GAP, 0);
             // The eagle settles on top of its prey over the first few ticks.
             double settle = Math.min(1.0, (c + 1.0) / 4);
             ownerNext = planned.clone().add(ownerNext.toVector().subtract(planned.toVector()).multiply(settle));
-            steer(held, heldPlan, next);
-            steer(owner, planned, ownerNext);
+            steered.toward(next);
+            eagle.toward(ownerNext);
             preyPlanned = next;
             planned = ownerNext;
             wings.follow(0.55, 0.1);
-            carryFx(held, c);
+            carryFx(target, c);
             if (c + 1 >= carryTicks) {
-                release(true);
+                release();
                 return false;
             }
             return true;
         }
 
-        private boolean stackFits(LivingEntity held, Location feet) {
-            double width = Math.max(owner.getWidth(), held.getWidth());
-            return Spots.isFree(world, feet, width, held.getHeight() + HANG_GAP + owner.getHeight())
-                    && ctx().isInsideArena(feet);
+        /**
+         * Where the carried pair may go: the prey with the eagle on top fits, it stays inside the arena, and there is
+         * safe ground somewhere below (never out over the void or a lava lake). A drop off a cliff is fair game.
+         */
+        private boolean carryFits(LivingEntity target, Location feet) {
+            double width = Math.max(owner.getWidth(), target.getWidth());
+            return Spots.isFree(world, feet, width, target.getHeight() + HANG_GAP + owner.getHeight())
+                    && ctx().isInsideArena(feet) && Spots.hasGroundBelow(world, feet);
         }
 
         /** Lets go: the prey drops (and is hurt where it lands), the eagle beats its wings once and glides down. */
-        private void release(boolean dropped) {
-            LivingEntity held = prey;
+        private void release() {
+            LivingEntity dropped = prey;
             prey = null;
-            if (held == null) {
+            held = null;
+            if (dropped == null) {
                 return;
             }
-            clearSafety(held);
-            if (Combat.isTargetable(ctx(), owner, held)) {
-                held.setFallDistance(0);
-                held.setVelocity(carryDirection.clone().multiply(0.15).setY(-0.2));
-                dropWatch(held);
+            clearSafety(dropped);
+            if (Combat.isTargetable(ctx(), owner, dropped)) {
+                dropped.setFallDistance(0);
+                dropped.setVelocity(carryDirection.clone().multiply(0.15).setY(-0.2));
+                dropWatch(dropped, preyPlanned.getY());
             }
             owner.setVelocity(carryDirection.clone().multiply(0.25).setY(0.3));
             owner.setFallDistance(0);
             Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
             Fx.sound(chest, Sound.ENTITY_ENDER_DRAGON_FLAP, 0.6f, 1.8f + Fx.jitter(0.1f));
             featherBurst(chest, 6, false);
-            if (dropped) {
-                owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">떨어뜨리기!</" + COLOR_TAG + ">"));
-            }
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">떨어뜨리기!</" + COLOR_TAG + ">"));
         }
 
-        /** Nobody caught: the glide eases out and part of the cooldown comes back. */
+        /** Nobody caught: the glide eases out (it was a glide all the same). */
         private void miss() {
             owner.setVelocity(direction.clone().multiply(0.35).setY(0.05));
             owner.setFallDistance(0);
-            double refund = Math.clamp(params().num("miss_refund") / 100.0, 0.0, 1.0);
-            if (refund > 0) {
-                ctx().reduceCooldown(owner, params().cooldownSeconds() * refund);
-            }
-            owner.sendActionBar(Text.mm("<gray>낚아채지 못했습니다 · 쿨타임 " + AbilityInfo.formatNumber(
-                    Math.round(params().cooldownSeconds() * refund * 10) / 10.0) + "초 회복</gray>"));
+            owner.sendActionBar(Text.mm("<gray>아무것도 움켜쥐지 못했습니다</gray>"));
         }
 
         private void bonk(Location at) {
@@ -613,14 +695,12 @@ public final class EagleAbility extends Ability {
             miss();
         }
 
-        /** Stops the snatch right away (the ultimate takes over): a held prey is dropped as usual. */
+        /** Stops the clutch right away (the ultimate takes over): a held prey is dropped as usual. */
         void abort() {
             if (ended) {
                 return;
             }
-            if (prey != null) {
-                release(true);
-            }
+            release();
             end();
         }
 
@@ -629,13 +709,10 @@ public final class EagleAbility extends Ability {
                 return;
             }
             ended = true;
-            LivingEntity held = prey;
-            if (held != null) {
-                release(true);
-            }
+            release();
             wings.fold();
-            if (snatch == this) {
-                snatch = null;
+            if (clutch == this) {
+                clutch = null;
             }
         }
 
@@ -654,18 +731,18 @@ public final class EagleAbility extends Ability {
             }
         }
 
-        private void carryFx(LivingEntity held, long c) {
-            Location waist = held.getLocation().add(0, held.getHeight() * 0.7, 0);
+        private void carryFx(LivingEntity target, long c) {
+            Location waist = preyPlanned.clone().add(0, target.getHeight() * 0.7, 0);
             if (c % 2 == 0) {
-                Vfx.ring(ctx(), waist, held.getWidth() * 0.5 + 0.3, 10, c * 0.5, Particle.DUST_COLOR_TRANSITION, SKY,
+                Vfx.ring(ctx(), waist, target.getWidth() * 0.5 + 0.3, 10, c * 0.5, Particle.DUST_COLOR_TRANSITION, SKY,
                         false);
             }
             if (c % 4 == 0) {
                 Fx.sound(waist, Sound.ENTITY_ENDER_DRAGON_FLAP, 0.5f, 1.6f + Fx.jitter(0.1f));
                 featherBurst(waist.clone().add(0, 1.2, 0), 2, false);
             }
-            Location ground = held.getLocation().clone();
-            Location floor = groundUnder(ground, 16);
+            // Where it would land if let go now: a brown ring on the ground below.
+            Location floor = groundUnder(preyPlanned, 24);
             if (floor != null && c % 2 == 1) {
                 Vfx.ring(ctx(), floor.add(0, 0.05, 0), 0.5, 8, c * 0.3, Particle.DUST, BROWN, false);
             }
@@ -685,51 +762,63 @@ public final class EagleAbility extends Ability {
     }
 
     private static Vector clampPitch(Vector direction) {
+        return clampPitch(direction, MIN_PITCH_Y, MAX_PITCH_Y);
+    }
+
+    /** {@code direction} as a unit vector whose vertical part (the sine of its pitch) is kept within the limits. */
+    private static Vector clampPitch(Vector direction, double minY, double maxY) {
         Vector flat = Motion.horizontal(direction);
         if (flat.lengthSquared() < 1.0E-6) {
             return new Vector(0, 0, 1);
         }
         double length = direction.length();
-        double y = length > 1.0E-9 ? Math.clamp(direction.getY() / length, MIN_PITCH_Y, MAX_PITCH_Y) : 0;
+        double y = length > 1.0E-9 ? Math.clamp(direction.getY() / length, minY, maxY) : 0;
         double horizontal = Math.sqrt(1 - y * y);
         return flat.multiply(horizontal).setY(y);
     }
 
-    /** The prey hits the ground: the drop hurts and stuns its legs for a moment. */
-    private void dropWatch(LivingEntity held) {
+    /** The dropped prey hits the ground: the further it fell from where it was let go, the more it hurts. */
+    private void dropWatch(LivingEntity dropped, double releaseY) {
         Player owner = player();
         Loop.repeat(ctx(), owner, 1, 1, DROP_WATCH_TICKS, run -> {
-            if (!Combat.isTargetable(ctx(), owner, held)) {
+            if (!Combat.isTargetable(ctx(), owner, dropped)) {
                 return false;
             }
-            held.setFallDistance(0);
-            if (run >= 1 && (Motion.isGrounded(held) || held.isInWater())) {
-                land(held);
+            dropped.setFallDistance(0);
+            if (run >= 1 && (Motion.isGrounded(dropped) || dropped.isInWater())) {
+                land(dropped, releaseY);
                 return false;
             }
             if (run % 2 == 0) {
-                Vfx.dot(held.getLocation().add(0, held.getHeight() + 0.2, 0), Particle.DUST_COLOR_TRANSITION, SKY,
-                        false);
+                Vfx.dot(dropped.getLocation().add(0, dropped.getHeight() + 0.2, 0), Particle.DUST_COLOR_TRANSITION,
+                        SKY, false);
             }
             return true;
         });
     }
 
-    private void land(LivingEntity held) {
-        Player owner = player();
-        Combat.hit(ctx(), owner, held, params().num("drop_damage"));
-        long slow = params().ticks("drop_slow");
-        if (slow > 0 && Combat.isTargetable(ctx(), owner, held)) {
-            held.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, (int) Math.min(Integer.MAX_VALUE, slow), 1,
-                    false, true, true));
-        }
-        Location feet = held.getLocation().add(0, 0.1, 0);
+    private void land(LivingEntity dropped, double releaseY) {
+        Location feet = dropped.getLocation().add(0, 0.1, 0);
         World world = feet.getWorld();
-        world.spawnParticle(Particle.BLOCK, feet, Vfx.n(ctx(), 14), 0.4, 0.05, 0.4, 0.12, floorAt(feet));
+        if (dropped.isInWater()) {
+            world.spawnParticle(Particle.SPLASH, feet, Vfx.n(ctx(), 14), 0.4, 0.1, 0.4, 0.1);
+            Fx.sound(feet, Sound.ENTITY_PLAYER_SPLASH, 0.8f, 1.0f + Fx.jitter(0.1f));
+            return; // the water breaks the fall
+        }
+        double height = Math.max(0, releaseY - dropped.getLocation().getY());
+        double damage = Math.min(Math.max(0, params().num("drop_max")),
+                Math.max(0, params().num("drop_per_block")) * height);
+        if (damage <= 1.0E-3) {
+            return;
+        }
+        groundHit(dropped, damage);
+        float weight = (float) Math.min(1.0, height / 6);
+        world.spawnParticle(Particle.BLOCK, feet, Vfx.n(ctx(), 8 + (int) (10 * weight)), 0.4, 0.05, 0.4, 0.12,
+                floorAt(feet));
         world.spawnParticle(Particle.DUST_PLUME, feet, Vfx.n(ctx(), 5), 0.4, 0.05, 0.4, 0.02);
-        Vfx.shockwave(ctx(), owner, feet, 0.3, 1.6, 4, Particle.DUST, BROWN, false);
+        Vfx.shockwave(ctx(), player(), feet, 0.3, 1.2 + weight, 4, Particle.DUST, BROWN, false);
         Fx.sound(feet, Sound.ENTITY_PLAYER_BIG_FALL, 1.0f, 0.8f + Fx.jitter(0.05f));
-        Fx.sound(feet, Sound.ITEM_MACE_SMASH_GROUND, 0.6f, 1.2f + Fx.jitter(0.1f));
+        Fx.sound(feet, Sound.ITEM_MACE_SMASH_GROUND, 0.4f + 0.4f * weight, 1.2f + Fx.jitter(0.1f));
     }
 
     // ------------------------------------------------------------------ ultimate: king of the sky
@@ -748,7 +837,7 @@ public final class EagleAbility extends Ability {
         if (target == null) {
             return ActivationResult.fail(AbilityInfo.formatNumber(range) + "블록 안에 노릴 먹잇감이 없습니다");
         }
-        Snatch running = snatch;
+        Clutch running = clutch;
         if (running != null) {
             running.abort();
         }
@@ -772,12 +861,13 @@ public final class EagleAbility extends Ability {
         return null;
     }
 
-    private enum Phase { SWOOP, RISE, CIRCLE, DIVE, DONE }
+    private enum Phase { SWOOP, RISE, FLIGHT, DIVE, DONE }
 
     /**
-     * King of the sky: a swoop onto the prey, a climb with it, a lap of the sky while the eagle aims its dive, and the
-     * dive that slams the prey into the aimed ground. Both bodies follow planned paths (the prey hangs under the
-     * eagle's talons); the prey cannot use its skills and floats down safely should the eagle fall out of the sky.
+     * King of the sky: a swoop onto the prey, a climb with it, a free flight wherever the eagle looks (the prey
+     * dangling under its talons, a golden reticle on the ground where it would dive) and the dive that drives the
+     * prey into that ground, harder the higher it dived from. The prey floats down safely should the eagle let go in
+     * the air: when it takes enough damage while carrying (the prey struggling, its friends shooting), or falls.
      */
     private final class Sovereign implements LongPredicate {
 
@@ -785,18 +875,27 @@ public final class EagleAbility extends Ability {
         private final LivingEntity prey;
         private final World world;
         private final Wings wings;
+        private final Steered eagle;
         private final long swoopMax;
-        private final long circleTicks;
+        private final long flightTicks;
         private final double reach;
+        private final double speed;
+        private @Nullable Steered held;
         private Phase phase = Phase.SWOOP;
         private long phaseStart;
         private Location planned;
-        private @Nullable Location preyPlanned;
+        private Location preyPlanned;
         private Location column;
         private double apexY;
+        private double ceilingY;
         private Location marker;
         private Location diveFrom;
         private long diveTicks = DIVE_TICKS;
+        /** A sneak dives, but only one pressed after the ultimate began (not one already held). */
+        private boolean sneakArmed;
+        /** The eagle's health (and absorption) at the last check, and what it lost since it took hold. */
+        private double healthMark;
+        private double lost;
         private boolean ended;
 
         Sovereign(Player owner, LivingEntity prey) {
@@ -804,18 +903,22 @@ public final class EagleAbility extends Ability {
             this.prey = prey;
             this.world = owner.getWorld();
             this.wings = new Wings(owner, 1.25f);
+            this.eagle = new Steered(owner);
             double range = Math.max(1, params().num("ult_range"));
             this.swoopMax = (long) Math.ceil(range / SWOOP_SPEED) + 6 + lagTicks(owner);
-            this.circleTicks = Math.max(4, params().ticks("ult_circle"));
+            this.flightTicks = Math.max(1, params().ticks("flight_time"));
             this.reach = Math.max(0, params().num("dive_reach"));
+            this.speed = Math.clamp(params().num("flight_speed") / 20.0, 0.0, 1.5);
             this.planned = owner.getLocation();
+            this.preyPlanned = prey.getLocation();
             this.column = prey.getLocation();
             this.marker = prey.getLocation();
             this.diveFrom = prey.getLocation();
+            this.sneakArmed = !owner.isSneaking();
         }
 
         void start() {
-            long life = swoopMax + RISE_TICKS + circleTicks + MAX_DIVE_TICKS + 10;
+            long life = swoopMax + RISE_TICKS + flightTicks + MAX_DIVE_TICKS + 10;
             wings.spawn(life + 20);
             guardLanding(owner);
             takeoffFx(owner, true);
@@ -830,7 +933,7 @@ public final class EagleAbility extends Ability {
             if (ended || !owner.getWorld().equals(world)) {
                 return false;
             }
-            if (owner.getLocation().distance(planned) > DRIFT_LIMIT) {
+            if (owner.getLocation().distance(planned) > DRIFT_LIMIT + DRIFT_PER_LAG_TICK * lagTicks(owner)) {
                 abort("<gray>비행이 끊겼습니다</gray>");
                 return false;
             }
@@ -839,19 +942,38 @@ public final class EagleAbility extends Ability {
                 abort("<gray>먹잇감을 놓쳤습니다</gray>");
                 return false;
             }
+            if ((phase == Phase.RISE || phase == Phase.FLIGHT) && struggledFree()) {
+                letGo();
+                return false;
+            }
+            if (!owner.isSneaking()) {
+                sneakArmed = true;
+            }
             long c = tick - phaseStart;
             return switch (phase) {
                 case SWOOP -> swoop(tick);
                 case RISE -> rise(tick, c);
-                case CIRCLE -> circle(tick, c);
+                case FLIGHT -> flight(tick, c);
                 case DIVE -> dive(c);
                 case DONE -> false;
             };
         }
 
+        /** The prey got away from the talons (a teleport, a dash): its server position is far from the plan. */
         private boolean escaped() {
-            Location at = preyPlanned;
-            return at != null && horizontalDistance(prey.getLocation(), at) > ESCAPE_LEASH + lagSlack(prey);
+            double slack = prey instanceof Player player ? lagTicks(player) * (phase == Phase.DIVE ? 2.5 : 0.6) : 0;
+            return horizontalDistance(prey.getLocation(), preyPlanned) > ESCAPE_LEASH + slack;
+        }
+
+        /** True once the eagle has lost enough health (and absorption) since it took hold. */
+        private boolean struggledFree() {
+            double now = owner.getHealth() + owner.getAbsorptionAmount();
+            if (now < healthMark) {
+                lost += healthMark - now;
+            }
+            healthMark = now;
+            double limit = params().num("break_damage");
+            return limit > 0 && lost >= limit;
         }
 
         private boolean swoop(long tick) {
@@ -864,6 +986,9 @@ public final class EagleAbility extends Ability {
             double gap = toward.length();
             Location actual = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
             if (gap <= ULT_GRAB_REACH || actual.distance(Fx.body(prey)) <= ULT_GRAB_REACH) {
+                // Every tick of the flight sends both bodies their step (here: stay), or a client would coast on
+                // with its last one and leave the plan.
+                eagle.toward(planned);
                 grab(tick);
                 return true;
             }
@@ -883,7 +1008,7 @@ public final class EagleAbility extends Ability {
                 }
                 next = over;
             }
-            steer(owner, planned, next);
+            eagle.toward(next);
             planned = next;
             wings.follow(0.8, 0.8);
             Location back = chestOf(planned).subtract(direction.clone().multiply(0.8));
@@ -896,22 +1021,24 @@ public final class EagleAbility extends Ability {
         }
 
         private void grab(long tick) {
-            if (prey instanceof Player held) {
-                ctx().silence(held, RISE_TICKS + circleTicks + MAX_DIVE_TICKS + 4);
-            }
-            holdSafely(prey, RISE_TICKS + circleTicks + MAX_DIVE_TICKS);
+            holdSafely(prey, RISE_TICKS + flightTicks + MAX_DIVE_TICKS);
             prey.setFallDistance(0);
+            held = new Steered(prey);
             column = prey.getLocation();
+            preyPlanned = column.clone();
             Location ground = groundUnder(column.clone().add(0, 0.3, 0), 16);
             marker = ground != null ? ground : column.clone();
             double leap = headroom(column, Math.max(0, params().num("ult_height")));
             apexY = column.getY() + leap;
+            ceilingY = Math.max(apexY, column.getY() + MAX_ALTITUDE);
+            healthMark = owner.getHealth() + owner.getAbsorptionAmount();
+            lost = 0;
             phase = Phase.RISE;
             phaseStart = tick + 1;
             grabFx(prey);
             Fx.sound(Fx.body(prey), Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.7f);
-            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>하늘의 제왕</b></" + COLOR_TAG + "> <gray>내리꽂을 곳을 "
-                    + "바라보세요</gray>"));
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>하늘의 제왕</b></" + COLOR_TAG + "> <gray>바라보는 쪽으로 "
+                    + "날아갑니다 · 웅크리면 급강하</gray>"));
         }
 
         /** How high the pair can climb from {@code start}: the prey with the eagle on top must fit all the way. */
@@ -930,7 +1057,7 @@ public final class EagleAbility extends Ability {
             double s = Math.min(1.0, (c + 1.0) / RISE_TICKS);
             double y = column.getY() + (apexY - column.getY()) * (1 - (1 - s) * (1 - s));
             Location preyNext = new Location(world, column.getX(), y, column.getZ());
-            moveStack(preyNext, Math.min(1.0, (c + 1.0) / 4));
+            moveStack(preyNext, Math.min(1.0, (c + 1.0) / 4), c);
             wings.follow(0.75, 0.0);
             speedLines(-1, tick);
             if (c == 0) {
@@ -939,51 +1066,73 @@ public final class EagleAbility extends Ability {
                 Fx.sound(ground, Sound.ENTITY_BREEZE_WIND_BURST, 1.0f, 0.8f);
             }
             if (c + 1 >= RISE_TICKS) {
-                phase = Phase.CIRCLE;
+                phase = Phase.FLIGHT;
                 phaseStart = tick + 1;
                 Fx.sound(chestOf(planned), Sound.ENTITY_PHANTOM_AMBIENT, 1.5f, 1.3f);
             }
             return true;
         }
 
-        private boolean circle(long tick, long c) {
-            double ease = Math.min(1.0, (c + 1.0) / ORBIT_EASE);
-            double angle = (c + 1.0) / circleTicks * TAU;
-            Location preyNext = new Location(world, column.getX() + Math.cos(angle) * ORBIT_RADIUS * ease,
-                    apexY + Math.sin(c * 0.4) * 0.15, column.getZ() + Math.sin(angle) * ORBIT_RADIUS * ease);
-            if (!stackFits(preyNext)) {
-                Location at = preyPlanned;
-                preyNext = at != null ? at.clone() : preyNext;
-            }
-            moveStack(preyNext, 1.0);
-            wings.follow(0.35, 0.0);
+        /**
+         * The free flight: the pair flies along the eagle's view (kept to a gentle climb, never above the ceiling,
+         * never out of the arena or over the void), and the reticle shows where a dive would land.
+         */
+        private boolean flight(long tick, long c) {
+            // The dive goes where the eagle looks the moment it begins.
             Location aimed = aimMarker();
-            if (aimed != null) {
-                marker = aimed;
+            marker = aimed != null ? aimed : fallbackMarker();
+            if (c >= flightTicks || sneakArmed && owner.isSneaking()) {
+                moveStack(preyPlanned, 1.0, c); // hold for the tick the dive is aimed in
+                beginDive(tick);
+                return true;
             }
-            if (tick % 2 == 0) {
+            Vector look = clampPitch(owner.getEyeLocation().getDirection(), -FLIGHT_MAX_SINK, FLIGHT_MAX_CLIMB);
+            Location from = preyPlanned;
+            Location next = from.clone().add(look.clone().multiply(speed));
+            next.setY(Math.min(next.getY(), ceilingY));
+            if (!flightFits(next)) {
+                // Slide along whatever is in the way: first level, then straight up or down.
+                Location level = from.clone().add(Motion.horizontal(look).multiply(speed));
+                Location vertical = from.clone();
+                vertical.setY(next.getY());
+                next = flightFits(level) ? level : flightFits(vertical) ? vertical : from.clone();
+            }
+            moveStack(next, 1.0, c);
+            wings.follow(0.4, 0.1);
+            if (c % 2 == 0) {
                 reticle(c);
             }
             if (c % 5 == 0) {
-                long left = Math.max(0, circleTicks - c);
-                owner.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>◎ 급강하까지 " + Fx.seconds(left) + "초</b></" + GOLD_TAG
-                        + "> <gray>바라보는 땅에 내리꽂습니다</gray>"));
+                long left = Math.max(0, flightTicks - c);
+                double height = Math.max(0, preyPlanned.getY() - marker.getY());
+                owner.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>◎ 하늘의 제왕</b></" + GOLD_TAG + "> <white>"
+                        + Fx.seconds(left) + "초</white> <gray>· 높이 " + AbilityInfo.formatNumber(Math.round(height))
+                        + " · 웅크리면 급강하</gray>"));
             }
-            if (c + 1 >= circleTicks) {
-                Location from = preyPlanned;
-                diveFrom = from != null ? from.clone() : preyNext.clone();
-                if (!Spots.clearPath(chestAbove(diveFrom), chestAbove(marker))) {
-                    marker = fallbackMarker();
-                }
-                // Long dives take a little longer, so the last (fastest) steps stay under the speed cap.
-                double length = diveFrom.distance(marker);
-                diveTicks = Math.clamp((long) Math.ceil(length / DIVE_STEP), DIVE_TICKS, MAX_DIVE_TICKS);
-                phase = Phase.DIVE;
-                phaseStart = tick + 1;
-                Fx.sound(chestOf(planned), Sound.ENTITY_PHANTOM_SWOOP, 1.4f, 0.6f);
-                Fx.sound(chestOf(planned), Sound.ITEM_ELYTRA_FLYING, 0.8f, 1.6f);
+            if (c % 6 == 0) {
+                Fx.sound(chestOf(planned), Sound.ENTITY_ENDER_DRAGON_FLAP, 0.7f, 1.3f + Fx.jitter(0.1f));
             }
             return true;
+        }
+
+        /** Where the flying pair may go: it fits, stays inside the arena and has safe ground somewhere below. */
+        private boolean flightFits(Location preyFeet) {
+            return stackFits(preyFeet) && ctx().isInsideArena(preyFeet) && Spots.hasGroundBelow(world, preyFeet);
+        }
+
+        private void beginDive(long tick) {
+            diveFrom = preyPlanned.clone();
+            if (!Spots.clearPath(chestAbove(diveFrom), chestAbove(marker))
+                    || !Spots.isSafe(ctx(), marker, Body.standing(prey))) {
+                marker = fallbackMarker();
+            }
+            // Long dives take a little longer, so the last (fastest) steps stay under the speed cap.
+            double length = diveFrom.distance(marker);
+            diveTicks = Math.clamp((long) Math.ceil(length / DIVE_STEP), DIVE_TICKS, MAX_DIVE_TICKS);
+            phase = Phase.DIVE;
+            phaseStart = tick + 1;
+            Fx.sound(chestOf(planned), Sound.ENTITY_PHANTOM_SWOOP, 1.4f, 0.6f);
+            Fx.sound(chestOf(planned), Sound.ITEM_ELYTRA_FLYING, 0.8f, 1.6f);
         }
 
         private boolean dive(long c) {
@@ -995,7 +1144,7 @@ public final class EagleAbility extends Ability {
             double s = Math.min(1.0, (c + 1.0) / diveTicks);
             double eased = s * s;
             Location preyNext = diveFrom.clone().add(marker.toVector().subtract(diveFrom.toVector()).multiply(eased));
-            moveStack(preyNext, 1.0);
+            moveStack(preyNext, 1.0, c);
             wings.follow(0.2, 1.0);
             Vector fall = marker.toVector().subtract(diveFrom.toVector());
             if (fall.lengthSquared() > 1.0E-6) {
@@ -1009,24 +1158,31 @@ public final class EagleAbility extends Ability {
                             : GOLD, 5, true);
                 }
             }
-            reticle(c);
+            if (c % 2 == 0) {
+                reticle(c);
+            }
             return true;
         }
 
         /** Moves the prey to {@code preyNext} and the eagle onto it ({@code settle} blends the eagle into place). */
-        private void moveStack(Location preyNext, double settle) {
+        private void moveStack(Location preyNext, double settle, long c) {
             Location ownerNext = preyNext.clone().add(0, prey.getHeight() + HANG_GAP, 0);
             if (settle < 1) {
                 ownerNext = planned.clone().add(ownerNext.toVector().subtract(planned.toVector()).multiply(settle));
             }
-            steer(prey, preyPlanned, preyNext);
-            steer(owner, planned, ownerNext);
+            Steered steered = held;
+            if (steered != null) {
+                steered.toward(preyNext);
+            }
+            eagle.toward(ownerNext);
             preyPlanned = preyNext;
             planned = ownerNext;
             // The prey dangles in a ring of sky-blue light under the talons.
-            Location waist = preyNext.clone().add(0, prey.getHeight() * 0.7, 0);
-            Vfx.ring(ctx(), waist, prey.getWidth() * 0.5 + 0.3, 8, preyNext.getY() * 2, Particle.DUST_COLOR_TRANSITION,
-                    SKY, true);
+            if (c % 2 == 0) {
+                Location waist = preyNext.clone().add(0, prey.getHeight() * 0.7, 0);
+                Vfx.ring(ctx(), waist, prey.getWidth() * 0.5 + 0.3, 8, preyNext.getY() * 2,
+                        Particle.DUST_COLOR_TRANSITION, SKY, true);
+            }
         }
 
         private boolean stackFits(Location preyFeet) {
@@ -1034,7 +1190,10 @@ public final class EagleAbility extends Ability {
             return Spots.isFree(world, preyFeet, width, prey.getHeight() + HANG_GAP + owner.getHeight());
         }
 
-        /** Where the eagle's view meets the ground, within reach of the column and safe for the prey; null if not. */
+        /**
+         * Where the eagle's view meets the ground, within reach of the prey's spot and safe for it, with a clear way
+         * down; null if not.
+         */
         private @Nullable Location aimMarker() {
             Location eye = owner.getEyeLocation();
             Vector look = eye.getDirection();
@@ -1043,25 +1202,29 @@ public final class EagleAbility extends Ability {
                 return null;
             }
             Vector point = hit.getHitPosition();
-            Vector offset = point.clone().subtract(column.toVector()).setY(0);
+            Vector offset = point.clone().subtract(preyPlanned.toVector()).setY(0);
             if (offset.length() > reach) {
                 offset.normalize().multiply(reach);
             }
-            double top = Math.min(apexY, point.getY() + 3);
-            Location probe = new Location(world, column.getX() + offset.getX(), top, column.getZ() + offset.getZ());
+            double top = Math.min(preyPlanned.getY(), point.getY() + 3);
+            Location probe = new Location(world, preyPlanned.getX() + offset.getX(), top,
+                    preyPlanned.getZ() + offset.getZ());
             Location feet = groundUnder(probe, Math.max(2, top - point.getY() + 8));
-            Location from = preyPlanned;
             if (feet == null || !Spots.isSafe(ctx(), feet, Body.standing(prey))
-                    || from != null && !Spots.clearPath(chestAbove(from), chestAbove(feet))) {
+                    || !Spots.clearPath(chestAbove(preyPlanned), chestAbove(feet))) {
                 return null;
             }
             return feet;
         }
 
-        /** The ground right under the column (where the prey was seized), or the seizing spot itself. */
+        /** The ground straight under the prey, or (should there be none in reach) where it was seized. */
         private Location fallbackMarker() {
-            Location ground = groundUnder(column.clone().add(0, 0.3, 0), 16);
-            return ground != null ? ground : column.clone();
+            Location ground = groundUnder(preyPlanned.clone().add(0, 0.3, 0), MAX_ALTITUDE + 24);
+            if (ground != null && Spots.isSafe(ctx(), ground, Body.standing(prey))) {
+                return ground;
+            }
+            Location seized = groundUnder(column.clone().add(0, 0.3, 0), 16);
+            return seized != null ? seized : column.clone();
         }
 
         private Location chestAbove(Location feet) {
@@ -1072,14 +1235,14 @@ public final class EagleAbility extends Ability {
         private void reticle(long c) {
             Location ground = marker.clone().add(0, 0.1, 0);
             double radius = Math.max(0.5, params().num("impact_radius"));
-            Vfx.ring(ctx(), ground, radius, (int) Math.min(36, Math.max(12, radius * 7)), c * 0.12,
+            Vfx.ring(ctx(), ground, radius, (int) Math.min(18, Math.max(10, radius * 5)), c * 0.12,
                     Particle.DUST_COLOR_TRANSITION, GOLD_FADE, true);
-            Vfx.ring(ctx(), ground, radius * 0.35, 8, -c * 0.3, Particle.DUST, GOLD_DUST, true);
+            Vfx.ring(ctx(), ground, radius * 0.35, 6, -c * 0.3, Particle.DUST, GOLD_DUST, true);
             for (int i = 0; i < 4; i++) {
                 double angle = c * 0.12 + i * Math.PI / 2;
-                Location inner = ground.clone().add(Math.cos(angle) * radius * 0.5, 0, Math.sin(angle) * radius * 0.5);
+                Location inner = ground.clone().add(Math.cos(angle) * radius * 0.55, 0, Math.sin(angle) * radius * 0.55);
                 Location outer = ground.clone().add(Math.cos(angle) * radius * 1.1, 0, Math.sin(angle) * radius * 1.1);
-                Vfx.line(ctx(), inner, outer, 3, Particle.DUST, GOLD_DUST, true);
+                Vfx.line(ctx(), inner, outer, 2, Particle.DUST, GOLD_DUST, true);
             }
             if (c % 4 == 0) {
                 Vfx.dot(ground.clone().add(0, 0.3, 0), Particle.END_ROD, null, true);
@@ -1100,12 +1263,17 @@ public final class EagleAbility extends Ability {
             }
         }
 
-        /** The dive lands: the prey is slammed into the ground, its friends around it thrown up. */
+        /** The dive lands: the prey is slammed into the ground (harder from higher up), its friends thrown aside. */
         private void impact() {
             phase = Phase.DONE;
             clearSafety(prey);
             prey.setFallDistance(0);
-            Combat.hit(ctx(), owner, prey, params().num("ult_damage"));
+            double height = Math.max(0, diveFrom.getY() - marker.getY());
+            double damage = Math.min(Math.max(0, params().num("dive_max")),
+                    Math.max(0, params().num("dive_per_block")) * height);
+            if (damage > 1.0E-3) {
+                groundHit(prey, damage);
+            }
             if (Combat.isTargetable(ctx(), owner, prey)) {
                 prey.setVelocity(new Vector(0, 0.2, 0));
             }
@@ -1116,7 +1284,7 @@ public final class EagleAbility extends Ability {
                 if (enemy.equals(prey)) {
                     continue;
                 }
-                Combat.hit(ctx(), owner, enemy, params().num("impact_damage"));
+                groundHit(enemy, params().num("impact_damage"));
                 splashed++;
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
@@ -1131,17 +1299,19 @@ public final class EagleAbility extends Ability {
             owner.setFallDistance(0);
             Vector back = Motion.horizontal(diveFrom.toVector().subtract(marker.toVector()));
             owner.setVelocity(back.multiply(0.25).setY(REBOUND_UP));
-            impactFx(point, radius);
+            impactFx(point, radius, height);
             owner.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>하늘의 제왕!</b></" + GOLD_TAG + "> <white>"
-                    + AbilityInfo.formatNumber(params().num("ult_damage")) + " 피해</white>"
+                    + AbilityInfo.formatNumber(Math.round(damage * 10) / 10.0) + " 피해</white> <gray>· "
+                    + AbilityInfo.formatNumber(Math.round(height)) + "블록 급강하</gray>"
                     + (splashed > 0 ? " <gray>· 충격파 " + splashed + "명</gray>" : "")));
         }
 
-        private void impactFx(Location point, double radius) {
+        private void impactFx(Location point, double radius, double height) {
             Location ground = point.clone().add(0, 0.1, 0);
             BlockData floor = floorAt(ground);
-            world.spawnParticle(Particle.BLOCK, ground, Vfx.n(ctx(), 40), radius * 0.4, 0.15, radius * 0.4, 0.2, floor,
-                    true);
+            double weight = Math.min(1.0, height / 10);
+            world.spawnParticle(Particle.BLOCK, ground, Vfx.n(ctx(), 20 + (int) (20 * weight)), radius * 0.4, 0.15,
+                    radius * 0.4, 0.2, floor, true);
             world.spawnParticle(Particle.DUST_PLUME, ground, Vfx.n(ctx(), 12), radius * 0.3, 0.1, radius * 0.3, 0.03,
                     null, true);
             Vfx.dot(ground.clone().add(0, 0.8, 0), Particle.FLASH, PALETTE.core(), true);
@@ -1153,7 +1323,7 @@ public final class EagleAbility extends Ability {
             featherBurst(ground.clone().add(0, 1.0, 0), 16, true);
             cracks(ground, radius);
             Fx.sound(ground, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 1.4f, 0.7f);
-            Fx.sound(ground, Sound.ENTITY_GENERIC_EXPLODE, 0.7f, 1.4f + Fx.jitter(0.05f));
+            Fx.sound(ground, Sound.ENTITY_GENERIC_EXPLODE, 0.4f + 0.4f * (float) weight, 1.4f + Fx.jitter(0.05f));
             Fx.sound(ground, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.5f);
             Fx.sound(ground, Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 0.9f);
             Location center = point.clone();
@@ -1192,6 +1362,15 @@ public final class EagleAbility extends Ability {
             }
         }
 
+        /** Struggled free: the eagle lets go in mid-air, the prey floats down on its safety net. */
+        private void letGo() {
+            Location chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
+            featherBurst(chest, 10, true);
+            Fx.sound(chest, Sound.ENTITY_PARROT_HURT, 1.0f, 0.6f);
+            Fx.sound(chest, Sound.ENTITY_PHANTOM_HURT, 0.8f, 1.2f + Fx.jitter(0.1f));
+            abort("<gray>발버둥에 먹잇감을 놓쳤습니다</gray>");
+        }
+
         /** The flight breaks off: the prey (with its safety net) and the eagle drop where they are. */
         private void abort(String reason) {
             if (phase == Phase.DONE) {
@@ -1200,7 +1379,7 @@ public final class EagleAbility extends Ability {
             phase = Phase.DONE;
             owner.setVelocity(new Vector(0, 0.1, 0));
             owner.setFallDistance(0);
-            if (Combat.isTargetable(ctx(), owner, prey)) {
+            if (held != null && Combat.isTargetable(ctx(), owner, prey)) {
                 prey.setVelocity(new Vector(0, 0, 0));
                 prey.setFallDistance(0);
             }
@@ -1268,23 +1447,10 @@ public final class EagleAbility extends Ability {
         int[] grounded = {0};
         Loop.repeat(ctx(), owner, 0, 1, LANDING_GRACE_TICKS, run -> {
             owner.setFallDistance(0);
-            boolean flying = snatch != null || sovereign != null;
+            boolean flying = clutch != null || sovereign != null;
             grounded[0] = !flying && (Motion.isGrounded(owner) || owner.isInWater()) ? grounded[0] + 1 : 0;
             return grounded[0] < LandingGuard.SETTLE_TICKS;
         });
-    }
-
-    /**
-     * Steers a body to {@code next}: the step from the last planned spot plus a share of the gap between that spot and
-     * where the server sees the body (a player's server position lags its client, so the plan leads).
-     */
-    private static void steer(LivingEntity entity, @Nullable Location planned, Location next) {
-        Vector current = entity.getLocation().toVector();
-        Vector velocity = planned == null ? next.toVector().subtract(current)
-                : next.toVector().subtract(planned.toVector())
-                        .add(planned.toVector().subtract(current).multiply(STEER_GAIN));
-        entity.setVelocity(Motion.clamp(velocity, MAX_SPEED));
-        entity.setFallDistance(0);
     }
 
     /** Slow falling as a safety net for a carried body, removed with {@link #clearSafety} when it is let go. */
@@ -1302,13 +1468,14 @@ public final class EagleAbility extends Ability {
         }
     }
 
+    /** Ticks the server sees a player's movement late: one round trip, capped (ping can read 0 after joining). */
     private static long lagTicks(Player player) {
         return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / MILLIS_PER_TICK));
     }
 
     /** Extra leash for a player whose server position trails its client. */
     private static double lagSlack(LivingEntity entity) {
-        return entity instanceof Player player ? lagTicks(player) * 0.4 : 0;
+        return entity instanceof Player player ? lagTicks(player) * 0.6 : 0;
     }
 
     private static Location chestOf(Location feet) {
@@ -1321,10 +1488,14 @@ public final class EagleAbility extends Ability {
 
     /**
      * The ground under {@code point}: the top of the first solid block at most {@code maxDrop} blocks below it, or
-     * null. The probe starts a little above the point (a ray starting on a face reports a hit inside the block).
+     * null. The probe starts a little above the point (a ray starting on a face reports a hit inside the block), and
+     * there is no ground to find from a point inside a block: null too.
      */
     private static @Nullable Location groundUnder(Location point, double maxDrop) {
         Location from = point.clone().add(0, 0.05, 0);
+        if (!Spots.isFree(point.getWorld(), from, 0.1, 0.1)) {
+            return null;
+        }
         RayTraceResult ground = point.getWorld().rayTraceBlocks(from, new Vector(0, -1, 0), maxDrop + 0.05,
                 FluidCollisionMode.NEVER, true);
         if (ground == null) {

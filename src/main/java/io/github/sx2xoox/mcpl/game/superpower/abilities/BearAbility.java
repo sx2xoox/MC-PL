@@ -34,6 +34,7 @@ import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Pose;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -69,7 +70,7 @@ public final class BearAbility extends Ability {
                             + "근접 피해가 {downed_bonus}% 늘어납니다.",
                     8)
             .ultimate("동면",
-                    "그 자리에 웅크려 최대 {sleep_duration}초간 겨울잠을 잡니다. 자는 동안 움직이거나 공격할 수 없지만 받는 "
+                    "그 자리(공중이면 떨어진 땅)에 웅크려 최대 {sleep_duration}초간 겨울잠을 잡니다. 자는 동안 움직이거나 공격할 수 없지만 받는 "
                             + "피해가 {sleep_reduction}% 줄고 1초마다 체력을 {sleep_heal} 회복합니다. 웅크리면 일찍 깨어나고, "
                             + "적에게 {wake_hits}번 맞으면 화가 나 깨어납니다. 깨어나며 포효해 반경 {roar_radius}블록의 적에게 "
                             + "{roar_damage} 피해(억지로 깨웠다면 {rude_roar_damage})를 주고 밀쳐내며, {rage_duration}초간 "
@@ -153,6 +154,10 @@ public final class BearAbility extends Ability {
     private static final long SNORE_PERIOD = 30;
     private static final double DEN_RADIUS = 0.78;
     private static final int DEN_COUNT = 6;
+    /** The den is made on the ground at most this far below a bear that falls asleep in the air. */
+    private static final double DEN_DROP = 4;
+    /** Size of the probe that makes sure a ground ray does not start inside a block. */
+    private static final double PROBE_SIZE = 0.1;
     private static final double ROAR_PUSH = 1.0;
     private static final double ROAR_LIFT = 0.4;
     private static final long ROAR_LABEL_TICKS = 22;
@@ -179,6 +184,10 @@ public final class BearAbility extends Ability {
 
     @Override
     public void onRevoke() {
+        Hibernation nap = sleep;
+        if (nap != null && !nap.woke) {
+            nap.standUp();
+        }
         maul = null;
         sleep = null;
         downedUntil.clear();
@@ -303,7 +312,7 @@ public final class BearAbility extends Ability {
             return;
         }
         Location body = Fx.body(victim);
-        float yaw = OctopusAbility.yawOf(body.toVector().subtract(player().getLocation().toVector()));
+        float yaw = yawOf(body.toVector().subtract(player().getLocation().toVector()));
         Vfx.arc(ctx(), body, 0.55, yaw, 120, 9, Particle.DUST_COLOR_TRANSITION, rage ? RAGE : HONEY, false);
         Vfx.cloud(ctx(), body, Particle.CRIT, 6, 0.25, 0.2, null, false);
         if (downed) {
@@ -603,7 +612,7 @@ public final class BearAbility extends Ability {
             return;
         }
         Location body = Fx.body(enemy).subtract(facing.clone().multiply(enemy.getWidth() * 0.55));
-        float yaw = OctopusAbility.yawOf(facing);
+        float yaw = yawOf(facing);
         for (int i = -1; i <= 1; i++) {
             float offset = i * 0.2f;
             BlockDisplay mark = Displays.block(ctx(), owner, body, SCRATCH.createBlockData(),
@@ -625,7 +634,7 @@ public final class BearAbility extends Ability {
     /** Three gouges torn into the floor in front of the bear, fading after a while. */
     private void gouges(Location feet, Vector facing) {
         Player owner = player();
-        float yaw = OctopusAbility.yawOf(facing);
+        float yaw = yawOf(facing);
         Vector side = new Vector(-facing.getZ(), 0, facing.getX());
         for (int i = -1; i <= 1; i++) {
             Location center = feet.clone().add(facing.clone().multiply(PAW_SLAM_FORWARD + GOUGE_LENGTH / 2 - 0.4))
@@ -666,8 +675,9 @@ public final class BearAbility extends Ability {
     }
 
     /**
-     * The winter nap: the bear is rooted in a mossy den, takes far less damage and heals every second. It wakes when
-     * the nap is over, when its owner sneaks, or — angrier — after enough hits from enemies.
+     * The winter nap: the bear curls up (everyone sees it crouched) in a mossy den on the ground, is rooted, takes far
+     * less damage and heals every second. It wakes when the nap is over, when its owner sneaks, or — angrier — after
+     * enough hits from enemies. Asleep in the air, it drops onto the den made on the ground below.
      */
     private final class Hibernation implements LongPredicate {
 
@@ -677,6 +687,8 @@ public final class BearAbility extends Ability {
         private final List<NamespacedKey> holds = new ArrayList<>();
         private final List<BlockDisplay> den = new ArrayList<>();
         private boolean sneakArmed;
+        /** The bear fell asleep high in the air: the den is made once it lands. */
+        private boolean denPending;
         private int irritation;
         private double healed;
         private boolean woke;
@@ -692,9 +704,17 @@ public final class BearAbility extends Ability {
             holds.add(ctx().addModifier(owner, owner, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1, 0));
             holds.add(ctx().addModifier(owner, owner, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1, 0));
             holds.add(ctx().addModifier(owner, owner, Attribute.KNOCKBACK_RESISTANCE, 1.0, Operation.ADD_NUMBER, 0));
-            owner.setVelocity(new Vector());
+            // Sends no motion but a drop: a bear asleep in mid-air falls onto its den, never hangs there.
+            owner.setVelocity(new Vector(0, Motion.isGrounded(owner) ? 0 : -0.1, 0));
             sneakArmed = !owner.isSneaking();
-            buildDen();
+            // Curled up: the others see the sleeping bear crouched (the bear's own client shows its own pose).
+            owner.setPose(Pose.SNEAKING, true);
+            Location floor = denFloor();
+            if (floor != null) {
+                buildDen(floor);
+            } else {
+                denPending = true;
+            }
             Location chest = owner.getLocation().add(0, owner.getHeight() * 0.5, 0);
             Vfx.cloud(ctx(), chest, Particle.DUST, 12, 0.4, 0, FUR, false);
             Vfx.ring(ctx(), owner.getLocation().add(0, 0.1, 0), 1.2, 16, 0, Particle.DUST_COLOR_TRANSITION, HONEY,
@@ -706,9 +726,14 @@ public final class BearAbility extends Ability {
             Loop.repeat(ctx(), owner, 1, 1, duration, this, () -> wake(false));
         }
 
+        /** The ground the den lies on: right under the bear, or where a bear asleep in the air will land. */
+        private @Nullable Location denFloor() {
+            return groundUnder(owner.getLocation(), DEN_DROP);
+        }
+
         /** A mossy den: a moss carpet under the bear and a ring of moss, azalea and mushroom tufts around it. */
-        private void buildDen() {
-            Location feet = Displays.unrotated(owner.getLocation());
+        private void buildDen(Location floor) {
+            Location feet = Displays.unrotated(floor);
             long life = duration + 40;
             BlockDisplay mat = Displays.block(ctx(), owner, feet, DEN_MAT.createBlockData(),
                     Displays.transform(0, 0.51f, 0, 0.3f, 1f, 0.3f, 0, 0, 0), life);
@@ -741,6 +766,13 @@ public final class BearAbility extends Ability {
                 return false;
             }
             ticks = tick + 1;
+            if (denPending && (Motion.isGrounded(owner) || owner.isInWater())) {
+                Location floor = denFloor();
+                if (floor != null) {
+                    denPending = false;
+                    buildDen(floor);
+                }
+            }
             if (!owner.isSneaking()) {
                 sneakArmed = true;
             } else if (sneakArmed && ticks >= SNEAK_GRACE) {
@@ -840,12 +872,20 @@ public final class BearAbility extends Ability {
                 ctx().removeModifier(owner, key);
             }
             holds.clear();
+            standUp();
             scatterDen();
             if (!owner.isOnline() || !ctx().isAlive(owner)) {
                 return;
             }
             roar(rude);
             rage();
+        }
+
+        /** Lets the bear's pose follow its own movement again. */
+        void standUp() {
+            if (owner.hasFixedPose()) {
+                owner.setPose(Pose.STANDING, false);
+            }
         }
 
         private void scatterDen() {
@@ -982,8 +1022,16 @@ public final class BearAbility extends Ability {
 
     // ------------------------------------------------------------------ helpers
 
+    /**
+     * The ground under {@code point}: the top of the first solid block at most {@code maxDrop} blocks below it, or
+     * null. The probe starts a little above the point (a ray starting on a face reports a hit inside the block), and
+     * there is no ground to find from a point inside a block (a wall in front of the bear): null too.
+     */
     private static @Nullable Location groundUnder(Location point, double maxDrop) {
         Location from = point.clone().add(0, 0.05, 0);
+        if (!Spots.isFree(point.getWorld(), from, PROBE_SIZE, PROBE_SIZE)) {
+            return null;
+        }
         org.bukkit.util.RayTraceResult ground = point.getWorld().rayTraceBlocks(from, new Vector(0, -1, 0),
                 maxDrop + 0.05, org.bukkit.FluidCollisionMode.NEVER, true);
         if (ground == null) {
@@ -992,6 +1040,15 @@ public final class BearAbility extends Ability {
         Location at = point.clone();
         at.setY(ground.getHitPosition().getY());
         return at;
+    }
+
+    /** Minecraft's yaw (degrees: 0 = +Z, 90 = -X) of the horizontal part of {@code direction}, 0 if it has none. */
+    private static float yawOf(Vector direction) {
+        Vector flat = Motion.horizontal(direction);
+        if (flat.lengthSquared() < 1.0E-6) {
+            return 0;
+        }
+        return (float) Math.toDegrees(Math.atan2(-flat.getX(), flat.getZ()));
     }
 
     private static BlockData floorAt(Location at) {

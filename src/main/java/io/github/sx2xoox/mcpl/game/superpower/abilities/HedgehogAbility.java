@@ -123,7 +123,13 @@ public final class HedgehogAbility extends Ability {
     private static final double MAX_SPEED = 1.6;
 
     // ------------------------------------------------------------------ passive: quills
-    private static final long QUILL_FOLLOW_PERIOD = 2;
+    /**
+     * Stuck quills follow their host every tick, gliding to each new spot over about the time a client takes to
+     * glide a moving player to its new position, so they ride on the body instead of trailing it.
+     */
+    private static final int QUILL_GLIDE_TICKS = 3;
+    /** The quills turn with their host once its body has turned this far (degrees). */
+    private static final float QUILL_TURN_STEP = 4;
     private static final int STUCK_DISPLAY_CAP = 9;
     private static final float STUCK_WIDTH = 0.12f;
     private static final float STUCK_LENGTH = 0.5f;
@@ -172,12 +178,18 @@ public final class HedgehogAbility extends Ability {
             new Quaternionf().rotateZ((float) Math.toRadians(45)).rotateY((float) Math.toRadians(30)),
     };
 
+    /** A quill display stuck in an enemy at one of the {@link #STUCK_SLOTS}. */
+    private record Stuck(BlockDisplay display, int slot) {
+    }
+
     /** Quills stuck in one enemy and when that enemy may be pricked again. */
     private static final class Quills {
         int count;
         long expires;
         long nextThorn = Long.MIN_VALUE / 2;
-        final List<BlockDisplay> displays = new ArrayList<>();
+        /** The body yaw the quills were last turned to. */
+        float yaw;
+        final List<Stuck> displays = new ArrayList<>();
     }
 
     private final Map<UUID, Quills> stuck = new HashMap<>();
@@ -246,14 +258,16 @@ public final class HedgehogAbility extends Ability {
             return;
         }
         Combat.hit(ctx(), owner, attacker, params().num("thorn_damage"));
-        Location from = owner.getLocation().add(0, owner.getHeight() * 0.55, 0);
-        Location body = Fx.body(attacker);
-        Vfx.trail(from, body, PALETTE.core(), 3, false);
-        Vfx.cloud(ctx(), body, Particle.CRIT, 6, 0.2, 0.15, null, false);
-        body.getWorld().spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 5), 0.2, 0.25, 0.2, 0, CHESTNUT);
         bristle(owner, 0.6);
-        Fx.sound(body, Sound.ENCHANT_THORNS_HIT, 1.0f, 1.0f + Fx.jitter(0.1f));
-        Fx.sound(body, Sound.ENTITY_PUFFER_FISH_STING, 0.6f, 1.3f + Fx.jitter(0.1f));
+        if (!hidden(attacker)) {
+            Location from = owner.getLocation().add(0, owner.getHeight() * 0.55, 0);
+            Location body = Fx.body(attacker);
+            Vfx.trail(from, body, PALETTE.core(), 3, false);
+            Vfx.cloud(ctx(), body, Particle.CRIT, 6, 0.2, 0.15, null, false);
+            body.getWorld().spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 5), 0.2, 0.25, 0.2, 0, CHESTNUT);
+            Fx.sound(body, Sound.ENCHANT_THORNS_HIT, 1.0f, 1.0f + Fx.jitter(0.1f));
+            Fx.sound(body, Sound.ENTITY_PUFFER_FISH_STING, 0.6f, 1.3f + Fx.jitter(0.1f));
+        }
         if (!Combat.isTargetable(ctx(), owner, attacker)) {
             return;
         }
@@ -278,33 +292,53 @@ public final class HedgehogAbility extends Ability {
             return;
         }
         Player owner = player();
+        float yaw = attacker.getBodyYaw();
+        if (quills.displays.isEmpty()) {
+            quills.yaw = yaw;
+        }
         BlockDisplay quill = keep(Displays.block(ctx(), owner, Displays.unrotated(attacker.getLocation()),
-                QUILL.createBlockData(), stuckPose(attacker, slot, 0.2f), 0));
-        quill.setTeleportDuration((int) QUILL_FOLLOW_PERIOD);
-        Displays.animateNextTick(ctx(), owner, quill, stuckPose(attacker, slot, 1f), 3);
-        if (attacker instanceof Player hidden && !owner.canSee(hidden)) {
+                QUILL.createBlockData(), stuckPose(attacker, slot, 0.2f, quills.yaw), 0));
+        quill.setTeleportDuration(QUILL_GLIDE_TICKS);
+        Displays.animateNextTick(ctx(), owner, quill, stuckPose(attacker, slot, 1f, quills.yaw), 3);
+        if (hidden(attacker)) {
             quill.setViewRange(0);
         }
-        quills.displays.add(quill);
+        quills.displays.add(new Stuck(quill, slot));
     }
 
     private int totalStuckDisplays() {
         int total = 0;
         for (Quills quills : stuck.values()) {
-            quills.displays.removeIf(display -> !display.isValid());
+            quills.displays.removeIf(quill -> !quill.display().isValid());
             total += quills.displays.size();
         }
         return total;
     }
 
-    /** A stuck quill: its base on the body surface at a slot, pointing outwards and a little up. */
-    static Transformation stuckPose(LivingEntity body, int slot, float grow) {
+    /** True if {@code enemy} is a player hidden from the hedgehog: nothing may be drawn that shows where it is. */
+    private boolean hidden(LivingEntity enemy) {
+        return enemy instanceof Player player && !player().canSee(player);
+    }
+
+    /**
+     * A stuck quill: its base on the body surface at a slot, pointing outwards and a little up. The slots are
+     * around the body as it faces {@code yaw} (0 = +Z, 90 = -X), so the quills turn with it.
+     */
+    static Transformation stuckPose(LivingEntity body, int slot, float grow, float yaw) {
         double[] spot = STUCK_SLOTS[slot % STUCK_SLOTS.length];
         double angle = Math.toRadians(spot[0]);
         double radius = body.getWidth() * 0.4;
-        Vector3f base = new Vector3f((float) (Math.cos(angle) * radius), (float) (body.getHeight() * spot[1]),
-                (float) (Math.sin(angle) * radius));
-        Vector3f direction = new Vector3f((float) Math.cos(angle), (float) spot[2], (float) Math.sin(angle)).normalize();
+        // Body space (x left, z forward) to world space for a body facing yaw.
+        double turn = Math.toRadians(yaw);
+        double cos = Math.cos(turn);
+        double sin = Math.sin(turn);
+        double localX = Math.cos(angle);
+        double localZ = Math.sin(angle);
+        float outX = (float) (localX * cos - localZ * sin);
+        float outZ = (float) (localX * sin + localZ * cos);
+        Vector3f base = new Vector3f((float) (outX * radius), (float) (body.getHeight() * spot[1]),
+                (float) (outZ * radius));
+        Vector3f direction = new Vector3f(outX, (float) spot[2], outZ).normalize();
         Quaternionf rotation = new Quaternionf().rotationTo(new Vector3f(0, 1, 0), direction);
         Vector3f size = new Vector3f(STUCK_WIDTH, STUCK_LENGTH, STUCK_WIDTH).mul(grow);
         // The quill's base (bottom centre of the block) sits on the body, sunk in a little.
@@ -314,7 +348,7 @@ public final class HedgehogAbility extends Ability {
 
     @Override
     public void onTick(long tick) {
-        if (tick % QUILL_FOLLOW_PERIOD != 0 || stuck.isEmpty()) {
+        if (stuck.isEmpty()) {
             return;
         }
         Player owner = player();
@@ -336,12 +370,21 @@ public final class HedgehogAbility extends Ability {
             if (!(entity instanceof LivingEntity body)) {
                 continue;
             }
-            boolean hidden = body instanceof Player victim && !owner.canSee(victim);
+            boolean hidden = hidden(body);
             Location feet = Displays.unrotated(body.getLocation());
-            for (BlockDisplay quill : quills.displays) {
-                if (quill.isValid()) {
-                    Displays.moveTo(quill, feet);
-                    quill.setViewRange(hidden ? 0 : 1.5f);
+            float yaw = body.getBodyYaw();
+            boolean turned = Math.abs(wrapDegrees(yaw - quills.yaw)) > QUILL_TURN_STEP;
+            if (turned) {
+                quills.yaw = yaw;
+            }
+            for (Stuck quill : quills.displays) {
+                BlockDisplay display = quill.display();
+                if (display.isValid()) {
+                    Displays.moveTo(display, feet);
+                    display.setViewRange(hidden ? 0 : 1.5f);
+                    if (turned) {
+                        Displays.animate(display, stuckPose(body, quill.slot(), 1f, yaw), 2);
+                    }
                 }
             }
             if (quills.count > 0 && tick % 20 == 0 && !hidden) {
@@ -353,7 +396,8 @@ public final class HedgehogAbility extends Ability {
     /** The stuck quills fall out (they expired, or the enemy is gone). */
     private void dropQuills(Quills quills, @Nullable LivingEntity body) {
         quills.count = 0;
-        for (BlockDisplay quill : quills.displays) {
+        for (Stuck stuckQuill : quills.displays) {
+            BlockDisplay quill = stuckQuill.display();
             if (quill.isValid()) {
                 quill.setTeleportDuration(6);
                 Displays.moveTo(quill, quill.getLocation().subtract(0, 0.6, 0));
@@ -361,7 +405,7 @@ public final class HedgehogAbility extends Ability {
             }
         }
         quills.displays.clear();
-        if (body != null) {
+        if (body != null && !hidden(body)) {
             Vfx.cloud(ctx(), Fx.body(body), Particle.DUST, 3, 0.2, 0, CREAM, false);
         }
     }
@@ -376,7 +420,8 @@ public final class HedgehogAbility extends Ability {
         quills.count = 0;
         Player owner = player();
         Location body = Fx.body(enemy);
-        for (BlockDisplay quill : quills.displays) {
+        for (Stuck stuckQuill : quills.displays) {
+            BlockDisplay quill = stuckQuill.display();
             if (!quill.isValid()) {
                 continue;
             }
@@ -387,6 +432,9 @@ public final class HedgehogAbility extends Ability {
             Displays.shrinkAway(ctx(), owner, quill, 5);
         }
         quills.displays.clear();
+        if (hidden(enemy)) {
+            return torn; // torn out unseen: no burst that would show where the enemy is
+        }
         Vfx.cloud(ctx(), body, Particle.CRIT, 8 + 4 * torn, 0.3, 0.3, null, false);
         Vfx.burst(ctx(), body, PALETTE, 0.4 + 0.15 * torn, Particle.CRIT, false);
         Fx.sound(body, Sound.BLOCK_POINTED_DRIPSTONE_BREAK, 1.0f, 1.2f + Fx.jitter(0.1f));
@@ -592,15 +640,24 @@ public final class HedgehogAbility extends Ability {
             struck.add(enemy.getUniqueId());
             int burst = tearQuills(enemy);
             double damage = params().num("volley_damage") + burst * Math.max(0, params().num("quill_burst"));
+            boolean unseen = hidden(enemy);
             Combat.hit(ctx(), owner, enemy, damage);
             hits++;
             torn += burst;
+            BlockDisplay display = quill.display;
+            if (unseen) {
+                // A radial quill found an enemy hidden from the hedgehog: no burst, no sound and no quill left
+                // where it hit, nothing that would show where it is.
+                if (display != null && display.isValid()) {
+                    display.remove();
+                }
+                return;
+            }
             Location body = Fx.body(enemy);
             Vfx.cloud(ctx(), body, Particle.CRIT, 6, 0.2, 0.2, null, false);
             body.getWorld().spawnParticle(Particle.DUST, body, Vfx.n(ctx(), 5), 0.2, 0.2, 0.2, 0, CREAM);
             Fx.sound(body, Sound.ENTITY_ARROW_HIT, 1.0f, 1.1f + Fx.jitter(0.1f));
             Fx.sound(body, Sound.ENTITY_PUFFER_FISH_STING, 0.6f, 1.0f + Fx.jitter(0.1f));
-            BlockDisplay display = quill.display;
             if (display != null && display.isValid()) {
                 Displays.moveTo(display, quill.position);
                 Displays.shrinkAway(ctx(), owner, display, 3);
@@ -817,12 +874,12 @@ public final class HedgehogAbility extends Ability {
                 contact.next = now + interval;
                 Combat.hit(ctx(), owner, enemy, damage);
                 bowled++;
-                Location body = Fx.body(enemy);
-                if (!(enemy instanceof Player hidden && !owner.canSee(hidden))) {
+                if (!hidden(enemy)) {
+                    Location body = Fx.body(enemy);
                     Vfx.burst(ctx(), body, PALETTE, 0.5, Particle.CRIT, false);
+                    Fx.sound(body, Sound.ENCHANT_THORNS_HIT, 1.0f, 0.8f + Fx.jitter(0.1f));
+                    Fx.sound(body, Sound.ENTITY_ARMADILLO_HURT_REDUCED, 0.8f, 1.2f + Fx.jitter(0.1f));
                 }
-                Fx.sound(body, Sound.ENCHANT_THORNS_HIT, 1.0f, 0.8f + Fx.jitter(0.1f));
-                Fx.sound(body, Sound.ENTITY_ARMADILLO_HURT_REDUCED, 0.8f, 1.2f + Fx.jitter(0.1f));
                 if (!Combat.isTargetable(ctx(), owner, enemy)) {
                     continue;
                 }
@@ -1010,12 +1067,15 @@ public final class HedgehogAbility extends Ability {
                 caltropSlows.put(enemy.getUniqueId(), ctx().addModifier(owner, enemy, Attribute.MOVEMENT_SPEED,
                         -amount, Operation.MULTIPLY_SCALAR_1, slow));
             }
-            Location point = at.clone().add(0, 0.2, 0);
-            at.getWorld().spawnParticle(Particle.BLOCK, point, Vfx.n(ctx(), 8), 0.15, 0.1, 0.15, 0.05,
-                    QUILL.createBlockData());
-            Vfx.cloud(ctx(), Fx.body(enemy), Particle.CRIT, 6, 0.2, 0.15, null, false);
-            Fx.sound(point, Sound.BLOCK_POINTED_DRIPSTONE_BREAK, 1.0f, 1.4f + Fx.jitter(0.1f));
-            Fx.sound(point, Sound.ENTITY_PUFFER_FISH_STING, 0.8f, 1.2f + Fx.jitter(0.1f));
+            if (!hidden(enemy)) {
+                // (An enemy hidden from the hedgehog springs it silently: the snap would show where it walks.)
+                Location point = at.clone().add(0, 0.2, 0);
+                at.getWorld().spawnParticle(Particle.BLOCK, point, Vfx.n(ctx(), 8), 0.15, 0.1, 0.15, 0.05,
+                        QUILL.createBlockData());
+                Vfx.cloud(ctx(), Fx.body(enemy), Particle.CRIT, 6, 0.2, 0.15, null, false);
+                Fx.sound(point, Sound.BLOCK_POINTED_DRIPSTONE_BREAK, 1.0f, 1.4f + Fx.jitter(0.1f));
+                Fx.sound(point, Sound.ENTITY_PUFFER_FISH_STING, 0.8f, 1.2f + Fx.jitter(0.1f));
+            }
             BlockDisplay spike = display;
             if (spike != null && spike.isValid()) {
                 Displays.shrinkAway(ctx(), owner, spike, 3);
@@ -1037,6 +1097,17 @@ public final class HedgehogAbility extends Ability {
     private static Transformation cubePose(float size, Quaternionf rotation) {
         Vector3f translation = new Quaternionf(rotation).transform(new Vector3f(size / 2)).negate();
         return new Transformation(translation, new Quaternionf(rotation), new Vector3f(size), new Quaternionf());
+    }
+
+    /** {@code degrees} wrapped into -180..180. */
+    private static float wrapDegrees(float degrees) {
+        float wrapped = degrees % 360;
+        if (wrapped >= 180) {
+            wrapped -= 360;
+        } else if (wrapped < -180) {
+            wrapped += 360;
+        }
+        return wrapped;
     }
 
     private static double horizontalDistance(Location a, Location b) {

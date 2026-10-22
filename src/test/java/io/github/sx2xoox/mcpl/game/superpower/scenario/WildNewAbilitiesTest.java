@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.stream.Stream;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
@@ -25,6 +29,7 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Pose;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
@@ -168,6 +173,109 @@ class WildNewAbilitiesTest {
         }
     }
 
+    /**
+     * Players whose real position is their client's: every client tick each moves by the last velocity the server
+     * sent it (then gravity, slow falling and drag, vanilla style, over a flat floor), and the server sees where it is
+     * {@code lag} ticks late. The harness's own physics is off while they run.
+     */
+    private static final class LaggyClients {
+
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one during a tick. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final List<Client> clients = new ArrayList<>();
+
+        LaggyClients(Scenario s, int lag, TestPlayer... players) {
+            this.s = s;
+            s.world.physics().setEnabled(false);
+            for (TestPlayer player : players) {
+                clients.add(new Client(player, lag));
+            }
+        }
+
+        /** One server tick, then one client tick of every player with whatever the server sent it. */
+        void tick() {
+            for (Client client : clients) {
+                client.mark();
+            }
+            s.ticks(1);
+            for (Client client : clients) {
+                client.step();
+            }
+        }
+
+        /** Where {@code player} really is (its client). */
+        Location at(TestPlayer player) {
+            for (Client client : clients) {
+                if (client.player.equals(player)) {
+                    return client.at.clone();
+                }
+            }
+            throw new IllegalArgumentException(player.getName());
+        }
+
+        /** Back to the harness's physics, every player where its client really is. */
+        void close() {
+            for (Client client : clients) {
+                Location real = client.at.clone();
+                Location look = client.player.getLocation();
+                real.setYaw(look.getYaw());
+                real.setPitch(look.getPitch());
+                client.player.teleport(real);
+                client.player.setVelocity(new Vector());
+            }
+            s.world.physics().setEnabled(true);
+        }
+
+        private static final class Client {
+            private final TestPlayer player;
+            private final Deque<Location> late = new ArrayDeque<>();
+            private final Location at;
+            private final Vector velocity = new Vector();
+            private Vector sent = new Vector();
+            private Vector marked = new Vector();
+
+            Client(TestPlayer player, int lag) {
+                this.player = player;
+                this.at = player.getLocation();
+                for (int i = 0; i < lag; i++) {
+                    late.addLast(at.clone());
+                }
+            }
+
+            void mark() {
+                marked = sent.clone().setX(sent.getX() + MARK);
+                player.setVelocity(marked);
+            }
+
+            void step() {
+                Vector now = player.getVelocity();
+                if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                        || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                    sent = now.clone();
+                    velocity.copy(now);
+                }
+                at.add(velocity);
+                boolean grounded = at.getY() <= FlatWorld.SURFACE;
+                if (grounded) {
+                    at.setY(FlatWorld.SURFACE);
+                }
+                double gravity = player.hasPotionEffect(PotionEffectType.SLOW_FALLING) && velocity.getY() <= 0
+                        ? 0.01 : 0.08;
+                double vy = (velocity.getY() - gravity) * 0.98;
+                double friction = grounded ? 0.546 : 0.91;
+                velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                        .setZ(velocity.getZ() * friction);
+                late.addLast(at.clone());
+                Location seen = late.removeFirst();
+                Location look = player.getLocation();
+                seen.setYaw(look.getYaw());
+                seen.setPitch(look.getPitch());
+                player.teleport(seen);
+            }
+        }
+    }
+
     /** Uses the ultimate the way the sweeps do, then lets the hedgehog's ball roll into the enemy. */
     private static void ultimateAndRoll(Scenario s, String id) {
         s.assertSucceeded(s.ultimate(), id + " ultimate");
@@ -283,6 +391,7 @@ class WildNewAbilitiesTest {
         }
         assertModifierFree(s.owner, id);
         assertEquals(1.0, attribute(s.owner, Attribute.SCALE), EPSILON, id + ": normal size");
+        assertFalse(s.owner.hasFixedPose(), id + ": the owner's pose follows it again");
         s.assertNoProblems();
         s.finishClean();
     }
@@ -466,6 +575,9 @@ class WildNewAbilitiesTest {
                 assertUnrotated(plate, "puddle plate");
                 assertEquals(FlatWorld.SURFACE, plate.getLocation().getY(), 1.0E-3, "on the floor, not in it");
                 assertTrue(plate.getTransformation().getScale().y() < 0.05f, "flat");
+                double corner = plate.getTransformation().getScale().x() / Math.sqrt(2);
+                assertTrue(corner <= s.param("puddle_radius") + 1.0E-3,
+                        "the ink never looks bigger than the area that slows: " + corner);
                 Vector3f center = boxCenter(plate);
                 assertTrue(center.y() > 0 && center.y() < 0.05f, "lying on the floor: " + center.y());
             }
@@ -483,30 +595,86 @@ class WildNewAbilitiesTest {
 
     private static final int PUDDLE_SETTLE = 6;
 
+    /** Lays an ink puddle on the floor at (0.5, 6.5) and returns where it lies. */
+    private static Location inkPuddle(Scenario s) {
+        s.place(s.enemy, -4.5, 9.5, 180);
+        s.place(s.enemy2, 9.5, -6.5, 0);
+        s.aimAtFloor(s.owner, 0.5, 6.5);
+        s.assertSucceeded(s.active(), "먹물 발사 at the floor");
+        s.ticks(12);
+        List<BlockDisplay> plates = blocks(s, Material.BLACK_CONCRETE);
+        assertEquals(2, plates.size(), "a puddle where the blob landed");
+        return plates.getFirst().getLocation();
+    }
+
     @Test
-    void octopusPuddleMakesMovingEnemiesSkid() {
+    void octopusPuddleThrowsAWalkersFeetSidewaysNeverOnwards() {
         try (Scenario s = Scenario.ffa("octopus")) {
-            s.place(s.enemy, -4.5, 9.5, 180);
-            s.place(s.enemy2, 9.5, -6.5, 0);
-            s.aimAtFloor(s.owner, 0.5, 6.5);
-            s.assertSucceeded(s.active(), "먹물 발사 at the floor");
-            s.ticks(12);
-            List<BlockDisplay> plates = blocks(s, Material.BLACK_CONCRETE);
-            assertEquals(2, plates.size(), "a puddle where the blob landed");
-            Location puddle = plates.getFirst().getLocation();
+            Location puddle = inkPuddle(s);
             s.place(s.enemy, puddle.getX(), puddle.getZ(), 180);
             s.ticks(2);
             s.world.physics().setEnabled(false);
             Vector before = s.enemy.getVelocity();
             s.ticks(4);
             assertEquals(before, s.enemy.getVelocity(), "no skid without moving");
-            // A step to the east: the ink carries the enemy on further than it meant.
-            s.enemy.teleport(new Location(s.world, puddle.getX() + 0.4, FlatWorld.SURFACE, puddle.getZ(), 180, 0));
+            // A hop to the east, in the air over the ink: a jump is never cut short by a skid.
+            s.enemy.teleport(new Location(s.world, puddle.getX() + 0.4, FlatWorld.SURFACE + 0.5, puddle.getZ(), 270, 0));
+            s.enemy.setVelocity(new Vector(0.2, 0.3, 0));
+            s.ticks(2);
+            assertEquals(new Vector(0.2, 0.3, 0), s.enemy.getVelocity(), "no skid in mid-jump");
+            s.enemy.teleport(new Location(s.world, puddle.getX() + 0.4, FlatWorld.SURFACE, puddle.getZ(), 270, 0));
+            s.ticks(2);
+            // A step to the east on the ink: the feet slip out sideways and the stride is lost.
+            s.enemy.teleport(new Location(s.world, puddle.getX() + 0.8, FlatWorld.SURFACE, puddle.getZ(), 270, 0));
             s.ticks(2);
             Vector skid = s.enemy.getVelocity();
-            assertTrue(skid.getX() > 0.2, "skids on in the direction it moved: " + skid);
+            assertTrue(Math.abs(skid.getZ()) > 0.25, "the feet slip out to a side: " + skid);
+            assertTrue(skid.getX() <= 0, "never carried on the way it walked: " + skid);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the puddle itself does no damage");
             s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("puddle_duration") + 15);
+            s.finishClean();
+        }
+    }
+
+    /**
+     * Walks {@code walker} east for {@code ticks} like a real client on the ground: each tick it takes the velocity
+     * the server sent (if any), adds its own walking push (vanilla: 0.98 x the movement speed attribute, so a slow
+     * counts), moves, and loses 45.4% of its speed to the ground's friction. Returns how far east it got.
+     */
+    private static double walkEast(Scenario s, TestPlayer walker, int ticks) {
+        Location at = walker.getLocation();
+        double startX = at.getX();
+        Vector velocity = new Vector();
+        for (int i = 0; i < ticks; i++) {
+            Vector marked = new Vector(1.0E-9 * (i + 1), 0, 0);
+            walker.setVelocity(marked);
+            s.ticks(1);
+            Vector sent = walker.getVelocity();
+            if (Double.compare(sent.getX(), marked.getX()) != 0 || Double.compare(sent.getZ(), marked.getZ()) != 0) {
+                velocity = sent.clone().setY(0);
+            }
+            velocity.add(new Vector(0.98 * walker.getAttribute(Attribute.MOVEMENT_SPEED).getValue(), 0, 0));
+            at.add(velocity.getX(), 0, velocity.getZ());
+            velocity.multiply(0.546);
+            walker.teleport(new Location(s.world, at.getX(), FlatWorld.SURFACE, at.getZ(), 270, 0));
+        }
+        return at.getX() - startX;
+    }
+
+    @Test
+    void octopusPuddleSlowsAWalkerDownInsteadOfCarryingItOn() {
+        try (Scenario s = Scenario.ffa("octopus")) {
+            Location puddle = inkPuddle(s);
+            s.place(s.enemy, -8.5, -8.5, 270);
+            s.world.physics().setEnabled(false);
+            double dry = walkEast(s, s.enemy, 20);
+            double radius = s.param("puddle_radius");
+            s.place(s.enemy, puddle.getX() - radius + 0.5, puddle.getZ(), 270);
+            double inInk = walkEast(s, s.enemy, 20);
+            s.world.physics().setEnabled(true);
+            assertTrue(dry > 3.5, "the model walks like a player: " + dry);
+            assertTrue(inInk < dry * 0.8, "slower across the ink (" + inInk + ") than on dry ground (" + dry + ")");
             s.ticks(s.paramTicks("puddle_duration") + 15);
             s.finishClean();
         }
@@ -629,12 +797,91 @@ class WildNewAbilitiesTest {
         try (Scenario s = Scenario.ffa("octopus")) {
             s.place(s.enemy2, 12.5, 12.5, 0);
             s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
-            s.assertSucceeded(s.ultimate(), "크라켄");
+            assertFalse(s.ultimate().succeeded(),
+                    "the only enemy in the sea is hidden: no wasted kraken, and no tell that someone hides there");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.finishClean();
+        }
+        try (Scenario s = Scenario.ffa("octopus")) {
+            s.place(s.enemy2, 3.5, 3.5, 0);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.assertSucceeded(s.ultimate(), "크라켄 on the visible enemy");
             s.ticks(s.paramTicks("kraken_delay") + 4);
+            assertEquals(s.param("grab_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "the visible one is seized");
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "a tentacle seizing it would show where it hides");
             assertTrue(s.enemy.getLocation().getY() < FlatWorld.SURFACE + 0.5, "not hoisted");
             s.owner.showPlayer(s.ctx().plugin(), s.enemy);
             s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void octopusKrakenHoistsALaggingPlayerWithoutFlingingItAndWithASafetyNet() {
+        try (Scenario s = Scenario.ffa("octopus")) {
+            s.place(s.enemy2, 12.5, 12.5, 0);
+            // The seized player sees what the server sends three ticks (a 150 ms round trip) before the server sees it
+            // move: steering by its server position kept pushing a body that was already up and flung it past.
+            LaggyClients clients = new LaggyClients(s, 3, s.enemy);
+            s.assertSucceeded(s.ultimate(), "크라켄");
+            double highest = 0;
+            boolean netted = false;
+            for (int i = 0; i < 60; i++) {
+                clients.tick();
+                highest = Math.max(highest, clients.at(s.enemy).getY() - FlatWorld.SURFACE);
+                if (s.damageBy(s.owner, s.enemy) > 0 && s.damageBy(s.owner, s.enemy) < s.param("grab_damage")
+                        + s.param("slam_damage") - EPSILON) {
+                    netted |= s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING);
+                }
+            }
+            assertTrue(highest > 2.0, "hoisted: " + highest);
+            assertTrue(highest < 2.5 + 0.3, "to the hold, not flung past it: " + highest);
+            assertTrue(netted, "held over a safety net: let go in the air, it would float down");
+            assertEquals(s.param("grab_damage") + s.param("slam_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "seized and slammed");
+            assertEquals(FlatWorld.SURFACE, clients.at(s.enemy).getY(), 1.0E-6, "slammed onto the ground");
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), "the net is taken off after the slam");
+            clients.close();
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void octopusKeepsItsDisplaysWithinItsBudget() {
+        try (Scenario s = Scenario.builder("octopus").param("ink_chance", 100).start()) {
+            s.place(s.enemy2, 3.5, 3.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 2.5);
+            s.assertSucceeded(s.active(), "먹물 발사 at the floor");
+            s.ticks(8);
+            assertEquals(2, blocks(s, Material.BLACK_CONCRETE).size(), "a puddle");
+            s.melee(s.enemy, s.owner, 1);
+            s.ticks(2);
+            assertEquals(3, blocks(s, Material.BLACK_STAINED_GLASS).size(), "an ink cloud");
+            s.assertSucceeded(s.ultimate(), "크라켄 on top");
+            int most = 0;
+            for (int i = 0; i < 60; i++) {
+                s.ticks(1);
+                most = Math.max(most, entities(s, Display.class).size());
+            }
+            assertTrue(most <= 24, "at most 24 displays alive at once: " + most);
+            assertTrue(most >= 20, "the kraken still rises in force: " + most);
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void octopusStaysHiddenWhenItsHitFromTheInkIsDodged() {
+        try (Scenario s = Scenario.builder("octopus").param("ink_chance", 100).enemyAbility("gambler")
+                .configure(h -> h.setParam("gambler", "dodge_chance", 100)).start()) {
+            s.melee(s.enemy, s.owner, 2);
+            assertFalse(s.enemy.canSee(s.owner), "vanished into the ink");
+            s.melee(s.owner, s.enemy, 2);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the gambler dodged it");
+            assertFalse(s.enemy.canSee(s.owner), "a blow that never landed does not show the octopus");
+            s.ticks(s.paramTicks("ink_stealth") + 2);
+            assertTrue(s.enemy.canSee(s.owner), "the ink clears");
             s.finishClean();
         }
     }
@@ -740,6 +987,8 @@ class WildNewAbilitiesTest {
             s.owner.setHealth(10);
             s.assertSucceeded(s.ultimate(), "동면");
             assertFalse(s.ultimate().succeeded(), "already asleep");
+            assertEquals(Pose.SNEAKING, s.owner.getPose(), "curled up: the others see the sleeping bear crouched");
+            assertTrue(s.owner.hasFixedPose(), "and it stays curled up");
             assertEquals(0, attribute(s.owner, Attribute.MOVEMENT_SPEED), EPSILON, "asleep: no moving");
             assertEquals(0, attribute(s.owner, Attribute.JUMP_STRENGTH), EPSILON, "asleep: no jumping");
             assertFalse(s.active().succeeded(), "no mauling in its sleep");
@@ -757,6 +1006,7 @@ class WildNewAbilitiesTest {
             s.ticks(s.paramTicks("sleep_duration"));
             assertEquals(s.param("roar_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the wake-up roar");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "enemy2 is out of the roar's reach");
+            assertFalse(s.owner.hasFixedPose(), "awake: the bear stands up again");
             assertTrue(attribute(s.owner, Attribute.MOVEMENT_SPEED) > 0.1, "angry and fast");
             s.clearHits();
             s.place(s.enemy, 0.5, 2.0, 180);
@@ -814,6 +1064,25 @@ class WildNewAbilitiesTest {
         }
     }
 
+    @Test
+    void bearAsleepInTheAirDropsOntoADenOnTheGround() {
+        try (Scenario s = noGaugeGain(Scenario.builder("bear")).start()) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 2.5, 0.5, 0, 0);
+            s.assertSucceeded(s.ultimate(), "동면 in mid-air");
+            s.ticks(8);
+            List<BlockDisplay> den = entities(s, BlockDisplay.class);
+            assertFalse(den.isEmpty(), "a den");
+            for (BlockDisplay piece : den) {
+                assertEquals(FlatWorld.SURFACE, piece.getLocation().getY(), 1.0E-3,
+                        "the den lies on the ground, never floating where the bear fell asleep");
+            }
+            s.tickUntilGrounded(s.owner, 40);
+            assertEquals(FlatWorld.SURFACE, s.owner.getLocation().getY(), 1.0E-6, "the bear fell into its den");
+            s.ticks(s.paramTicks("sleep_duration") + s.paramTicks("rage_duration") + 20);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 독수리 eagle
 
     @Test
@@ -845,29 +1114,55 @@ class WildNewAbilitiesTest {
     }
 
     @Test
-    void eagleSnatchesCarriesAndDropsItsPrey() {
-        // Without the hawk's eye: the eagle is still high above when its prey hits the ground (that bonus is real).
-        try (Scenario s = noGaugeGain(Scenario.builder("eagle").param("eye_bonus", 0)).start()) {
+    void eagleOnlyStrikesHarderWhatItCanSee() {
+        try (Scenario s = Scenario.ffa("eagle")) {
+            int height = (int) s.param("eye_height") + 1;
+            standOnPillar(s, s.owner, 0, 0, height, 0);
+            // A wall between the eagle on its pillar and the enemy below.
+            s.world.wallAlongX(-3, 3, 2, height + 3, Material.STONE);
+            s.enemy.removePotionEffect(PotionEffectType.GLOWING);
+            s.ticks(12);
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.GLOWING), "behind the wall: not spotted");
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4, s.damageBy(s.owner, s.enemy), EPSILON, "no bonus on an enemy the eagle cannot see");
+            s.world.wallAlongX(-3, 3, 2, height + 3, Material.AIR);
+            s.ticks(12);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4 * (1 + s.param("eye_bonus") / 100), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "in sight again: the bonus is back");
+            removePillar(s, 0, 0, height);
+            s.tickUntilGrounded(s.owner, 200);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void eagleClutchesCarriesAndDropsItsPrey() {
+        // With the hawk's eye on: the eagle is still high above when its prey hits the ground, and that hit is the
+        // ground's (the documented number).
+        try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
             s.place(s.enemy2, 9.5, -6.5, 0);
             s.aimAt(s.owner, s.enemy);
-            s.assertSucceeded(s.active(), "낚아채기");
+            s.assertSucceeded(s.active(), "움켜쥐기");
             assertFalse(s.active().succeeded(), "on cooldown");
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 12, "the grab");
             assertEquals(s.param("snatch_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "talons");
             double highest = 0;
-            for (int i = 0; i < s.paramTicks("carry_time"); i++) {
+            for (int i = 0; i < s.paramTicks("carry_time") - 1; i++) {
                 s.ticks(1);
                 highest = Math.max(highest, s.enemy.getLocation().getY() - FlatWorld.SURFACE);
                 assertTrue(s.owner.getLocation().getY() > s.enemy.getLocation().getY(), "the eagle flies on top");
+                assertTrue(s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), "carried over a safety net");
             }
-            assertTrue(highest > s.param("carry_height") * 0.7, "carried up into the air: " + highest);
+            assertEquals(s.param("carry_height"), highest, 0.05, "carried up into the air");
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > s.param("snatch_damage"), 60, "the drop");
-            assertEquals(s.param("snatch_damage") + s.param("drop_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
-                    "hurt by the drop, not by a fall on top");
-            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.SLOWNESS), "dazed by the drop");
+            double drop = Math.min(s.param("drop_max"), s.param("drop_per_block") * s.param("carry_height"));
+            assertEquals(s.param("snatch_damage") + drop, s.damageBy(s.owner, s.enemy), EPSILON,
+                    "hurt by the fall from where it was let go, never by a fall on top (nor the hawk's eye)");
             assertTrue(s.enemy.getLocation().getZ() > 6, "carried on along the eagle's view: " + s.enemy.getLocation());
             assertEquals(FlatWorld.SURFACE, s.enemy.getLocation().getY(), 1.0E-6, "landed on the ground, not in it");
-            assertTrue(s.ctx().cooldownRemaining(s.owner) > s.param("cooldown") * 0.5, "no refund for a catch");
             assertTrue(s.hitsOf(s.enemy, org.bukkit.event.entity.EntityDamageEvent.DamageCause.FALL).isEmpty(),
                     "no vanilla fall damage on top");
             s.tickUntilGrounded(s.owner, 200);
@@ -881,19 +1176,80 @@ class WildNewAbilitiesTest {
     }
 
     @Test
-    void eagleSnatchWithoutPreyRefundsPartOfTheCooldown() {
+    void eagleLetsGoOfItsPreyWhenItSneaks() {
+        try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.setSneaking(true); // held from before: does not let go
+            s.assertSucceeded(s.active(), "움켜쥐기");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 12, "the grab");
+            s.ticks(3);
+            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), "still held");
+            s.owner.setSneaking(false);
+            s.ticks(1);
+            s.owner.setSneaking(true);
+            s.ticks(1);
+            double letGo = s.enemy.getLocation().getY() - FlatWorld.SURFACE;
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), "let go at once");
+            assertTrue(letGo > 1 && letGo < s.param("carry_height"), "early, lower than the full lift: " + letGo);
+            s.owner.setSneaking(false);
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > s.param("snatch_damage"), 60, "the drop");
+            // (Measured a tick after it was let go: it has dropped a little since.)
+            assertEquals(s.param("snatch_damage") + s.param("drop_per_block") * letGo, s.damageBy(s.owner, s.enemy),
+                    0.2, "a lower drop hurts less");
+            assertTrue(s.enemy.getLocation().getZ() < 9, "dropped short of the full carry: " + s.enemy.getLocation());
+            s.tickUntilGrounded(s.owner, 200);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void eagleClutchCarriesALaggingPreyWithoutFlingingIt() {
+        try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
+            s.place(s.enemy2, 9.5, -6.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            // The eagle and its prey see what the server sends them three ticks (a 150 ms round trip) before the
+            // server sees them move: steering by their server positions flung them up and down past the plan.
+            LaggyClients clients = new LaggyClients(s, 3, s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "움켜쥐기");
+            double highest = 0;
+            double worstStack = 0;
+            for (int i = 0; i < 50; i++) {
+                clients.tick();
+                double height = clients.at(s.enemy).getY() - FlatWorld.SURFACE;
+                highest = Math.max(highest, height);
+                if (s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING) && height > 3.2) {
+                    double stack = clients.at(s.owner).getY() - clients.at(s.enemy).getY();
+                    worstStack = Math.max(worstStack, Math.abs(stack - (s.enemy.getHeight() + 0.15)));
+                }
+            }
+            assertEquals(s.param("snatch_damage") + s.param("drop_per_block") * s.param("carry_height"),
+                    s.damageBy(s.owner, s.enemy), 0.05, "grabbed, carried and dropped");
+            assertTrue(highest < s.param("carry_height") + 0.3, "lifted to the carry height, not past it: " + highest);
+            assertTrue(highest > s.param("carry_height") - 0.3, "but lifted: " + highest);
+            assertTrue(worstStack < 0.3, "the eagle stays right on top of its prey: " + worstStack);
+            clients.close();
+            s.tickUntilGrounded(s.owner, 200);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void eagleClutchWithoutPreyIsAGlide() {
         try (Scenario s = Scenario.ffa("eagle")) {
             s.place(s.enemy, 9.5, -12.5, 0);
             s.place(s.enemy2, -9.5, -12.5, 0);
             s.place(s.owner, 0.5, 0.5, 0); // looking along +z: nobody there
-            s.assertSucceeded(s.active(), "낚아채기 into the empty air");
+            s.assertSucceeded(s.active(), "움켜쥐기 into the empty air");
             s.ticks((int) Math.ceil(s.param("snatch_range")) + 4);
-            double expected = s.param("cooldown") * (1 - s.param("miss_refund") / 100);
-            double remaining = s.ctx().cooldownRemaining(s.owner);
-            assertTrue(remaining < expected + 0.05 && remaining > expected - 1.0,
-                    "half the cooldown comes back: " + remaining);
             assertTrue(s.owner.getLocation().getZ() > s.param("snatch_range") * 0.7, "glided ahead: "
                     + s.owner.getLocation());
+            assertTrue(s.ctx().cooldownRemaining(s.owner) > s.param("cooldown") - 1.0,
+                    "a glide like any other: the cooldown runs in full");
             s.tickUntilGrounded(s.owner, 200);
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "a soft landing");
@@ -903,11 +1259,11 @@ class WildNewAbilitiesTest {
     }
 
     @Test
-    void eagleSnatchStopsAtWalls() {
+    void eagleClutchStopsAtWalls() {
         try (Scenario s = Scenario.ffa("eagle")) {
             s.world.wallAlongX(-3, 3, 3, 4, Material.STONE);
             s.aimAt(s.owner, s.enemy);
-            s.assertSucceeded(s.active(), "낚아채기 into a wall");
+            s.assertSucceeded(s.active(), "움켜쥐기 into a wall");
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "the wall is in the way");
             assertTrue(s.owner.getLocation().getZ() < 3, "the eagle stays on its side: " + s.owner.getLocation());
@@ -919,14 +1275,14 @@ class WildNewAbilitiesTest {
     }
 
     @Test
-    void eagleSnatchIgnoresAStaleVelocity() {
+    void eagleClutchIgnoresAStaleVelocity() {
         try (Scenario s = Scenario.ffa("eagle")) {
             s.ticks(2);
             s.place(s.owner, 0.5, 0.5, 90); // facing west, nobody there
             s.world.physics().setEnabled(false);
             // A real server never reads a player's motion back: its velocity is what it last sent.
             s.owner.setVelocity(new Vector(0, 0, 1.5));
-            s.assertSucceeded(s.active(), "낚아채기");
+            s.assertSucceeded(s.active(), "움켜쥐기");
             s.ticks(1);
             Vector glide = s.owner.getVelocity();
             assertTrue(glide.getX() < -0.5, "glides west: " + glide);
@@ -939,17 +1295,21 @@ class WildNewAbilitiesTest {
     }
 
     @Test
-    void eagleWingsSpreadToTheSidesAndStayUnrotated() {
+    void eagleWingsSpreadToTheSidesStayUnrotatedAndAreHiddenFromTheEagle() {
         try (Scenario s = Scenario.ffa("eagle")) {
             s.place(s.enemy, 0.5, 12.5, 180);
             s.place(s.enemy2, 9.5, 12.5, 180);
             s.place(s.owner, 0.5, 0.5, 90); // facing west (-x), nobody there
-            s.assertSucceeded(s.active(), "낚아채기 west");
+            s.assertSucceeded(s.active(), "움켜쥐기 west");
             s.ticks(3);
             List<BlockDisplay> coverts = blocks(s, Material.BROWN_WOOL);
             assertEquals(2, coverts.size(), "two wings");
             List<BlockDisplay> primaries = blocks(s, Material.BROWN_TERRACOTTA);
             assertEquals(2, primaries.size(), "with dark primaries");
+            for (BlockDisplay plate : entities(s, BlockDisplay.class)) {
+                assertFalse(s.owner.canSee(plate), "the wings would sit in the eagle's own view");
+                assertTrue(s.enemy.canSee(plate), "everyone else sees them");
+            }
             float yaw = s.owner.getLocation().getYaw();
             Vector left = facing(yaw + 90).multiply(-1); // facing west, the left side is south (+z)
             double sides = 1;
@@ -984,30 +1344,51 @@ class WildNewAbilitiesTest {
         }
     }
 
+    /** Ticks until the sky king has seized its prey (the prey hangs on its safety net). */
+    private static void awaitSkyGrab(Scenario s) {
+        s.h.tickUntil(() -> s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), 20, "the grab");
+    }
+
     @Test
-    void eagleSkyKingSoarsWithThePreyAndDivesOntoTheMarkedGround() {
+    void eagleSkyKingFliesWhereItLooksAndDivesOntoTheMarkedGround() {
         try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
-            s.place(s.enemy2, 7.5, -3.5, 0);
+            s.place(s.enemy2, 10.5, 4.5, 0);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "하늘의 제왕");
             assertFalse(s.ultimate().succeeded(), "the gauge is spent");
-            assertFalse(s.active().succeeded(), "no snatching while soaring");
-            s.h.tickUntil(() -> s.ctx().isSilenced(s.enemy), 20, "the grab");
-            s.ticks(14);
-            assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + s.param("ult_height") * 0.8,
-                    "high in the sky: " + s.enemy.getLocation().getY());
+            assertFalse(s.active().succeeded(), "no clutching while flying");
+            awaitSkyGrab(s);
+            s.ticks(12);
+            assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + s.param("ult_height") * 0.9,
+                    "soared up: " + s.enemy.getLocation().getY());
             assertTrue(s.owner.getLocation().getY() > s.enemy.getLocation().getY(), "the eagle over its prey");
-            assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON, "nothing before the dive");
-            // Choose where to strike: the floor next to enemy2, keeping the aim on it while circling.
-            for (int i = 0; i < 80 && s.damageBy(s.owner, s.enemy) <= 0; i++) {
-                s.aimAtFloor(s.owner, 6.5, -2.5);
+            assertFalse(s.ctx().isSilenced(s.enemy), "unlike a wrestler's grip, the prey keeps its skills");
+            // Fly east, climbing: the prey dangles along.
+            Location before = s.enemy.getLocation();
+            for (int i = 0; i < 10; i++) {
+                s.owner.setRotation(270, -20);
                 s.ticks(1);
             }
-            assertEquals(s.param("ult_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "slammed into the ground");
+            Location after = s.enemy.getLocation();
+            double speed = s.param("flight_speed") / 20;
+            assertTrue(after.getX() - before.getX() > 10 * speed * 0.8, "flown east: " + before + " -> " + after);
+            assertTrue(after.getY() > before.getY() + 1, "and up: " + before + " -> " + after);
+            assertTrue(horizontalDistance(after, s.owner.getLocation()) < 0.2, "right under the talons: " + after
+                    + " / " + s.owner.getLocation());
+            assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON, "nothing before the dive");
+            // Choose where to strike: the floor next to enemy2, then dive with a sneak.
+            s.aimAtFloor(s.owner, 9.5, 4.5);
+            double from = s.enemy.getLocation().getY();
+            s.owner.setSneaking(true);
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 30, "the dive");
+            s.owner.setSneaking(false);
+            double height = from - FlatWorld.SURFACE;
+            assertEquals(Math.min(s.param("dive_max"), s.param("dive_per_block") * height),
+                    s.damageBy(s.owner, s.enemy), 0.05, "slammed in, harder the higher it dived from (" + height + ")");
             assertEquals(s.param("impact_damage"), s.damageBy(s.owner, s.enemy2), EPSILON,
                     "enemy2 is caught by the impact");
             Location landed = s.enemy.getLocation();
-            assertTrue(horizontalDistance(landed, new Location(s.world, 6.5, FlatWorld.SURFACE, -2.5)) < 1.0,
+            assertTrue(horizontalDistance(landed, new Location(s.world, 9.5, FlatWorld.SURFACE, 4.5)) < 1.0,
                     "driven into the aimed ground: " + landed);
             s.ticks(4);
             List<BlockDisplay> cracks = blocks(s, Material.BLACK_CONCRETE);
@@ -1029,10 +1410,92 @@ class WildNewAbilitiesTest {
             s.tickUntilGrounded(s.owner, 200);
             s.ticks(20);
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "the eagle never hurts itself");
-            assertFalse(s.ctx().isSilenced(s.enemy), "the grip (and its silence) is over");
             assertFalse(s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), "the safety net is taken off");
             s.ticks(40);
             assertNoDisplays(s, "wings and cracks");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void eagleSkyKingDivesByItselfWhenTheFlightIsOver() {
+        try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "하늘의 제왕");
+            awaitSkyGrab(s);
+            for (int i = 0; i < 12 + s.paramTicks("flight_time") - 4; i++) {
+                s.owner.setRotation(0, 0); // level flight north... along +z
+                s.ticks(1);
+            }
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "still flying");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 30, "the dive once the time is up");
+            assertEquals(s.param("dive_per_block") * s.param("ult_height"), s.damageBy(s.owner, s.enemy), 0.05,
+                    "from the height it flew at");
+            s.tickUntilGrounded(s.owner, 200);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void eagleSkyKingLetsGoWhenItIsHurtEnough() {
+        try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "하늘의 제왕");
+            awaitSkyGrab(s);
+            s.ticks(12);
+            // The prey's friend shoots the eagle down: it lets go.
+            abilityHit(s, s.enemy2, s.owner, s.param("break_damage") / 2);
+            s.ticks(2);
+            assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + 3, "not yet");
+            s.owner.setNoDamageTicks(0);
+            abilityHit(s, s.enemy2, s.owner, s.param("break_damage") / 2);
+            s.ticks(2);
+            double hang = s.enemy.getLocation().getY();
+            s.ticks(2);
+            assertTrue(s.enemy.getLocation().getY() < hang, "let go: the prey sinks");
+            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING), "on its safety net");
+            s.tickUntilGrounded(s.enemy, 300);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "no dive, and it floated down without a fall: "
+                    + s.hits());
+            s.tickUntilGrounded(s.owner, 300);
+            s.ticks(20);
+            assertEquals(s.param("break_damage"), s.damageTaken(s.owner), EPSILON, "the eagle only took the shots");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void eagleSkyKingRisesWithALaggingPreyWithoutFlingingIt() {
+        try (Scenario s = noGaugeGain(Scenario.builder("eagle")).start()) {
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            // The eagle and its prey see what the server sends them three ticks (a 150 ms round trip) before the
+            // server sees them move: steering by their server positions flung the climbing pair far past the plan.
+            LaggyClients clients = new LaggyClients(s, 3, s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "하늘의 제왕");
+            double highest = 0;
+            double worstStack = 0;
+            for (int i = 0; i < 30; i++) {
+                clients.tick();
+                double height = clients.at(s.enemy).getY() - FlatWorld.SURFACE;
+                highest = Math.max(highest, height);
+                if (s.enemy.hasPotionEffect(PotionEffectType.SLOW_FALLING) && height > 3.6) {
+                    double stack = clients.at(s.owner).getY() - clients.at(s.enemy).getY();
+                    worstStack = Math.max(worstStack, Math.abs(stack - (s.enemy.getHeight() + 0.15)));
+                }
+            }
+            assertTrue(highest > s.param("ult_height") - 0.3, "soared: " + highest);
+            assertTrue(highest < s.param("ult_height") + 0.3, "to the planned height, not past it: " + highest);
+            assertTrue(worstStack < 0.3, "the eagle stays right on top of its prey: " + worstStack);
+            clients.close();
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 100, "the dive");
+            s.tickUntilGrounded(s.owner, 200);
+            s.ticks(20);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
             s.finishClean();
         }
     }
@@ -1043,10 +1506,10 @@ class WildNewAbilitiesTest {
             s.place(s.enemy2, 2.5, 5.5, 180);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "하늘의 제왕");
-            s.h.tickUntil(() -> s.ctx().isSilenced(s.enemy), 20, "the grab");
+            awaitSkyGrab(s);
             s.ticks(8);
             s.place(s.enemy2, 14.5, 14.5, 180); // sees the reticle and runs
-            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 80, "the dive");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 100, "the dive");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "enemy2 got out of the reticle");
             s.tickUntilGrounded(s.owner, 200);
             s.finishClean();
@@ -1066,10 +1529,10 @@ class WildNewAbilitiesTest {
         try (Scenario s = Scenario.ffa("eagle")) {
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "하늘의 제왕");
-            s.h.tickUntil(() -> s.ctx().isSilenced(s.enemy), 20, "the grab");
+            awaitSkyGrab(s);
             s.ticks(6);
             s.place(s.enemy, 14.5, 14.5, 180); // teleported away
-            s.ticks(60);
+            s.ticks(100);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "no dive for an escaped prey: " + s.hits());
             s.tickUntilGrounded(s.owner, 300);
             s.ticks(20);
@@ -1248,6 +1711,97 @@ class WildNewAbilitiesTest {
             assertEquals(s.param("ball_max_hits") * s.param("ball_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "at most " + s.param("ball_max_hits") + " hits");
             s.ticks(s.paramTicks("ball_duration"));
+            s.finishClean();
+        }
+    }
+
+    /** Sounds the owner heard since {@code from} (an index into its heard sounds) within 1.5 blocks of {@code at}. */
+    private static List<String> soundsNear(TestPlayer listener, int from, Location at) {
+        List<String> near = new ArrayList<>();
+        var heard = listener.getHeardSounds();
+        for (int i = from; i < heard.size(); i++) {
+            Location where = heard.get(i).getLocation();
+            if (where != null && where.getWorld().equals(at.getWorld()) && where.distance(at) < 1.5) {
+                near.add(heard.get(i).getSound());
+            }
+        }
+        return near;
+    }
+
+    @Test
+    void hedgehogQuillsNeverShowWhereAHiddenEnemyIs() {
+        try (Scenario s = noGaugeGain(Scenario.builder("hedgehog")).start()) {
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.melee(s.enemy, s.owner, 2);
+            s.ticks(2);
+            assertEquals(1, blocks(s, Material.POINTED_DRIPSTONE).size(), "a quill stuck in the attacker");
+            s.place(s.enemy, 0.5, 2.0, 180); // close: some quill of the ring always finds it
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.clearHits();
+            int heard = s.owner.getHeardSounds().size();
+            s.assertSucceeded(s.active(), "가시 발사");
+            s.ticks(12);
+            assertEquals(s.param("volley_damage") + s.param("quill_burst"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "a radial quill still finds the hidden enemy (and tears out the stuck one)");
+            assertEquals(List.of(), soundsNear(s.owner, heard, Fx.body(s.enemy)),
+                    "no hit sound where the hidden enemy stands");
+            for (BlockDisplay quill : blocks(s, Material.POINTED_DRIPSTONE)) {
+                assertTrue(quill.getLocation().distance(Fx.body(s.enemy)) > 1.5 || quill.getViewRange() == 0,
+                        "no quill left showing where it stands");
+            }
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hedgehogStuckQuillsTurnWithTheirHost() {
+        try (Scenario s = Scenario.ffa("hedgehog")) {
+            s.melee(s.enemy, s.owner, 2);
+            s.ticks(6);
+            List<BlockDisplay> quills = blocks(s, Material.POINTED_DRIPSTONE);
+            assertEquals(1, quills.size(), "a quill stuck in the attacker");
+            Vector3f before = rotated(quills.getFirst(), new Vector3f(0, 1, 0));
+            // The enemy turns a quarter to its right (yaw +90).
+            Location turned = s.enemy.getLocation();
+            turned.setYaw(turned.getYaw() + 90);
+            s.enemy.teleport(turned);
+            s.enemy.setBodyYaw(turned.getYaw());
+            s.ticks(4);
+            Vector3f after = rotated(quills.getFirst(), new Vector3f(0, 1, 0));
+            double turnedBy = Math.toDegrees(Math.atan2(after.z(), after.x()) - Math.atan2(before.z(), before.x()));
+            turnedBy = ((turnedBy % 360) + 540) % 360 - 180;
+            assertEquals(90, turnedBy, 1.0, "the quill turned with the body: " + before + " -> " + after);
+            assertUnrotated(quills.getFirst(), "stuck quill");
+            s.ticks(s.paramTicks("quill_duration") + 10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void hedgehogBallAndCaltropsNeverHarmAnAlly() {
+        try (Scenario s = noGaugeGain(Scenario.builder("hedgehog")).teams().start()) {
+            s.place(s.enemy, 12.5, 12.5, 180);
+            s.place(s.enemy2, -12.5, 12.5, 180);
+            s.place(s.ally(), 0.5, 3.0, 180); // right in the ball's path
+            double speed = attribute(s.ally(), Attribute.MOVEMENT_SPEED);
+            s.assertSucceeded(s.ultimate(), "가시 공");
+            s.ticks(2);
+            roll(s, 0.5, 0.5, 6.0, 0.3);
+            List<BlockDisplay> caltrops = blocks(s, Material.POINTED_DRIPSTONE).stream()
+                    .filter(d -> d.getLocation().getY() < FlatWorld.SURFACE + 0.01).toList();
+            assertFalse(caltrops.isEmpty(), "caltrops strewn along the way");
+            for (BlockDisplay caltrop : caltrops) {
+                s.place(s.ally(), caltrop.getLocation().getX(), caltrop.getLocation().getZ(), 180);
+                s.ticks(4);
+            }
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "the ball and its caltrops spare the ally: " + s.hits());
+            assertEquals(speed, attribute(s.ally(), Attribute.MOVEMENT_SPEED), EPSILON, "and never slow it");
+            for (BlockDisplay caltrop : caltrops) {
+                assertTrue(caltrop.isValid(), "an ally does not spring them either");
+            }
+            s.ticks(s.paramTicks("ball_duration") + s.paramTicks("spike_duration") + 20);
             s.finishClean();
         }
     }
