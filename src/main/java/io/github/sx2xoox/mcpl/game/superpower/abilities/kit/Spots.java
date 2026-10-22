@@ -3,9 +3,10 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities.kit;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.Lightable;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
@@ -16,9 +17,9 @@ import org.jspecify.annotations.Nullable;
  * Finding and checking teleport, swap and dash destinations.
  *
  * <p>{@link #isSafe} is the check every teleport destination of the owner must pass: the body fits without
- * touching blocks or hazards, there is something below (never the void) and the spot is inside the arena and its
- * current border ({@link AbilityContext#isInsideArena}). Velocity-based dashes, which have no exact destination,
- * shorten themselves with {@link #arenaReach}.
+ * touching blocks or hazards, the first thing below is harmless ground or water (never the void, lava or fire) and
+ * the spot is inside the arena and its current border ({@link AbilityContext#isInsideArena}). Velocity-based dashes,
+ * which have no exact destination, shorten themselves with {@link #arenaReach}.
  */
 public final class Spots {
 
@@ -38,7 +39,7 @@ public final class Spots {
 
     /**
      * The full safety check for a teleport destination: {@link #fits} (no blocks, no hazards),
-     * {@link #hasGroundBelow} (not above the void) and inside the arena and its current border.
+     * {@link #hasGroundBelow} (not above the void or a hazard) and inside the arena and its current border.
      */
     public static boolean isSafe(AbilityContext ctx, Location feet, Body body) {
         World world = feet.getWorld();
@@ -46,17 +47,28 @@ public final class Spots {
                 && ctx.isInsideArena(feet);
     }
 
-    /** True if a standing body of the given size fits at {@code feet}: {@link #isFree} and no harmful blocks. */
+    /**
+     * True if a standing body of the given size fits at {@code feet}: {@link #isFree} and no harmful block in any
+     * block column the body overlaps (lava and fire burn whatever part of the hitbox touches them).
+     */
     public static boolean fits(World world, Location feet, double width, double height) {
         if (!isFree(world, feet, width, height)) {
             return false;
         }
-        int x = feet.getBlockX();
-        int z = feet.getBlockZ();
+        double half = Math.max(0, width / 2 - 0.01);
+        int minX = (int) Math.floor(feet.getX() - half);
+        int maxX = (int) Math.floor(feet.getX() + half);
+        int minZ = (int) Math.floor(feet.getZ() - half);
+        int maxZ = (int) Math.floor(feet.getZ() + half);
+        int bottom = (int) Math.floor(feet.getY() + 0.01);
         int top = (int) Math.floor(feet.getY() + height);
-        for (int y = (int) Math.floor(feet.getY() + 0.01); y <= top; y++) {
-            if (isHazard(world.getBlockAt(x, y, z))) {
-                return false;
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = bottom; y <= top; y++) {
+                    if (isHazard(world.getBlockAt(x, y, z))) {
+                        return false;
+                    }
+                }
             }
         }
         return true;
@@ -73,18 +85,38 @@ public final class Spots {
         return !world.hasCollisionsIn(box);
     }
 
-    /** Blocks nobody should be teleported into or walk onto: lava, fire, powder snow, cobwebs and magma. */
+    /**
+     * Blocks nobody should be teleported into, next to or onto: lava, fire, a lit campfire, magma, powder snow,
+     * cobwebs, cactus (its collision box is inset, so a body beside it still touches it), berry bushes, wither roses
+     * and portals (which would carry the player out of the arena).
+     */
     public static boolean isHazard(Block block) {
-        Material type = block.getType();
-        return type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE
-                || type == Material.POWDER_SNOW || type == Material.COBWEB || type == Material.MAGMA_BLOCK;
+        return switch (block.getType()) {
+            case LAVA, FIRE, SOUL_FIRE, MAGMA_BLOCK, POWDER_SNOW, COBWEB, CACTUS, SWEET_BERRY_BUSH, WITHER_ROSE,
+                 NETHER_PORTAL, END_PORTAL, END_GATEWAY -> true;
+            case CAMPFIRE, SOUL_CAMPFIRE -> block.getBlockData() instanceof Lightable campfire && campfire.isLit();
+            default -> false;
+        };
     }
 
-    /** False above the void: something (a block or a fluid) must exist somewhere below {@code feet}. */
+    /**
+     * False above the void and above hazards: the first block or fluid straight below {@code feet} must exist, must
+     * not be harmful ({@link #isHazard}: lava, magma...) and must not carry a harmful block such as fire on top.
+     * Water counts as safe ground.
+     */
     public static boolean hasGroundBelow(World world, Location feet) {
         double depth = feet.getY() - world.getMinHeight();
-        return depth > 0 && world.rayTraceBlocks(feet, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS,
-                true) != null;
+        if (depth <= 0) {
+            return false;
+        }
+        RayTraceResult ground = world.rayTraceBlocks(feet, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS,
+                true);
+        if (ground == null) {
+            return false;
+        }
+        Block block = ground.getHitBlock();
+        // Fire, cobwebs and berry bushes have no collision, so the ray passes them and hits the block they sit on.
+        return block == null || (!isHazard(block) && !isHazard(block.getRelative(BlockFace.UP)));
     }
 
     /** Lowers {@code feet} (in place) onto the ground if the ground is at most {@code maxDrop} blocks below. */
