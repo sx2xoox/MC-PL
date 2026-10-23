@@ -1350,7 +1350,9 @@ class TradeNewAbilitiesTest {
 
     @Test
     void minerRocksNeverSlowAnEnemyTwiceOver() {
-        try (Scenario s = noGaugeGain(Scenario.builder("miner").param("rock_radius", 1.2).param("rock_count", 3)
+        // Rocks keep 1.1 blocks apart: a 2-block scatter always finds room for the second rock, and every rock
+        // within 2 blocks of the aimed enemy reaches it (a 1.2-block scatter left a ring too thin to hit every time).
+        try (Scenario s = noGaugeGain(Scenario.builder("miner").param("rock_radius", 2.0).param("rock_count", 3)
                 .param("rock_hit_radius", 2.5)).start()) {
             s.place(s.enemy2, 8.5, -6.5, 0);
             s.aimAt(s.owner, s.enemy);

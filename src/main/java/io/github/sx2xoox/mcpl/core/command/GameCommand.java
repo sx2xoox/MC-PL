@@ -24,6 +24,8 @@ import io.github.sx2xoox.mcpl.core.game.GameStartException;
 import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.core.game.MiniGame;
 import io.github.sx2xoox.mcpl.core.game.Rotation;
+import io.github.sx2xoox.mcpl.core.map.ArenaMap;
+import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -34,6 +36,7 @@ import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
@@ -49,7 +52,7 @@ import org.jspecify.annotations.Nullable;
  * /게임 목록|list
  * /게임 참가|join, /게임 관전|spectate
  * /게임 순환|rotation [켜기|on | 끄기|off | 목록|list]   (admin)
- * /게임 경기장|arena [설정|set [반경] | 초기화|reset]     (admin)
+ * /게임 경기장|arena [설정|set [반경] | 초기화|reset | 맵|map [맵 [다시짓기|rebuild | 이동|tp]]]     (admin)
  * /게임 설정|settings [팀|team &lt;인원&gt;]             (admin)
  * /게임 리로드|reload                     (admin)
  * </pre>
@@ -137,6 +140,24 @@ public final class GameCommand {
             }
             for (String reset : List.of("초기화", "reset")) {
                 arena.then(Commands.literal(reset).executes(ctx -> arenaReset(ctx.getSource().getSender())));
+            }
+            for (String mapName : List.of("맵", "map")) {
+                String mapArg = name.equals("arena") ? "map" : "맵이름";
+                LiteralArgumentBuilder<CommandSourceStack> map = Commands.literal(mapName)
+                        .executes(ctx -> mapList(ctx.getSource().getSender()));
+                var mapId = Commands.argument(mapArg, StringArgumentType.word())
+                        .suggests(this::suggestMaps)
+                        .executes(ctx -> mapUse(ctx.getSource().getSender(), StringArgumentType.getString(ctx, mapArg),
+                                false));
+                for (String rebuild : List.of("다시짓기", "rebuild")) {
+                    mapId.then(Commands.literal(rebuild).executes(ctx -> mapUse(ctx.getSource().getSender(),
+                            StringArgumentType.getString(ctx, mapArg), true)));
+                }
+                for (String teleport : List.of("이동", "tp")) {
+                    mapId.then(Commands.literal(teleport).executes(ctx -> mapTeleport(ctx.getSource().getSender(),
+                            StringArgumentType.getString(ctx, mapArg))));
+                }
+                arena.then(map.then(mapId));
             }
             root.then(arena);
         }
@@ -405,6 +426,123 @@ public final class GameCommand {
                 Messages.tag("z", center.getBlockZ()),
                 Messages.tag("radius", radius)
         };
+    }
+
+    // ------------------------------------------------------------------ battle maps
+
+    private CompletableFuture<Suggestions> suggestMaps(CommandContext<CommandSourceStack> ctx, SuggestionsBuilder builder) {
+        String remaining = builder.getRemainingLowerCase();
+        for (String id : hub.maps().ids()) {
+            if (id.startsWith(remaining)) {
+                builder.suggest(id);
+            }
+        }
+        return builder.buildFuture();
+    }
+
+    private int mapList(CommandSender sender) {
+        MapService maps = hub.maps();
+        messages().send(sender, "command.map-list-header");
+        for (ArenaMap map : maps.maps()) {
+            String status = maps.isBuilt(map) ? "command.map-status-built"
+                    : maps.world(map) != null ? "command.map-status-outdated" : "command.map-status-missing";
+            messages().send(sender, "command.map-list-entry",
+                    Messages.tag("id", map.id()),
+                    Messages.tag("name", map.displayName()),
+                    Messages.tag("size", map.playRadius() * 2),
+                    Messages.tag("status", messages().get(status)),
+                    Messages.tag("description", map.description()));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Builds the map if needed (or {@code rebuild}), then makes it the arena. */
+    private int mapUse(CommandSender sender, String id, boolean rebuild) {
+        MapService maps = hub.maps();
+        ArenaMap map = maps.map(id);
+        if (map == null) {
+            messages().send(sender, "error.map-unknown", Messages.tag("id", id));
+            return 0;
+        }
+        if (configLocked(sender)) {
+            return 0;
+        }
+        if (!rebuild && maps.isBuilt(map)) {
+            useMap(sender, map, maps.world(map));
+            return Command.SINGLE_SUCCESS;
+        }
+        if (games().session() != null) {
+            messages().send(sender, "error.map-match-running");
+            return 0;
+        }
+        if (maps.isBuilding()) {
+            messages().send(sender, "error.map-busy");
+            return 0;
+        }
+        messages().send(sender, "command.map-building-start", Messages.tag("name", map.displayName()),
+                Messages.tag("world", MapService.worldName(map)));
+        int[] lastQuarter = {0};
+        boolean started;
+        try {
+            started = maps.build(map, progress -> {
+                int percent = (int) Math.floor(progress * 100);
+                if (sender instanceof Player player) {
+                    player.sendActionBar(messages().get("command.map-building-progress",
+                            Messages.tag("percent", percent)));
+                } else if (percent / 25 > lastQuarter[0]) {
+                    lastQuarter[0] = percent / 25;
+                    messages().send(sender, "command.map-building-progress", Messages.tag("percent", percent));
+                }
+            }, world -> {
+                messages().send(sender, "command.map-built", Messages.tag("name", map.displayName()));
+                useMap(sender, map, world);
+            });
+        } catch (RuntimeException e) {
+            hub.plugin().getLogger().log(Level.SEVERE, "Could not build the map " + map.id(), e);
+            messages().send(sender, "error.internal");
+            return 0;
+        }
+        if (!started) {
+            messages().send(sender, "error.map-busy");
+            return 0;
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private void useMap(CommandSender sender, ArenaMap map, @Nullable World world) {
+        if (world == null) {
+            messages().send(sender, "error.map-not-built", Messages.tag("name", map.displayName()),
+                    Messages.tag("id", map.id()));
+            return;
+        }
+        hub.config().setArena(hub.maps().center(map, world), map.playRadius());
+        messages().send(sender, "command.map-arena-set", Messages.tag("name", map.displayName()),
+                Messages.tag("radius", map.playRadius()));
+        if (games().session() != null) {
+            messages().send(sender, "command.applies-next-match");
+        }
+    }
+
+    private int mapTeleport(CommandSender sender, String id) {
+        MapService maps = hub.maps();
+        ArenaMap map = maps.map(id);
+        if (map == null) {
+            messages().send(sender, "error.map-unknown", Messages.tag("id", id));
+            return 0;
+        }
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "error.player-only");
+            return 0;
+        }
+        World world = maps.world(map);
+        if (world == null || !maps.isBuilt(map) && maps.isBuilding() && map.id().equals(maps.buildingId())) {
+            messages().send(sender, "error.map-not-built", Messages.tag("name", map.displayName()),
+                    Messages.tag("id", map.id()));
+            return 0;
+        }
+        player.teleport(maps.center(map, world));
+        messages().send(sender, "command.map-teleport", Messages.tag("name", map.displayName()));
+        return Command.SINGLE_SUCCESS;
     }
 
     private int arenaReset(CommandSender sender) {

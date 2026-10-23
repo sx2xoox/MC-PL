@@ -4,6 +4,7 @@ import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.arena.TempBlockService;
 import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
+import io.github.sx2xoox.mcpl.core.map.citadel.CitadelMap;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -22,6 +23,8 @@ public class MCPLPlugin extends JavaPlugin {
     public void onEnable() {
         hub = new Hub(this);
         hub.enable();
+        // Built-in battle maps; a map built before is loaded again here, before the first match needs its world.
+        hub.maps().register(new CitadelMap());
         registerGames(hub.games());
         // only now: the first rotation match must follow rotation.games, not the registration order
         hub.games().startRotation();

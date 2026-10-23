@@ -9,6 +9,7 @@ import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.command.GameCommand;
 import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
+import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.player.SnapshotStore;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import org.bukkit.Bukkit;
@@ -40,6 +41,7 @@ public final class Hub {
     private final TempBlockService tempBlocks;
     private final GameRuleGuard gameRules;
     private final CombatTracker combat;
+    private final MapService maps;
     private final GameManager games;
     private final GameCommand command;
     private final HubListener listener;
@@ -54,6 +56,7 @@ public final class Hub {
         this.tempBlocks = new TempBlockService(plugin, new File(data, "tempblocks.yml"));
         this.gameRules = new GameRuleGuard(plugin, new File(data, "gamerules.yml"));
         this.combat = new CombatTracker();
+        this.maps = new MapService(plugin);
         this.games = new GameManager(this);
         this.command = new GameCommand(this);
         this.listener = new HubListener(this);
@@ -76,6 +79,7 @@ public final class Hub {
         tempBlocks.recover();
         tempBlocks.start();
         Bukkit.getPluginManager().registerEvents(listener, plugin);
+        maps.enable();
         for (Player player : Bukkit.getOnlinePlayers()) {
             listener.restorePending(player);
         }
@@ -97,6 +101,7 @@ public final class Hub {
         }
         tempBlocks.shutdown();
         gameRules.shutdown();
+        maps.disable();
         HandlerList.unregisterAll(listener);
         combat.clear();
     }
@@ -138,6 +143,11 @@ public final class Hub {
 
     public GameRuleGuard gameRules() {
         return gameRules;
+    }
+
+    /** The battle maps and their worlds. */
+    public MapService maps() {
+        return maps;
     }
 
     public CombatTracker combat() {

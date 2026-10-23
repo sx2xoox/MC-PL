@@ -64,3 +64,18 @@ tasks.register<Test>("updateAbilityDocs") {
     systemProperty("mcpl.updateDocs", "true")
     outputs.upToDateWhen { false }
 }
+
+tasks.register<Test>("renderMaps") {
+    description = "Renders preview images of the battle maps to build/map-previews (-Pzone=<name> for one zone)."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*MapPreviewRender")
+    }
+    systemProperty("mcpl.renderMaps", "true")
+    systemProperty("mcpl.renderZone", (project.findProperty("zone") ?: "").toString())
+    maxHeapSize = "2g"
+    outputs.upToDateWhen { false }
+}
