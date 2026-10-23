@@ -278,7 +278,6 @@ command:
   assign-next: "<green><white><player></white>님은 다음 경기에서 <ability><green> 능력을 받습니다."
   assign-too-late: "<yellow>이미 전투가 시작되었습니다. <white><player></white>님은 다음 경기에서 <ability><yellow> 능력을 받습니다."
   mode-current: "<gray>능력 배정 방식: <white><mode></white> <dark_gray>(<name>)</dark_gray> <gray>· 바꾸기: <white>/게임 능력 선택방식 \\<RANDOM|CHOICE>"
-  mode-set: "<green>능력 배정 방식을 <white><mode></white> <dark_gray>(<name>)</dark_gray><green>(으)로 바꿨습니다."
   applies-next-match: "<gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
   player-only: "<red>플레이어만 사용할 수 있는 명령어입니다."
 
@@ -366,20 +365,23 @@ settings:
       - "<gray>전투가 시작되면 경기장 곳곳에 상자가 놓이고,"
       - "<gray>자기장이 줄어들기 시작하면 하늘에서 보급 상자가 떨어집니다."
   chests:
-    name: "참가자당 상자 수"
+    name: "인당 상자"
     lore:
+      - "<gray>참가자 한 명당 놓는 상자 수입니다."
       - "<gray>전투 시작 때 놓는 상자 수 = (참가자 수 × 이 값 + 기본 개수) × 경기장 크기 배율"
       - "<gray>최대 상자 수를 넘지 않습니다."
   max-chests:
     name: "최대 상자 수"
     lore:
       - "<gray>한 경기에 놓는 상자 수의 상한입니다. 0이면 상자를 놓지 않습니다."
+      - "<gray>최소 상자 수(config.yml 의 chests.min)보다 낮으면 이 값이 우선합니다."
     zero: "<red>상자 없음"
   supply:
     name: "보급 상자 수 (최대)"
     lore:
       - "<gray>자기장이 줄어들기 시작할 때 떨어지는 보급 상자의 최대 개수"
       - "<gray>남은 참가자 수 ÷ 보급 인원(올림)개가 떨어지며 이 값을 넘지 않습니다."
+      - "<gray>최소 개수(config.yml 의 supply.min)보다 낮으면 이 값이 우선합니다."
     zero: "<red>보급 없음"
   supply-players:
     name: "보급 인원"
@@ -390,11 +392,12 @@ settings:
     lore:
       - "<gray>능력 연습(/게임 능력 연습)에도 상자를 놓습니다."
   chest-hint:
-    name: "가까운 상자 반짝임"
+    name: "상자 반짝임"
     lore:
       - "<gray>아직 열지 않은 일반 상자가 가까이 있는 플레이어에게만"
-      - "<gray>은은하게 반짝입니다. 희귀 상자는 이와 상관없이 반짝입니다."
+      - "<gray>은은한 흰 반짝임을 보여 줍니다."
+      - "<gray>희귀 상자는 이와 상관없이 주황색으로 더 반짝입니다."
   chest-hint-radius:
-    name: "반짝임이 보이는 거리"
+    name: "반짝임 거리"
     lore:
-      - "<gray>이 거리(블록) 안에 있는 플레이어와 관전자에게만 보입니다."
+      - "<gray>상자 반짝임은 이 거리(블록) 안에 있는 플레이어와 관전자에게만 보입니다."

@@ -12,8 +12,9 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
 import io.github.sx2xoox.mcpl.core.command.Permissions;
-import io.github.sx2xoox.mcpl.core.game.GameState;
+import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
 import io.github.sx2xoox.mcpl.game.superpower.SelectionMode;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
@@ -244,18 +245,16 @@ public final class AbilityCommand {
         return Command.SINGLE_SUCCESS;
     }
 
+    /** The same change as {@code /게임 설정 선택방식}: saved, logged, shown in open settings menus. */
     private int setMode(CommandSender sender, SelectionMode mode) {
-        if (!game.hub().config().isWritable()) {
-            game.hub().messages().send(sender, "error.config-broken");
-            return 0;
-        }
-        game.setSelectionMode(mode);
-        messages().send(sender, "command.mode-set", Messages.tag("mode", mode.name()),
-                Messages.tag("name", mode.koreanName()));
-        if (game.hub().games().session() != null && game.hub().games().session().state() != GameState.COUNTDOWN) {
-            messages().send(sender, "command.applies-next-match");
-        }
-        return Command.SINGLE_SUCCESS;
+        Setting.Choice setting = game.modeSetting();
+        Setting.Choice.Option option = setting.options().stream()
+                .filter(candidate -> candidate.value().equals(mode.name()))
+                .findFirst()
+                .orElseThrow();
+        boolean accepted = game.hub().settings().change(sender, setting, () -> setting.set(option),
+                SettingsEditor.Origin.COMMAND);
+        return accepted ? Command.SINGLE_SUCCESS : 0;
     }
 
     private int reroll(CommandSender sender) {

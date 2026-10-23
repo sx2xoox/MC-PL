@@ -669,7 +669,7 @@ class LootTest {
     /** The sparkles of {@code chest} sent to {@code player} alone. */
     private static List<TestPlayer.SentParticle> hints(TestPlayer player, LootChest chest) {
         return player.particles().stream()
-                .filter(sent -> sent.particle() == Particle.WAX_ON && sent.at().distanceSquared(chest.center()) < 1.0)
+                .filter(sent -> sent.particle() == Particle.WAX_OFF && sent.at().distanceSquared(chest.center()) < 1.0)
                 .toList();
     }
 

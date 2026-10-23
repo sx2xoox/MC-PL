@@ -13,6 +13,7 @@ import java.util.UUID;
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
 import io.github.sx2xoox.mcpl.core.command.Permissions;
+import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.config.SettingsSection;
 import io.github.sx2xoox.mcpl.core.game.GameInstance;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
@@ -142,6 +143,18 @@ public final class SuperpowerGame implements MiniGame {
             settings = SuperpowerSettingEntries.create(this);
         }
         return settings;
+    }
+
+    /** The 능력 배정 방식 entry ({@code /게임 설정 선택방식}), which {@code /게임 능력 선택방식} changes too. */
+    public Setting.Choice modeSetting() {
+        for (SettingsSection section : settings()) {
+            for (Setting setting : section.settings()) {
+                if (setting.id().equals(SuperpowerSettingEntries.MODE) && setting instanceof Setting.Choice choice) {
+                    return choice;
+                }
+            }
+        }
+        throw new IllegalStateException("the selection mode setting is missing");
     }
 
     @Override

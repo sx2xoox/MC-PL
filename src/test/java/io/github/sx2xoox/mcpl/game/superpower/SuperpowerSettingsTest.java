@@ -10,13 +10,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
 
+import io.github.sx2xoox.mcpl.core.game.GameSession;
+import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
 import io.github.sx2xoox.mcpl.core.ui.SettingsMenu;
 import io.github.sx2xoox.mcpl.game.superpower.loot.LootSettings;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchPhase;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
+import io.github.sx2xoox.mcpl.game.superpower.support.TestServer;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
+import io.papermc.paper.datacomponent.DataComponentTypes;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.configuration.ConfigurationSection;
@@ -25,6 +29,7 @@ import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -138,7 +143,7 @@ class SuperpowerSettingsTest {
         assertFalse(saved().getBoolean(SuperpowerSettings.TEAM_ABILITIES));
         run("mcpl settings team-abilities on");
         assertTrue(read().showTeamAbilities());
-        run("게임 설정 궁극기알림 끄기");
+        run("게임 설정 궁극기공지 끄기");
         assertFalse(read().announceUltimates());
         run("mcpl settings ultimate-announce on");
         assertTrue(saved().getBoolean(SuperpowerSettings.ANNOUNCE_ULTIMATES));
@@ -160,21 +165,22 @@ class SuperpowerSettingsTest {
         run("mcpl settings practice-loot off");
         assertFalse(saved().getBoolean(LootSettings.PRACTICE));
 
-        run("게임 설정 상자수 2.5");
+        run("게임 설정 인당상자 2.5");
         assertEquals(2.5, loot().chestsPerPlayer());
         run("mcpl settings chests 50");
         assertEquals(LootSettings.MAX_CHESTS_PER_PLAYER, saved().getDouble(LootSettings.CHESTS_PER_PLAYER));
 
         run("게임 설정 상자최대 2");
         assertEquals(2, loot().maxChests());
-        assertEquals(2, loot().minChests(), "the minimum (3) comes down with the maximum");
-        assertEquals(2, saved().getInt(LootSettings.CHESTS_MIN));
+        assertEquals(2, loot().minChests(), "the maximum wins over the minimum (3)");
+        assertEquals(3, saved().getInt(LootSettings.CHESTS_MIN), "which is kept as configured");
         run("mcpl settings max-chests 500");
         assertEquals(200, loot().maxChests());
+        assertEquals(3, loot().minChests(), "back in effect");
 
         run("게임 설정 보급 0");
         assertEquals(0, loot().supplyCount(8), "0 = no supply drops at all");
-        assertEquals(0, saved().getInt(LootSettings.SUPPLY_MIN));
+        assertEquals(1, saved().getInt(LootSettings.SUPPLY_MIN), "the minimum is kept");
         run("mcpl settings supply 20");
         assertEquals(10, saved().getInt(LootSettings.SUPPLY_MAX));
         run("게임 설정 보급인원 0");
@@ -182,11 +188,11 @@ class SuperpowerSettingsTest {
         run("mcpl settings supply-players 3");
         assertEquals(3, saved().getInt(LootSettings.PLAYERS_PER_SUPPLY));
 
-        run("게임 설정 상자표시 끄기");
+        run("게임 설정 상자반짝임 끄기");
         assertFalse(loot().nearbyHint());
         run("mcpl settings chest-hint on");
         assertTrue(saved().getBoolean(LootSettings.NEARBY_HINT));
-        run("게임 설정 상자표시거리 100");
+        run("게임 설정 반짝임거리 100");
         assertEquals(LootSettings.MAX_HINT_RADIUS, loot().nearbyHintRadius());
         run("mcpl settings chest-hint-radius 1");
         assertEquals(LootSettings.MIN_HINT_RADIUS, saved().getInt(LootSettings.NEARBY_HINT_RADIUS));
@@ -216,10 +222,73 @@ class SuperpowerSettingsTest {
     }
 
     @Test
-    void theOldModeCommandStillWorks() {
+    void duringTheCountdownChangesApplyToTheComingMatch() {
+        h.join(2);
+        GameSession session = h.start();
+        assertEquals(GameState.COUNTDOWN, session.state());
+        chat();
+        run("게임 설정 리롤 7");
+        List<String> lines = chat();
+        assertTrue(lines.stream().noneMatch(line -> line.contains("다음 경기부터")), "" + lines);
+        assertTrue(lines.stream().anyMatch(line -> line.contains("카운트다운 중인 경기에도")), "" + lines);
+        run("게임 능력 선택방식 CHOICE");
+        assertTrue(chat().stream().noneMatch(line -> line.contains("다음 경기부터")), "both commands agree");
+        run("게임 설정 카운트다운 20");
+        assertTrue(chat().stream().anyMatch(line -> line.contains("다음 경기부터")),
+                "the countdown of this match already runs");
+
+        h.tickUntil(session::isRunning, 400, "the match to begin");
+        assertEquals(7, h.match().settings().rerolls(), "read when the countdown ended");
+        assertEquals(SelectionMode.CHOICE, h.match().settings().selectionMode());
+    }
+
+    @Test
+    void theOldModeCommandStillWorksAndOpenMenusShowIt() {
+        SettingsMenu menu = openMenu();
         run("게임 능력 선택방식 CHOICE");
         assertEquals(SelectionMode.CHOICE, read().selectionMode());
         assertEquals("CHOICE", saved().getString(SuperpowerSettings.MODE));
+        assertTrue(entryName(menu, "superpower.mode").contains("선택"), entryName(menu, "superpower.mode"));
+        run("mcpl ability mode random");
+        assertTrue(entryName(menu, "superpower.mode").contains("무작위"), "redrawn again");
+    }
+
+    private static String entryName(SettingsMenu menu, String id) {
+        ItemStack item = ((TestServer.HolderInventory) menu.getInventory()).placed(menu.slotOf(id));
+        assertNotNull(item);
+        Component name = item.getData(DataComponentTypes.ITEM_NAME);
+        assertNotNull(name);
+        return PlainTextComponentSerializer.plainText().serialize(name);
+    }
+
+    @Test
+    void loweringTheMaximumKeepsTheMinimumAndAResetBringsEverythingBack() {
+        SettingsMenu menu = openMenu();
+        for (int i = 0; i < 5; i++) {
+            click(menu, "superpower.max-chests", ClickType.SHIFT_RIGHT);
+            click(menu, "superpower.supply", ClickType.SHIFT_RIGHT);
+        }
+        assertEquals(0, loot().chestCount(8, 60), "0 = no chests");
+        assertEquals(0, loot().supplyCount(8), "0 = no supply drops");
+        click(menu, "superpower.max-chests", ClickType.DROP);
+        click(menu, "superpower.supply", ClickType.DROP);
+        LootSettings defaults = LootSettings.defaults(LOGGER);
+        assertEquals(defaults.maxChests(), loot().maxChests());
+        assertEquals(defaults.minChests(), loot().minChests(), "the configured minimum is in effect again");
+        assertEquals(defaults.supplyMin(), loot().supplyMin());
+        assertEquals(defaults.minChests(), saved().getInt(LootSettings.CHESTS_MIN));
+        assertEquals(defaults.supplyMin(), saved().getInt(LootSettings.SUPPLY_MIN));
+    }
+
+    @Test
+    void rangesAndClampsShowPlainNumbers() {
+        chat();
+        run("게임 설정 제한시간 99999");
+        List<String> lines = chat();
+        assertTrue(lines.stream().anyMatch(line -> line.contains("2시간")), "a whole hour without 0분: " + lines);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("0분")), "" + lines);
+        assertTrue(lines.stream().anyMatch(line -> line.contains("범위: 0초 ~ 7200초")), "" + lines);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("무제한 ~")), "0 is not shown as a label: " + lines);
     }
 
     // =================================================================== menu

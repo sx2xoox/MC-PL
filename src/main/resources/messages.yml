@@ -24,6 +24,7 @@ error:
   rotation-empty: "<red>순환 목록(config.yml 의 rotation.games)에 등록된 게임이 없습니다."
   reload-failed: "<red>설정을 다시 불러오지 못했습니다. 콘솔 로그를 확인해 주세요."
   config-broken: "<red>config.yml 에 문법 오류가 있어 설정을 저장할 수 없습니다. <gray>파일을 고친 뒤 <white>/게임 리로드</white> 해 주세요. (콘솔 로그 참고)"
+  config-changed: "<red>config.yml 이 수정된 뒤 아직 불러오지 않아 설정을 바꾸지 않았습니다. <gray>바꾸면 그 수정 내용을 덮어쓰게 됩니다. <white>/게임 리로드</white> 로 먼저 불러온 뒤 다시 해 주세요."
 
 # ── 도움말 (/게임) ───────────────────────────────────────────
 help:
@@ -201,7 +202,11 @@ settings:
   # 명령어로 바꿨을 때 (채팅)
   changed: "<gray><name></gray> <dark_gray>→</dark_gray> <value> <dark_gray>(config.yml 에 저장됨)"
   unchanged: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>(이미 이 값입니다)"
-  clamped: "<gray>입력한 값이 범위(<min> <dark_gray>~</dark_gray> <max>)를 벗어나 범위 안의 값으로 맞췄습니다."
+  # 디스크가 가득 찼거나 폴더에 쓸 수 없을 때 (콘솔 로그에 원인)
+  save-failed: "<red><name> → <value> 로 바꿨지만 config.yml 에 저장하지 못했습니다. <gray>서버를 다시 켜면 사라집니다. (콘솔 로그 참고)"
+  clamped: "<gray>입력한 값이 범위를 벗어나 가장 가까운 값으로 맞췄습니다. <dark_gray>범위: <min> ~ <max>"
+  # 곧 시작할 경기(카운트다운 중)에도 적용되는 변경
+  applies-this-match: "<gray>카운트다운 중인 경기에도 적용됩니다."
   current: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>· 바꾸려면 <white><usage>"
   no-permission: "<red>설정을 바꿀 권한이 없습니다."
   # /게임 설정 목록 (콘솔에서 /게임 설정 도 같은 목록)
@@ -216,8 +221,14 @@ settings:
     title: "<dark_gray>MCPL 설정"
     entry-name: "<yellow><name></yellow> <dark_gray>·</dark_gray> <value>"
     value: "<gray>현재 값: <value>"
+    value-max: "<gray>현재 값: <value> <red>(최댓값)"
+    value-min: "<gray>현재 값: <value> <red>(최솟값)"
     default: "<dark_gray>기본값: <default>"
-    range: "<dark_gray>범위 <min> <dark_gray>~</dark_gray> <max> <dark_gray>· 기본값 <default>"
+    # <zero> = 0 의 뜻이 있을 때 zero-means, 없으면 빈칸
+    range: "<dark_gray>범위 <min> ~ <max><zero> · 기본값 <default>"
+    zero-means: "<dark_gray> (0 = <zero><dark_gray>)"
+    # 경기 중이라 이 항목을 바꾸면 다음 경기부터 적용될 때
+    waits: "<gold>⏳ 진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다"
     options: "<dark_gray>선택지: <options>"
     option: "<dark_gray><option>"
     option-current: "<white><bold>▶</bold> <option>"
@@ -243,6 +254,8 @@ settings:
         - "<gray>Q(버리기 키): 기본값으로 되돌리기"
         - ""
         - "<dark_gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
+        - "<dark_gray>카운트다운 중에 바꾸면 곧 시작할 경기에 적용됩니다"
+        - "<dark_gray>(카운트다운 시간과 능력 지형 파괴는 다음 경기부터)."
         - "<dark_gray>명령어로도 바꿀 수 있습니다: /게임 설정 목록"
     close:
       name: "<red>닫기"
@@ -257,6 +270,12 @@ settings:
       name: "<green>대기 중"
       lore:
         - "<gray>바꾼 설정은 다음 경기부터 적용됩니다."
+        - "<dark_gray><page> / <pages> 쪽"
+    status-countdown:
+      name: "<yellow>경기 시작 전 (카운트다운)"
+      lore:
+        - "<gray>지금 바꾼 설정은 <white>곧 시작할 경기</white>에 적용됩니다."
+        - "<gray>카운트다운 시간과 능력 지형 파괴만 다음 경기부터 적용됩니다."
         - "<dark_gray><page> / <pages> 쪽"
     status-running:
       name: "<gold>경기 진행 중"

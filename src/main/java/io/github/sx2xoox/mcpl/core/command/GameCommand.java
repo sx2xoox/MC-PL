@@ -324,13 +324,12 @@ public final class GameCommand {
         return rotationList(sender);
     }
 
-    /** True (and tells the sender) when config.yml has a syntax error, so a setting change could not be saved. */
+    /**
+     * True (and tells the sender) when a setting change could not be saved now: config.yml has a syntax error, or it
+     * was edited on disk and not reloaded yet.
+     */
     private boolean configLocked(CommandSender sender) {
-        if (hub.config().isWritable()) {
-            return false;
-        }
-        messages().send(sender, "error.config-broken");
-        return true;
+        return !hub.settings().canSave(sender);
     }
 
     private int rotationToggle(CommandSender sender, boolean enabled) {

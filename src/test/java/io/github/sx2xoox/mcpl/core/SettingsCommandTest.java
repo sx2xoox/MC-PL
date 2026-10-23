@@ -91,7 +91,8 @@ class SettingsCommandTest {
         assertTrue(server.dispatchCommand(admin, "mcpl settings team 99"));
         assertEquals(32, hub.config().teamSize(), "clamped to the reader's maximum");
         assertEquals(32, saved().getInt("match.team-size"));
-        assertTrue(anyContains(plainLines(drain(admin)), "범위"), "the admin is told the value was clamped");
+        List<String> clamped = plainLines(drain(admin));
+        assertTrue(anyContains(clamped, "범위: 0명 ~ 32명"), "told the value was clamped, in plain numbers: " + clamped);
 
         assertTrue(server.dispatchCommand(admin, "게임 설정 팀 -3"));
         assertEquals(0, hub.config().teamSize());
@@ -206,6 +207,46 @@ class SettingsCommandTest {
                 }
             }
         }
+    }
+
+    @Test
+    void editsOnDiskAreNeverOverwrittenBeforeTheyAreLoaded() throws IOException {
+        String edited = Files.readString(file.toPath()).replace("team-size: 0", "team-size: 4");
+        Files.writeString(file.toPath(), edited);
+
+        drain(admin);
+        assertTrue(server.dispatchCommand(admin, "게임 설정 카운트다운 9"));
+        server.dispatchCommand(admin, "게임 설정 상자 끄기");
+        server.dispatchCommand(admin, "게임 경기장 초기화");
+        assertEquals(5, hub.config().countdownSeconds(), "refused");
+        assertTrue(hub.config().gameSection("superpower").getBoolean("loot.enabled"));
+        assertEquals(edited, Files.readString(file.toPath()), "the owner's edit is kept");
+        List<String> lines = plainLines(drain(admin));
+        assertEquals(3, lines.stream().filter(line -> line.contains("/게임 리로드")).count(), "told why: " + lines);
+        hub.config().setTeamSize(2); // a direct save is skipped too
+        assertEquals(edited, Files.readString(file.toPath()));
+
+        assertTrue(server.dispatchCommand(admin, "게임 리로드"));
+        assertEquals(4, hub.config().teamSize(), "the edit is loaded");
+        assertTrue(server.dispatchCommand(admin, "게임 설정 카운트다운 9"));
+        assertEquals(9, saved().getInt("match.countdown-seconds"));
+        assertEquals(4, saved().getInt("match.team-size"), "and kept by the next save");
+    }
+
+    @Test
+    void anEditThatBreaksTheFileIsKeptAsideAndRefusesChanges() throws IOException {
+        Files.writeString(file.toPath(), "match:\n\tteam-size: 2\n"); // no /게임 리로드
+        assertTrue(hub.config().isWritable(), "nothing has noticed yet");
+
+        drain(admin);
+        server.dispatchCommand(admin, "게임 설정 팀 3");
+        assertEquals(0, hub.config().teamSize());
+        assertEquals("match:\n\tteam-size: 2\n", Files.readString(file.toPath()), "never written over");
+        assertFalse(hub.config().isWritable(), "treated like a broken file on load");
+        assertTrue(anyContains(plainLines(drain(admin)), "문법 오류"));
+        File[] copies = plugin.getDataFolder().listFiles((dir, name) -> name.startsWith("config.yml.broken-"));
+        assertNotNull(copies);
+        assertEquals(1, copies.length, "a copy is kept aside");
     }
 
     @Test

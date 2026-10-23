@@ -18,7 +18,7 @@ import org.jspecify.annotations.Nullable;
  * @param inPractice           loot chests in the ability practice too
  * @param chestsPerPlayer      chests per participant
  * @param chestsBase           chests on top of that
- * @param minChests            fewest chests
+ * @param minChests            fewest chests (never above {@code maxChests})
  * @param maxChests            most chests
  * @param referenceRadius      arena radius the counts are meant for; bigger arenas get proportionally more chests
  *                             (×{@value #MIN_SIZE_FACTOR}..×{@value #MAX_SIZE_FACTOR})
@@ -28,7 +28,7 @@ import org.jspecify.annotations.Nullable;
  * @param normal               normal chests: item count and pool
  * @param rare                 rare chests: item count and pool
  * @param supply               supply drops: item count and pool
- * @param supplyMin            fewest supply drops when the border starts shrinking
+ * @param supplyMin            fewest supply drops when the border starts shrinking (never above {@code supplyMax})
  * @param supplyMax            most supply drops
  * @param playersPerSupply     one supply drop per this many participants (clamped to min..max)
  * @param supplyFallTicks      how long a supply drop takes to fall from the sky
@@ -193,6 +193,7 @@ public record LootSettings(
         d.set(p + "chests.per-player", 1.5);
         d.setComments(p + "chests", List.of(
                 "전투 시작 때 놓는 상자 수 = (참가자 수 × per-player + base) × 경기장 크기 배율, min~max 사이",
+                "max 가 min 보다 작으면 max 가 우선합니다 (max: 0 = 상자 없음)",
                 "경기장 크기 배율 = 경기장 반지름 ÷ reference-radius (0.5~2배)"));
         d.setComments(p + "chests.per-player", List.of("참가자 1명당 상자 수"));
         d.set(p + "chests.base", 2.0);
@@ -226,7 +227,8 @@ public record LootSettings(
                 "기본값으로 두 개 중 하나꼴로 다이아몬드 장비가 들어 있습니다."));
         d.set(p + "supply.min", 1);
         d.setComments(p + "supply.min", List.of(
-                "보급 상자 수 = 그때 남은 참가자 수 ÷ players-per-drop (올림), min~max 사이"));
+                "보급 상자 수 = 그때 남은 참가자 수 ÷ players-per-drop (올림), min~max 사이",
+                "max 가 min 보다 작으면 max 가 우선합니다 (max: 0 = 보급 없음)"));
         d.set(p + "supply.max", 2);
         d.set(p + "supply.players-per-drop", 4);
         d.set(p + "supply.fall-seconds", 2.0);
@@ -258,10 +260,11 @@ public record LootSettings(
             s = new MemoryConfiguration();
         }
         String path = "games.superpower." + SECTION + ".";
-        int minChests = clamp(s.getInt("chests.min", 3), 0, MAX_CHESTS);
-        int maxChests = Math.max(minChests, clamp(s.getInt("chests.max", 20), 0, MAX_CHESTS));
-        int supplyMin = clamp(s.getInt("supply.min", 1), 0, MAX_SUPPLY);
-        int supplyMax = Math.max(supplyMin, clamp(s.getInt("supply.max", 2), 0, MAX_SUPPLY));
+        // The maximum wins over a higher minimum, so max 0 really means none (the minimum is kept as configured).
+        int maxChests = clamp(s.getInt("chests.max", 20), 0, MAX_CHESTS);
+        int minChests = Math.min(maxChests, clamp(s.getInt("chests.min", 3), 0, MAX_CHESTS));
+        int supplyMax = clamp(s.getInt("supply.max", 2), 0, MAX_SUPPLY);
+        int supplyMin = Math.min(supplyMax, clamp(s.getInt("supply.min", 1), 0, MAX_SUPPLY));
         double fall = finite(s.getDouble("supply.fall-seconds", 2.0), 2.0);
         return new LootSettings(
                 s.getBoolean("enabled", true),

@@ -11,6 +11,8 @@ import io.github.sx2xoox.mcpl.core.config.BlockDamageScope;
 import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.config.SettingsSection;
+import io.github.sx2xoox.mcpl.core.game.GameSession;
+import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.core.game.MiniGame;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
@@ -59,12 +61,14 @@ public final class SettingsEditor {
                 .text(messages, "settings.hub.countdown")
                 .path("match.countdown-seconds")
                 .range(0, HubConfig.MAX_COUNTDOWN_SECONDS).steps(1, 5).integer().unit(Setting.Unit.SECONDS)
+                .readWhenMatchOpens() // the countdown itself
                 .number(config::countdownSeconds, value -> config.setCountdownSeconds((int) value), 5);
         Setting terrain = Setting.builder("hub.terrain")
                 .command("지형파괴", "terrain")
                 .icon(Material.TNT)
                 .text(messages, "settings.hub.terrain")
                 .path("protection.ability-block-damage")
+                .readWhenMatchOpens() // GameSession reads it when it is created
                 .choice(List.of(
                                 new Setting.Choice.Option(BlockDamageScope.OFF.name(), List.of("끄기"), List.of("off")),
                                 new Setting.Choice.Option(BlockDamageScope.MAP_WORLDS.name(), List.of("맵에서만"),
@@ -114,9 +118,10 @@ public final class SettingsEditor {
     }
 
     /**
-     * Applies a change for {@code sender}: refused without the admin permission or while {@code config.yml} cannot be
-     * written; otherwise the setter saves it, the sender is told the new value (and that a running match keeps its
-     * settings), the change is logged and every open settings menu shows it.
+     * Applies a change for {@code sender}: refused without the admin permission, while {@code config.yml} has a
+     * syntax error or while it has edits on disk that were not loaded yet ({@link #canSave}); otherwise the setter
+     * saves it, the sender is told the new value (and whether the current match still uses it), the change is logged
+     * and every open settings menu shows it.
      *
      * @return true if the change was accepted (even if the value already was the requested one)
      */
@@ -125,53 +130,94 @@ public final class SettingsEditor {
             messages().send(sender, "settings.no-permission");
             return false;
         }
-        if (!hub.config().isWritable()) {
-            messages().send(sender, "error.config-broken");
+        if (!canSave(sender)) {
             if (origin == Origin.MENU && sender instanceof Player player) {
                 Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 0.6f);
             }
             return false;
         }
+        int failedBefore = hub.config().failedSaves();
         Setting.Change change = action.get();
+        boolean saved = hub.config().failedSaves() == failedBefore;
         if (change.changed()) {
             hub.plugin().getLogger().info(sender.getName() + " changed " + setting.path() + " to "
                     + PlainTextComponentSerializer.plainText().serialize(setting.valueText(messages()))
-                    + " (/게임 설정)");
+                    + " (/게임 설정)" + (saved ? "" : ", but it could not be saved to config.yml"));
             refreshMenus();
         }
+        if (!saved) {
+            messages().send(sender, "settings.save-failed", Messages.tag("name", setting.name()),
+                    Messages.tag("value", setting.valueText(messages())));
+        }
         if (origin == Origin.MENU) {
-            menuFeedback(sender, setting, change);
+            menuFeedback(sender, setting, change, saved);
         } else {
-            commandFeedback(sender, setting, change);
+            commandFeedback(sender, setting, change, saved);
         }
         return true;
     }
 
-    private boolean matchRunning() {
-        return hub.games().session() != null;
+    /**
+     * True if {@code config.yml} can take a change now; otherwise tells {@code sender} why not: the file has a syntax
+     * error, or it was edited on disk and not reloaded yet (saving would undo those edits). Every command that changes
+     * a setting of {@code config.yml} asks this first.
+     */
+    public boolean canSave(CommandSender sender) {
+        return switch (hub.config().checkWritable()) {
+            case OK -> true;
+            case BROKEN -> {
+                messages().send(sender, "error.config-broken");
+                yield false;
+            }
+            case CHANGED -> {
+                messages().send(sender, "error.config-changed");
+                yield false;
+            }
+        };
     }
 
-    private void commandFeedback(CommandSender sender, Setting setting, Setting.Change change) {
+    /**
+     * True if a change of {@code setting} made now only applies from the next match: a match is running or showing
+     * its results, or it is counting down and already read this setting when it was started
+     * ({@link Setting#readWhenMatchOpens()}). Everything else is read when the countdown ends, so a change during the
+     * countdown applies to the match about to start.
+     */
+    public boolean waitsForNextMatch(Setting setting) {
+        GameSession session = hub.games().session();
+        return session != null && (setting.readWhenMatchOpens() || session.state() != GameState.COUNTDOWN);
+    }
+
+    /** True while a match counts down: most changes still apply to it. */
+    boolean countingDown() {
+        GameSession session = hub.games().session();
+        return session != null && session.state() == GameState.COUNTDOWN;
+    }
+
+    private void commandFeedback(CommandSender sender, Setting setting, Setting.Change change, boolean saved) {
         Component name = setting.name();
         Component value = setting.valueText(messages());
         if (!change.changed()) {
             messages().send(sender, "settings.unchanged", Messages.tag("name", name), Messages.tag("value", value));
-        } else {
+        } else if (saved) {
             messages().send(sender, "settings.changed", Messages.tag("name", name), Messages.tag("value", value));
         }
         if (change.limit() != null && setting instanceof Setting.Number number) {
             messages().send(sender, "settings.clamped",
-                    Messages.tag("min", number.format(messages(), number.min())),
-                    Messages.tag("max", number.format(messages(), number.max())));
+                    Messages.tag("min", number.formatPlain(messages(), number.min())),
+                    Messages.tag("max", number.formatPlain(messages(), number.max())));
         }
-        if (change.changed() && matchRunning()) {
-            messages().send(sender, "command.applies-next-match");
+        if (change.changed()) {
+            if (waitsForNextMatch(setting)) {
+                messages().send(sender, "command.applies-next-match");
+            } else if (countingDown()) {
+                messages().send(sender, "settings.applies-this-match");
+            }
         }
     }
 
-    private void menuFeedback(CommandSender sender, Setting setting, Setting.Change change) {
+    private void menuFeedback(CommandSender sender, Setting setting, Setting.Change change, boolean saved) {
         if (!(sender instanceof Player player)) {
-            commandFeedback(sender, setting, change);
+            commandFeedback(sender, setting, change, saved);
             return;
         }
         Component name = setting.name();
@@ -183,7 +229,7 @@ public final class SettingsEditor {
             Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_BASS, 0.7f, 0.7f);
             return;
         }
-        String key = matchRunning() ? "settings.menu.changed-next-match" : "settings.menu.changed";
+        String key = waitsForNextMatch(setting) ? "settings.menu.changed-next-match" : "settings.menu.changed";
         player.sendActionBar(messages().get(key, Messages.tag("name", name), Messages.tag("value", value)));
         if (setting instanceof Setting.Toggle) {
             Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, change.direction() > 0 ? 1.6f : 0.9f);

@@ -2,13 +2,16 @@ package io.github.sx2xoox.mcpl.core.ui;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.command.SettingsCommand;
 import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.config.SettingsSection;
+import io.papermc.paper.datacomponent.DataComponentType;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.ItemLore;
 import io.papermc.paper.datacomponent.item.TooltipDisplay;
@@ -16,6 +19,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Sound;
@@ -29,7 +33,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * The settings menu of one admin ({@code /게임 설정}): a chest with one row per {@link SettingsSection} (a header item
  * on the left, up to eight entries next to it; longer sections continue on the next row) and a control row at the
- * bottom (help, close, pages, match status). Every entry shows its value, range and default in the lore.
+ * bottom (help, close, pages, match status). Every entry shows its value, range and default in the lore, and whether a
+ * change would wait for the next match (the hovered item's tooltip is the feedback the admin always sees; the action
+ * bar can be hidden behind the menu).
  *
  * <ul>
  *     <li>on/off: any click flips it;</li>
@@ -157,9 +163,12 @@ public final class SettingsMenu implements InventoryHolder {
         if (page < pages() - 1) {
             inventory.setItem(controls + NEXT, simple(Material.ARROW, "settings.menu.next"));
         }
-        boolean running = editor.hub().games().session() != null;
-        inventory.setItem(controls + STATUS, simple(running ? Material.CLOCK : Material.LIME_DYE,
-                running ? "settings.menu.status-running" : "settings.menu.status-idle",
+        boolean session = editor.hub().games().session() != null;
+        boolean countdown = editor.countingDown();
+        inventory.setItem(controls + STATUS, simple(
+                !session ? Material.LIME_DYE : countdown ? Material.YELLOW_DYE : Material.CLOCK,
+                !session ? "settings.menu.status-idle"
+                        : countdown ? "settings.menu.status-countdown" : "settings.menu.status-running",
                 Messages.tag("page", page + 1), Messages.tag("pages", pages())));
     }
 
@@ -192,7 +201,15 @@ public final class SettingsMenu implements InventoryHolder {
                 Messages.tag("name", setting.name()), Messages.tag("value", setting.valueText(hub))));
         List<Component> lore = new ArrayList<>(setting.description());
         lore.add(Component.empty());
-        lore.add(hub.get("settings.menu.value", Messages.tag("value", setting.valueText(hub))));
+        String valueKey = "settings.menu.value";
+        // At an end of the range the tooltip says so (a click there changes nothing); a 0 with a meaning of its own
+        // (개인전, 무제한) is not called the minimum.
+        if (setting instanceof Setting.Number number && number.min() < number.max()
+                && !(number.value() == 0 && number.zeroLabel() != null)) {
+            valueKey = number.value() >= number.max() ? "settings.menu.value-max"
+                    : number.value() <= number.min() ? "settings.menu.value-min" : valueKey;
+        }
+        lore.add(hub.get(valueKey, Messages.tag("value", setting.valueText(hub))));
         switch (setting) {
             case Setting.Toggle toggle -> {
                 lore.add(hub.get("settings.menu.default", Messages.tag("default", toggle.defaultText(hub))));
@@ -201,9 +218,12 @@ public final class SettingsMenu implements InventoryHolder {
                 item.setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, toggle.value());
             }
             case Setting.Number number -> {
+                Component zero = number.zeroLabel();
                 lore.add(hub.get("settings.menu.range",
-                        Messages.tag("min", number.format(hub, number.min())),
-                        Messages.tag("max", number.format(hub, number.max())),
+                        Messages.tag("min", number.formatPlain(hub, number.min())),
+                        Messages.tag("max", number.formatPlain(hub, number.max())),
+                        Messages.tag("zero", zero == null || number.min() > 0 ? Component.empty()
+                                : hub.get("settings.menu.zero-means", Messages.tag("zero", zero))),
                         Messages.tag("default", number.defaultText(hub))));
                 lore.add(Component.empty());
                 lore.add(hub.get("settings.menu.hint-number", Messages.tag("step", Format.decimal(number.step())),
@@ -213,8 +233,12 @@ public final class SettingsMenu implements InventoryHolder {
             case Setting.Choice choice -> {
                 List<Component> labels = new ArrayList<>();
                 for (Setting.Choice.Option option : choice.options()) {
-                    labels.add(hub.get(option.equals(choice.value()) ? "settings.menu.option-current"
-                            : "settings.menu.option", Messages.tag("option", choice.label(option))));
+                    boolean current = option.equals(choice.value());
+                    // The other options are dimmed: their own colours would win over the line's dark gray.
+                    Component label = current ? choice.label(option)
+                            : Component.text(PlainTextComponentSerializer.plainText().serialize(choice.label(option)));
+                    labels.add(hub.get(current ? "settings.menu.option-current" : "settings.menu.option",
+                            Messages.tag("option", label)));
                 }
                 lore.add(hub.get("settings.menu.options", Messages.tag("options",
                         Component.join(JoinConfiguration.separator(hub.get("settings.menu.option-separator")),
@@ -226,6 +250,9 @@ public final class SettingsMenu implements InventoryHolder {
             }
         }
         lore.add(hub.get("settings.menu.hint-reset"));
+        if (editor.waitsForNextMatch(setting)) {
+            lore.add(hub.get("settings.menu.waits"));
+        }
         lore.add(hub.get("settings.menu.command", Messages.tag("command", SettingsCommand.usage(setting, false))));
         lore.add(hub.get("settings.menu.path", Messages.tag("path", setting.path())));
         item.setData(DataComponentTypes.LORE, ItemLore.lore(plain(lore)));
@@ -233,10 +260,23 @@ public final class SettingsMenu implements InventoryHolder {
         return item;
     }
 
+    /** Tooltip lines an icon may bring along (rocket flight time, horn sound, bundle contents, ...). */
+    private static final List<DataComponentType> TOOLTIP_EXTRAS = List.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,
+            DataComponentTypes.ENCHANTMENTS, DataComponentTypes.STORED_ENCHANTMENTS, DataComponentTypes.FIREWORKS,
+            DataComponentTypes.FIREWORK_EXPLOSION, DataComponentTypes.INSTRUMENT, DataComponentTypes.BUNDLE_CONTENTS,
+            DataComponentTypes.CONTAINER, DataComponentTypes.POTION_CONTENTS, DataComponentTypes.JUKEBOX_PLAYABLE,
+            DataComponentTypes.BANNER_PATTERNS, DataComponentTypes.DYED_COLOR, DataComponentTypes.TRIM);
+
+    /** Only the name and the lore are shown: every other component of the icon is hidden from the tooltip. */
     private static void hideExtras(ItemStack item) {
         item.setData(DataComponentTypes.MAX_STACK_SIZE, 1);
+        Set<DataComponentType> hidden = new LinkedHashSet<>(TOOLTIP_EXTRAS);
+        hidden.addAll(item.getDataTypes());
+        hidden.remove(DataComponentTypes.ITEM_NAME);
+        hidden.remove(DataComponentTypes.LORE);
+        hidden.remove(DataComponentTypes.TOOLTIP_DISPLAY);
         item.setData(DataComponentTypes.TOOLTIP_DISPLAY, TooltipDisplay.tooltipDisplay()
-                .addHiddenComponents(DataComponentTypes.ATTRIBUTE_MODIFIERS, DataComponentTypes.ENCHANTMENTS)
+                .hiddenComponents(hidden)
                 .build());
     }
 

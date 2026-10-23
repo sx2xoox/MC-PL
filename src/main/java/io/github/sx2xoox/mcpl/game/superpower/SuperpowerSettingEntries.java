@@ -22,6 +22,9 @@ import org.bukkit.configuration.MemoryConfiguration;
  */
 final class SuperpowerSettingEntries {
 
+    /** Id of the 능력 배정 방식 entry ({@link SuperpowerGame#modeSetting()}). */
+    static final String MODE = "superpower.mode";
+
     private final HubConfig config;
     private final Messages messages;
     /** The declared defaults ({@link SuperpowerGame#configDefaults}), for the menu's "기본값" and resets. */
@@ -38,7 +41,7 @@ final class SuperpowerSettingEntries {
     }
 
     private List<SettingsSection> sections(SuperpowerGame game) {
-        Setting mode = Setting.builder("superpower.mode")
+        Setting mode = Setting.builder(MODE)
                 .command("선택방식", "mode")
                 .icon(Material.ENCHANTING_TABLE)
                 .text(messages, "settings.mode")
@@ -92,7 +95,7 @@ final class SuperpowerSettingEntries {
                         defaults.getDouble(SuperpowerSettings.PARTICLE_SCALE));
         Setting teamAbilities = toggle("superpower.team-abilities", "팀원능력", "team-abilities", Material.SPYGLASS,
                 "settings.team-abilities", SuperpowerSettings.TEAM_ABILITIES);
-        Setting announce = toggle("superpower.ultimate-announce", "궁극기알림", "ultimate-announce",
+        Setting announce = toggle("superpower.ultimate-announce", "궁극기공지", "ultimate-announce",
                 Material.GOAT_HORN, "settings.ultimate-announce", SuperpowerSettings.ANNOUNCE_ULTIMATES);
         Setting killFeed = toggle("superpower.kill-feed", "킬로그능력", "kill-feed", Material.SKELETON_SKULL,
                 "settings.kill-feed", SuperpowerSettings.KILL_FEED_ABILITY);
@@ -100,7 +103,7 @@ final class SuperpowerSettingEntries {
         Setting loot = toggle("superpower.loot", "상자", "loot", Material.CHEST, "settings.loot",
                 LootSettings.ENABLED);
         Setting chests = Setting.builder("superpower.chests")
-                .command("상자수", "chests")
+                .command("인당상자", "chests")
                 .icon(Material.BARREL)
                 .text(messages, "settings.chests")
                 .path(path(LootSettings.CHESTS_PER_PLAYER))
@@ -113,8 +116,7 @@ final class SuperpowerSettingEntries {
                 .text(messages, "settings.max-chests")
                 .path(path(LootSettings.CHESTS_MAX))
                 .range(0, LootSettings.MAX_CHESTS).steps(1, 5).integer().unit(Setting.Unit.COUNT)
-                .number(upper(LootSettings.CHESTS_MIN, LootSettings.CHESTS_MAX, LootSettings.MAX_CHESTS),
-                        storeUpper(LootSettings.CHESTS_MIN, LootSettings.CHESTS_MAX),
+                .number(integer(LootSettings.CHESTS_MAX), store(LootSettings.CHESTS_MAX, true),
                         defaults.getInt(LootSettings.CHESTS_MAX));
         Setting supply = Setting.builder("superpower.supply")
                 .command("보급", "supply")
@@ -122,8 +124,7 @@ final class SuperpowerSettingEntries {
                 .text(messages, "settings.supply")
                 .path(path(LootSettings.SUPPLY_MAX))
                 .range(0, LootSettings.MAX_SUPPLY).steps(1, 2).integer().unit(Setting.Unit.COUNT)
-                .number(upper(LootSettings.SUPPLY_MIN, LootSettings.SUPPLY_MAX, LootSettings.MAX_SUPPLY),
-                        storeUpper(LootSettings.SUPPLY_MIN, LootSettings.SUPPLY_MAX),
+                .number(integer(LootSettings.SUPPLY_MAX), store(LootSettings.SUPPLY_MAX, true),
                         defaults.getInt(LootSettings.SUPPLY_MAX));
         Setting supplyPlayers = number("superpower.supply-players", "보급인원", "supply-players",
                 Material.PLAYER_HEAD, "settings.supply-players", LootSettings.PLAYERS_PER_SUPPLY, true)
@@ -132,9 +133,9 @@ final class SuperpowerSettingEntries {
                         defaults.getInt(LootSettings.PLAYERS_PER_SUPPLY));
         Setting practiceLoot = toggle("superpower.practice-loot", "연습상자", "practice-loot", Material.TARGET,
                 "settings.practice-loot", LootSettings.PRACTICE);
-        Setting hint = toggle("superpower.chest-hint", "상자표시", "chest-hint", Material.GLOWSTONE_DUST,
+        Setting hint = toggle("superpower.chest-hint", "상자반짝임", "chest-hint", Material.GLOWSTONE_DUST,
                 "settings.chest-hint", LootSettings.NEARBY_HINT);
-        Setting hintRadius = number("superpower.chest-hint-radius", "상자표시거리", "chest-hint-radius",
+        Setting hintRadius = number("superpower.chest-hint-radius", "반짝임거리", "chest-hint-radius",
                 Material.COMPASS, "settings.chest-hint-radius", LootSettings.NEARBY_HINT_RADIUS, true)
                 .range(LootSettings.MIN_HINT_RADIUS, LootSettings.MAX_HINT_RADIUS).steps(1, 4)
                 .unit(Setting.Unit.BLOCKS)
@@ -195,29 +196,5 @@ final class SuperpowerSettingEntries {
     /** Stores whole numbers as integers, so the file keeps {@code 20} rather than {@code 20.0}. */
     private DoubleConsumer store(String key, boolean whole) {
         return value -> config.setGameValue(SuperpowerGame.ID, key, whole ? (Object) (int) Math.round(value) : value);
-    }
-
-    /** The effective upper end of a min..max pair: the reader never lets it fall below the lower end. */
-    private DoubleSupplier upper(String minKey, String maxKey, int limit) {
-        int minFallback = defaults.getInt(minKey);
-        int maxFallback = defaults.getInt(maxKey);
-        return () -> {
-            int min = Math.max(0, Math.min(limit, live().getInt(minKey, minFallback)));
-            return Math.max(min, live().getInt(maxKey, maxFallback));
-        };
-    }
-
-    /** Sets the upper end; a lower end above it comes down with it (so 0 really means none). */
-    private DoubleConsumer storeUpper(String minKey, String maxKey) {
-        int minFallback = defaults.getInt(minKey);
-        return value -> {
-            int max = (int) Math.round(value);
-            config.updateGameSection(SuperpowerGame.ID, section -> {
-                section.set(maxKey, max);
-                if (section.getInt(minKey, minFallback) > max) {
-                    section.set(minKey, max);
-                }
-            });
-        };
     }
 }

@@ -11,15 +11,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import io.github.sx2xoox.mcpl.MCPLPlugin;
 import io.github.sx2xoox.mcpl.core.config.BlockDamageScope;
+import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
 import io.github.sx2xoox.mcpl.core.ui.SettingsMenu;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestServer;
 import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.ItemLore;
+import io.papermc.paper.datacomponent.item.TooltipDisplay;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -32,6 +40,7 @@ import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockbukkit.mockbukkit.ServerMock;
@@ -107,10 +116,29 @@ class SettingsMenuTest {
     }
 
     private static String name(SettingsMenu menu, String settingId) {
-        ItemStack item = item(menu, menu.slotOf(settingId));
+        return name(item(menu, menu.slotOf(settingId)));
+    }
+
+    private static String name(ItemStack item) {
         Component name = item.getData(DataComponentTypes.ITEM_NAME);
         assertNotNull(name);
         return plain(name);
+    }
+
+    private static List<Component> loreLines(ItemStack item) {
+        ItemLore lore = item.getData(DataComponentTypes.LORE);
+        assertNotNull(lore);
+        return lore.lines();
+    }
+
+    private static String lore(SettingsMenu menu, String settingId) {
+        return String.join("\n", loreLines(item(menu, menu.slotOf(settingId))).stream()
+                .map(SettingsMenuTest::plain).toList());
+    }
+
+    /** The match status item in the bottom right corner. */
+    private static ItemStack status(SettingsMenu menu) {
+        return item(menu, menu.getInventory().getSize() - 1);
     }
 
     @Test
@@ -123,13 +151,64 @@ class SettingsMenuTest {
             assertTrue(menu.slotOf(id) >= 0, id + " is in the menu");
         }
         assertEquals("팀 인원 · 개인전", name(menu, "hub.team-size"));
-        ItemStack team = item(menu, menu.slotOf("hub.team-size"));
-        String lore = String.join("\n", team.getData(DataComponentTypes.LORE).lines().stream()
-                .map(SettingsMenuTest::plain).toList());
+        String lore = lore(menu, "hub.team-size");
         assertTrue(lore.contains("팀당 인원"), "the explanation: " + lore);
-        assertTrue(lore.contains("범위 개인전 ~ 32명"), "the range: " + lore);
+        assertTrue(lore.contains("범위 0명 ~ 32명 (0 = 개인전)"), "the range in plain numbers: " + lore);
+        assertTrue(lore.contains("현재 값: 개인전") && !lore.contains("최솟값"), "0 has its own meaning: " + lore);
         assertTrue(lore.contains("/게임 설정 팀 <인원>"), "the matching command: " + lore);
         assertTrue(lore.contains("config.yml → match.team-size"), "where it is saved: " + lore);
+        assertFalse(lore.contains("다음 경기부터"), "no match is running: " + lore);
+        assertEquals("대기 중", name(status(menu)));
+    }
+
+    @Test
+    void choicesDimTheOptionsThatAreNotSelected() {
+        SettingsMenu menu = open();
+        Component options = loreLines(item(menu, menu.slotOf("hub.terrain"))).stream()
+                .filter(line -> plain(line).startsWith("선택지")).findFirst().orElseThrow();
+        assertTrue(plain(options).contains("▶ 전투 맵에서만"), plain(options));
+        Map<String, @Nullable TextColor> colours = new HashMap<>();
+        colours(options, null, colours);
+        assertEquals(NamedTextColor.DARK_GRAY, colourOf(colours, "끄기"), "dimmed: " + colours);
+        assertEquals(NamedTextColor.DARK_GRAY, colourOf(colours, "모든 월드"), "dimmed: " + colours);
+        assertEquals(NamedTextColor.GREEN, colourOf(colours, "전투 맵에서만"), "the current option keeps its colour");
+    }
+
+    private static @Nullable TextColor colourOf(Map<String, @Nullable TextColor> colours, String text) {
+        return colours.entrySet().stream().filter(entry -> entry.getKey().contains(text))
+                .map(Map.Entry::getValue).findFirst().orElseThrow();
+    }
+
+    /** The colour every piece of text is drawn in (its own or the nearest parent's), by text. */
+    private static void colours(Component node, @Nullable TextColor inherited, Map<String, @Nullable TextColor> into) {
+        TextColor colour = node.color() != null ? node.color() : inherited;
+        if (node instanceof TextComponent text && !text.content().isBlank()) {
+            into.put(text.content().trim(), colour);
+        }
+        for (Component child : node.children()) {
+            colours(child, colour, into);
+        }
+    }
+
+    @Test
+    void iconsShowOnlyTheirNameAndLore() {
+        SettingsMenu menu = open();
+        int size = menu.getInventory().getSize();
+        int checked = 0;
+        for (int slot = 0; slot < size; slot++) {
+            ItemStack item = ((TestServer.HolderInventory) menu.getInventory()).placed(slot);
+            if (item == null || item.getType() == Material.GRAY_STAINED_GLASS_PANE) {
+                continue;
+            }
+            TooltipDisplay display = item.getData(DataComponentTypes.TOOLTIP_DISPLAY);
+            assertNotNull(display, item.getType() + " hides its extra tooltip lines");
+            assertTrue(display.hiddenComponents().containsAll(List.of(DataComponentTypes.FIREWORKS,
+                    DataComponentTypes.INSTRUMENT, DataComponentTypes.BUNDLE_CONTENTS,
+                    DataComponentTypes.ATTRIBUTE_MODIFIERS)), item.getType().toString());
+            assertFalse(display.hiddenComponents().contains(DataComponentTypes.LORE), "the lore stays");
+            checked++;
+        }
+        assertTrue(checked > 20, "headers, entries and controls: " + checked);
     }
 
     @Test
@@ -150,6 +229,8 @@ class SettingsMenuTest {
         }
         assertEquals(32, hub.config().teamSize(), "clamped at the maximum");
         assertTrue(lastActionBar().contains("최댓값"), "the admin is told why nothing changes");
+        assertTrue(lore(menu, "hub.team-size").contains("현재 값: 32명 (최댓값)"),
+                "also in the tooltip, which the menu never covers");
         click(menu, "hub.team-size", ClickType.DROP);
         assertEquals(0, hub.config().teamSize(), "Q puts the default back");
         click(menu, "hub.team-size", ClickType.RIGHT);
@@ -229,16 +310,59 @@ class SettingsMenuTest {
     }
 
     @Test
-    void theMenuWorksWhileAMatchRuns() {
+    void duringTheCountdownMostChangesApplyToTheComingMatch() {
+        server.addPlayer("User");
+        SettingsMenu menu = open();
+        assertTrue(server.dispatchCommand(admin, "게임 시작 fake"));
+        assertEquals(GameState.COUNTDOWN, hub.games().session().state());
+        assertEquals("경기 시작 전 (카운트다운)", name(status(menu)), "open menus follow the match");
+        assertFalse(lore(menu, "hub.team-size").contains("다음 경기부터"), "read when the countdown ends");
+        assertTrue(lore(menu, "hub.countdown").contains("다음 경기부터"), "the countdown already runs");
+        assertTrue(lore(menu, "hub.terrain").contains("다음 경기부터"), "read when the match was started");
+
+        lastActionBar();
+        click(menu, "hub.team-size", ClickType.LEFT);
+        assertEquals(1, hub.config().teamSize());
+        String bar = lastActionBar();
+        assertTrue(bar.contains("팀 인원") && bar.contains("1명") && !bar.contains("다음 경기부터"), bar);
+        click(menu, "hub.countdown", ClickType.LEFT);
+        assertTrue(lastActionBar().contains("다음 경기부터"), "the countdown of this match is not changed");
+    }
+
+    @Test
+    void whileAMatchRunsChangesWaitForTheNextMatch() {
         server.addPlayer("User");
         assertTrue(server.dispatchCommand(admin, "게임 시작 fake"));
-        assertNotNull(hub.games().session());
+        server.getScheduler().performTicks(hub.config().countdownSeconds() * 20L + 5);
+        assertEquals(GameState.RUNNING, hub.games().session().state());
         SettingsMenu menu = open();
+        assertEquals("경기 진행 중", name(status(menu)));
+        assertTrue(lore(menu, "hub.team-size").contains("다음 경기부터"), "every entry says so in its tooltip");
+
         lastActionBar();
         click(menu, "hub.team-size", ClickType.LEFT);
         assertEquals(1, hub.config().teamSize(), "saved for the next match");
         String bar = lastActionBar();
         assertTrue(bar.contains("팀 인원") && bar.contains("1명") && bar.contains("다음 경기부터"), bar);
+    }
+
+    @Test
+    void aClickNeverOverwritesEditsMadeToTheFile() throws IOException {
+        SettingsMenu menu = open();
+        File file = new File(plugin.getDataFolder(), "config.yml");
+        String edited = Files.readString(file.toPath()).replace("countdown-seconds: 5", "countdown-seconds: 9");
+        Files.writeString(file.toPath(), edited);
+        click(menu, "hub.team-size", ClickType.LEFT);
+        assertEquals(0, hub.config().teamSize(), "refused until the edit is loaded");
+        assertEquals(edited, Files.readString(file.toPath()), "the owner's edit is kept");
+        assertTrue(hub.config().isWritable(), "the edited file is fine, it only needs /게임 리로드");
+
+        assertTrue(server.dispatchCommand(admin, "게임 리로드"));
+        click(menu, "hub.team-size", ClickType.LEFT);
+        assertEquals(1, hub.config().teamSize());
+        YamlConfiguration saved = YamlConfiguration.loadConfiguration(file);
+        assertEquals(1, saved.getInt("match.team-size"));
+        assertEquals(9, saved.getInt("match.countdown-seconds"), "the owner's edit survives the save");
     }
 
     @Test

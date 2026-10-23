@@ -78,6 +78,7 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
     private final Messages messages;
     private final String textKey;
     private final String path;
+    private final boolean readWhenMatchOpens;
 
     private Setting(Builder builder) {
         this.id = builder.id;
@@ -87,6 +88,7 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
         this.messages = Objects.requireNonNull(builder.messages, "text(messages, key) is required");
         this.textKey = Objects.requireNonNull(builder.textKey, "text(messages, key) is required");
         this.path = builder.path;
+        this.readWhenMatchOpens = builder.readWhenMatchOpens;
         if (korean.isEmpty() || english.isEmpty()) {
             throw new IllegalArgumentException("setting " + id + " needs a Korean and an English command name");
         }
@@ -118,6 +120,14 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
     /** Where the value is saved, e.g. {@code games.superpower.loot.enabled} (shown in the menu). */
     public String path() {
         return path;
+    }
+
+    /**
+     * True if a match reads this value as soon as it is started (before its countdown), so a change made during the
+     * countdown already waits for the next match. Other values are read when the countdown ends.
+     */
+    public boolean readWhenMatchOpens() {
+        return readWhenMatchOpens;
     }
 
     /** The short name, e.g. "보급 상자". */
@@ -307,7 +317,7 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
         /** {@code value} formatted like the value of this setting (unit, or the zero label). */
         public Component format(Messages hub, double value) {
             if (value == 0) {
-                Component zero = optionalText("zero");
+                Component zero = zeroLabel();
                 if (zero != null) {
                     return zero;
                 }
@@ -318,6 +328,19 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
                         Messages.tag("duration", Format.duration(Math.round(value * 1000))));
             }
             return hub.get("settings.unit." + unit.key(), Messages.tag("value", number));
+        }
+
+        /**
+         * {@code value} as a plain number with its unit, never the zero label and seconds never as minutes (the ends
+         * of the range: "0초 ~ 7200초", not "무제한 ~ 2시간").
+         */
+        public Component formatPlain(Messages hub, double value) {
+            return hub.get("settings.unit." + unit.key(), Messages.tag("value", Format.decimal(value)));
+        }
+
+        /** What 0 means (e.g. 개인전, 무제한), or null if 0 is just a number. */
+        public @Nullable Component zeroLabel() {
+            return optionalText("zero");
         }
 
         @Override
@@ -484,6 +507,7 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
         private double bigStep = 5;
         private boolean integer;
         private Unit unit = Unit.COUNT;
+        private boolean readWhenMatchOpens;
 
         private Builder(String id) {
             this.id = id;
@@ -542,6 +566,15 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
         /** Numbers: how the value is shown. */
         public Builder unit(Unit unit) {
             this.unit = unit;
+            return this;
+        }
+
+        /**
+         * The value is read when a match is started, before its countdown (not when the countdown ends), so changes
+         * during the countdown wait for the next match. See {@link Setting#readWhenMatchOpens()}.
+         */
+        public Builder readWhenMatchOpens() {
+            this.readWhenMatchOpens = true;
             return this;
         }
 

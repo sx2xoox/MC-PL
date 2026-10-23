@@ -664,8 +664,9 @@ public final class LootManager {
     }
 
     /**
-     * A gentle sparkle on an unopened normal chest, sent only to the viewers (players in play and spectators) within
-     * {@code loot.nearby-hint-radius}, so it helps whoever is close without lighting up every chest of the arena.
+     * A gentle white sparkle on an unopened normal chest, sent only to the viewers (players in play and spectators)
+     * within {@code loot.nearby-hint-radius}, so it helps whoever is close without lighting up every chest of the
+     * arena. White ({@code WAX_OFF}), so the orange sparkle ({@code WAX_ON}) still tells a rare chest apart.
      */
     private void nearbyHint(Location center, double scale) {
         double radius = settings.nearbyHintRadius();
@@ -675,7 +676,7 @@ public final class LootManager {
                     || viewer.getLocation().distanceSquared(center) > radius * radius) {
                 continue;
             }
-            viewer.spawnParticle(Particle.WAX_ON, center.getX(), center.getY() + 0.35, center.getZ(), count,
+            viewer.spawnParticle(Particle.WAX_OFF, center.getX(), center.getY() + 0.35, center.getZ(), count,
                     0.3, 0.25, 0.3, 0.0);
         }
     }
