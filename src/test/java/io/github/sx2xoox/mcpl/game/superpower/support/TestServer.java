@@ -8,10 +8,14 @@ import io.papermc.paper.scoreboard.numbers.NumberFormat;
 import net.kyori.adventure.text.Component;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.WorldBorder;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.scoreboard.Criteria;
 import org.bukkit.scoreboard.RenderType;
 import org.jspecify.annotations.Nullable;
 import org.mockbukkit.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.inventory.ChestInventoryMock;
+import org.mockbukkit.mockbukkit.inventory.InventoryMock;
 import org.mockbukkit.mockbukkit.scoreboard.ObjectiveMock;
 import org.mockbukkit.mockbukkit.scoreboard.ScoreMock;
 import org.mockbukkit.mockbukkit.scoreboard.ScoreboardManagerMock;
@@ -19,9 +23,9 @@ import org.mockbukkit.mockbukkit.scoreboard.ScoreboardMock;
 import org.mockbukkit.mockbukkit.world.WorldBorderMock;
 
 /**
- * MockBukkit server that can create per-player world borders (used by the hub's virtual border) and whose
+ * MockBukkit server that can create per-player world borders (used by the hub's virtual border), whose
  * scoreboards support {@link ObjectiveMock#numberFormat(NumberFormat)} (unimplemented in MockBukkit; the hub's
- * sidebars set it), so the match HUD really runs in tests.
+ * sidebars set it), so the match HUD really runs in tests, and whose custom inventories know their holder.
  */
 @SuppressWarnings("unchecked")
 public final class TestServer extends ServerMock {
@@ -31,6 +35,38 @@ public final class TestServer extends ServerMock {
     @Override
     public WorldBorder createWorldBorder() {
         return new WorldBorderMock(getWorlds().getFirst());
+    }
+
+    @Override
+    public InventoryMock createInventory(@Nullable InventoryHolder owner, int size) {
+        return createInventory(owner, size, Component.empty());
+    }
+
+    /**
+     * Chest inventories that also answer {@link Inventory#getHolder(boolean)} like Paper's (MockBukkit throws), so the
+     * listeners that find their custom holders without a block snapshot (choice menu, loot chests) run in tests.
+     * MockBukkit ignores the title of a chest inventory too.
+     */
+    @Override
+    public InventoryMock createInventory(@Nullable InventoryHolder owner, int size, Component title) {
+        if (size < 9 || size > 54 || size % 9 != 0) {
+            throw new IllegalArgumentException("Size for custom inventory must be a multiple of 9 between 9 and 54 slots"
+                    + " (got " + size + ")");
+        }
+        return new HolderInventory(owner, size);
+    }
+
+    /** A chest inventory whose {@link #getHolder(boolean)} works. */
+    static final class HolderInventory extends ChestInventoryMock {
+
+        HolderInventory(@Nullable InventoryHolder owner, int size) {
+            super(owner, size);
+        }
+
+        @Override
+        public @Nullable InventoryHolder getHolder(boolean useSnapshot) {
+            return getHolder();
+        }
     }
 
     @Override

@@ -49,6 +49,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.EquipmentSlotGroup;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -222,8 +223,9 @@ class SuperpowerMatchTest {
             closer.closeInventory(InventoryCloseEvent.Reason.PLAYER);
             h.ticks(25);
         }
-        assertFalse(closer.getOpenInventory().getTopInventory().getHolder() instanceof ChoiceMenu,
-                "after a few closes it stays closed");
+        // MockBukkit's own (crafting) view has no top inventory.
+        Inventory top = closer.getOpenInventory().getTopInventory();
+        assertFalse(top != null && top.getHolder() instanceof ChoiceMenu, "after a few closes it stays closed");
         assertTrue(match.reopenMenu(closer), "/게임 능력 선택 opens it again");
         assertTrue(closer.getOpenInventory().getTopInventory().getHolder() instanceof ChoiceMenu);
         closer.closeInventory(InventoryCloseEvent.Reason.PLAYER);
