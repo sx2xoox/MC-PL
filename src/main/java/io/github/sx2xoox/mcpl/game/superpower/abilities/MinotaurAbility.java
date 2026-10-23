@@ -81,7 +81,7 @@ public final class MinotaurAbility extends Ability {
                             + "빠져나갈 틈이 있습니다). 그동안 이동 속도가 {maze_speed}% 빨라지고 돌진 기세가 늘 올라 있으며, "
                             + "액티브가 {rush_cooldown}초마다 쓸 수 있는 미궁 돌진으로 바뀌어 바라보는 방향으로 "
                             + "{rush_distance}블록 돌진하며 미궁 벽을 부수고, 부딪힌 적에게 {rush_damage} 피해를 주고 뿔로 받아 "
-                            + "날려 보냅니다.")
+                            + "날려 보냅니다. 전투 맵에서는 앞을 막는 벽과 지형도 폭 {rush_block_width}블록으로 뚫고 지나갑니다.")
             .ultimateNotStandalone()
             .param("charge_time", 1.2)
             .param("charge_linger", 1)
@@ -97,6 +97,7 @@ public final class MinotaurAbility extends Ability {
             .param("rush_cooldown", 2.5)
             .param("rush_distance", 10)
             .param("rush_damage", 3.5)
+            .param("rush_block_width", 3)
             .build();
 
     private static final String BRONZE_TAG = "#C8803A";
@@ -167,6 +168,15 @@ public final class MinotaurAbility extends Ability {
     private static final double MAX_LAG_MARGIN = 1.2;
     /** Walls closer than this to the rush's path (horizontally) are smashed. */
     private static final double SMASH_REACH = 1.25;
+    /**
+     * The rush tunnels through terrain along a line this high over the bottom of the block its feet are in (between
+     * the feet and head blocks), so the floor under the hooves (a slab or a stair too) is never touched.
+     */
+    private static final double RUSH_TUNNEL_HEIGHT = 1.0;
+    /** The tunnel ends this far past the end of the rush (the front of the body). */
+    private static final double TUNNEL_LEAD = 0.3;
+    /** The way ahead is checked (and the tunnel cut) in steps of this many blocks. */
+    private static final double WAY_STEP = 0.4;
     private static final double GORE_AHEAD = 1.2;
     private static final double GORE_REACH = 1.4;
     private static final long LANDING_GUARD_TICKS = 100;
@@ -716,6 +726,17 @@ public final class MinotaurAbility extends Ability {
         return ActivationResult.success();
     }
 
+    /**
+     * The distance from the rush's line within which blocks break for a tunnel {@code width} blocks wide: the centers
+     * of the feet and head blocks lie half a block below and above the line, the outermost ones
+     * {@code (width - 1) / 2} to its side. The floor under the hooves (1.5 below) always stays: a charge never digs
+     * more than one block below its line.
+     */
+    private static double tunnelRadius(double width) {
+        double side = Math.max(0, (width - 1) / 2);
+        return Math.sqrt(side * side + 0.25) + 0.01;
+    }
+
     /** Ticks the server sees the owner's movement late: one round trip, capped. */
     private static long lagTicks(Player player) {
         return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / 50.0));
@@ -736,6 +757,10 @@ public final class MinotaurAbility extends Ability {
         private Location start;
         private Location last;
         private double sent;
+        /** How far from the start the tunnel through real terrain has been cut. */
+        private double tunnelled;
+        /** How far from the start the first real wall that stays standing is (the rush ends there). */
+        private double wall = Double.POSITIVE_INFINITY;
         private int stalls;
         private boolean moved;
         private boolean ended;
@@ -793,21 +818,44 @@ public final class MinotaurAbility extends Ability {
             return true;
         }
 
-        /** Smashes the labyrinth walls in the way of where the rush is carrying the owner (plus its ping's worth). */
+        /**
+         * Smashes the labyrinth walls in the way of where the rush is carrying the owner (plus its ping's worth), and
+         * on battle maps a tunnel through the real walls and terrain in the way: cut step by step while the way is
+         * checked, so it never runs past a block that stays standing (the rush stops there) nor past the end of the
+         * rush.
+         */
         private void smashAhead() {
             Labyrinth labyrinth = maze;
             if (labyrinth == null) {
                 return;
             }
             double back = Math.max(0, sent - RUSH_SPEED);
+            if (back >= wall) {
+                return; // stopped by a real wall: nothing behind it may break
+            }
             Location from = start.clone().add(direction.clone().multiply(back));
-            double reach = sent + RUSH_SPEED * (2 + lag) + 0.8 - back;
-            // Never past a real wall: the rush stops there, and nothing behind it may break.
-            for (double d = 0; d <= reach; d += 0.4) {
-                Location at = from.clone().add(direction.clone().multiply(d));
-                if (labyrinth.blocksTheWay(at.getBlock()) || labyrinth.blocksTheWay(at.clone().add(0, 1, 0)
-                        .getBlock())) {
+            double reach = Math.min(sent + RUSH_SPEED * (2 + lag) + 0.8, wall) - back;
+            double width = params().num("rush_block_width");
+            double tunnelEnd = width > 0 ? Math.min(back + reach, distance + TUNNEL_LEAD) : 0;
+            // The block the feet are in (a slab or a stair under them rounds up to the block above it).
+            double feet = Math.floor(start.getY() + 0.5);
+            for (double d = 0; d <= reach; d += WAY_STEP) {
+                double along = back + d;
+                if (along > tunnelled && tunnelled < tunnelEnd) {
+                    double end = Math.min(tunnelEnd, along);
+                    Location line = start.clone().add(direction.clone().multiply(tunnelled));
+                    line.setY(feet + RUSH_TUNNEL_HEIGHT);
+                    ctx().breakBlocksAlong(owner, line, line.clone().add(direction.clone().multiply(end - tunnelled)),
+                            tunnelRadius(width));
+                    tunnelled = end;
+                }
+                // Never past a real wall: the rush stops there, and nothing behind it may break.
+                Location at = start.clone().add(direction.clone().multiply(along));
+                at.setY(feet + 0.5);
+                Block body = at.getBlock();
+                if (labyrinth.blocksTheWay(body) || labyrinth.blocksTheWay(body.getRelative(0, 1, 0))) {
                     reach = d;
+                    wall = along;
                     break;
                 }
             }

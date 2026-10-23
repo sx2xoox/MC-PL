@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.superpower.support.world;
 
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.util.BoundingBox;
 import org.jspecify.annotations.Nullable;
 import org.mockbukkit.mockbukkit.block.BlockMock;
@@ -50,6 +51,15 @@ public final class FlatBlock extends BlockMock {
         target.setYaw(0);
         target.setPitch(0);
         return target;
+    }
+
+    /** Records a change with physics in {@link FlatWorld#physicsUpdates()}. */
+    @Override
+    public void setBlockData(BlockData data, boolean applyPhysics) {
+        super.setBlockData(data, applyPhysics);
+        if (applyPhysics && super.getLocation().getWorld() instanceof FlatWorld flat) {
+            flat.physicsUpdates().add(getLocation());
+        }
     }
 
     /** Like vanilla: passable means "no collision shape" (air, plants, fluids...). */

@@ -55,7 +55,8 @@ import org.jspecify.annotations.Nullable;
  * ticking grenade and calls a carpet of falling bombs across the aimed spot.
  *
  * <p>No real explosion ever happens: the grenade is a primed TNT entity with zero yield that is removed right before
- * its fuse would run out, the bombs are block displays, and every blast is applied explicitly to enemies only.
+ * its fuse would run out, the bombs are block displays, and every blast is applied explicitly to enemies only. The
+ * blasts break terrain through {@code AbilityContext#breakBlocks} (restored when the match ends).
  *
  * <p>Visuals: the grenade carries a blinking red light and draws a red countdown ring that closes in before it
  * blows; every blast is a layered fireball of glowing glass cubes with a flash, a fire bloom, debris, an expanding
@@ -72,17 +73,20 @@ public final class BomberAbility extends Ability {
                             + "(폭탄 점프) 착지 피해도 받지 않습니다.")
             .active("수류탄",
                     "{grenade_fuse}초 뒤 터지는 수류탄을 던집니다. 반경 {grenade_radius}블록 안의 적에게 거리에 따라 "
-                            + "{grenade_min_damage}~{grenade_damage} 피해를 주고 밀쳐냅니다(블록 파괴 없음).",
+                            + "{grenade_min_damage}~{grenade_damage} 피해를 주고 밀쳐내며, 전투 맵에서는 반경 "
+                            + "{grenade_block_radius}블록의 지형도 부숩니다.",
                     8)
             .ultimate("융단폭격",
                     "조준한 지점({carpet_range}블록 이내)을 가로질러 {carpet_duration}초에 걸쳐 폭탄 {carpet_bombs}개를 "
                             + "떨어뜨립니다. 폭탄마다 반경 {carpet_radius}블록의 적에게 {carpet_damage} 피해를 줍니다"
-                            + "(한 적당 최대 {carpet_max_hits}회).")
+                            + "(한 적당 최대 {carpet_max_hits}회). 전투 맵에서는 폭탄마다 반경 {carpet_block_radius}블록의 "
+                            + "지형도 부숩니다.")
             .param("blast_resist", 70)
             .param("grenade_fuse", 1.5)
             .param("grenade_radius", 4)
             .param("grenade_damage", 7)
             .param("grenade_min_damage", 3)
+            .param("grenade_block_radius", 2.5)
             .param("carpet_range", 40)
             .param("carpet_duration", 1.5)
             .param("carpet_bombs", 8)
@@ -90,6 +94,7 @@ public final class BomberAbility extends Ability {
             .param("carpet_damage", 5)
             .param("carpet_length", 12)
             .param("carpet_max_hits", 3)
+            .param("carpet_block_radius", 2)
             .build();
 
     private static final double GRENADE_SPEED = 1.0;
@@ -285,7 +290,7 @@ public final class BomberAbility extends Ability {
                 grenade.remove();
                 light.remove();
                 detonate(at, radius, params().num("grenade_damage"), params().num("grenade_min_damage"), true,
-                        target -> true);
+                        target -> true, params().num("grenade_block_radius"));
                 blastJump(at, radius);
                 return false;
             }
@@ -450,7 +455,8 @@ public final class BomberAbility extends Ability {
                 if (bomb.fall()) {
                     it.remove();
                     detonate(bomb.ground.clone().add(0, 0.5, 0), radius, damage, damage, false,
-                            target -> hits.merge(target.getUniqueId(), 1, Integer::sum) <= maxHits);
+                            target -> hits.merge(target.getUniqueId(), 1, Integer::sum) <= maxHits,
+                            params().num("carpet_block_radius"));
                 }
             }
             return released[0] < bombs || !falling.isEmpty();
@@ -641,11 +647,12 @@ public final class BomberAbility extends Ability {
     // ------------------------------------------------------------------ explosions
 
     /**
-     * An explicit, block-safe blast: visuals, then damage falling off linearly from {@code maxDamage} at the center
-     * to {@code minDamage} at the edge for every exposed enemy in range that {@code admit} accepts, plus knockback.
+     * An explicit blast: visuals, then damage falling off linearly from {@code maxDamage} at the center to
+     * {@code minDamage} at the edge for every exposed enemy in range that {@code admit} accepts, plus knockback, and
+     * finally the terrain within {@code blockRadius} breaks (where the server allows it; cover still took this blast).
      */
     private void detonate(Location center, double radius, double maxDamage, double minDamage, boolean big,
-                          Predicate<LivingEntity> admit) {
+                          Predicate<LivingEntity> admit, double blockRadius) {
         explosion(center, radius, big);
         for (LivingEntity target : ctx().enemiesNear(player(), center, radius)) {
             if (!exposed(center, target) || !admit.test(target)) {
@@ -658,6 +665,9 @@ public final class BomberAbility extends Ability {
                     && !target.isDead()) {
                 knockback(center, target, proximity);
             }
+        }
+        if (blockRadius > 0) {
+            ctx().breakBlocks(player(), center, blockRadius);
         }
     }
 

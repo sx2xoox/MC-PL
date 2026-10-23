@@ -221,4 +221,34 @@ public interface AbilityContext {
      * block entities are replaced; returns false if the block was refused or is already temporary.
      */
     boolean placeTempBlock(Block block, BlockData data, long durationTicks);
+
+    // ------------------------------------------------------------------ terrain
+
+    /**
+     * Breaks the terrain for an explosion or a heavy impact of {@code owner}: the blocks within {@code radius} of
+     * {@code center} break with their own particles and break sounds and a few flying chunks, and the battlefield
+     * stays scarred until the match ends, when everything comes back at once. Abilities never touch blocks
+     * themselves; this keeps every rule:
+     * <ul>
+     *     <li>only where the server allows it ({@code protection.ability-block-damage}, by default only in the battle
+     *     map worlds) and inside the arena and the current border;</li>
+     *     <li>structures (walls, pillars, rocks, trees, bridges) break, the ground is dug at most two blocks below its
+     *     original surface (bowl shaped, never a pit nobody can climb out of, never through a thin floor);</li>
+     *     <li>block entities, temporary blocks and blocks next to water or lava never break, nothing that a falling
+     *     block rests on, nothing ever drops as an item, and attached blocks (torches, plants, doors) go with their
+     *     block.</li>
+     * </ul>
+     * Call it after dealing the damage of the blast (cover still counts for that hit, like vanilla explosions).
+     *
+     * @return how many blocks broke (0 where nothing may break, or when {@code owner} is out)
+     */
+    int breakBlocks(Player owner, Location center, double radius);
+
+    /**
+     * {@link #breakBlocks} along the path from {@code from} to {@code to} (every block within {@code radius} of the
+     * segment): a charge or a dash smashing through cover. It never digs into the floor the charge runs on: blocks
+     * whose centers lie more than one block below the segment stay, so a line one block over the feet (between the
+     * feet and head blocks) tunnels through walls but leaves the ground under them.
+     */
+    int breakBlocksAlong(Player owner, Location from, Location to, double radius);
 }

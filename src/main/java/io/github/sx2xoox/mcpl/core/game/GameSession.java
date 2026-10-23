@@ -11,12 +11,14 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.arena.Arena;
 import io.github.sx2xoox.mcpl.core.arena.ProtectionListener;
 import io.github.sx2xoox.mcpl.core.arena.Spread;
+import io.github.sx2xoox.mcpl.core.arena.TerrainDamage;
 import io.github.sx2xoox.mcpl.core.arena.VirtualBorder;
 import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.combat.MatchStats;
@@ -104,6 +106,7 @@ public final class GameSession {
     private final MatchStats stats = new MatchStats();
     private final SessionResources resources;
     private final ViewerBoards boards;
+    private final TerrainDamage terrain;
 
     private final Set<UUID> participants = new LinkedHashSet<>();
     private final Set<UUID> alive = new LinkedHashSet<>();
@@ -144,6 +147,8 @@ public final class GameSession {
         this.protection = game.protection(hub.config().protection());
         this.resources = new SessionResources(hub.plugin());
         this.boards = new ViewerBoards(game.displayComponent());
+        this.terrain = new TerrainDamage(hub.tempBlocks(), hub.config().abilityBlockDamage(),
+                hub.config().abilityBlockDamageLimit(), hub.maps()::isMapWorld, hub.plugin().getLogger());
         for (Player player : initial) {
             participants.add(player.getUniqueId());
             names.put(player.getUniqueId(), player.getName());
@@ -574,6 +579,33 @@ public final class GameSession {
         return hub.tempBlocks().place(block, data, durationTicks);
     }
 
+    /**
+     * Breaks the blocks within {@code radius} of {@code center}, where the server allows it
+     * ({@code protection.ability-block-damage}) and only inside the arena and where {@code allowed} accepts a block's
+     * center (see {@link TerrainDamage} for what breaks and what never does). Everything broken comes back when the
+     * match closes, after the players are restored. Returns what broke, nearest first; nothing once the mode stopped.
+     */
+    public List<TerrainDamage.Broken> breakBlocks(Location center, double radius, Predicate<Location> allowed) {
+        if (resources.isClosed()) {
+            return List.of();
+        }
+        return terrain.blast(center, radius, at -> arena.contains(at) && allowed.test(at));
+    }
+
+    /** {@link #breakBlocks} along the segment {@code from}-{@code to} (a dash, a charge). */
+    public List<TerrainDamage.Broken> breakBlocksAlong(Location from, Location to, double radius,
+                                                       Predicate<Location> allowed) {
+        if (resources.isClosed()) {
+            return List.of();
+        }
+        return terrain.blastAlong(from, to, radius, at -> arena.contains(at) && allowed.test(at));
+    }
+
+    /** The terrain damage of this match (scope, blocks broken so far). */
+    public TerrainDamage terrain() {
+        return terrain;
+    }
+
     // =================================================================== positions
 
     /** {@code count} safe, spread-out standing locations in the arena (see {@link Spread#findSpawns}). */
@@ -902,7 +934,8 @@ public final class GameSession {
             }
         }
         resources.cleanup();
-        hub.tempBlocks().restoreAll();
+        // Temporary blocks go now; broken terrain stays for the results and comes back when everyone left (close).
+        hub.tempBlocks().restorePlacements();
     }
 
     private void close(EndReason why) {
@@ -928,7 +961,7 @@ public final class GameSession {
             org.bukkit.event.HandlerList.unregisterAll(protectionListener);
             protectionListener = null;
         }
-        hub.tempBlocks().restoreAll();
+        hub.tempBlocks().restorePlacements();
 
         for (UUID id : members) {
             Player player = Bukkit.getPlayer(id);
@@ -942,6 +975,13 @@ public final class GameSession {
             } catch (RuntimeException e) {
                 log("restore " + player.getName(), e);
             }
+        }
+        // The broken terrain comes back at once, after the players were taken out of the arena (anyone still in a
+        // crater is lifted out of the restored ground).
+        try {
+            hub.tempBlocks().restoreRemovals();
+        } catch (RuntimeException e) {
+            log("terrain", e);
         }
         boards.clear();
         try {

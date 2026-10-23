@@ -57,7 +57,8 @@ public final class EarthAbility extends Ability {
                     "넉백 저항이 {knockback_resist}% 증가합니다.")
             .active("지진",
                     "바라보는 방향 {quake_range}블록 부채꼴({quake_angle}°)로 땅을 솟구치게 합니다. "
-                            + "휩쓸린 적은 {quake_damage} 피해를 입고 {quake_launch}블록 떠오릅니다.",
+                            + "휩쓸린 적은 {quake_damage} 피해를 입고 {quake_launch}블록 떠오릅니다. 전투 맵에서는 땅이 "
+                            + "솟구치다 부딪힌 벽이 반경 {quake_block_radius}블록 무너집니다.",
                     10)
             .ultimate("바위 감옥",
                     "반경 {ult_radius}블록의 적을 각각 {ult_duration}초간 바위 감옥에 가둬 움직이지 못하게 합니다. "
@@ -67,6 +68,7 @@ public final class EarthAbility extends Ability {
             .param("quake_angle", 70)
             .param("quake_damage", 5)
             .param("quake_launch", 1.5)
+            .param("quake_block_radius", 1.5)
             .param("ult_radius", 10)
             .param("ult_duration", 3)
             .build();
@@ -112,6 +114,8 @@ public final class EarthAbility extends Ability {
     /** Spikes only erupt from this many blocks out, at most this many per quake, on this share of the cells. */
     private static final int SPIKE_FROM_STEP = 3;
     private static final int MAX_QUAKE_SPIKES = 8;
+    /** Walls the wave runs into crumble at points at least this far apart (one hole per stretch of wall). */
+    private static final double WALL_BREAK_SPACING = 2.0;
     private static final float SPIKE_CHANCE = 0.3f;
 
     // ultimate: stone cage
@@ -248,6 +252,8 @@ public final class EarthAbility extends Ability {
         private final Set<Long> raised = new HashSet<>();
         private final Set<UUID> struck = new HashSet<>();
         private final List<Ring> rings = new ArrayList<>();
+        /** Where the wave broke through walls so far. */
+        private final List<Location> breaches = new ArrayList<>();
         private int spikes;
 
         Quake(Location feet, int groundY, Vector forward) {
@@ -308,6 +314,7 @@ public final class EarthAbility extends Ability {
                 int previous = rayGround[i];
                 if (!passable(world, x, previous + 1, z) && !passable(world, x, previous + 2, z)) {
                     rayAlive[i] = false; // a wall at least two blocks high stops this part of the wave
+                    breach(new Location(world, x + 0.5, previous + 1.5, z + 0.5));
                     continue;
                 }
                 Block ground = surface(x, z, previous);
@@ -340,6 +347,21 @@ public final class EarthAbility extends Ability {
                     Fx.sound(at, Sound.BLOCK_POINTED_DRIPSTONE_LAND, 0.8f, 0.8f + Fx.jitter(0.1f));
                 }
             }
+        }
+
+        /** The wave crashes into a wall: it crumbles around {@code point} (one breach per stretch of wall). */
+        private void breach(Location point) {
+            double radius = params().num("quake_block_radius");
+            if (radius <= 0) {
+                return;
+            }
+            for (Location done : breaches) {
+                if (done.distanceSquared(point) < WALL_BREAK_SPACING * WALL_BREAK_SPACING) {
+                    return;
+                }
+            }
+            breaches.add(point);
+            ctx().breakBlocks(player(), point, radius);
         }
 
         /** The walkable ground block of column (x, z): at most one step up and {@link #MAX_STEP_DOWN} down. */

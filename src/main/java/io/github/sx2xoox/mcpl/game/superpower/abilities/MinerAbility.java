@@ -84,14 +84,16 @@ public final class MinerAbility extends Ability {
                     "조준한 곳({rock_range}블록 이내)의 머리 위에 금이 가고 {rock_delay}초 뒤 반경 {rock_radius}블록에 "
                             + "바위 {rock_count}개가 차례로 쏟아집니다. 바위에 맞은 적은 {rock_damage} 피해를 입고 "
                             + "{rock_slow_duration}초간 이동 속도가 {rock_slow}% 느려지며(한 적은 최대 {rock_max_hits}번), "
-                            + "떨어진 바위는 {rubble_duration}초간 잔해로 남아 길을 막습니다.",
+                            + "떨어진 바위는 {rubble_duration}초간 잔해로 남아 길을 막습니다. 전투 맵에서는 바위가 떨어진 "
+                            + "자리의 지형이 반경 {rock_block_radius}블록 부서집니다.",
                     10)
             .ultimate("광산 수레",
                     "앞쪽 땅을 따라 {cart_length}블록 레일을 깔고 {cart_delay}초 뒤 광석을 가득 실은 수레를 밀어 보냅니다. "
                             + "점점 빨라지는 수레는 레일 위에 선 적을 쓸어 담아 {cart_damage} 피해를 주고 싣고 달립니다. "
                             + "레일 끝에서 수레가 뒤집히면 쏟아진 광석이 반경 {crash_radius}블록의 적(실린 적 포함)에게 "
                             + "{crash_damage} 피해를 주고 {crash_slow_duration}초간 이동 속도를 {crash_slow}% 늦추며, 실린 "
-                            + "적은 레일 끝 너머 안전한 땅으로 최대 {toss_distance}블록 굴러떨어집니다.")
+                            + "적은 레일 끝 너머 안전한 땅으로 최대 {toss_distance}블록 굴러떨어집니다. 전투 맵에서는 수레가 "
+                            + "뒤집힌 자리의 지형이 반경 {crash_block_radius}블록 부서집니다.")
             .param("fatigue_duration", 3)
             .param("fatigue_level", 2)
             .param("vein_duration", 5)
@@ -106,6 +108,7 @@ public final class MinerAbility extends Ability {
             .param("rock_slow_duration", 1.5)
             .param("rock_max_hits", 2)
             .param("rubble_duration", 4)
+            .param("rock_block_radius", 1.5)
             .param("cart_length", 16)
             .param("cart_delay", 0.6)
             .param("cart_damage", 3)
@@ -114,6 +117,7 @@ public final class MinerAbility extends Ability {
             .param("crash_slow", 40)
             .param("crash_slow_duration", 2)
             .param("toss_distance", 3)
+            .param("crash_block_radius", 2.5)
             .build();
 
     private static final String COLOR_TAG = "#E8A33D";
@@ -585,7 +589,14 @@ public final class MinerAbility extends Ability {
                             false);
                 }
             }
-            boolean rubble = placeRubble(spot);
+            // The rock smashes the ground it lands on; the rubble then lies in the dent.
+            Location rest = spot;
+            double blockRadius = params().num("rock_block_radius");
+            if (blockRadius > 0 && ctx().breakBlocks(owner, spot.clone().add(0, 0.5, 0), blockRadius) > 0) {
+                Location lower = ground(spot.clone().add(0, 0.3, 0));
+                rest = lower == null ? spot : lower;
+            }
+            boolean rubble = placeRubble(rest);
             if (display != null && display.isValid()) {
                 if (rubble) {
                     display.remove();
@@ -1030,6 +1041,10 @@ public final class MinerAbility extends Ability {
             double radius = Math.max(0, params().num("crash_radius"));
             long slowTicks = params().ticks("crash_slow_duration");
             double slow = Math.clamp(params().num("crash_slow") / 100.0, 0.0, 1.0);
+            Location spill = at.clone().add(forward.clone().multiply(0.8));
+            Location front = spill.clone().add(0, 0.6, 0);
+            // The crash breaks the ground first, so the riders are thrown onto ground that is still there afterwards.
+            ctx().breakBlocks(owner, front, params().num("crash_block_radius"));
             Location landing = tossSpot();
             Set<UUID> buried = new HashSet<>();
             int thrown = 0;
@@ -1048,7 +1063,6 @@ public final class MinerAbility extends Ability {
                 }
             }
             riders.clear();
-            Location spill = at.clone().add(forward.clone().multiply(0.8));
             for (LivingEntity enemy : ctx().enemiesNear(owner, spill.clone().add(0, 0.5, 0), radius)) {
                 if (buried.contains(enemy.getUniqueId())
                         || Math.abs(enemy.getLocation().getY() - spill.getY()) > SPILL_HEIGHT) {
@@ -1060,7 +1074,6 @@ public final class MinerAbility extends Ability {
                     bury(enemy, slow, slowTicks);
                 }
             }
-            Location front = spill.clone().add(0, 0.6, 0);
             Vfx.dot(front, Particle.FLASH, PALETTE.core(), true);
             world.spawnParticle(Particle.BLOCK, front, Vfx.n(ctx(), 24), radius * 0.35, 0.4, radius * 0.35, 0.2,
                     Material.IRON_ORE.createBlockData(), true);

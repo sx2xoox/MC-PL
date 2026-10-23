@@ -76,14 +76,16 @@ public final class MechAbility extends Ability {
             .active("미사일 포드",
                     "어깨의 포드에서 소형 미사일 {missile_count}발을 연달아 쏩니다. 미사일은 조준한 적(없으면 조준한 곳, "
                             + "{missile_range}블록 이내)을 향해 살짝 휘어 날아가, 부딪힌 곳 반경 {missile_radius}블록의 적에게 "
-                            + "{missile_damage} 피해를 주고 살짝 밀쳐냅니다.",
+                            + "{missile_damage} 피해를 주고 살짝 밀쳐냅니다. 전투 맵에서는 미사일이 터진 곳의 지형도 반경 "
+                            + "{missile_block_radius}블록 부숩니다.",
                     9)
             .ultimate("메카 변신",
                     "{ult_duration}초간 강철 슈트를 입습니다. 크기가 {ult_scale}배가 되고 넉백에 면역이 되며, 받는 피해가 "
                             + "{ult_armor}% 줄고 근접 피해가 {ult_melee}% 늘어나며, 주먹에 맞은 적은 더 멀리 밀려납니다. "
                             + "그동안 액티브는 {punch_cooldown}초마다 "
                             + "쓸 수 있는 로켓 펀치로 바뀌어, 주먹을 {punch_range}블록 날려 처음 맞은 적에게 {punch_damage} "
-                            + "피해를 주고 멀리 날려 보냅니다.")
+                            + "피해를 주고 멀리 날려 보냅니다. 전투 맵에서는 벽에 부딪힌 주먹이 반경 {punch_block_radius}블록의 "
+                            + "지형을 부숩니다.")
             // The melee bonus, the armor and the rocket punch live in this instance's hooks.
             .ultimateNotStandalone()
             .param("armor_knockback", 40)
@@ -93,6 +95,7 @@ public final class MechAbility extends Ability {
             .param("missile_range", 30)
             .param("missile_radius", 1.8)
             .param("missile_damage", 1.5)
+            .param("missile_block_radius", 1.5)
             .param("ult_duration", 10)
             .param("ult_scale", 1.3)
             .param("ult_armor", 25)
@@ -100,6 +103,7 @@ public final class MechAbility extends Ability {
             .param("punch_cooldown", 3)
             .param("punch_range", 14)
             .param("punch_damage", 4)
+            .param("punch_block_radius", 1.5)
             .build();
 
     private static final String ORANGE = "#FF8C1A";
@@ -793,6 +797,7 @@ public final class MechAbility extends Ability {
                 volley.hits++;
             }
             explosionFx(position, radius);
+            ctx().breakBlocks(owner, position, params().num("missile_block_radius"));
             report();
         }
 
@@ -1410,8 +1415,9 @@ public final class MechAbility extends Ability {
             owner.sendActionBar(Text.mm("<" + ORANGE + "><b>로켓 펀치!</b></" + ORANGE + ">"));
         }
 
-        /** The fist hits a wall: sparks fly and it clangs off. */
+        /** The fist hits a wall: sparks fly, it clangs off and the wall cracks open. */
         private void clank() {
+            ctx().breakBlocks(player(), position, params().num("punch_block_radius"));
             world.spawnParticle(Particle.ELECTRIC_SPARK, position, Vfx.n(ctx(), 10), 0.15, 0.15, 0.15, 0.4);
             world.spawnParticle(Particle.DUST, position, Vfx.n(ctx(), 6), 0.15, 0.15, 0.15, 0, SPARK_DUST);
             Fx.sound(position, Sound.BLOCK_ANVIL_LAND, 0.5f, 1.4f + Fx.jitter(0.1f));

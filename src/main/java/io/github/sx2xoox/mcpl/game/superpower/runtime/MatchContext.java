@@ -14,6 +14,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 
 import io.github.sx2xoox.mcpl.core.Hub;
+import io.github.sx2xoox.mcpl.core.arena.TerrainDamage;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext;
@@ -63,6 +64,7 @@ public final class MatchContext implements AbilityContext {
     private final Hub hub;
     private final AbilityGuard guard;
     private final String nonce;
+    private final TerrainFx terrainFx;
 
     private final Map<UUID, OwnerScope> scopes = new HashMap<>();
     /** Every entity created through the context (tracked, summoned, tagged), by entity id. */
@@ -110,6 +112,7 @@ public final class MatchContext implements AbilityContext {
         this.hub = session.hub();
         this.guard = match.guard();
         this.nonce = Long.toString(ThreadLocalRandom.current().nextLong(1L << 40), 36);
+        this.terrainFx = new TerrainFx(session);
     }
 
     // =================================================================== basics
@@ -606,6 +609,30 @@ public final class MatchContext implements AbilityContext {
             return false;
         }
         return session.placeTempBlock(block, data, durationTicks);
+    }
+
+    @Override
+    public int breakBlocks(Player owner, Location center, double radius) {
+        if (closed || !(radius > 0) || !session.isAlive(owner) || center.getWorld() == null) {
+            return 0;
+        }
+        List<TerrainDamage.Broken> broken = session.breakBlocks(center, radius, this::isInsideArena);
+        terrainFx.play(center, broken, effectScale());
+        return broken.size();
+    }
+
+    @Override
+    public int breakBlocksAlong(Player owner, Location from, Location to, double radius) {
+        if (closed || !(radius > 0) || !session.isAlive(owner) || from.getWorld() == null) {
+            return 0;
+        }
+        // A charge never digs into the floor it runs on: nothing more than a block below its line breaks.
+        double floor = Math.min(from.getY(), to.getY()) - 1.0 - 1.0E-6;
+        List<TerrainDamage.Broken> broken = session.breakBlocksAlong(from, to, radius,
+                at -> at.getY() >= floor && isInsideArena(at));
+        Location middle = from.clone().add(to.clone().subtract(from).multiply(0.5));
+        terrainFx.play(middle, broken, effectScale());
+        return broken.size();
     }
 
     // =================================================================== framework side
