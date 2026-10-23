@@ -278,10 +278,126 @@ command:
   assign-next: "<green><white><player></white>님은 다음 경기에서 <ability><green> 능력을 받습니다."
   assign-too-late: "<yellow>이미 전투가 시작되었습니다. <white><player></white>님은 다음 경기에서 <ability><yellow> 능력을 받습니다."
   mode-current: "<gray>능력 배정 방식: <white><mode></white> <dark_gray>(<name>)</dark_gray> <gray>· 바꾸기: <white>/게임 능력 선택방식 \\<RANDOM|CHOICE>"
-  mode-set: "<green>능력 배정 방식을 <white><mode></white> <dark_gray>(<name>)</dark_gray><green>(으)로 바꿨습니다."
   applies-next-match: "<gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
   player-only: "<red>플레이어만 사용할 수 있는 명령어입니다."
 
 # ── 설정 ─────────────────────────────────────────────────────
 config:
   abilities-broken: "<red>abilities.yml 을 읽지 못해 이전 능력 설정을 그대로 씁니다. <gray>(콘솔 로그에서 줄 번호 확인)"
+
+# ── 설정 메뉴와 /게임 설정 의 초능력전쟁 항목 ─────────────────
+#  name = 항목 이름, lore = 설명, zero = 값이 0일 때 숫자 대신 보여 줄 말, option = 선택지 이름
+settings:
+  section:
+    match:
+      name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>진행"
+      lore:
+        - "<gray>능력 배정, 준비·제한 시간, 자기장"
+    effects:
+      name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>연출"
+      lore:
+        - "<gray>파티클, 팀원 능력 공개, 궁극기 공지, 킬로그"
+    loot:
+      name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>상자"
+      lore:
+        - "<gray>전투 시작 때 놓이는 상자와 하늘에서 떨어지는 보급 상자"
+  mode:
+    name: "능력 배정 방식"
+    lore:
+      - "<gray>무작위: 참가자끼리 최대한 겹치지 않게 무작위로 줍니다."
+      - "<gray>  준비 시간에 웅크리고 우클릭하면 리롤할 수 있습니다."
+      - "<gray>선택: 무작위 후보 3개 중 메뉴에서 직접 고릅니다."
+    option:
+      random: "<aqua>무작위"
+      choice: "<light_purple>선택"
+  rerolls:
+    name: "리롤 횟수"
+    lore:
+      - "<gray>무작위 배정에서 준비 시간 중 능력을 다시 뽑을 수 있는 횟수"
+    zero: "<red>리롤 없음"
+  prep:
+    name: "준비 시간"
+    lore:
+      - "<gray>능력 공개 뒤 전투 전까지의 준비 시간입니다."
+      - "<gray>그동안은 무적이고 능력은 아직 쓸 수 없습니다."
+    zero: "<aqua>바로 전투"
+  time-limit:
+    name: "전투 제한 시간"
+    lore:
+      - "<gray>시간이 다 되면 킬 수 → 남은 체력 순으로 승자를 정합니다."
+    zero: "<aqua>무제한"
+  border-delay:
+    name: "자기장 시작"
+    lore:
+      - "<gray>전투가 시작된 뒤 자기장이 줄어들기 시작할 때까지의 시간"
+      - "<gray>줄어들기 시작하면 보급 상자가 떨어집니다."
+    zero: "<aqua>바로 줄어듦"
+  border-shrink:
+    name: "자기장 축소 시간"
+    lore:
+      - "<gray>자기장이 최종 크기까지 줄어드는 데 걸리는 시간"
+    zero: "<aqua>한순간에"
+  border-final:
+    name: "최종 자기장 크기"
+    lore:
+      - "<gray>다 줄어든 자기장 한 변의 길이(블록)"
+  particles:
+    name: "파티클 양"
+    lore:
+      - "<gray>능력 연출 파티클의 양입니다. 서버나 컴퓨터가 버거우면 낮추세요."
+      - "<gray>상자의 반짝임과 보급 상자의 빛기둥도 따릅니다."
+  team-abilities:
+    name: "팀원 능력 공개"
+    lore:
+      - "<gray>팀전에서 같은 팀끼리 서로의 능력을 봅니다."
+      - "<gray>(사이드바, 전투 시작 채팅, /게임 능력 팀)"
+  ultimate-announce:
+    name: "궁극기 공지"
+    lore:
+      - "<gray>누가 궁극기를 쓰면 모두에게 채팅과 효과음으로 알립니다."
+  kill-feed:
+    name: "킬로그 능력 표시"
+    lore:
+      - "<gray>킬로그에 능력 이름을 붙입니다: ☠ 철수(화염술사) → 영희(빙결술사)"
+  loot:
+    name: "상자"
+    lore:
+      - "<gray>전투가 시작되면 경기장 곳곳에 상자가 놓이고,"
+      - "<gray>자기장이 줄어들기 시작하면 하늘에서 보급 상자가 떨어집니다."
+  chests:
+    name: "인당 상자"
+    lore:
+      - "<gray>참가자 한 명당 놓는 상자 수입니다."
+      - "<gray>전투 시작 때 놓는 상자 수 = (참가자 수 × 이 값 + 기본 개수) × 경기장 크기 배율"
+      - "<gray>최대 상자 수를 넘지 않습니다."
+  max-chests:
+    name: "최대 상자 수"
+    lore:
+      - "<gray>한 경기에 놓는 상자 수의 상한입니다. 0이면 상자를 놓지 않습니다."
+      - "<gray>최소 상자 수(config.yml 의 chests.min)보다 낮으면 이 값이 우선합니다."
+    zero: "<red>상자 없음"
+  supply:
+    name: "보급 상자 수 (최대)"
+    lore:
+      - "<gray>자기장이 줄어들기 시작할 때 떨어지는 보급 상자의 최대 개수"
+      - "<gray>남은 참가자 수 ÷ 보급 인원(올림)개가 떨어지며 이 값을 넘지 않습니다."
+      - "<gray>최소 개수(config.yml 의 supply.min)보다 낮으면 이 값이 우선합니다."
+    zero: "<red>보급 없음"
+  supply-players:
+    name: "보급 인원"
+    lore:
+      - "<gray>남은 참가자 몇 명마다 보급 상자 하나가 떨어질지 정합니다."
+  practice-loot:
+    name: "연습에도 상자"
+    lore:
+      - "<gray>능력 연습(/게임 능력 연습)에도 상자를 놓습니다."
+  chest-hint:
+    name: "상자 반짝임"
+    lore:
+      - "<gray>아직 열지 않은 일반 상자가 가까이 있는 플레이어에게만"
+      - "<gray>은은한 흰 반짝임을 보여 줍니다."
+      - "<gray>희귀 상자는 이와 상관없이 주황색으로 더 반짝입니다."
+  chest-hint-radius:
+    name: "반짝임 거리"
+    lore:
+      - "<gray>상자 반짝임은 이 거리(블록) 안에 있는 플레이어와 관전자에게만 보입니다."

@@ -17,7 +17,6 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.config.HubConfig;
-import io.github.sx2xoox.mcpl.core.config.ProtectionSettings;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.GameStartException;
@@ -53,7 +52,7 @@ import org.jspecify.annotations.Nullable;
  * /게임 참가|join, /게임 관전|spectate
  * /게임 순환|rotation [켜기|on | 끄기|off | 목록|list]   (admin)
  * /게임 경기장|arena [설정|set [반경] | 초기화|reset | 맵|map [맵 [다시짓기|rebuild | 이동|tp]]]     (admin)
- * /게임 설정|settings [팀|team &lt;인원&gt;]             (admin)
+ * /게임 설정|settings [목록|list | &lt;설정&gt; [값]]   (admin, see {@link SettingsCommand}; players get a menu)
  * /게임 리로드|reload                     (admin)
  * </pre>
  * plus whatever the registered mini-games add through {@link MiniGame#registerCommands}.
@@ -161,17 +160,9 @@ public final class GameCommand {
             }
             root.then(arena);
         }
+        SettingsCommand settings = new SettingsCommand(hub);
         for (String name : List.of("설정", "settings")) {
-            String sizeArg = name.equals("settings") ? "size" : "인원";
-            LiteralArgumentBuilder<CommandSourceStack> settings = Commands.literal(name).requires(ADMIN)
-                    .executes(ctx -> settings(ctx.getSource().getSender()));
-            for (String team : List.of("팀", "team")) {
-                settings.then(Commands.literal(team)
-                        .executes(ctx -> settings(ctx.getSource().getSender()))
-                        .then(Commands.argument(sizeArg, IntegerArgumentType.integer(0, HubConfig.MAX_TEAM_SIZE))
-                                .executes(ctx -> teamSize(ctx.getSource().getSender(), IntegerArgumentType.getInteger(ctx, sizeArg)))));
-            }
-            root.then(settings);
+            root.then(settings.build(name, ADMIN));
         }
         for (String name : List.of("리로드", "reload")) {
             root.then(Commands.literal(name).requires(ADMIN).executes(ctx -> reload(ctx.getSource().getSender())));
@@ -333,13 +324,12 @@ public final class GameCommand {
         return rotationList(sender);
     }
 
-    /** True (and tells the sender) when config.yml has a syntax error, so a setting change could not be saved. */
+    /**
+     * True (and tells the sender) when a setting change could not be saved now: config.yml has a syntax error, or it
+     * was edited on disk and not reloaded yet.
+     */
     private boolean configLocked(CommandSender sender) {
-        if (hub.config().isWritable()) {
-            return false;
-        }
-        messages().send(sender, "error.config-broken");
-        return true;
+        return !hub.settings().canSave(sender);
     }
 
     private int rotationToggle(CommandSender sender, boolean enabled) {
@@ -551,50 +541,6 @@ public final class GameCommand {
         }
         hub.config().clearArena();
         messages().send(sender, "command.arena-reset", Messages.tag("radius", hub.config().arenaRadius()));
-        return Command.SINGLE_SUCCESS;
-    }
-
-    private int settings(CommandSender sender) {
-        HubConfig config = hub.config();
-        ProtectionSettings protection = config.protection();
-        Component teams = config.teamSize() == 0 ? messages().get("command.settings-ffa")
-                : messages().get("command.settings-team", Messages.tag("size", config.teamSize()));
-        messages().sendPlain(sender, "command.settings",
-                Messages.tag("teams", teams),
-                Messages.tag("countdown", config.countdownSeconds()),
-                Messages.tag("ending", config.endingSeconds()),
-                Messages.tag("rotation", messages().get(config.rotationEnabled() ? "command.on" : "command.off")),
-                Messages.tag("intermission", config.intermissionSeconds()),
-                Messages.tag("radius", config.arenaRadius()),
-                Messages.tag("protection", Component.text(protectionSummary(protection))));
-        return Command.SINGLE_SUCCESS;
-    }
-
-    private static String protectionSummary(ProtectionSettings p) {
-        int on = 0;
-        boolean[] flags = {p.blockBreak(), p.blockPlace(), p.explosions(), p.fire(), p.entityChangeBlock(),
-                p.hanging(), p.interact(), p.itemDrop(), p.entities()};
-        for (boolean flag : flags) {
-            if (flag) {
-                on++;
-            }
-        }
-        return on + "/" + flags.length;
-    }
-
-    private int teamSize(CommandSender sender, int size) {
-        if (configLocked(sender)) {
-            return 0;
-        }
-        hub.config().setTeamSize(size);
-        if (size == 0) {
-            messages().send(sender, "command.team-ffa");
-        } else {
-            messages().send(sender, "command.team-size", Messages.tag("size", size));
-        }
-        if (games().session() != null) {
-            messages().send(sender, "command.applies-next-match");
-        }
         return Command.SINGLE_SUCCESS;
     }
 

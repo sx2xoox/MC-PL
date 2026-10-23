@@ -44,6 +44,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -71,6 +72,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.potion.PotionType;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -660,6 +662,91 @@ class LootTest {
         rightClick(enemy, chest.block());
         assertSame(chest.getInventory(), first.getOpenInventory().getTopInventory());
         assertSame(chest.getInventory(), enemy.getOpenInventory().getTopInventory());
+    }
+
+    // =================================================================== nearby hint
+
+    /** The sparkles of {@code chest} sent to {@code player} alone. */
+    private static List<TestPlayer.SentParticle> hints(TestPlayer player, LootChest chest) {
+        return player.particles().stream()
+                .filter(sent -> sent.particle() == Particle.WAX_OFF && sent.at().distanceSquared(chest.center()) < 1.0)
+                .toList();
+    }
+
+    /** {@code distance} blocks from the chest, towards the arena center (so still inside the arena). */
+    private static Location towardsCenter(LootChest chest, Location center, double distance) {
+        Location at = chest.center();
+        Vector direction = center.toVector().subtract(at.toVector()).setY(0);
+        if (direction.lengthSquared() < 1) {
+            direction = new Vector(1, 0, 0);
+        }
+        Location target = at.add(direction.normalize().multiply(distance));
+        target.setY(chest.block().getY());
+        return target;
+    }
+
+    @Test
+    void unopenedNormalChestsSparkleOnlyForViewersNearby() {
+        h.settings().set("loot.chances.rare", 0);
+        TestPlayer watcher = h.join("Watcher");
+        h.hub.games().setPrefersSpectating(watcher, true);
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = h.startFight();
+        LootChest chest = loot(match).chests().getFirst();
+        assertEquals(LootTier.NORMAL, chest.tier());
+        TestPlayer near = players.get(0);
+        TestPlayer far = players.get(1);
+        standNextTo(near, chest, 3);
+        far.teleport(towardsCenter(chest, match.session().arena().center(), 20));
+        watcher.teleport(towardsCenter(chest, match.session().arena().center(), 5));
+        assertTrue(match.session().isSpectator(watcher));
+        near.particles().clear();
+        far.particles().clear();
+        watcher.particles().clear();
+
+        h.ticks(40); // exactly two whole seconds, whatever the phase of the effect timer
+        List<TestPlayer.SentParticle> seen = hints(near, chest);
+        assertEquals(2, seen.size(), "one sparkle a second for a player 3 blocks away");
+        assertTrue(seen.stream().allMatch(sent -> sent.count() == 2), "a few small particles (particle scale 1)");
+        assertTrue(hints(far, chest).isEmpty(), "nothing for a player 20 blocks away");
+        assertEquals(2, hints(watcher, chest).size(), "spectators nearby see it too");
+
+        rightClick(near, chest.block());
+        near.closeInventory();
+        near.particles().clear();
+        h.ticks(41);
+        assertFalse(chest.isRemoved(), "the chest still has loot");
+        assertTrue(hints(near, chest).isEmpty(), "an opened chest no longer sparkles");
+    }
+
+    @Test
+    void theNearbyHintCanBeTurnedOffOrShortened() {
+        h.settings().set("loot.chances.rare", 0);
+        h.settings().set("loot.nearby-hint", false);
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = h.startFight();
+        LootChest chest = loot(match).chests().getFirst();
+        TestPlayer near = players.getFirst();
+        standNextTo(near, chest, 2);
+        near.particles().clear();
+        h.ticks(41);
+        assertTrue(hints(near, chest).isEmpty(), "loot.nearby-hint: false");
+        assertTrue(h.hub.games().stop(Component.text("test")));
+
+        h.settings().set("loot.nearby-hint", true);
+        h.settings().set("loot.nearby-hint-radius", 4);
+        h.settings().set("effects.particle-scale", 2.0);
+        match = h.startFight();
+        chest = loot(match).chests().getFirst();
+        near.teleport(towardsCenter(chest, match.session().arena().center(), 6));
+        near.particles().clear();
+        h.ticks(41);
+        assertTrue(hints(near, chest).isEmpty(), "6 blocks is beyond a radius of 4");
+        standNextTo(near, chest, 3);
+        h.ticks(41);
+        List<TestPlayer.SentParticle> seen = hints(near, chest);
+        assertFalse(seen.isEmpty(), "3 blocks is within it");
+        assertTrue(seen.stream().allMatch(sent -> sent.count() == 4), "scaled by effects.particle-scale");
     }
 
     @Test

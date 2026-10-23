@@ -16,19 +16,29 @@ public final class Format {
         return String.format(Locale.ROOT, "%.1f", value);
     }
 
+    /** Up to two decimals without trailing zeros: {@code 3}, {@code 1.5}, {@code 0.25}. */
+    public static String decimal(double value) {
+        double rounded = Math.round(value * 100.0) / 100.0;
+        if (rounded == Math.rint(rounded)) {
+            return Long.toString(Math.round(rounded));
+        }
+        String text = String.format(Locale.ROOT, "%.2f", rounded);
+        return text.endsWith("0") ? text.substring(0, text.length() - 1) : text;
+    }
+
     /** Health points as hearts, e.g. {@code 7} → {@code "3.5"}. */
     public static String hearts(double healthPoints) {
         return number(healthPoints / 2.0);
     }
 
-    /** {@code "4분 12초"}, {@code "38초"}, {@code "1시간 2분"}. */
+    /** {@code "4분 12초"}, {@code "38초"}, {@code "1시간 2분"}, {@code "2시간"}. */
     public static String duration(long millis) {
         long totalSeconds = Math.max(0, millis / 1000);
         long hours = totalSeconds / 3600;
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;
         if (hours > 0) {
-            return hours + "시간 " + minutes + "분";
+            return minutes == 0 ? hours + "시간" : hours + "시간 " + minutes + "분";
         }
         if (minutes > 0) {
             return seconds == 0 ? minutes + "분" : minutes + "분 " + seconds + "초";

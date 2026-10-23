@@ -12,6 +12,8 @@ import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.player.SnapshotStore;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
+import io.github.sx2xoox.mcpl.core.ui.SettingsMenuListener;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Player;
@@ -30,6 +32,7 @@ import org.bukkit.plugin.java.JavaPlugin;
  *     <li>{@link #tempBlocks()} — temporary blocks restored automatically</li>
  *     <li>{@link #combat()} — kill credit / entity ownership</li>
  *     <li>{@link #gameRules()} — temporary world game rules</li>
+ *     <li>{@link #settings()} — the in-game settings menu and {@code /게임 설정} entries</li>
  * </ul>
  */
 public final class Hub {
@@ -45,6 +48,8 @@ public final class Hub {
     private final GameManager games;
     private final GameCommand command;
     private final HubListener listener;
+    private final SettingsEditor settings;
+    private final SettingsMenuListener settingsListener;
     private boolean enabled;
 
     public Hub(JavaPlugin plugin) {
@@ -60,6 +65,8 @@ public final class Hub {
         this.games = new GameManager(this);
         this.command = new GameCommand(this);
         this.listener = new HubListener(this);
+        this.settings = new SettingsEditor(this);
+        this.settingsListener = new SettingsMenuListener(this);
     }
 
     /**
@@ -79,6 +86,7 @@ public final class Hub {
         tempBlocks.recover();
         tempBlocks.start();
         Bukkit.getPluginManager().registerEvents(listener, plugin);
+        Bukkit.getPluginManager().registerEvents(settingsListener, plugin);
         maps.enable();
         for (Player player : Bukkit.getOnlinePlayers()) {
             listener.restorePending(player);
@@ -95,6 +103,11 @@ public final class Hub {
         }
         enabled = false;
         try {
+            settings.closeMenus();
+        } catch (RuntimeException e) {
+            plugin.getLogger().log(Level.WARNING, "Could not close the settings menus", e);
+        }
+        try {
             games.shutdown();
         } catch (RuntimeException e) {
             plugin.getLogger().log(Level.SEVERE, "Error while stopping the running match", e);
@@ -103,6 +116,7 @@ public final class Hub {
         gameRules.shutdown();
         maps.disable();
         HandlerList.unregisterAll(listener);
+        HandlerList.unregisterAll(settingsListener);
         combat.clear();
     }
 
@@ -111,6 +125,7 @@ public final class Hub {
         config.load();
         messages.load();
         games.reload();
+        settings.refreshMenus();
     }
 
     public boolean isEnabled() {
@@ -152,6 +167,11 @@ public final class Hub {
 
     public CombatTracker combat() {
         return combat;
+    }
+
+    /** The in-game settings: the menu ({@code /게임 설정}) and the entries of the hub and every mini-game. */
+    public SettingsEditor settings() {
+        return settings;
     }
 
     /** A key in this plugin's namespace (attribute modifiers, PDC, ...). Modifiers in it are stripped on restore. */

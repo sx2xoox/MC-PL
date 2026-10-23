@@ -2,9 +2,13 @@ package io.github.sx2xoox.mcpl.core.config;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -26,6 +30,10 @@ import org.jspecify.annotations.Nullable;
  * Typed, cached view of {@code config.yml}. Values are read once per {@link #load()} (startup and
  * {@code /게임 리로드}); setters write through to the file immediately.
  *
+ * <p>The file is never written over edits the server owner made after it was loaded: {@link #save()} skips a file
+ * that changed on disk since the last load or save, and commands that change a setting ask
+ * {@link #checkWritable()} first, so the owner's edits are kept until {@code /게임 리로드} picks them up.
+ *
  * <p>Mini-games keep their own settings under {@code games.<id>.*}: declare defaults with
  * {@link io.github.sx2xoox.mcpl.core.game.MiniGame#configDefaults(ConfigurationSection)} and read them with
  * {@link #gameSection(String)}. Do not cache the returned section across reloads; call it again instead.
@@ -38,9 +46,20 @@ public final class HubConfig {
     public static final int MIN_RADIUS = 8;
     public static final int MAX_RADIUS = 1000;
     public static final int MAX_TEAM_SIZE = 32;
+    public static final int MAX_COUNTDOWN_SECONDS = 60;
     /** Default and upper bound of {@code protection.ability-block-damage-limit}. */
     public static final int DEFAULT_BLOCK_DAMAGE_LIMIT = 20_000;
     public static final int MAX_BLOCK_DAMAGE_LIMIT = 1_000_000;
+
+    /** What {@link #checkWritable()} found. */
+    public enum WriteCheck {
+        /** The file is as it was loaded or last saved: a change can be saved. */
+        OK,
+        /** The file has a syntax error: nothing is saved until it is fixed and reloaded. */
+        BROKEN,
+        /** The file was edited on disk and not reloaded yet: saving now would undo those edits. */
+        CHANGED
+    }
 
     private final JavaPlugin plugin;
 
@@ -63,6 +82,11 @@ public final class HubConfig {
     private boolean writable = true;
     private boolean warnedUnwritable;
     private long lastBrokenBackup = -1;
+    /** SHA-256 of the file as last loaded or saved (null: there was no file). */
+    private byte @Nullable [] stamp;
+    /** The changed file version already reported in the log (once per version). */
+    private byte @Nullable [] reportedChange;
+    private int failedSaves;
 
     public HubConfig(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -79,7 +103,7 @@ public final class HubConfig {
      */
     public void load() {
         plugin.saveDefaultConfig();
-        File file = new File(plugin.getDataFolder(), "config.yml");
+        File file = file();
         String parseError = probe(file);
         if (parseError != null) {
             writable = false;
@@ -99,6 +123,8 @@ public final class HubConfig {
             return;
         }
         plugin.reloadConfig();
+        stamp = digest(file);
+        reportedChange = null;
         writable = true;
         loadedOnce = true;
         FileConfiguration config = plugin.getConfig();
@@ -140,10 +166,72 @@ public final class HubConfig {
 
     /**
      * False while {@code config.yml} has a syntax error: settings then live in memory only and nothing is saved, so the
-     * owner's file is never overwritten. Commands that change settings refuse while this is false.
+     * owner's file is never overwritten. Commands that change settings refuse while this is false. This only reflects
+     * the last load (and the last {@link #checkWritable()}); ask {@link #checkWritable()} before changing a setting.
      */
     public boolean isWritable() {
         return writable;
+    }
+
+    /**
+     * Checks the file on disk before a setting is changed. A file that was edited since it was loaded (or last saved)
+     * must not be written over: if it no longer parses, writing is turned off as on a failed load (a copy is kept as
+     * {@code config.yml.broken-<time>}) and the result is {@link WriteCheck#BROKEN}; if it parses, the result is
+     * {@link WriteCheck#CHANGED} until {@code /게임 리로드} loads it.
+     */
+    public WriteCheck checkWritable() {
+        if (!writable) {
+            return WriteCheck.BROKEN;
+        }
+        File file = file();
+        byte[] current = digest(file);
+        if (Arrays.equals(current, stamp)) {
+            return WriteCheck.OK;
+        }
+        String parseError = probe(file);
+        if (parseError != null) {
+            writable = false;
+            warnedUnwritable = false;
+            plugin.getLogger().severe("config.yml was edited and now has a syntax error: " + parseError);
+            plugin.getLogger().severe("Fix config.yml and run /게임 리로드; nothing is saved to config.yml until then.");
+            backupBroken(file);
+            return WriteCheck.BROKEN;
+        }
+        if (!Arrays.equals(current, reportedChange)) {
+            reportedChange = current;
+            plugin.getLogger().warning("config.yml was edited since it was loaded; it is not saved over until"
+                    + " /게임 리로드 loads it (setting changes are refused until then).");
+        }
+        return WriteCheck.CHANGED;
+    }
+
+    /** How many saves failed (could not write, or the file had changed on disk); compare before and after a change. */
+    public int failedSaves() {
+        return failedSaves;
+    }
+
+    private File file() {
+        return new File(plugin.getDataFolder(), "config.yml");
+    }
+
+    /** SHA-256 of the file, null if there is none, an empty array if it cannot be read (never equal to a stamp). */
+    private static byte @Nullable [] digest(File file) {
+        if (!file.isFile()) {
+            return null;
+        }
+        try {
+            return digest(Files.readAllBytes(file.toPath()));
+        } catch (IOException e) {
+            return new byte[0];
+        }
+    }
+
+    private static byte[] digest(byte[] bytes) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(bytes);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is always available", e);
+        }
     }
 
     private boolean migrate(FileConfiguration config) {
@@ -186,7 +274,7 @@ public final class HubConfig {
     }
 
     private void read(FileConfiguration config) {
-        countdownSeconds = clamp(config.getInt("match.countdown-seconds", 5), 0, 60);
+        countdownSeconds = clamp(config.getInt("match.countdown-seconds", 5), 0, MAX_COUNTDOWN_SECONDS);
         endingSeconds = clamp(config.getInt("match.ending-seconds", 10), 0, 120);
         teamSize = clamp(config.getInt("match.team-size", 0), 0, MAX_TEAM_SIZE);
         fireworks = config.getBoolean("match.fireworks", true);
@@ -225,19 +313,37 @@ public final class HubConfig {
                 DEFAULT_BLOCK_DAMAGE_LIMIT), 0, MAX_BLOCK_DAMAGE_LIMIT);
     }
 
-    /** Writes the current in-memory configuration to disk (skipped while {@link #isWritable()} is false). */
-    public void save() {
+    /**
+     * Writes the current in-memory configuration to disk. Skipped while {@link #isWritable()} is false and when the
+     * file was edited on disk since it was loaded or last saved (see {@link #checkWritable()}), so the owner's edits
+     * are never undone; the value then lives in memory only.
+     *
+     * @return true if the file was written
+     */
+    public boolean save() {
         if (!writable) {
             if (!warnedUnwritable) {
                 warnedUnwritable = true;
                 plugin.getLogger().warning("config.yml has a syntax error; changes are kept in memory only, not saved.");
             }
-            return;
+            return false;
         }
+        if (checkWritable() != WriteCheck.OK) {
+            failedSaves++;
+            return false; // edited on disk since it was loaded: logged by checkWritable
+        }
+        File file = file();
+        byte[] data = raw().saveToString().getBytes(StandardCharsets.UTF_8);
         try {
-            plugin.saveConfig();
-        } catch (RuntimeException e) {
-            plugin.getLogger().log(Level.SEVERE, "Could not save config.yml", e);
+            Files.createDirectories(file.toPath().toAbsolutePath().getParent());
+            Files.write(file.toPath(), data);
+            stamp = digest(data);
+            return true;
+        } catch (IOException | RuntimeException e) {
+            failedSaves++;
+            stamp = digest(file); // whatever got written is ours: the next save may replace it
+            plugin.getLogger().log(Level.SEVERE, "Could not save config.yml; the change is kept in memory only", e);
+            return false;
         }
     }
 
@@ -251,9 +357,15 @@ public final class HubConfig {
 
     // ------------------------------------------------------------------ match
 
-    /** Countdown before a match starts, in seconds (0..60). */
+    /** Countdown before a match starts, in seconds (0..{@value #MAX_COUNTDOWN_SECONDS}). */
     public int countdownSeconds() {
         return countdownSeconds;
+    }
+
+    public void setCountdownSeconds(int seconds) {
+        countdownSeconds = clamp(seconds, 0, MAX_COUNTDOWN_SECONDS);
+        raw().set("match.countdown-seconds", countdownSeconds);
+        save();
     }
 
     /** How long results are shown before everyone is restored, in seconds (0..120). */
@@ -398,6 +510,20 @@ public final class HubConfig {
         }
         ConfigurationSection section = games.getConfigurationSection(gameId);
         return section != null ? section : games.createSection(gameId);
+    }
+
+    /**
+     * Sets {@code games.<gameId>.<path>} (null removes it) and saves. An existing key keeps its comments. Games read
+     * their section when a match starts, so the value applies to the next match.
+     */
+    public void setGameValue(String gameId, String path, @Nullable Object value) {
+        updateGameSection(gameId, section -> section.set(path, value));
+    }
+
+    /** Changes several values of {@code games.<gameId>} at once, then saves once. */
+    public void updateGameSection(String gameId, Consumer<ConfigurationSection> change) {
+        change.accept(gameSection(gameId));
+        save();
     }
 
     /**

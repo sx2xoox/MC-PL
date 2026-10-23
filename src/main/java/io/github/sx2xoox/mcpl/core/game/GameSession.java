@@ -873,6 +873,7 @@ public final class GameSession {
 
         state = GameState.RUNNING;
         tick = 0;
+        hub.settings().refreshMenus(); // open settings menus: changes now wait for the next match
         announceTeams();
         Audience everyone = audience();
         Feedback.title(everyone, messages().get("match.start-title"),

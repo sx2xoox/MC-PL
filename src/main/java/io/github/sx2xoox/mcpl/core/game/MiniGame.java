@@ -4,6 +4,8 @@ import java.util.List;
 
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
 import io.github.sx2xoox.mcpl.core.config.ProtectionSettings;
+import io.github.sx2xoox.mcpl.core.config.Setting;
+import io.github.sx2xoox.mcpl.core.config.SettingsSection;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
@@ -83,6 +85,18 @@ public interface MiniGame {
      * tree is (re)built, so create fresh builders each call.
      */
     default void registerCommands(GameCommandRegistrar registrar) {
+    }
+
+    /**
+     * The settings of this mode an admin can change in game: rows of the settings menu ({@code /게임 설정}) and
+     * subcommands of {@code /게임 설정} (e.g. {@code /게임 설정 상자 켜기}), shown after the hub's own. Build the
+     * entries with {@link Setting#builder(String)}; their setters should write through
+     * {@link io.github.sx2xoox.mcpl.core.config.HubConfig#setGameValue} so the value is saved at once. The hub checks
+     * the permission and that {@code config.yml} can be written before calling a setter, and refreshes open menus
+     * after it. Called whenever the menu opens or the command tree is built; return the same objects each time.
+     */
+    default List<SettingsSection> settings() {
+        return List.of();
     }
 
     /**
