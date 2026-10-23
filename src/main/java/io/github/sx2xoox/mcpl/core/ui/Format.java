@@ -16,6 +16,16 @@ public final class Format {
         return String.format(Locale.ROOT, "%.1f", value);
     }
 
+    /** Up to two decimals without trailing zeros: {@code 3}, {@code 1.5}, {@code 0.25}. */
+    public static String decimal(double value) {
+        double rounded = Math.round(value * 100.0) / 100.0;
+        if (rounded == Math.rint(rounded)) {
+            return Long.toString(Math.round(rounded));
+        }
+        String text = String.format(Locale.ROOT, "%.2f", rounded);
+        return text.endsWith("0") ? text.substring(0, text.length() - 1) : text;
+    }
+
     /** Health points as hearts, e.g. {@code 7} → {@code "3.5"}. */
     public static String hearts(double healthPoints) {
         return number(healthPoints / 2.0);

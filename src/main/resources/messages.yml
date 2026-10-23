@@ -36,7 +36,7 @@ help:
     - " <click:suggest_command:'/게임 중지'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 중지</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기 강제 종료 및 복구"
     - " <click:suggest_command:'/게임 순환 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 순환 \\<켜기|끄기|목록></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>자동 연속 진행"
     - " <click:suggest_command:'/게임 경기장 설정 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 경기장 설정 [반경]</#ff7f50></hover></click> <dark_gray>/</dark_gray> <click:suggest_command:'/게임 경기장 초기화'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>초기화</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기장 중심"
-    - " <click:suggest_command:'/게임 설정 팀 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 설정 팀 \\<인원></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>팀당 인원 (0 = 개인전)"
+    - " <click:suggest_command:'/게임 설정'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 설정</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>설정 메뉴 (팀 인원, 상자, 자기장 …) <dark_gray>·</dark_gray> <click:suggest_command:'/게임 설정 목록'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>목록</#ff7f50></hover></click> <gray>현재 값과 명령어"
     - " <click:suggest_command:'/게임 리로드'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 리로드</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>설정 다시 불러오기"
   footer: "<dark_gray>영어 명령어도 사용할 수 있습니다: /mcpl start, stop, list, join, spectate, rotation, arena, settings, reload"
 
@@ -83,19 +83,6 @@ command:
   map-arena-set: "<green>경기장을 맵 <white><name></white>(으)로 설정했습니다. <gray>반경 <white><radius></white>"
   map-teleport: "<gray>맵 <white><name></white>(으)로 이동했습니다."
   applies-next-match: "<gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
-  team-ffa: "<green>개인전으로 설정했습니다."
-  team-size: "<green>팀당 <white><size></white>명 팀전으로 설정했습니다."
-  settings: |-
-    <gradient:#ffb347:#ff5e62><bold>현재 설정</bold></gradient>
-     <gray>대전 방식</gray> <white><teams>
-     <gray>카운트다운</gray> <white><countdown>초</white> <dark_gray>·</dark_gray> <gray>결과 표시</gray> <white><ending>초
-     <gray>순환 모드</gray> <rotation> <dark_gray>·</dark_gray> <gray>대기</gray> <white><intermission>초
-     <gray>경기장 반경</gray> <white><radius>
-     <gray>월드 보호</gray> <white><protection> 항목 켜짐 <dark_gray>(config.yml → protection)
-  settings-ffa: "개인전"
-  settings-team: "팀전 (팀당 <size>명)"
-  "on": "<green>켜짐"
-  "off": "<red>꺼짐"
   reloaded: "<green>설정을 다시 불러왔습니다. <dark_gray>(<ms>ms)"
 
 # ── 경기 진행 ────────────────────────────────────────────────
@@ -197,3 +184,110 @@ rotation:
   announce: "<aqua>순환 모드</aqua> <gray>· <game><gray> 경기가 <white><seconds></white>초 후 시작됩니다. <dark_gray>(관전하려면 /게임 관전)"
   bossbar-countdown: "<yellow>다음 게임</yellow> <white><game></white> <gray>· <white><seconds></white>초 후 시작"
   bossbar-waiting: "<gray>다음 게임</gray> <white><game></white> <gray>· 인원 대기 중 <white><count></white>/<white><min></white>"
+
+# ── 설정 (/게임 설정) ────────────────────────────────────────
+settings:
+  "on": "<green>켜짐"
+  "off": "<red>꺼짐"
+  # 숫자 표시 (<value> = 숫자, <duration> = 1분 이상일 때 "2분 30초")
+  unit:
+    seconds: "<white><value>초"
+    minutes: "<white><duration></white> <dark_gray>(<value>초)"
+    blocks: "<white><value>블록"
+    players: "<white><value>명"
+    count: "<white><value>개"
+    times: "<white><value>회"
+    multiplier: "<white>×<value>"
+  # 명령어로 바꿨을 때 (채팅)
+  changed: "<gray><name></gray> <dark_gray>→</dark_gray> <value> <dark_gray>(config.yml 에 저장됨)"
+  unchanged: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>(이미 이 값입니다)"
+  clamped: "<gray>입력한 값이 범위(<min> <dark_gray>~</dark_gray> <max>)를 벗어나 범위 안의 값으로 맞췄습니다."
+  current: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>· 바꾸려면 <white><usage>"
+  no-permission: "<red>설정을 바꿀 권한이 없습니다."
+  # /게임 설정 목록 (콘솔에서 /게임 설정 도 같은 목록)
+  list:
+    header: "<gradient:#ffb347:#ff5e62><bold>현재 설정</bold></gradient> <dark_gray>· 줄을 클릭하면 명령어가 입력됩니다 · 메뉴: /게임 설정"
+    section: " <section>"
+    entry: "   <dark_gray>▪</dark_gray> <gray><name></gray> <value>"
+    hover: "<gray>클릭하면 입력됩니다: <white><usage>"
+    footer: "   <dark_gray>그 밖에 (config.yml): 결과 표시 <gray><ending>초</gray> · 순환 모드 <rotation><dark_gray> · 순환 대기 <gray><intermission>초</gray> · 경기장 반경 <gray><radius></gray> · 월드 보호 <gray><protection></gray> 항목"
+  # 설정 메뉴 (상자 화면)
+  menu:
+    title: "<dark_gray>MCPL 설정"
+    entry-name: "<yellow><name></yellow> <dark_gray>·</dark_gray> <value>"
+    value: "<gray>현재 값: <value>"
+    default: "<dark_gray>기본값: <default>"
+    range: "<dark_gray>범위 <min> <dark_gray>~</dark_gray> <max> <dark_gray>· 기본값 <default>"
+    options: "<dark_gray>선택지: <options>"
+    option: "<dark_gray><option>"
+    option-current: "<white><bold>▶</bold> <option>"
+    option-separator: "<dark_gray> / "
+    hint-toggle: "<yellow>클릭</yellow> <gray>켜기 / 끄기"
+    hint-number: "<yellow>좌클릭</yellow> <gray>+<step></gray> <dark_gray>·</dark_gray> <yellow>우클릭</yellow> <gray>-<step></gray> <dark_gray>·</dark_gray> <yellow>Shift+클릭</yellow> <gray>±<big>"
+    hint-choice: "<yellow>좌클릭</yellow> <gray>다음</gray> <dark_gray>·</dark_gray> <yellow>우클릭</yellow> <gray>이전"
+    hint-reset: "<yellow>Q</yellow> <gray>(버리기 키) 기본값으로"
+    command: "<dark_gray>명령어: <command>"
+    path: "<dark_gray>config.yml → <path>"
+    # 액션바
+    changed: "<gray><name></gray> <dark_gray>→</dark_gray> <value>"
+    changed-next-match: "<gray><name></gray> <dark_gray>→</dark_gray> <value> <dark_gray>· 다음 경기부터 적용"
+    unchanged: "<gray><name></gray> <dark_gray>:</dark_gray> <value>"
+    at-max: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <red>(최댓값)"
+    at-min: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <red>(최솟값)"
+    help:
+      name: "<gold>설정 메뉴 사용법"
+      lore:
+        - "<gray>항목을 클릭하면 값이 바뀌고 <white>config.yml</white> 에 바로 저장됩니다."
+        - "<gray>숫자: 좌클릭 +, 우클릭 -, Shift+클릭은 크게"
+        - "<gray>켜기/끄기: 클릭 · 선택지: 좌클릭 다음, 우클릭 이전"
+        - "<gray>Q(버리기 키): 기본값으로 되돌리기"
+        - ""
+        - "<dark_gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
+        - "<dark_gray>명령어로도 바꿀 수 있습니다: /게임 설정 목록"
+    close:
+      name: "<red>닫기"
+      lore: []
+    previous:
+      name: "<yellow>◀ 이전 쪽"
+      lore: []
+    next:
+      name: "<yellow>다음 쪽 ▶"
+      lore: []
+    status-idle:
+      name: "<green>대기 중"
+      lore:
+        - "<gray>바꾼 설정은 다음 경기부터 적용됩니다."
+        - "<dark_gray><page> / <pages> 쪽"
+    status-running:
+      name: "<gold>경기 진행 중"
+      lore:
+        - "<gray>지금 경기는 시작할 때의 설정으로 진행되고,"
+        - "<gray>바꾼 설정은 <white>다음 경기</white>부터 적용됩니다."
+        - "<dark_gray><page> / <pages> 쪽"
+  # 공통 설정 (모든 게임)
+  hub:
+    section:
+      name: "<gold><bold>공통 설정"
+      lore:
+        - "<gray>모든 게임에 적용되는 설정입니다."
+    team:
+      name: "팀 인원"
+      lore:
+        - "<gray>팀당 인원입니다. 0이면 개인전입니다."
+        - "<gray>팀전을 지원하는 게임(초능력전쟁)에만 적용됩니다."
+      zero: "<aqua>개인전"
+    countdown:
+      name: "카운트다운"
+      lore:
+        - "<gray>경기를 시작하기 전 카운트다운(초)입니다."
+      zero: "<aqua>바로 시작"
+    terrain:
+      name: "능력 지형 파괴"
+      lore:
+        - "<gray>폭발·강타 같은 능력이 지형(블록)을 부수는 곳입니다."
+        - "<gray>부서진 블록은 경기가 끝나면 모두 원래대로 돌아옵니다."
+        - "<dark_gray>땅은 최대 2칸까지만 파이고 상자·표지판·물가는 부수지 않습니다."
+      option:
+        "off": "<red>끄기"
+        map-worlds: "<green>전투 맵에서만"
+        all-worlds: "<gold>모든 월드"

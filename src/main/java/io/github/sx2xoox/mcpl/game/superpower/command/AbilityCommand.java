@@ -245,6 +245,10 @@ public final class AbilityCommand {
     }
 
     private int setMode(CommandSender sender, SelectionMode mode) {
+        if (!game.hub().config().isWritable()) {
+            game.hub().messages().send(sender, "error.config-broken");
+            return 0;
+        }
         game.setSelectionMode(mode);
         messages().send(sender, "command.mode-set", Messages.tag("mode", mode.name()),
                 Messages.tag("name", mode.koreanName()));

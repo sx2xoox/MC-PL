@@ -13,6 +13,7 @@ import java.util.UUID;
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
 import io.github.sx2xoox.mcpl.core.command.Permissions;
+import io.github.sx2xoox.mcpl.core.config.SettingsSection;
 import io.github.sx2xoox.mcpl.core.game.GameInstance;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.MiniGame;
@@ -57,6 +58,7 @@ public final class SuperpowerGame implements MiniGame {
     /** Players who asked to join the running practice ({@code /게임 능력 연습}). */
     private final Set<UUID> practiceJoins = new HashSet<>();
     private final SuperpowerPracticeGame practice;
+    private @Nullable List<SettingsSection> settings;
     private @Nullable SuperpowerMatch current;
 
     public SuperpowerGame(Hub hub) {
@@ -131,6 +133,15 @@ public final class SuperpowerGame implements MiniGame {
         SuperpowerMatch match = new SuperpowerMatch(this, session, practiceSession);
         current = match;
         return match;
+    }
+
+    /** Match flow and border, effects and loot chests (see {@link SuperpowerSettingEntries}). */
+    @Override
+    public List<SettingsSection> settings() {
+        if (settings == null) {
+            settings = SuperpowerSettingEntries.create(this);
+        }
+        return settings;
     }
 
     @Override
@@ -245,8 +256,7 @@ public final class SuperpowerGame implements MiniGame {
 
     /** Saves the selection mode to {@code config.yml} (applies to the next match). */
     public void setSelectionMode(SelectionMode mode) {
-        hub.config().gameSection(ID).set(SuperpowerSettings.MODE, mode.name());
-        hub.config().save();
+        hub.config().setGameValue(ID, SuperpowerSettings.MODE, mode.name());
     }
 
     /** Remembers an admin assignment for the next match (replacing an earlier one for the same player). */

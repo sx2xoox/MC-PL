@@ -33,6 +33,8 @@ import org.jspecify.annotations.Nullable;
  * @param playersPerSupply     one supply drop per this many participants (clamped to min..max)
  * @param supplyFallTicks      how long a supply drop takes to fall from the sky
  * @param crystalGauge         ultimate gauge % granted by a 궁극기 결정
+ * @param nearbyHint           unopened normal chests sparkle for the viewers near them
+ * @param nearbyHintRadius     how near (blocks), {@value #MIN_HINT_RADIUS}..{@value #MAX_HINT_RADIUS}
  */
 public record LootSettings(
         boolean enabled,
@@ -52,10 +54,31 @@ public record LootSettings(
         int supplyMax,
         int playersPerSupply,
         int supplyFallTicks,
-        double crystalGauge
+        double crystalGauge,
+        boolean nearbyHint,
+        double nearbyHintRadius
 ) {
 
     public static final String SECTION = "loot";
+    /** Paths inside {@code games.superpower} (for the settings menu). */
+    public static final String ENABLED = SECTION + ".enabled";
+    public static final String PRACTICE = SECTION + ".practice";
+    public static final String CHESTS_PER_PLAYER = SECTION + ".chests.per-player";
+    public static final String CHESTS_MIN = SECTION + ".chests.min";
+    public static final String CHESTS_MAX = SECTION + ".chests.max";
+    public static final String SUPPLY_MIN = SECTION + ".supply.min";
+    public static final String SUPPLY_MAX = SECTION + ".supply.max";
+    public static final String PLAYERS_PER_SUPPLY = SECTION + ".supply.players-per-drop";
+    public static final String NEARBY_HINT = SECTION + ".nearby-hint";
+    public static final String NEARBY_HINT_RADIUS = SECTION + ".nearby-hint-radius";
+
+    public static final int MAX_CHESTS = 200;
+    public static final double MAX_CHESTS_PER_PLAYER = 10;
+    public static final int MAX_SUPPLY = 10;
+    public static final int MAX_PLAYERS_PER_SUPPLY = 100;
+    public static final int DEFAULT_HINT_RADIUS = 12;
+    public static final int MIN_HINT_RADIUS = 4;
+    public static final int MAX_HINT_RADIUS = 32;
     public static final double MIN_SIZE_FACTOR = 0.5;
     public static final double MAX_SIZE_FACTOR = 2.0;
     /** Chest inventories have 27 slots. */
@@ -159,6 +182,13 @@ public record LootSettings(
         d.setComments(p + "enabled", List.of("경기에 상자를 놓을지 여부"));
         d.set(p + "practice", false);
         d.setComments(p + "practice", List.of("능력 연습(/게임 능력 연습)에도 상자를 놓을지 여부"));
+        d.set(p + "nearby-hint", true);
+        d.setComments(p + "nearby-hint", List.of(
+                "아직 열지 않은 일반 상자가 가까이 있는 플레이어에게만 은은하게 반짝입니다 (파티클 배율을 따름)",
+                "희귀 상자는 이와 상관없이 모두에게 조금 더 반짝이고, 보급 상자는 빛기둥이 솟습니다."));
+        d.set(p + "nearby-hint-radius", DEFAULT_HINT_RADIUS);
+        d.setComments(p + "nearby-hint-radius", List.of(
+                "위 반짝임이 보이는 거리(블록, " + MIN_HINT_RADIUS + "~" + MAX_HINT_RADIUS + ")"));
 
         d.set(p + "chests.per-player", 1.5);
         d.setComments(p + "chests", List.of(
@@ -228,15 +258,15 @@ public record LootSettings(
             s = new MemoryConfiguration();
         }
         String path = "games.superpower." + SECTION + ".";
-        int minChests = clamp(s.getInt("chests.min", 3), 0, 200);
-        int maxChests = Math.max(minChests, clamp(s.getInt("chests.max", 20), 0, 200));
-        int supplyMin = clamp(s.getInt("supply.min", 1), 0, 10);
-        int supplyMax = Math.max(supplyMin, clamp(s.getInt("supply.max", 2), 0, 10));
+        int minChests = clamp(s.getInt("chests.min", 3), 0, MAX_CHESTS);
+        int maxChests = Math.max(minChests, clamp(s.getInt("chests.max", 20), 0, MAX_CHESTS));
+        int supplyMin = clamp(s.getInt("supply.min", 1), 0, MAX_SUPPLY);
+        int supplyMax = Math.max(supplyMin, clamp(s.getInt("supply.max", 2), 0, MAX_SUPPLY));
         double fall = finite(s.getDouble("supply.fall-seconds", 2.0), 2.0);
         return new LootSettings(
                 s.getBoolean("enabled", true),
                 s.getBoolean("practice", false),
-                Math.max(0, finite(s.getDouble("chests.per-player", 1.5), 1.5)),
+                Math.max(0, Math.min(MAX_CHESTS_PER_PLAYER, finite(s.getDouble("chests.per-player", 1.5), 1.5))),
                 Math.max(0, finite(s.getDouble("chests.base", 2.0), 2.0)),
                 minChests,
                 maxChests,
@@ -249,9 +279,12 @@ public record LootSettings(
                 tier(s, LootTier.SUPPLY, 4, 5, DEFAULT_SUPPLY_POOL, path, logger),
                 supplyMin,
                 supplyMax,
-                clamp(s.getInt("supply.players-per-drop", 4), 1, 100),
+                clamp(s.getInt("supply.players-per-drop", 4), 1, MAX_PLAYERS_PER_SUPPLY),
                 (int) Math.round(Math.max(0.5, Math.min(10.0, fall)) * 20),
-                Math.max(0, Math.min(100, finite(s.getDouble("ultimate-crystal.gauge", 25.0), 25.0))));
+                Math.max(0, Math.min(100, finite(s.getDouble("ultimate-crystal.gauge", 25.0), 25.0))),
+                s.getBoolean("nearby-hint", true),
+                Math.max(MIN_HINT_RADIUS, Math.min(MAX_HINT_RADIUS,
+                        finite(s.getDouble("nearby-hint-radius", DEFAULT_HINT_RADIUS), DEFAULT_HINT_RADIUS))));
     }
 
     private static Tier tier(ConfigurationSection s, LootTier tier, int defaultMin, int defaultMax,

@@ -78,6 +78,10 @@ public final class LootManager {
     private static final double MIN_BEAM_SCALE = 0.25;
     private static final float MARKER_HEIGHT = 2.2f;
     private static final Color SUPPLY_GLOW = Color.fromRGB(0xFFC83D);
+    /** Sparkles of an unopened normal chest per hint (at particle scale 1), sent to nearby viewers only. */
+    private static final int HINT_PARTICLES = 2;
+    /** Sparkles of a rare chest per period (at particle scale 1), seen by everyone. */
+    private static final int RARE_PARTICLES = 3;
     private static final Display.Brightness FULL_BRIGHT = new Display.Brightness(15, 15);
     /** Within this distance of the arena center a supply drop is announced as "중앙". */
     private static final double CENTER_RADIUS = 8.0;
@@ -636,11 +640,13 @@ public final class LootManager {
         World world = center.getWorld();
         switch (chest.tier()) {
             case NORMAL -> {
-                // plain: the chest itself is the hint
+                if (settings.nearbyHint() && !chest.wasOpened() && age % (EFFECT_PERIOD * 2) == 0) {
+                    nearbyHint(center, scale);
+                }
             }
             case RARE -> {
                 if (age % (EFFECT_PERIOD * 2) == 0) {
-                    int count = Math.max(1, (int) Math.round(3 * scale));
+                    int count = Math.max(1, (int) Math.round(RARE_PARTICLES * scale));
                     world.spawnParticle(Particle.WAX_ON, center.getX(), center.getY() + 0.3, center.getZ(), count,
                             0.35, 0.3, 0.35, 0.0);
                 }
@@ -654,6 +660,23 @@ public final class LootManager {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * A gentle sparkle on an unopened normal chest, sent only to the viewers (players in play and spectators) within
+     * {@code loot.nearby-hint-radius}, so it helps whoever is close without lighting up every chest of the arena.
+     */
+    private void nearbyHint(Location center, double scale) {
+        double radius = settings.nearbyHintRadius();
+        int count = Math.max(1, (int) Math.round(HINT_PARTICLES * scale));
+        for (Player viewer : session.viewers()) {
+            if (!viewer.getWorld().equals(center.getWorld())
+                    || viewer.getLocation().distanceSquared(center) > radius * radius) {
+                continue;
+            }
+            viewer.spawnParticle(Particle.WAX_ON, center.getX(), center.getY() + 0.35, center.getZ(), count,
+                    0.3, 0.25, 0.3, 0.0);
         }
     }
 

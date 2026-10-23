@@ -10,6 +10,7 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.WorldBorder;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.scoreboard.Criteria;
 import org.bukkit.scoreboard.RenderType;
 import org.jspecify.annotations.Nullable;
@@ -44,7 +45,8 @@ public final class TestServer extends ServerMock {
 
     /**
      * Chest inventories that also answer {@link Inventory#getHolder(boolean)} like Paper's (MockBukkit throws), so the
-     * listeners that find their custom holders without a block snapshot (choice menu, loot chests) run in tests.
+     * listeners that find their custom holders without a block snapshot (choice menu, loot chests, settings menu) run
+     * in tests.
      * MockBukkit ignores the title of a chest inventory too.
      */
     @Override
@@ -56,16 +58,33 @@ public final class TestServer extends ServerMock {
         return new HolderInventory(owner, size);
     }
 
-    /** A chest inventory whose {@link #getHolder(boolean)} works. */
-    static final class HolderInventory extends ChestInventoryMock {
+    /**
+     * A chest inventory whose {@link #getHolder(boolean)} works. MockBukkit's copies of an item lose its data
+     * components (item name, lore, ...), so it also remembers the very stack each slot was given ({@link #placed}).
+     */
+    public static final class HolderInventory extends ChestInventoryMock {
+
+        private final ItemStack[] placed;
 
         HolderInventory(@Nullable InventoryHolder owner, int size) {
             super(owner, size);
+            placed = new ItemStack[size];
         }
 
         @Override
         public @Nullable InventoryHolder getHolder(boolean useSnapshot) {
             return getHolder();
+        }
+
+        @Override
+        public void setItem(int index, @Nullable ItemStack item) {
+            super.setItem(index, item);
+            placed[index] = item;
+        }
+
+        /** The stack last put into {@code slot} with {@link #setItem}, data components included (or null). */
+        public @Nullable ItemStack placed(int slot) {
+            return placed[slot];
         }
     }
 

@@ -38,6 +38,7 @@ public final class HubConfig {
     public static final int MIN_RADIUS = 8;
     public static final int MAX_RADIUS = 1000;
     public static final int MAX_TEAM_SIZE = 32;
+    public static final int MAX_COUNTDOWN_SECONDS = 60;
     /** Default and upper bound of {@code protection.ability-block-damage-limit}. */
     public static final int DEFAULT_BLOCK_DAMAGE_LIMIT = 20_000;
     public static final int MAX_BLOCK_DAMAGE_LIMIT = 1_000_000;
@@ -186,7 +187,7 @@ public final class HubConfig {
     }
 
     private void read(FileConfiguration config) {
-        countdownSeconds = clamp(config.getInt("match.countdown-seconds", 5), 0, 60);
+        countdownSeconds = clamp(config.getInt("match.countdown-seconds", 5), 0, MAX_COUNTDOWN_SECONDS);
         endingSeconds = clamp(config.getInt("match.ending-seconds", 10), 0, 120);
         teamSize = clamp(config.getInt("match.team-size", 0), 0, MAX_TEAM_SIZE);
         fireworks = config.getBoolean("match.fireworks", true);
@@ -251,9 +252,15 @@ public final class HubConfig {
 
     // ------------------------------------------------------------------ match
 
-    /** Countdown before a match starts, in seconds (0..60). */
+    /** Countdown before a match starts, in seconds (0..{@value #MAX_COUNTDOWN_SECONDS}). */
     public int countdownSeconds() {
         return countdownSeconds;
+    }
+
+    public void setCountdownSeconds(int seconds) {
+        countdownSeconds = clamp(seconds, 0, MAX_COUNTDOWN_SECONDS);
+        raw().set("match.countdown-seconds", countdownSeconds);
+        save();
     }
 
     /** How long results are shown before everyone is restored, in seconds (0..120). */
@@ -398,6 +405,20 @@ public final class HubConfig {
         }
         ConfigurationSection section = games.getConfigurationSection(gameId);
         return section != null ? section : games.createSection(gameId);
+    }
+
+    /**
+     * Sets {@code games.<gameId>.<path>} (null removes it) and saves. An existing key keeps its comments. Games read
+     * their section when a match starts, so the value applies to the next match.
+     */
+    public void setGameValue(String gameId, String path, @Nullable Object value) {
+        updateGameSection(gameId, section -> section.set(path, value));
+    }
+
+    /** Changes several values of {@code games.<gameId>} at once, then saves once. */
+    public void updateGameSection(String gameId, Consumer<ConfigurationSection> change) {
+        change.accept(gameSection(gameId));
+        save();
     }
 
     /**

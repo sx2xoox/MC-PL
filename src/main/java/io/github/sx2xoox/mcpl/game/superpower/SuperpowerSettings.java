@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.logging.Logger;
 
+import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.inventory.ItemStack;
@@ -83,6 +84,12 @@ public record SuperpowerSettings(
 
     public static final double MIN_PARTICLE_SCALE = 0.25;
     public static final double MAX_PARTICLE_SCALE = 2.0;
+    public static final int MAX_REROLLS = 10;
+    public static final int MAX_PREP_SECONDS = 300;
+    public static final int MAX_TIME_LIMIT_SECONDS = 7200;
+    public static final int MAX_BORDER_SECONDS = 7200;
+    /** Upper bound of {@code border.final-diameter}: the diameter of the largest arena. */
+    public static final int MAX_BORDER_FINAL = 2 * HubConfig.MAX_RADIUS;
 
     public static final List<String> DEFAULT_KIT = List.of(
             "IRON_HELMET", "IRON_CHESTPLATE", "IRON_LEGGINGS", "IRON_BOOTS", "IRON_SWORD",
@@ -202,20 +209,20 @@ public record SuperpowerSettings(
         }
         return new SuperpowerSettings(
                 mode,
-                clamp(s.getInt(REROLLS, 1), 0, 10),
+                clamp(s.getInt(REROLLS, 1), 0, MAX_REROLLS),
                 seconds(s.getDouble(REVEAL_SECONDS, 3), 0, 15),
                 seconds(s.getDouble(CHOICE_SECONDS, 15), 3, 120),
-                seconds(s.getDouble(PREP_SECONDS, 15), 0, 300),
-                seconds(s.getDouble(TIME_LIMIT_SECONDS, 900), 0, 7200),
+                seconds(s.getDouble(PREP_SECONDS, 15), 0, MAX_PREP_SECONDS),
+                seconds(s.getDouble(TIME_LIMIT_SECONDS, 900), 0, MAX_TIME_LIMIT_SECONDS),
                 kit,
                 nonNegative(s.getDouble(GAUGE_DEALT, 4.0)),
                 nonNegative(s.getDouble(GAUGE_TAKEN, 2.0)),
                 nonNegative(s.getDouble(GAUGE_SECOND, 0.5)),
                 s.getBoolean(ANNOUNCE_ULTIMATES, true),
                 seconds(s.getDouble(ULTIMATE_LOCK, 10), 0, 120),
-                seconds(s.getDouble(BORDER_DELAY, 120), 0, 7200),
-                seconds(s.getDouble(BORDER_SHRINK, 180), 0, 7200),
-                Math.max(1.0, finite(s.getDouble(BORDER_FINAL, 20), 20)),
+                seconds(s.getDouble(BORDER_DELAY, 120), 0, MAX_BORDER_SECONDS),
+                seconds(s.getDouble(BORDER_SHRINK, 180), 0, MAX_BORDER_SECONDS),
+                Math.max(1.0, Math.min(MAX_BORDER_FINAL, finite(s.getDouble(BORDER_FINAL, 20), 20))),
                 nonNegative(s.getDouble(BORDER_DAMAGE, 2.0)),
                 s.getBoolean(KILL_FEED_ABILITY, true),
                 s.getBoolean(TEAM_ABILITIES, true),

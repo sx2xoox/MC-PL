@@ -1,6 +1,8 @@
 package io.github.sx2xoox.mcpl.game.superpower.support;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.destroystokyo.paper.ClientOption;
@@ -38,10 +40,15 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
  *     <li>line of sight through block ray tracing ({@link RayTracing#hasLineOfSight}), body yaw and
  *     {@link #isInLava()} in a {@link FlatWorld};</li>
  *     <li>the client options a default client reports ({@link #getClientOption}) and a settable ping
- *     ({@link #setPing}, 0 by default).</li>
+ *     ({@link #setPing}, 0 by default);</li>
+ *     <li>the particles sent to this player alone ({@link #particles()}).</li>
  * </ul>
  */
 public final class TestPlayer extends PlayerMock implements Hurtable {
+
+    /** A particle sent to this player alone ({@code player.spawnParticle}). */
+    public record SentParticle(org.bukkit.Particle particle, Location at, int count) {
+    }
 
     private static final double WIDTH = 0.6;
     private static final double HEIGHT = 1.8;
@@ -55,6 +62,7 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
     private double lastHurt;
     private int skinParts = TestSkinParts.ALL;
     private int ping;
+    private final List<SentParticle> particles = new ArrayList<>();
 
     public TestPlayer(ServerMock server, String name) {
         super(server, name);
@@ -270,8 +278,14 @@ public final class TestPlayer extends PlayerMock implements Hurtable {
                                   double speedZ, @Nullable T data, boolean force,
                                   org.bukkit.Particle.RandomizationType randomizationType) {
         io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.checkParticle(particle, data);
+        particles.add(new SentParticle(particle, new Location(getWorld(), x, y, z), count));
         super.spawnParticle(particle, x, y, z, count, offsetX, offsetY, offsetZ, speedX, speedY, speedZ, data, force,
                 randomizationType);
+    }
+
+    /** The particles sent to this player alone so far (oldest first). */
+    public List<SentParticle> particles() {
+        return particles;
     }
 
     /** Like Paper, a non-finite velocity throws (MockBukkit stores it). */

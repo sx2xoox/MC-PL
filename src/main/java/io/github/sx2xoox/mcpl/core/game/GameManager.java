@@ -207,6 +207,7 @@ public final class GameManager {
             session = null;
             throw new GameStartException(messages.prefixed("error.internal"), e);
         }
+        hub.settings().refreshMenus(); // their status shows that changes now wait for the next match
         return created;
     }
 
@@ -251,6 +252,7 @@ public final class GameManager {
     void onSessionClosed(GameSession closed, GameSession.EndReason reason) {
         if (session == closed) {
             session = null;
+            hub.settings().refreshMenus();
         }
         if (shuttingDown || reason == GameSession.EndReason.STOPPED || reason == GameSession.EndReason.SHUTDOWN) {
             return;
