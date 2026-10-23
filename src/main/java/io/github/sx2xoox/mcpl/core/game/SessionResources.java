@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.arena.VirtualBorder;
@@ -85,6 +86,19 @@ final class SessionResources {
 
     void untrack(Entity entity) {
         entities.remove(entity.getUniqueId());
+    }
+
+    /** Removes (and stops tracking) the tracked entities that match {@code filter}. */
+    void removeTracked(Predicate<? super Entity> filter) {
+        for (Iterator<Entity> it = entities.values().iterator(); it.hasNext(); ) {
+            Entity entity = it.next();
+            if (filter.test(entity)) {
+                it.remove();
+                if (entity.isValid()) {
+                    runSafely(entity::remove, "entity removal");
+                }
+            }
+        }
     }
 
     void registerListener(Listener listener) {

@@ -356,9 +356,6 @@ final class MatchListener implements Listener {
         if (!items.isAbilityItem(event.getItem()) || !session.isParticipant(player)) {
             return;
         }
-        if (action == Action.RIGHT_CLICK_BLOCK && match.opensLootChest(player, event.getClickedBlock())) {
-            return; // a click on a loot chest opens it (the loot listener), it is not an ability use
-        }
         event.setUseItemInHand(Event.Result.DENY);
         event.setUseInteractedBlock(Event.Result.DENY);
         if (event.getHand() == EquipmentSlot.HAND) {

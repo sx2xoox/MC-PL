@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -17,6 +18,7 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchPhase;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
+import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Color;
 import org.bukkit.Location;
@@ -63,9 +65,17 @@ public final class LootManager {
 
     /** Visual effects (beams, sparkles) and the viewer checks run every this many ticks. */
     static final int EFFECT_PERIOD = 10;
+    /**
+     * Consumable uses of one player closer together than this (ticks) are one press: the block and the air
+     * interaction of one click, or the client repeating the use (every 4 ticks) while the button is held down.
+     */
+    public static final int USE_REPEAT_TICKS = 8;
     /** A viewer farther than this from the chest (or no longer in play) has the chest closed. */
     static final double VIEW_DISTANCE = 6.0;
     private static final int BEAM_HEIGHT = 32;
+    /** Blocks between two beam particles at particle scale 1 (more apart at a lower scale, at most 4x). */
+    private static final int BEAM_STEP = 2;
+    private static final double MIN_BEAM_SCALE = 0.25;
     private static final float MARKER_HEIGHT = 2.2f;
     private static final Color SUPPLY_GLOW = Color.fromRGB(0xFFC83D);
     private static final Display.Brightness FULL_BRIGHT = new Display.Brightness(15, 15);
@@ -79,10 +89,16 @@ public final class LootManager {
     private final LootSettings settings;
     private final LootConsumables consumables;
     private final Messages messages;
+    private final AbilityItems items;
     private final Random random;
     private final List<LootChest> chests = new ArrayList<>();
     private final List<SupplyDrop> falling = new ArrayList<>();
     private final Map<UUID, Long> lastUse = new HashMap<>();
+    /**
+     * Outside built-in maps: the standing places the players can walk to from where they stood when the fight started
+     * (see {@link LootPlacer#connectTo}); null in map worlds (audited by the map tests) or when nobody stood anywhere.
+     */
+    private @Nullable Set<Long> walkable;
     private boolean spread;
     private boolean suppliesDropped;
     private boolean broken;
@@ -110,6 +126,7 @@ public final class LootManager {
         this.session = match.session();
         this.settings = settings;
         this.messages = game.messages();
+        this.items = game.items();
         this.consumables = new LootConsumables(game.hub(), messages);
         this.random = session.random();
     }
@@ -151,7 +168,12 @@ public final class LootManager {
                 avoid.add(player.getLocation());
             }
             int count = settings.chestCount(players.size(), session.arena().radius());
-            List<LootPlacer.Spot> spots = placer().chestSpots(count, avoid, settings.playerDistance(), List.of());
+            LootPlacer placer = placer();
+            if (!placer.usesMapGround()) {
+                // Reachable on foot = connected to where the players stand (no sealed caves, closed buildings, roofs).
+                walkable = placer.connectTo(avoid);
+            }
+            List<LootPlacer.Spot> spots = placer.chestSpots(count, avoid, settings.playerDistance(), List.of());
             int placed = 0;
             for (LootPlacer.Spot spot : spots) {
                 LootTier tier = rollTier();
@@ -159,6 +181,9 @@ public final class LootManager {
                     placed++;
                 }
             }
+            // Up to twenty container blocks at a predictable moment: on disk now, not after the usual debounce, so a
+            // crash right at the start of the fight cannot leave them in the world.
+            session.hub().tempBlocks().flush();
             if (placed < count) {
                 logger().info("Placed " + placed + " of " + count + " loot chests (not enough good spots)");
             }
@@ -171,7 +196,7 @@ public final class LootManager {
     /**
      * The border started shrinking: announces the supply drops and lets them fall (once).
      *
-     * @param finalBorderSize the side length the border shrinks to (drops land where it stays longest)
+     * @param finalBorderSize the side length the border shrinks to (drops land inside it when there is room)
      */
     public void dropSupplies(double finalBorderSize) {
         if (suppliesDropped || disposed || broken) {
@@ -184,7 +209,7 @@ public final class LootManager {
                 return;
             }
             List<LootPlacer.Spot> taken = spots();
-            List<LootPlacer.Spot> spots = placer().supplySpots(count, finalBorderSize * 0.4, taken);
+            List<LootPlacer.Spot> spots = placer().supplySpots(count, finalBorderSize / 2, taken);
             if (spots.isEmpty()) {
                 logger().info("No open spot for a supply drop in the arena");
                 return;
@@ -297,16 +322,29 @@ public final class LootManager {
         return consumables;
     }
 
-    /** True if right-clicking a loot chest opens it (like vanilla: not when sneaking with something in hand). */
-    public static boolean opensOnClick(Player player) {
+    /**
+     * True if right-clicking a loot chest opens it: not with the ability item in the main hand (that click is always
+     * the ability) and, like vanilla, not when sneaking with something in hand.
+     */
+    public boolean opensOnClick(Player player) {
+        if (isAbilityItem(player.getInventory().getItemInMainHand())) {
+            return false;
+        }
         return !player.isSneaking() || (player.getInventory().getItemInMainHand().isEmpty()
                 && player.getInventory().getItemInOffHand().isEmpty());
+    }
+
+    /** True if {@code item} is a 초능력전쟁 ability item. */
+    public boolean isAbilityItem(@Nullable ItemStack item) {
+        return items.isAbilityItem(item);
     }
 
     // =================================================================== chests
 
     private LootPlacer placer() {
-        return LootPlacer.of(session, session.hub().maps());
+        LootPlacer placer = LootPlacer.of(session, session.hub().maps());
+        placer.useWalkable(walkable);
+        return placer;
     }
 
     private List<LootPlacer.Spot> spots() {
@@ -392,7 +430,7 @@ public final class LootManager {
     }
 
     private void refresh(LootChest chest) {
-        if (disposed || chest.isRemoved()) {
+        if (disposed || chest.isRemoved() || !chest.isLoaded()) {
             return;
         }
         if (!chest.isIntact()) {
@@ -487,13 +525,23 @@ public final class LootManager {
         LootPlacer.Spot spot = drop.spot;
         LootPlacer placer = placer();
         if (!placer.isChestSpot(spot.block())) {
-            // Something took the spot while the crate fell (an ability's block): land right next to it.
-            spot = placer.spotNear(spot.block().getLocation(), 4, false, spots());
+            // Something took the spot while the crate fell (an ability's block): land right next to it, under open
+            // sky like the announced spot if there is such a place.
+            List<LootPlacer.Spot> taken = spots();
+            Location near = spot.block().getLocation();
+            LootPlacer.Spot underSky = placer.spotNear(near, 4, true, taken);
+            spot = underSky != null ? underSky : placer.spotNear(near, 4, false, taken);
         }
         LootChest chest = spot == null ? null : place(spot, LootTier.SUPPLY);
         if (chest == null) {
             logger().info("A supply drop could not land near " + drop.spot.block());
             return;
+        }
+        session.hub().tempBlocks().flush();
+        Block landed = chest.block();
+        if (!landed.equals(drop.spot.block())) {
+            session.broadcast(messages.prefixed("loot.supply-moved", Messages.tag("x", landed.getX()),
+                    Messages.tag("y", landed.getY()), Messages.tag("z", landed.getZ())));
         }
         Location center = chest.center();
         World world = center.getWorld();
@@ -554,6 +602,13 @@ public final class LootManager {
     private void maintain() {
         double scale = match.settings().particleScale();
         for (LootChest chest : List.copyOf(chests)) {
+            if (!chest.isLoaded()) {
+                // Nobody is near it (no effects needed) and its block cannot change: never load the chunk for it.
+                for (HumanEntity viewer : List.copyOf(chest.getInventory().getViewers())) {
+                    viewer.closeInventory();
+                }
+                continue;
+            }
             if (!chest.isIntact()) {
                 remove(chest, false);
                 continue;
@@ -592,7 +647,8 @@ public final class LootManager {
             }
             case SUPPLY -> {
                 if (!chest.wasOpened()) {
-                    for (int i = 0; i < BEAM_HEIGHT; i += 2) {
+                    int step = Math.max(1, (int) Math.round(BEAM_STEP / Math.max(MIN_BEAM_SCALE, scale)));
+                    for (int i = 0; i < BEAM_HEIGHT; i += step) {
                         world.spawnParticle(Particle.END_ROD, center.getX(), center.getY() + 1.0 + i, center.getZ(),
                                 1, 0.02, 0.4, 0.02, 0.0, null, true);
                     }
@@ -613,8 +669,8 @@ public final class LootManager {
     void useConsumable(Player player, EquipmentSlot hand, LootConsumables.Kind kind) {
         long tick = session.tick();
         Long last = lastUse.put(player.getUniqueId(), tick);
-        if (last != null && last == tick) {
-            return; // the block and the air interaction of one click
+        if (last != null && tick - last < USE_REPEAT_TICKS) {
+            return; // the same press: one click's block and air interactions, or the button held down
         }
         SuperpowerMatch.ItemUseResult result = switch (kind) {
             case ULTIMATE_CRYSTAL -> match.chargeGaugeWithItem(player, settings.crystalGauge());

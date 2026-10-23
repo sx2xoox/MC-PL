@@ -37,7 +37,10 @@ public final class LootListener implements Listener {
         this.session = session;
     }
 
-    /** Right-click: a loot chest opens (vanilla rules: not while sneaking with an item), or a consumable is used. */
+    /**
+     * Right-click: a loot chest opens (not with the ability item in hand, and vanilla rules: not while sneaking with
+     * an item), or a consumable is used.
+     */
     @EventHandler(priority = EventPriority.HIGH)
     public void onInteract(PlayerInteractEvent event) {
         Action action = event.getAction();
@@ -50,7 +53,7 @@ public final class LootListener implements Listener {
             LootChest chest = loot.chestAt(block);
             if (chest != null) {
                 event.setUseInteractedBlock(Event.Result.DENY);
-                if (LootManager.opensOnClick(player)) {
+                if (loot.opensOnClick(player)) {
                     event.setUseItemInHand(Event.Result.DENY);
                     if (event.getHand() == EquipmentSlot.HAND) {
                         loot.open(player, chest);
@@ -58,6 +61,11 @@ public final class LootListener implements Listener {
                     return;
                 }
             }
+        }
+        if (loot.isAbilityItem(player.getInventory().getItemInMainHand())) {
+            // That click is the ability (the match listener). The client sends the off-hand use right after it, as
+            // the ability item has no vanilla use: a consumable in the off hand must not go with every skill.
+            return;
         }
         LootConsumables.Kind kind = loot.consumables().kindOf(event.getItem());
         EquipmentSlot hand = event.getHand();

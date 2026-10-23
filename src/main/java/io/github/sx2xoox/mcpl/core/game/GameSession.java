@@ -41,6 +41,7 @@ import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.entity.EnderPearl;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
@@ -1236,6 +1237,10 @@ public final class GameSession {
         names.put(id, player.getName());
         boards.detach(id);
         resources.forget(id);
+        // A pearl still flying is saved with the player and thrown again on the next join, possibly into the arena
+        // long after the match; removed now, it is not saved (the quit event comes before the save).
+        resources.removeTracked(entity -> entity instanceof EnderPearl pearl
+                && pearl.getShooter() instanceof Player shooter && shooter.getUniqueId().equals(id));
         switch (state) {
             case COUNTDOWN -> {
                 if (participants.remove(id)) {

@@ -48,7 +48,6 @@ import org.bukkit.SoundCategory;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.Tag;
 import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
@@ -1501,12 +1500,6 @@ public final class SuperpowerMatch implements GameInstance {
     /** The loot of this match, or null when loot chests are off ({@code loot.enabled}, practice). */
     public @Nullable LootManager loot() {
         return loot;
-    }
-
-    /** True if right-clicking {@code block} opens a loot chest for {@code player} (then no ability is used). */
-    boolean opensLootChest(Player player, @Nullable Block block) {
-        LootManager chests = loot;
-        return chests != null && chests.chestAt(block) != null && LootManager.opensOnClick(player);
     }
 
     private void refreshSilences() {

@@ -8,18 +8,20 @@ import io.github.sx2xoox.mcpl.core.config.ProtectionSettings;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.papermc.paper.event.player.PlayerItemFrameChangeEvent;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.damage.DamageSource;
-import org.bukkit.entity.AbstractArrow;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.EnderPearl;
 import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Hanging;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.entity.Tameable;
 import org.bukkit.entity.Vehicle;
 import org.bukkit.event.Event;
@@ -35,6 +37,7 @@ import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.block.EntityBlockFormEvent;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -53,6 +56,7 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerTakeLecternBookEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.vehicle.VehicleDestroyEvent;
 import org.bukkit.event.vehicle.VehicleEnterEvent;
 import org.bukkit.inventory.InventoryHolder;
@@ -69,6 +73,7 @@ import org.jspecify.annotations.Nullable;
  * similar blocks, nor trample farmland or press plates. Participants cannot drop items.
  * Entities: bystanders (villagers, animals, pets, vehicles: anything the match did not create) cannot be hurt or used
  * by players of the match, real pets stay out of the fight and participants cannot pick up world items.
+ * Projectiles participants launch are match entities; ender pearls never carry players of the match between worlds.
  */
 public final class ProtectionListener implements Listener {
 
@@ -397,8 +402,8 @@ public final class ProtectionListener implements Listener {
     }
 
     /**
-     * Items participants drop and arrows they shoot during the match belong to the match: they may be picked up again
-     * and are removed when it ends, so kit items never stay in the world.
+     * Items participants drop during the match belong to the match: they may be picked up again and are removed when
+     * it ends, so kit items never stay in the world.
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDropTracked(PlayerDropItemEvent event) {
@@ -407,12 +412,52 @@ public final class ProtectionListener implements Listener {
         }
     }
 
+    /**
+     * Projectiles participants launch (arrows, snowballs, potions, ender pearls...) belong to the match too. Ender
+     * pearls are always tracked: one still flying when the match ends would carry its owner back into the arena after
+     * the restore (pearls cross worlds), so it is removed with the match (at once after the result, when the
+     * session's resources are already released) or when its owner leaves ({@link GameSession}).
+     */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onShootTracked(ProjectileLaunchEvent event) {
-        if (settings.entities() && session.state() != GameState.COUNTDOWN
-                && event.getEntity() instanceof AbstractArrow arrow && arrow.getShooter() instanceof Player shooter
-                && session.isParticipant(shooter)) {
-            session.track(arrow);
+        Projectile projectile = event.getEntity();
+        if (!(projectile.getShooter() instanceof Player shooter) || !session.isParticipant(shooter)) {
+            return;
+        }
+        if (projectile instanceof EnderPearl
+                || settings.entities() && session.state() != GameState.COUNTDOWN) {
+            session.track(projectile);
+        }
+    }
+
+    /**
+     * Ender pearls never move a player of the match between worlds (a pearl thrown in the lobby before the match, or
+     * one landing after the restore) and only carry players in play of the running match inside the arena world. A
+     * refused pearl simply disappears (no teleport, no damage).
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPearlTeleport(PlayerTeleportEvent event) {
+        if (event.getCause() != PlayerTeleportEvent.TeleportCause.ENDER_PEARL) {
+            return;
+        }
+        Player player = event.getPlayer();
+        if (session.state() == GameState.COUNTDOWN || !involved(player)) {
+            return; // while counting down everyone is still where they were before the match
+        }
+        Location to = event.getTo();
+        boolean crossWorld = !event.getFrom().getWorld().equals(to.getWorld());
+        boolean inPlay = session.state() == GameState.RUNNING && session.isInPlay(player);
+        if (crossWorld || inArena(to.getWorld()) && !inPlay) {
+            event.setCancelled(true);
+        }
+    }
+
+    /** Pearls landing in the arena hatch no endermites (nothing would remove them after the match). */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onPearlMite(CreatureSpawnEvent event) {
+        if (event.getSpawnReason() == CreatureSpawnEvent.SpawnReason.ENDER_PEARL
+                && session.arena().contains(event.getLocation())) {
+            event.setCancelled(true);
         }
     }
 

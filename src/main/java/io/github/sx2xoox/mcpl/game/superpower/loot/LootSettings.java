@@ -84,12 +84,13 @@ public record LootSettings(
             "POTION swiftness seconds=30 weight=7",
             "POTION strength seconds=20 weight=4");
 
+    /** About one rare chest in three has a diamond piece (rarely two): 5 of 53 weight, 3-4 picks. */
     public static final List<String> DEFAULT_RARE_POOL = List.of(
-            "DIAMOND_HELMET weight=4",
-            "DIAMOND_CHESTPLATE weight=3",
-            "DIAMOND_LEGGINGS weight=3",
-            "DIAMOND_BOOTS weight=4",
-            "DIAMOND_SWORD weight=3",
+            "DIAMOND_HELMET weight=1",
+            "DIAMOND_CHESTPLATE weight=1",
+            "DIAMOND_LEGGINGS weight=1",
+            "DIAMOND_BOOTS weight=1",
+            "DIAMOND_SWORD weight=1",
             "GOLDEN_APPLE 2 weight=10",
             "ENDER_PEARL 2 weight=8",
             "BOW + ARROW 12-16 weight=6",
@@ -98,12 +99,13 @@ public record LootSettings(
             "ULTIMATE_CRYSTAL weight=6",
             "RECHARGE_CHARM weight=6");
 
+    /** About every other supply drop has a diamond piece (0.7 on average): 8 of 65 weight, 4-5 picks. */
     public static final List<String> DEFAULT_SUPPLY_POOL = List.of(
-            "DIAMOND_HELMET weight=5",
-            "DIAMOND_CHESTPLATE weight=5",
-            "DIAMOND_LEGGINGS weight=5",
-            "DIAMOND_BOOTS weight=5",
-            "DIAMOND_SWORD weight=5",
+            "DIAMOND_HELMET weight=2",
+            "DIAMOND_CHESTPLATE weight=1",
+            "DIAMOND_LEGGINGS weight=1",
+            "DIAMOND_BOOTS weight=2",
+            "DIAMOND_SWORD weight=2",
             "GOLDEN_APPLE 2-3 weight=12",
             "ENDER_PEARL 2-3 weight=8",
             "ULTIMATE_CRYSTAL 1-2 weight=10",
@@ -188,11 +190,13 @@ public record LootSettings(
                 "  여러 아이템을 함께: \"BOW + ARROW 8-12\"",
                 "  초능력 전용: ULTIMATE_CRYSTAL (궁극기 결정), RECHARGE_CHARM (재충전 부적)"));
         declareTier(d, LootTier.RARE, "3-4", DEFAULT_RARE_POOL, List.of(
-                "희귀 상자 (반짝이는 상자). 가끔 다이아몬드 장비와 초능력 전용 아이템이 나옵니다."));
+                "희귀 상자 (반짝이는 상자). 초능력 전용 아이템이 자주, 다이아몬드 장비가 가끔(기본값: 3개 중 1개꼴) 나옵니다."));
         declareTier(d, LootTier.SUPPLY, "4-5", DEFAULT_SUPPLY_POOL, List.of(
-                "보급 상자: 자기장이 줄어들기 시작할 때 하늘에서 떨어지는 상자 (위치를 채팅으로 알립니다)"));
+                "보급 상자: 자기장이 줄어들기 시작할 때 하늘에서 떨어지는 상자 (위치를 채팅으로 알립니다)",
+                "기본값으로 두 개 중 하나꼴로 다이아몬드 장비가 들어 있습니다."));
         d.set(p + "supply.min", 1);
-        d.setComments(p + "supply.min", List.of("보급 상자 수 = 참가자 수 ÷ players-per-drop (올림), min~max 사이"));
+        d.setComments(p + "supply.min", List.of(
+                "보급 상자 수 = 그때 남은 참가자 수 ÷ players-per-drop (올림), min~max 사이"));
         d.set(p + "supply.max", 2);
         d.set(p + "supply.players-per-drop", 4);
         d.set(p + "supply.fall-seconds", 2.0);

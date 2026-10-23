@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.loot;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,17 +38,23 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Finds the places loot chests go. A chest spot is a free block (air or a plant, never a fluid, a real block or a
- * temporary one) on a full, safe floor, with free space above (so the lid opens) and room on at least three sides
- * (never blocking a corridor or a doorway), away from hoppers and other containers.
+ * temporary one) on a full, safe floor, with free space above (so the lid opens) and room on at least three sides,
+ * away from hoppers and other containers. It never blocks a way: the open places around it stay connected without it
+ * (a chest is never right in front of a doorway, an archway, a one-wide staircase or a corridor).
  *
- * <p><b>Reachable on foot.</b> Every chosen spot is checked with a small walk search: from the spot a player must be
- * able to reach at least {@value #REACH_NODES} standing places with steps a player can also walk back (level, one
- * block up or down, ladders and vines; no drops, no swimming). Roofs, tree crowns and tower tops that need parkour are
- * small islands for that search and are rejected; the cut-off areas a built-in map may have are at most 80 places
- * ({@code CitadelMapTest}).
+ * <p><b>Reachable on foot</b>, with steps a player can also walk back (level, one block up or down, ladders and vines;
+ * no drops, no swimming, no closed doors):
+ * <ul>
+ *     <li>outside built-in maps ({@link #connectTo}), a spot must be connected to where a player stands when the fight
+ *     starts: sealed caves, closed buildings, roofs, plateaus and tower tops are not, whatever their size;</li>
+ *     <li>in a built-in map world a small walk search from the spot must reach at least {@value #REACH_NODES} standing
+ *     places: roofs and tower tops that need parkour are small islands, and the cut-off areas a built-in map may have
+ *     are at most 80 places ({@code CitadelMapTest}).</li>
+ * </ul>
  *
  * <p><b>Near the ground.</b> In a built-in map world the floor closest to the map's ground level is preferred in every
- * column (a street before a roof, a hall before an attic); elsewhere the column's surface (without leaves) is.
+ * column (a street before a roof, a hall before an attic); elsewhere the column's surface (without leaves) is, or the
+ * walkable floor closest below it (a hall under a roof).
  *
  * <p>Runs on the main thread and loads the chunks it inspects; it samples a bounded number of columns, like
  * {@link Spread}.
@@ -70,6 +77,13 @@ public final class LootPlacer {
     private static final int REACH_HEIGHT = 32;
     /** Spots within this many blocks of the ground level count as "on the ground" (preferred). */
     private static final int NEAR_GROUND = 4;
+    /** Most standing places {@link #connectTo} visits (far more than an arena of radius 100 has on one level). */
+    static final int REGION_NODES = 150_000;
+    /** Outside the final border, a raised supply drop spot counts as this many blocks farther from the center. */
+    private static final double RAISED_PENALTY = 6.0;
+    private static final int NONE = Integer.MIN_VALUE;
+    /** The eight cells around a spot in ring order: N, NE, E, SE, S, SW, W, NW (even indexes are the sides). */
+    private static final int[][] RING = {{0, -1}, {1, -1}, {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}};
 
     private static final Set<Material> HAZARDS = EnumSet.of(
             Material.FIRE, Material.SOUL_FIRE, Material.LAVA, Material.WATER, Material.COBWEB, Material.POWDER_SNOW,
@@ -116,6 +130,8 @@ public final class LootPlacer {
     private final Predicate<Block> taken;
     private final Map<Long, Boolean> standCache = new HashMap<>();
     private final Map<Long, Boolean> reachCache = new HashMap<>();
+    /** Standing places connected to the players ({@link #connectTo}), or null to use the walk search. */
+    private @Nullable Set<Long> walkable;
 
     /**
      * @param groundY    feet level of the ground (map ground + 1, or the arena center)
@@ -129,6 +145,73 @@ public final class LootPlacer {
         this.groundY = groundY;
         this.nearGround = nearGround;
         this.taken = taken;
+    }
+
+    /** True in built-in map worlds (the map's ground level is preferred; reachability is the walk search). */
+    public boolean usesMapGround() {
+        return nearGround;
+    }
+
+    /**
+     * Limits the reachable spots to {@code region} (from {@link #connectTo} of an earlier placer of the same match),
+     * or with null back to the walk search.
+     */
+    public void useWalkable(@Nullable Set<Long> region) {
+        this.walkable = region;
+    }
+
+    /**
+     * Finds every standing place a player can walk to (with reversible steps) from one of {@code from} inside the arena
+     * (and within {@value #REACH_HEIGHT} blocks up or down of them) and from now on accepts only spots among them. One
+     * bounded flood fill (at most {@value #REGION_NODES} places) instead of a walk search per spot.
+     *
+     * @param from where the players stand
+     * @return the region (to reuse with {@link #useWalkable}), or null if none of {@code from} is a standing place
+     *         (then the walk search stays in use)
+     */
+    public @Nullable Set<Long> connectTo(Collection<Location> from) {
+        Set<Long> seen = new HashSet<>();
+        ArrayDeque<int[]> queue = new ArrayDeque<>();
+        int low = Integer.MAX_VALUE;
+        int high = Integer.MIN_VALUE;
+        for (Location location : from) {
+            if (!world.equals(location.getWorld())) {
+                continue;
+            }
+            int x = location.getBlockX();
+            int y = location.getBlockY();
+            int z = location.getBlockZ();
+            // On a slab or a path the feet are inside the floor block; mid-jump they are above an empty one.
+            for (int feet : new int[] {y, y + 1, y - 1, y - 2}) {
+                if (stand(x, feet, z)) {
+                    if (seen.add(key(x, feet, z))) {
+                        queue.add(new int[] {x, feet, z});
+                    }
+                    low = Math.min(low, feet);
+                    high = Math.max(high, feet);
+                    break;
+                }
+            }
+        }
+        if (queue.isEmpty()) {
+            return null;
+        }
+        double limit = arena.radius() + 8.0;
+        while (!queue.isEmpty() && seen.size() < REGION_NODES) {
+            int[] node = queue.poll();
+            for (int[] next : moves(node[0], node[1], node[2])) {
+                double dx = next[0] + 0.5 - arena.centerX();
+                double dz = next[2] + 0.5 - arena.centerZ();
+                if (next[1] < low - REACH_HEIGHT || next[1] > high + REACH_HEIGHT || dx * dx + dz * dz > limit * limit) {
+                    continue;
+                }
+                if (seen.add(key(next[0], next[1], next[2]))) {
+                    queue.add(next);
+                }
+            }
+        }
+        walkable = seen;
+        return seen;
     }
 
     /** The placer for a match: the map's ground level in built-in map worlds, the arena center height elsewhere. */
@@ -172,25 +255,29 @@ public final class LootPlacer {
         return choose(candidates, count, existing);
     }
 
-    /** True if the spot is within {@value #NEAR_GROUND} blocks of the ground level. */
+    /**
+     * True if the spot is within {@value #NEAR_GROUND} blocks of the map's ground level; outside built-in maps every
+     * spot is (it is the surface, or the floor under it, of its column).
+     */
     private boolean isNearGround(Spot spot) {
-        return Math.abs(spot.block().getY() - groundY) <= NEAR_GROUND;
+        return !nearGround || Math.abs(spot.block().getY() - groundY) <= NEAR_GROUND;
     }
 
     /**
-     * Up to {@code count} supply drop spots under open sky, as close to the arena center as the arena allows: first
-     * within {@code preferredRadius} (the part the border keeps longest), widening the search when there is no room
-     * there.
+     * Up to {@code count} supply drop spots under open sky, where the border keeps them longest: inside the final border
+     * square ({@code finalHalfSize} blocks from the center along both axes) if there is room, spread apart and ground
+     * before raised floors (in built-in maps); otherwise the spots closest to the center. The search starts around the
+     * final square and widens only while spots are missing.
      */
-    public List<Spot> supplySpots(int count, double preferredRadius, Collection<Spot> existing) {
+    public List<Spot> supplySpots(int count, double finalHalfSize, Collection<Spot> existing) {
         if (count <= 0) {
             return List.of();
         }
         double maxRadius = Math.max(1, arena.radius() * RADIUS_FRACTION);
-        double radius = Math.max(3, Math.min(maxRadius, preferredRadius));
-        // A crate lands on the ground when there is room there (not through a hole onto an upper floor).
-        List<Spot> low = new ArrayList<>();
-        List<Spot> raised = new ArrayList<>();
+        double half = Math.max(1.0, finalHalfSize);
+        // The circle through the final square's corners.
+        double radius = Math.max(3, Math.min(maxRadius, half * Math.sqrt(2)));
+        List<Spot> found = new ArrayList<>();
         Set<Long> columns = new HashSet<>();
         Location center = arena.center();
         while (true) {
@@ -200,21 +287,52 @@ public final class LootPlacer {
                 Spot spot = candidate((int) Math.floor(center.getX() + Math.cos(angle) * distance),
                         (int) Math.floor(center.getZ() + Math.sin(angle) * distance), true, columns);
                 if (spot != null) {
-                    (isNearGround(spot) ? low : raised).add(spot);
+                    found.add(spot);
                 }
             }
-            if (low.size() >= count * 3 || radius >= maxRadius) {
-                break;
+            List<Spot> chosen = pickSupply(found, count, existing, half);
+            if (chosen.size() >= count || radius >= maxRadius) {
+                return chosen;
             }
             radius = Math.min(maxRadius, radius * 1.6);
         }
-        List<Spot> chosen = choose(low, count, existing);
-        if (chosen.size() < count) {
-            List<Spot> placed = new ArrayList<>(existing);
-            placed.addAll(chosen);
-            List<Spot> more = new ArrayList<>(chosen);
-            more.addAll(choose(raised, count - chosen.size(), placed));
-            return more;
+    }
+
+    /**
+     * The supply drop spots among {@code candidates}: inside the final square first (on the ground, then raised; each
+     * group spread apart), then the rest by distance to the center.
+     */
+    private List<Spot> pickSupply(List<Spot> candidates, int count, Collection<Spot> existing, double half) {
+        List<Spot> insideLow = new ArrayList<>();
+        List<Spot> insideRaised = new ArrayList<>();
+        List<Spot> outside = new ArrayList<>();
+        for (Spot spot : candidates) {
+            double dx = Math.abs(spot.block().getX() + 0.5 - arena.centerX());
+            double dz = Math.abs(spot.block().getZ() + 0.5 - arena.centerZ());
+            if (dx > half || dz > half) {
+                outside.add(spot);
+            } else {
+                (isNearGround(spot) ? insideLow : insideRaised).add(spot);
+            }
+        }
+        List<Spot> chosen = new ArrayList<>();
+        List<Spot> placed = new ArrayList<>(existing);
+        for (List<Spot> group : List.of(insideLow, insideRaised)) {
+            List<Spot> picked = choose(group, count - chosen.size(), placed);
+            chosen.addAll(picked);
+            placed.addAll(picked);
+        }
+        Location center = arena.center();
+        outside.sort(Comparator.comparingDouble(
+                spot -> Math.sqrt(spot.distanceSquared(center)) + (isNearGround(spot) ? 0 : RAISED_PENALTY)));
+        for (Spot spot : outside) {
+            if (chosen.size() >= count) {
+                break;
+            }
+            if (isFree(spot, placed) && reachable(spot.block())) {
+                chosen.add(spot);
+                placed.add(spot);
+            }
         }
         return chosen;
     }
@@ -303,7 +421,8 @@ public final class LootPlacer {
 
     /**
      * The chest spot of column {@code x, z}: the valid spot closest to the column's reference height (the map ground,
-     * or the surface), or null. {@code openSky} also requires nothing solid above it (supply drops fall in).
+     * or the surface), or null. {@code openSky} also requires nothing solid above it (supply drops fall in). With a
+     * {@link #connectTo region} only spots in it count, so the column's next floor is tried instead of a sealed one.
      */
     public @Nullable Spot spotInColumn(int x, int z, boolean openSky) {
         if (!arena.contains(new Location(world, x + 0.5, groundY, z + 0.5))) {
@@ -329,7 +448,8 @@ public final class LootPlacer {
                     continue;
                 }
                 Block cell = world.getBlockAt(x, y, z);
-                if (isChestSpot(cell) && (!openSky || hasOpenSky(cell))) {
+                if (isChestSpot(cell) && (!openSky || hasOpenSky(cell))
+                        && (walkable == null || walkable.contains(key(x, y, z)))) {
                     return new Spot(cell, facing(cell));
                 }
             }
@@ -356,7 +476,60 @@ public final class LootPlacer {
                 open++;
             }
         }
-        return open >= 3 && !isContainer(cell.getRelative(BlockFace.UP).getType());
+        return open >= 3 && !isContainer(cell.getRelative(BlockFace.UP).getType()) && !cutsWay(cell);
+    }
+
+    /**
+     * True if a chest in {@code cell} would cut a way: going around it through the eight cells around it, some open
+     * side is no longer connected to the other open sides. That is the mouth of a doorway, an archway, a one-wide
+     * staircase or a corridor (walls on both sides of the opening; a lintel stops a jump onto the chest). Neighbours
+     * one block up or down count as open (steps), with at most one block between two neighbours.
+     */
+    private boolean cutsWay(Block cell) {
+        int x = cell.getX();
+        int y = cell.getY();
+        int z = cell.getZ();
+        int[] height = new int[RING.length];
+        for (int i = 0; i < RING.length; i++) {
+            height[i] = standingHeight(x + RING[i][0], y, z + RING[i][1]);
+        }
+        boolean[] link = new boolean[RING.length];
+        int gap = -1;
+        for (int i = 0; i < RING.length; i++) {
+            int next = height[(i + 1) % RING.length];
+            link[i] = height[i] != NONE && next != NONE && Math.abs(height[i] - next) <= 1;
+            if (!link[i]) {
+                gap = i;
+            }
+        }
+        if (gap < 0) {
+            return false; // open all around
+        }
+        // Walk the ring once from just after a gap; every gap ends a stretch of connected cells.
+        int stretches = 0;
+        boolean side = false;
+        for (int step = 1; step <= RING.length; step++) {
+            int i = (gap + step) % RING.length;
+            side |= i % 2 == 0 && height[i] != NONE;
+            if (!link[i]) {
+                if (side) {
+                    stretches++;
+                }
+                side = false;
+            }
+        }
+        return stretches > 1;
+    }
+
+    /** The feet height a player stands at in column {@code x, z} next to feet height {@code y} (level first), or NONE. */
+    private int standingHeight(int x, int y, int z) {
+        if (stand(x, y, z)) {
+            return y;
+        }
+        if (stand(x, y + 1, z)) {
+            return y + 1;
+        }
+        return stand(x, y - 1, z) ? y - 1 : NONE;
     }
 
     /** A floor a chest sits flush on: a solid full block, not stairs, slabs, fences, beds, doors or block entities. */
@@ -429,14 +602,17 @@ public final class LootPlacer {
     // =================================================================== walking
 
     /**
-     * True if a player standing in {@code cell} can walk (with steps it can also walk back) to at least
-     * {@value #REACH_NODES} standing places.
+     * True if a player standing in {@code cell} can walk (with steps it can also walk back) to the players' region
+     * ({@link #connectTo}), or without one to at least {@value #REACH_NODES} standing places.
      */
     public boolean reachable(Block cell) {
         int x0 = cell.getX();
         int y0 = cell.getY();
         int z0 = cell.getZ();
         long start = key(x0, y0, z0);
+        if (walkable != null) {
+            return walkable.contains(start) && stand(x0, y0, z0);
+        }
         Boolean known = reachCache.get(start);
         if (known != null) {
             return known;

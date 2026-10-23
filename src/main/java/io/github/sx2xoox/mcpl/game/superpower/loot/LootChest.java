@@ -70,9 +70,17 @@ public final class LootChest implements InventoryHolder {
         return block.getLocation().add(0.5, 0.5, 0.5);
     }
 
-    /** True while the block is still the chest. */
+    /** True while the block is still the chest (loads its chunk: check {@link #isLoaded()} first). */
     boolean isIntact() {
         return block.getType() == Material.CHEST;
+    }
+
+    /**
+     * True while the chest's chunk is loaded. An unloaded chest has nobody near it and its block cannot change, so the
+     * upkeep skips it instead of loading the chunk again.
+     */
+    boolean isLoaded() {
+        return block.getWorld().isChunkLoaded(block.getX() >> 4, block.getZ() >> 4);
     }
 
     void markOpened() {
@@ -89,7 +97,7 @@ public final class LootChest implements InventoryHolder {
 
     /** Opens or closes the lid (with the vanilla sound) while someone looks inside. */
     void lid(boolean open) {
-        if (lidOpen == open || !isIntact()) {
+        if (lidOpen == open || !isLoaded() || !isIntact()) {
             return;
         }
         lidOpen = open;

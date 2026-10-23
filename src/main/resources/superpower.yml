@@ -89,9 +89,11 @@ loot:
     normal: "<dark_gray>상자"
     rare: "<dark_purple>희귀 상자"
     supply: "<gold><bold>보급 상자"
-  spread: "<gold>✦</gold> <gray>경기장 곳곳에 상자 <white><count>개</white>가 놓였습니다! <dark_gray>(우클릭으로 열기 · 먼저 가져가는 사람이 임자)"
+  spread: "<gold>✦</gold> <gray>경기장 곳곳에 상자 <white><count>개</white>가 놓였습니다! <dark_gray>(능력 아이템이 아닌 손으로 우클릭해 열기 · 먼저 가져가는 사람이 임자)"
   # <direction> = 경기장 중심에서 본 방향 (아래 direction), <x> <y> <z> = 좌표
   supply-incoming: "<gold><bold>보급 상자!</bold></gold> <gray>하늘에서 떨어집니다 → <yellow><direction></yellow> <white>(<x>, <y>, <z>)</white>"
+  # 알린 자리가 떨어지는 사이 막혀서 바로 옆에 내려앉았을 때
+  supply-moved: "<gold>보급 상자</gold> <gray>자리가 막혀 바로 옆 <white>(<x>, <y>, <z>)</white>에 떨어졌습니다"
   not-now: "<gray>지금은 상자를 열 수 없습니다"
   direction:
     center: "중앙"

@@ -9,6 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -34,27 +37,34 @@ import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch.ItemUseRes
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.PotionContents;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.configuration.MemoryConfiguration;
+import org.bukkit.entity.EnderPearl;
+import org.bukkit.entity.Endermite;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.CreatureSpawnEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -161,6 +171,35 @@ class LootTest {
         return displays;
     }
 
+    /** A participant throws an ender pearl (spawned and announced like a real throw). */
+    private EnderPearl throwPearl(Player player) {
+        EnderPearl pearl = player.getWorld().spawn(player.getEyeLocation(), EnderPearl.class);
+        pearl.setShooter(player);
+        h.server.getPluginManager().callEvent(new ProjectileLaunchEvent(pearl));
+        return pearl;
+    }
+
+    private boolean pearlTeleportCancelled(Player player, Location to) {
+        PlayerTeleportEvent event = new PlayerTeleportEvent(player, player.getLocation(), to,
+                PlayerTeleportEvent.TeleportCause.ENDER_PEARL);
+        h.server.getPluginManager().callEvent(event);
+        return event.isCancelled();
+    }
+
+    /** Diamond pieces in one chest of {@code tier}, rolled like {@link LootManager} does. */
+    private static int diamonds(LootSettings.Tier tier, Random random) {
+        int items = tier.minItems() + random.nextInt(tier.maxItems() - tier.minItems() + 1);
+        int count = 0;
+        for (LootEntry entry : tier.pool().pick(random, items)) {
+            for (LootEntry.Part part : entry.parts()) {
+                if (part.template() != null && part.template().getType().name().startsWith("DIAMOND_")) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     private SuperpowerMatch probeFight(List<TestPlayer> players) {
         h.registerTestAbilities();
         SuperpowerMatch match = h.startFight();
@@ -188,6 +227,26 @@ class LootTest {
         assertFalse(settings.normal().pool().isEmpty());
         assertFalse(settings.rare().pool().isEmpty());
         assertFalse(settings.supply().pool().isEmpty());
+    }
+
+    @Test
+    void diamondGearStaysOccasionalInTheDefaultPools() {
+        LootSettings settings = LootSettings.defaults(Logger.getLogger("LootTest"));
+        Random random = new Random(42);
+        int rolls = 4000;
+        int rareWithDiamond = 0;
+        int supplyDiamonds = 0;
+        for (int i = 0; i < rolls; i++) {
+            rareWithDiamond += diamonds(settings.rare(), random) > 0 ? 1 : 0;
+            supplyDiamonds += diamonds(settings.supply(), random);
+        }
+        double rare = rareWithDiamond / (double) rolls;
+        double supply = supplyDiamonds / (double) rolls;
+        assertTrue(rare > 0.2 && rare < 0.45, "about one rare chest in three has a diamond piece: " + rare);
+        assertTrue(supply > 0.5 && supply < 0.85, "about 0.7 diamond pieces per supply drop: " + supply);
+        for (int i = 0; i < 200; i++) {
+            assertEquals(0, diamonds(settings.normal(), random), "never in a normal chest");
+        }
     }
 
     @Test
@@ -317,6 +376,13 @@ class LootTest {
         }
         assertTrue(chat(players.getFirst()).stream().anyMatch(line -> line.contains("상자 8개")),
                 "everyone is told about the chests");
+        File record = new File(h.hub.plugin().getDataFolder(), "tempblocks.yml");
+        assertTrue(record.isFile(), "the chest blocks are on disk at once (crash recovery), not a second later");
+        try {
+            assertTrue(Files.readAllLines(record.toPath()).stream().filter(line -> !line.isBlank()).count() >= expected);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
     }
 
     @Test
@@ -379,6 +445,112 @@ class LootTest {
         assertEquals("north-east", LootManager.directionKey(arena.center(), new Location(world, 30, ground, -30)));
         assertEquals("center", LootManager.directionKey(arena.center(), new Location(world, 3, ground, 2)));
         assertEquals("west", LootManager.directionKey(arena.center(), new Location(world, -30, ground, 1)));
+    }
+
+    @Test
+    void chestsNeverPlugADoorwayOrTheFootOfAOneWideStaircase() {
+        FlatWorld world = h.flatWorld();
+        int ground = (int) FlatWorld.SURFACE;
+        // A wall along x at z = 0, three high, with a one-wide archway at x = 0 (the lintel stops a jump onto a chest).
+        world.wallAlongX(-10, 10, 0, 3, Material.STONE);
+        world.setBlock(0, ground, 0, Material.AIR);
+        world.setBlock(0, ground + 1, 0, Material.AIR);
+        // A one-wide staircase going north at x = 20 between two walls: steps at z = 5 (one high) and z = 4 (two).
+        for (int z = 3; z <= 5; z++) {
+            for (int y = ground; y <= ground + 3; y++) {
+                world.setBlock(19, y, z, Material.STONE);
+                world.setBlock(21, y, z, Material.STONE);
+            }
+        }
+        world.setBlock(20, ground, 5, Material.STONE);
+        world.setBlock(20, ground, 4, Material.STONE);
+        world.setBlock(20, ground + 1, 4, Material.STONE);
+        Arena arena = Arena.around(new Location(world, 0.5, ground, 0.5), 40);
+        LootPlacer placer = new LootPlacer(arena, new Random(1), ground, true, block -> false);
+
+        assertFalse(placer.isChestSpot(world.getBlockAt(0, ground, 1)), "never right in front of an archway");
+        assertFalse(placer.isChestSpot(world.getBlockAt(0, ground, -1)), "nor right behind it");
+        assertFalse(placer.isChestSpot(world.getBlockAt(20, ground, 6)), "never at the foot of a narrow staircase");
+        assertTrue(placer.isChestSpot(world.getBlockAt(0, ground, 3)), "a few steps away is fine");
+        assertTrue(placer.isChestSpot(world.getBlockAt(5, ground, 1)), "along a wall is fine");
+        assertTrue(placer.isChestSpot(world.getBlockAt(20, ground, 8)), "away from the stairs is fine");
+        for (LootPlacer.Spot spot : placer.chestSpots(150, List.of(), 0, List.of())) {
+            Block cell = spot.block();
+            assertFalse(cell.getX() == 0 && Math.abs(cell.getZ()) == 1, "no chest plugs the archway: " + cell);
+            assertFalse(cell.getX() == 20 && cell.getZ() == 6, "no chest plugs the staircase: " + cell);
+        }
+    }
+
+    @Test
+    void outsideMapsChestsGoOnlyWhereThePlayersCanWalk() {
+        FlatWorld world = h.flatWorld();
+        int ground = (int) FlatWorld.SURFACE;
+        // A closed hall: walls around a 13 x 13 floor, a roof on top. Big enough for the walk search from inside (and
+        // on its roof), but nobody can walk in or up.
+        for (int x = 10; x <= 24; x++) {
+            for (int z = 10; z <= 24; z++) {
+                boolean wall = x == 10 || x == 24 || z == 10 || z == 24;
+                for (int y = ground; y <= ground + 3; y++) {
+                    if (wall || y == ground + 3) {
+                        world.setBlock(x, y, z, Material.STONE);
+                    }
+                }
+            }
+        }
+        Arena arena = Arena.around(new Location(world, 0.5, ground, 0.5), 40);
+        LootPlacer placer = new LootPlacer(arena, new Random(5), ground, false, block -> false);
+        Block inside = world.getBlockAt(17, ground, 17);
+        Block roof = world.getBlockAt(17, ground + 4, 17);
+        assertTrue(placer.reachable(inside), "the walk search alone takes the closed hall for open ground");
+        assertTrue(placer.reachable(roof), "and its roof");
+
+        LootPlacer connected = new LootPlacer(arena, new Random(5), ground, false, block -> false);
+        assertNull(connected.connectTo(List.of(new Location(world, 0.5, ground + 30, 0.5))),
+                "nobody stands anywhere: the walk search stays");
+        assertNotNull(connected.connectTo(List.of(new Location(world, 0.5, ground, 0.5),
+                new Location(world, -20.5, ground, 3.5))));
+        assertFalse(connected.reachable(inside), "nobody can walk into the closed hall");
+        assertFalse(connected.reachable(roof), "nor onto its roof");
+        assertTrue(connected.reachable(world.getBlockAt(0, ground, 30)));
+        List<LootPlacer.Spot> spots = connected.chestSpots(80, List.of(), 0, List.of());
+        assertTrue(spots.size() >= 20, "plenty of room outside: " + spots.size());
+        for (LootPlacer.Spot spot : spots) {
+            Block cell = spot.block();
+            assertFalse(cell.getX() >= 10 && cell.getX() <= 24 && cell.getZ() >= 10 && cell.getZ() <= 24,
+                    "never in or on the closed hall: " + cell);
+            assertEquals(ground, cell.getY());
+        }
+    }
+
+    @Test
+    void supplyDropsLandInsideTheFinalBorderWhereverTheStarterStood() {
+        FlatWorld world = h.flatWorld();
+        int ground = (int) FlatWorld.SURFACE;
+        // The match was started from the top of a tower: the arena center is 20 blocks above the ground.
+        Arena arena = Arena.around(new Location(world, 0.5, ground + 20, 0.5), 60);
+        LootPlacer placer = new LootPlacer(arena, new Random(11), ground + 20, false, block -> false);
+        List<LootPlacer.Spot> open = placer.supplySpots(2, 10, List.of());
+        assertEquals(2, open.size());
+        for (LootPlacer.Spot spot : open) {
+            Block cell = spot.block();
+            assertTrue(Math.abs(cell.getX()) <= 10 && Math.abs(cell.getZ()) <= 10, "inside the final square: " + cell);
+            assertEquals(ground, cell.getY());
+        }
+
+        // A roofed market fills the final square: the drops land as close to it as they can, not anywhere.
+        for (int x = -12; x <= 12; x++) {
+            for (int z = -12; z <= 12; z++) {
+                world.setBlock(x, ground + 3, z, Material.STONE);
+            }
+        }
+        LootPlacer roofed = new LootPlacer(arena, new Random(11), ground + 20, false, block -> false);
+        roofed.connectTo(List.of(new Location(world, 30.5, ground, 30.5)));
+        List<LootPlacer.Spot> spots = roofed.supplySpots(2, 10, List.of());
+        assertEquals(2, spots.size());
+        for (LootPlacer.Spot spot : spots) {
+            assertTrue(horizontal(arena.center(), spot.center()) <= 20, "close to the final square: " + spot);
+            assertEquals(ground, spot.block().getY(), "on the ground, not on the market roof");
+        }
     }
 
     // =================================================================== opening
@@ -490,6 +662,35 @@ class LootTest {
         assertSame(chest.getInventory(), enemy.getOpenInventory().getTopInventory());
     }
 
+    @Test
+    void theAbilityItemCastsInsteadOfOpeningAndLeavesTheOffHandConsumableAlone() {
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = probeFight(players);
+        LootManager loot = loot(match);
+        TestPlayer player = players.getFirst();
+        LootChest chest = loot.chests().getFirst();
+        standNextTo(player, chest, 1);
+        player.getInventory().setItemInOffHand(loot.consumables().create(LootConsumables.Kind.RECHARGE_CHARM, 2, 25));
+        player.getInventory().setHeldItemSlot(AbilityItems.SLOT);
+        assertTrue(loot.isAbilityItem(player.getInventory().getItemInMainHand()));
+
+        PlayerInteractEvent click = rightClick(player, chest.block());
+        assertEquals(Event.Result.DENY, click.useInteractedBlock(), "never the vanilla chest");
+        assertNotSame(chest.getInventory(), player.getOpenInventory().getTopInventory(),
+                "the ability item casts, it does not open the chest");
+        assertTrue(match.context().cooldownRemaining(player) > 0, "the active skill was used");
+        // The client sends the off-hand use right after a main-hand use that does nothing in vanilla.
+        PlayerInteractEvent offHand = new PlayerInteractEvent(player, Action.RIGHT_CLICK_BLOCK,
+                player.getInventory().getItemInOffHand(), chest.block(), BlockFace.UP, EquipmentSlot.OFF_HAND);
+        h.server.getPluginManager().callEvent(offHand);
+        assertEquals(2, player.getInventory().getItemInOffHand().getAmount(), "the charm is not used with the skill");
+        assertTrue(match.context().cooldownRemaining(player) > 0, "the cooldown keeps running");
+
+        player.getInventory().setHeldItemSlot(0);
+        rightClick(player, chest.block());
+        assertSame(chest.getInventory(), player.getOpenInventory().getTopInventory(), "any other hand opens it");
+    }
+
     // =================================================================== supply drops
 
     @Test
@@ -523,7 +724,8 @@ class LootTest {
         for (LootChest supply : supplies) {
             assertEquals(Material.CHEST, supply.block().getType());
             assertFalse(supply.getInventory().isEmpty());
-            assertTrue(horizontal(center, supply.center()) <= 10 * 1.6 + 1, "near the center the border keeps");
+            assertTrue(Math.abs(supply.center().getX() - center.getX()) <= 10.5
+                    && Math.abs(supply.center().getZ() - center.getZ()) <= 10.5, "inside the final border");
             ItemDisplay marker = supply.marker();
             assertNotNull(marker);
             assertTrue(marker.isValid() && marker.isGlowing(), "a glowing marker while unopened");
@@ -564,7 +766,7 @@ class LootTest {
         assertTrue(match.useUltimate(player).succeeded());
         assertEquals(0.0, match.context().gauge(player), EPSILON);
         actionBars(player);
-        h.ticks(1);
+        h.ticks(LootManager.USE_REPEAT_TICKS);
         useHeld(player);
         assertEquals(0.0, match.context().gauge(player), EPSILON, "nothing charges during the recharge delay");
         assertEquals(2, player.getInventory().getItemInMainHand().getAmount(), "a refused crystal is kept");
@@ -577,9 +779,43 @@ class LootTest {
         assertEquals(1, player.getInventory().getItemInMainHand().getAmount());
         match.setGauge(player, 100);
         assertEquals(ItemUseResult.GAUGE_FULL, match.chargeGaugeWithItem(player, 25));
-        h.ticks(1);
+        h.ticks(LootManager.USE_REPEAT_TICKS);
+        actionBars(player);
         useHeld(player);
         assertEquals(1, player.getInventory().getItemInMainHand().getAmount(), "not wasted on a full gauge");
+        assertTrue(actionBars(player).stream().anyMatch(bar -> bar.contains("가득")), "the player is told why");
+    }
+
+    @Test
+    void holdingTheButtonUsesOneConsumablePerPress() {
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = probeFight(players);
+        TestPlayer player = players.getFirst();
+        LootManager loot = loot(match);
+        player.getInventory().setItemInMainHand(loot.consumables().create(LootConsumables.Kind.ULTIMATE_CRYSTAL, 3,
+                25));
+        match.setGauge(player, 60);
+        // A held button: the client repeats the use every 4 ticks.
+        for (int i = 0; i < 6; i++) {
+            useHeld(player);
+            h.ticks(4);
+        }
+        assertEquals(85.0, match.context().gauge(player), EPSILON, "one crystal for one press");
+        assertEquals(2, player.getInventory().getItemInMainHand().getAmount());
+        h.ticks(LootManager.USE_REPEAT_TICKS);
+        useHeld(player);
+        assertEquals(100.0, match.context().gauge(player), EPSILON, "the next press uses the next crystal");
+        assertEquals(1, player.getInventory().getItemInMainHand().getAmount());
+
+        h.ticks(LootManager.USE_REPEAT_TICKS);
+        actionBars(player);
+        for (int i = 0; i < 6; i++) {
+            useHeld(player);
+            h.ticks(4);
+        }
+        assertEquals(1, actionBars(player).stream().filter(bar -> bar.contains("가득")).count(),
+                "a refused press is told once, not on every repeat");
+        assertEquals(1, player.getInventory().getItemInMainHand().getAmount());
     }
 
     @Test
@@ -598,7 +834,7 @@ class LootTest {
         assertEquals(0, player.getCooldown(h.game.items().cooldownGroup()), "the item overlay is cleared");
         assertEquals(1, player.getInventory().getItemInMainHand().getAmount());
 
-        h.ticks(1);
+        h.ticks(LootManager.USE_REPEAT_TICKS);
         useHeld(player);
         assertEquals(1, player.getInventory().getItemInMainHand().getAmount(), "not wasted when ready anyway");
         assertEquals(ItemUseResult.COOLDOWN_READY, match.rechargeActiveWithItem(player));
@@ -683,6 +919,52 @@ class LootTest {
         assertNotSame(open.getInventory(), viewer.getOpenInventory().getTopInventory(), "open chests were closed");
         assertTrue(loot.chests().isEmpty());
         assertEquals(0, loot.fallingCount());
+    }
+
+    @Test
+    void enderPearlsInFlightNeverOutliveTheMatchOrCarryPlayersAcrossWorlds() {
+        World lobby = h.server.addSimpleWorld("lobby");
+        List<TestPlayer> players = h.join(3);
+        SuperpowerMatch match = h.startFight();
+        GameSession session = match.session();
+        TestPlayer thrower = players.get(0);
+        EnderPearl pearl = throwPearl(thrower);
+        assertTrue(session.isMatchEntity(pearl), "a thrown pearl belongs to the match");
+        assertFalse(pearl.isPersistent());
+
+        TestPlayer leaver = players.get(1);
+        EnderPearl leaving = throwPearl(leaver);
+        assertTrue(leaver.disconnect());
+        assertFalse(leaving.isValid(), "removed before the player is saved, so it never comes back on the next join");
+        assertTrue(pearl.isValid(), "other pearls fly on");
+
+        assertFalse(pearlTeleportCancelled(thrower, thrower.getLocation().add(3, 0, 0)), "pearls work in the arena");
+        assertTrue(pearlTeleportCancelled(thrower, lobby.getSpawnLocation()), "but never out of the arena world");
+        TestPlayer watcher = h.join("Watcher");
+        assertTrue(session.isMember(watcher));
+        assertFalse(session.isInPlay(watcher));
+        assertTrue(pearlTeleportCancelled(watcher, thrower.getLocation()), "and never for anyone not in play");
+
+        Endermite mite = thrower.getWorld().spawn(thrower.getLocation(), Endermite.class);
+        CreatureSpawnEvent hatch = new CreatureSpawnEvent(mite, CreatureSpawnEvent.SpawnReason.ENDER_PEARL);
+        h.server.getPluginManager().callEvent(hatch);
+        assertTrue(hatch.isCancelled(), "no endermite that would outlive the match");
+
+        assertTrue(h.hub.games().stop(Component.text("test")));
+        assertFalse(pearl.isValid(), "a pearl still flying is gone before everyone is restored");
+    }
+
+    @Test
+    void aPearlThrownDuringTheResultsIsRemovedAtOnce() {
+        List<TestPlayer> players = h.join(2);
+        SuperpowerMatch match = h.startFight();
+        GameSession session = match.session();
+        session.eliminate(players.get(1), players.get(0));
+        assertEquals(GameState.ENDING, session.state(), "a winner");
+        TestPlayer winner = players.get(0);
+        EnderPearl pearl = throwPearl(winner);
+        assertFalse(pearl.isValid(), "the match is over: nothing it creates stays");
+        assertTrue(pearlTeleportCancelled(winner, winner.getLocation().add(3, 0, 0)), "no pearl rides after the end");
     }
 
     @Test
