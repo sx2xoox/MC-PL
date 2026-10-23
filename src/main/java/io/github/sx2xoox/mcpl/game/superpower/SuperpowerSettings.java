@@ -32,6 +32,7 @@ import org.jspecify.annotations.Nullable;
  * @param borderFinalSize        final border side length in blocks
  * @param borderDamagePerSecond  damage per second outside the border (health points)
  * @param showAbilityInKillFeed  show {@code Name(능력)} in the kill feed
+ * @param showTeamAbilities      in team mode, teammates see each other's abilities (sidebar, chat, command)
  * @param abilityItemMaterial    base item of the ability item (rendered with the ability icon model)
  * @param particleScale          multiplier for ability particle counts ({@code AbilityContext#effectScale()}),
  *                               {@value #MIN_PARTICLE_SCALE}..{@value #MAX_PARTICLE_SCALE}
@@ -54,6 +55,7 @@ public record SuperpowerSettings(
         double borderFinalSize,
         double borderDamagePerSecond,
         boolean showAbilityInKillFeed,
+        boolean showTeamAbilities,
         Material abilityItemMaterial,
         double particleScale
 ) {
@@ -75,6 +77,7 @@ public record SuperpowerSettings(
     public static final String BORDER_FINAL = "border.final-diameter";
     public static final String BORDER_DAMAGE = "border.damage-per-second";
     public static final String KILL_FEED_ABILITY = "show-ability-in-kill-feed";
+    public static final String TEAM_ABILITIES = "show-team-abilities";
     public static final String ABILITY_ITEM = "ability-item";
     public static final String PARTICLE_SCALE = "effects.particle-scale";
 
@@ -97,8 +100,8 @@ public record SuperpowerSettings(
     public SuperpowerSettings forPractice() {
         return new SuperpowerSettings(SelectionMode.RANDOM, 0, 0, choiceTicks, 0, 0, kit, gaugePerDamageDealt,
                 gaugePerDamageTaken, gaugePerSecond, announceUltimates, ultimateLockTicks, borderDelayTicks,
-                borderShrinkTicks, Double.MAX_VALUE, borderDamagePerSecond, showAbilityInKillFeed, abilityItemMaterial,
-                particleScale);
+                borderShrinkTicks, Double.MAX_VALUE, borderDamagePerSecond, showAbilityInKillFeed, showTeamAbilities,
+                abilityItemMaterial, particleScale);
     }
 
     /** The kit as fresh copies, safe to put into an inventory. */
@@ -163,6 +166,9 @@ public record SuperpowerSettings(
 
         d.set(KILL_FEED_ABILITY, true);
         d.setComments(KILL_FEED_ABILITY, List.of("킬로그에 능력 이름 표시: ☠ 철수(화염술사) → 영희(빙결술사)"));
+        d.set(TEAM_ABILITIES, true);
+        d.setComments(TEAM_ABILITIES, List.of(
+                "팀전에서 같은 팀끼리 서로의 능력을 봅니다 (사이드바, 전투 시작 채팅, /게임 능력 팀)"));
         d.set(ABILITY_ITEM, Material.IRON_INGOT.name());
         d.setComments(ABILITY_ITEM, List.of(
                 "능력 아이템의 기본 재료 (옛 \"능력자\" 플러그인의 철괴). 모양은 능력 아이콘으로 보입니다."));
@@ -212,6 +218,7 @@ public record SuperpowerSettings(
                 Math.max(1.0, finite(s.getDouble(BORDER_FINAL, 20), 20)),
                 nonNegative(s.getDouble(BORDER_DAMAGE, 2.0)),
                 s.getBoolean(KILL_FEED_ABILITY, true),
+                s.getBoolean(TEAM_ABILITIES, true),
                 item,
                 Math.max(MIN_PARTICLE_SCALE,
                         Math.min(MAX_PARTICLE_SCALE, finite(s.getDouble(PARTICLE_SCALE, 1.0), 1.0))));

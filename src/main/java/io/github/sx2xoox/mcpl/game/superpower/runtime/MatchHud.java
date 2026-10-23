@@ -23,8 +23,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The match HUD: one shared boss bar (phase and border timer) and a private sidebar per viewer (alive count, own
- * kills, own ability with cooldown/gauge, team, border state, time). Spectators get a reduced sidebar. Updated from
- * the match tick (every 10 ticks); the sidebar only sends changed lines.
+ * kills, own ability with cooldown/gauge, team and the teammates' abilities, border state, time). Spectators get a
+ * reduced sidebar (eliminated players keep their team). Updated from the match tick (every 10 ticks); the sidebar only
+ * sends changed lines.
  */
 final class MatchHud {
 
@@ -183,16 +184,11 @@ final class MatchHud {
             MatchTeam team = session.teamOf(participant.id());
             if (team != null) {
                 lines.add(Component.empty());
-                // "팀 빨강", not "팀 빨강 팀" (displayName already ends with 팀).
-                lines.add(messages.get("hud.team",
-                        Messages.tag("team", Component.text(team.shortName(), team.color()))));
+                lines.add(teamLine(team));
+                lines.addAll(teammateLines(participant.id(), Sidebar.MAX_LINES - lines.size() - fightLineCount()));
             }
         }
-        if (match.phase() == MatchPhase.FIGHT) {
-            lines.add(Component.empty());
-            lines.add(borderLine());
-            lines.add(timeLine());
-        }
+        addFightLines(lines);
         return lines;
     }
 
@@ -202,15 +198,65 @@ final class MatchHud {
         lines.add(aliveLine());
         if (eliminated != null) {
             lines.add(messages.get("hud.kills", Messages.tag("kills", kills(eliminated))));
+            MatchTeam team = match.showsTeamAbilities() ? session.teamOf(eliminated.id()) : null;
+            if (team != null) {
+                lines.add(Component.empty());
+                lines.add(teamLine(team));
+                lines.addAll(teammateLines(eliminated.id(), Sidebar.MAX_LINES - lines.size() - fightLineCount() - 2));
+            }
         }
+        addFightLines(lines);
+        lines.add(Component.empty());
+        lines.add(messages.get("hud.spectating"));
+        return lines;
+    }
+
+    private Component teamLine(MatchTeam team) {
+        // "팀 빨강", not "팀 빨강 팀" (displayName already ends with 팀).
+        return messages.get("hud.team", Messages.tag("team", Component.text(team.shortName(), team.color())));
+    }
+
+    /**
+     * One line per teammate with their ability (alive teammates first), at most {@code budget} lines: when the team
+     * is too big for the sidebar the last line counts the rest.
+     */
+    private List<Component> teammateLines(UUID self, int budget) {
+        if (budget <= 0 || !match.showsTeamAbilities()) {
+            return List.of();
+        }
+        List<Participant> mates = match.teammates(self);
+        int shown = mates.size() <= budget ? mates.size() : budget - 1;
+        List<Component> lines = new ArrayList<>();
+        for (Participant mate : mates.subList(0, shown)) {
+            lines.add(teammateLine(mate));
+        }
+        if (shown < mates.size()) {
+            lines.add(messages.get("hud.teammates-more", Messages.tag("count", mates.size() - shown)));
+        }
+        return lines;
+    }
+
+    private Component teammateLine(Participant mate) {
+        AbilityInfo info = match.knownAbility(mate);
+        if (!session.isAlive(mate.id())) {
+            return messages.get("hud.teammate-out", Messages.tag("player", session.plainName(mate.id())),
+                    Messages.tag("ability", info == null ? "" : info.name()));
+        }
+        return messages.get("hud.teammate", Messages.tag("player", session.name(mate.id())),
+                Messages.tag("ability", info == null ? messages.get("hud.teammate-unknown") : AbilityTexts.name(info)));
+    }
+
+    /** Lines {@link #addFightLines} adds. */
+    private int fightLineCount() {
+        return match.phase() == MatchPhase.FIGHT ? 3 : 0;
+    }
+
+    private void addFightLines(List<Component> lines) {
         if (match.phase() == MatchPhase.FIGHT) {
             lines.add(Component.empty());
             lines.add(borderLine());
             lines.add(timeLine());
         }
-        lines.add(Component.empty());
-        lines.add(messages.get("hud.spectating"));
-        return lines;
     }
 
     private Component aliveLine() {

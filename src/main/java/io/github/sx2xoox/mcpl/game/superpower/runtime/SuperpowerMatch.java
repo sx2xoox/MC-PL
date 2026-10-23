@@ -90,6 +90,9 @@ public final class SuperpowerMatch implements GameInstance {
     /** Outcome of {@link #reroll(Player)}. */
     public enum RerollResult { OK, NOT_PARTICIPANT, WRONG_PHASE, WRONG_MODE, FORCED, NONE_LEFT, NO_OPTIONS }
 
+    /** Outcome of {@link #showTeamAbilities(Player)}. */
+    public enum TeamAbilitiesResult { OK, NOT_TEAM_MODE, DISABLED, NO_TEAM, ALONE }
+
     /** Outcome of {@link #assign(Player, String)}. */
     public enum AssignResult { APPLIED, NOT_STARTED, NOT_PARTICIPANT, TOO_LATE }
 
@@ -516,6 +519,7 @@ public final class SuperpowerMatch implements GameInstance {
                 Messages.tag("border", borderHint)));
         // Every ability is final now (rerolls and assignments end with the prep phase).
         sendSpectatorSummary();
+        sendTeamSummaries();
     }
 
     /** Creates and binds the participant's ability (not granted yet); false if that failed. */
@@ -810,6 +814,96 @@ public final class SuperpowerMatch implements GameInstance {
         for (Player spectator : spectators) {
             lines.forEach(spectator::sendMessage);
         }
+    }
+
+    // =================================================================== team abilities
+
+    /** True if teammates see each other's abilities in this match (team mode and enabled in the config). */
+    boolean showsTeamAbilities() {
+        return session.isTeamMode() && settings.showTeamAbilities();
+    }
+
+    /** The other participants on {@code playerId}'s team: alive ones first, then eliminated ones, in team order. */
+    List<Participant> teammates(UUID playerId) {
+        MatchTeam team = session.teamOf(playerId);
+        if (team == null) {
+            return List.of();
+        }
+        List<Participant> alive = new ArrayList<>();
+        List<Participant> out = new ArrayList<>();
+        for (UUID member : team.members()) {
+            Participant mate = participants.get(member);
+            if (mate != null && !member.equals(playerId)) {
+                (session.isAlive(member) ? alive : out).add(mate);
+            }
+        }
+        alive.addAll(out);
+        return alive;
+    }
+
+    /** The teammate's ability once their teammates may know it: assigned and revealed to its owner. */
+    @Nullable AbilityInfo knownAbility(Participant teammate) {
+        return teammate.abilityId == null || isRevealing(teammate) ? null : info(teammate.abilityId);
+    }
+
+    /** Chat lines with the abilities of {@code playerId}'s teammates (hover: the ability card). */
+    private List<Component> teamSummaryLines(UUID playerId) {
+        List<Component> lines = new ArrayList<>();
+        for (Participant mate : teammates(playerId)) {
+            AbilityInfo info = knownAbility(mate);
+            if (session.isAlive(mate.id())) {
+                lines.add(messages.get("summary.team-line", Messages.tag("player", session.name(mate.id())),
+                        Messages.tag("ability", info == null ? messages.get("summary.team-unknown")
+                                : texts.nameWithCard(info, params(info)))));
+            } else {
+                lines.add(messages.get("summary.team-line-out", Messages.tag("player", session.plainName(mate.id())),
+                        Messages.tag("ability", info == null ? "" : info.name())));
+            }
+        }
+        return lines;
+    }
+
+    private void sendTeamSummary(Player viewer, MatchTeam team, List<Component> lines) {
+        viewer.sendMessage(messages.prefixed("summary.team-header", Messages.tag("team", team.displayName())));
+        lines.forEach(viewer::sendMessage);
+    }
+
+    /** When the fight starts every player in play learns the (now final) abilities of their teammates. */
+    private void sendTeamSummaries() {
+        if (!showsTeamAbilities()) {
+            return;
+        }
+        for (Participant participant : participants.values()) {
+            Player player = participant.player();
+            MatchTeam team = session.teamOf(participant.id());
+            if (player == null || team == null || !session.isInPlay(player)) {
+                continue;
+            }
+            List<Component> lines = teamSummaryLines(participant.id());
+            if (!lines.isEmpty()) {
+                sendTeamSummary(player, team, lines);
+            }
+        }
+    }
+
+    /** {@code /게임 능력 팀}: sends the abilities of the viewer's teammates. */
+    public TeamAbilitiesResult showTeamAbilities(Player viewer) {
+        if (!session.isTeamMode()) {
+            return TeamAbilitiesResult.NOT_TEAM_MODE;
+        }
+        if (!settings.showTeamAbilities()) {
+            return TeamAbilitiesResult.DISABLED;
+        }
+        MatchTeam team = session.teamOf(viewer.getUniqueId());
+        if (team == null) {
+            return TeamAbilitiesResult.NO_TEAM;
+        }
+        List<Component> lines = teamSummaryLines(viewer.getUniqueId());
+        if (lines.isEmpty()) {
+            return TeamAbilitiesResult.ALONE;
+        }
+        sendTeamSummary(viewer, team, lines);
+        return TeamAbilitiesResult.OK;
     }
 
     // =================================================================== menus
