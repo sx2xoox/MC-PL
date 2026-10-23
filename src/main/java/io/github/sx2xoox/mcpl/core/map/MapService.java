@@ -197,6 +197,7 @@ public final class MapService {
         if (!name.startsWith(WORLD_PREFIX)) {
             throw new IllegalStateException("Refusing to delete " + name);
         }
+        List<Path> folders = worldPaths(map);
         World world = Bukkit.getWorld(name);
         if (world != null) {
             World main = Bukkit.getWorlds().getFirst();
@@ -207,27 +208,53 @@ public final class MapService {
                 throw new IllegalStateException("Could not unload the world " + name);
             }
         }
-        if (hasWorldFolder(map)) {
-            File folder = worldFolder(map);
+        for (Path folder : folders) {
+            // Only ever a folder named after the map world, never the main save around it.
+            if (!Files.isDirectory(folder) || !name.equals(String.valueOf(folder.getFileName()))) {
+                continue;
+            }
             try {
-                deleteRecursively(folder.toPath());
+                deleteRecursively(folder);
             } catch (IOException e) {
                 throw new IllegalStateException("Could not delete " + folder, e);
             }
         }
     }
 
-    private static File worldFolder(ArenaMap map) {
-        return new File(Bukkit.getWorldContainer(), worldName(map));
+    /**
+     * Where the map's world may live on disk. Paper 26 keeps every world as a dimension of the main save
+     * ({@code <save>/dimensions/minecraft/<name>}, next to the overworld's folder); older servers kept it in
+     * {@code <world container>/<name>} (Paper migrates that one when the world is loaded).
+     */
+    private static List<Path> worldPaths(ArenaMap map) {
+        String name = worldName(map);
+        List<Path> paths = new ArrayList<>(2);
+        try {
+            World loaded = Bukkit.getWorld(name);
+            if (loaded != null) {
+                paths.add(loaded.getWorldPath());
+            } else if (!Bukkit.getWorlds().isEmpty()) {
+                paths.add(dimensionPath(Bukkit.getWorlds().getFirst().getWorldPath(), name));
+            }
+        } catch (RuntimeException noWorldStorage) {
+            // test servers have no world folders
+        }
+        try {
+            paths.add(new File(Bukkit.getWorldContainer(), name).toPath());
+        } catch (RuntimeException noWorldContainer) {
+            // test servers have no world container
+        }
+        return paths;
     }
 
-    /** True if the map's world folder exists (false where the server has no world folder, as in tests). */
+    /** The folder of the world {@code name} next to the main world's folder {@code overworld}. */
+    static Path dimensionPath(Path overworld, String name) {
+        return overworld.resolveSibling(name);
+    }
+
+    /** True if the map's world exists on disk (false where the server has no world folders, as in tests). */
     private static boolean hasWorldFolder(ArenaMap map) {
-        try {
-            return worldFolder(map).isDirectory();
-        } catch (RuntimeException noWorldContainer) {
-            return false;
-        }
+        return worldPaths(map).stream().anyMatch(Files::isDirectory);
     }
 
     private static void deleteRecursively(Path root) throws IOException {

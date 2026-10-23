@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
+
 import io.github.sx2xoox.mcpl.MCPLPlugin;
 import io.github.sx2xoox.mcpl.core.Hub;
 import org.bukkit.Location;
@@ -66,5 +68,13 @@ class MapCommandTest {
         assertFalse(hub.maps().isBuilding());
         assertTrue(server.dispatchCommand(admin, "게임 경기장 맵 citadel 이동"));
         assertEquals(world, admin.getWorld());
+    }
+
+    @Test
+    void mapWorldsLiveNextToTheOverworldInPaper26Saves() {
+        // Paper 26 stores every world as a dimension of the main save: <save>/dimensions/minecraft/<name>.
+        Path overworld = Path.of("server", "world", "dimensions", "minecraft", "overworld");
+        assertEquals(Path.of("server", "world", "dimensions", "minecraft", "mcpl_map_citadel"),
+                MapService.dimensionPath(overworld, "mcpl_map_citadel"));
     }
 }
