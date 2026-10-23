@@ -1041,6 +1041,10 @@ public final class MinerAbility extends Ability {
             double radius = Math.max(0, params().num("crash_radius"));
             long slowTicks = params().ticks("crash_slow_duration");
             double slow = Math.clamp(params().num("crash_slow") / 100.0, 0.0, 1.0);
+            Location spill = at.clone().add(forward.clone().multiply(0.8));
+            Location front = spill.clone().add(0, 0.6, 0);
+            // The crash breaks the ground first, so the riders are thrown onto ground that is still there afterwards.
+            ctx().breakBlocks(owner, front, params().num("crash_block_radius"));
             Location landing = tossSpot();
             Set<UUID> buried = new HashSet<>();
             int thrown = 0;
@@ -1059,7 +1063,6 @@ public final class MinerAbility extends Ability {
                 }
             }
             riders.clear();
-            Location spill = at.clone().add(forward.clone().multiply(0.8));
             for (LivingEntity enemy : ctx().enemiesNear(owner, spill.clone().add(0, 0.5, 0), radius)) {
                 if (buried.contains(enemy.getUniqueId())
                         || Math.abs(enemy.getLocation().getY() - spill.getY()) > SPILL_HEIGHT) {
@@ -1071,8 +1074,6 @@ public final class MinerAbility extends Ability {
                     bury(enemy, slow, slowTicks);
                 }
             }
-            Location front = spill.clone().add(0, 0.6, 0);
-            ctx().breakBlocks(owner, front, params().num("crash_block_radius"));
             Vfx.dot(front, Particle.FLASH, PALETTE.core(), true);
             world.spawnParticle(Particle.BLOCK, front, Vfx.n(ctx(), 24), radius * 0.35, 0.4, radius * 0.35, 0.2,
                     Material.IRON_ORE.createBlockData(), true);

@@ -130,8 +130,10 @@ public final class DragonAbility extends Ability {
     private static final double BOMB_GRAVITY = 0.1;
     private static final double BOMB_MAX_SPEED = 1.8;
     private static final double BOMB_MAX_FALL = 40;
-    /** After the bomb blew out a crater, its fire pool settles at most this far down into it. */
-    private static final double MAX_DEPTH_BELOW_IMPACT = 3;
+    /** After the bomb blew out a crater, its fire pool also burns this far down into it. */
+    private static final double CRATER_DEPTH = 2.5;
+    /** Below the pool's ground, enemies are burnt down to this depth on unbroken ground. */
+    private static final double POOL_DEPTH = 0.5;
     /** Height (above the pool's ground) up to which the smouldering pool burns. */
     private static final double POOL_HEIGHT = 1.5;
     /**
@@ -731,17 +733,16 @@ public final class DragonAbility extends Ability {
             owner.sendActionBar(Text.mm("<" + VIOLET + ">브레스 폭탄!</" + VIOLET + "> <gray>" + struck
                     + "명 적중</gray>"));
         }
-        Location settled = impact;
-        if (ctx().breakBlocks(owner, center, params().num("bomb_block_radius")) > 0) {
-            // The fire pools in the crater the bomb blew out.
-            Location floor = groundBelow(impact.clone().add(0, 0.1, 0), MAX_DEPTH_BELOW_IMPACT);
-            settled = floor == null ? impact : floor;
-        }
-        pool(owner, settled, radius);
+        // The pool stays at the impact height (seen over the crater's rim) and burns down into the crater too.
+        boolean crater = ctx().breakBlocks(owner, center, params().num("bomb_block_radius")) > 0;
+        pool(owner, impact, radius, crater ? CRATER_DEPTH : POOL_DEPTH);
     }
 
-    /** Dragon fire smoulders where the bomb fell, burning enemies who stay in it. */
-    private void pool(Player owner, Location impact, double radius) {
+    /**
+     * Dragon fire smoulders where the bomb fell, burning enemies who stay in it (down to {@code depth} below its
+     * ground, so a crater under it burns too).
+     */
+    private void pool(Player owner, Location impact, double radius, double depth) {
         long duration = params().ticks("pool_duration");
         if (duration <= 0) {
             return;
@@ -776,7 +777,7 @@ public final class DragonAbility extends Ability {
                     double dy = enemy.getLocation().getY() - ground.getY();
                     double dx = enemy.getLocation().getX() - ground.getX();
                     double dz = enemy.getLocation().getZ() - ground.getZ();
-                    if (dy < -0.5 || dy > POOL_HEIGHT || dx * dx + dz * dz > poolRadius * poolRadius) {
+                    if (dy < -depth || dy > POOL_HEIGHT || dx * dx + dz * dz > poolRadius * poolRadius) {
                         continue;
                     }
                     Combat.hit(ctx(), owner, enemy, damage);

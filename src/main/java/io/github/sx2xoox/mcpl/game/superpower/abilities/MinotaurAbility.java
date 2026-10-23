@@ -168,8 +168,15 @@ public final class MinotaurAbility extends Ability {
     private static final double MAX_LAG_MARGIN = 1.2;
     /** Walls closer than this to the rush's path (horizontally) are smashed. */
     private static final double SMASH_REACH = 1.25;
-    /** The rush tunnels through terrain along a line this high over the feet (between the feet and head blocks). */
+    /**
+     * The rush tunnels through terrain along a line this high over the bottom of the block its feet are in (between
+     * the feet and head blocks), so the floor under the hooves (a slab or a stair too) is never touched.
+     */
     private static final double RUSH_TUNNEL_HEIGHT = 1.0;
+    /** The tunnel ends this far past the end of the rush (the front of the body). */
+    private static final double TUNNEL_LEAD = 0.3;
+    /** The way ahead is checked (and the tunnel cut) in steps of this many blocks. */
+    private static final double WAY_STEP = 0.4;
     private static final double GORE_AHEAD = 1.2;
     private static final double GORE_REACH = 1.4;
     private static final long LANDING_GUARD_TICKS = 100;
@@ -722,7 +729,8 @@ public final class MinotaurAbility extends Ability {
     /**
      * The distance from the rush's line within which blocks break for a tunnel {@code width} blocks wide: the centers
      * of the feet and head blocks lie half a block below and above the line, the outermost ones
-     * {@code (width - 1) / 2} to its side. Up to three blocks wide the ground under the hooves (1.5 below) stays.
+     * {@code (width - 1) / 2} to its side. The floor under the hooves (1.5 below) always stays: a charge never digs
+     * more than one block below its line.
      */
     private static double tunnelRadius(double width) {
         double side = Math.max(0, (width - 1) / 2);
@@ -749,6 +757,10 @@ public final class MinotaurAbility extends Ability {
         private Location start;
         private Location last;
         private double sent;
+        /** How far from the start the tunnel through real terrain has been cut. */
+        private double tunnelled;
+        /** How far from the start the first real wall that stays standing is (the rush ends there). */
+        private double wall = Double.POSITIVE_INFINITY;
         private int stalls;
         private boolean moved;
         private boolean ended;
@@ -808,7 +820,9 @@ public final class MinotaurAbility extends Ability {
 
         /**
          * Smashes the labyrinth walls in the way of where the rush is carrying the owner (plus its ping's worth), and
-         * on battle maps a tunnel through the real walls and terrain in the way.
+         * on battle maps a tunnel through the real walls and terrain in the way: cut step by step while the way is
+         * checked, so it never runs past a block that stays standing (the rush stops there) nor past the end of the
+         * rush.
          */
         private void smashAhead() {
             Labyrinth labyrinth = maze;
@@ -816,22 +830,32 @@ public final class MinotaurAbility extends Ability {
                 return;
             }
             double back = Math.max(0, sent - RUSH_SPEED);
-            Location from = start.clone().add(direction.clone().multiply(back));
-            double reach = sent + RUSH_SPEED * (2 + lag) + 0.8 - back;
-            double width = params().num("rush_block_width");
-            if (width > 0) {
-                // A line at hip height: the blocks at the feet and head (within half the width of it) break, never the
-                // ground under the hooves.
-                Location hips = from.clone().add(0, RUSH_TUNNEL_HEIGHT, 0);
-                ctx().breakBlocksAlong(owner, hips, hips.clone().add(direction.clone().multiply(reach)),
-                        tunnelRadius(width));
+            if (back >= wall) {
+                return; // stopped by a real wall: nothing behind it may break
             }
-            // Never past a real wall: the rush stops there, and nothing behind it may break.
-            for (double d = 0; d <= reach; d += 0.4) {
-                Location at = from.clone().add(direction.clone().multiply(d));
-                if (labyrinth.blocksTheWay(at.getBlock()) || labyrinth.blocksTheWay(at.clone().add(0, 1, 0)
-                        .getBlock())) {
+            Location from = start.clone().add(direction.clone().multiply(back));
+            double reach = Math.min(sent + RUSH_SPEED * (2 + lag) + 0.8, wall) - back;
+            double width = params().num("rush_block_width");
+            double tunnelEnd = width > 0 ? Math.min(back + reach, distance + TUNNEL_LEAD) : 0;
+            // The block the feet are in (a slab or a stair under them rounds up to the block above it).
+            double feet = Math.floor(start.getY() + 0.5);
+            for (double d = 0; d <= reach; d += WAY_STEP) {
+                double along = back + d;
+                if (along > tunnelled && tunnelled < tunnelEnd) {
+                    double end = Math.min(tunnelEnd, along);
+                    Location line = start.clone().add(direction.clone().multiply(tunnelled));
+                    line.setY(feet + RUSH_TUNNEL_HEIGHT);
+                    ctx().breakBlocksAlong(owner, line, line.clone().add(direction.clone().multiply(end - tunnelled)),
+                            tunnelRadius(width));
+                    tunnelled = end;
+                }
+                // Never past a real wall: the rush stops there, and nothing behind it may break.
+                Location at = start.clone().add(direction.clone().multiply(along));
+                at.setY(feet + 0.5);
+                Block body = at.getBlock();
+                if (labyrinth.blocksTheWay(body) || labyrinth.blocksTheWay(body.getRelative(0, 1, 0))) {
                     reach = d;
+                    wall = along;
                     break;
                 }
             }

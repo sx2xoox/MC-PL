@@ -246,7 +246,9 @@ public interface AbilityContext {
 
     /**
      * {@link #breakBlocks} along the path from {@code from} to {@code to} (every block within {@code radius} of the
-     * segment): a charge or a dash smashing through cover.
+     * segment): a charge or a dash smashing through cover. It never digs into the floor the charge runs on: blocks
+     * whose centers lie more than one block below the segment stay, so a line one block over the feet (between the
+     * feet and head blocks) tunnels through walls but leaves the ground under them.
      */
     int breakBlocksAlong(Player owner, Location from, Location to, double radius);
 }

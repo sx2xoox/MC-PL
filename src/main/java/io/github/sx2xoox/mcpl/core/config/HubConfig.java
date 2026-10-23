@@ -210,8 +210,11 @@ public final class HubConfig {
 
         ConfigurationSection protectionSection = config.getConfigurationSection("protection");
         protection = protectionSection == null ? ProtectionSettings.ALL : ProtectionSettings.read(protectionSection);
-        String scope = config.getString("protection.ability-block-damage", BlockDamageScope.MAP_WORLDS.name());
-        BlockDamageScope parsed = BlockDamageScope.parse(scope);
+        // YAML reads an unquoted OFF (or on/yes/no) as a boolean: off/false is OFF, on/true the default.
+        Object scope = config.get("protection.ability-block-damage", BlockDamageScope.MAP_WORLDS.name());
+        BlockDamageScope parsed = scope instanceof Boolean on
+                ? on ? BlockDamageScope.MAP_WORLDS : BlockDamageScope.OFF
+                : BlockDamageScope.parse(scope == null ? null : scope.toString());
         if (parsed == null) {
             plugin.getLogger().warning("Unknown protection.ability-block-damage '" + scope
                     + "' (use OFF, MAP_WORLDS or ALL_WORLDS); using MAP_WORLDS.");

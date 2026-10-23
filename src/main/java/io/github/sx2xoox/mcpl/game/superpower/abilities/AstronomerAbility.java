@@ -74,7 +74,8 @@ public final class AstronomerAbility extends Ability {
             .ultimate("대운석",
                     "조준한 곳({ult_range}블록 이내)에 {ult_delay}초 뒤 거대한 운석이 떨어집니다. 낙하 지점 반경 "
                             + "{ult_radius}블록의 적은 {ult_damage} 피해를 받고 튕겨 오르며, 반경 {shock_radius}블록까지 퍼지는 "
-                            + "충격파가 그 바깥의 적에게 {shock_damage} 피해를 주고 밀쳐내며 {shock_slow}초간 구속시킵니다.")
+                            + "충격파가 그 바깥의 적에게 {shock_damage} 피해를 주고 밀쳐내며 {shock_slow}초간 구속시킵니다. "
+                            + "전투 맵에서는 낙하 지점 반경 {ult_block_radius}블록의 지형도 부숩니다.")
             .param("night_cooldown", 30)
             .param("constellation_stars", 5)
             .param("constellation_gauge", 15)
@@ -88,6 +89,7 @@ public final class AstronomerAbility extends Ability {
             .param("ult_delay", 2)
             .param("ult_radius", 4.5)
             .param("ult_damage", 8)
+            .param("ult_block_radius", 3)
             .param("shock_radius", 9)
             .param("shock_damage", 3)
             .param("shock_slow", 2)
@@ -865,6 +867,8 @@ public final class AstronomerAbility extends Ability {
                 }
                 Vfx.dot(Fx.body(enemy), Particle.FLASH, PALETTE.body(), true);
             }
+            // The impact blows a crater into the battlefield (after the hits: cover still shielded them).
+            ctx().breakBlocks(owner, center, params().num("ult_block_radius"));
             craterFx(owner);
             if (hits > 0 && owner.isOnline()) {
                 owner.sendActionBar(Text.mm("<" + BLUE + "><b>☄ 대운석!</b></" + BLUE + "> <white>" + hits

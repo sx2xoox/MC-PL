@@ -51,6 +51,7 @@ public final class FlatWorld extends WorldMock {
 
     private final Map<Coordinate, BlockMock> blocks = new HashMap<>();
     private final List<Location> lightningEffects = new ArrayList<>();
+    private final List<Location> physicsUpdates = new ArrayList<>();
     private final WorldPhysics physics = new WorldPhysics(this);
 
     public FlatWorld(String name) {
@@ -62,6 +63,15 @@ public final class FlatWorld extends WorldMock {
 
     public WorldPhysics physics() {
         return physics;
+    }
+
+    /**
+     * Every block set with physics ({@code setBlockData(data, true)}) so far, in order. MockBukkit runs no block
+     * physics, so tests use this to check that none would have run where it must not (a shape update next to a
+     * crater reshapes the blocks around it on a real server).
+     */
+    public List<Location> physicsUpdates() {
+        return physicsUpdates;
     }
 
     /** Locations of every {@link #strikeLightningEffect} so far. */

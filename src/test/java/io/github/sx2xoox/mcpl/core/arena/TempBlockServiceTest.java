@@ -8,6 +8,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
 
+import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -281,6 +282,63 @@ class TempBlockServiceTest {
         assertEquals(Material.STONE, stone.getType());
         server.getScheduler().performTicks(45);
         assertEquals(Material.STONE, stone.getType(), "the expired ice does not bring the air back");
+    }
+
+    /**
+     * A temporary block in or near a crater (a web at someone's feet, rubble in a dent) comes back without physics: on
+     * a server the shape update would turn the stair next to the hole straight or cut a fence's connection, and the
+     * removed block comes back without physics, so nothing would ever put the old shapes back.
+     */
+    @Test
+    void temporaryBlocksComeBackWithoutPhysicsWhileTheWorldHasCraters() {
+        FlatWorld flat = new FlatWorld("flat");
+        server.addWorld(flat);
+        Block stair = flat.getBlockAt(0, 64, 0);
+        stair.setType(Material.STONE_BRICK_STAIRS);
+        Block corner = flat.getBlockAt(1, 64, 0);
+        corner.setType(Material.STONE_BRICK_STAIRS);
+        Block far = flat.getBlockAt(20, 64, 20);
+        assertTrue(service.remove(List.of(stair)));
+        assertTrue(service.place(stair, Material.COBWEB.createBlockData(), 20), "a web in the gap");
+        assertTrue(service.place(far, Material.ICE.createBlockData(), 20), "and somewhere else in the world");
+        flat.physicsUpdates().clear();
+
+        server.getScheduler().performTicks(21);
+        assertEquals(Material.AIR, stair.getType(), "the gap is back when the web goes");
+        assertEquals(Material.AIR, far.getType());
+        assertTrue(flat.physicsUpdates().isEmpty(), "no shape update while the world has craters: "
+                + flat.physicsUpdates());
+
+        assertTrue(service.place(far, Material.ICE.createBlockData(), 0));
+        service.restorePlacements(); // the match's temporary blocks go first, the crater stays
+        assertTrue(flat.physicsUpdates().isEmpty());
+        service.restoreRemovals();
+        assertEquals(Material.STONE_BRICK_STAIRS, stair.getType());
+        assertTrue(flat.physicsUpdates().isEmpty(), "the removed block comes back without physics too");
+
+        assertTrue(service.place(far, Material.ICE.createBlockData(), 0));
+        service.restorePlacements();
+        assertEquals(1, flat.physicsUpdates().size(), "without craters temporary blocks come back with physics");
+    }
+
+    @Test
+    void crashRecoveryRestoresTemporaryBlocksOfAScarredWorldWithoutPhysics() {
+        FlatWorld flat = new FlatWorld("flat");
+        server.addWorld(flat);
+        Block wall = flat.getBlockAt(0, 64, 0);
+        wall.setType(Material.STONE_BRICKS); // (MockBukkit cannot parse a wall's block data back)
+        Block other = flat.getBlockAt(10, 64, 10);
+        assertTrue(service.remove(List.of(wall)));
+        assertTrue(service.place(wall, Material.COBWEB.createBlockData(), 0));
+        assertTrue(service.place(other, Material.ICE.createBlockData(), 0));
+        service.flush();
+        flat.physicsUpdates().clear();
+
+        TempBlockService afterCrash = new TempBlockService(plugin, file);
+        afterCrash.recover();
+        assertEquals(Material.STONE_BRICKS, wall.getType());
+        assertEquals(Material.AIR, other.getType());
+        assertTrue(flat.physicsUpdates().isEmpty(), "nothing reshapes around the crater: " + flat.physicsUpdates());
     }
 
     @Test

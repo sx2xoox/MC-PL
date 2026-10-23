@@ -29,6 +29,7 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.type.Leaves;
 import org.bukkit.entity.Item;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.AfterEach;
@@ -204,6 +205,33 @@ class TerrainDamageTest {
         assertSame(before, snapshot());
     }
 
+    /**
+     * A thick structure on the ground (the graveyard temple's podium: three blocks of cobbled deepslate and a floor on
+     * top) is not ground, so every blast takes it down freely; repeated blasts in the same spot must still never
+     * leave a pit with walls nobody can climb.
+     */
+    @Test
+    void repeatedBlastsIntoAThickPodiumNeverLeaveAPit() {
+        int half = 9;
+        int floor = TOP + 4;
+        for (int x = -half; x <= half; x++) {
+            for (int z = -half; z <= half; z++) {
+                for (int y = TOP + 1; y < floor; y++) {
+                    world.setBlock(x, y, z, Material.COBBLED_DEEPSLATE);
+                }
+                world.setBlock(x, floor, z, Material.POLISHED_DEEPSLATE);
+            }
+        }
+        TerrainDamage terrain = everywhere();
+        for (int i = 0; i < 5; i++) {
+            terrain.blast(at(world, 0.5, floor + 1.5 - i, 0.5), 2.5, EVERYWHERE);
+        }
+        terrain.blast(at(world, 1.5, floor + 0.5, 0.5), 4, EVERYWHERE);
+        assertTrue(type(0, floor, 0).isAir(), "the podium was blown open");
+        assertNoStructurePit(half, floor);
+        assertNoItems();
+    }
+
     @Test
     void aThinFloorIsNeverDugThrough() {
         // Three blocks of floor over a cavern: only the top one may go, so two stay under the crater.
@@ -319,7 +347,72 @@ class TerrainDamageTest {
         assertTrue(type(0, TOP, 0).isAir(), "the rest broke");
     }
 
+    /** A temporary block standing in an older crater (rubble in a dent) never loses the ground under it. */
+    @Test
+    void aTemporaryBlockInACraterKeepsItsFloor() {
+        grassland(4);
+        TerrainDamage terrain = everywhere();
+        terrain.blast(at(world, 0.5, TOP + 0.5, 0.5), 0.6, EVERYWHERE);
+        Block dent = world.getBlockAt(0, TOP, 0);
+        assertTrue(dent.getType().isAir(), "a dent");
+        assertTrue(blocks.place(dent, Material.COBBLESTONE.createBlockData(), 0), "rubble lies in the dent");
+        terrain.blast(at(world, 0.5, TOP - 0.5, 0.5), 0.6, EVERYWHERE);
+        assertEquals(Material.DIRT, type(0, TOP - 1, 0), "the ground under the rubble stays");
+        assertEquals(Material.COBBLESTONE, dent.getType());
+    }
+
+    /**
+     * Outside the battle map worlds leaves decay: breaking a log or natural leaves would leave the rest of the tree to
+     * decay after the match (with drops), so trees stay there. In a map world they break like any structure.
+     */
+    @Test
+    void treesOnlyBreakInBattleMapWorlds() {
+        FlatWorld map = new FlatWorld(MapService.WORLD_PREFIX + "trees");
+        server.addWorld(map);
+        for (World w : List.of(world, map)) {
+            for (int y = TOP + 1; y <= TOP + 3; y++) {
+                w.getBlockAt(0, y, 8).setType(Material.OAK_LOG);
+            }
+            Leaves natural = (Leaves) Material.OAK_LEAVES.createBlockData();
+            natural.setPersistent(false);
+            w.getBlockAt(1, TOP + 2, 8).setBlockData(natural);
+            w.getBlockAt(-1, TOP + 2, 8).setBlockData(natural);
+        }
+        TerrainDamage terrain = everywhere();
+        terrain.blast(at(world, 0.5, TOP + 2.5, 8.5), 1.2, EVERYWHERE);
+        assertEquals(Material.OAK_LOG, type(0, TOP + 2, 8), "an ordinary world keeps its trees");
+        assertEquals(Material.OAK_LEAVES, type(1, TOP + 2, 8));
+        terrain.blast(at(map, 0.5, TOP + 2.5, 8.5), 1.2, EVERYWHERE);
+        assertTrue(map.getBlockAt(0, TOP + 2, 8).getType().isAir(), "a map world's tree breaks");
+        assertTrue(map.getBlockAt(1, TOP + 2, 8).getType().isAir());
+    }
+
     // ------------------------------------------------------------------ attached blocks
+
+    /**
+     * Pressure plates and standing banners count as solid but pop off without their block: a fence leg that breaks
+     * takes the plate of the table with it (and brings it back), and the block under a banner stays.
+     */
+    @Test
+    void platesGoWithTheirTableAndBannersKeepTheirBlock() {
+        world.setBlock(0, TOP + 1, 3, Material.OAK_FENCE);
+        world.setBlock(0, TOP + 2, 3, Material.OAK_PRESSURE_PLATE);
+        world.setBlock(0, TOP + 1, 6, Material.STONE_BRICKS);
+        world.getBlockAt(0, TOP + 2, 6).setType(Material.WHITE_BANNER);
+        BlockData[][][] before = snapshot();
+
+        TerrainDamage terrain = everywhere();
+        terrain.blast(at(world, 0.5, TOP + 1.5, 3.5), 0.6, EVERYWHERE);
+        assertTrue(type(0, TOP + 1, 3).isAir(), "the fence leg broke");
+        assertTrue(type(0, TOP + 2, 3).isAir(), "and the plate on it did not stay floating");
+        terrain.blast(at(world, 0.5, TOP + 1.5, 6.5), 0.6, EVERYWHERE);
+        assertEquals(Material.STONE_BRICKS, type(0, TOP + 1, 6), "the block under the banner stays");
+        assertEquals(Material.WHITE_BANNER, type(0, TOP + 2, 6));
+        assertNoItems();
+
+        blocks.restoreRemovals();
+        assertSame(before, snapshot());
+    }
 
     @Test
     void attachedBlocksGoAndComeBackWithTheirBlock() {
@@ -430,6 +523,54 @@ class TerrainDamageTest {
                 }
             }
             assertTrue(out, "a pit nobody can climb out of at " + (int) (start >> 32) + "," + (int) start);
+        }
+    }
+
+    /**
+     * Every column of the podium ({@code -half..half}, original top {@code top}) one now stands lower in leads, one
+     * block up at a time (falling is fine), to a column one stands as high in as before (or off the podium).
+     */
+    private void assertNoStructurePit(int half, int top) {
+        Map<Long, Integer> stand = new HashMap<>();
+        for (int x = -half - 1; x <= half + 1; x++) {
+            for (int z = -half - 1; z <= half + 1; z++) {
+                int y = TOP - 2;
+                while (world.getBlockAt(x, y + 1, z).getType().isSolid()) {
+                    y++;
+                }
+                stand.put(key(x, z), y);
+            }
+        }
+        for (int x = -half; x <= half; x++) {
+            for (int z = -half; z <= half; z++) {
+                if (stand.get(key(x, z)) >= top) {
+                    continue;
+                }
+                Deque<Long> queue = new ArrayDeque<>(List.of(key(x, z)));
+                Set<Long> seen = new HashSet<>(List.of(key(x, z)));
+                boolean out = false;
+                while (!queue.isEmpty() && !out) {
+                    long column = queue.poll();
+                    int cx = (int) (column >> 32);
+                    int cz = (int) column;
+                    for (int[] step : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                        int nx = cx + step[0];
+                        int nz = cz + step[1];
+                        long next = key(nx, nz);
+                        Integer height = stand.get(next);
+                        if (height == null || height > stand.get(column) + 1 || !seen.add(next)) {
+                            continue;
+                        }
+                        if (Math.abs(nx) > half || Math.abs(nz) > half || height >= top) {
+                            out = true;
+                            break;
+                        }
+                        queue.add(next);
+                    }
+                }
+                assertTrue(out, "a pit nobody can climb out of at " + x + "," + z + " (standing at "
+                        + stand.get(key(x, z)) + ", the podium's top is " + top + ")");
+            }
         }
     }
 

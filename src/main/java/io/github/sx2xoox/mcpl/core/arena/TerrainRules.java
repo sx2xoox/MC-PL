@@ -17,9 +17,12 @@ import org.bukkit.block.data.FaceAttachable;
 import org.bukkit.block.data.Hangable;
 import org.bukkit.block.data.MultipleFacing;
 import org.bukkit.block.data.Waterlogged;
+import org.bukkit.block.data.type.Bell;
 import org.bukkit.block.data.type.Cocoa;
+import org.bukkit.block.data.type.Leaves;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.block.data.type.TrapDoor;
+import org.bukkit.block.data.type.WallHangingSign;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -113,6 +116,16 @@ final class TerrainRules {
         return MapBlocks.hasGravity(material) || material.hasGravity();
     }
 
+    /**
+     * Logs (and the like) and natural leaves: the leaves around them count their distance to a log through them, so
+     * where leaves decay, breaking one leaves the others to decay after the match (with drops).
+     */
+    static boolean keepsLeaves(BlockData data) {
+        Material material = data.getMaterial();
+        return tagged(Tag.PREVENTS_NEARBY_LEAF_DECAY, material) || tagged(Tag.LOGS, material)
+                || data instanceof Leaves leaves && !leaves.isPersistent();
+    }
+
     /** True if the block has a block entity (chests, signs, banners, skulls, spawners, ...). */
     static boolean hasBlockEntity(Block block) {
         return block.getState(false) instanceof TileState;
@@ -126,7 +139,8 @@ final class TerrainRules {
     /**
      * True if {@code attached}, the neighbour on side {@code face} of a block of {@code support}, is held by that
      * block: it would pop off (or come apart) without it. Torches, ladders, buttons and vines on its sides, plants,
-     * carpets, snow and doors on top, lanterns and roots hanging below, the other half of a double block.
+     * carpets, snow, doors, pressure plates and banners on top, lanterns, bells and roots hanging below, the other half
+     * of a double block.
      */
     static boolean isAttached(BlockData attached, BlockFace face, BlockData support) {
         Material material = attached.getMaterial();
@@ -152,6 +166,19 @@ final class TerrainRules {
         if (attached instanceof Hangable hangable) {
             return hangable.isHanging() ? face == BlockFace.DOWN : face == BlockFace.UP;
         }
+        if (attached instanceof Bell bell) {
+            return switch (bell.getAttachment()) {
+                case FLOOR -> face == BlockFace.UP;
+                case CEILING -> face == BlockFace.DOWN;
+                // on the wall behind it, or between two walls: held by either
+                case SINGLE_WALL, DOUBLE_WALL -> face == bell.getFacing() || face == bell.getFacing().getOppositeFace();
+            };
+        }
+        if (attached instanceof WallHangingSign sign) {
+            // hangs from a bar resting on the blocks to its left and right
+            return face != sign.getFacing() && face != sign.getFacing().getOppositeFace() && face != BlockFace.UP
+                    && face != BlockFace.DOWN;
+        }
         if (attached instanceof Cocoa cocoa) {
             return cocoa.getFacing() == face.getOppositeFace();
         }
@@ -168,8 +195,16 @@ final class TerrainRules {
         if (face != BlockFace.UP) {
             return false;
         }
-        // On top: plants, carpets, rails, plates, torches, pots, ... and the solid things that stand on the ground.
-        return !material.isSolid() || STANDING.contains(material) || material.name().endsWith("CAKE");
+        // On top: plants, carpets, rails, plates, torches, pots, ... and the solid things that stand on the ground
+        // (pressure plates, standing banners and dead corals count as solid but pop off without their block).
+        return !material.isSolid() || STANDING.contains(material) || material.name().endsWith("CAKE")
+                || tagged(Tag.PRESSURE_PLATES, material) || tagged(Tag.BANNERS, material) || isDeadCoral(material);
+    }
+
+    /** Dead coral plants and fans standing on a block (the wall fans are mounted). */
+    private static boolean isDeadCoral(Material material) {
+        String name = material.name();
+        return name.startsWith("DEAD_") && (name.endsWith("_CORAL") || name.endsWith("_CORAL_FAN"));
     }
 
     /** Wall torches, ladders, wall signs, banners and heads, coral fans, hooks, amethyst buds. */

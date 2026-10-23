@@ -239,6 +239,123 @@ class TerrainAbilitiesTest {
         }
     }
 
+    /** The tunnel ends with the rush: a wall a little past its end is not touched, whatever the ping. */
+    @Test
+    void minotaurTunnelEndsWithTheRush() {
+        try (Scenario s = breaking("minotaur").start()) {
+            int beyond = (int) Math.floor(0.5 + s.param("rush_distance")) + 2;
+            for (int z = -1; z <= 1; z++) {
+                s.world.wallAlongX(beyond, beyond, z, 3, Material.STONE_BRICKS);
+            }
+            s.place(s.enemy, 9.5, -9.5, 0);
+            s.place(s.enemy2, -9.5, -9.5, 0);
+            s.assertSucceeded(s.ultimate(), "미궁");
+            s.ticks(25);
+            face(s.owner, 270);
+            s.assertSucceeded(s.active(), "미궁 돌진");
+            s.ticks(30);
+            assertTrue(s.owner.getLocation().getX() > 5, "the bull charged");
+            for (int z = -1; z <= 1; z++) {
+                for (int y = Y; y < Y + 3; y++) {
+                    assertEquals(Material.STONE_BRICKS, s.world.getBlockAt(beyond, y, z).getType(),
+                            "a wall past the end of the rush stays at " + beyond + "," + y + "," + z);
+                }
+            }
+            s.ticks(s.paramTicks("maze_duration"));
+            finishRestored(s, t -> {
+                for (int z = -1; z <= 1; z++) {
+                    t.world.wallAlongX(beyond, beyond, z, 3, Material.AIR);
+                }
+            });
+        }
+    }
+
+    /** A block that never breaks (a chest) stops the rush, and the tunnel never runs on behind it. */
+    @Test
+    void minotaurTunnelStopsAtAWallThatStays() {
+        try (Scenario s = breaking("minotaur").start()) {
+            for (int z = -1; z <= 1; z++) {
+                s.world.wallAlongX(5, 5, z, 2, Material.CHEST);
+                s.world.wallAlongX(6, 6, z, 3, Material.STONE_BRICKS);
+            }
+            s.place(s.enemy, 9.5, -9.5, 0);
+            s.place(s.enemy2, -9.5, -9.5, 0);
+            s.assertSucceeded(s.ultimate(), "미궁");
+            s.ticks(25);
+            face(s.owner, 270);
+            s.assertSucceeded(s.active(), "미궁 돌진 into chests");
+            s.ticks(30);
+            assertTrue(s.owner.getLocation().getX() < 5, "the chests stopped the bull");
+            for (int z = -1; z <= 1; z++) {
+                assertEquals(Material.CHEST, s.world.getBlockAt(5, Y, z).getType());
+                for (int y = Y; y < Y + 3; y++) {
+                    assertEquals(Material.STONE_BRICKS, s.world.getBlockAt(6, y, z).getType(),
+                            "nothing behind the chests breaks: " + y + "," + z);
+                }
+            }
+            s.ticks(s.paramTicks("maze_duration"));
+            finishRestored(s, t -> {
+                for (int z = -1; z <= 1; z++) {
+                    t.world.wallAlongX(5, 6, z, 3, Material.AIR);
+                }
+            });
+        }
+    }
+
+    /** Charging off a floor of bottom slabs digs no trench: the tunnel runs over the slabs, not through them. */
+    @Test
+    void minotaurRushFromASlabFloorKeepsTheFloor() {
+        try (Scenario s = breaking("minotaur").start()) {
+            for (int x = -1; x <= 8; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, Y, z, Material.STONE_SLAB);
+                }
+            }
+            s.world.setBlock(5, Y + 1, 0, Material.STONE_BRICKS);
+            s.world.physics().setEnabled(false); // partial blocks are not modelled: the bull stands still on its slab
+            s.place(s.enemy, 9.5, -9.5, 0);
+            s.place(s.enemy2, -9.5, -9.5, 0);
+            s.place(s.owner, 0.5, Y + 0.5, 0.5, 270, 0);
+            s.assertSucceeded(s.ultimate(), "미궁");
+            s.ticks(25);
+            s.assertSucceeded(s.active(), "미궁 돌진 off a slab");
+            s.ticks(20);
+            assertTrue(s.world.getBlockAt(5, Y + 1, 0).getType().isAir(), "the wall at head height broke");
+            for (int x = -1; x <= 8; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    assertEquals(Material.STONE_SLAB, s.world.getBlockAt(x, Y, z).getType(),
+                            "the slab floor stays at " + x + "," + z);
+                }
+            }
+            s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("maze_duration"));
+            finishRestored(s, t -> {
+                for (int x = -1; x <= 8; x++) {
+                    for (int z = -1; z <= 1; z++) {
+                        t.world.setBlock(x, Y, z, Material.AIR);
+                    }
+                }
+                t.world.setBlock(5, Y + 1, 0, Material.AIR);
+            });
+        }
+    }
+
+    @Test
+    void astronomerGreatMeteorBlowsACrater() {
+        try (Scenario s = breaking("astronomer").start()) {
+            s.place(s.enemy2, 0.5, -11.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "대운석");
+            s.ticks(s.paramTicks("ult_delay") + 5);
+            assertTrue(removed(s) > 0, "the impact blew a crater");
+            assertTrue(s.world.getBlockAt(0, TOP, 4).getType().isAir(), "where the meteor struck");
+            assertEquals(Material.STONE, s.world.getBlockAt(0, TOP, 0).getType(), "the astronomer's ground is fine");
+            assertNoDropsAndChunksSettle(s);
+            s.tickUntilGrounded(s.enemy, 200);
+            finishRestored(s, x -> { });
+        }
+    }
+
     @Test
     void dragonBombsBlowCratersIntoTheGround() {
         try (Scenario s = breaking("dragon").start()) {

@@ -93,6 +93,30 @@ class HubConfigTest {
         assertEquals(broken, Files.readString(file.toPath()));
     }
 
+    /** YAML reads an unquoted {@code OFF} as false, which must still switch the terrain damage off. */
+    @Test
+    void abilityBlockDamageReadsTheWordsTheCommentsSuggest() throws IOException {
+        Files.writeString(file.toPath(), "protection:\n  ability-block-damage: OFF\n");
+        hub.reload();
+        assertEquals(BlockDamageScope.OFF, hub.config().abilityBlockDamage());
+
+        Files.writeString(file.toPath(), "protection:\n  ability-block-damage: ALL_WORLDS\n");
+        hub.reload();
+        assertEquals(BlockDamageScope.ALL_WORLDS, hub.config().abilityBlockDamage());
+
+        Files.writeString(file.toPath(), "protection:\n  ability-block-damage: on\n");
+        hub.reload();
+        assertEquals(BlockDamageScope.MAP_WORLDS, hub.config().abilityBlockDamage());
+
+        Files.writeString(file.toPath(), "protection:\n  ability-block-damage: map-worlds\n");
+        hub.reload();
+        assertEquals(BlockDamageScope.MAP_WORLDS, hub.config().abilityBlockDamage());
+
+        hub.config().setAbilityBlockDamage(BlockDamageScope.OFF);
+        hub.reload();
+        assertEquals(BlockDamageScope.OFF, hub.config().abilityBlockDamage(), "saved and read back");
+    }
+
     @Test
     void aBrokenPlayersFileIsNotOverwritten() throws IOException {
         File players = new File(plugin.getDataFolder(), "players.yml");

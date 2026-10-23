@@ -28,6 +28,7 @@ final class TerrainFx {
 
     /** At most this many broken blocks get their own particle burst per blast (scaled). */
     private static final int BURST_BLOCKS = 24;
+    /** Particles per burst (not scaled: the number of bursts is, so the total grows linearly with the scale). */
     private static final int BURST_PARTICLES = 6;
     /** Distinct break sounds per blast. */
     private static final int SOUNDS = 3;
@@ -51,11 +52,10 @@ final class TerrainFx {
         }
         World world = center.getWorld();
         int bursts = Math.min(broken.size(), Math.max(4, (int) Math.round(BURST_BLOCKS * scale)));
-        int particles = Math.max(2, (int) Math.round(BURST_PARTICLES * scale));
         for (int i = 0; i < bursts; i++) {
             TerrainDamage.Broken block = broken.get(i * broken.size() / bursts);
             Location middle = block.location().clone().add(0.5, 0.5, 0.5);
-            world.spawnParticle(Particle.BLOCK, middle, particles, 0.3, 0.3, 0.3, 0.15, block.data());
+            world.spawnParticle(Particle.BLOCK, middle, BURST_PARTICLES, 0.3, 0.3, 0.3, 0.15, block.data());
         }
         Set<Sound> played = new HashSet<>();
         for (TerrainDamage.Broken block : broken) {

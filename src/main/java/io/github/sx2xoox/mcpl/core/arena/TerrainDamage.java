@@ -40,8 +40,10 @@ import org.bukkit.util.Vector;
  *     <li>Above the surface everything breaks freely within the blast: walls, pillars, rocks, trees, bridges, roofs.</li>
  *     <li>The ground is dug at most two blocks below its original surface, from the top, and never where fewer than
  *     two solid blocks would remain under the crater (thin floors over the void). Repeated blasts never dig deeper.</li>
- *     <li>A crater never leaves a pit nobody can climb out of: every dug column must lead, one block up at a time, to
- *     ground that was not dug; columns that do not are dug less (so craters come out bowl shaped).</li>
+ *     <li>A blast never leaves a pit nobody can climb out of, in the ground or in a thick structure (a podium, the top
+ *     of a solid wall): every column one now stands lower in than before the match must lead, one block up at a time
+ *     (falling is fine), to a column one stands as high in as before; columns that do not keep their deepest blocks
+ *     (so craters come out bowl shaped).</li>
  *     <li>A block standing over the void (nothing solid anywhere below it) never breaks.</li>
  * </ul>
  *
@@ -51,9 +53,11 @@ import org.bukkit.util.Vector;
  * anvils, pointed dripstone, ...), blocks holding a painting or an item frame, unbreakable, explosion-proof and
  * technical blocks, and anything outside the arena. Blocks attached to a broken block (torches, ladders, vines, plants
  * and snow on top, hanging lanterns, both halves of doors and tall plants, ...) go and come back with it; if one of
- * them may not break, the block stays too.
+ * them may not break, the block stays too. Outside the battle map worlds (where leaves never decay) logs and natural
+ * leaves never break either: the leaves around them would forget their log and decay after the match.
  *
- * <p>At most {@code protection.ability-block-damage-limit} blocks break per match. Main thread only.
+ * <p>At most {@code protection.ability-block-damage-limit} blocks break per match, and a blast reaches at most
+ * {@link #MAX_RADIUS} blocks. Main thread only.
  */
 public final class TerrainDamage {
 
@@ -73,14 +77,15 @@ public final class TerrainDamage {
     public static final double MAX_RADIUS = 8;
     /** A broken block takes at most this many attached blocks with it. */
     private static final int MAX_GROUP = 32;
-    /** A column's standing height is looked for up to this far above its surface (more is a wall). */
-    private static final int CLIMB = 3;
     /** Older craters this many columns around a blast are checked for a way out too. */
     private static final int ESCAPE_MARGIN = 6;
     private static final int NONE = Integer.MIN_VALUE;
 
-    /** A column's original surface ({@link #NONE} without ground) and its lowest solid block (MAX without any). */
-    private record Column(int surface, int floor) {
+    /**
+     * A column's original surface ({@link #NONE} without ground), its lowest solid block (MAX without any) and the top
+     * of the solid blocks standing on the surface before the match (where one stood; {@link #NONE} without ground).
+     */
+    private record Column(int surface, int floor, int stand) {
         boolean hasSurface() {
             return surface != NONE;
         }
@@ -109,8 +114,11 @@ public final class TerrainDamage {
     private final Predicate<World> mapWorld;
     private final Logger logger;
     private final Map<ColumnKey, Column> columns = new HashMap<>();
+    /** Columns with blocks broken in this match. */
+    private final Set<ColumnKey> scarred = new HashSet<>();
     private int broken;
     private boolean warnedLimit;
+    private boolean warnedRadius;
 
     /**
      * @param blocks   the store that removes and restores the blocks
@@ -165,6 +173,11 @@ public final class TerrainDamage {
                 || !Double.isFinite(radius) || remaining() <= 0 || !finite(from) || !finite(to)) {
             return List.of();
         }
+        if (radius > MAX_RADIUS && !warnedRadius) {
+            warnedRadius = true;
+            logger.warning("An ability blast of radius " + radius + " was capped to " + MAX_RADIUS
+                    + " blocks; lower its *_block_radius in abilities.yml.");
+        }
         Blast blast = new Blast(world, from.toVector(), to.toVector(), Math.min(radius, MAX_RADIUS), inside);
         List<Broken> result = blast.run();
         broken += result.size();
@@ -198,7 +211,7 @@ public final class TerrainDamage {
         int top = Math.min(world.getMaxHeight() - 1, nearY + SCAN_RANGE);
         int bottom = Math.max(world.getMinHeight(), nearY - SCAN_RANGE);
         if (top < bottom) {
-            return new Column(NONE, Integer.MAX_VALUE);
+            return new Column(NONE, Integer.MAX_VALUE, NONE);
         }
         int size = top - bottom + 1;
         boolean[] ground = new boolean[size];
@@ -234,10 +247,14 @@ public final class TerrainDamage {
             groundTop = anyGround;
         }
         if (groundTop == NONE) {
-            return new Column(NONE, floor);
+            return new Column(NONE, floor, NONE);
         }
         int surface = groundTop + 1 <= top && solid[groundTop + 1 - bottom] ? groundTop + 1 : groundTop;
-        return new Column(surface, floor);
+        int stand = surface;
+        while (stand < top && solid[stand + 1 - bottom]) {
+            stand++;
+        }
+        return new Column(surface, floor, stand);
     }
 
     // ------------------------------------------------------------------ one blast
@@ -253,9 +270,11 @@ public final class TerrainDamage {
         /** Accepted blocks of this blast. */
         private final Set<Pos> taken = new HashSet<>();
         private final List<Group> groups = new ArrayList<>();
-        /** Ground columns dug deeper by this blast: column → its accepted ground groups, deepest last. */
-        private final Map<Long, List<Group>> dug = new LinkedHashMap<>();
+        /** The accepted groups by the column of their block, deepest last. */
+        private final Map<Long, List<Group>> byColumn = new LinkedHashMap<>();
         private final List<BoundingBox> hangingHolds = new ArrayList<>();
+        /** Outside the battle map worlds leaves decay: logs and natural leaves stay. */
+        private final boolean leavesDecay;
         private int budget;
 
         Blast(World world, Vector from, Vector to, double radius, Predicate<Location> inside) {
@@ -265,6 +284,7 @@ public final class TerrainDamage {
             this.radius = radius;
             this.inside = inside;
             this.nearY = (int) Math.floor(Math.min(from.getY(), to.getY()));
+            this.leavesDecay = !mapWorld.test(world);
             this.budget = remaining();
         }
 
@@ -386,9 +406,7 @@ public final class TerrainDamage {
             budget -= group.size();
             Group accepted = new Group(candidate, group);
             groups.add(accepted);
-            if (candidate.ground()) {
-                dug.computeIfAbsent(columnKey(root.getX(), root.getZ()), key -> new ArrayList<>()).add(accepted);
-            }
+            byColumn.computeIfAbsent(columnKey(root.getX(), root.getZ()), key -> new ArrayList<>()).add(accepted);
         }
 
         /** True if the ground block above {@code block} (in the ground layer) is gone or going. */
@@ -449,6 +467,7 @@ public final class TerrainDamage {
             BlockData data = block.getBlockData();
             Material material = data.getMaterial();
             if (TerrainRules.isWet(data) || TerrainRules.isUnbreakable(material)
+                    || leavesDecay && TerrainRules.keepsLeaves(data)
                     || !inside.test(block.getLocation().add(0.5, 0.5, 0.5))
                     || TerrainRules.hasBlockEntity(block)) {
                 return false;
@@ -463,13 +482,19 @@ public final class TerrainDamage {
 
         /**
          * The neighbours that stay must not need the block: no fluid may spill into its spot, no falling block or
-         * temporary block may lose its support, and no dripstone may snap.
+         * temporary block may lose its support (not even one standing in an older crater), and no dripstone may snap.
          */
         private boolean neighboursAllow(Block block, Set<Pos> members) {
             for (BlockFace face : TerrainRules.FACES) {
                 Block next = block.getRelative(face);
                 Pos pos = Pos.of(next);
-                if (members.contains(pos) || taken.contains(pos) || outsideHeight(next) || blocks.isRemoved(next)) {
+                if (members.contains(pos) || taken.contains(pos) || outsideHeight(next)) {
+                    continue;
+                }
+                if (face == BlockFace.UP && blocks.isTemporary(next)) {
+                    return false;
+                }
+                if (blocks.isRemoved(next)) {
                     continue;
                 }
                 BlockData data = next.getBlockData();
@@ -477,7 +502,7 @@ public final class TerrainDamage {
                 if (TerrainRules.isWet(data) || material == Material.POINTED_DRIPSTONE) {
                     return false;
                 }
-                if (face == BlockFace.UP && (TerrainRules.hasGravity(material) || blocks.isTemporary(next))) {
+                if (face == BlockFace.UP && TerrainRules.hasGravity(material)) {
                     return false;
                 }
             }
@@ -520,18 +545,19 @@ public final class TerrainDamage {
         // -------------------------------------------------------------- no stranded pits
 
         /**
-         * Digs less where a column would become a pit. Every dug column near the blast (dug now or by an earlier
-         * blast) must lead, one block up at a time (falling is fine), to a column that is not dug. Where one does not,
-         * the deepest ground block this blast took from it (or, for an older crater, from its neighbours) stays, until
+         * Breaks less where a column would become a pit. Every column near the blast that one now stands lower in than
+         * before the match (dug ground, or a thick structure broken from the top, by this blast or an earlier one) must
+         * lead, one block up at a time (falling is fine), to a column one stands as high in as before. Where one does
+         * not, the deepest block this blast took from it (or, for an older crater, from its neighbours) stays, until
          * every crater can be climbed out of again.
          */
         private void keepEscapable() {
-            if (dug.isEmpty()) {
-                return; // only new ground blocks lower the floor; broken structures only open the way
+            if (groups.isEmpty()) {
+                return;
             }
             while (true) {
                 Map<Long, Integer> heights = new HashMap<>();
-                Set<Long> region = dugColumnsNear();
+                Set<Long> region = loweredColumnsNear(heights);
                 Set<Long> safe = new HashSet<>();
                 boolean grew = true;
                 while (grew) {
@@ -548,8 +574,8 @@ public final class TerrainDamage {
                     if (safe.contains(key)) {
                         continue;
                     }
-                    if (dug.containsKey(key)) {
-                        dropped |= dropDeepest(key);
+                    if (dropDeepest(key)) {
+                        dropped = true;
                         continue;
                     }
                     for (BlockFace side : SIDES) {
@@ -562,7 +588,7 @@ public final class TerrainDamage {
             }
         }
 
-        /** True if the dug column {@code key} steps up (at most one block) onto a safe or undug neighbour. */
+        /** True if the lowered column {@code key} steps up (at most one block) onto a safe or unlowered neighbour. */
         private boolean leadsOut(long key, Set<Long> region, Set<Long> safe, Map<Long, Integer> heights) {
             int x = keyX(key);
             int z = keyZ(key);
@@ -578,43 +604,76 @@ public final class TerrainDamage {
         }
 
         /**
-         * The columns around the blast whose ground is (or would be) dug: the ones this blast digs and older craters
-         * within {@link #ESCAPE_MARGIN} columns of it. Only columns touched before can hold an older crater.
+         * The columns around the blast (within {@link #ESCAPE_MARGIN} columns of it) that one stands lower in than
+         * before the match. Only columns with blocks broken now or earlier in the match can be lower.
          */
-        private Set<Long> dugColumnsNear() {
-            Set<Long> region = new HashSet<>(dug.keySet());
+        private Set<Long> loweredColumnsNear(Map<Long, Integer> heights) {
+            Set<Long> touched = new HashSet<>();
+            for (Pos pos : taken) {
+                touched.add(columnKey(pos.x(), pos.z()));
+            }
+            Set<Long> region = new HashSet<>();
             BoundingBox box = BoundingBox.of(from, to).expand(radius + ESCAPE_MARGIN, 0, radius + ESCAPE_MARGIN);
             UUID worldId = world.getUID();
             for (int x = (int) Math.floor(box.getMinX()); x <= (int) Math.floor(box.getMaxX()); x++) {
                 for (int z = (int) Math.floor(box.getMinZ()); z <= (int) Math.floor(box.getMaxZ()); z++) {
-                    Column column = columns.get(new ColumnKey(worldId, x, z));
-                    if (column != null && column.hasSurface() && isDug(x, z, column.surface())) {
-                        region.add(columnKey(x, z));
+                    long key = columnKey(x, z);
+                    ColumnKey columnKey = new ColumnKey(worldId, x, z);
+                    if (!touched.contains(key) && !scarred.contains(columnKey)) {
+                        continue;
+                    }
+                    Column column = columns.get(columnKey);
+                    if (column != null && column.hasSurface() && height(heights, x, z) < column.stand()) {
+                        region.add(key);
                     }
                 }
             }
             return region;
         }
 
-        /** True if a ground block of the column's top layer is gone (removed before or taken now). */
-        private boolean isDug(int x, int z, int surface) {
-            for (int y = surface; y > surface - MAX_DEPTH; y--) {
-                if (taken.contains(new Pos(x, y, z)) || blocks.isRemoved(world.getBlockAt(x, y, z))) {
-                    return true;
+        /**
+         * Keeps the deepest solid block this blast was going to take from column {@code key} (with what is attached to
+         * it); false if there is none it may keep.
+         */
+        private boolean dropDeepest(long key) {
+            List<Group> here = byColumn.get(key);
+            if (here == null) {
+                return false;
+            }
+            for (int i = here.size() - 1; i >= 0; i--) {
+                Group group = here.get(i);
+                if (!group.root().block().getType().isSolid() || !canKeep(group)) {
+                    continue; // keeping it would not raise the floor, or it would hang on a block that goes
                 }
+                here.remove(i);
+                if (here.isEmpty()) {
+                    byColumn.remove(key);
+                }
+                drop(group);
+                return true;
             }
             return false;
         }
 
-        /** Keeps the deepest ground block this blast was going to take from column {@code key}; false if none. */
-        private boolean dropDeepest(long key) {
-            List<Group> dugHere = dug.get(key);
-            if (dugHere == null || dugHere.isEmpty()) {
-                return false;
+        /** True if the group may stay while the rest goes: none of it hangs on, or falls into, a block that goes. */
+        private boolean canKeep(Group group) {
+            Set<Pos> own = new HashSet<>();
+            for (Block block : group.blocks()) {
+                own.add(Pos.of(block));
             }
-            drop(dugHere.removeLast());
-            if (dugHere.isEmpty()) {
-                dug.remove(key);
+            for (Block block : group.blocks()) {
+                BlockData data = block.getBlockData();
+                for (BlockFace face : TerrainRules.FACES) {
+                    Block next = block.getRelative(face);
+                    Pos pos = Pos.of(next);
+                    if (own.contains(pos) || !taken.contains(pos)) {
+                        continue;
+                    }
+                    if (TerrainRules.isAttached(data, face.getOppositeFace(), next.getBlockData())
+                            || face == BlockFace.DOWN && TerrainRules.hasGravity(data.getMaterial())) {
+                        return false;
+                    }
+                }
             }
             return true;
         }
@@ -628,9 +687,9 @@ public final class TerrainDamage {
         }
 
         /**
-         * Where a player stands in column (x, z) after the blast: on the remaining ground, or on top of what stands on
-         * it (up to {@link #CLIMB} blocks over the surface; higher is a wall, {@link Integer#MAX_VALUE}).
-         * {@link #NONE} for a column without ground.
+         * Where one stands in column (x, z) after the blast: on the remaining ground, or on top of the solid blocks
+         * standing on it (the top of a wall or a podium). Temporary blocks do not count (they go away), removed blocks
+         * are gone. {@link #NONE} for a column without ground.
          */
         private int height(Map<Long, Integer> cache, int x, int z) {
             return cache.computeIfAbsent(columnKey(x, z), key -> {
@@ -643,11 +702,8 @@ public final class TerrainDamage {
                 while (y > surface - MAX_DEPTH && !solidAfter(x, y, z)) {
                     y--;
                 }
-                while (solidAfter(x, y + 1, z)) {
-                    y++;
-                    if (y > surface + CLIMB) {
-                        return Integer.MAX_VALUE;
-                    }
+                while (y < column.stand() && solidAfter(x, y + 1, z)) {
+                    y++; // never above where one stood before the match: blocks only ever go
                 }
                 return y;
             });
@@ -657,7 +713,8 @@ public final class TerrainDamage {
             if (y < world.getMinHeight() || y >= world.getMaxHeight() || taken.contains(new Pos(x, y, z))) {
                 return false;
             }
-            return world.getBlockAt(x, y, z).getType().isSolid();
+            Block block = world.getBlockAt(x, y, z);
+            return !blocks.isRemoved(block) && blocks.originalData(block).getMaterial().isSolid();
         }
 
         // -------------------------------------------------------------- apply
@@ -672,6 +729,9 @@ public final class TerrainDamage {
                 }
                 if (blocks.remove(group.blocks())) {
                     out.addAll(removed);
+                    for (Block block : group.blocks()) {
+                        scarred.add(new ColumnKey(world.getUID(), block.getX(), block.getZ()));
+                    }
                 }
             }
             out.sort(Comparator.comparingDouble(Ranked::distance));

@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 
 import org.bukkit.Bukkit;
@@ -73,6 +74,11 @@ import org.jspecify.annotations.Nullable;
  * spot can carry a temporary block meanwhile; that one is restored first. Removals are written to the same file and
  * restored after a crash too. While removed, nothing flows, forms, grows or spreads into the spot, and the ground
  * exposed under it does not turn into grass.
+ *
+ * <p>While a world has removed blocks, its temporary blocks come back <b>without physics</b> as well (they were placed
+ * without it): a shape update next to a crater would reshape the blocks around it (a stair turning straight, a fence or
+ * wall losing its connection or post, leaves forgetting their log) and pop anything left without support, and the
+ * removed blocks themselves come back without physics, so nothing would ever reshape them back.
  */
 public final class TempBlockService implements Listener {
 
@@ -129,6 +135,8 @@ public final class TempBlockService implements Listener {
     private final Map<UUID, List<String>> orphans = new LinkedHashMap<>();
     /** Like {@link #orphans}, for removed blocks (restored after them, without physics). */
     private final Map<UUID, List<String>> orphanRemovals = new LinkedHashMap<>();
+    /** Worlds with removed blocks right now (their temporary blocks are restored without physics). */
+    private final Set<UUID> scarred = new HashSet<>();
     private final PhysicsGuard physicsGuard = new PhysicsGuard();
     private boolean physicsGuardRegistered;
     private BukkitTask ticker;
@@ -307,6 +315,7 @@ public final class TempBlockService implements Listener {
             BlockKey key = BlockKey.of(block);
             removed.put(key, new Removal(original, key.serialize() + ";" + original.getAsString()));
         }
+        scarred.add(group.getFirst().getWorld().getUID());
         // Attached blocks first, so not even a client sees one hang in the air for a moment.
         for (int i = group.size() - 1; i >= 0; i--) {
             group.get(i).setBlockData(air, false);
@@ -423,6 +432,7 @@ public final class TempBlockService implements Listener {
             updatePhysicsGuard();
         }
         removed.clear();
+        scarred.clear();
         Map<UUID, Set<BlockKey>> solids = new HashMap<>();
         for (Map.Entry<BlockKey, Removal> entry : all) {
             BlockKey key = entry.getKey();
@@ -510,6 +520,10 @@ public final class TempBlockService implements Listener {
 
     // ------------------------------------------------------------------ internals
 
+    /**
+     * Puts the original back: with physics (the neighbours fit themselves to it again), except in a world with removed
+     * blocks (see the class comment), where nothing may reshape around the craters.
+     */
     private void apply(Entry entry) {
         entry.done = true;
         World world = Bukkit.getWorld(entry.key.world());
@@ -519,7 +533,8 @@ public final class TempBlockService implements Listener {
             return;
         }
         try {
-            world.getBlockAt(entry.key.x(), entry.key.y(), entry.key.z()).setBlockData(entry.original, true);
+            world.getBlockAt(entry.key.x(), entry.key.y(), entry.key.z())
+                    .setBlockData(entry.original, !scarred.contains(entry.key.world()));
         } catch (RuntimeException e) {
             plugin.getLogger().log(Level.WARNING, "Could not restore temporary block at " + entry.key, e);
         }
@@ -630,22 +645,32 @@ public final class TempBlockService implements Listener {
 
     /**
      * Restores blocks left over from a crash (read from disk): temporary blocks first, then removed blocks. Blocks in
-     * worlds that are not loaded yet are restored when the world loads.
+     * worlds that are not loaded yet are restored when the world loads. Like during the match, temporary blocks of a
+     * world with removed blocks come back without physics.
      */
     public void recover() {
         if (!file.exists()) {
             return;
         }
         YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
-        int restored = recoverLines(yaml.getStringList("blocks"), orphans, true);
-        restored += recoverLines(yaml.getStringList("removed"), orphanRemovals, false);
+        List<String> removals = yaml.getStringList("removed");
+        Set<UUID> withRemovals = new HashSet<>();
+        for (String line : removals) {
+            try {
+                withRemovals.add(UUID.fromString(line.split(";", 2)[0]));
+            } catch (IllegalArgumentException e) {
+                // malformed, reported below
+            }
+        }
+        int restored = recoverLines(yaml.getStringList("blocks"), orphans, world -> !withRemovals.contains(world));
+        restored += recoverLines(removals, orphanRemovals, world -> false);
         if (restored > 0) {
             plugin.getLogger().info("Restored " + restored + " temporary block(s) left over from an unclean shutdown.");
         }
         flush();
     }
 
-    private int recoverLines(List<String> lines, Map<UUID, List<String>> waiting, boolean physics) {
+    private int recoverLines(List<String> lines, Map<UUID, List<String>> waiting, Predicate<UUID> physics) {
         int restored = 0;
         for (String line : lines) {
             String[] parts = line.split(";", 5);
@@ -658,7 +683,7 @@ public final class TempBlockService implements Listener {
                 World world = Bukkit.getWorld(worldId);
                 if (world == null) {
                     waiting.computeIfAbsent(worldId, id -> new ArrayList<>()).add(rest);
-                } else if (restoreLine(world, rest, physics)) {
+                } else if (restoreLine(world, rest, physics.test(worldId))) {
                     restored++;
                 }
             } catch (IllegalArgumentException e) {
@@ -691,8 +716,9 @@ public final class TempBlockService implements Listener {
         if (lines == null && removals == null) {
             return;
         }
+        boolean physics = removals == null || removals.isEmpty();
         for (String line : lines == null ? List.<String>of() : lines) {
-            restoreLine(event.getWorld(), line, true);
+            restoreLine(event.getWorld(), line, physics);
         }
         for (String line : removals == null ? List.<String>of() : removals) {
             restoreLine(event.getWorld(), line, false);
