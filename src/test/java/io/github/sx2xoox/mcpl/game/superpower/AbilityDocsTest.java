@@ -61,6 +61,11 @@ class AbilityDocsTest {
         CATEGORIES.put("야생 동물", List.of("octopus", "bear", "eagle", "hedgehog"));
         CATEGORIES.put("정신 · 기묘", List.of("hypnotist", "puppeteer", "alien", "zombie"));
         CATEGORIES.put("겨울 · 축제", List.of("snowman", "santa", "dj", "skater"));
+        CATEGORIES.put("소년만화", List.of("rubber", "kiwarrior", "boredhero", "chuuni", "oath"));
+        CATEGORIES.put("탐식 · 탐욕", List.of("bulgasari", "agwi", "midas", "centipede", "taotie"));
+        CATEGORIES.put("마음 · 속임수", List.of("satori", "mimic", "odysseus", "eris", "baku"));
+        CATEGORIES.put("죽음 · 예언", List.of("cassandra", "banshee", "cursenote", "charon", "yeomra"));
+        CATEGORIES.put("하늘 · 땅", List.of("blockfall", "qilin", "atlas", "poltergeist", "jormungandr"));
     }
 
     private MatchHarness h;

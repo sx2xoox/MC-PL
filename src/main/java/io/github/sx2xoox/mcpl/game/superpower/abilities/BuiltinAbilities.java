@@ -109,5 +109,30 @@ public final class BuiltinAbilities {
         registry.register(SantaAbility.INFO, SantaAbility::new);
         registry.register(DjAbility.INFO, DjAbility::new);
         registry.register(SkaterAbility.INFO, SkaterAbility::new);
+        registry.register(RubberAbility.INFO, RubberAbility::new);
+        registry.register(KiWarriorAbility.INFO, KiWarriorAbility::new);
+        registry.register(BoredHeroAbility.INFO, BoredHeroAbility::new);
+        registry.register(ChuuniAbility.INFO, ChuuniAbility::new);
+        registry.register(OathAbility.INFO, OathAbility::new);
+        registry.register(BulgasariAbility.INFO, BulgasariAbility::new);
+        registry.register(AgwiAbility.INFO, AgwiAbility::new);
+        registry.register(MidasAbility.INFO, MidasAbility::new);
+        registry.register(CentipedeAbility.INFO, CentipedeAbility::new);
+        registry.register(TaotieAbility.INFO, TaotieAbility::new);
+        registry.register(SatoriAbility.INFO, SatoriAbility::new);
+        registry.register(MimicAbility.INFO, MimicAbility::new);
+        registry.register(OdysseusAbility.INFO, OdysseusAbility::new);
+        registry.register(ErisAbility.INFO, ErisAbility::new);
+        registry.register(BakuAbility.INFO, BakuAbility::new);
+        registry.register(CassandraAbility.INFO, CassandraAbility::new);
+        registry.register(BansheeAbility.INFO, BansheeAbility::new);
+        registry.register(CurseNoteAbility.INFO, CurseNoteAbility::new);
+        registry.register(CharonAbility.INFO, CharonAbility::new);
+        registry.register(YeomraAbility.INFO, YeomraAbility::new);
+        registry.register(BlockFallAbility.INFO, BlockFallAbility::new);
+        registry.register(QilinAbility.INFO, QilinAbility::new);
+        registry.register(AtlasAbility.INFO, AtlasAbility::new);
+        registry.register(PoltergeistAbility.INFO, PoltergeistAbility::new);
+        registry.register(JormungandrAbility.INFO, JormungandrAbility::new);
     }
 }
