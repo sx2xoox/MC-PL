@@ -22,6 +22,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.command.AbilityCommand;
 import io.github.sx2xoox.mcpl.game.superpower.config.AbilityConfig;
+import io.github.sx2xoox.mcpl.game.superpower.loot.LootSettings;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
@@ -117,6 +118,7 @@ public final class SuperpowerGame implements MiniGame {
     @Override
     public void configDefaults(ConfigurationSection defaults) {
         SuperpowerSettings.declareDefaults(defaults);
+        LootSettings.declareDefaults(defaults);
     }
 
     @Override

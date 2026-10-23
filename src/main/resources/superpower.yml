@@ -82,6 +82,52 @@ border:
 result:
   time-limit: "제한 시간 종료 · 킬 수 → 남은 체력 순으로 결정"
 
+# ── 보급 상자 (config.yml → games.superpower.loot) ─────────────
+loot:
+  # 상자를 열었을 때 창 제목
+  title:
+    normal: "<dark_gray>상자"
+    rare: "<dark_purple>희귀 상자"
+    supply: "<gold><bold>보급 상자"
+  spread: "<gold>✦</gold> <gray>경기장 곳곳에 상자 <white><count>개</white>가 놓였습니다! <dark_gray>(능력 아이템이 아닌 손으로 우클릭해 열기 · 먼저 가져가는 사람이 임자)"
+  # <direction> = 경기장 중심에서 본 방향 (아래 direction), <x> <y> <z> = 좌표
+  supply-incoming: "<gold><bold>보급 상자!</bold></gold> <gray>하늘에서 떨어집니다 → <yellow><direction></yellow> <white>(<x>, <y>, <z>)</white>"
+  # 알린 자리가 떨어지는 사이 막혀서 바로 옆에 내려앉았을 때
+  supply-moved: "<gold>보급 상자</gold> <gray>자리가 막혀 바로 옆 <white>(<x>, <y>, <z>)</white>에 떨어졌습니다"
+  not-now: "<gray>지금은 상자를 열 수 없습니다"
+  direction:
+    center: "중앙"
+    north: "북쪽"
+    north-east: "북동쪽"
+    east: "동쪽"
+    south-east: "남동쪽"
+    south: "남쪽"
+    south-west: "남서쪽"
+    west: "서쪽"
+    north-west: "북서쪽"
+  # 초능력 전용 아이템 (<amount> = 채우는 게이지 %)
+  ultimate-crystal:
+    name: "<#c792ea><bold>궁극기 결정"
+    lore:
+      - "<gray>우클릭하면 궁극기 게이지가 <white>+<amount>%</white> 찹니다."
+      - "<dark_gray>궁극기를 쓴 직후(재충전 대기)와 침묵 중에는 쓸 수 없습니다."
+      - "<dark_gray>초능력전쟁 전용 · 경기가 끝나면 사라집니다"
+  recharge-charm:
+    name: "<#7bd88f><bold>재충전 부적"
+    lore:
+      - "<gray>우클릭하면 액티브 스킬의 쿨타임이 바로 끝납니다."
+      - "<dark_gray>침묵 중에는 쓸 수 없습니다."
+      - "<dark_gray>초능력전쟁 전용 · 경기가 끝나면 사라집니다"
+  # 사용 결과 (액션바)
+  use:
+    crystal: "<#c792ea>궁극기 결정</#c792ea> <gray>게이지 <white>+<amount>%</white> <dark_gray>→</dark_gray> <aqua><percent>%"
+    charm: "<#7bd88f>재충전 부적</#7bd88f> <gray>액티브 스킬을 바로 쓸 수 있습니다!"
+    not-now: "<gray>전투 중에만 쓸 수 있습니다"
+    silenced: "<dark_purple><bold>침묵!</bold></dark_purple> <gray>침묵 중에는 쓸 수 없습니다 <dark_gray>(<seconds>초)"
+    gauge-locked: "<gray>궁극기를 쓴 직후라 아직 게이지를 채울 수 없습니다 <dark_gray>(<white><seconds>초</white> 뒤)"
+    gauge-full: "<gray>궁극기 게이지가 이미 가득 찼습니다"
+    cooldown-ready: "<gray>액티브 스킬을 이미 쓸 수 있습니다"
+
 # ── 능력 연습 (/게임 능력 연습) ──────────────────────────────
 practice:
   name: "<gradient:#7bd88f:#4fc3f7><bold>능력 연습</bold></gradient>"

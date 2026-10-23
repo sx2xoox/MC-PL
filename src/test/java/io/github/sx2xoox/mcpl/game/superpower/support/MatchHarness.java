@@ -26,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 import org.mockbukkit.mockbukkit.MockBukkit;
 
 /**
- * Sets up MockBukkit with the plugin and drives superpower matches quickly (1 s reveal, 1 s prep).
+ * Sets up MockBukkit with the plugin and drives superpower matches quickly (1 s reveal, 1 s prep, no loot chests).
  *
  * <p>{@link #MatchHarness()} uses MockBukkit's simple world (no block shapes, no physics). {@link #flat()} uses a
  * {@link FlatWorld} instead: real ray tracing, collisions and line of sight, and a {@link
@@ -57,6 +57,9 @@ public final class MatchHarness implements AutoCloseable {
         game = (SuperpowerGame) hub.games().game(SuperpowerGame.ID);
         settings().set("selection.reveal-seconds", 1);
         settings().set("prep-seconds", 1);
+        // Loot chests are random blocks in the arena: off unless a test turns them on (LootTest), so ability
+        // scenarios keep a predictable arena.
+        settings().set("loot.enabled", false);
         ProbeAbility.reset();
     }
 

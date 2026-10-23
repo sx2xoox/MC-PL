@@ -32,6 +32,8 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.config.AbilityConfig;
+import io.github.sx2xoox.mcpl.game.superpower.loot.LootListener;
+import io.github.sx2xoox.mcpl.game.superpower.loot.LootManager;
 import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
@@ -46,6 +48,7 @@ import org.bukkit.SoundCategory;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.Tag;
 import org.bukkit.World;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
@@ -67,6 +70,10 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>All ability code runs through the {@link AbilityGuard}: an exception in any hook is logged with the ability id
  * and never escapes into the hub or affects other players.
+ *
+ * <p>Loot chests ({@link LootManager}, {@code games.superpower.loot}) appear when the fight starts and as supply drops
+ * when the border starts shrinking; the superpower consumables found in them go through
+ * {@link #chargeGaugeWithItem} and {@link #rechargeActiveWithItem}, which apply the match rules.
  *
  * <p><b>Practice</b> ({@code /게임 능력 연습}, {@link #isPractice()}): the same match machinery with the fight starting
  * right away (requested or random ability, no reveal, prep phase, border shrink, time limit or win check), training
@@ -99,6 +106,21 @@ public final class SuperpowerMatch implements GameInstance {
     /** Outcome of the practice actions ({@link #switchAbility}, {@link #chargeUltimate}, {@link #placeDummies}). */
     public enum PracticeResult { OK, NOT_PRACTICE, NOT_STARTED, NOT_PARTICIPANT, UNKNOWN_ABILITY, FAILED }
 
+    /** Outcome of a loot consumable ({@link #chargeGaugeWithItem}, {@link #rechargeActiveWithItem}). */
+    public enum ItemUseResult {
+        OK,
+        /** Not during the fight of a running match. */
+        NOT_FIGHTING,
+        /** Not a participant in play with an ability. */
+        NOT_IN_PLAY,
+        SILENCED,
+        /** The post-ultimate recharge delay ({@code ultimate.recharge-delay-seconds}) is running. */
+        GAUGE_LOCKED,
+        GAUGE_FULL,
+        /** The active skill is not on cooldown. */
+        COOLDOWN_READY
+    }
+
     private final SuperpowerGame game;
     private final GameSession session;
     private final Messages messages;
@@ -119,6 +141,8 @@ public final class SuperpowerMatch implements GameInstance {
     private @Nullable MatchContext ctx;
     private @Nullable BorderController border;
     private @Nullable MatchHud hud;
+    /** Loot chests and supply drops, null when loot is off for this match ({@code loot.enabled}). */
+    private @Nullable LootManager loot;
     private MatchPhase phase = MatchPhase.INTRO;
     private long phaseTicks;
     private long fightTicks;
@@ -156,9 +180,10 @@ public final class SuperpowerMatch implements GameInstance {
     @Override
     public void start() {
         started = true;
-        settings = practice
-                ? SuperpowerSettings.read(game.hub().config().gameSection(SuperpowerGame.ID), logger()).forPractice()
-                : SuperpowerSettings.read(session.gameConfig(), logger());
+        ConfigurationSection superpowerConfig = practice
+                ? game.hub().config().gameSection(SuperpowerGame.ID) : session.gameConfig();
+        SuperpowerSettings configured = SuperpowerSettings.read(superpowerConfig, logger());
+        settings = practice ? configured.forPractice() : configured;
         abilities = game.abilities().snapshot();
         if (!practice && abilities.enabledIds().isEmpty()) {
             session.abort(messages.get("match.no-abilities"));
@@ -173,6 +198,10 @@ public final class SuperpowerMatch implements GameInstance {
         }
         border = new BorderController(session, settings);
         hud = new MatchHud(this);
+        loot = LootManager.create(game, this, superpowerConfig);
+        if (loot != null) {
+            session.registerListener(new LootListener(loot, session));
+        }
         if (practice) {
             startPractice();
             return;
@@ -305,6 +334,9 @@ public final class SuperpowerMatch implements GameInstance {
             reveals.clear();
             if (dummies != null) {
                 dummies.dispose();
+            }
+            if (loot != null) {
+                loot.dispose();
             }
         } finally {
             if (ctx != null) {
@@ -520,6 +552,9 @@ public final class SuperpowerMatch implements GameInstance {
         // Every ability is final now (rerolls and assignments end with the prep phase).
         sendSpectatorSummary();
         sendTeamSummaries();
+        if (loot != null) {
+            loot.spreadChests();
+        }
     }
 
     /** Creates and binds the participant's ability (not granted yet); false if that failed. */
@@ -578,6 +613,9 @@ public final class SuperpowerMatch implements GameInstance {
         BorderController zone = border();
         if (zone.tick(now)) {
             announceBorderShrink();
+            if (loot != null) {
+                loot.dropSupplies(zone.finalSize());
+            }
         } else if (zone.state(now) == BorderController.State.WAITING && zone.ticksUntilShrink(now) == 200) {
             session.broadcast(messages.prefixed("border.warning", Messages.tag("seconds", 10)));
         }
@@ -586,6 +624,9 @@ public final class SuperpowerMatch implements GameInstance {
         }
         if (dummies != null && now % TrainingDummies.MAINTAIN_PERIOD == 0) {
             dummies.tick(now);
+        }
+        if (loot != null) {
+            loot.tick();
         }
         if (now % 20 == 0) {
             secondTick();
@@ -1389,6 +1430,78 @@ public final class SuperpowerMatch implements GameInstance {
         return participant != null && participant.isSilenced(fightTicks);
     }
 
+    // =================================================================== loot consumables
+
+    /**
+     * A 궁극기 결정 was used: adds {@code percent} to the gauge. Refused (nothing changes, the item is kept) outside
+     * the fight, for anyone not in play, while silenced, during the post-ultimate recharge delay (the gauge earns
+     * nothing then, see {@link #addEarnedGauge}) and when the gauge is already full.
+     */
+    public ItemUseResult chargeGaugeWithItem(Player player, double percent) {
+        ItemUseResult check = checkItemUse(player);
+        if (check != ItemUseResult.OK) {
+            return check;
+        }
+        Participant participant = participants.get(player.getUniqueId());
+        if (participant.isGaugeLocked(fightTicks)) {
+            return ItemUseResult.GAUGE_LOCKED;
+        }
+        if (participant.gauge.isFull()) {
+            return ItemUseResult.GAUGE_FULL;
+        }
+        addGauge(participant, percent);
+        return ItemUseResult.OK;
+    }
+
+    /**
+     * A 재충전 부적 was used: the active skill's cooldown ends now. Refused outside the fight, for anyone not in play,
+     * while silenced and when the skill is not on cooldown.
+     */
+    public ItemUseResult rechargeActiveWithItem(Player player) {
+        ItemUseResult check = checkItemUse(player);
+        if (check != ItemUseResult.OK) {
+            return check;
+        }
+        Participant participant = participants.get(player.getUniqueId());
+        if (participant.cooldown.isReady(fightTicks)) {
+            return ItemUseResult.COOLDOWN_READY;
+        }
+        participant.cooldown.reset();
+        showCooldown(participant, player);
+        return ItemUseResult.OK;
+    }
+
+    private ItemUseResult checkItemUse(Player player) {
+        if (stopped || !session.isRunning() || phase != MatchPhase.FIGHT) {
+            return ItemUseResult.NOT_FIGHTING;
+        }
+        Participant participant = participants.get(player.getUniqueId());
+        if (participant == null || participant.ability == null || !session.isInPlay(player)) {
+            return ItemUseResult.NOT_IN_PLAY;
+        }
+        if (participant.isSilenced(fightTicks)) {
+            return ItemUseResult.SILENCED;
+        }
+        return ItemUseResult.OK;
+    }
+
+    /** Seconds left of the player's silence (0 when not silenced). */
+    public double silenceSeconds(Player player) {
+        Participant participant = participants.get(player.getUniqueId());
+        return participant == null ? 0.0 : Math.max(0, participant.silencedUntil - fightTicks) / 20.0;
+    }
+
+    /** Seconds left of the player's post-ultimate gauge lock (0 when not locked). */
+    public double gaugeLockSeconds(Player player) {
+        Participant participant = participants.get(player.getUniqueId());
+        return participant == null ? 0.0 : Math.max(0, participant.gaugeLockedUntil - fightTicks) / 20.0;
+    }
+
+    /** The loot of this match, or null when loot chests are off ({@code loot.enabled}, practice). */
+    public @Nullable LootManager loot() {
+        return loot;
+    }
+
     private void refreshSilences() {
         for (Participant participant : participants.values()) {
             if (participant.silenceShown && !participant.isSilenced(fightTicks)) {
@@ -1545,6 +1658,9 @@ public final class SuperpowerMatch implements GameInstance {
         session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 0.7f, 1.4f);
         if (hud != null) {
             hud.update();
+        }
+        if (loot != null) {
+            loot.spreadChests();
         }
     }
 
