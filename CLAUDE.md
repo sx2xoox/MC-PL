@@ -8,6 +8,9 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 
 - Java 25, Paper API 26.3 (`compileOnly`), Gradle wrapper (`./gradlew build`). Tests: JUnit 6 + MockBukkit v26.3.
 - `./gradlew runServer` starts a local Paper 26.3 test server (needs internet access to PaperMC).
+- Maps: `./gradlew renderMaps [-Pzone=<zone>]` writes PNG previews to `build/map-previews/`; `CitadelMapTest` audits
+  walkability (every standable place reachable, no stranded pits) and blocks (no floating sand, spilling water, lava).
+  Bump `ArenaMap#version` whenever a map's blocks change, so servers rebuild it.
 - `docs/abilities.md` is generated from every `AbilityInfo`; after changing ability names, descriptions or params run
   `./gradlew updateAbilityDocs` (`AbilityDocsTest` fails while it is stale). New abilities need a docs section there.
 - Sandboxed cloud sessions cannot reach `repo.papermc.io`; a locally built Paper API is published to `~/.m2` and
@@ -22,6 +25,8 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 src/main/java/io/github/sx2xoox/mcpl/
   MCPLPlugin.java              entry point, wires core + games
   core/                        game hub shared by all modes (sessions, rotation, snapshots, arena, UI, commands)
+    map/                       battle maps built in code into void worlds (MapCanvas/BlockSpec, MapService, /게임 경기장 맵)
+      citadel/                 폐허의 성채: CitadelLayout (the plan) + one MapZone class per zone
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
     abilities/                 one class per ability + BuiltinAbilities registration
