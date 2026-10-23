@@ -93,6 +93,9 @@ class MapCanvasTest {
         // Unsupported properties are skipped instead of failing.
         BlockData stone = MapBlocks.toData(BlockSpec.of(Material.STONE).facing(BlockFace.UP).axis(Axis.Z));
         assertEquals(Material.STONE, stone.getMaterial());
+        // Walls convert even where the server does not implement wall sides (MockBukkit).
+        assertEquals(Material.MOSSY_COBBLESTONE_WALL,
+                MapBlocks.toData(BlockSpec.of(Material.MOSSY_COBBLESTONE_WALL)).getMaterial());
     }
 
     @Test

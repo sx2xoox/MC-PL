@@ -182,10 +182,15 @@ public final class MapBlocks {
             leaves.setPersistent(true);
         }
         if (data instanceof Wall wall) {
-            for (int i = 0; i < SIDES.length; i++) {
-                wall.setHeight(SIDES[i], (spec.connections() & SIDE_BITS[i]) != 0 ? Wall.Height.LOW : Wall.Height.NONE);
+            try {
+                for (int i = 0; i < SIDES.length; i++) {
+                    wall.setHeight(SIDES[i],
+                            (spec.connections() & SIDE_BITS[i]) != 0 ? Wall.Height.LOW : Wall.Height.NONE);
+                }
+                wall.setUp(spec.up());
+            } catch (UnsupportedOperationException testServer) {
+                // MockBukkit does not implement wall sides; the plain post it keeps is fine there.
             }
-            wall.setUp(spec.up());
         } else if (data instanceof MultipleFacing facing && family(spec.material()) != Family.NONE) {
             for (int i = 0; i < SIDES.length; i++) {
                 if (facing.getAllowedFaces().contains(SIDES[i])) {
