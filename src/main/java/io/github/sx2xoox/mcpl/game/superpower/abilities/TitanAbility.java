@@ -59,7 +59,8 @@ public final class TitanAbility extends Ability {
                             + "대신 이동 속도가 {speed_penalty}% 느립니다.")
             .active("대지 강타",
                     "약 {leap_height}블록 높이로 뛰어올랐다가 내리꽂힙니다. 착지 지점 반경 {slam_radius}블록의 적에게 "
-                            + "{slam_damage} 피해를 주고 띄우며, 자신은 낙하 피해를 받지 않습니다.",
+                            + "{slam_damage} 피해를 주고 띄우며, 자신은 낙하 피해를 받지 않습니다. 전투 맵에서는 착지 지점 "
+                            + "반경 {slam_block_radius}블록의 지형도 부숩니다.",
                     9)
             .ultimate("거대화",
                     "{ult_duration}초간 {ult_scale}배 크기의 거인이 되어 공격 사거리 +{ult_reach}블록, 근접 피해 "
@@ -72,6 +73,7 @@ public final class TitanAbility extends Ability {
             .param("leap_distance", 5)
             .param("slam_radius", 4)
             .param("slam_damage", 5)
+            .param("slam_block_radius", 2.5)
             .param("ult_duration", 10)
             .param("ult_scale", 2)
             .param("ult_reach", 2)
@@ -100,6 +102,8 @@ public final class TitanAbility extends Ability {
     private static final double LAUNCH_OUT = 0.45;
     private static final double MAX_VELOCITY = 2.5;
     private static final int SHOCKWAVE_TICKS = 5;
+    /** The slam breaks the terrain around this point over the landing spot (a bowl: deepest under the titan). */
+    private static final double SLAM_BREAK_LIFT = 0.6;
 
     // Giant form
     private static final int GROW_STEPS = 5;
@@ -374,6 +378,7 @@ public final class TitanAbility extends Ability {
             }
         }
         slamImpact(center, radius, ground);
+        ctx().breakBlocks(owner, center.clone().add(0, SLAM_BREAK_LIFT, 0), params().num("slam_block_radius"));
         if (struck > 0) {
             owner.sendActionBar(Text.mm("<#C08A4E>대지 강타!</#C08A4E> <gray>" + struck + "명 적중</gray>"));
         }

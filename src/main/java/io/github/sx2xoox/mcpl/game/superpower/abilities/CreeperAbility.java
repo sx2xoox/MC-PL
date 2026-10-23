@@ -70,12 +70,14 @@ public final class CreeperAbility extends Ability {
             .active("자폭",
                     "{fuse}초간 부풀어 오르며 쉬익거리다(이동 속도 -{fuse_slow}%) 폭발해, 반경 {blast_radius}블록의 "
                             + "적에게 가까울수록 큰 {blast_min_damage}~{blast_damage} 피해를 주고 날려 보냅니다. 자신도 "
-                            + "최대 피해의 {self_damage}%를 입지만 죽지는 않으며, 벽 뒤의 적은 무사합니다.",
+                            + "최대 피해의 {self_damage}%를 입지만 죽지는 않으며, 벽 뒤의 적은 무사합니다. 전투 맵에서는 반경 "
+                            + "{blast_block_radius}블록의 지형도 부숩니다.",
                     9)
             .ultimate("충전된 크리퍼",
                     "번개를 맞아 {ult_duration}초간 충전됩니다. 그동안 자폭은 쿨타임 없이 {ult_fuse}초 만에 터지고, "
                             + "피해가 {ult_damage}% 늘고 범위가 {ult_radius}블록 넓어지며, 자신은 피해를 입지 않고 "
-                            + "부풀어 오르는 동안 느려지지도 않습니다.")
+                            + "부풀어 오르는 동안 느려지지도 않습니다. 전투 맵에서는 충전된 폭발이 반경 {ult_block_radius}블록의 "
+                            + "지형을 부숩니다.")
             .param("charge_time", 3)
             .param("charge_damage", 50)
             .param("charge_radius", 1.5)
@@ -86,10 +88,12 @@ public final class CreeperAbility extends Ability {
             .param("blast_damage", 6)
             .param("blast_min_damage", 2.5)
             .param("self_damage", 25)
+            .param("blast_block_radius", 2.5)
             .param("ult_duration", 6)
             .param("ult_fuse", 0.8)
             .param("ult_damage", 30)
             .param("ult_radius", 1.5)
+            .param("ult_block_radius", 3.5)
             .ultimateNotStandalone()
             .build();
 
@@ -526,6 +530,7 @@ public final class CreeperAbility extends Ability {
         }
 
         blastFx(owner, center, radius, charged, boosted);
+        ctx().breakBlocks(owner, center, params().num(charged ? "ult_block_radius" : "blast_block_radius"));
         if (!charged) {
             hurtSelf(owner, max * Math.clamp(params().num("self_damage") / 100.0, 0.0, 1.0));
         }

@@ -38,6 +38,9 @@ public final class HubConfig {
     public static final int MIN_RADIUS = 8;
     public static final int MAX_RADIUS = 1000;
     public static final int MAX_TEAM_SIZE = 32;
+    /** Default and upper bound of {@code protection.ability-block-damage-limit}. */
+    public static final int DEFAULT_BLOCK_DAMAGE_LIMIT = 20_000;
+    public static final int MAX_BLOCK_DAMAGE_LIMIT = 1_000_000;
 
     private final JavaPlugin plugin;
 
@@ -54,6 +57,8 @@ public final class HubConfig {
     private double arenaZ;
     private int arenaRadius = 60;
     private ProtectionSettings protection = ProtectionSettings.ALL;
+    private BlockDamageScope abilityBlockDamage = BlockDamageScope.MAP_WORLDS;
+    private int abilityBlockDamageLimit = DEFAULT_BLOCK_DAMAGE_LIMIT;
     private boolean loadedOnce;
     private boolean writable = true;
     private boolean warnedUnwritable;
@@ -205,6 +210,16 @@ public final class HubConfig {
 
         ConfigurationSection protectionSection = config.getConfigurationSection("protection");
         protection = protectionSection == null ? ProtectionSettings.ALL : ProtectionSettings.read(protectionSection);
+        String scope = config.getString("protection.ability-block-damage", BlockDamageScope.MAP_WORLDS.name());
+        BlockDamageScope parsed = BlockDamageScope.parse(scope);
+        if (parsed == null) {
+            plugin.getLogger().warning("Unknown protection.ability-block-damage '" + scope
+                    + "' (use OFF, MAP_WORLDS or ALL_WORLDS); using MAP_WORLDS.");
+            parsed = BlockDamageScope.MAP_WORLDS;
+        }
+        abilityBlockDamage = parsed;
+        abilityBlockDamageLimit = clamp(config.getInt("protection.ability-block-damage-limit",
+                DEFAULT_BLOCK_DAMAGE_LIMIT), 0, MAX_BLOCK_DAMAGE_LIMIT);
     }
 
     /** Writes the current in-memory configuration to disk (skipped while {@link #isWritable()} is false). */
@@ -342,6 +357,28 @@ public final class HubConfig {
 
     public ProtectionSettings protection() {
         return protection;
+    }
+
+    /** Where abilities may break blocks during a match (restored when it ends). */
+    public BlockDamageScope abilityBlockDamage() {
+        return abilityBlockDamage;
+    }
+
+    public void setAbilityBlockDamage(BlockDamageScope scope) {
+        abilityBlockDamage = scope;
+        raw().set("protection.ability-block-damage", scope.name());
+        save();
+    }
+
+    /** At most this many blocks are broken by abilities in one match (0 = none). */
+    public int abilityBlockDamageLimit() {
+        return abilityBlockDamageLimit;
+    }
+
+    public void setAbilityBlockDamageLimit(int limit) {
+        abilityBlockDamageLimit = clamp(limit, 0, MAX_BLOCK_DAMAGE_LIMIT);
+        raw().set("protection.ability-block-damage-limit", abilityBlockDamageLimit);
+        save();
     }
 
     // ------------------------------------------------------------------ games

@@ -6,12 +6,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.List;
 
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Bisected;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Directional;
+import org.bukkit.entity.Zombie;
 import org.bukkit.event.block.BlockFadeEvent;
+import org.bukkit.event.block.BlockFromToEvent;
+import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -190,6 +197,151 @@ class TempBlockServiceTest {
 
         service.restoreAll();
         BlockFadeEvent later = new BlockFadeEvent(grass, grass.getState());
+        server.getPluginManager().callEvent(later);
+        assertFalse(later.isCancelled());
+    }
+
+    // ------------------------------------------------------------------ removed blocks (terrain damage)
+
+    /** A stone block with a torch on its south side, in the open; returns the stone. */
+    private Block stoneWithTorch(int x, int z) {
+        Block stone = world.getBlockAt(x, world.getMaxHeight() - 20, z);
+        stone.setType(Material.STONE);
+        Block torch = stone.getRelative(BlockFace.SOUTH);
+        Directional data = (Directional) Material.WALL_TORCH.createBlockData();
+        data.setFacing(BlockFace.SOUTH);
+        torch.setBlockData(data);
+        return stone;
+    }
+
+    @Test
+    void removedBlocksComeBackExactlyAtOnce() {
+        Block stone = stoneWithTorch(30, 30);
+        Block torch = stone.getRelative(BlockFace.SOUTH);
+        BlockData torchData = torch.getBlockData();
+        assertTrue(service.remove(List.of(stone, torch)));
+        assertEquals(Material.AIR, stone.getType());
+        assertEquals(Material.AIR, torch.getType());
+        assertTrue(service.isRemoved(stone));
+        assertFalse(service.isTemporary(stone), "removed, not a temporary block");
+        assertEquals(2, service.removedCount());
+        assertEquals(0, service.size());
+        assertEquals(Material.STONE, service.originalData(stone).getMaterial());
+
+        assertEquals(0, service.restorePlacements(), "temporary blocks go first, removed blocks stay");
+        assertEquals(Material.AIR, stone.getType());
+        assertEquals(2, service.restoreRemovals());
+        assertEquals(Material.STONE, stone.getType());
+        assertTrue(torchData.matches(torch.getBlockData()), "the torch is back facing the same way");
+        assertEquals(0, service.removedCount());
+    }
+
+    @Test
+    void removalIsAllOrNothing() {
+        Block stone = world.getBlockAt(32, world.getMaxHeight() - 20, 32);
+        stone.setType(Material.STONE);
+        Block chest = stone.getRelative(BlockFace.UP);
+        chest.setType(Material.CHEST);
+        Block air = airBlock(33, 33);
+        Block temporary = airBlock(34, 34);
+        assertTrue(service.place(temporary, Material.GLASS.createBlockData(), 0));
+
+        assertFalse(service.remove(List.of(stone, chest)), "a block entity never goes");
+        assertFalse(service.remove(List.of(stone, air)), "nothing to remove");
+        assertFalse(service.remove(List.of(stone, temporary)), "a temporary block is not removed");
+        assertFalse(service.remove(List.of(stone, stone)));
+        assertEquals(Material.STONE, stone.getType(), "nothing changed");
+        assertEquals(0, service.removedCount());
+        assertTrue(service.remove(List.of(stone)));
+        assertFalse(service.remove(List.of(stone)), "already removed");
+    }
+
+    @Test
+    void aTemporaryBlockCanStandInARemovedSpot() {
+        Block stone = world.getBlockAt(36, world.getMaxHeight() - 20, 36);
+        stone.setType(Material.STONE);
+        assertTrue(service.remove(List.of(stone)));
+        assertTrue(service.place(stone, Material.ICE.createBlockData(), 0));
+        assertEquals(Material.ICE, stone.getType());
+        assertEquals(Material.STONE, service.originalData(stone).getMaterial(), "what it will be in the end");
+
+        service.restorePlacements();
+        assertEquals(Material.AIR, stone.getType(), "the crater is back when the ice goes");
+        service.restoreRemovals();
+        assertEquals(Material.STONE, stone.getType());
+    }
+
+    @Test
+    void restoringRemovalsFirstClearsTemporaryBlocksStandingInThem() {
+        Block stone = world.getBlockAt(37, world.getMaxHeight() - 20, 37);
+        stone.setType(Material.STONE);
+        assertTrue(service.remove(List.of(stone)));
+        assertTrue(service.place(stone, Material.ICE.createBlockData(), 40));
+        service.restoreRemovals();
+        assertEquals(Material.STONE, stone.getType());
+        server.getScheduler().performTicks(45);
+        assertEquals(Material.STONE, stone.getType(), "the expired ice does not bring the air back");
+    }
+
+    @Test
+    void removedBlocksRecoverAfterACrash() {
+        Block stone = stoneWithTorch(40, 40);
+        Block torch = stone.getRelative(BlockFace.SOUTH);
+        BlockData torchData = torch.getBlockData();
+        Block other = world.getBlockAt(42, world.getMaxHeight() - 20, 40);
+        other.setType(Material.OAK_PLANKS);
+        assertTrue(service.remove(List.of(stone, torch)));
+        assertTrue(service.remove(List.of(other)));
+        assertTrue(service.place(other, Material.ICE.createBlockData(), 0), "ice in the crater");
+        service.flush();
+        assertTrue(file.exists());
+
+        // A crash: nothing is restored, a new service starts from the file.
+        TempBlockService afterCrash = new TempBlockService(plugin, file);
+        afterCrash.recover();
+        assertEquals(Material.STONE, stone.getType());
+        assertTrue(torchData.matches(torch.getBlockData()));
+        assertEquals(Material.OAK_PLANKS, other.getType(), "the original wins over the ice that stood in the crater");
+        assertFalse(file.exists(), "nothing left to restore");
+    }
+
+    @Test
+    void livingEntitiesAreLiftedOutOfRestoredBlocks() {
+        int y = world.getMaxHeight() - 30;
+        Block ground = world.getBlockAt(50, y, 50);
+        ground.setType(Material.STONE);
+        ground.getRelative(BlockFace.UP).setType(Material.AIR);
+        ground.getRelative(0, 2, 0).setType(Material.AIR);
+        ground.getRelative(0, 3, 0).setType(Material.AIR);
+        ground.getRelative(BlockFace.DOWN).setType(Material.STONE);
+        assertTrue(service.remove(List.of(ground)));
+        Zombie zombie = world.spawn(new Location(world, 50.5, y, 50.5), Zombie.class);
+        service.restoreRemovals();
+        assertEquals(Material.STONE, ground.getType());
+        assertTrue(zombie.getLocation().getY() >= y + 1, "standing on the restored block, not inside it");
+    }
+
+    @Test
+    void nothingFlowsGrowsOrSpreadsIntoACrater() {
+        Block stone = world.getBlockAt(60, world.getMaxHeight() - 20, 60);
+        stone.setType(Material.STONE);
+        Block dirt = stone.getRelative(BlockFace.DOWN);
+        dirt.setType(Material.DIRT);
+        Block water = stone.getRelative(BlockFace.EAST);
+        water.setType(Material.WATER);
+        assertTrue(service.remove(List.of(stone)));
+
+        BlockFromToEvent flow = new BlockFromToEvent(water, stone);
+        server.getPluginManager().callEvent(flow);
+        assertTrue(flow.isCancelled(), "no water runs into the crater");
+        Block grass = dirt.getRelative(BlockFace.WEST);
+        grass.setType(Material.GRASS_BLOCK);
+        BlockSpreadEvent spread = new BlockSpreadEvent(dirt, grass, grass.getState());
+        server.getPluginManager().callEvent(spread);
+        assertTrue(spread.isCancelled(), "the dirt laid bare stays dirt");
+
+        service.restoreRemovals();
+        BlockSpreadEvent later = new BlockSpreadEvent(dirt, grass, grass.getState());
         server.getPluginManager().callEvent(later);
         assertFalse(later.isCancelled());
     }

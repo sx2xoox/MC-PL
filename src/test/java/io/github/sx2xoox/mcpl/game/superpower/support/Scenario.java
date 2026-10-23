@@ -592,6 +592,7 @@ public final class Scenario implements AutoCloseable {
     public void assertCleanWorld() {
         assertNoLeftoverEntities();
         assertEquals(0, h.hub.tempBlocks().size(), "temporary blocks restored");
+        assertEquals(0, h.hub.tempBlocks().removedCount(), "broken terrain restored");
         for (int x = -24; x <= 24; x++) {
             for (int z = -24; z <= 24; z++) {
                 for (int y = FlatWorld.FLOOR_Y - 2; y <= FlatWorld.FLOOR_Y + 8; y++) {
