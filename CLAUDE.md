@@ -32,6 +32,7 @@ src/main/java/io/github/sx2xoox/mcpl/
     abilities/                 one class per ability + BuiltinAbilities registration
     config/                    abilities.yml (enabled flags + params, generated from AbilityInfo)
     runtime/                   the match: phases, AbilityContext impl, listener, assignment, gauge, cooldown, HUD
+    loot/                      loot chests, supply drops, superpower consumables (games.superpower.loot.*)
     ui/ menu/ command/         ability item/texts/reveal, CHOICE menu, /게임 능력 commands
   util/                        small shared helpers (Text = MiniMessage)
 docs/                          game design docs (Korean), the source of truth for game rules; abilities.md is generated
@@ -46,5 +47,7 @@ docs/                          game design docs (Korean), the source of truth fo
 - Abilities only harm entities for which `AbilityContext#isEnemy` is true and only through the context helpers
   (`damage`, `enemiesNear`, `findTarget`, ...) so team mode, spectators and kill credit work.
 - Every balance number lives in `AbilityInfo` params (seconds, blocks, health points), never hard-coded.
+- Abilities break terrain only through `AbilityContext#breakBlocks` / `breakBlocksAlong` (temporary removal via
+  `TempBlockService`, map worlds only by default, restored at match end); never set blocks directly.
 - Prefer modern API: data components (`DataComponentTypes`), `Attribute` modifiers keyed by `NamespacedKey`,
   display entities for visuals, `DamageSource.builder`, Adventure components/titles/boss bars.
