@@ -85,12 +85,14 @@ public final class MagicalGirlAbility extends Ability {
             .passive("우정의 리본",
                     "하트로 치유한 아군은 {ribbon_duration}초간 분홍 리본으로 나와 이어집니다. 그 아군이 적에게 받는 "
                             + "피해의 {ribbon_share}%를 내가 대신 받고, 내게 오는 몫은 리본이 {ribbon_cushion}% 줄여 "
-                            + "줍니다. 리본은 모두에게 보이며 {ribbon_range}블록 넘게 멀어지면 끊어집니다.")
+                            + "줍니다. 리본은 그 아군을 볼 수 있는 모두에게 보이며 {ribbon_range}블록 넘게 멀어지면 "
+                            + "끊어집니다.")
             .active("하트 스틱",
                     "마법봉을 휘둘러 하트를 날립니다({heart_range}블록). 처음 맞은 적에게 {heart_damage} 피해를 주고 "
-                            + "튕겨 나가, {bounce_range}블록 안에서 가장 많이 다친 아군(없으면 나)을 {heart_heal} 회복시키고 "
+                            + "튕겨 나가, {bounce_range}블록 안에서 가장 많이 다친 아군(없으면 {heart_range}블록 안의 나)을 "
+                            + "{heart_heal} 회복시키고 "
                             + "다시 그 근처의 다른 적에게 {bounce_damage} 피해를 주는 식으로 적과 아군을 번갈아 최대 "
-                            + "{bounces}번 맞힙니다(같은 대상은 한 번씩, 벽 너머로는 튕기지 않음).",
+                            + "{bounces}번 맞힙니다(같은 대상은 한 번씩, 벽 너머로나 숨은 아군에게는 튕기지 않음).",
                     9)
             .ultimate("변신!",
                     "{transform_time}초간 리본과 빛에 감싸여 변신합니다. 그동안 피해를 받지 않고 밀려나지도 않지만 "
@@ -154,6 +156,11 @@ public final class MagicalGirlAbility extends Ability {
     private static final Material BOW_KNOT = Material.MAGENTA_CONCRETE;
 
     private static final int MAX_DISPLAYS = 24;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final double TAU = Math.PI * 2;
     private static final double MAX_SPEED = 2.0;
     private static final String HEART = "❤";
@@ -281,6 +288,8 @@ public final class MagicalGirlAbility extends Ability {
         final Player ally;
         long until;
         final List<BlockDisplay> bow = new ArrayList<>();
+        /** Viewers the bow is hidden from: they cannot see the ally (stealth), so the bow must not show it. */
+        final Set<UUID> bowHiddenFrom = new HashSet<>();
 
         Ribbon(Player ally, long until) {
             this.ally = ally;
@@ -294,7 +303,8 @@ public final class MagicalGirlAbility extends Ability {
                 }
             }
             bow.clear();
-            if (snapped && ally.isValid()) {
+            bowHiddenFrom.clear();
+            if (snapped && ally.isValid() && !concealed(ally)) {
                 Location back = Fx.body(ally);
                 Vfx.cloud(ctx(), back, Particle.DUST, 5, 0.25, 0, PINK_DUST, false);
                 Fx.sound(back, Sound.BLOCK_WOOL_BREAK, 0.6f, 1.5f);
@@ -323,12 +333,15 @@ public final class MagicalGirlAbility extends Ability {
             for (int i = 0; i < 3; i++) {
                 BlockDisplay part = keep(Displays.block(ctx(), owner, feet, (i == 2 ? BOW_KNOT : BOW).createBlockData(),
                         bowPose(ally, i, 0.05f), 0));
-                part.setTeleportDuration(1);
+                part.setTeleportDuration(FOLLOW_LERP);
                 Displays.animateNextTick(ctx(), owner, part, bowPose(ally, i, 1f), 4);
                 ribbon.bow.add(part);
             }
+            syncBow(ribbon);
         }
-        Fx.sound(ally.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 1.6f);
+        if (!concealed(ally)) {
+            Fx.sound(ally.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.8f, 1.6f);
+        }
         ally.sendActionBar(Text.mm("<" + PINK_TAG + "><b>우정의 리본</b></" + PINK_TAG + "> <gray>받는 피해를 마법소녀가 "
                 + "나눠 받습니다</gray>"));
     }
@@ -353,9 +366,14 @@ public final class MagicalGirlAbility extends Ability {
         double mine = total * share * (1 - cushion);
         Location from = Fx.body(ribbon.ally);
         Location to = Fx.body(owner);
-        Vfx.trail(from, to, PINK, 8, false);
-        Vfx.cloud(ctx(), from, Particle.DUST, 3, 0.2, 0, PINK_DUST, false);
-        Fx.sound(from, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.6f, 1.5f + Fx.jitter(0.1f));
+        // A stealthed ally (or girl) is not given away by the shared pain.
+        if (!concealed(ribbon.ally)) {
+            if (!concealed(owner)) {
+                Vfx.trail(from, to, PINK, 8, false);
+            }
+            Vfx.cloud(ctx(), from, Particle.DUST, 3, 0.2, 0, PINK_DUST, false);
+            Fx.sound(from, Sound.BLOCK_AMETHYST_BLOCK_HIT, 0.6f, 1.5f + Fx.jitter(0.1f));
+        }
         if (mine > 0) {
             sharing = true;
             try {
@@ -405,8 +423,35 @@ public final class MagicalGirlAbility extends Ability {
                 Displays.moveTo(part, ally.getLocation());
                 Displays.animate(part, bowPose(ally, i, 1f), 2);
             }
-            if (tick % RIBBON_PERIOD == 0 && !hidden(owner) && seen(owner, ally)) {
+            syncBow(ribbon);
+            // The ribbon's particles are seen by everyone near it: never drawn to (or from) someone in hiding.
+            if (tick % RIBBON_PERIOD == 0 && !concealed(owner) && !concealed(ally)) {
                 drawRibbon(Fx.body(owner), Fx.body(ally), tick);
+            }
+        }
+    }
+
+    /** The bow on a tied ally's back is shown exactly to the viewers who can see that ally. */
+    private void syncBow(Ribbon ribbon) {
+        if (ribbon.bow.isEmpty()) {
+            return;
+        }
+        Player ally = ribbon.ally;
+        boolean invisible = invisible(ally);
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (viewer.equals(ally)) {
+                continue;
+            }
+            boolean hide = invisible || !viewer.canSee(ally);
+            UUID id = viewer.getUniqueId();
+            if (hide && ribbon.bowHiddenFrom.add(id)) {
+                for (BlockDisplay part : ribbon.bow) {
+                    viewer.hideEntity(ctx().plugin(), part);
+                }
+            } else if (!hide && ribbon.bowHiddenFrom.remove(id)) {
+                for (BlockDisplay part : ribbon.bow) {
+                    viewer.showEntity(ctx().plugin(), part);
+                }
             }
         }
     }
@@ -502,6 +547,11 @@ public final class MagicalGirlAbility extends Ability {
         private boolean enemyNext = true;
         private @Nullable LivingEntity target;
         private long hopTicks;
+        /**
+         * The flight leg now under way. Each leg (the first throw, every hop) is its own loop, and a loop that ends
+         * because its leg landed must not pop the heart the next leg carries on.
+         */
+        private int leg;
 
         Heart(Player owner, int maxHops) {
             this.owner = owner;
@@ -525,7 +575,8 @@ public final class MagicalGirlAbility extends Ability {
             Vector direction = owner.getEyeLocation().getDirection();
             double range = Math.max(1, params().num("heart_range"));
             long ticks = (long) Math.ceil(range / HEART_SPEED) + 1;
-            Loop.repeat(ctx(), owner, 1, 1, ticks, run -> straight(direction, run), this::fizzle);
+            int first = ++leg;
+            Loop.repeat(ctx(), owner, 1, 1, ticks, run -> straight(direction, run), () -> fizzle(first));
         }
 
         /** The first flight: straight ahead along the aim. */
@@ -619,7 +670,8 @@ public final class MagicalGirlAbility extends Ability {
             target = next;
             hopTicks = 0;
             Fx.sound(at, Sound.ENTITY_ALLAY_AMBIENT_WITH_ITEM, 0.6f, 1.6f + 0.08f * landed);
-            Loop.repeat(ctx(), owner, 1, 1, HOP_MAX_TICKS, this::home, this::fizzle);
+            int hop = ++leg;
+            Loop.repeat(ctx(), owner, 1, 1, HOP_MAX_TICKS, this::home, () -> fizzle(hop));
         }
 
         /** The most hurt ally within reach of the heart (seen through no wall), else the girl herself. */
@@ -628,7 +680,8 @@ public final class MagicalGirlAbility extends Ability {
             Player best = null;
             double missing = -1;
             for (Player ally : ctx().alliesNear(owner, at, reach)) {
-                if (visited.contains(ally.getUniqueId()) || !clear(ally)) {
+                // A heart springing to a stealthed ally would show everyone where it hides.
+                if (visited.contains(ally.getUniqueId()) || !clear(ally) || concealed(ally)) {
                     continue;
                 }
                 double gap = Combat.maxHealth(ally) - ally.getHealth();
@@ -721,8 +774,9 @@ public final class MagicalGirlAbility extends Ability {
             Fx.sound(at, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.6f, 1.6f + Fx.jitter(0.1f));
         }
 
-        private void fizzle() {
-            if (sprite != null) {
+        /** The loop of leg {@code which} ran out: the heart fizzles, unless a later leg already carries it on. */
+        private void fizzle(int which) {
+            if (which == leg && sprite != null) {
                 pop(false);
             }
         }
@@ -896,7 +950,7 @@ public final class MagicalGirlAbility extends Ability {
         for (int i = 0; i < 3; i++) {
             BlockDisplay part = keep(Displays.block(ctx(), owner, feet, (i == 2 ? BOW_KNOT : BOW).createBlockData(),
                     bigBowPose(owner, i, 0.05f), life));
-            part.setTeleportDuration(1);
+            part.setTeleportDuration(FOLLOW_LERP);
             Displays.animateNextTick(ctx(), owner, part, bigBowPose(owner, i, 1f), 5);
             outfit.add(part);
         }
@@ -1165,7 +1219,27 @@ public final class MagicalGirlAbility extends Ability {
 
     /** True if the girl cannot be seen (invisibility): her glitter must not give her away. */
     private static boolean hidden(Player owner) {
-        return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
+        return invisible(owner);
+    }
+
+    private static boolean invisible(Player player) {
+        return player.isInvisible() || player.hasPotionEffect(PotionEffectType.INVISIBILITY);
+    }
+
+    /**
+     * True if {@code player} is hiding from someone: invisible, or hidden from any other player in its world
+     * (stealth). Particles and sounds are seen by everyone near them, so none may be drawn on such a player.
+     */
+    private static boolean concealed(Player player) {
+        if (invisible(player)) {
+            return true;
+        }
+        for (Player viewer : player.getWorld().getPlayers()) {
+            if (!viewer.equals(player) && !viewer.canSee(player)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** True unless {@code entity} is a player hidden from the owner (its visuals would give it away). */

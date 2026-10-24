@@ -1,11 +1,10 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -59,7 +58,8 @@ import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.entity.EntityRemoveEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.inventory.EntityEquipment;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -90,9 +90,9 @@ public final class CirceAbility extends Ability {
             .color(TextColor.color(0x6C3FA0))
             .difficulty(1)
             .passive("짐승의 여주인",
-                    "{tame_radius}블록 안에 있는 적의 소환수와 짐승(늑대·골렘·좀비·벌·슬라임·팬텀 같은 몹)은 나를 "
-                            + "노리지 않고 나를 물거나 때려도 피해를 주지 못하며, 나를 노리던 몹도 나를 놓칩니다. 몹에게 "
-                            + "주는 내 근접 피해는 {beast_multiplier}배가 됩니다.")
+                    "{tame_radius}블록 안에 있는 적의 소환수와 짐승(늑대·골렘·언데드·좀비 같은 몹)은 스스로 나를 "
+                            + "노리지 않고, 나를 쫓던 몹도 {tame_interval}초마다 나를 놓쳐 머뭇거립니다(주인이 다시 시키면 "
+                            + "다시 덤빕니다). 몹에게 주는 내 근접 피해는 {beast_multiplier}배가 됩니다.")
             .active("돼지가 되어라",
                     "마법 포도주 잔을 포물선으로 던집니다(최대 {cup_range}블록). 처음 맞은 적은 {pig_duration}초간 "
                             + "돼지가 됩니다: 몸이 숨겨지고 돼지 모습으로 걷거나(이동 속도 -{pig_slow}%) 뛸 수는 있지만 "
@@ -102,13 +102,15 @@ public final class CirceAbility extends Ability {
                     11)
             .ultimate("키르케의 연회",
                     "내 자리에 잔이 놓인 연회 식탁을 차립니다. {feast_warning}초 동안 반경 {feast_radius}블록의 빛의 "
-                            + "고리가 경고하고(그사이 도망칠 수 있음), 그때 고리 안에 있는 적은 모두 {feast_duration}초간 "
+                            + "고리가 경고하고(그사이 고리 밖으로 달아날 수 있음), 그때 고리 안에 있는 적은 모두 "
+                            + "{feast_duration}초간 "
                             + "무작위 동물이 됩니다 — 돼지(이동 속도 -{feast_pig_slow}%), 닭(점프력 "
                             + "-{feast_chicken_jump}%, 천천히 떨어짐), 토끼(계속 깡충거리며 이동 속도 "
                             + "+{feast_rabbit_speed}%), 양(넉백 {feast_sheep_knockback}배). 동물은 공격하거나 능력을 쓸 "
                             + "수 없고, 그동안 나와 아군이 동물에게 주는 피해가 {feast_bonus}% 늘어납니다. 풀릴 때 "
                             + "{feast_release_damage} 피해를 입습니다.")
             .param("tame_radius", 8)
+            .param("tame_interval", 1)
             .param("beast_multiplier", 2)
             .param("cup_range", 20)
             .param("pig_duration", 2)
@@ -117,7 +119,7 @@ public final class CirceAbility extends Ability {
             .param("puddle_duration", 3)
             .param("puddle_radius", 2)
             .param("puddle_slow", 30)
-            .param("feast_warning", 1)
+            .param("feast_warning", 1.5)
             .param("feast_radius", 10)
             .param("feast_duration", 2.5)
             .param("feast_pig_slow", 30)
@@ -157,7 +159,6 @@ public final class CirceAbility extends Ability {
     private static final double MAX_SPEED = 2.0;
 
     // passive
-    private static final long TAME_PERIOD = 10;
     private static final long AURA_PERIOD = 20;
     private static final long TAME_NOTICE = 60;
 
@@ -175,6 +176,8 @@ public final class CirceAbility extends Ability {
     private static final double PUDDLE_HEIGHT = 1.0;
 
     // morphs
+    private static final EquipmentSlot[] GEAR = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
+            EquipmentSlot.FEET, EquipmentSlot.HAND, EquipmentSlot.OFF_HAND};
     private static final long BUBBLE_GAP = 10;
     private static final double RABBIT_HOP = 0.8;
     private static final long RABBIT_PERIOD = 10;
@@ -268,7 +271,9 @@ public final class CirceAbility extends Ability {
     @Override
     public void onTick(long tick) {
         Player owner = player();
-        calmBeasts(owner, tick % TAME_PERIOD == 0);
+        if (tick % Math.max(1, params().ticks("tame_interval")) == 0) {
+            calmBeasts(owner);
+        }
         if (tick % AURA_PERIOD == 0 && !owner.isInvisible() && !owner.hasPotionEffect(PotionEffectType.INVISIBILITY)) {
             Location feet = owner.getLocation().add(0, 0.08, 0);
             Vfx.ring(ctx(), feet, 0.55, 8, tick * 0.05, Particle.DUST, tick % 40 == 0 ? HERB_DUST : PURPLE_DUST,
@@ -276,8 +281,11 @@ public final class CirceAbility extends Ability {
         }
     }
 
-    /** Mobs already chasing the witch lose interest (every tick), and bow to her with a heart now and then. */
-    private void calmBeasts(Player owner, boolean show) {
+    /**
+     * Mobs chasing the witch lose interest for a moment and bow to her with a heart. Only now and then: a summon its
+     * master keeps sending at her hesitates, but still comes (the passive is a weak counter, not an immunity).
+     */
+    private void calmBeasts(Player owner) {
         double radius = Math.max(0, params().num("tame_radius"));
         if (radius <= 0) {
             return;
@@ -287,13 +295,11 @@ public final class CirceAbility extends Ability {
             if (entity instanceof Mob mob && owner.equals(mob.getTarget()) && tamed(owner, mob)) {
                 mob.setTarget(null);
                 calmed++;
-                if (show) {
-                    bow(mob);
-                }
+                bow(mob);
             }
         }
         long now = ctx().currentTick();
-        if (calmed > 0 && show && now - lastTameNotice >= TAME_NOTICE) {
+        if (calmed > 0 && now - lastTameNotice >= TAME_NOTICE) {
             lastTameNotice = now;
             owner.sendActionBar(Text.mm("<" + PURPLE_TAG + "><b>짐승의 여주인</b></" + PURPLE_TAG + "> <gray>짐승들이 "
                     + "고개를 숙입니다</gray>"));
@@ -306,21 +312,6 @@ public final class CirceAbility extends Ability {
         Vfx.dot(head, Particle.HEART, null, false);
         Vfx.cloud(ctx(), head, Particle.DUST, 3, 0.2, 0, PURPLE_DUST, false);
         Fx.sound(head, Sound.ENTITY_CAT_PURR, 0.6f, 1.2f + Fx.jitter(0.1f));
-    }
-
-    /** A tamed beast's bite or blow (a summon whose master set its target anyway) does not hurt its mistress. */
-    @Override
-    public void onTakeDamage(EntityDamageEvent event) {
-        if (event.isCancelled() || !(event instanceof EntityDamageByEntityEvent byEntity)
-                || !(byEntity.getDamager() instanceof Mob mob) || !tamed(player(), mob)) {
-            return;
-        }
-        event.setCancelled(true);
-        if (mob.getTarget() != null && mob.getTarget().equals(player())) {
-            mob.setTarget(null);
-        }
-        bow(mob);
-        Fx.sound(mob.getLocation(), Sound.ENTITY_WOLF_WHINE, 0.7f, 1.3f + Fx.jitter(0.1f));
     }
 
     /** Her own blows (not ability damage) hit mobs harder: only changes the damage. */
@@ -548,8 +539,8 @@ public final class CirceAbility extends Ability {
                     slowedUntil.put(enemy.getUniqueId(), now + PUDDLE_SLOW_TICKS);
                     if (seen(owner, enemy)) {
                         Vfx.cloud(ctx(), feet.clone().add(0, 0.1, 0), Particle.DUST, 3, 0.2, 0, SMALL_WINE, false);
+                        Fx.sound(feet, Sound.BLOCK_HONEY_BLOCK_SLIDE, 0.4f, 1.3f + Fx.jitter(0.1f));
                     }
-                    Fx.sound(feet, Sound.BLOCK_HONEY_BLOCK_SLIDE, 0.4f, 1.3f + Fx.jitter(0.1f));
                 }
             }
             // The wine glints and bubbles.
@@ -576,9 +567,12 @@ public final class CirceAbility extends Ability {
     // ================================================================== morphs
 
     /**
-     * One enemy turned into an animal: hidden from every viewer, a real (but motionless and silent) animal follows it
-     * and takes the blows meant for it, it cannot strike or shoot (and is silenced, so it cannot cast), and its body
-     * gets the animal's quirks.
+     * One enemy turned into an animal: its body turns invisible (its armour and held items too, with fake empty
+     * equipment for every viewer), a real (but motionless and silent) animal follows it and takes the blows meant for
+     * it, it cannot strike or shoot (and is silenced, so it cannot cast), and its body gets the animal's quirks.
+     *
+     * <p>The body is not hidden with {@code hidePlayer}: everyone can still see (so aim at and target) the victim, as
+     * stealth checks treat a hidden player as out of sight, and the witch's side must be able to hit the animals.
      */
     private final class Morph {
         final Player owner;
@@ -587,8 +581,9 @@ public final class CirceAbility extends Ability {
         final boolean feast;
         final double releaseDamage;
         final long until;
-        final Set<UUID> hiddenFrom = new HashSet<>();
         final List<NamespacedKey> keys = new ArrayList<>();
+        /** Whether the spell made the body invisible (it was not already). */
+        boolean madeInvisible;
         @Nullable Mob model;
         /** Stands in for a missing animal: its removal with the witch's ability ends the spell. */
         @Nullable TextDisplay anchor;
@@ -604,31 +599,53 @@ public final class CirceAbility extends Ability {
             this.until = until;
         }
 
-        /** Hides the victim from {@code viewer} (if it can see it now), remembering to show it again. */
-        void hideFrom(Player viewer) {
-            if (viewer.equals(victim) || !viewer.canSee(victim) || !hiddenFrom.add(viewer.getUniqueId())) {
+        /** The body vanishes into its animal: invisible, with its gear hidden from everyone. */
+        void conceal(long life) {
+            if (!victim.hasPotionEffect(PotionEffectType.INVISIBILITY)) {
+                victim.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, (int) life + 5, 0, false,
+                        false, true));
+                madeInvisible = true;
+            }
+            hideGear();
+        }
+
+        /** Every viewer sees the body's armour and held items as empty (resent every tick: the server resends gear). */
+        void hideGear() {
+            if (!victim.isValid()) {
                 return;
             }
-            if (victim instanceof Player target) {
-                viewer.hidePlayer(ctx().plugin(), target);
-            } else {
-                viewer.hideEntity(ctx().plugin(), victim);
+            Map<EquipmentSlot, ItemStack> empty = new EnumMap<>(EquipmentSlot.class);
+            for (EquipmentSlot slot : GEAR) {
+                empty.put(slot, ItemStack.empty());
+            }
+            for (Player viewer : victim.getWorld().getPlayers()) {
+                if (!viewer.equals(victim)) {
+                    viewer.sendEquipmentChange(victim, empty);
+                }
             }
         }
 
         void showAgain() {
-            for (UUID id : hiddenFrom) {
-                Player viewer = Bukkit.getPlayer(id);
-                if (viewer == null) {
-                    continue;
-                }
-                if (victim instanceof Player target) {
-                    viewer.showPlayer(ctx().plugin(), target);
-                } else {
-                    viewer.showEntity(ctx().plugin(), victim);
+            if (madeInvisible) {
+                madeInvisible = false;
+                PotionEffect invisible = victim.getPotionEffect(PotionEffectType.INVISIBILITY);
+                if (invisible != null && !invisible.hasParticles()) {
+                    victim.removePotionEffect(PotionEffectType.INVISIBILITY);
                 }
             }
-            hiddenFrom.clear();
+            EntityEquipment worn = victim.getEquipment();
+            if (worn == null || !victim.isValid()) {
+                return;
+            }
+            Map<EquipmentSlot, ItemStack> real = new EnumMap<>(EquipmentSlot.class);
+            for (EquipmentSlot slot : GEAR) {
+                real.put(slot, worn.getItem(slot));
+            }
+            for (Player viewer : Bukkit.getOnlinePlayers()) {
+                if (!viewer.equals(victim)) {
+                    viewer.sendEquipmentChange(victim, real);
+                }
+            }
         }
 
         /** The animal follows the victim's body, turned the way it looks. */
@@ -756,9 +773,7 @@ public final class CirceAbility extends Ability {
             morph.anchor = standIn;
             byModel.put(standIn.getUniqueId(), morph);
         }
-        for (Player viewer : Bukkit.getOnlinePlayers()) {
-            morph.hideFrom(viewer);
-        }
+        morph.conceal(life);
         applyQuirks(owner, morph, life);
         if (victim instanceof Player target) {
             ctx().silence(target, life);
@@ -813,6 +828,7 @@ public final class CirceAbility extends Ability {
             return false;
         }
         morph.follow();
+        morph.hideGear();
         if (morph.kind == Kind.RABBIT && run % RABBIT_PERIOD == 0 && Motion.isGrounded(victim)) {
             // It cannot help hopping.
             Vector hop = Motion.horizontalFacing(victim.getLocation()).multiply(RABBIT_PUSH);
@@ -928,14 +944,6 @@ public final class CirceAbility extends Ability {
                 if (morph != null && !morph.ended) {
                     event.setCancelled(true);
                 }
-            }
-        }
-
-        /** A newcomer must not see the victims either. */
-        @EventHandler(priority = EventPriority.MONITOR)
-        public void onJoin(PlayerJoinEvent event) {
-            for (Morph morph : morphs.values()) {
-                morph.hideFrom(event.getPlayer());
             }
         }
 
@@ -1088,12 +1096,9 @@ public final class CirceAbility extends Ability {
 
     // ================================================================== helpers
 
-    /**
-     * True unless {@code entity} is a player hidden from the owner (aiming and markers must not give it away); the
-     * witch's own animals count as seen (she hid them herself).
-     */
-    private boolean seen(Player owner, Entity entity) {
-        return !(entity instanceof Player player) || owner.canSee(player) || morphs.containsKey(entity.getUniqueId());
+    /** True unless {@code entity} is a player hidden from the owner (aiming and markers must not give it away). */
+    private static boolean seen(Player owner, Entity entity) {
+        return !(entity instanceof Player player) || owner.canSee(player);
     }
 
     /** A box of {@code size} centered on {@code center} (relative to the display), turned by {@code rotation}. */

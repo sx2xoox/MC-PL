@@ -71,9 +71,10 @@ public final class KoscheiAbility extends Ability {
             .color(TextColor.color(0xB8963E))
             .difficulty(2)
             .passive("숨겨 둔 죽음",
-                    "내 죽음이 든 알(체력 {egg_health})이 전장에 있고 {egg_range}블록 안에 있는 동안 나는 체력 1 아래로 "
-                            + "떨어지지 않고, 넘친 피해는 알이 대신 받습니다. 알은 모두에게 보이고(벽 너머로도 희미하게 "
-                            + "빛남) 적이 근접 공격이나 능력으로 부술 수 있으며, {egg_safe_radius}블록 안에 적이 없으면 "
+                    "내 죽음이 든 알(체력 {egg_health})이 전장(경계 안)에 있고 {egg_range}블록 안에 있는 동안 나는 체력 "
+                            + "1 아래로 떨어지지 않고, 넘친 피해는 알이 대신 받습니다. 알은 모두에게 보이고(벽 너머로도 "
+                            + "희미하게 빛남) 적이 근접 공격·화살·능력으로 부술 수 있으며, {egg_safe_radius}블록 안에 적이 "
+                            + "없으면 "
                             + "{egg_regen_interval}초마다 {egg_regen} 회복합니다. 알이 깨지면 나는 {break_damage} 피해를 "
                             + "입고 다시 숨길 때까지 평범한 몸이 됩니다. 경기가 시작되면 알은 내 발밑에 놓입니다.")
             .active("죽음 숨기기",
@@ -135,6 +136,11 @@ public final class KoscheiAbility extends Ability {
 
     private static final int MAX_DISPLAYS = 24;
     private static final double TAU = Math.PI * 2;
+    /**
+     * Ticks a display following a moving body glides to each new spot: as long as a client lerps a moving entity
+     * (3 steps), so a figure moved every tick keeps pace with its hitbox instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final double MAX_SPEED = 1.5;
 
     // the vessels
@@ -414,7 +420,7 @@ public final class KoscheiAbility extends Ability {
             for (int i = 0; i < count; i++) {
                 BlockDisplay part = keep(Displays.block(ctx(), owner, at, figureMaterial(shell, i).createBlockData(),
                         figurePose(shell, i, vessel.yaw, 0.05f, 0f, tick), 0));
-                part.setTeleportDuration(1);
+                part.setTeleportDuration(FOLLOW_LERP);
                 if (shell == Shell.EGG) {
                     Displays.outline(part, GLOW_GREEN);
                 } else if (i == 0) {
@@ -425,7 +431,7 @@ public final class KoscheiAbility extends Ability {
             }
             TextDisplay label = keep(Displays.text(ctx(), owner, at.clone().add(0, labelHeight(shell), 0),
                     Text.mm(pips(maxHealth, maxHealth)), LABEL_SCALE, 0));
-            label.setTeleportDuration(1);
+            label.setTeleportDuration(FOLLOW_LERP);
             label.setSeeThrough(false);
             vessel.label = label;
         }
@@ -587,8 +593,8 @@ public final class KoscheiAbility extends Ability {
         boolean inRange = inRange(owner, main);
         if (!inRange && wasInRange && now - lastFarNotice >= FAR_NOTICE) {
             lastFarNotice = now;
-            owner.sendActionBar(Text.mm("<gray>알이 너무 멀어 </gray><" + GOLD_TAG + ">숨겨 둔 죽음</" + GOLD_TAG
-                    + "><gray>이 힘을 잃었습니다</gray>"));
+            owner.sendActionBar(Text.mm("<gray>알이 너무 멀거나 전장 밖에 있어 </gray><" + GOLD_TAG + ">숨겨 둔 "
+                    + "죽음</" + GOLD_TAG + "><gray>이 힘을 잃었습니다</gray>"));
             Fx.sound(owner.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 0.5f, 1.4f);
         } else if (inRange && !wasInRange) {
             owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">숨겨 둔 죽음</" + GOLD_TAG + "><gray>이 다시 나를 "
@@ -623,10 +629,15 @@ public final class KoscheiAbility extends Ability {
         }
     }
 
+    /**
+     * Whether the egg protects Koschei: near enough, and on the battlefield (an egg the shrinking border left outside
+     * cannot be reached without taking the border's damage, so it no longer keeps Koschei alive).
+     */
     private boolean inRange(Player owner, Vessel vessel) {
         double range = Math.max(0, params().num("egg_range"));
         Location at = vessel.body.getLocation();
-        return at.getWorld().equals(owner.getWorld()) && at.distanceSquared(owner.getLocation()) <= range * range;
+        return at.getWorld().equals(owner.getWorld()) && at.distanceSquared(owner.getLocation()) <= range * range
+                && ctx().isInsideArena(at);
     }
 
     /** The vessels that keep Koschei alive right now: every shell during the ultimate, else the egg if near. */
@@ -634,7 +645,7 @@ public final class KoscheiAbility extends Ability {
         List<Vessel> found = new ArrayList<>();
         if (!layers.isEmpty()) {
             for (Vessel layer : layers) {
-                if (layer.alive()) {
+                if (layer.alive() && ctx().isInsideArena(layer.body.getLocation())) {
                     found.add(layer);
                 }
             }

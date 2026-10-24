@@ -88,10 +88,11 @@ public final class TenguAbility extends Ability {
                             + "않습니다.",
                     8)
             .ultimate("소인국",
-                    "큰 부채를 휘둘러 앞쪽 {ult_range}블록 부채꼴({ult_angle}°)의 적을 {ult_duration}초간 "
-                            + "{tiny_scale}배 소인으로 만들고, 나는 {giant_scale}배로 커집니다(머리 위가 막히면 원래 "
-                            + "크기로). 소인은 근접 피해가 {tiny_melee}% 줄고 공격 사거리가 {tiny_reach}블록 짧아지며 넉백을 "
-                            + "{tiny_knockback}배로 받습니다. 그동안 소인에게 주는 내 근접 피해가 {giant_melee}% 늘고, 뛰었다가 "
+                    "큰 부채를 {ult_windup}초간 치켜들어(바닥에 부채꼴이 빛남) 휘두르면, 앞쪽 {ult_range}블록 "
+                            + "부채꼴({ult_angle}°)의 적을 {ult_duration}초간 {tiny_scale}배 소인으로 만들고, 나는 "
+                            + "{giant_scale}배로 커집니다(머리 위가 막히면 원래 크기로). 소인은 근접 피해가 {tiny_melee}% 줄고 "
+                            + "공격 사거리가 {tiny_reach}블록 짧아지며 넉백을 {tiny_knockback}배로 받습니다. 그동안(거인이 "
+                            + "되지 못해도) 소인에게 주는 내 근접 피해가 {giant_melee}% 늘고, 뛰었다가 "
                             + "소인 {stomp_radius}블록 안에 착지하면 짓밟아 {stomp_damage} 피해를 줍니다(같은 적은 "
                             + "{stomp_cooldown}초마다). 작아진 적은 좁은 곳에서는 원래 크기로 돌아갈 자리가 생길 때까지(최대 "
                             + "{regrow_wait}초) 작은 채로 남습니다.")
@@ -113,6 +114,7 @@ public final class TenguAbility extends Ability {
             .param("grow_scale", 1.25)
             .param("grow_melee", 15)
             .param("grow_reach", 0.75)
+            .param("ult_windup", 0.75)
             .param("ult_range", 10)
             .param("ult_angle", 100)
             .param("ult_duration", 6)
@@ -157,6 +159,11 @@ public final class TenguAbility extends Ability {
 
     private static final int MAX_DISPLAYS = 24;
     private static final double TAU = Math.PI * 2;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
 
     // passive: the nose
     private static final float NOSE_BASE = 0.12f;
@@ -211,7 +218,9 @@ public final class TenguAbility extends Ability {
     private long breakStart = Long.MIN_VALUE / 2;
     private int brokenFrom;
     private @Nullable NamespacedKey stagger;
-    private long giantUntil = Long.MIN_VALUE / 2;
+    /** The land of little people lasts until then (with or without a giant tengu). */
+    private long ultUntil = Long.MIN_VALUE / 2;
+    private int ultToken;
     private @Nullable Growth giant;
     private int airTicks;
     private @Nullable Location lastStep;
@@ -232,7 +241,7 @@ public final class TenguAbility extends Ability {
             nose = keep(Displays.block(ctx(), owner, feet, NOSE.createBlockData(), nosePose(owner, 0, 0), 0));
             cap = keep(Displays.block(ctx(), owner, feet, CAP.createBlockData(), capPose(owner), 0));
             for (BlockDisplay part : List.of(nose, cap)) {
-                part.setTeleportDuration(1);
+                part.setTeleportDuration(FOLLOW_LERP);
                 // The owner's own nose would sit right in front of its camera.
                 owner.hideEntity(ctx().plugin(), part);
             }
@@ -262,6 +271,8 @@ public final class TenguAbility extends Ability {
         stomped.clear();
         noseHiddenFrom.clear();
         giant = null;
+        ultUntil = Long.MIN_VALUE / 2;
+        ultToken++;
         nose = null;
         cap = null;
         stagger = null;
@@ -336,7 +347,7 @@ public final class TenguAbility extends Ability {
         }
         double multiplier = 1 + stage * Math.max(0, params().num("nose_bonus")) / 100.0;
         Shrink shrink = shrunk.get(victim.getUniqueId());
-        if (giant != null && shrink != null && shrink.tiny && isMelee(event) && !ctx().isAbilityDamage()) {
+        if (ultActive() && shrink != null && shrink.tiny && isMelee(event) && !ctx().isAbilityDamage()) {
             multiplier *= 1 + Math.max(0, params().num("giant_melee")) / 100.0;
         }
         if (multiplier != 1) {
@@ -544,21 +555,22 @@ public final class TenguAbility extends Ability {
     public ActivationResult onActive() {
         Player owner = player();
         boolean white = owner.isSneaking();
+        float yaw = owner.getLocation().getYaw();
         if (white) {
             List<Player> targets = new ArrayList<>();
             targets.add(owner);
-            targets.addAll(alliesInCone(owner, params().num("fan_range"), params().num("fan_angle")));
-            swingFan(owner, true, false, () -> whiteFan(owner, targets));
+            targets.addAll(alliesInCone(owner, yaw, params().num("fan_range"), params().num("fan_angle")));
+            swingFan(owner, yaw, true, false, () -> whiteFan(owner, targets));
         } else {
-            swingFan(owner, false, false, () -> redFan(owner));
+            swingFan(owner, yaw, false, false, () -> redFan(owner, yaw));
         }
         return ActivationResult.success();
     }
 
     /** The red side: the enemies in front take a little damage and shrink. */
-    private void redFan(Player owner) {
+    private void redFan(Player owner, float yaw) {
         double range = Math.max(1, params().num("fan_range"));
-        List<LivingEntity> hit = enemiesInCone(owner, range, params().num("fan_angle"));
+        List<LivingEntity> hit = enemiesInCone(owner, yaw, range, params().num("fan_angle"));
         double factor = Math.clamp(params().num("shrink_scale"), 0.1, 1.0);
         for (LivingEntity enemy : hit) {
             Combat.hit(ctx(), owner, enemy, params().num("fan_damage"));
@@ -592,30 +604,37 @@ public final class TenguAbility extends Ability {
         }
     }
 
-    private List<LivingEntity> enemiesInCone(Player owner, double range, double angle) {
+    /** The enemies in the fan facing {@code yaw} (fixed when the fan was raised: the telegraph shows the real cone). */
+    private List<LivingEntity> enemiesInCone(Player owner, float yaw, double range, double angle) {
         List<LivingEntity> found = new ArrayList<>();
         Location eye = owner.getEyeLocation();
         for (LivingEntity enemy : ctx().enemiesNear(owner, eye, range)) {
-            if (inCone(owner, eye, enemy, range, angle)) {
+            if (inCone(yaw, eye, enemy, range, angle)) {
                 found.add(enemy);
             }
         }
         return found;
     }
 
-    private List<Player> alliesInCone(Player owner, double range, double angle) {
+    private List<Player> alliesInCone(Player owner, float yaw, double range, double angle) {
         List<Player> found = new ArrayList<>();
         Location eye = owner.getEyeLocation();
         for (Player ally : ctx().alliesNear(owner, eye, range)) {
-            if (inCone(owner, eye, ally, range, angle)) {
+            if (inCone(yaw, eye, ally, range, angle)) {
                 found.add(ally);
             }
         }
         return found;
     }
 
+    /** The horizontal direction of {@code yaw} (0 = +Z south, 90 = -X west). */
+    private static Vector facing(float yaw) {
+        double rad = Math.toRadians(yaw);
+        return new Vector(-Math.sin(rad), 0, Math.cos(rad));
+    }
+
     /** In the horizontal fan in front of the eyes, not too far above or below, and not behind a wall. */
-    private static boolean inCone(Player owner, Location eye, LivingEntity target, double range, double angle) {
+    private static boolean inCone(float yaw, Location eye, LivingEntity target, double range, double angle) {
         Location body = Fx.body(target);
         Vector to = body.toVector().subtract(eye.toVector());
         if (Math.abs(to.getY()) > range * 0.6 + 1.5) {
@@ -624,7 +643,7 @@ public final class TenguAbility extends Ability {
         Vector flat = new Vector(to.getX(), 0, to.getZ());
         if (flat.lengthSquared() > 0.36) {
             double half = Math.toRadians(Math.clamp(angle, 1, 360) / 2);
-            if (Motion.horizontalFacing(owner.getLocation()).angle(flat) > half) {
+            if (facing(yaw).angle(flat) > half) {
                 return false;
             }
         }
@@ -635,9 +654,8 @@ public final class TenguAbility extends Ability {
      * The fan sweeps across the front: telegraph arc, the feathers swing from right to left, at {@link #SWING_HIT}
      * the effect lands with a trail of leaves along the cone, then the fan folds away.
      */
-    private void swingFan(Player owner, boolean white, boolean big, Runnable effect) {
+    private void swingFan(Player owner, float yaw, boolean white, boolean big, Runnable effect) {
         Location feet = owner.getLocation();
-        float yaw = feet.getYaw();
         double range = big ? params().num("ult_range") : params().num("fan_range");
         double angle = big ? params().num("ult_angle") : params().num("fan_angle");
         Location chest = feet.clone().add(0, owner.getHeight() * 0.7, 0);
@@ -661,7 +679,8 @@ public final class TenguAbility extends Ability {
                         : (i % 2 == 0 ? RED_FEATHER : RED_FEATHER_DARK);
                 BlockDisplay part = keep(Displays.block(ctx(), owner, anchor, type.createBlockData(),
                         fanPose(owner, i, blades, yaw + SWING_ARC, size, 0.2f), SWING_TICKS + 12));
-                part.setTeleportDuration(1);
+                part.setTeleportDuration(FOLLOW_LERP);
+                hideFromThoseWhoCannotSee(owner, part);
                 parts.add(part);
             }
         }
@@ -675,7 +694,7 @@ public final class TenguAbility extends Ability {
                 Displays.animate(part, fanPose(owner, i, blades, sweep, size, open), 2);
             }
             if (run < SWING_TICKS) {
-                sweepFx(owner, chest, sweep, range, white, big, run);
+                sweepFx(owner, chest, yaw, sweep, range, white, big, run);
             }
             if (run == SWING_HIT) {
                 effect.run();
@@ -716,8 +735,8 @@ public final class TenguAbility extends Ability {
     }
 
     /** The swing's wind: colored arcs and drifting leaves along the swept part of the cone. */
-    private void sweepFx(Player owner, Location chest, float sweep, double range, boolean white, boolean big,
-                         long run) {
+    private void sweepFx(Player owner, Location chest, float yaw, float sweep, double range, boolean white,
+                         boolean big, long run) {
         Location low = chest.clone().subtract(0, owner.getHeight() * 0.25, 0);
         double width = big ? 30 : 22;
         for (double r = 1.5; r <= range; r += big ? 2.0 : 1.5) {
@@ -725,11 +744,10 @@ public final class TenguAbility extends Ability {
                     Particle.DUST, white ? WHITE_DUST : (run % 2 == 0 ? RED_DUST : GOLD_DUST), big);
         }
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        Vector facing = Motion.horizontalFacing(owner.getLocation());
+        Vector facing = facing(yaw);
         for (int i = 0; i < Vfx.n(ctx(), big ? 6 : 3); i++) {
             double r = 1 + random.nextDouble(range);
-            Vector dir = facing.clone().rotateAroundY(Math.toRadians(-(sweep - owner.getLocation().getYaw())
-                    + Fx.jitter(10f)));
+            Vector dir = facing.clone().rotateAroundY(Math.toRadians(-(sweep - yaw) + Fx.jitter(10f)));
             Location at = low.clone().add(dir.multiply(r)).add(0, random.nextDouble(1.2) - 0.4, 0);
             Vfx.dot(at, Particle.TINTED_LEAVES, white ? WHITE : (random.nextBoolean() ? RED : GOLD), big);
         }
@@ -817,9 +835,9 @@ public final class TenguAbility extends Ability {
         shrunk.put(enemy.getUniqueId(), shrink);
 
         Location body = Fx.body(enemy);
-        Fx.sound(body, Sound.ENTITY_PUFFER_FISH_BLOW_OUT, 0.9f, tiny ? 1.4f : 1.7f + Fx.jitter(0.1f));
-        Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.6f, 1.8f + Fx.jitter(0.1f));
         if (seen(owner, enemy)) {
+            Fx.sound(body, Sound.ENTITY_PUFFER_FISH_BLOW_OUT, 0.9f, tiny ? 1.4f : 1.7f + Fx.jitter(0.1f));
+            Fx.sound(body, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.6f, 1.8f + Fx.jitter(0.1f));
             // A red spiral collapses into the shrinking body.
             Location feet = enemy.getLocation();
             Vfx.helix(ctx(), feet, 0.7, enemy.getHeight() / factor, 1.5, 2, 9, ThreadLocalRandom.current()
@@ -854,8 +872,8 @@ public final class TenguAbility extends Ability {
             shrink.strip();
             if (seen(player(), enemy)) {
                 Vfx.cloud(ctx(), Fx.body(enemy), Particle.POOF, 3, 0.25, 0.02, null, false);
+                Fx.sound(enemy.getLocation(), Sound.ENTITY_PUFFER_FISH_BLOW_UP, 0.6f, 1.5f + Fx.jitter(0.1f));
             }
-            Fx.sound(enemy.getLocation(), Sound.ENTITY_PUFFER_FISH_BLOW_UP, 0.6f, 1.5f + Fx.jitter(0.1f));
         }
     }
 
@@ -906,9 +924,9 @@ public final class TenguAbility extends Ability {
                     Operation.ADD_NUMBER, ticks));
         }
         grown.put(target.getUniqueId(), growth);
-        Fx.sound(feet, Sound.BLOCK_BEACON_POWER_SELECT, 0.5f, 1.6f);
-        Fx.sound(feet, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.7f, 0.8f + Fx.jitter(0.1f));
-        if (seen(owner, target)) {
+        if (!concealed(target)) {
+            Fx.sound(feet, Sound.BLOCK_BEACON_POWER_SELECT, 0.5f, 1.6f);
+            Fx.sound(feet, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.7f, 0.8f + Fx.jitter(0.1f));
             Vfx.helix(ctx(), feet, 0.6, target.getHeight() * factor, 1.5, 2, 10, 0, Particle.DUST_COLOR_TRANSITION,
                     GOLD_GLOW, false);
             Vfx.cloud(ctx(), Fx.body(target), Particle.WAX_OFF, 6, 0.4, 0.02, null, false);
@@ -946,64 +964,113 @@ public final class TenguAbility extends Ability {
     @Override
     public ActivationResult onUltimate() {
         Player owner = player();
-        swingFan(owner, false, true, () -> bigFan(owner));
+        // The cone is fixed when the fan goes up: what the telegraph shows is what the sweep hits.
+        float yaw = owner.getLocation().getYaw();
+        raiseBigFan(owner, yaw, () -> swingFan(owner, yaw, false, true, () -> bigFan(owner, yaw)));
         return ActivationResult.success();
     }
 
-    private void bigFan(Player owner) {
+    /**
+     * The telegraph: the big fan is raised for {@code ult_windup} while the cone it will sweep glows on the ground,
+     * its edge closing in from the tengu and a gust gathering behind it; then {@code swing} runs.
+     */
+    private void raiseBigFan(Player owner, float yaw, Runnable swing) {
+        long windup = Math.max(1, params().ticks("ult_windup"));
+        double range = Math.max(1, params().num("ult_range"));
+        double angle = Math.clamp(params().num("ult_angle"), 1, 360);
+        Location start = owner.getLocation();
+        Fx.sound(start, Sound.ENTITY_BREEZE_CHARGE, 1.0f, 0.6f);
+        Fx.sound(start, Sound.BLOCK_BAMBOO_WOOD_PLACE, 0.8f, 0.7f);
+        owner.sendActionBar(Text.mm("<" + RED_TAG + "><b>소인국</b></" + RED_TAG + "> <gray>큰 부채를 "
+                + "치켜듭니다…</gray>"));
+        Loop.repeat(ctx(), owner, 0, 1, windup, run -> {
+            Location feet = owner.getLocation();
+            Location ground = feet.clone().add(0, 0.12, 0);
+            double progress = (run + 1.0) / windup;
+            if (run % 2 == 0) {
+                // The edge of the cone, its two sides, and a glow sweeping out from the tengu.
+                Vfx.arc(ctx(), ground, range, yaw, angle, (int) Math.round(range * 2.5), Particle.DUST, RED_DUST,
+                        true);
+                for (double side : new double[] {-angle / 2, angle / 2}) {
+                    Vector edge = facing(yaw).rotateAroundY(Math.toRadians(-side)).multiply(range);
+                    Vfx.line(ctx(), ground.clone().add(edge.clone().multiply(0.12)), ground.clone().add(edge), 0.8,
+                            Particle.DUST, GOLD_DUST, true);
+                }
+                Vfx.arc(ctx(), ground, Math.max(0.8, range * progress), yaw, angle, (int) Math.round(range * 1.5),
+                        Particle.DUST_COLOR_TRANSITION, RED_FADE, true);
+            }
+            // A gust gathers behind the raised fan.
+            Location back = feet.clone().add(0, owner.getHeight() * 1.1, 0).add(facing(yaw).multiply(-0.4));
+            Vfx.dot(back.add(Fx.jitter(0.5f), Fx.jitter(0.4f), Fx.jitter(0.5f)), Particle.TINTED_LEAVES,
+                    run % 2 == 0 ? RED : GOLD, true);
+            if (run % 4 == 0) {
+                Fx.sound(feet, Sound.ENTITY_PHANTOM_FLAP, 0.8f, 0.5f + (float) progress * 0.6f);
+            }
+            return true;
+        }, swing);
+    }
+
+    private void bigFan(Player owner, float yaw) {
         long ticks = Math.max(1, params().ticks("ult_duration"));
         double factor = Math.clamp(params().num("tiny_scale"), 0.1, 1.0);
-        List<LivingEntity> hit = enemiesInCone(owner, Math.max(1, params().num("ult_range")),
+        List<LivingEntity> hit = enemiesInCone(owner, yaw, Math.max(1, params().num("ult_range")),
                 params().num("ult_angle"));
         for (LivingEntity enemy : hit) {
             shrink(owner, enemy, factor, params().num("tiny_melee"), params().num("tiny_reach"),
                     Math.max(1, params().num("tiny_knockback")), ticks, true);
         }
+        // The land of little people: the bonus against them and the stomps last the whole time, giant or not.
+        long now = ctx().currentTick();
+        ultUntil = now + ticks;
+        int token = ++ultToken;
+        airTicks = 0;
+        // The giant's stomps belong to the ultimate: they run in its own task.
+        Loop.repeat(ctx(), owner, 1, 1, ticks + 1, run -> {
+            tickGiant(owner, ctx().currentTick());
+            return token == ultToken && ultActive();
+        });
         // The tengu grows into a giant over them (if there is room).
         double giantFactor = Math.max(1.0, params().num("giant_scale"));
         Location feet = owner.getLocation();
+        if (giant != null) {
+            giant.strip();
+            giant = null;
+        }
         if (Spots.isFree(owner.getWorld(), feet, owner.getWidth() * giantFactor, owner.getHeight() * giantFactor)) {
-            if (giant != null) {
-                giant.strip();
-            }
-            Growth growth = new Growth(owner, ctx().currentTick() + ticks);
+            Growth growth = new Growth(owner, now + ticks);
             growth.keys.add(ctx().addModifier(owner, owner, Attribute.SCALE, giantFactor - 1,
                     Operation.MULTIPLY_SCALAR_1, ticks));
             giant = growth;
-            giantUntil = ctx().currentTick() + ticks;
-            airTicks = 0;
-            // The giant's stomps belong to the ultimate: they run in its own task.
-            Loop.repeat(ctx(), owner, 1, 1, ticks + 1, run -> {
-                tickGiant(owner, ctx().currentTick());
-                return giant == growth;
-            });
             Fx.sound(feet, Sound.ENTITY_RAVAGER_ROAR, 0.7f, 1.3f);
             Fx.sound(feet, Sound.BLOCK_BELL_USE, 0.8f, 0.6f);
             Vfx.helix(ctx(), feet, 1.0, owner.getHeight() * giantFactor, 2, 3, 14, 0, Particle.DUST, RED_DUST, true);
             Vfx.cloud(ctx(), feet.clone().add(0, 1, 0), Particle.TINTED_LEAVES, 16, 1.0, 0.05, RED, true);
             Vfx.cloud(ctx(), feet.clone().add(0, 1, 0), Particle.TINTED_LEAVES, 10, 1.0, 0.05, GOLD, true);
-        } else {
-            owner.sendActionBar(Text.mm("<gray>머리 위가 막혀 거인이 되지 못했습니다</gray>"));
         }
         owner.sendActionBar(Text.mm("<" + RED_TAG + "><b>소인국</b></" + RED_TAG + "> <white>" + hit.size()
-                + "</white><gray>명을 소인으로 만들었습니다 · 뛰었다 착지해 짓밟으세요</gray>"));
+                + "</white><gray>명을 소인으로 만들었습니다 · " + (giant == null ? "머리 위가 막혀 거인은 되지 "
+                + "못했지만 " : "") + "뛰었다 착지해 짓밟으세요</gray>"));
     }
 
-    /** The giant: its size breaks off under a low ceiling, and every landing near little people stomps them. */
+    private boolean ultActive() {
+        return ctx().currentTick() < ultUntil;
+    }
+
+    /**
+     * The land of little people: the giant's size breaks off under a low ceiling (the tengu goes on stomping at its
+     * own size), and every landing near little people stomps them.
+     */
     private void tickGiant(Player owner, long now) {
-        Growth growth = giant;
-        if (growth == null) {
-            return;
-        }
-        if (now >= giantUntil || !owner.isValid()) {
+        if (now >= ultUntil || !owner.isValid()) {
             giant = null;
             return;
         }
-        if (!Spots.isFree(owner.getWorld(), owner.getLocation(), owner.getWidth(), owner.getHeight())) {
+        Growth growth = giant;
+        if (growth != null && !Spots.isFree(owner.getWorld(), owner.getLocation(), owner.getWidth(),
+                owner.getHeight())) {
             growth.strip();
             giant = null;
-            owner.sendActionBar(Text.mm("<gray>머리 위가 막혀 원래 크기로 돌아왔습니다</gray>"));
-            return;
+            owner.sendActionBar(Text.mm("<gray>머리 위가 막혀 원래 크기로 돌아왔습니다 · 짓밟기는 계속됩니다</gray>"));
         }
         boolean grounded = Motion.isGrounded(owner) || owner.isInWater();
         if (!grounded) {
@@ -1012,7 +1079,7 @@ public final class TenguAbility extends Ability {
         }
         if (airTicks >= MIN_AIR_TICKS) {
             stomp(owner, now);
-        } else if (now % GIANT_STEP_PERIOD == 0) {
+        } else if (giant != null && now % GIANT_STEP_PERIOD == 0) {
             // The giant's footsteps shake the ground as it walks.
             Location feet = owner.getLocation();
             Location last = lastStep;
@@ -1081,6 +1148,32 @@ public final class TenguAbility extends Ability {
     /** True unless {@code entity} is a player hidden from the owner (its visuals would give it away). */
     private static boolean seen(Player owner, Entity entity) {
         return !(entity instanceof Player player) || owner.canSee(player);
+    }
+
+    /**
+     * True if {@code player} is hiding from someone: invisible, or hidden from any other player in its world
+     * (stealth). Particles and sounds are seen and heard by everyone near them, so none may be made on such a player.
+     */
+    private static boolean concealed(Player player) {
+        if (hiddenOwner(player)) {
+            return true;
+        }
+        for (Player viewer : player.getWorld().getPlayers()) {
+            if (!viewer.equals(player) && !viewer.canSee(player)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Hides a display of the tengu's from every viewer that cannot see the tengu (stealth or invisibility). */
+    private void hideFromThoseWhoCannotSee(Player owner, Display display) {
+        boolean invisible = hiddenOwner(owner);
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (!viewer.equals(owner) && (invisible || !viewer.canSee(owner))) {
+                viewer.hideEntity(ctx().plugin(), display);
+            }
+        }
     }
 
     /** A box of {@code size} centered on {@code center} (relative to the display), turned by {@code rotation}. */

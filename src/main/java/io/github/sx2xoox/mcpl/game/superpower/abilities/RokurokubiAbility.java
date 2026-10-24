@@ -90,7 +90,8 @@ public final class RokurokubiAbility extends Ability {
             .difficulty(3)
             .passive("목 빼고 엿보기",
                     "웅크린 채 {peek_delay}초 가만히 있으면 목이 {peek_height}블록 위로 쭉 늘어나 엄폐물 너머를 엿봅니다"
-                            + "(머리 위가 막혀 있으면 그만큼만). 그 높이에서 보이는 {peek_range}블록 안의 적은 "
+                            + "(머리 위가 막혀 있으면 그만큼만, 너무 낮으면 엿보지 못함). 그 높이에서 보이는 {peek_range}블록 "
+                            + "안의 적은 "
                             + "{peek_glow}초간 발광합니다({peek_interval}초마다 갱신). 엿보는 머리는 모두에게 보입니다.")
             .active("늘어나는 목",
                     "머리를 날려 목을 최대 {neck_length}블록까지 늘입니다. {neck_time}초 동안 머리는 내 시선을 따라 "
@@ -100,9 +101,10 @@ public final class RokurokubiAbility extends Ability {
                             + "묶입니다.",
                     8)
             .ultimate("누케쿠비",
-                    "{head_duration}초간 머리가 몸에서 빠져 날아다닙니다. 나는 작은 머리가 되어 자유롭게 날며(비행 속도 "
-                            + "+{head_speed}%) 닿는 적을 물어 {head_bite} 피해를 주고 체력을 {head_heal} 회복합니다(같은 "
-                            + "적은 {head_bite_interval}초마다). 머리 없는 몸은 그 자리에 남고, 몸이 받는 피해는 "
+                    "{head_duration}초간 머리가 몸에서 빠져 날아다닙니다. 나는 작은 머리가 되어 자유롭게 날며(달려서 날면 "
+                            + "달리기보다 {head_speed}% 빠르고, 느려지는 효과도 그대로 받음) 닿는 적을 물어 {head_bite} 피해를 "
+                            + "주고 체력을 {head_heal} 회복합니다(같은 적은 {head_bite_interval}초마다). 머리 없는 몸은 그 "
+                            + "자리에 남고, 몸이 받는 피해는 "
                             + "{body_share}배로 나에게 들어옵니다. 끝나면(F를 다시 누르면 일찍) 머리가 몸으로 돌아가는데, "
                             + "그동안 몸이 {body_limit} 이상 피해를 입었거나 {body_push}블록 넘게 밀려났다면 제대로 붙지 "
                             + "못해 {misfit_stun}초간 기절합니다.")
@@ -119,11 +121,11 @@ public final class RokurokubiAbility extends Ability {
             .param("bite_slow_time", 1)
             .param("corner_bonus", 2)
             .param("head_duration", 6)
-            .param("head_scale", 0.35)
+            .param("head_scale", 0.5)
             .param("head_speed", 20)
             .param("head_bite", 2)
             .param("head_heal", 1)
-            .param("head_bite_interval", 0.6)
+            .param("head_bite_interval", 1)
             .param("body_share", 1.5)
             .param("body_limit", 6)
             .param("body_push", 1)
@@ -150,6 +152,11 @@ public final class RokurokubiAbility extends Ability {
     private static final Material PAPER_LANTERN = Material.SHROOMLIGHT;
 
     private static final int MAX_DISPLAYS = 24;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final float NECK_WIDTH = 0.17f;
     private static final float HEAD_SIZE = 0.9f;
     private static final float FLYING_HEAD = 0.8f;
@@ -165,6 +172,14 @@ public final class RokurokubiAbility extends Ability {
 
     // ultimate: the flying head
     private static final double HEAD_REACH = 0.45;
+    /** A player's sprinting speed on flat ground, blocks per second. */
+    private static final double SPRINT_SPEED = 5.612;
+    /**
+     * Blocks per second a sprint-flying player reaches per unit of Bukkit fly speed: the client accelerates by the
+     * fly speed (Bukkit's value is twice the internal one, sprinting doubles it again) times its 0.98 input scale, and
+     * air drag keeps 0.91 of the speed every tick, so it settles at speed * 0.98 / 0.09 blocks per tick.
+     */
+    private static final double SPRINT_FLY_PER_SPEED = 0.98 / 0.09 * 20;
     private static final double BODY_HEALTH = 1024;
     private static final long LANDING_TICKS = 60;
     private static final EquipmentSlot[] SLOTS = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
@@ -176,6 +191,7 @@ public final class RokurokubiAbility extends Ability {
     private final Set<UUID> hiddenFrom = new HashSet<>();
     private final LandingGuard landing = new LandingGuard();
     private @Nullable RokuListener listener;
+    private int lastSeen = -1;
     private boolean forward;
     private boolean backward;
     private boolean left;
@@ -197,6 +213,21 @@ public final class RokurokubiAbility extends Ability {
         RokuListener created = new RokuListener();
         Bukkit.getPluginManager().registerEvents(created, ctx().plugin());
         listener = created;
+        // Keys held since before the grant send no input event until they change: start from what is held now.
+        try {
+            readKeys(player().getCurrentInput());
+        } catch (RuntimeException ignored) {
+            // No input known yet (a server or test double without it): the next input event fills it in.
+        }
+    }
+
+    private void readKeys(Input keys) {
+        forward = keys.isForward();
+        backward = keys.isBackward();
+        left = keys.isLeft();
+        right = keys.isRight();
+        jump = keys.isJump();
+        sneakKey = keys.isSneak();
     }
 
     @Override
@@ -225,13 +256,7 @@ public final class RokurokubiAbility extends Ability {
             if (!event.getPlayer().equals(player())) {
                 return;
             }
-            Input keys = event.getInput();
-            forward = keys.isForward();
-            backward = keys.isBackward();
-            left = keys.isLeft();
-            right = keys.isRight();
-            jump = keys.isJump();
-            sneakKey = keys.isSneak();
+            readKeys(event.getInput());
         }
 
         /** The body is immune to the world (falls, fire, suffocation): only blows and skills reach it. */
@@ -274,7 +299,10 @@ public final class RokurokubiAbility extends Ability {
         Peek current = peek;
         if (current == null) {
             if (stillTicks >= Math.max(1, params().ticks("peek_delay"))) {
-                peek = Peek.start(this, owner);
+                double height = peekHeight(owner);
+                if (height >= MIN_PEEK) {
+                    peek = Peek.start(this, owner, height);
+                }
             }
             return;
         }
@@ -304,20 +332,20 @@ public final class RokurokubiAbility extends Ability {
             this.head = head;
         }
 
-        static Peek start(RokurokubiAbility ability, Player owner) {
-            double height = ability.peekHeight(owner);
+        static Peek start(RokurokubiAbility ability, Player owner, double height) {
+            ability.lastSeen = -1;
             BlockDisplay column = null;
             ItemDisplay head = null;
             Location feet = Displays.unrotated(owner.getLocation());
             if (ability.reserve(2)) {
                 column = ability.keep(Displays.block(ability.ctx(), owner, feet, NECK.createBlockData(),
                         columnPose(owner, 0.01), 0));
-                column.setTeleportDuration(1);
+                column.setTeleportDuration(FOLLOW_LERP);
                 Displays.animateNextTick(ability.ctx(), owner, column, columnPose(owner, height), PEEK_GROW_TICKS);
                 head = ability.keep(Displays.item(ability.ctx(), owner, feet, headOf(owner),
                         headPose(owner, owner.getEyeHeight() + 0.3, owner.getLocation().getYaw(),
                                 owner.getLocation().getPitch()), 0));
-                head.setTeleportDuration(1);
+                head.setTeleportDuration(FOLLOW_LERP);
                 ItemDisplay grown = head;
                 Displays.animateNextTick(ability.ctx(), owner, grown, headPose(owner, peekEyeHeight(owner, height),
                         owner.getLocation().getYaw(), owner.getLocation().getPitch()), PEEK_GROW_TICKS);
@@ -381,7 +409,11 @@ public final class RokurokubiAbility extends Ability {
         }
     }
 
-    /** How far the neck may rise over the head (a ceiling stops it), at most {@code peek_height}. */
+    /**
+     * How far the neck may rise over the head: at most {@code peek_height}, and a ceiling stops it with the peeking
+     * head under it. Less than {@link #MIN_PEEK} means there is no room to peek at all (a neck and eyes pushed through
+     * a roof would see, and show, what is on top of it).
+     */
     private double peekHeight(Player owner) {
         double wanted = Math.max(MIN_PEEK, params().num("peek_height"));
         Location top = owner.getLocation().add(0, owner.getHeight() + 0.05, 0);
@@ -390,7 +422,7 @@ public final class RokurokubiAbility extends Ability {
         if (roof == null) {
             return wanted;
         }
-        return Math.max(MIN_PEEK, Math.min(wanted, roof.getHitPosition().getY() - top.getY() - 0.45));
+        return Math.min(wanted, roof.getHitPosition().getY() - top.getY() - 0.45);
     }
 
     /** The peeking head's eyes, above the feet. */
@@ -420,6 +452,11 @@ public final class RokurokubiAbility extends Ability {
             enemy.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, glow, 0, false, false, true));
             seen++;
         }
+        if (seen == lastSeen) {
+            // Only news is worth the action bar (other abilities use it too).
+            return;
+        }
+        lastSeen = seen;
         if (seen > 0) {
             owner.playSound(owner, Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.6f);
             owner.sendActionBar(Text.mm("<" + LANTERN_TAG + "><b>엿보는 중</b></" + LANTERN_TAG + "> <gray>적 </gray>"
@@ -500,6 +537,8 @@ public final class RokurokubiAbility extends Ability {
                 head = keep(Displays.item(ctx(), owner, Displays.unrotated(eye), headOf(owner), headTurn(heading, 1f),
                         0));
                 head.setTeleportDuration(1);
+                hideFromThoseWhoCannotSee(owner, collar);
+                hideFromThoseWhoCannotSee(owner, head);
             }
             Loop.repeat(ctx(), owner, 1, 1, steps, this::stretch, this::reelIn);
         }
@@ -581,6 +620,7 @@ public final class RokurokubiAbility extends Ability {
                 Vector middle = from.clone().add(delta.clone().multiply(0.5));
                 BlockDisplay segment = keep(Displays.block(ctx(), owner, middle.toLocation(world),
                         NECK.createBlockData(), segmentPose(delta, length), 0));
+                hideFromThoseWhoCannotSee(owner, segment);
                 segments.add(segment);
             }
             Location spot = at.toLocation(world);
@@ -775,7 +815,9 @@ public final class RokurokubiAbility extends Ability {
         private @Nullable Mannequin body;
         private @Nullable ItemDisplay head;
         private @Nullable NamespacedKey shrink;
+        /** Where the body came to rest (it may first drop to the ground); pushes are measured from here. */
         private Location bodyStart;
+        private boolean settled;
         private boolean allowedFlight;
         private boolean wasFlying;
         private float flySpeed;
@@ -814,15 +856,13 @@ public final class RokurokubiAbility extends Ability {
                     true));
             owner.setAllowFlight(true);
             owner.setFlying(true);
-            float faster = (float) Math.clamp(flySpeed * (1 + Math.max(0, params().num("head_speed")) / 100.0), 0.0,
-                    1.0);
-            owner.setFlySpeed(faster);
+            owner.setFlySpeed(headFlySpeed(owner));
             owner.setVelocity(new Vector(0, 0.3, 0));
             hideEquipment();
             if (reserve(1)) {
                 head = keep(Displays.item(ctx(), owner, Displays.unrotated(owner.getLocation()), headOf(owner),
                         flyingHeadPose(owner, owner.getLocation().getYaw(), owner.getLocation().getPitch()), 0));
-                head.setTeleportDuration(1);
+                head.setTeleportDuration(FOLLOW_LERP);
                 owner.hideEntity(ctx().plugin(), head);
                 hideFromThoseWhoCannotSee(owner, head);
             }
@@ -886,6 +926,15 @@ public final class RokurokubiAbility extends Ability {
             if (!owner.isFlying() && owner.getAllowFlight()) {
                 owner.setFlying(true);
             }
+            // Flight ignores the movement speed attribute: slows and roots reach the head through its fly speed.
+            float speed = headFlySpeed(owner);
+            if (Math.abs(owner.getFlySpeed() - speed) > 1.0E-4f) {
+                owner.setFlySpeed(speed);
+            }
+            if (!settled && (Motion.isGrounded(left) || left.isInWater())) {
+                settled = true;
+                bodyStart = left.getLocation();
+            }
             owner.setFallDistance(0);
             hideEquipment();
             Location feet = owner.getLocation();
@@ -924,7 +973,7 @@ public final class RokurokubiAbility extends Ability {
             long interval = Math.max(1, params().ticks("head_bite_interval"));
             BoundingBox reach = owner.getBoundingBox().expand(HEAD_REACH);
             for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getEyeLocation(), 1.6)) {
-                if (!enemy.getBoundingBox().overlaps(reach)) {
+                if (!enemy.getBoundingBox().overlaps(reach) || !seen(owner, enemy)) {
                     continue;
                 }
                 Long last = bitten.get(enemy.getUniqueId());
@@ -1044,7 +1093,7 @@ public final class RokurokubiAbility extends Ability {
             Location target = null;
             if (left != null && left.isValid()) {
                 Location home = left.getLocation();
-                misfit |= horizontal(home, bodyStart) > Math.max(0, params().num("body_push"));
+                misfit |= moved(home, bodyStart, settled) > Math.max(0, params().num("body_push"));
                 Location feet = home.clone();
                 Spots.snapToGround(feet.getWorld(), feet, 3);
                 if (Spots.isSafe(ctx(), feet, Body.PLAYER)) {
@@ -1094,11 +1143,29 @@ public final class RokurokubiAbility extends Ability {
         landing.absorb(event, ctx().currentTick());
     }
 
-    private static double horizontal(Location a, Location b) {
-        if (!a.getWorld().equals(b.getWorld())) {
+    /**
+     * How far the body was moved from where it came to rest: up, down or sideways once it {@code settled}, sideways
+     * only if it never touched the ground (it was left in mid-air and is still falling).
+     */
+    private static double moved(Location now, Location rest, boolean settled) {
+        if (!now.getWorld().equals(rest.getWorld())) {
             return Double.MAX_VALUE;
         }
-        return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+        return settled ? now.distance(rest) : Math.hypot(now.getX() - rest.getX(), now.getZ() - rest.getZ());
+    }
+
+    /**
+     * The flying head's fly speed: sprint-flying it is {@code head_speed} percent faster than a sprinting player, times
+     * whatever its movement speed attribute is slowed (or sped up) by.
+     */
+    private float headFlySpeed(Player owner) {
+        double factor = 1;
+        AttributeInstance speed = owner.getAttribute(Attribute.MOVEMENT_SPEED);
+        if (speed != null && speed.getBaseValue() > 1.0E-6) {
+            factor = Math.clamp(speed.getValue() / speed.getBaseValue(), 0.0, 2.0);
+        }
+        double wanted = SPRINT_SPEED * (1 + Math.max(0, params().num("head_speed")) / 100.0) * factor;
+        return (float) Math.clamp(wanted / SPRINT_FLY_PER_SPEED, 0.0, 1.0);
     }
 
     // ================================================================== helpers

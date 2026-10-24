@@ -507,7 +507,7 @@ class ShapeNewAbilitiesTest {
             s.aimAt(s.owner, s.enemy);
             s.clearHits();
             s.assertSucceeded(s.ultimate(), "소인국");
-            s.ticks(6);
+            s.ticks(s.paramTicks("ult_windup") + 6);
             for (TestPlayer enemy : s.enemies()) {
                 assertEquals(s.param("tiny_scale"), scale(enemy), 1.0E-6, enemy.getName() + " is tiny");
             }
@@ -545,7 +545,7 @@ class ShapeNewAbilitiesTest {
             s.ticks(10);
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "소인국");
-            s.ticks(6);
+            s.ticks(s.paramTicks("ult_windup") + 6);
             assertEquals(s.param("tiny_scale"), scale(s.enemy), 1.0E-6);
             // The little enemy crawls under a one block high roof.
             ceiling(s, -1, 1, 10, 12, FlatWorld.FLOOR_Y + 2, Material.STONE);
@@ -556,6 +556,75 @@ class ShapeNewAbilitiesTest {
             s.ticks(4);
             assertEquals(1, scale(s.enemy), 1.0E-6, "out in the open it grows back");
             ceiling(s, -1, 1, 10, 12, FlatWorld.FLOOR_Y + 2, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tenguBigFanIsTelegraphedAndSweepsTheConeItShowedEvenIfTheTenguTurns() {
+        try (Scenario s = Scenario.ffa("tengu")) {
+            s.ticks(10);
+            s.aimAt(s.owner, s.enemy);
+            Location aimed = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "소인국");
+            s.ticks(s.paramTicks("ult_windup") - 1);
+            assertEquals(1, scale(s.enemy), 1.0E-6, "nothing lands while the fan is still being raised");
+            assertFalse(tengu(s).isShrunk(s.enemy));
+            // The tengu turns its back: the sweep still covers the cone the telegraph showed.
+            s.place(s.owner, aimed.getX(), aimed.getZ(), aimed.getYaw() + 180);
+            s.ticks(8);
+            assertEquals(s.param("tiny_scale"), scale(s.enemy), 1.0E-6, "the shown cone is swept");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tenguLittlePeopleBonusAndStompsDoNotNeedTheGiant() {
+        try (Scenario s = Scenario.ffa("tengu")) {
+            s.ticks(10);
+            // Two blocks of headroom: the tengu cannot grow into a giant here.
+            ceiling(s, -1, 1, -1, 1, FlatWorld.FLOOR_Y + 3, Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "소인국");
+            s.ticks(s.paramTicks("ult_windup") + 6);
+            assertEquals(1, scale(s.owner), 1.0E-6, "no room for a giant");
+            assertEquals(s.param("tiny_scale"), scale(s.enemy), 1.0E-6, "the enemies are little all the same");
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4 * (1 + s.param("giant_melee") / 100), s.damageBy(s.owner, s.enemy), 1.0E-6,
+                    "the bonus against little people stays");
+            // Out from under the roof, a jump next to the little enemy still stomps it.
+            s.place(s.enemy, 6.5, 6.0, 180);
+            s.place(s.owner, 6.5, FlatWorld.SURFACE + 2.5, 5.0, 0, 0);
+            s.clearHits();
+            s.tickUntilGrounded(s.owner, 60);
+            s.ticks(2);
+            assertTrue(s.damageBy(s.owner, s.enemy) >= s.param("stomp_damage") - EPSILON, "stomped: " + s.hits());
+            ceiling(s, -1, 1, -1, 1, FlatWorld.FLOOR_Y + 3, Material.AIR);
+            s.ticks(s.paramTicks("ult_duration"));
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tenguFanNeverShowsAHiddenTengu() {
+        try (Scenario s = Scenario.ffa("tengu")) {
+            s.ticks(10);
+            s.enemy2.hidePlayer(s.ctx().plugin(), s.owner);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "요술 부채");
+            s.ticks(1);
+            List<BlockDisplay> fan = Stream.concat(blocks(s, Material.RED_TERRACOTTA).stream(),
+                    blocks(s, Material.STRIPPED_BAMBOO_BLOCK).stream()).toList();
+            assertFalse(fan.isEmpty(), "the fan is out");
+            for (BlockDisplay part : fan) {
+                assertFalse(s.enemy2.canSee(part), "whoever cannot see the tengu cannot see its fan");
+                assertTrue(s.enemy.canSee(part), "the others can");
+            }
+            s.enemy2.showPlayer(s.ctx().plugin(), s.owner);
+            s.ticks(20);
             s.finishClean();
         }
     }
@@ -581,8 +650,9 @@ class ShapeNewAbilitiesTest {
             s.clearHits();
             pig(s, s.enemy);
             assertFalse(circe(s).isMorphed(s.enemy2), "only the first enemy");
-            assertFalse(s.owner.canSee(s.enemy), "the victim's body is hidden");
-            assertFalse(s.enemy2.canSee(s.enemy), "from everyone");
+            assertTrue(s.enemy.hasPotionEffect(PotionEffectType.INVISIBILITY), "the victim's body vanishes");
+            assertTrue(s.owner.canSee(s.enemy) && s.enemy2.canSee(s.enemy),
+                    "but it is not stealthed: everyone can still aim at it");
             Entity model = circe(s).modelOf(s.enemy);
             assertNotNull(model);
             assertTrue(model instanceof Pig, "a pig takes its place");
@@ -611,7 +681,7 @@ class ShapeNewAbilitiesTest {
             s.clearHits();
             s.ticks(s.paramTicks("pig_duration") + 2);
             assertFalse(circe(s).isMorphed(s.enemy), "the spell wears off");
-            assertTrue(s.owner.canSee(s.enemy) && s.enemy2.canSee(s.enemy), "seen again");
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.INVISIBILITY), "seen again");
             assertFalse(model.isValid(), "the pig is gone");
             assertEquals(s.param("unpig_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "a sore return");
             assertModifierFree(s.enemy, "unpigged");
@@ -675,10 +745,10 @@ class ShapeNewAbilitiesTest {
             EntityTargetEvent target = new EntityTargetEvent(wolf, s.owner, EntityTargetEvent.TargetReason.CLOSEST_PLAYER);
             s.h.server.getPluginManager().callEvent(target);
             assertTrue(target.isCancelled(), "a beast near its mistress will not go for her");
-            // Even a beast its master sets on her cannot bite her.
+            // A beast its master sets on her anyway still bites: a weak counter, not an immunity.
             s.clearHits();
             s.melee(wolf, s.owner, 4);
-            assertEquals(0, s.damageTaken(s.owner), EPSILON, "a tamed beast's bite does nothing");
+            assertTrue(s.damageTaken(s.owner) > 0, "a summon sent at her still hurts her");
             s.melee(wolf, s.enemy2, 4);
             assertTrue(s.damageTaken(s.enemy2) > 0, "it still bites others");
             // Far away it may.
@@ -696,6 +766,22 @@ class ShapeNewAbilitiesTest {
             assertEquals(3 * s.param("beast_multiplier"), s.damageBy(s.owner, wolf), 1.0E-6);
             s.melee(s.owner, s.enemy2, 3);
             assertEquals(3, s.damageBy(s.owner, s.enemy2), 1.0E-6);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void circeAnimalsStayTargetableForTheWitchsSide() {
+        try (Scenario s = Scenario.teams("circe")) {
+            s.ticks(10);
+            s.place(s.ally(), -1.5, 0.5, 0);
+            pig(s, s.enemy);
+            assertTrue(s.ally().canSee(s.enemy), "the witch's ally is not blinded to the pig");
+            s.aimAt(s.ally(), s.enemy);
+            assertSame(s.enemy, s.ctx().findTarget(s.ally(), 20), "aimed skills of her side still find the pig");
+            assertTrue(s.ctx().enemiesNear(s.ally(), s.enemy.getLocation(), 1).contains(s.enemy));
+            s.ticks(s.paramTicks("pig_duration") + 2);
             s.assertNoProblems();
             s.finishClean();
         }
@@ -769,7 +855,21 @@ class ShapeNewAbilitiesTest {
             s.aimAt(s.owner, s.enemy);
             s.clearHits();
             s.assertSucceeded(s.active(), "하트 스틱");
-            s.ticks(50);
+            boolean healed = false;
+            boolean secondHit = false;
+            for (int i = 0; i < 50; i++) {
+                s.ticks(1);
+                if (!healed && s.ally().getHealth() > allyBefore + EPSILON) {
+                    healed = true;
+                    assertHeartFlying(s, "the heart lands on the ally");
+                }
+                if (!secondHit && s.damageBy(s.owner, s.enemy2) > 0) {
+                    secondHit = true;
+                    assertHeartFlying(s, "the heart springs on to the second enemy");
+                }
+            }
+            assertTrue(healed && secondHit, "the whole chain ran");
+            assertTrue(texts(s, "❤").isEmpty(), "the heart pops after its last target");
             assertEquals(s.param("heart_damage"), s.damageBy(s.owner, s.enemy), 1.0E-6, "the first enemy");
             assertEquals(allyBefore + s.param("heart_heal"), s.ally().getHealth(), 1.0E-6, "then the hurt ally");
             assertEquals(s.param("bounce_damage"), s.damageBy(s.owner, s.enemy2), 1.0E-6, "then the other enemy");
@@ -778,6 +878,51 @@ class ShapeNewAbilitiesTest {
             assertFalse(blocks(s, Material.PINK_CONCRETE).isEmpty(), "with a bow on its back");
             for (Display display : entities(s, Display.class)) {
                 assertUnrotated(display, "bow");
+            }
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /** The heart's sprite is still out, full size (not shrinking away), while the chain goes on. */
+    private static void assertHeartFlying(Scenario s, String what) {
+        List<TextDisplay> hearts = texts(s, "❤").stream().filter(Entity::isValid).toList();
+        assertEquals(1, hearts.size(), what + ": one heart sprite");
+        assertTrue(hearts.getFirst().getTransformation().getScale().x > 1, what + ": at full size, not popping");
+    }
+
+    @Test
+    void magicalGirlRibbonAndHeartNeverRevealAHiddenAlly() {
+        try (Scenario s = Scenario.teams("magicalgirl")) {
+            s.ticks(10);
+            s.crossfireAlly();
+            s.ally().setHealth(s.ally().getHealth() - 6);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "하트 스틱");
+            s.ticks(50);
+            assertTrue(girl(s).isTied(s.ally()));
+            List<BlockDisplay> bow = blocks(s, Material.PINK_CONCRETE);
+            assertFalse(bow.isEmpty(), "a bow on the ally's back");
+            // The ally slips into stealth from one enemy: that enemy must not see its bow.
+            s.enemy.hidePlayer(s.ctx().plugin(), s.ally());
+            s.ticks(2);
+            for (BlockDisplay part : bow) {
+                assertFalse(s.enemy.canSee(part), "the bow never shows a hidden ally");
+                assertTrue(s.enemy2.canSee(part), "whoever sees the ally sees its bow");
+            }
+            // Nor does a heart spring to it.
+            s.layout();
+            s.place(s.ally(), 1.3, 3.0, 180);
+            double before = s.ally().getHealth();
+            s.readyActive();
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "하트 스틱");
+            s.ticks(50);
+            assertEquals(before, s.ally().getHealth(), 1.0E-6, "a hidden ally is not given away by the heart");
+            s.enemy.showPlayer(s.ctx().plugin(), s.ally());
+            s.ticks(2);
+            for (BlockDisplay part : blocks(s, Material.PINK_CONCRETE)) {
+                assertTrue(s.enemy.canSee(part), "shown again with the ally");
             }
             s.assertNoProblems();
             s.finishClean();
@@ -1017,6 +1162,31 @@ class ShapeNewAbilitiesTest {
     }
 
     @Test
+    void koscheiEggBeyondTheBorderDoesNotProtect() {
+        try (Scenario s = Scenario.ffa("koschei")) {
+            s.ticks(5);
+            double edge = 0.5;
+            while (edge < 400 && s.ctx().isInsideArena(new Location(s.world, 0.5, FlatWorld.SURFACE, edge + 0.5))) {
+                edge += 0.5;
+            }
+            assertTrue(edge < 400, "the arena has an edge");
+            LivingEntity egg = egg(s);
+            egg.teleport(new Location(s.world, 0.5, FlatWorld.SURFACE, edge + 2));
+            assertFalse(s.ctx().isInsideArena(egg.getLocation()), "the egg lies beyond the border");
+            s.place(s.owner, 0.5, edge - 4, 0);
+            s.place(s.enemy, 0.5, edge - 6, 0);
+            s.place(s.enemy2, -10.5, 0.5, 0);
+            s.ticks(3);
+            assertNotNull(koschei(s).eggBody(), "the egg itself is fine");
+            s.owner.setHealth(4);
+            s.melee(s.enemy, s.owner, 10);
+            assertFalse(s.session.isAlive(s.owner), "an egg out of the fight keeps nobody alive");
+            s.finishMatch();
+            s.assertNoProblems();
+        }
+    }
+
+    @Test
     void koscheiEggBreaksUnderEnemyBlowsHurtsKoscheiAndHealsWhenLeftAlone() {
         try (Scenario s = Scenario.ffa("koschei")) {
             s.ticks(5);
@@ -1229,6 +1399,22 @@ class ShapeNewAbilitiesTest {
     }
 
     @Test
+    void rokurokubiCannotPeekUnderARoofRightOverItsHead() {
+        try (Scenario s = Scenario.ffa("rokurokubi")) {
+            s.ticks(10);
+            // Two blocks of headroom: a crouching body leaves no room for a neck under the roof.
+            ceiling(s, -1, 1, -1, 1, FlatWorld.FLOOR_Y + 3, Material.STONE);
+            crouchStill(s);
+            s.ticks(s.paramTicks("peek_delay") + 10);
+            assertFalse(roku(s).isPeeking(), "no neck through the roof");
+            assertTrue(blocks(s, Material.WHITE_TERRACOTTA).isEmpty());
+            s.owner.setSneaking(false);
+            ceiling(s, -1, 1, -1, 1, FlatWorld.FLOOR_Y + 3, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void rokurokubiNeckBitesTheFirstEnemyWhileTheBodyStaysPut() {
         try (Scenario s = Scenario.ffa("rokurokubi")) {
             s.ticks(10);
@@ -1369,6 +1555,71 @@ class ShapeNewAbilitiesTest {
             assertFalse(body.isValid(), "the body is gone");
             assertFalse(s.ctx().isSilenced(s.owner), "it fit cleanly");
             assertTrue(entities(s, org.bukkit.entity.Mannequin.class).isEmpty());
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void rokurokubiFlyingHeadIsOnlyABitFasterThanARunnerFeelsSlowsAndSparesTheHidden() {
+        try (Scenario s = Scenario.ffa("rokurokubi")) {
+            s.ticks(10);
+            s.assertSucceeded(s.ultimate(), "누케쿠비");
+            s.ticks(2);
+            // Sprint-flying settles at fly speed * 0.98 / 0.09 * 20 blocks per second.
+            double sprintFly = s.owner.getFlySpeed() * 0.98 / 0.09 * 20;
+            assertEquals(5.612 * (1 + s.param("head_speed") / 100), sprintFly, 0.05,
+                    "sprint-flying a little faster than a sprinting player");
+            // A root stops the head too (flight ignores the movement speed attribute by itself).
+            s.ctx().addModifier(s.enemy, s.owner, Attribute.MOVEMENT_SPEED, -1,
+                    org.bukkit.attribute.AttributeModifier.Operation.MULTIPLY_SCALAR_1, 10);
+            s.ticks(1);
+            assertEquals(0, s.owner.getFlySpeed(), 1.0E-6, "rooted in the air");
+            s.ticks(12);
+            assertTrue(s.owner.getFlySpeed() > 0.01, "free again");
+            // An enemy hidden from the head is not bitten (a bite would give it away).
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            s.clearHits();
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 0.6, 4.2, 180, 0);
+            s.ticks(3);
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "no bite on a hidden enemy");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.ticks(2);
+            assertEquals(s.param("head_bite"), s.damageBy(s.owner, s.enemy), 1.0E-6, "seen, it is bitten");
+            pressF(s);
+            s.ticks(2);
+            assertEquals(0.1f, s.owner.getFlySpeed(), 1.0E-6, "the fly speed is restored");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void rokurokubiBodyLiftedUpDoesNotTakeItsHeadBack() {
+        try (Scenario s = Scenario.ffa("rokurokubi")) {
+            s.ticks(10);
+            s.assertSucceeded(s.ultimate(), "누케쿠비");
+            s.ticks(3);
+            LivingEntity body = roku(s).body();
+            assertNotNull(body);
+            s.place(s.owner, 8.5, FlatWorld.SURFACE + 2, 8.5, 0, 0);
+            // Something heaves the body straight up onto a pillar: it never moved sideways.
+            Location at = body.getLocation();
+            int bx = at.getBlockX();
+            int bz = at.getBlockZ();
+            body.teleport(at.clone().add(0, 2, 0));
+            s.world.getBlockAt(bx, FlatWorld.FLOOR_Y + 1, bz).setType(Material.STONE);
+            s.world.getBlockAt(bx, FlatWorld.FLOOR_Y + 2, bz).setType(Material.STONE);
+            s.ticks(2);
+            pressF(s);
+            s.ticks(2);
+            assertFalse(roku(s).isHeadFlying());
+            assertTrue(s.ctx().isSilenced(s.owner), "a body lifted away does not take its head back cleanly");
+            s.world.getBlockAt(bx, FlatWorld.FLOOR_Y + 1, bz).setType(Material.AIR);
+            s.world.getBlockAt(bx, FlatWorld.FLOOR_Y + 2, bz).setType(Material.AIR);
+            s.tickUntilGrounded(s.owner, 60);
+            s.ticks(s.paramTicks("misfit_stun") + 2);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "the drop off the pillar is no fall");
             s.assertNoProblems();
             s.finishClean();
         }
