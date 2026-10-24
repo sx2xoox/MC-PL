@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 
@@ -17,6 +18,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
@@ -83,16 +85,16 @@ public final class RaAbility extends Ability {
                     "조준한 적({ray_range}블록 이내)에게 태양 원반 조준선을 띄우고 {ray_delay}초 뒤 해가 있는 쪽에서 광선을 "
                             + "내립니다. 해의 방향은 경기마다 아침(동쪽)·한낮(머리 위)·저녁(서쪽) 중 하나로 정해지고, 조준선 "
                             + "옆의 작은 해가 알려 줍니다. 해에 드러난 대상은 {ray_damage} 피해를 받고 {heat_time}초간 "
-                            + "일사병(발광, 이동 속도 -{heat_slow}%)에 걸립니다. 대상과 해 사이에 블록(지붕·처마·해 쪽 벽)이 "
-                            + "있으면 그 블록이 그을릴 뿐 대상은 무사합니다(전투 맵에서는 그 블록이 부서집니다). 불이 아닌 "
-                            + "열이라 불타지 않습니다.",
+                            + "일사병(발광, 이동 속도 -{heat_slow}%)에 걸립니다. 대상에서 해 쪽으로 {shade_reach}블록 안에 "
+                            + "블록(지붕·처마·해 쪽 벽)이 있으면 그 블록이 그을릴 뿐 대상은 무사합니다(전투 맵에서는 그 블록이 "
+                            + "부서집니다). 불이 아닌 열이라 불타지 않습니다.",
                     9)
             .ultimate("태양의 배",
                     "{barque_time}초간 두 번째 해가 태양의 배를 타고 {barque_radius}블록 안의 하늘을 동쪽 30°에서 서쪽 "
                             + "30°까지 가로지릅니다. 그 빛을 직접 받는(해 쪽이 막히지 않은) 적은 0.5초마다 {barque_damage} "
                             + "피해를 받고 이동 속도가 {barque_slow}% 느려지며, 그늘의 적은 무사합니다. 해가 움직이면 "
-                            + "그림자도 돌고 줄어듭니다. 지금의 그늘은 바닥에 어둡게 칠해져 모두에게 보입니다. 빛 속의 나와 "
-                            + "아군은 주는 피해가 {barque_bonus}% 늘어납니다.")
+                            + "그림자도 돌고 줄어듭니다. 지금의 그늘은 {barque_radius}블록 안의 바닥에 어둡게 칠해져 모두에게 "
+                            + "보이고, 햇살이 땅을 쓸고 지나갑니다. 빛 속의 나와 아군은 주는 피해가 {barque_bonus}% 늘어납니다.")
             .ultimateNotStandalone()
             .param("sun_haste", 25)
             .param("sun_heal", 1)
@@ -102,6 +104,7 @@ public final class RaAbility extends Ability {
             .param("ray_damage", 5)
             .param("heat_time", 3)
             .param("heat_slow", 15)
+            .param("shade_reach", 16)
             .param("ray_terrain", 1)
             .param("barque_time", 7)
             .param("barque_radius", 30)
@@ -146,7 +149,6 @@ public final class RaAbility extends Ability {
     // the active
     /** The sun's elevation in the morning and the evening (degrees above the horizon). */
     private static final double LOW_SUN = 35;
-    private static final double SUN_REACH = 64;
     private static final double SMALL_SUN_GAP = 3.2;
     private static final double BEAM_LENGTH = 24;
     private static final long BEAM_TICKS = 8;
@@ -157,7 +159,10 @@ public final class RaAbility extends Ability {
     private static final double SUN_TO = 150;
     private static final long ULT_PULSE = 10;
     private static final long ULT_SLOW_TICKS = 14;
-    private static final double SHADE_RADIUS = 14;
+    /** The shade is painted over the whole reach, and more densely within this of everyone in it. */
+    private static final double SHADE_NEAR = 3.5;
+    private static final int SHADE_SAMPLES = 12;
+    private static final double TAU = Math.PI * 2;
     private static final float BIG_SUN = 3.6f;
 
     /** The side of the sky the match's sun stands on. */
@@ -184,6 +189,12 @@ public final class RaAbility extends Ability {
             };
         }
     }
+
+    /**
+     * The sun of each match, chosen once: every Ra of a match sees the same one, and so does a Ra granted again
+     * after a practice respawn or an ability switch. Keyed weakly by the match's context.
+     */
+    private static final Map<AbilityContext, Sun> MATCH_SUNS = new WeakHashMap<>();
 
     // ------------------------------------------------------------------ state
 
@@ -218,11 +229,12 @@ public final class RaAbility extends Ability {
         displays.clear();
     }
 
-    /** The match's sun (chosen once, at random). */
+    /** The match's sun (chosen once per match, at random). */
     public Sun sun() {
         Sun chosen = sun;
         if (chosen == null) {
-            chosen = Sun.values()[ThreadLocalRandom.current().nextInt(Sun.values().length)];
+            chosen = MATCH_SUNS.computeIfAbsent(ctx(),
+                    key -> Sun.values()[ThreadLocalRandom.current().nextInt(Sun.values().length)]);
             sun = chosen;
         }
         return chosen;
@@ -236,12 +248,13 @@ public final class RaAbility extends Ability {
             return;
         }
         Player owner = player();
+        boolean hidden = concealed(owner);
         if (tick % SKY_PERIOD == 0) {
             boolean open = underSky(owner);
             if (open != skyOpen) {
                 skyOpen = open;
                 lightDisc(open);
-                if (open) {
+                if (open && !hidden) {
                     Fx.sound(owner.getEyeLocation(), Sound.BLOCK_BEACON_AMBIENT, 0.4f, 1.9f);
                 }
             }
@@ -254,11 +267,11 @@ public final class RaAbility extends Ability {
                 long period = Math.max(SKY_PERIOD, params().ticks("sun_heal_period"));
                 if (sunTicks >= period) {
                     sunTicks -= period;
-                    heal(owner);
+                    heal(owner, hidden);
                 }
             }
         }
-        followDisc(owner, tick);
+        followDisc(owner, tick, hidden);
     }
 
     /** True if nothing but sky is over the owner's head. */
@@ -268,12 +281,15 @@ public final class RaAbility extends Ability {
                 == null;
     }
 
-    private void heal(Player owner) {
+    private void heal(Player owner, boolean hidden) {
         double amount = params().num("sun_heal");
         if (amount <= 0 || owner.getHealth() >= Combat.maxHealth(owner)) {
             return;
         }
         ctx().heal(owner, amount);
+        if (hidden) {
+            return;
+        }
         Location chest = owner.getLocation().add(0, 1.0, 0);
         Vfx.helix(ctx(), owner.getLocation().add(0, 0.1, 0), 0.5, 1.9, 1, 2, 6, ctx().currentTick() * 0.2,
                 Particle.DUST, GOLD_SMALL, false);
@@ -285,8 +301,16 @@ public final class RaAbility extends Ability {
      * The small sun disc over the head: two crossed plates facing every viewer, bright under the sky. It hangs a little
      * towards the side of the sky the match's sun stands on, so everyone can tell where Ra's rays will come from.
      */
-    private void followDisc(Player owner, long tick) {
+    private void followDisc(Player owner, long tick, boolean hidden) {
         disc.removeIf(part -> !part.isValid());
+        if (hidden) {
+            // Nothing may float over an invisible Ra and give him away.
+            for (BlockDisplay plate : disc) {
+                Displays.shrinkAway(ctx(), owner, plate, 3);
+            }
+            disc.clear();
+            return;
+        }
         Vector toward = sun().toward();
         Location at = Displays.unrotated(owner.getLocation().add(toward.getX() * DISC_LEAN, owner.getHeight()
                 + DISC_ABOVE, toward.getZ() * DISC_LEAN));
@@ -447,7 +471,9 @@ public final class RaAbility extends Ability {
             }
             Location body = Fx.body(target);
             World world = body.getWorld();
-            RayTraceResult shade = world.rayTraceBlocks(body, toward, SUN_REACH, FluidCollisionMode.NEVER, true);
+            // Only cover near the target shades it: a tower or a canyon rim far off would make the ray never land.
+            double reach = Math.max(1, params().num("shade_reach"));
+            RayTraceResult shade = world.rayTraceBlocks(body, toward, reach, FluidCollisionMode.NEVER, true);
             if (shade == null) {
                 burn(body);
             } else {
@@ -726,7 +752,8 @@ public final class RaAbility extends Ability {
             if (tick % 5 == 0) {
                 refreshLit();
             }
-            paintShade();
+            paintShade(tick);
+            sweep(tick);
             if (tick % ULT_PULSE == 0) {
                 pulse();
             }
@@ -749,17 +776,62 @@ public final class RaAbility extends Ability {
             }
         }
 
-        /** Dark motes on the ground where the sun's shade falls right now (shown to everyone). */
-        private void paintShade() {
+        /**
+         * Dark motes on the ground where the sun's shade falls right now (shown to everyone): spread over the whole
+         * reach of the barque, and denser around everyone in it, where the shade decides who burns.
+         */
+        private void paintShade(long tick) {
             ThreadLocalRandom random = ThreadLocalRandom.current();
-            int points = Vfx.n(ctx(), 16);
+            int points = Vfx.n(ctx(), SHADE_SAMPLES);
             for (int i = 0; i < points; i++) {
-                Location spot = Vfx.scatter(center, SHADE_RADIUS);
+                double r = radius * Math.sqrt(random.nextDouble());
+                double a = random.nextDouble(TAU);
+                shadeAt(center.clone().add(Math.cos(a) * r, 0, Math.sin(a) * r), random);
+            }
+            if (tick % 2 != 0) {
+                return;
+            }
+            List<LivingEntity> around = new ArrayList<>(ctx().enemiesNear(owner, center, radius));
+            around.addAll(ctx().alliesNear(owner, center, radius));
+            around.add(owner);
+            int near = Vfx.n(ctx(), 2);
+            for (LivingEntity entity : around) {
+                if (!entity.getWorld().equals(world) || isHidden(owner, entity)) {
+                    continue;
+                }
+                for (int i = 0; i < near; i++) {
+                    double r = SHADE_NEAR * Math.sqrt(random.nextDouble());
+                    double a = random.nextDouble(TAU);
+                    shadeAt(entity.getLocation().add(Math.cos(a) * r, 0, Math.sin(a) * r), random);
+                }
+            }
+        }
+
+        private void shadeAt(Location spot, ThreadLocalRandom random) {
+            spot.setY(center.getY() + 3);
+            Spots.snapToGround(world, spot, 7);
+            Location probe = spot.clone().add(0, 0.3, 0);
+            if (!clear(probe)) {
+                Vfx.dot(probe.add(0, random.nextDouble(0.1), 0), Particle.DUST, SHADE_DUST, true);
+            }
+        }
+
+        /** Two shafts of sunlight sweep around the ground below the sun, stopped by the shade they meet. */
+        private void sweep(long tick) {
+            if (tick % 2 != 0) {
+                return;
+            }
+            for (int k = 0; k < 2; k++) {
+                double a = tick * 0.11 + k * Math.PI;
+                double r = radius * (0.4 + 0.3 * Math.sin(tick * 0.045 + k * 1.7));
+                Location spot = center.clone().add(Math.cos(a) * r, 0, Math.sin(a) * r);
                 spot.setY(center.getY() + 3);
                 Spots.snapToGround(world, spot, 7);
-                Location probe = spot.clone().add(0, 0.3, 0);
-                if (!clear(probe)) {
-                    Vfx.dot(probe.add(0, random.nextDouble(0.1), 0), Particle.DUST, SHADE_DUST, true);
+                Location ground = spot.add(0, 0.15, 0);
+                if (clear(ground)) {
+                    Vfx.line(ctx(), sunAt, ground, 2.6, Particle.DUST, GOLD_SMALL, true);
+                    Vfx.dot(ground, Particle.END_ROD, null, true);
+                    Vfx.dot(Vfx.scatter(ground, 0.4), Particle.DUST_COLOR_TRANSITION, SUN_GLOW, true);
                 }
             }
         }
@@ -847,5 +919,10 @@ public final class RaAbility extends Ability {
 
     private static boolean isHidden(Player owner, LivingEntity entity) {
         return entity instanceof Player hidden && !owner.canSee(hidden);
+    }
+
+    /** True while Ra is invisible: his sun disc and its light must not give him away. */
+    private static boolean concealed(Player owner) {
+        return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
     }
 }

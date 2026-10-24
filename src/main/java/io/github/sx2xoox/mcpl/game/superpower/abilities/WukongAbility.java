@@ -38,6 +38,7 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
@@ -80,7 +81,9 @@ public final class WukongAbility extends Ability {
                     "여의봉이 {pillar_rise}초에 걸쳐 앞에서 {pillar_height}블록 높이로 솟구치고, 바라보는 방향의 땅에 "
                             + "그림자 선(폭 {pillar_width}블록, 길이 {pillar_length}블록)이 그려집니다. 이어 기둥이 그 선을 "
                             + "따라 쓰러져 깔린 적에게 {pillar_damage} 피해를 주고 {pillar_flat}초간 납작하게 눌러 이동 속도를 "
-                            + "{pillar_slow}% 늦춥니다(전투 맵에서는 선을 따라 지형도 갈라집니다).")
+                            + "{pillar_slow}% 늦춥니다. 선 위의 벽이나 건물(몸 높이의 엄폐물)에 부딪히면 기둥이 거기서 부러져 "
+                            + "그림자도 거기까지만 그려지고 그 너머는 무사합니다(전투 맵에서는 선을 따라 지형이 갈라지고 부딪힌 "
+                            + "엄폐물도 부서집니다). 바로 앞이 막혀 있으면 쓸 수 없습니다.")
             .param("sweep_radius", 1.5)
             .param("sweep_share", 50)
             .param("pole_length", 12)
@@ -137,6 +140,8 @@ public final class WukongAbility extends Ability {
     private static final long RETRACT_TICKS = 3;
     private static final double DRIVE_SPEED = 1.25;
     private static final double DRIVE_SINK = -0.06;
+    /** A wall at most this far in front of a driven body at the staff's end crushes it. */
+    private static final double WALL_CONTACT = 0.3;
     private static final double MAX_SPEED = 2.5;
     /** Every vault rises at least this much (a wall kick pops up as well as away). */
     private static final double MIN_RISE = 0.45;
@@ -153,6 +158,10 @@ public final class WukongAbility extends Ability {
     private static final double REACH_UP = 2.6;
     private static final double REACH_DOWN = 1.5;
     private static final double CRACK_STEP = 2.5;
+    /** Cover is what blocks the line at this height over the ground: a wall, a house (a step or a slab is not). */
+    private static final double COVER_HEIGHT = 1.5;
+    /** The pillar needs at least this much open line ahead to fall. */
+    private static final double MIN_FALL = 2.0;
 
     // ------------------------------------------------------------------ state
 
@@ -184,7 +193,7 @@ public final class WukongAbility extends Ability {
         Player owner = player();
         landing.update(owner, tick);
         followBack(owner);
-        if (tick % 20 == 0 && inUse == 0) {
+        if (tick % 20 == 0 && inUse == 0 && !concealed(owner)) {
             Location tip = backSpot(owner).add(0, 0.75, 0);
             Vfx.dot(Vfx.scatter(tip, 0.15), Particle.DUST, GOLD_DUST, false);
         }
@@ -193,6 +202,14 @@ public final class WukongAbility extends Ability {
     /** The staff rides diagonally across the sage's back, turned with his body. */
     private void followBack(Player owner) {
         backStaff.removeIf(part -> !part.isValid());
+        if (concealed(owner)) {
+            // Nothing may float over an invisible sage and give him away.
+            for (BlockDisplay part : backStaff) {
+                Displays.shrinkAway(ctx(), owner, part, 3);
+            }
+            backStaff.clear();
+            return;
+        }
         if (backStaff.isEmpty()) {
             if (!reserve(3)) {
                 return;
@@ -357,7 +374,7 @@ public final class WukongAbility extends Ability {
         Fx.sound(eye, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 0.8f, 1.2f);
         Vfx.cloud(ctx(), hand, Particle.CLOUD, 8, 0.15, 0.04, null, false);
         if (skewered != null) {
-            new Drive(owner, hand, dir, skewered, enemyDistance, wall != null, blockDistance).start();
+            new Drive(owner, hand, dir, skewered, enemyDistance, blockDistance).start();
             return ActivationResult.success();
         }
         Pole pole = new Pole(owner, hand, dir, blockDistance, null);
@@ -558,14 +575,14 @@ public final class WukongAbility extends Ability {
     /**
      * A skewered enemy driven along the staff to its end. A player flies on its own client and the server learns
      * where it is a moment later, so the drive steers by its own reckoning of where the steps it sent have carried the
-     * enemy (mobs are moved by the server: their hitbox is used); the crush against the wall is judged on that path.
+     * enemy (mobs are moved by the server: their hitbox is used); the crush against the wall is judged on that path,
+     * and only a real wall in front of the enemy's body crushes it (the floor the staff may end in never does).
      */
     private final class Drive implements LongPredicate {
 
         private final Player owner;
         private final LivingEntity target;
         private final Vector flat;
-        private final boolean walled;
         private final boolean clientDriven;
         private final Pole pole;
         private final double startX;
@@ -574,11 +591,9 @@ public final class WukongAbility extends Ability {
         private double traveled;
         boolean over;
 
-        Drive(Player owner, Location hand, Vector dir, LivingEntity target, double enemyDistance, boolean walled,
-              double poleLength) {
+        Drive(Player owner, Location hand, Vector dir, LivingEntity target, double enemyDistance, double poleLength) {
             this.owner = owner;
             this.target = target;
-            this.walled = walled;
             this.clientDriven = target instanceof Player;
             Vector horizontal = Motion.horizontal(dir);
             this.flat = horizontal.lengthSquared() > 0 ? horizontal
@@ -621,11 +636,7 @@ public final class WukongAbility extends Ability {
             }
             double step = Math.min(DRIVE_SPEED, remaining);
             BoundingBox box = onPath();
-            BoundingBox next = box.clone().shift(flat.getX() * step, 0, flat.getZ() * step);
-            // The probe skips the feet, so sliding over the floor or a small step never counts as a wall.
-            BoundingBox probe = new BoundingBox(next.getMinX() + 0.05, next.getMinY() + 0.6, next.getMinZ() + 0.05,
-                    next.getMaxX() - 0.05, next.getMaxY() - 0.05, next.getMaxZ() - 0.05);
-            if (target.getWorld().hasCollisionsIn(probe)) {
+            if (blockedAhead(box, step)) {
                 pin(box);
                 return false;
             }
@@ -651,10 +662,22 @@ public final class WukongAbility extends Ability {
             return new BoundingBox(x - half, live.getMinY(), z - half, x + half, live.getMaxY(), z + half);
         }
 
-        /** The staff's end: crushed against the wall there, or just let go in the open. */
+        /**
+         * True if the body {@code box} moved {@code ahead} blocks on would run into a wall. The probe skips the feet,
+         * so the floor, a slab or a small step never counts as one.
+         */
+        private boolean blockedAhead(BoundingBox box, double ahead) {
+            BoundingBox next = box.clone().shift(flat.getX() * ahead, 0, flat.getZ() * ahead);
+            BoundingBox probe = new BoundingBox(next.getMinX() + 0.05, next.getMinY() + 0.6, next.getMinZ() + 0.05,
+                    next.getMaxX() - 0.05, next.getMaxY() - 0.05, next.getMaxZ() - 0.05);
+            return target.getWorld().hasCollisionsIn(probe);
+        }
+
+        /** The staff's end: crushed against a wall right there, or just let go in the open. */
         private void arrive() {
-            if (walled) {
-                pin(onPath());
+            BoundingBox box = onPath();
+            if (blockedAhead(box, WALL_CONTACT)) {
+                pin(box);
                 return;
             }
             over = true;
@@ -719,13 +742,30 @@ public final class WukongAbility extends Ability {
         Location base = owner.getLocation().add(dir.clone().multiply(PILLAR_OFFSET));
         base.setY(owner.getLocation().getY() + 1.0);
         Spots.snapToGround(owner.getWorld(), base, 4);
-        new Pillar(owner, Displays.unrotated(base), dir).start();
+        Location foot = Displays.unrotated(base);
+        if (!Spots.isFree(owner.getWorld(), foot, PILLAR_THICKNESS * 0.8, 2.0)
+                || coverAlong(foot, dir, MIN_FALL) < MIN_FALL) {
+            return ActivationResult.fail("앞이 막혀 여의봉이 쓰러질 자리가 없습니다");
+        }
+        new Pillar(owner, foot, dir).start();
         return ActivationResult.success();
     }
 
     /**
+     * How far along {@code dir} from {@code base} the first cover stands (a block at body height: a wall, a house),
+     * up to {@code max}. A step or a slab lower than that is no cover: the pillar simply comes down on it.
+     */
+    private static double coverAlong(Location base, Vector dir, double max) {
+        Location probe = base.clone().add(0, COVER_HEIGHT, 0);
+        RayTraceResult hit = base.getWorld().rayTraceBlocks(probe, dir, max, FluidCollisionMode.NEVER, true);
+        return hit == null ? max : hit.getHitPosition().distance(probe.toVector());
+    }
+
+    /**
      * The pillar: it rises over the rise time while its shadow is drawn on the ground, then topples along the shadow
-     * (each tick a new pose, so its golden bands stay on the shaft), crashes, lies a moment and shrinks back.
+     * (each tick a new pose, so its golden bands stay on the shaft) about its front foot, crashes onto the ground,
+     * lies a moment and shrinks back. Cover on the line stops it: the pillar breaks against it, the part above
+     * snapping off in a shower of shards, and whoever stands behind the cover is spared.
      */
     private final class Pillar implements LongPredicate {
 
@@ -741,6 +781,13 @@ public final class WukongAbility extends Ability {
         private final World world;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private @Nullable BlockDisplay shadow;
+        /** How far along the line the cover stands that the pillar breaks against; infinite without one. */
+        private double stop = Double.POSITIVE_INFINITY;
+        /** How high above the base that cover rises. */
+        private double coverTop;
+        /** The stretch of the line the pillar crushes: the shadow, cut short by the cover. */
+        private double crushLength;
+        private boolean broken;
 
         Pillar(Player owner, Location base, Vector dir) {
             this.owner = owner;
@@ -753,10 +800,38 @@ public final class WukongAbility extends Ability {
             this.halfWidth = Math.max(0.25, params().num("pillar_width") / 2);
             this.rise = Math.max(2, params().ticks("pillar_rise"));
             this.world = base.getWorld();
+            survey();
         }
 
         private long total() {
             return rise + TOPPLE_TICKS + LIE_TICKS + SHRINK_TICKS + 2;
+        }
+
+        /** Looks along the line for the cover the pillar would break against. */
+        private void survey() {
+            double reach = Math.max(height, length) + PILLAR_THICKNESS;
+            double cover = coverAlong(base, dir, reach);
+            if (cover < reach - 1.0E-6) {
+                stop = cover;
+                coverTop = coverHeight(cover);
+            } else {
+                stop = Double.POSITIVE_INFINITY;
+                coverTop = 0;
+            }
+            crushLength = Math.min(length, stop);
+        }
+
+        /** How high above the base the cover found {@code cover} blocks ahead rises. */
+        private double coverHeight(double cover) {
+            Location column = base.clone().add(dir.clone().multiply(cover + 0.05));
+            int x = column.getBlockX();
+            int z = column.getBlockZ();
+            int y = (int) Math.floor(base.getY() + COVER_HEIGHT);
+            int top = (int) Math.floor(base.getY() + height);
+            while (y <= top && world.getBlockAt(x, y, z).getType().isSolid()) {
+                y++;
+            }
+            return Math.max(COVER_HEIGHT, y - base.getY());
         }
 
         void start() {
@@ -764,10 +839,11 @@ public final class WukongAbility extends Ability {
             showBack(false);
             long life = total() + 10;
             if (reserve(6)) {
-                parts.add(keep(Displays.block(ctx(), owner, base, SHAFT.createBlockData(), shaft(0.05, 0), life)));
+                parts.add(keep(Displays.block(ctx(), owner, base, SHAFT.createBlockData(), shaft(0.05 * height, 0),
+                        life)));
                 for (int band = 0; band < 4; band++) {
-                    parts.add(keep(Displays.block(ctx(), owner, base, CAP.createBlockData(), band(band, 0.05, 0),
-                            life)));
+                    parts.add(keep(Displays.block(ctx(), owner, base, CAP.createBlockData(),
+                            band(band, 0.05 * height, 0.05 * height, 0), life)));
                 }
                 for (BlockDisplay part : parts) {
                     part.setViewRange(4.0f);
@@ -790,48 +866,81 @@ public final class WukongAbility extends Ability {
             Loop.repeat(ctx(), owner, 1, 1, total(), this, this::end);
         }
 
-        /** The red shaft from the ground up to {@code grown} of the full height, tipped {@code tilt} degrees. */
-        private Transformation shaft(double grown, double tilt) {
+        /** The red shaft from the ground up to {@code extent} blocks, tipped {@code tilt} degrees. */
+        private Transformation shaft(double extent, double tilt) {
             return upright(-PILLAR_THICKNESS / 2, 0, -PILLAR_THICKNESS / 2, PILLAR_THICKNESS,
-                    (float) (height * grown), PILLAR_THICKNESS, tilt);
+                    (float) Math.max(0.01, extent), PILLAR_THICKNESS, tilt);
         }
 
-        /** Gold band {@code index}: the foot, a third, two thirds and the top of the shaft. */
-        private Transformation band(int index, double grown, double tilt) {
-            double h = height * grown;
+        /**
+         * Gold band {@code index}: the foot, a third, two thirds and the top of a shaft {@code full} blocks tall; a band
+         * above what is left of the shaft ({@code extent}) broke off with its top and is gone.
+         */
+        private Transformation band(int index, double full, double extent, double tilt) {
             double thick = index == 0 || index == 3 ? 1.3 : 0.55;
             double from = switch (index) {
                 case 0 -> 0;
-                case 1 -> h / 3;
-                case 2 -> h * 2 / 3;
-                default -> h - 1.3;
+                case 1 -> full / 3;
+                case 2 -> full * 2 / 3;
+                default -> full - 1.3;
             };
-            from = Math.max(0, Math.min(from, h - thick));
-            return upright(-BAND_THICKNESS / 2, (float) from, -BAND_THICKNESS / 2, BAND_THICKNESS, (float) thick,
-                    BAND_THICKNESS, tilt);
+            from = Math.max(0, Math.min(from, full - thick));
+            if (from + thick > extent + 1.0E-3 && index > 0) {
+                return upright(0, (float) Math.min(from, extent), 0, 0.001f, 0.001f, 0.001f, tilt);
+            }
+            return upright(-BAND_THICKNESS / 2, (float) from, -BAND_THICKNESS / 2, BAND_THICKNESS,
+                    (float) Math.min(thick, Math.max(0.01, extent)), BAND_THICKNESS, tilt);
         }
 
         /**
          * A box at {@code (x, y, z)} of size {@code (sx, sy, sz)} in the standing pillar's frame (y up from the base,
-         * z towards the fall), tipped {@code tilt} degrees over towards the fall: the base stays put.
+         * z towards the fall), tipped {@code tilt} degrees over towards the fall about the pillar's front foot edge,
+         * so the fallen pillar lies on the ground with its whole thickness above it.
          */
         private Transformation upright(float x, float y, float z, float sx, float sy, float sz, double tilt) {
-            Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
-                    .rotateX((float) Math.toRadians(tilt));
-            Vector3f translation = rotation.transform(new Vector3f(x, y, z));
-            return new Transformation(translation, rotation, new Vector3f(sx, sy, sz), new Quaternionf());
+            Quaternionf tip = new Quaternionf().rotateX((float) Math.toRadians(tilt));
+            Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
+            Vector3f pivot = new Vector3f(0, 0, PILLAR_THICKNESS / 2);
+            Vector3f corner = tip.transform(new Vector3f(x, y, z).sub(pivot)).add(pivot);
+            Vector3f translation = turn.transform(corner);
+            return new Transformation(translation, new Quaternionf(turn).mul(tip), new Vector3f(sx, sy, sz),
+                    new Quaternionf());
         }
 
         /** The shadow on the ground, {@code grown} of its full length out from the base. */
         private Transformation shadowPose(double grown) {
             float w = (float) (halfWidth * 2);
-            return upright(-w / 2, 0.03f, 0, w, 0.02f, (float) (length * grown), 0);
+            return upright(-w / 2, 0.03f, 0, w, 0.02f, (float) Math.max(0.01, crushLength * grown), 0);
         }
 
-        private void pose(double grown, double tilt, int ticks) {
+        private void pose(double full, double extent, double tilt, int ticks) {
             for (int i = 0; i < parts.size(); i++) {
-                Displays.animate(parts.get(i), i == 0 ? shaft(grown, tilt) : band(i - 1, grown, tilt), ticks);
+                Displays.animate(parts.get(i), i == 0 ? shaft(extent, tilt) : band(i - 1, full, extent, tilt), ticks);
             }
+        }
+
+        /**
+         * How much of the shaft is left at {@code tilt} degrees, {@code t} of the way through the fall: the staff
+         * shrinks to the shadow's length as it falls (it grows and shrinks at will), and once its front meets the top
+         * of the cover on the line, the shaft ends at the cover's face.
+         */
+        private double extentAt(double tilt, double t) {
+            double extent = shrinking(t);
+            if (Double.isInfinite(stop)) {
+                return extent;
+            }
+            double reach = Math.max(0.05, stop - PILLAR_THICKNESS / 2);
+            double contact = Math.toDegrees(Math.atan2(reach, coverTop));
+            if (tilt < contact) {
+                return extent;
+            }
+            return Math.min(extent, reach / Math.max(1.0E-3, Math.sin(Math.toRadians(tilt))));
+        }
+
+        /** The shaft's length {@code t} of the way through the fall, shrinking from its full height to the shadow's. */
+        private double shrinking(double t) {
+            double lying = Math.max(1, Math.min(height, length - PILLAR_THICKNESS / 2));
+            return height + (lying - height) * t;
         }
 
         @Override
@@ -839,13 +948,14 @@ public final class WukongAbility extends Ability {
             if (tick < rise) {
                 double grown = (tick + 1) / (double) rise;
                 if (tick % 2 == 0) {
-                    pose(Math.min(1, (tick + 2) / (double) rise), 0, 2);
+                    double h = height * Math.min(1, (tick + 2) / (double) rise);
+                    pose(h, h, 0, 2);
                 }
                 BlockDisplay plate = shadow;
                 if (plate != null && tick % 2 == 0) {
                     Displays.animate(plate, shadowPose(Math.min(1, (tick + 2) / (double) rise)), 2);
                 }
-                drawShadow(grown);
+                drawShadow(grown, tick);
                 Location top = base.clone().add(0, height * grown, 0);
                 Vfx.dot(top, Particle.DUST_COLOR_TRANSITION, GOLD_GLOW, true);
                 Vfx.cloud(ctx(), base.clone().add(0, 0.2, 0), Particle.CLOUD, 2, 0.6, 0.02, null, false);
@@ -856,14 +966,29 @@ public final class WukongAbility extends Ability {
             }
             long fall = tick - rise;
             if (fall < TOPPLE_TICKS) {
-                // It tips slowly, then ever faster.
-                double t = (fall + 1) / (double) TOPPLE_TICKS;
-                pose(1, 90 * t * t, 1);
-                drawShadow(1);
                 if (fall == 0) {
+                    // The line may have changed while the pillar rose (cover broken or raised): look again.
+                    double before = crushLength;
+                    survey();
+                    BlockDisplay plate = shadow;
+                    if (plate != null && Math.abs(before - crushLength) > 1.0E-6) {
+                        Displays.animate(plate, shadowPose(1), 2);
+                    }
                     Fx.sound(base, Sound.ENTITY_IRON_GOLEM_DAMAGE, 1.0f, 0.5f);
                     Fx.sound(base, Sound.BLOCK_WOOD_BREAK, 1.2f, 0.5f);
                 }
+                // It tips slowly, then ever faster.
+                double t = (fall + 1) / (double) TOPPLE_TICKS;
+                double tilt = 90 * t * t;
+                double extent = extentAt(tilt, t * t);
+                pose(height, extent, tilt, 1);
+                if (!broken && extent < shrinking(t * t) - 0.01) {
+                    broken = true;
+                    double rad = Math.toRadians(tilt);
+                    crack(base.clone().add(dir.clone().multiply(PILLAR_THICKNESS / 2 + extent * Math.sin(rad)))
+                            .add(0, extent * Math.cos(rad), 0));
+                }
+                drawShadow(1, tick);
                 if (fall == TOPPLE_TICKS - 1) {
                     crash();
                 }
@@ -872,14 +997,16 @@ public final class WukongAbility extends Ability {
             long lie = fall - TOPPLE_TICKS;
             if (lie < LIE_TICKS) {
                 if (lie % 3 == 0) {
-                    Location spot = base.clone().add(dir.clone().multiply(ThreadLocalRandom.current().nextDouble(length)));
+                    Location spot = base.clone().add(dir.clone().multiply(ThreadLocalRandom.current()
+                            .nextDouble(Math.max(0.5, crushLength))));
                     Vfx.cloud(ctx(), spot.add(0, 0.5, 0), Particle.CAMPFIRE_COSY_SMOKE, 2, 0.4, 0.01, null, false);
                 }
                 return true;
             }
             long shrink = lie - LIE_TICKS;
             if (shrink == 0) {
-                pose(0.02, 90, (int) SHRINK_TICKS);
+                double h = Math.max(0.05, 0.02 * height);
+                pose(h, h, 90, (int) SHRINK_TICKS);
                 Fx.sound(base, Sound.ITEM_TRIDENT_RETURN, 1.0f, 0.6f);
                 BlockDisplay plate = shadow;
                 if (plate != null && plate.isValid()) {
@@ -889,9 +1016,9 @@ public final class WukongAbility extends Ability {
             return shrink < SHRINK_TICKS;
         }
 
-        /** The telegraph: the pillar's shadow on the ground, dark dust with a red rim. */
-        private void drawShadow(double grown) {
-            double reach = length * grown;
+        /** The telegraph: the pillar's shadow on the ground, dark dust with a red rim, and a red mark on the cover. */
+        private void drawShadow(double grown, long tick) {
+            double reach = crushLength * grown;
             int points = Vfx.n(ctx(), 6);
             ThreadLocalRandom random = ThreadLocalRandom.current();
             for (int i = 0; i < points; i++) {
@@ -905,6 +1032,15 @@ public final class WukongAbility extends Ability {
                         .add(side.clone().multiply(edge * halfWidth)));
                 Vfx.dot(at.add(0, 0.12, 0), Particle.DUST, RED_DUST, true);
             }
+            if (!Double.isInfinite(stop) && grown >= 1 && tick % 4 == 0) {
+                // Where the pillar will break: a red cross on the face of the cover.
+                Location face = base.clone().add(dir.clone().multiply(stop - 0.1)).add(0, COVER_HEIGHT, 0);
+                for (int k = -2; k <= 2; k++) {
+                    double d = k * 0.18;
+                    Vfx.dot(face.clone().add(side.clone().multiply(d)).add(0, d, 0), Particle.DUST, RED_DUST, true);
+                    Vfx.dot(face.clone().add(side.clone().multiply(d)).add(0, -d, 0), Particle.DUST, RED_DUST, true);
+                }
+            }
         }
 
         private Location ground(Location at) {
@@ -914,14 +1050,51 @@ public final class WukongAbility extends Ability {
             return probe;
         }
 
+        /** The pillar's front meets the cover: its top snaps off and shatters against it. */
+        private void crack(Location at) {
+            Block cover = at.clone().add(dir.clone().multiply(0.3)).getBlock();
+            if (!cover.getType().isAir()) {
+                world.spawnParticle(Particle.BLOCK_CRUMBLE, at, Vfx.n(ctx(), 24), 0.5, 0.5, 0.5, 0.2,
+                        cover.getBlockData(), true);
+            }
+            world.spawnParticle(Particle.BLOCK_CRUMBLE, at, Vfx.n(ctx(), 16), 0.4, 0.4, 0.4, 0.2,
+                    SHAFT.createBlockData(), true);
+            Vfx.burst(ctx(), at, IMPERIAL, 1.0, Particle.CRIT, true);
+            Vfx.cloud(ctx(), at, Particle.CLOUD, 8, 0.5, 0.05, null, true);
+            Vfx.dot(at, Particle.FLASH, GOLD, true);
+            Fx.sound(at, Sound.ENTITY_ZOMBIE_BREAK_WOODEN_DOOR, 1.4f, 0.6f + Fx.jitter(0.05f));
+            Fx.sound(at, Sound.BLOCK_STONE_BREAK, 1.2f, 0.6f);
+            Fx.sound(at, Sound.ITEM_MACE_SMASH_GROUND, 1.0f, 0.8f);
+            // Shards of the broken top tumble down in front of the cover.
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            for (int i = 0; i < 3 && reserve(1); i++) {
+                Material type = i == 1 ? CAP : SHAFT;
+                float size = 0.3f + random.nextFloat() * 0.15f;
+                BlockDisplay shard = keep(Displays.block(ctx(), owner, Displays.unrotated(at), type.createBlockData(),
+                        Displays.transform(0, 0, 0, size, size, size, random.nextFloat(360), 0, 0), 16));
+                shard.setViewRange(2.0f);
+                Vector fly = dir.clone().multiply(-random.nextDouble(0.6, 1.6))
+                        .add(side.clone().multiply(random.nextDouble(-1.2, 1.2)));
+                double drop = -Math.max(0.2, at.getY() - base.getY() - 0.2);
+                Displays.animateNextTick(ctx(), owner, shard, Displays.transform((float) fly.getX(), (float) drop,
+                        (float) fly.getZ(), size * 0.8f, size * 0.8f, size * 0.8f, random.nextFloat(360),
+                        random.nextFloat(-90, 90), random.nextFloat(-90, 90)), 10);
+                ctx().runLater(owner, 11, () -> {
+                    if (shard.isValid()) {
+                        Displays.shrinkAway(ctx(), owner, shard, 4);
+                    }
+                });
+            }
+        }
+
         /** The pillar lands along its shadow: everyone under it is crushed flat. */
         private void crash() {
             double damage = params().num("pillar_damage");
             long flat = params().ticks("pillar_flat");
             double slow = Math.clamp(params().num("pillar_slow") / 100.0, 0.0, 1.0);
             int hits = 0;
-            Location middle = base.clone().add(dir.clone().multiply(length / 2));
-            for (LivingEntity enemy : ctx().enemiesNear(owner, middle, length / 2 + halfWidth + 3)) {
+            Location middle = base.clone().add(dir.clone().multiply(crushLength / 2));
+            for (LivingEntity enemy : ctx().enemiesNear(owner, middle, crushLength / 2 + halfWidth + 3)) {
                 if (!under(enemy)) {
                     continue;
                 }
@@ -938,10 +1111,11 @@ public final class WukongAbility extends Ability {
                             + ">납작!</" + GOLD_TAG + "></b>", 1.0f, 20);
                 }
             }
-            // Dust and the ground's own debris burst up all along the pillar.
-            Block floor = base.clone().subtract(0, 0.5, 0).getBlock();
-            for (double along = 0.5; along <= length; along += 1.5) {
-                Location at = ground(base.clone().add(dir.clone().multiply(along))).add(0, 0.3, 0);
+            // Dust and the ground's own debris burst up all along where the pillar really lies.
+            for (double along = 0.5; along <= crushLength; along += 1.5) {
+                Location at = ground(base.clone().add(dir.clone().multiply(along)));
+                Block floor = at.clone().subtract(0, 0.2, 0).getBlock();
+                at.add(0, 0.3, 0);
                 Vfx.cloud(ctx(), at, Particle.CLOUD, 2, 0.5, 0.05, null, true);
                 Vfx.dot(at, Particle.DUST_COLOR_TRANSITION, RED_FADE, true);
                 if (floor.getType().isSolid()) {
@@ -949,8 +1123,8 @@ public final class WukongAbility extends Ability {
                             floor.getBlockData(), true);
                 }
             }
-            Location end = base.clone().add(dir.clone().multiply(length));
-            Vfx.shockwave(ctx(), owner, middle.clone().add(0, 0.2, 0), 1, length / 2 + 1, 6, Particle.DUST,
+            Location end = base.clone().add(dir.clone().multiply(crushLength));
+            Vfx.shockwave(ctx(), owner, middle.clone().add(0, 0.2, 0), 1, crushLength / 2 + 1, 6, Particle.DUST,
                     CLOUD_DUST, true);
             Fx.sound(middle, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 2.0f, 0.6f);
             Fx.sound(middle, Sound.ENTITY_GENERIC_EXPLODE, 1.2f, 0.7f);
@@ -959,7 +1133,7 @@ public final class WukongAbility extends Ability {
             breakTerrain();
             owner.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>☁ 여의봉 천주</b></" + GOLD_TAG + ">"
                     + (hits > 0 ? " <white>" + hits + "명</white><gray>을 깔아뭉갰습니다</gray>" : " <gray>아무도 깔리지 "
-                    + "않았습니다</gray>")));
+                    + "않았습니다</gray>") + (broken ? " <dark_gray>(엄폐물에 부딪혀 부러졌습니다)</dark_gray>" : "")));
         }
 
         /** True if {@code enemy}'s body is under the fallen pillar (inside the shadow, near its height). */
@@ -974,23 +1148,27 @@ public final class WukongAbility extends Ability {
             Vector rel = new Vector(box.getCenterX() - base.getX(), 0, box.getCenterZ() - base.getZ());
             double along = rel.dot(dir);
             double reach = enemy.getWidth() / 2;
-            if (along < -reach - 0.3 || along > length + reach) {
+            if (along < -reach - 0.3 || along > crushLength + reach) {
                 return false;
             }
             return Math.abs(rel.dot(side)) <= halfWidth + reach;
         }
 
-        /** On battle maps the ground cracks along the fall and the cover under it is smashed. */
+        /** On battle maps the ground cracks along the fall, and the cover it broke against is smashed. */
         private void breakTerrain() {
             double radius = params().num("pillar_terrain");
             if (radius <= 0) {
                 return;
             }
             Location from = base.clone().add(0, 0.6, 0);
-            Location to = base.clone().add(dir.clone().multiply(length)).add(0, 0.6, 0);
+            Location to = base.clone().add(dir.clone().multiply(crushLength)).add(0, 0.6, 0);
             ctx().breakBlocksAlong(owner, from, to, radius);
-            for (double along = CRACK_STEP; along <= length; along += CRACK_STEP) {
+            for (double along = CRACK_STEP; along <= crushLength; along += CRACK_STEP) {
                 ctx().breakBlocks(owner, ground(base.clone().add(dir.clone().multiply(along))), radius * 0.75);
+            }
+            if (broken) {
+                ctx().breakBlocks(owner, base.clone().add(dir.clone().multiply(stop + 0.5)).add(0, COVER_HEIGHT, 0),
+                        radius);
             }
         }
 
@@ -1069,5 +1247,10 @@ public final class WukongAbility extends Ability {
 
     private static boolean isHidden(Player owner, LivingEntity entity) {
         return entity instanceof Player hidden && !owner.canSee(hidden);
+    }
+
+    /** True while the owner is invisible: the passive's staff and motes must not give him away. */
+    private static boolean concealed(Player owner) {
+        return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
     }
 }

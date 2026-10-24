@@ -53,6 +53,8 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -89,7 +91,8 @@ public final class FourGodsAbility extends Ability {
                             + "+{trail_jump}블록, 적은 0.5초마다 {trail_damage} 피해(불 아님)를 받습니다. 백호: "
                             + "{tiger_range}블록 안의 조준한 적에게 호랑이 혼이 덮쳐 {tiger_damage} 피해를 주고 "
                             + "{tiger_stagger}초간 휘청이게 합니다(이동·공격 속도 {stagger_slow}% 감소). 현무: "
-                            + "{tortoise_range}블록 안의 가장 가까운 아군(없으면 적)과 자리를 맞바꿉니다. 아군이면 둘 다, "
+                            + "{tortoise_range}블록 안의 보이는(벽 너머는 안 됨) 가장 가까운 아군(없으면 적)과 자리를 "
+                            + "맞바꿉니다. 아군이면 둘 다, "
                             + "적이면 나만 {tortoise_shell}초간 저항 II(받는 피해 40% 감소)를 얻고, 그 적은 "
                             + "{tortoise_slow}초간 구속 II에 걸립니다.",
                     6)
@@ -210,6 +213,8 @@ public final class FourGodsAbility extends Ability {
     private static final double BIRD_POP = 0.3;
     private static final double BIRD_HOVER = 0.03;
     private static final double BIRD_GLIDE = 0.15;
+    /** How far from the spine the wings hinge. */
+    private static final double WING_SHOULDER = 0.18;
     private static final long TRAIL_PULSE = 10;
     /** Trail buffs last a little longer than a pulse, so standing on the path keeps them without a gap. */
     private static final long TRAIL_BUFF_TICKS = 14;
@@ -232,6 +237,10 @@ public final class FourGodsAbility extends Ability {
     private static final long ULT_PULSE = 10;
     private static final double ULT_HEIGHT = 4;
     private static final double PULL_SPEED = 0.42;
+    /** Horizontal pull speed per block from the middle: the slide that follows stops about at the middle. */
+    private static final double PULL_PER_BLOCK = 0.3;
+    private static final double PULL_DEAD_ZONE = 0.25;
+    private static final double PULL_LIFT = 0.12;
     private static final double LIFT_SPEED = 0.36;
     private static final long ULT_MOD_TICKS = 14;
     private static final double GLYPH_HEIGHT = 2.6;
@@ -327,6 +336,10 @@ public final class FourGodsAbility extends Ability {
         Player owner = player();
         landing.update(owner, tick);
         followLabel(owner);
+        if (concealed(owner)) {
+            // Nothing of the stance may give an invisible owner away.
+            return;
+        }
         if (tick % 2 == 0) {
             // The current guardian's ring turns at the feet; the next one's motes rise from it.
             double angle = tick * 0.21;
@@ -350,6 +363,13 @@ public final class FourGodsAbility extends Ability {
     private void followLabel(Player owner) {
         Location at = labelSpot(owner);
         TextDisplay shown = label;
+        if (concealed(owner)) {
+            if (shown != null && shown.isValid()) {
+                Displays.shrinkAway(ctx(), owner, shown, 3);
+            }
+            label = null;
+            return;
+        }
         if (shown == null || !shown.isValid()) {
             if (!reserve(1)) {
                 return;
@@ -730,7 +750,7 @@ public final class FourGodsAbility extends Ability {
             owner.setFallDistance(0);
             if (reserve(2)) {
                 for (int side = -1; side <= 1; side += 2) {
-                    BlockDisplay wing = keep(Displays.block(ctx(), owner, wingSpot(), WING_BLOCK.createBlockData(),
+                    BlockDisplay wing = keep(Displays.block(ctx(), owner, wingSpot(start), WING_BLOCK.createBlockData(),
                             wingPose(side, 0.2f, 0), (long) Math.ceil(distance / BIRD_SPEED) + 12));
                     wing.setTeleportDuration(1);
                     Displays.outline(wing, Guardian.BIRD.palette.body());
@@ -745,16 +765,29 @@ public final class FourGodsAbility extends Ability {
             Loop.repeat(ctx(), owner, 0, 1, runs, this, this::land);
         }
 
-        private Location wingSpot() {
-            return Displays.unrotated(owner.getLocation().add(0, owner.getHeight() * 0.72, 0)
+        /**
+         * Where the wings ride: on the bird's back where the steps sent so far have carried it ({@code body}, its
+         * feet). The server sees a flying player a ping late, so following {@code owner.getLocation()} would leave the
+         * wings trailing a block or more behind it.
+         */
+        private Location wingSpot(Location body) {
+            return Displays.unrotated(body.clone().add(0, owner.getHeight() * 0.72, 0)
                     .subtract(dir.clone().multiply(0.18)));
         }
 
-        /** One wing, spread to the side and beating: {@code side} -1 left, 1 right. */
+        /**
+         * One wing, spread to the side and beating: {@code side} -1 left, 1 right. The wing hinges at the shoulder:
+         * its inner edge stays on the back while the tip rises and falls, and the whole wing turns with the flight.
+         */
         private Transformation wingPose(int side, float spread, double beat) {
-            float roll = (float) (side * (12 + Math.sin(beat) * 28));
-            return Displays.transform(side * (0.2f + 0.55f * spread), 0.05f, -0.1f, 1.1f * spread + 0.05f, 0.04f,
-                    0.55f, yaw, 0, roll);
+            double lift = 12 + Math.sin(beat) * 28;
+            double rad = Math.toRadians(lift);
+            float span = 1.1f * spread + 0.05f;
+            double half = span / 2;
+            Vector hinge = new Vector(side * (WING_SHOULDER + half * Math.cos(rad)), 0.05 + half * Math.sin(rad), -0.1);
+            Vector offset = rotate(hinge, yaw);
+            return Displays.transform((float) offset.getX(), (float) offset.getY(), (float) offset.getZ(), span, 0.04f,
+                    0.55f, yaw, 0, (float) (side * lift));
         }
 
         @Override
@@ -775,12 +808,14 @@ public final class FourGodsAbility extends Ability {
             owner.setVelocity(Motion.clamp(dir.clone().multiply(step).setY(tick == 0 ? BIRD_POP : BIRD_HOVER), 1.5));
             owner.setFallDistance(0);
             sent += step;
+            Location reckoned = start.clone().add(dir.clone().multiply(sent));
+            reckoned.setY(owner.getLocation().getY());
             for (int i = 0; i < wings.size(); i++) {
                 BlockDisplay wing = wings.get(i);
-                Displays.moveTo(wing, wingSpot());
+                Displays.moveTo(wing, wingSpot(reckoned));
                 Displays.animate(wing, wingPose(i == 0 ? -1 : 1, 1f, tick * 1.3), 1);
             }
-            Location body = owner.getLocation().add(0, 0.9, 0);
+            Location body = reckoned.clone().add(0, 0.9, 0);
             Vfx.dot(body, Particle.FLAME, null, false);
             Vfx.trail(body, body.clone().subtract(dir.clone().multiply(2)), Guardian.BIRD.palette.body(), 6, false);
             Vfx.dot(Vfx.scatter(body, 0.4), Particle.DUST_COLOR_TRANSITION, Guardian.BIRD.palette.glow(1.0f), false);
@@ -989,16 +1024,11 @@ public final class FourGodsAbility extends Ability {
             float yaw = yawOf(Fx.body(target).toVector().subtract(from.toVector()));
             if (reserve(5)) {
                 long life = POUNCE_TICKS + 14;
-                parts.add(keep(Displays.block(ctx(), owner, from, TIGER_FUR.createBlockData(),
-                        Displays.transform(0, 0, 0, 0.46f, 0.42f, 0.95f, yaw, 0, 0), life)));
-                parts.add(keep(Displays.block(ctx(), owner, from, TIGER_FUR.createBlockData(),
-                        tigerPart(yaw, 0, 0.12f, 0.6f, 0.4f, 0.38f, 0.36f), life)));
-                parts.add(keep(Displays.block(ctx(), owner, from, TIGER_STRIPE.createBlockData(),
-                        tigerPart(yaw, 0, 0.0f, 0.15f, 0.48f, 0.44f, 0.07f), life)));
-                parts.add(keep(Displays.block(ctx(), owner, from, TIGER_STRIPE.createBlockData(),
-                        tigerPart(yaw, 0, 0.0f, -0.18f, 0.48f, 0.44f, 0.07f), life)));
-                parts.add(keep(Displays.block(ctx(), owner, from, TIGER_FUR.createBlockData(),
-                        tigerPart(yaw, 0, 0.1f, -0.68f, 0.1f, 0.1f, 0.5f), life)));
+                for (int i = 0; i < 5; i++) {
+                    Material fur = i == 2 || i == 3 ? TIGER_STRIPE : TIGER_FUR;
+                    parts.add(keep(Displays.block(ctx(), owner, Displays.unrotated(from), fur.createBlockData(),
+                            pose(i, yaw, 0), life)));
+                }
                 for (BlockDisplay part : parts) {
                     part.setTeleportDuration(1);
                 }
@@ -1010,11 +1040,15 @@ public final class FourGodsAbility extends Ability {
             Loop.repeat(ctx(), owner, 1, 1, POUNCE_TICKS + 1, this, this::end);
         }
 
-        /** A box of the tiger offset along its body ({@code forward}) and up, turned with it. */
-        private Transformation tigerPart(float yaw, float side, float up, float forward, float sx, float sy, float sz) {
-            Vector offset = rotate(new Vector(side, up, forward), yaw);
-            return Displays.transform((float) offset.getX(), (float) offset.getY(), (float) offset.getZ(), sx, sy, sz,
-                    yaw, 0, 0);
+        /**
+         * A box of the tiger offset along its body ({@code forward}) and up, in the body's own frame: turned and
+         * pitched with it, so the head, the stripes and the tail stay on the body through the whole leap.
+         */
+        private Transformation tigerPart(float yaw, float pitch, float up, float forward, float sx, float sy,
+                                         float sz) {
+            Vector3f offset = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                    .rotateX((float) Math.toRadians(pitch)).transform(new Vector3f(0, up, forward));
+            return Displays.transform(offset.x(), offset.y(), offset.z(), sx, sy, sz, yaw, pitch, 0);
         }
 
         @Override
@@ -1046,13 +1080,14 @@ public final class FourGodsAbility extends Ability {
             return true;
         }
 
+        /** Part {@code index} (0 body, 1 head, 2 and 3 stripes, 4 tail) of the tiger turned and pitched. */
         private Transformation pose(int index, float yaw, float pitch) {
             return switch (index) {
-                case 0 -> Displays.transform(0, 0, 0, 0.46f, 0.42f, 0.95f, yaw, pitch, 0);
-                case 1 -> tigerPart(yaw, 0, 0.12f, 0.6f, 0.4f, 0.38f, 0.36f);
-                case 2 -> tigerPart(yaw, 0, 0.0f, 0.15f, 0.48f, 0.44f, 0.07f);
-                case 3 -> tigerPart(yaw, 0, 0.0f, -0.18f, 0.48f, 0.44f, 0.07f);
-                default -> tigerPart(yaw, 0, 0.1f, -0.68f, 0.1f, 0.1f, 0.5f);
+                case 0 -> tigerPart(yaw, pitch, 0, 0, 0.46f, 0.42f, 0.95f);
+                case 1 -> tigerPart(yaw, pitch, 0.12f, 0.6f, 0.4f, 0.38f, 0.36f);
+                case 2 -> tigerPart(yaw, pitch, 0.0f, 0.15f, 0.48f, 0.44f, 0.07f);
+                case 3 -> tigerPart(yaw, pitch, 0.0f, -0.18f, 0.48f, 0.44f, 0.07f);
+                default -> tigerPart(yaw, pitch, 0.1f, -0.68f, 0.1f, 0.1f, 0.5f);
             };
         }
 
@@ -1131,9 +1166,13 @@ public final class FourGodsAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** Both bodies fit at the other's spot, inside the arena, and neither rides anything. */
+    /**
+     * Both bodies fit at the other's spot, inside the arena, neither rides anything, and they see each other: the
+     * shell never swaps through a wall or a floor (into a sealed room, out of a cage, a storey up or down).
+     */
     private boolean canSwap(Player owner, LivingEntity other) {
-        if (owner.isInsideVehicle() || other.isInsideVehicle() || !other.getWorld().equals(owner.getWorld())) {
+        if (owner.isInsideVehicle() || other.isInsideVehicle() || !other.getWorld().equals(owner.getWorld())
+                || !Spots.clearPath(owner.getEyeLocation(), other.getEyeLocation())) {
             return false;
         }
         Location ownerFeet = owner.getLocation();
@@ -1474,9 +1513,12 @@ public final class FourGodsAbility extends Ability {
                 switch (guardian) {
                     case DRAGON -> {
                         Combat.hit(ctx(), owner, enemy, params().num("ult_dragon_damage"));
-                        Vector pull = Motion.horizontal(center.toVector().subtract(enemy.getLocation().toVector()));
-                        if (pull.lengthSquared() > 0 && Combat.isTargetable(ctx(), owner, enemy)) {
-                            Motion.push(enemy, pull.multiply(PULL_SPEED).setY(0.12), MAX_PUSH);
+                        Vector toward = center.toVector().subtract(enemy.getLocation().toVector()).setY(0);
+                        double off = toward.length();
+                        if (off > PULL_DEAD_ZONE && Combat.isTargetable(ctx(), owner, enemy)) {
+                            // Drawn in about as far as it is from the middle: never flung past it.
+                            double speed = Math.min(PULL_SPEED, off * PULL_PER_BLOCK);
+                            Motion.push(enemy, toward.multiply(speed / off).setY(PULL_LIFT), MAX_PUSH);
                         }
                     }
                     case BIRD -> {
@@ -1622,5 +1664,10 @@ public final class FourGodsAbility extends Ability {
 
     private static boolean isHidden(Player owner, LivingEntity entity) {
         return entity instanceof Player hidden && !owner.canSee(hidden);
+    }
+
+    /** True while the owner is invisible: the stance label and aura must not give him away. */
+    private static boolean concealed(Player owner) {
+        return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
     }
 }

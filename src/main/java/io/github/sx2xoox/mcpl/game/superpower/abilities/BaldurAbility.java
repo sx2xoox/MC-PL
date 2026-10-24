@@ -77,10 +77,13 @@ public final class BaldurAbility extends Ability {
                     10)
             .ultimate("겨우살이를 쥔 자",
                     "{mistletoe_time}초간 {mistletoe_range}블록 안의 적 하나(플레이어 우선, 무작위)를 뺀 모든 것에 "
-                            + "무적이 됩니다. 그 적에게 빛나는 겨우살이 화살이 쥐어져 모두가 누가 쥐었는지 봅니다(\"발두르를 "
-                            + "쓰러뜨릴 수 있는 건 당신뿐\"). 쥔 자의 공격은 약점과 상관없이 {holder_bonus}% 더 아픕니다. 그동안 "
-                            + "1초마다 반경 {aura_radius}블록 안의 적에게 {aura_damage} 피해를 줍니다. 쥔 자가 쓰러지거나 "
-                            + "{pass_range}블록 넘게 멀어지면 겨우살이는 가장 가까운 다른 적에게 넘어갑니다.")
+                            + "무적이 됩니다. 그 적에게 빛나는 겨우살이 화살이 날아가 쥐어져 모두가 누가 쥐었는지 봅니다"
+                            + "(\"발두르를 쓰러뜨릴 수 있는 건 당신뿐\"). 쥔 자의 공격은 약점과 상관없이 {holder_bonus}% 더 "
+                            + "아프지만, 쥔 자 말고는 {mistletoe_range}블록 안에 적이 없는 1:1에서는 평소의 약점 규칙을 "
+                            + "따릅니다. 그동안 1초마다 반경 {aura_radius}블록 안의 적에게 {aura_damage} 피해를 줍니다. 쥔 자가 "
+                            + "쓰러지면 {pass_range}블록 안의 가장 가까운 다른 적에게 넘어가고(없으면 {mistletoe_range}블록 안에 "
+                            + "적이 올 때까지 아무도 쥐지 못해 아무것도 그를 해치지 못합니다), {pass_range}블록 넘게 멀어지면 그 "
+                            + "안의 가장 가까운 다른 적에게 넘어갑니다(없으면 그대로 쥡니다).")
             .ultimateNotStandalone()
             .param("sworn_reduction", 40)
             .param("weak_bonus", 25)
@@ -126,6 +129,9 @@ public final class BaldurAbility extends Ability {
     private static final double MAX_PUSH = 1.5;
     private static final long AURA_PERIOD = 20;
     private static final long PICK_PERIOD = 10;
+    /** Ticks the mistletoe dart flies to its holder, and how high its arc rises. */
+    private static final long DART_FLIGHT = 6;
+    private static final double DART_ARC = 1.2;
 
     /** The three kinds of harm, in the order the weakness turns. */
     public enum Kind {
@@ -204,7 +210,7 @@ public final class BaldurAbility extends Ability {
             turn(owner, false);
         }
         followIcon(owner, now, tick);
-        if (tick % 10 == 0) {
+        if (tick % 10 == 0 && !concealed(owner)) {
             // A faint radiance always hangs about the god.
             Vfx.dot(Vfx.scatter(owner.getLocation().add(0, 1.0, 0), 0.45), Particle.DUST, GOLD_DUST, false);
         }
@@ -223,12 +229,15 @@ public final class BaldurAbility extends Ability {
         if (text != null && text.isValid()) {
             text.text(labelText());
         }
+        owner.sendActionBar(Text.mm(weaknessLine(forced ? "약점을 넘겼습니다" : "약점이 바뀌었습니다")));
+        if (concealed(owner)) {
+            return;
+        }
         Location head = iconSpot(owner);
         Vfx.cloud(ctx(), head, Particle.DUST, 10, 0.3, 0, GREEN_DUST, false);
         Vfx.ring(ctx(), head, 0.5, 10, 0, Particle.DUST, BERRY_DUST, false);
         Fx.sound(head, Sound.BLOCK_AZALEA_LEAVES_BREAK, 0.8f, 1.2f + Fx.jitter(0.1f));
         Fx.sound(head, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.7f, forced ? 1.6f : 1.2f);
-        owner.sendActionBar(Text.mm(weaknessLine(forced ? "약점을 넘겼습니다" : "약점이 바뀌었습니다")));
     }
 
     private String weaknessLine(String prefix) {
@@ -245,6 +254,17 @@ public final class BaldurAbility extends Ability {
     private void followIcon(Player owner, long now, long tick) {
         Location at = iconSpot(owner);
         ItemDisplay shown = icon;
+        if (concealed(owner)) {
+            TextDisplay text = label;
+            for (Display display : new Display[] {shown, text}) {
+                if (display != null && display.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, display, 3);
+                }
+            }
+            icon = null;
+            label = null;
+            return;
+        }
         if (shown == null || !shown.isValid()) {
             if (!reserve(2)) {
                 return;
@@ -326,14 +346,17 @@ public final class BaldurAbility extends Ability {
         Player owner = player();
         Mistletoe ult = mistletoe;
         if (ult != null && ult.running()) {
-            if (ult.isHolder(event)) {
-                event.setDamage(event.getDamage() * (1 + Math.max(0, params().num("holder_bonus")) / 100.0));
-                ult.pierced(owner);
-            } else {
+            if (!ult.isHolder(event)) {
                 event.setCancelled(true);
                 ult.warded(owner, event);
+                return;
             }
-            return;
+            if (!ult.alone()) {
+                event.setDamage(event.getDamage() * (1 + Math.max(0, params().num("holder_bonus")) / 100.0));
+                ult.pierced(owner);
+                return;
+            }
+            // A duel: the mistletoe does not pierce deeper than the oath allows (it would only weaken the god).
         }
         Kind kind = kindOf(event);
         if (kind == weakness) {
@@ -514,6 +537,9 @@ public final class BaldurAbility extends Ability {
         private final long duration;
         private @Nullable LivingEntity holder;
         private @Nullable ItemDisplay dart;
+        /** Where the dart flew from to its holder, and how many ticks of its flight have passed. */
+        private Location flightFrom;
+        private long flightAge = DART_FLIGHT;
         private boolean over;
         private long lastWard = Long.MIN_VALUE / 2;
         private long lastPierce = Long.MIN_VALUE / 2;
@@ -521,6 +547,7 @@ public final class BaldurAbility extends Ability {
         Mistletoe(Player owner) {
             this.owner = owner;
             this.duration = Math.max(1, params().ticks("mistletoe_time"));
+            this.flightFrom = chest(owner);
         }
 
         boolean running() {
@@ -560,12 +587,14 @@ public final class BaldurAbility extends Ability {
         private void give(LivingEntity next, boolean passed) {
             holder = next;
             ItemDisplay old = dart;
+            // The dart flies from the god (or from the hand that held it) to its new holder.
+            Location from = old != null && old.isValid() ? Displays.unrotated(old.getLocation()) : chest(owner);
             if (old != null && old.isValid()) {
                 old.remove();
             }
             dart = null;
             Location at = dartSpot(next);
-            showDart(next);
+            showDart(next, from);
             Fx.sound(at, Sound.BLOCK_AZALEA_LEAVES_PLACE, 1.0f, 1.0f);
             Fx.sound(at, Sound.ENTITY_ARROW_SHOOT, 0.7f, 0.6f);
             ctx().announce(Text.mm("<" + GREEN_TAG + ">❦</" + GREEN_TAG + "> <white><holder></white><gray>이(가) "
@@ -579,15 +608,20 @@ public final class BaldurAbility extends Ability {
             }
         }
 
-        /** The glowing mistletoe dart over the holder's head, pointing down, outlined for everyone to see. */
-        private void showDart(LivingEntity target) {
+        /**
+         * The glowing mistletoe dart over the holder's head, pointing down, outlined for everyone to see. It flies
+         * there from {@code from} (or appears in place, with {@code from} null).
+         */
+        private void showDart(LivingEntity target, @Nullable Location from) {
             if (isHidden(owner, target) || !reserve(1)) {
                 return;
             }
-            Location at = dartSpot(target);
+            Location at = from != null ? from : dartSpot(target);
+            flightFrom = at.clone();
+            flightAge = from != null ? 0 : DART_FLIGHT;
             ItemDisplay made = keep(Displays.item(ctx(), owner, at, new ItemStack(MISTLETOE_DART),
                     Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, -135), duration + 10));
-            made.setTeleportDuration(FOLLOW_GLIDE);
+            made.setTeleportDuration(from != null ? 1 : FOLLOW_GLIDE);
             made.setBillboard(Display.Billboard.VERTICAL);
             made.setViewRange(3.0f);
             Displays.outline(made, GREEN);
@@ -598,6 +632,26 @@ public final class BaldurAbility extends Ability {
 
         private Location dartSpot(LivingEntity target) {
             return Displays.unrotated(target.getLocation().add(0, target.getHeight() + 0.75, 0));
+        }
+
+        /** One tick of the dart's arc onto its holder, trailing leaves; it lands with a rustle. */
+        private void fly(ItemDisplay shown, LivingEntity current) {
+            flightAge++;
+            double t = Math.min(1, flightAge / (double) DART_FLIGHT);
+            Location goal = dartSpot(current);
+            Vector path = goal.toVector().subtract(flightFrom.toVector());
+            Location at = Displays.unrotated(flightFrom.clone().add(path.multiply(t)).add(0, Math.sin(t * Math.PI)
+                    * DART_ARC, 0));
+            Displays.moveTo(shown, at);
+            Vfx.dot(at, Particle.DUST, GREEN_DUST, true);
+            Vfx.dot(Vfx.scatter(at, 0.15), Particle.DUST, BERRY_DUST, false);
+            if (flightAge >= DART_FLIGHT) {
+                shown.setTeleportDuration(FOLLOW_GLIDE);
+                Vfx.cloud(ctx(), goal, Particle.TINTED_LEAVES, 10, 0.3, 0.05, GREEN, true);
+                Vfx.ring(ctx(), goal, 0.5, 10, 0, Particle.DUST_COLOR_TRANSITION, GREEN_FADE, true);
+                Fx.sound(goal, Sound.BLOCK_AZALEA_LEAVES_PLACE, 1.0f, 1.3f);
+                Fx.sound(goal, Sound.ENTITY_ARROW_HIT, 0.8f, 0.8f);
+            }
         }
 
         @Override
@@ -613,11 +667,13 @@ public final class BaldurAbility extends Ability {
                     // A hidden holder's dart would give it away.
                     shown.remove();
                     dart = null;
+                } else if (flightAge < DART_FLIGHT) {
+                    fly(shown, current);
                 } else {
                     Displays.moveTo(shown, dartSpot(current));
                 }
             } else if (current != null && (shown == null || !shown.isValid()) && tick % 5 == 0) {
-                showDart(current);
+                showDart(current, null);
             }
             if (current != null && tick % 5 == 0 && !isHidden(owner, current)) {
                 // A green thread of light from the holder to the god.
@@ -640,14 +696,18 @@ public final class BaldurAbility extends Ability {
             return true;
         }
 
-        /** The holder fell, strayed too far or left: the mistletoe passes to the nearest other enemy. */
+        /**
+         * The holder fell or left: the mistletoe passes to the nearest other enemy (or to nobody until one comes
+         * near). A holder that strayed too far hands it to the nearest other enemy, or keeps it if there is none: the
+         * god is never left harmless to all while his only foe walks away.
+         */
         private void keepHolder(long tick) {
             LivingEntity current = holder;
             double pass = Math.max(1, params().num("pass_range"));
-            boolean lost = current == null || !Combat.isTargetable(ctx(), owner, current)
-                    || !current.getWorld().equals(owner.getWorld())
-                    || current.getLocation().distance(owner.getLocation()) > pass;
-            if (!lost) {
+            boolean gone = current == null || !Combat.isTargetable(ctx(), owner, current)
+                    || !current.getWorld().equals(owner.getWorld());
+            boolean strayed = !gone && current.getLocation().distance(owner.getLocation()) > pass;
+            if (!gone && !strayed) {
                 return;
             }
             if (current == null && tick % PICK_PERIOD != 0) {
@@ -657,7 +717,7 @@ public final class BaldurAbility extends Ability {
                     current, false);
             if (next != null) {
                 give(next, true);
-            } else if (current != null) {
+            } else if (gone && current != null) {
                 holder = null;
                 ItemDisplay old = dart;
                 if (old != null && old.isValid()) {
@@ -665,6 +725,24 @@ public final class BaldurAbility extends Ability {
                 }
                 dart = null;
             }
+        }
+
+        /**
+         * True if no enemy but the holder (and its own summons) is within the mistletoe's range: a duel, where the
+         * holder's blows meet the oath as usual.
+         */
+        boolean alone() {
+            LivingEntity current = holder;
+            if (current == null) {
+                return true;
+            }
+            for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(),
+                    Math.max(1, params().num("mistletoe_range")))) {
+                if (!enemy.equals(current) && !current.equals(ctx().resolveAttacker(enemy))) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /** Every second the radiance scorches the enemies around the god. */
@@ -751,5 +829,14 @@ public final class BaldurAbility extends Ability {
 
     private static boolean isHidden(Player owner, LivingEntity entity) {
         return entity instanceof Player hidden && !owner.canSee(hidden);
+    }
+
+    /** True while the god is invisible: his icon, label and radiance must not give him away. */
+    private static boolean concealed(Player owner) {
+        return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
+    }
+
+    private static Location chest(Player owner) {
+        return Displays.unrotated(owner.getLocation().add(0, owner.getHeight() * 0.6, 0));
     }
 }

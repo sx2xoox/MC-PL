@@ -1294,6 +1294,11 @@ class DivineNewAbilitiesTest {
             s.assertSucceeded(s.ultimate(), "겨우살이를 쥔 자");
             assertFalse(s.ultimate().succeeded(), "one mistletoe at a time");
             s.ticks(2);
+            ItemDisplay flying = entities(s, ItemDisplay.class).stream()
+                    .filter(d -> d.getItemStack().getType() == Material.ARROW).findFirst().orElse(null);
+            assertNotNull(flying, "the dart flies");
+            assertTrue(flying.getLocation().distance(headOf(s.enemy)) > 1.0, "from the god to its holder");
+            s.ticks(6);
             ItemDisplay dart = entities(s, ItemDisplay.class).stream()
                     .filter(d -> d.getItemStack().getType() == Material.ARROW
                             && d.getLocation().distance(headOf(s.enemy)) < 1.5).findFirst().orElse(null);
@@ -1301,6 +1306,7 @@ class DivineNewAbilitiesTest {
             assertTrue(dart.isGlowing(), "everyone sees it");
             assertUnrotated(dart, "dart");
 
+            s.place(s.enemy2, 0.5, 12.5, 180); // company: no duel any more
             s.melee(s.enemy2, s.owner, 8);
             s.ctx().damage(s.enemy2, s.owner, 8);
             s.owner.setNoDamageTicks(0);
@@ -1317,6 +1323,8 @@ class DivineNewAbilitiesTest {
             s.place(s.enemy, 0.5, 31.5, 180);
             s.place(s.enemy2, 0.5, 10.5, 180);
             s.ticks(2);
+            s.place(s.enemy, 0.5, 15.5, 180); // back in company, but the mistletoe has passed on
+            s.ticks(1);
             s.healAll();
             s.clearHits();
             s.melee(s.enemy, s.owner, 4);
@@ -1504,6 +1512,587 @@ class DivineNewAbilitiesTest {
             s.clearHits();
             s.melee(s.owner, s.enemy, 4);
             assertEquals(4, s.damageBy(s.owner, s.enemy), EPSILON, "the sun has set");
+            s.finishClean();
+        }
+    }
+
+    /** Two Ra in one match (or one Ra granted again after a practice respawn) share the match's sun. */
+    @Test
+    void raSunIsTheSameForEveryRaOfTheMatch() {
+        try (Scenario s = Scenario.ffa("ra")) {
+            s.ticks(3);
+            RaAbility.Sun sun = ra(s).sun();
+            for (int i = 0; i < 12; i++) {
+                RaAbility other = (RaAbility) s.ctx().registry().create("ra");
+                other.bind(s.enemy, s.ctx(), s.ctx().paramsFor("ra"));
+                assertEquals(sun, other.sun(), "one sun for the whole match");
+            }
+            s.finishClean();
+        }
+    }
+
+    /** Only cover near the target shades it: a tower far off on the sun's side casts no shade here. */
+    @Test
+    void raFarTerrainOnTheSunsSideCastsNoShade() {
+        try (Scenario s = Scenario.ffa("ra")) {
+            s.ticks(3);
+            Vector toward = ra(s).sun().toward();
+            Location far = s.enemy.getLocation().add(0, s.enemy.getHeight() / 2, 0)
+                    .add(toward.clone().multiply(30));
+            s.world.setBlock(far.getBlockX(), far.getBlockY(), far.getBlockZ(), Material.STONE);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "태양 광선");
+            s.ticks(s.paramTicks("ray_delay") + 4);
+            assertEquals(s.param("ray_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "a block far beyond the target shades nothing: " + s.hits());
+            s.world.setBlock(far.getBlockX(), far.getBlockY(), far.getBlockZ(), Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== review regressions
+
+    /** Where a display's (block) box is centred in the world, by its transformation. */
+    static Vector boxCenter(Display display) {
+        Transformation transformation = display.getTransformation();
+        Vector3f half = leftRotation(display).transform(new Vector3f(transformation.getScale()).mul(0.5f));
+        Vector3f translation = transformation.getTranslation();
+        return display.getLocation().toVector().add(new Vector(translation.x() + half.x(),
+                translation.y() + half.y(), translation.z() + half.z()));
+    }
+
+    /** The lowest and the highest world y of a block display's transformed box. */
+    static double[] boxHeights(Display display) {
+        Transformation transformation = display.getTransformation();
+        Quaternionf rotation = leftRotation(display);
+        Vector3f scale = transformation.getScale();
+        double low = Double.MAX_VALUE;
+        double high = -Double.MAX_VALUE;
+        for (int corner = 0; corner < 8; corner++) {
+            Vector3f local = new Vector3f((corner & 1) * scale.x(), ((corner >> 1) & 1) * scale.y(),
+                    ((corner >> 2) & 1) * scale.z());
+            double y = display.getLocation().getY() + transformation.getTranslation().y()
+                    + rotation.transform(local).y();
+            low = Math.min(low, y);
+            high = Math.max(high, y);
+        }
+        return new double[] {low, high};
+    }
+
+    /** The farthest world z of a block display's transformed box. */
+    static double boxMaxZ(Display display) {
+        Transformation transformation = display.getTransformation();
+        Quaternionf rotation = leftRotation(display);
+        Vector3f scale = transformation.getScale();
+        double far = -Double.MAX_VALUE;
+        for (int corner = 0; corner < 8; corner++) {
+            Vector3f local = new Vector3f((corner & 1) * scale.x(), ((corner >> 1) & 1) * scale.y(),
+                    ((corner >> 2) & 1) * scale.z());
+            far = Math.max(far, display.getLocation().getZ() + transformation.getTranslation().z()
+                    + rotation.transform(local).z());
+        }
+        return far;
+    }
+
+    /** The perched ravens face the way Odin's body does (their models turned by the transformation alone). */
+    @Test
+    void odinPerchedRavensFaceWithTheBody() {
+        try (Scenario s = Scenario.ffa("odin")) {
+            s.place(s.owner, 0.5, Y, 0.5, -90, 0); // east
+            s.owner.setBodyYaw(-90);
+            s.ticks(12);
+            Vector facing = new Vector(1, 0, 0);
+            List<BlockDisplay> bodies = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> Math.abs(d.getTransformation().getScale().z() - 0.32f) < 1.0E-3).toList();
+            assertEquals(2, bodies.size(), "two raven bodies");
+            for (BlockDisplay body : bodies) {
+                Vector forward = rotated(body, 0, 0, 1).setY(0).normalize();
+                assertTrue(forward.dot(facing) > 0.85, "a perched raven looks out with Odin: " + forward);
+                assertUnrotated(body, "raven");
+            }
+            s.finishClean();
+        }
+    }
+
+    /** The staff on the back lies across the back, slanted, whichever way the sage faces. */
+    @Test
+    void wukongBackStaffLiesAcrossTheBack() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.place(s.owner, 0.5, Y, 0.5, -90, 0); // east
+            s.owner.setBodyYaw(-90);
+            s.ticks(6);
+            BlockDisplay shaft = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.RED_CONCRETE).findFirst().orElse(null);
+            assertNotNull(shaft, "the staff on the back");
+            Vector axis = rotated(shaft, 0, 0, 1);
+            assertEquals(0, axis.getX(), 0.05, "across the back of an eastward body, not along it: " + axis);
+            assertEquals(Math.sin(Math.toRadians(40)), Math.abs(axis.getY()), 0.05, "slanted: " + axis);
+            assertTrue(boxCenter(shaft).getX() < s.owner.getLocation().getX(), "on the back, behind the body");
+            s.finishClean();
+        }
+    }
+
+    /** The dragon's scales swim along its wave, heads first. */
+    @Test
+    void fourGodsDragonScalesSwimAlongTheWave() {
+        try (Scenario s = Scenario.ffa("fourgods")) {
+            s.place(s.enemy, -10.5, -10.5, 0);
+            s.place(s.enemy2, -12.5, 10.5, 0);
+            s.place(s.owner, 0.5, Y, 0.5, -90, 0); // east
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "청룡");
+            s.ticks(5);
+            List<BlockDisplay> scales = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.LIGHT_BLUE_STAINED_GLASS
+                            || d.getBlock().getMaterial() == Material.CYAN_STAINED_GLASS).toList();
+            assertTrue(scales.size() >= 3, "the scales");
+            for (BlockDisplay scale : scales) {
+                Vector along = rotated(scale, 0, 0, 1);
+                assertTrue(along.getX() > 0.7, "swimming east: " + along);
+            }
+            s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    /** Nothing of the passive floats over an invisible owner (it would give him away); it returns afterwards. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("abilities")
+    void passiveDisplaysHideWhileTheOwnerIsConcealed(String id) {
+        try (Scenario s = Scenario.ffa(id)) {
+            s.ticks(5);
+            assertEquals(passiveDisplays(id), entities(s, Display.class).size(), id + ": the passive shows");
+            s.owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 400, 0, false, false));
+            s.ticks(12);
+            assertTrue(entities(s, Display.class).isEmpty(), id + ": nothing floats over the invisible owner: "
+                    + entities(s, Display.class));
+            s.owner.removePotionEffect(PotionEffectType.INVISIBILITY);
+            s.ticks(12);
+            assertEquals(passiveDisplays(id), entities(s, Display.class).size(), id + ": back once he is seen");
+            assertAllUnrotated(s, id);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ 사방신
+
+    /** Facing east the wings still spread across the flight, and they fly with the steps sent, not behind them. */
+    @Test
+    void fourGodsBirdWingsSpreadAcrossTheFlightAndKeepUpWithIt() {
+        try (Scenario s = Scenario.ffa("fourgods")) {
+            advanceTo(s, Guardian.BIRD);
+            s.place(s.enemy, -10.5, -10.5, 0);
+            s.place(s.enemy2, -12.5, 10.5, 0);
+            s.place(s.owner, 0.5, Y, 0.5, -90, 0); // east, +X
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "주작");
+            s.ticks(4);
+            List<BlockDisplay> wings = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.RED_STAINED_GLASS).toList();
+            assertEquals(2, wings.size(), "two wings");
+            Vector a = boxCenter(wings.get(0));
+            Vector b = boxCenter(wings.get(1));
+            Vector across = a.clone().subtract(b);
+            assertTrue(Math.abs(across.getZ()) > 1.0, "the wings spread to the sides of an eastward flight: " + across);
+            assertTrue(Math.abs(across.getX()) < 0.3, "not one in front of the other: " + across);
+            for (BlockDisplay wing : wings) {
+                Vector span = rotated(wing, 1, 0, 0);
+                assertTrue(Math.abs(span.getZ()) > 0.7, "each wing's span runs across the flight: " + span);
+            }
+            double middle = (a.getX() + b.getX()) / 2;
+            assertTrue(middle > 0.5 + 2.5, "the wings fly where the steps sent carried the bird: " + middle);
+            s.world.physics().setEnabled(true);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    /** The tiger keeps its head, stripes and tail on its body while the body pitches in the leap. */
+    @Test
+    void fourGodsTigerPartsPitchWithTheBody() {
+        try (Scenario s = Scenario.ffa("fourgods")) {
+            advanceTo(s, Guardian.TIGER);
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "백호");
+            boolean checked = false;
+            for (int i = 0; i < 6 && !checked; i++) {
+                s.ticks(1);
+                BlockDisplay body = null;
+                BlockDisplay head = null;
+                for (BlockDisplay part : entities(s, BlockDisplay.class)) {
+                    Vector3f scale = part.getTransformation().getScale();
+                    if (Math.abs(scale.z() - 0.95f) < 1.0E-3) {
+                        body = part;
+                    } else if (Math.abs(scale.z() - 0.36f) < 1.0E-3 && Math.abs(scale.x() - 0.4f) < 1.0E-3) {
+                        head = part;
+                    }
+                }
+                if (body == null || head == null) {
+                    continue;
+                }
+                Vector forward = rotated(body, 0, 0, 1);
+                if (Math.abs(forward.getY()) < 0.15) {
+                    continue; // level: any frame would do
+                }
+                Vector expected = rotated(body, 0, 0.12f, 0.6f);
+                Vector actual = boxCenter(head).subtract(boxCenter(body));
+                assertTrue(actual.distance(expected) < 0.04, "the head stays on the pitched body: " + actual
+                        + " vs " + expected);
+                assertTrue(rotated(head, 0, 0, 1).dot(forward) > 0.99, "and faces where the body does");
+                checked = true;
+            }
+            assertTrue(checked, "the leap pitched the tiger");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    /** The tortoise swaps only with someone in sight: never through a wall. */
+    @Test
+    void fourGodsTortoiseNeverSwapsThroughAWall() {
+        try (Scenario s = Scenario.teams("fourgods")) {
+            advanceTo(s, Guardian.TORTOISE);
+            s.place(s.ally(), 0.5, -3.5, 0);
+            wall(s, -3, 4, -2, 3);
+            s.assertSucceeded(s.active(), "현무");
+            assertEquals(4.5, s.owner.getLocation().getZ(), EPSILON, "the enemy in sight, not the ally behind the wall");
+            assertEquals(-3.5, s.ally().getLocation().getZ(), EPSILON, "the ally stays where it was");
+            clearWall(s, -3, 4, -2, 3);
+            s.finishClean();
+        }
+    }
+
+    /** The dragon's quarter pulls towards the middle without flinging a close enemy past it. */
+    @Test
+    void fourGodsDragonQuarterPullsWithoutFlingingPastTheMiddle() {
+        try (Scenario s = Scenario.ffa("fourgods")) {
+            s.ticks(2);
+            s.place(s.enemy, 1.3, 0.5, 90); // 0.8 east of the middle: the dragon's quarter
+            s.place(s.enemy2, -12.5, 12.5, 0);
+            s.assertSucceeded(s.ultimate(), "사신 결계");
+            double least = Double.MAX_VALUE;
+            for (int i = 0; i < 9; i++) {
+                s.ticks(1);
+                least = Math.min(least, s.enemy.getLocation().getX());
+            }
+            assertTrue(least < 1.3 - 0.2, "pulled in: " + least);
+            assertTrue(least > 0.5 - 0.25, "but not flung into the west quarter: " + least);
+            s.ticks(s.paramTicks("ult_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ 오딘
+
+    /** Swinging all the time (from the throw, or in a melee fight) never parries: the parry is a timed swing. */
+    @Test
+    void odinGungnirCannotBeParriedBySpammingSwings() {
+        try (Scenario s = gungnir()) {
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            for (int i = 0; i < 120 && s.damageTaken(s.enemy) == 0; i++) {
+                if (i % 2 == 0) {
+                    swing(s, s.enemy);
+                }
+                s.ticks(1);
+            }
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "spam is struck: " + s.hits());
+            assertFalse(s.enemy.hasPotionEffect(PotionEffectType.SPEED), "and is not 'worthy'");
+            s.ticks(40);
+            assertOnlyPassiveDisplays(s, "the spear faded");
+            s.finishClean();
+        }
+    }
+
+    /** The first swing after the flash is the only chance: too early (before the spear slows) wastes it. */
+    @Test
+    void odinGungnirSwingBeforeTheSpearSlowsWastesTheParry() {
+        try (Scenario s = gungnir()) {
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            s.h.tickUntil(() -> !ringAround(s, s.enemy).isEmpty(), 60, "the rune ring");
+            swing(s, s.enemy); // the ring just flashed: the spear has not slowed yet
+            s.ticks(10);
+            swing(s, s.enemy); // in the slow stretch, but the one chance is gone
+            s.ticks(40);
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "struck: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    /** A parry right after a swing (within the lockout) fails; one after a pause in the slow stretch works. */
+    @Test
+    void odinGungnirParryNeedsAPauseBeforeTheSwing() {
+        try (Scenario s = gungnir()) {
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            s.h.tickUntil(() -> !ringAround(s, s.enemy).isEmpty(), 60, "the rune ring");
+            s.ticks(9);
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON);
+            swing(s, s.enemy);
+            assertEquals(s.param("parry_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "a calm, timed swing parries");
+            s.finishClean();
+        }
+        try (Scenario s = gungnir()) {
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            for (int i = 0; i < 60 && ringAround(s, s.enemy).isEmpty(); i++) {
+                swing(s, s.enemy); // swinging away until the ring flashes
+                s.ticks(1);
+            }
+            assertFalse(ringAround(s, s.enemy).isEmpty(), "the rune ring");
+            s.ticks(7);
+            swing(s, s.enemy); // in the slow stretch, but too soon after the last swing
+            s.ticks(40);
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "a swing right after others is no parry: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    /** Cover that keeps the spear from the warning distance never skips the telegraph: the ring flashes in time. */
+    @Test
+    void odinGungnirFlashesInTimeEvenWhenCoverKeepsItAway() {
+        try (Scenario s = Scenario.builder("odin").param("warn_distance", 1).param("slow_distance", 0.5).start()) {
+            s.ticks(3);
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, -15.5, -15.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            cell(s, s.enemy, Material.STONE); // shut in: the spear can come no nearer than the cell's walls
+            boolean flashed = false;
+            for (int i = 0; i < 160 && s.damageTaken(s.enemy) == 0; i++) {
+                s.ticks(1);
+                flashed |= ringAround(s, s.enemy).size() >= 3;
+            }
+            assertTrue(flashed, "the rune ring flashed before the strike");
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "it never misses");
+            cell(s, s.enemy, Material.AIR);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    /** Gungnir's own damage carries neither Mímir's rune strike nor Huginn's revenge (both wait for a real hit). */
+    @Test
+    void odinGungnirCarriesNeitherTheRuneStrikeNorTheRevenge() {
+        try (Scenario s = gungnir()) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.melee(s.enemy, s.owner, 2); // Muninn remembers it
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "미미르의 샘");
+            s.place(s.enemy, 0.5, 20.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            s.h.tickUntil(() -> s.damageTaken(s.enemy) > 0, 80, "the strike");
+            s.ticks(8);
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "only the spear's own damage: " + s.hits());
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(8);
+            assertEquals(2 + s.param("rune_damage") + s.param("revenge_damage"), s.damageBy(s.owner, s.enemy),
+                    EPSILON, "the rune and the revenge still wait for Odin's next blow: " + s.hits());
+            s.finishClean();
+        }
+        try (Scenario s = gungnir()) {
+            s.ticks(1);
+            s.assertSucceeded(s.active(), "미미르의 샘");
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            // Mímir's own rune hangs over the target: the ring is the three runes around it.
+            s.h.tickUntil(() -> ringAround(s, s.enemy).size() >= 3, 60, "the rune ring");
+            s.ticks(9);
+            swing(s, s.enemy);
+            s.ticks(4);
+            assertEquals(s.param("parry_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "a parried spear deals its parry damage, nothing more: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ 제천대성
+
+    /** Aimed at the chest of a close enemy the ray ends in the floor: the floor is no wall to crush it against. */
+    @ParameterizedTest(name = "enemy at z={0}")
+    @org.junit.jupiter.params.provider.ValueSource(doubles = {2.5, 3.0, 3.5, 4.5})
+    void wukongStaffNeverPinsAgainstTheFloor(double z) {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            s.place(s.enemy, 0.5, z, 180);
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "여의봉아 늘어나라");
+            s.ticks(20);
+            assertEquals(s.param("pole_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "no wall, no crush: " + s.hits());
+            assertModifierFree(s.enemy, "no stagger in the open");
+            assertTrue(s.enemy.getLocation().getZ() > z + 0.5, "still driven along: " + s.enemy.getLocation());
+            s.finishClean();
+        }
+    }
+
+    /** The staff's shaft points where the sage aims, whatever the direction. */
+    @Test
+    void wukongStaffPointsWhereTheSageAims() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            s.place(s.enemy, -12.5, 12.5, 0);
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.place(s.owner, 0.5, Y, 0.5, -90, -20); // east and a little up: into the air
+            Vector aim = s.owner.getEyeLocation().getDirection();
+            s.assertSucceeded(s.active(), "허공");
+            s.ticks(2);
+            BlockDisplay shaft = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.RED_CONCRETE
+                            && d.getTransformation().getScale().z() > 1).findFirst().orElse(null);
+            assertNotNull(shaft, "the extended staff");
+            assertTrue(rotated(shaft, 0, 0, 1).dot(aim) > 0.99, "along the aim: " + rotated(shaft, 0, 0, 1));
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
+
+    static BlockDisplay fallenShaft(Scenario s) {
+        return entities(s, BlockDisplay.class).stream()
+                .filter(d -> d.getBlock().getMaterial() == Material.RED_CONCRETE
+                        && d.getTransformation().getScale().y() > 2).findFirst().orElse(null);
+    }
+
+    /** The fallen pillar lies on the ground, its whole thickness above it. */
+    @Test
+    void wukongFallenPillarLiesOnTheGroundNotInIt() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            s.place(s.owner, 0.5, Y, 0.5, 0, 0);
+            s.assertSucceeded(s.ultimate(), "여의봉 천주");
+            s.ticks(s.paramTicks("pillar_rise") + 12);
+            BlockDisplay shaft = fallenShaft(s);
+            assertNotNull(shaft, "the fallen pillar");
+            double[] heights = boxHeights(shaft);
+            assertEquals(FlatWorld.SURFACE, heights[0], 0.05, "it lies on the ground, not half in it");
+            assertTrue(heights[1] > FlatWorld.SURFACE + 1.0, "its whole thickness shows: " + heights[1]);
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    /** The pillar breaks against the cover it falls on: whoever hides behind it is spared. */
+    @Test
+    void wukongPillarBreaksAgainstCoverAndSparesWhoIsBehindIt() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            wall(s, -3, 4, 9, 3);
+            s.place(s.owner, 0.5, Y, 0.5, 0, 0);
+            s.place(s.enemy, 0.5, 12.5, 180); // behind the wall, on the line
+            s.place(s.enemy2, 0.5, 6.5, 180); // in front of it, on the line
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "여의봉 천주");
+            s.ticks(4);
+            BlockDisplay plate = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.BLACK_STAINED_GLASS).findFirst().orElse(null);
+            assertNotNull(plate, "the shadow");
+            s.ticks(s.paramTicks("pillar_rise"));
+            assertTrue(boxMaxZ(plate) <= 9 + 0.05, "the shadow ends at the wall: " + boxMaxZ(plate));
+            s.ticks(10);
+            assertEquals(s.param("pillar_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "crushed in front of it");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON, "spared behind the wall: " + s.hits());
+            BlockDisplay shaft = fallenShaft(s);
+            assertNotNull(shaft, "what is left of the pillar");
+            assertTrue(boxMaxZ(shaft) <= 9 + 0.05, "it broke against the wall, not through it: " + boxMaxZ(shaft));
+            assertTrue(boxHeights(shaft)[0] > FlatWorld.SURFACE - 0.05, "on the ground");
+            assertAllUnrotated(s, "broken pillar");
+            s.ticks(60);
+            assertOnlyPassiveDisplays(s, "the staff shrank back");
+            clearWall(s, -3, 4, 9, 3);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /** With a wall right in front there is nowhere for the pillar to fall: the ultimate is not spent. */
+    @Test
+    void wukongPillarNeedsRoomToFall() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            wall(s, -3, 4, 2, 3);
+            s.place(s.owner, 0.5, Y, 0.5, 0, 0);
+            assertFalse(s.ultimate().succeeded(), "no room");
+            assertTrue(entities(s, BlockDisplay.class).size() == passiveDisplays("wukong"), "nothing raised");
+            clearWall(s, -3, 4, 2, 3);
+            s.finishClean();
+        }
+    }
+
+    // ------------------------------------------------------------------ 발두르
+
+    /** In a duel (the holder is the only enemy near) the holder's blows meet the oath as usual: no +50%. */
+    @Test
+    void baldurInADuelTheHolderMeetsTheOathAsUsual() {
+        try (Scenario s = Scenario.ffa("baldur")) {
+            s.place(s.enemy2, 0.5, 26.5, 180);
+            weakTo(s, BaldurAbility.Kind.PROJECTILE);
+            s.assertSucceeded(s.ultimate(), "겨우살이를 쥔 자");
+            s.ticks(2);
+            s.clearHits();
+            s.melee(s.enemy, s.owner, 4);
+            assertEquals(4 * (1 - s.param("sworn_reduction") / 100), s.damageTaken(s.owner), EPSILON,
+                    "a blade is still sworn off in a duel: " + s.hits());
+            s.healAll();
+            s.clearHits();
+            shoot(s, s.enemy, s.owner, 10);
+            assertEquals(10 * (1 + s.param("weak_bonus") / 100), s.damageTaken(s.owner), EPSILON,
+                    "and the weakness is still the weakness");
+            s.healAll();
+            s.clearHits();
+            s.place(s.enemy2, 0.5, 12.5, 180);
+            s.melee(s.enemy2, s.owner, 4);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON, "anyone else is warded off");
+            s.melee(s.enemy, s.owner, 4);
+            assertEquals(4 * (1 + s.param("holder_bonus") / 100), s.damageTaken(s.owner), EPSILON,
+                    "with company around the mistletoe pierces");
+            s.finishClean();
+        }
+    }
+
+    /** A holder that strays with nobody to take over keeps the mistletoe: the god is never immune to all. */
+    @Test
+    void baldurMistletoeStaysWithAStrayHolderNobodyCanTakeItFrom() {
+        try (Scenario s = Scenario.ffa("baldur")) {
+            s.ticks(2);
+            s.place(s.enemy2, 0.5, -28.5, 0);
+            s.assertSucceeded(s.ultimate(), "겨우살이를 쥔 자");
+            s.ticks(2);
+            s.place(s.enemy, 0.5, 34.5, 180);
+            s.place(s.enemy2, 0.5, -36.5, 0);
+            s.ticks(12);
+            s.clearHits();
+            s.melee(s.enemy, s.owner, 4);
+            assertTrue(s.damageTaken(s.owner) > 0, "the stray still holds it: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    /** The rods of light fly outward from the god, each along its own direction. */
+    @Test
+    void baldurRodsOfLightPointOutward() {
+        try (Scenario s = Scenario.ffa("baldur")) {
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "찬란한 빛");
+            s.ticks(3);
+            Vector chest = s.owner.getLocation().add(0, s.owner.getHeight() * 0.55, 0).toVector();
+            List<BlockDisplay> rods = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.END_ROD).toList();
+            assertTrue(rods.size() >= 8, "the rods");
+            for (BlockDisplay rod : rods) {
+                Vector out = boxCenter(rod).subtract(chest).normalize();
+                assertTrue(Math.abs(rotated(rod, 0, 1, 0).dot(out)) > 0.98, "a rod lies along its ray: " + out);
+            }
+            s.ticks(30);
             s.finishClean();
         }
     }

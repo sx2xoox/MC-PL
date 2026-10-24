@@ -77,17 +77,19 @@ public final class OdinAbility extends Ability {
             .active("미미르의 샘",
                     "지혜의 대가로 체력 {wisdom_cost}를 바칩니다(체력 {wisdom_floor} 아래로는 내려가지 않습니다). "
                             + "{sight_time}초간 {sight_radius}블록 안의 적(가까운 {sight_max}명까지) 머리 위에 나와 아군에게만 "
-                            + "보이는 룬이 떠 벽 너머로도 보이고, 그동안 내 다음 적중(무엇이든)에 {rune_damage} 룬 피해가 "
-                            + "더해집니다.",
+                            + "보이는 룬이 떠 벽 너머로도 보이고, 그동안 내 다음 적중(궁니르 말고는 무엇이든)에 "
+                            + "{rune_damage} 룬 피해가 더해집니다.",
                     10)
             .ultimate("궁니르",
                     "조준한 적({spear_range}블록 이내)에게 절대 빗나가지 않는 창을 던집니다. 창은 초속 {spear_speed}블록으로 "
                             + "벽을 돌아 날아가며 대상 말고는 무엇에도 막히지 않습니다. 대상 {warn_distance}블록 앞에서 대상 "
                             + "주위에 룬 고리가 번쩍이고(날카로운 소리) 마지막 {slow_distance}블록은 초속 {slow_speed}블록으로 "
-                            + "느려집니다. 그 사이 대상이 근접 공격을 휘두르면(핑만큼 여유) 창을 쳐 내어 {parry_damage} 피해만 "
-                            + "받고 {parry_haste}초간 신속을 얻지만('자격 있는 자'), 못 쳐 내면 {spear_damage} 피해를 받고 약 "
-                            + "{spear_knockback}블록 밀려납니다. 대상이 먼저 쓰러지거나 내 눈에서 사라지면 창이 돌아와 게이지 "
-                            + "{spear_refund}%를 돌려받습니다. 창은 늦어도 {spear_time}초 안에 닿습니다.")
+                            + "느려집니다. 번쩍인 뒤 대상의 첫 근접 휘두르기만 판정합니다: 창이 느려진 뒤(늦게는 핑만큼 여유)이고 "
+                            + "직전 {parry_lockout}초 동안 휘두르지 않았다면 창을 쳐 내어 {parry_damage} 피해만 받고 "
+                            + "{parry_haste}초간 신속을 얻습니다('자격 있는 자'). 너무 이르거나 연타 중이거나 휘두르지 못하면 "
+                            + "{spear_damage} 피해를 받고 약 {spear_knockback}블록 밀려납니다(룬 일격·후긴의 복수는 붙지 "
+                            + "않습니다). 대상이 먼저 쓰러지거나 내 눈에서 사라지면 창이 돌아와 게이지 {spear_refund}%를 "
+                            + "돌려받습니다. 창은 늦어도 {spear_time}초 안에 닿습니다.")
             .ultimateNotStandalone()
             .param("memory_time", 8)
             .param("revenge_damage", 3)
@@ -103,6 +105,7 @@ public final class OdinAbility extends Ability {
             .param("warn_distance", 8)
             .param("slow_distance", 4)
             .param("slow_speed", 6)
+            .param("parry_lockout", 0.5)
             .param("parry_damage", 3)
             .param("parry_haste", 2)
             .param("spear_damage", 8)
@@ -180,6 +183,8 @@ public final class OdinAbility extends Ability {
     /** True while Odin deals his own bonus damage (revenge, rune): it triggers nothing. */
     private boolean bonusHit;
     private @Nullable Gungnir spear;
+    /** True while Odin is invisible: the ravens and his hand's runes hide so they do not give him away. */
+    private boolean ravensHidden;
 
     @Override
     public AbilityInfo info() {
@@ -251,7 +256,7 @@ public final class OdinAbility extends Ability {
 
         private void spawn() {
             parts.removeIf(part -> !part.isValid());
-            if (!parts.isEmpty() || !reserve(5)) {
+            if (ravensHidden || !parts.isEmpty() || !reserve(5)) {
                 return;
             }
             for (int i = 0; i < 5; i++) {
@@ -301,6 +306,14 @@ public final class OdinAbility extends Ability {
         }
 
         private void render(double spread, double flap, int glide, boolean turn) {
+            if (ravensHidden) {
+                // Nothing may fly to or perch on an invisible Odin and give him away.
+                for (BlockDisplay part : parts) {
+                    Displays.shrinkAway(ctx(), owner, part, 3);
+                }
+                parts.clear();
+                return;
+            }
             spawn();
             for (int i = 0; i < parts.size(); i++) {
                 BlockDisplay part = parts.get(i);
@@ -382,10 +395,10 @@ public final class OdinAbility extends Ability {
                         yaw = yawOf(heading);
                     }
                     render(1, 30 * Math.sin(tick * 0.9), 1, true);
-                    if (tick % 4 == 0) {
+                    if (tick % 4 == 0 && !ravensHidden) {
                         Vfx.dot(at, Particle.DUST, RAVEN_DUST, false);
                     }
-                    if (tick % 30 == 0) {
+                    if (tick % 30 == 0 && !ravensHidden) {
                         Fx.sound(at, Sound.ENTITY_PARROT_AMBIENT, 0.5f, 0.55f + Fx.jitter(0.05f));
                     }
                 }
@@ -401,8 +414,10 @@ public final class OdinAbility extends Ability {
                             .add(0, Math.sin(t * Math.PI) * 0.8, 0));
                     yaw = yawOf(path);
                     render(0.6, 60, 1, true);
-                    Vfx.trail(at, at.clone().subtract(path.clone().normalize().multiply(1.2)), RAVEN, 4, false);
-                    Vfx.dot(at, Particle.DUST, GOLD_SMALL, false);
+                    if (!ravensHidden && path.lengthSquared() > 1.0E-6) {
+                        Vfx.trail(at, at.clone().subtract(path.clone().normalize().multiply(1.2)), RAVEN, 4, false);
+                        Vfx.dot(at, Particle.DUST, GOLD_SMALL, false);
+                    }
                 }
                 case RETURNING -> {
                     Location goal = shoulder();
@@ -410,7 +425,9 @@ public final class OdinAbility extends Ability {
                         state = State.PERCHED;
                         at = goal;
                         render(0, 0, FOLLOW_GLIDE, true);
-                        Fx.sound(at, Sound.ENTITY_PARROT_STEP, 0.6f, 1.0f);
+                        if (!ravensHidden) {
+                            Fx.sound(at, Sound.ENTITY_PARROT_STEP, 0.6f, 1.0f);
+                        }
                     }
                 }
             }
@@ -426,10 +443,10 @@ public final class OdinAbility extends Ability {
                 yaw = yawOf(path);
             }
             render(1, 40 * Math.sin(tick * 1.2), 1, true);
-            if (tick % 6 == 0) {
+            if (tick % 6 == 0 && !ravensHidden) {
                 Fx.sound(at, Sound.ENTITY_PARROT_FLY, 0.5f, 0.7f + Fx.jitter(0.1f));
             }
-            if (tick % 3 == 0) {
+            if (tick % 3 == 0 && !ravensHidden) {
                 Vfx.dot(at, Particle.DUST, RAVEN_DUST, false);
             }
             return Math.max(0, distance - RAVEN_SPEED);
@@ -459,6 +476,7 @@ public final class OdinAbility extends Ability {
                 || isHidden(owner, memory) || !memory.getWorld().equals(owner.getWorld()))) {
             forget();
         }
+        ravensHidden = concealed(owner);
         if (huginn != null) {
             huginn.tick(tick);
         }
@@ -466,7 +484,7 @@ public final class OdinAbility extends Ability {
             muninn.tick(tick);
         }
         updateSight(owner, now, tick);
-        if (now < runeUntil && tick % 2 == 0) {
+        if (now < runeUntil && tick % 2 == 0 && !ravensHidden) {
             // The rune strike waits in Odin's hand.
             Location hand = hand(owner);
             Vfx.dot(Vfx.scatter(hand, 0.18), Particle.DUST_COLOR_TRANSITION, RUNE_GLOW, false);
@@ -499,8 +517,10 @@ public final class OdinAbility extends Ability {
         if (fresh) {
             Location head = attacker.getLocation().add(0, attacker.getHeight() + 0.55, 0);
             popText(owner, head, "<" + STORM_TAG + "><i>기억해 두었다</i></" + STORM_TAG + ">", 0.7f, 30);
-            Fx.sound(memory.location(), Sound.ENTITY_PARROT_AMBIENT, 0.9f, 0.5f + Fx.jitter(0.05f));
-            Fx.sound(memory.location(), Sound.ENTITY_PHANTOM_FLAP, 0.6f, 1.4f);
+            if (!ravensHidden) {
+                Fx.sound(memory.location(), Sound.ENTITY_PARROT_AMBIENT, 0.9f, 0.5f + Fx.jitter(0.05f));
+                Fx.sound(memory.location(), Sound.ENTITY_PHANTOM_FLAP, 0.6f, 1.4f);
+            }
             owner.sendActionBar(Text.mm("<" + STORM_TAG + ">✦ 무닌</" + STORM_TAG + "> <gray>— <white><enemy></white>"
                     + "을(를) 기억합니다</gray>", Placeholder.component("enemy", attacker.name())));
         }
@@ -551,8 +571,10 @@ public final class OdinAbility extends Ability {
         remembered = null;
         restUntil = ctx().currentTick() + DIVE_TICKS + Math.max(0, params().ticks("raven_rest"));
         thought.dive(victim);
-        Fx.sound(thought.location(), Sound.ENTITY_PARROT_AMBIENT, 1.0f, 0.6f);
-        Fx.sound(thought.location(), Sound.ENTITY_PHANTOM_SWOOP, 0.8f, 1.5f);
+        if (!ravensHidden) {
+            Fx.sound(thought.location(), Sound.ENTITY_PARROT_AMBIENT, 1.0f, 0.6f);
+            Fx.sound(thought.location(), Sound.ENTITY_PHANTOM_SWOOP, 0.8f, 1.5f);
+        }
         ctx().runLater(owner, DIVE_TICKS, () -> {
             if (Combat.isTargetable(ctx(), owner, victim)) {
                 bonus(owner, victim, params().num("revenge_damage"));
@@ -579,7 +601,7 @@ public final class OdinAbility extends Ability {
         });
     }
 
-    /** Damage of Odin's own bonus effects: it never triggers another bonus. */
+    /** Damage of Odin's own bonus effects and of Gungnir: it never triggers a bonus (rune strike, revenge). */
     private void bonus(Player owner, LivingEntity victim, double amount) {
         bonusHit = true;
         try {
@@ -805,6 +827,12 @@ public final class OdinAbility extends Ability {
         private long slowAt;
         private long impactAt;
         private long slack;
+        /** The target's last swing (in ticks since the throw): one right before the parry spoils it. */
+        private long lastSwing = Long.MIN_VALUE / 2;
+        /** The target's first swing after the flash is its only chance to parry. */
+        private boolean committed;
+        private boolean cued;
+        private final long lockout;
         private boolean resolved;
         private boolean finished;
 
@@ -817,6 +845,7 @@ public final class OdinAbility extends Ability {
             this.warnDistance = Math.max(0.5, params().num("warn_distance"));
             this.slowDistance = Math.clamp(params().num("slow_distance"), 0.1, warnDistance);
             this.maxTicks = Math.max(20, params().ticks("spear_time"));
+            this.lockout = Math.max(0, params().ticks("parry_lockout"));
             Location eye = owner.getEyeLocation();
             this.heading = eye.getDirection();
             if (heading.lengthSquared() < 1.0E-6) {
@@ -852,7 +881,7 @@ public final class OdinAbility extends Ability {
                     Placeholder.component("target", target.name())));
             if (target instanceof Player hunted) {
                 hunted.sendActionBar(Text.mm("<" + GOLD_TAG + ">ᛟ 궁니르가 당신을 노립니다</" + GOLD_TAG + "> <gray>— "
-                        + "룬 고리가 번쩍이면 휘둘러 쳐 내세요</gray>"));
+                        + "창이 느려지는 순간 한 번 휘둘러 쳐 내세요 (연타는 실패)</gray>"));
             }
             Loop.repeat(ctx(), owner, 1, 1, maxTicks + MAX_SLACK + 4, this, this::timeUp);
         }
@@ -910,7 +939,8 @@ public final class OdinAbility extends Ability {
             double distance = toTarget.length();
             if (flashAt < 0) {
                 cruise(toTarget, distance);
-                if (Fx.body(target).distance(tip) <= warnDistance + 1.0E-6) {
+                // A detour around cover may keep it from the warning distance: the ring flashes in time all the same.
+                if (Fx.body(target).distance(tip) <= warnDistance + 1.0E-6 || tick >= maxTicks - windowTicks() - 1) {
                     flash();
                 }
             } else if (tick < impactAt) {
@@ -1003,14 +1033,33 @@ public final class OdinAbility extends Ability {
             Fx.sound(body, Sound.BLOCK_BELL_USE, 1.2f, 1.8f);
             Fx.sound(body, Sound.ITEM_TRIDENT_RIPTIDE_3, 0.8f, 1.6f);
             if (target instanceof Player hunted) {
+                hunted.playSound(hunted.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, SoundCategory.PLAYERS, 1.0f, 1.6f);
+                hunted.sendActionBar(Text.mm("<" + GOLD_TAG + ">ᛟ 룬 고리</" + GOLD_TAG + "> <gray>— 창이 느려지면 한 번 "
+                        + "휘두르세요</gray>"));
+            }
+        }
+
+        /** The spear slows for its last stretch: the parry window opens, and the target hears it. */
+        private void cue() {
+            cued = true;
+            Location body = Fx.body(target);
+            Fx.sound(body, Sound.BLOCK_BELL_USE, 1.0f, 2.0f);
+            Vfx.ring(ctx(), body, 0.9, 16, 0, Particle.DUST_COLOR_TRANSITION, RUNE_GLOW, true);
+            if (target instanceof Player hunted) {
                 hunted.playSound(hunted.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, SoundCategory.PLAYERS, 1.0f, 2.0f);
-                hunted.sendActionBar(Text.mm("<b><" + GOLD_TAG + ">ᛟ 지금! 휘둘러 궁니르를 쳐 내세요</" + GOLD_TAG + "></b>"));
+                if (!committed) {
+                    hunted.sendActionBar(Text.mm("<b><" + GOLD_TAG + ">ᛟ 지금! 휘둘러 궁니르를 쳐 내세요</" + GOLD_TAG
+                            + "></b>"));
+                }
             }
         }
 
         /** After the flash: the next stretch at cruise speed, then slow, reaching the target exactly at impact. */
         private void close(Location aim, Vector toTarget, double distance) {
             long now = tick;
+            if (now >= slowAt && !cued) {
+                cue();
+            }
             double step;
             if (now < slowAt) {
                 double goal = Math.max(0, distance - slowDistance);
@@ -1053,18 +1102,49 @@ public final class OdinAbility extends Ability {
             }
         }
 
-        /** The target swung its weapon: inside the window, Gungnir is struck aside. */
+        /**
+         * The target swung its weapon. Before the flash a swing only counts against the next one; the first swing
+         * after it is the one chance: once the spear has slowed (until its impact plus the ping slack) and after a
+         * pause of the lockout, Gungnir is struck aside, otherwise the parry is spoilt. Spamming never parries.
+         */
         void swung(Player swinger) {
-            if (resolved || flashAt < 0 || !swinger.equals(target) || tick > impactAt + slack) {
+            if (resolved || !swinger.equals(target)) {
                 return;
             }
-            resolved = true;
-            parried();
+            long previous = lastSwing;
+            lastSwing = tick;
+            if (flashAt < 0 || committed) {
+                return;
+            }
+            committed = true;
+            if (tick < slowAt) {
+                spoilt(swinger, "너무 일렀습니다");
+            } else if (tick - previous < lockout) {
+                spoilt(swinger, "연타로는 쳐 낼 수 없습니다");
+            } else if (tick <= impactAt + slack) {
+                resolved = true;
+                parried();
+            }
+        }
+
+        /** The one chance is gone: the runes of the ring go dark and the spear comes on. */
+        private void spoilt(Player swinger, String why) {
+            for (int i = 0; i < ring.size(); i++) {
+                TextDisplay rune = ring.get(i);
+                if (rune.isValid()) {
+                    rune.text(Text.mm("<b><dark_gray>" + RUNES[i] + "</dark_gray></b>"));
+                }
+            }
+            Location body = Fx.body(swinger);
+            Vfx.cloud(ctx(), body, Particle.SMOKE, 6, 0.3, 0.02, null, false);
+            Fx.sound(body, Sound.BLOCK_ANVIL_PLACE, 0.6f, 0.6f);
+            swinger.sendActionBar(Text.mm("<" + STORM_TAG + ">ᛟ " + why + "</" + STORM_TAG + "> <gray>— 궁니르를 쳐 낼 "
+                    + "수 없습니다</gray>"));
         }
 
         private void parried() {
             Player hunted = (Player) target;
-            Combat.hit(ctx(), owner, target, params().num("parry_damage"));
+            bonus(owner, target, params().num("parry_damage"));
             int haste = (int) Math.min(Integer.MAX_VALUE, params().ticks("parry_haste"));
             if (haste > 0 && hunted.isValid() && !hunted.isDead()) {
                 hunted.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, haste, 0, false, true, true));
@@ -1099,7 +1179,7 @@ public final class OdinAbility extends Ability {
                 return;
             }
             resolved = true;
-            Combat.hit(ctx(), owner, target, params().num("spear_damage"));
+            bonus(owner, target, params().num("spear_damage"));
             double knock = Math.max(0, params().num("spear_knockback"));
             if (knock > 0 && Combat.isTargetable(ctx(), owner, target)) {
                 Vector push = Motion.horizontal(heading);
@@ -1260,5 +1340,9 @@ public final class OdinAbility extends Ability {
 
     private static boolean isHidden(Player owner, LivingEntity entity) {
         return entity instanceof Player hidden && !owner.canSee(hidden);
+    }
+
+    private static boolean concealed(Player owner) {
+        return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
     }
 }
