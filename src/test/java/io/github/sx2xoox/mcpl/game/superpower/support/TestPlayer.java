@@ -104,6 +104,14 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
         VanillaAttributes.completePlayer(attributes);
     }
 
+    /** Like Paper 26: displays riding the player stay mounted through a teleport within the world. */
+    @Override
+    public boolean teleport(Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause,
+                            io.papermc.paper.entity.TeleportFlag... flags) {
+        return super.teleport(location, cause,
+                io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.keepPassengers(this, location, flags));
+    }
+
     /** Like the server: absorption is clamped to the {@link Attribute#MAX_ABSORPTION} attribute. */
     @Override
     public void setAbsorptionAmount(double amount) {

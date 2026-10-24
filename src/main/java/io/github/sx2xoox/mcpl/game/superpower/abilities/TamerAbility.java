@@ -70,8 +70,8 @@ import org.jspecify.annotations.Nullable;
  * passive reads the prey (a health bar and a catch rate over every enemy it hits, for its eyes only) and bends the
  * capsule towards badly hurt ones. The active throws a capsule that swallows an enemy: three shakes, each one a chance
  * to break free (better at full health, and better the harder the prisoner mashes jump); held through all three, the
- * capsule comes back to the collector's hand, to be thrown where it likes (a sneak) or dropped at its feet. The ultimate
- * drops a giant capsule from the sky that swallows everyone around where it lands, shakes them all and bursts.
+ * capsule comes back over the collector's head, to be thrown where it likes (a sneak) or dropped at its feet. The
+ * ultimate drops a giant capsule from the sky that swallows everyone around where it lands, shakes them all and bursts.
  *
  * <p>Look (capsule sky blue, gold rim, button white): a capsule of block displays (sky-blue top, white bottom, a gold
  * band and a white button) tumbling along its arc with a gold trail, wobbling with a clunk at every shake while its
@@ -172,6 +172,12 @@ public final class TamerAbility extends Ability {
     private static final double DRIFT = 0.4;
     private static final double REST_FALL = -0.0784;
     private static final long INFO_REFRESH = 5;
+    /** The readout's height over the prey's head (it rides the prey). */
+    private static final float INFO_ABOVE = 0.75f;
+    /** The caught capsule's height over the collector's head (it rides the collector, out of its first-person view). */
+    private static final float OVERHEAD = 0.7f;
+    /** Ticks a shake's wobble takes (tilt, back the other way, upright). */
+    private static final long SHAKE_TICKS = 8;
     private static final long SILENCE_TICKS = 4;
     private static final int MAX_INFOS = 5;
 
@@ -274,28 +280,35 @@ public final class TamerAbility extends Ability {
             this.prey = prey;
         }
 
+        /** The panel rides the prey (it moves with the body on the client, knockback and all). */
         void follow(Player owner, long tick) {
             if (ctx().isConcealedFrom(prey, owner) || isCaptured(prey)) {
                 remove();
                 return;
             }
-            Location at = Displays.unrotated(prey.getLocation().add(0, prey.getHeight() + 0.75, 0));
+            Location at = Displays.unrotated(prey.getLocation().add(0, prey.getHeight() + INFO_ABOVE, 0));
             TextDisplay shown = panel;
             if (shown == null || !shown.isValid()) {
                 if (!reserve(1)) {
                     return;
                 }
-                shown = keep(Displays.text(ctx(), owner, at, readout(), 0.55f, 0, Displays.owner(owner)));
-                shown.setTeleportDuration(2);
+                Component text = readout();
+                shown = keep(Displays.spawn(ctx(), owner, Displays.unrotated(prey.getLocation().add(0,
+                        prey.getHeight(), 0)), TextDisplay.class, 0, Displays.owner(owner), display -> {
+                            display.text(text);
+                            display.setBillboard(Display.Billboard.CENTER);
+                            display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+                            display.setShadowed(true);
+                            display.setTransformation(Displays.centered(0, INFO_ABOVE, 0, 0.55f, 0.55f, 0.55f, 0,
+                                    0, 0));
+                        }));
                 panel = shown;
                 dirty = false;
-                return;
-            }
-            if (dirty || tick % INFO_REFRESH == 0) {
+            } else if (dirty || tick % INFO_REFRESH == 0) {
                 shown.text(readout());
                 dirty = false;
             }
-            Displays.moveTo(shown, at);
+            ride(prey, shown);
             if (weakened(prey) && tick % 8 == 0) {
                 Vfx.dot(at.clone().add(Fx.jitter(0.3f), -0.2, Fx.jitter(0.3f)), Particle.DUST, GOLD_DUST, false);
             }
@@ -332,12 +345,19 @@ public final class TamerAbility extends Ability {
                 new Quaternionf());
     }
 
-    /** A capsule of block displays centered on {@code at}. */
+    /**
+     * A capsule of block displays centered on {@code at}: its parts' entity location plus {@link #lift} (in the parts'
+     * transformation) is the capsule's middle, so it can ride the collector over its head and fly off from there.
+     */
     private final class Capsule {
         private final Player owner;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private float size;
         private Quaternionf rotation = new Quaternionf();
+        /** From the parts' entity location to the capsule's middle. */
+        private Vector3f lift = new Vector3f();
+        /** No mash wiggle before this tick (a shake, a swell or the flight is animating the capsule). */
+        private long busyUntil;
 
         Capsule(Player owner, Location at, float size, long lifetime) {
             this.owner = owner;
@@ -369,8 +389,10 @@ public final class TamerAbility extends Ability {
             return !parts.isEmpty() && parts.getFirst().isValid();
         }
 
+        /** Moves the capsule's middle to {@code at} (a riding capsule is set down first). */
         void moveTo(Location at) {
-            Location spot = Displays.unrotated(at);
+            dismount();
+            Location spot = Displays.unrotated(at).subtract(lift.x(), lift.y(), lift.z());
             for (BlockDisplay part : parts) {
                 Displays.moveTo(part, spot);
             }
@@ -386,8 +408,66 @@ public final class TamerAbility extends Ability {
             size = newSize;
             rotation = new Quaternionf(newRotation);
             for (int i = 0; i < parts.size(); i++) {
-                Displays.animate(parts.get(i), TamerAbility.posePart(CAPSULE[i], size, rotation), ticks);
+                Displays.animate(parts.get(i), posed(i, size, rotation), ticks);
             }
+        }
+
+        /** Part {@code index} at {@code size} and {@code rotation}, lifted to the capsule's middle. */
+        private Transformation posed(int index, float atSize, Quaternionf atRotation) {
+            Transformation posed = TamerAbility.posePart(CAPSULE[index], atSize, atRotation);
+            return new Transformation(posed.getTranslation().add(lift), posed.getLeftRotation(), posed.getScale(),
+                    posed.getRightRotation());
+        }
+
+        /**
+         * The capsule rides {@code carrier} (its passenger point is over the head): it moves with the body on every
+         * client. Mounted where it is ({@link #lift} keeps its middle in place); {@link #raise} then floats it up.
+         */
+        void mount(LivingEntity carrier) {
+            if (!isValid()) {
+                return;
+            }
+            Location middle = parts.getFirst().getLocation().add(lift.x(), lift.y(), lift.z());
+            Location seat = carrier.getLocation().add(0, carrier.getHeight(), 0);
+            for (BlockDisplay part : parts) {
+                ride(carrier, part);
+            }
+            lift = new Vector3f((float) (middle.getX() - seat.getX()), (float) (middle.getY() - seat.getY()),
+                    (float) (middle.getZ() - seat.getZ()));
+            pose(size, rotation, 0);
+        }
+
+        /** A riding capsule floats to {@code height} over its carrier's head, at {@code newSize}. */
+        void raise(float height, float newSize, int ticks) {
+            lift = new Vector3f(0, height, 0);
+            busyUntil = Math.max(busyUntil, ctx().currentTick() + ticks + 1);
+            pose(newSize, new Quaternionf(), ticks);
+        }
+
+        /** Keeps a mounted capsule on {@code carrier} (mounted again if it was thrown off). */
+        void stayOn(LivingEntity carrier) {
+            for (BlockDisplay part : parts) {
+                ride(carrier, part);
+            }
+        }
+
+        /** Gets off whatever the capsule rides, staying where it is (its entity location is its passenger spot). */
+        void dismount() {
+            for (BlockDisplay part : parts) {
+                Entity vehicle = part.getVehicle();
+                if (vehicle != null) {
+                    vehicle.removePassenger(part);
+                }
+            }
+        }
+
+        /** True unless a shake, a swell or the flight is animating the capsule (a mash wiggle would cut into it). */
+        boolean steady() {
+            return ctx().currentTick() >= busyUntil;
+        }
+
+        void busyFor(long ticks) {
+            busyUntil = Math.max(busyUntil, ctx().currentTick() + ticks);
         }
 
         void flash(boolean lit) {
@@ -400,6 +480,7 @@ public final class TamerAbility extends Ability {
         void shake(Location at, int index) {
             float side = index % 2 == 0 ? 1 : -1;
             Quaternionf tilt = new Quaternionf().rotateZ((float) Math.toRadians(24 * side));
+            busyFor(SHAKE_TICKS);
             pose(size, tilt, 2);
             flash(true);
             ctx().runLater(owner, 3, () -> pose(size, new Quaternionf().rotateZ((float) Math.toRadians(-12 * side)), 2));
@@ -423,7 +504,7 @@ public final class TamerAbility extends Ability {
                 }
                 if (i == 0) {
                     Quaternionf flip = new Quaternionf().rotateX((float) Math.toRadians(-80));
-                    Transformation lid = TamerAbility.posePart(CAPSULE[0], size, flip);
+                    Transformation lid = posed(0, size, flip);
                     Displays.animate(part, new Transformation(lid.getTranslation().add(0, size * 0.7f, -size * 0.3f),
                             lid.getLeftRotation(), lid.getScale(), lid.getRightRotation()), 3);
                     ctx().runLater(owner, 4, () -> {
@@ -478,6 +559,11 @@ public final class TamerAbility extends Ability {
             this.body = Body.standing(prey);
             this.capsule = capsule;
             this.hadInvisibility = prey.getPotionEffect(PotionEffectType.INVISIBILITY);
+            // The readout riding the prey goes before the prey shrinks into the capsule (back once it is out).
+            Info readout = infos.get(prey.getUniqueId());
+            if (readout != null) {
+                readout.remove();
+            }
             Location spot = anchor.clone();
             if (!Spots.isSafe(ctx(), spot, body)) {
                 spot = prey.getLocation();
@@ -544,7 +630,8 @@ public final class TamerAbility extends Ability {
             Vfx.cloud(ctx(), at, Particle.DUST, 2, 0.3, 0, SKY_DUST, false);
             if (mashTotal % 3 == 0) {
                 Fx.sound(at, Sound.BLOCK_WOODEN_BUTTON_CLICK_ON, 0.5f, 1.4f + Fx.jitter(0.1f));
-                if (shown != null && shown.isValid()) {
+                // A little rattle, never cutting into a shake's wobble (it would snap between the two tilts).
+                if (shown != null && shown.isValid() && shown.steady()) {
                     float wiggle = (mashTotal / 3 % 2 == 0 ? 6 : -6);
                     shown.pose(shown.size, new Quaternionf().rotateX((float) Math.toRadians(wiggle)), 1);
                 }
@@ -721,7 +808,9 @@ public final class TamerAbility extends Ability {
         Vector velocity = eye.getDirection().multiply(THROW_SPEED);
         Fx.sound(hand, Sound.ENTITY_SNOWBALL_THROW, 1.0f, 0.8f + Fx.jitter(0.05f));
         Fx.sound(hand, Sound.ENTITY_ALLAY_ITEM_THROWN, 0.8f, 1.2f + Fx.jitter(0.05f));
-        Capsule capsule = new Capsule(owner, hand, FLIGHT_SIZE, 80);
+        // No lifetime: the capsule lives as long as the capture it carries (every way out opens or removes it, and it is
+        // tracked); a fixed one cut long throws, long holds and slow shakes short.
+        Capsule capsule = new Capsule(owner, hand, FLIGHT_SIZE, 0);
         new Throw(owner, hand, velocity, capsule).fly();
         return ActivationResult.success();
     }
@@ -745,6 +834,7 @@ public final class TamerAbility extends Ability {
         private Vector velocity;
         private double travelled;
         private float spin;
+        private boolean landed;
 
         Throw(Player owner, Location from, Vector velocity, Capsule capsule) {
             this.owner = owner;
@@ -754,7 +844,11 @@ public final class TamerAbility extends Ability {
         }
 
         void fly() {
-            Loop.repeat(ctx(), owner, 0, 1, 60, run -> step(), null);
+            Loop.repeat(ctx(), owner, 0, 1, 60, run -> step(), () -> {
+                if (!landed) {
+                    miss(at); // out of flight time: it pops open where it is
+                }
+            });
         }
 
         private boolean step() {
@@ -850,6 +944,7 @@ public final class TamerAbility extends Ability {
 
         /** Nothing caught: the capsule pops open empty and part of the cooldown comes back. */
         private boolean miss(Location where) {
+            landed = true;
             capsule.moveTo(where);
             capsule.open(false);
             Vfx.cloud(ctx(), where, Particle.POOF, 6, 0.2, 0.02, null, false);
@@ -862,6 +957,7 @@ public final class TamerAbility extends Ability {
         }
 
         private void swallow(LivingEntity prey) {
+            landed = true;
             Location ground = prey.getLocation();
             Spots.snapToGround(ground.getWorld(), ground, 3);
             new Catch(owner, prey, ground, capsule).begin();
@@ -870,7 +966,7 @@ public final class TamerAbility extends Ability {
 
     /**
      * One capture by the active: the capsule settles where the enemy stood and shakes; held through every shake it flies
-     * back to the collector's hand, where a sneak throws it.
+     * back over the collector's head, where a sneak throws it.
      */
     private final class Catch {
         private final Player owner;
@@ -936,7 +1032,9 @@ public final class TamerAbility extends Ability {
             if (prey instanceof Player enemy && !ctx().hasShownPrompt(enemy)) {
                 enemy.sendActionBar(Text.mm("<b><white>탈출 성공!</white></b>"));
             }
-            owner.sendActionBar(Text.mm("<gray>앗, 캡슐에서 빠져나왔다!</gray>"));
+            if (!ctx().hasShownPrompt(owner)) {
+                owner.sendActionBar(Text.mm("<gray>앗, 캡슐에서 빠져나왔다!</gray>"));
+            }
         }
 
         private void endEarly() {
@@ -947,7 +1045,7 @@ public final class TamerAbility extends Ability {
             capsule.open(false);
         }
 
-        /** Held through every shake: "잡았다!" — the capsule flies back to the collector's hand. */
+        /** Held through every shake: "잡았다!" — the capsule flies back over the collector's head. */
         private void caught() {
             Capture inside = capture;
             if (inside == null || !inside.alive()) {
@@ -971,8 +1069,15 @@ public final class TamerAbility extends Ability {
                 Displays.animateNextTick(ctx(), owner, cheer, Displays.centered(0, 0.3f, 0, 1.2f, 1.2f, 1.2f, 0, 0, 0),
                         4);
             }
-            capsule.glide(3);
-            capsule.pose(HAND_SIZE, new Quaternionf(), 3);
+            // The capsule rides the collector, floating up over its head: out of its first-person view while it aims,
+            // and moving with its body on every screen (no per-tick chase that trails the camera).
+            capsule.mount(owner);
+            capsule.busyFor(4);
+            ctx().runLater(owner, 1, () -> {
+                if (capsule.isValid() && capsule.parts.getFirst().getVehicle() != null) {
+                    capsule.raise(OVERHEAD, HAND_SIZE, 3);
+                }
+            });
             PromptHandle choice = null;
             if (!ctx().hasShownPrompt(owner)) {
                 choice = ctx().prompt(owner, owner, Prompt.builder(Text.mm("<b><" + GOLD_TAG + ">잡았다!</" + GOLD_TAG
@@ -987,8 +1092,7 @@ public final class TamerAbility extends Ability {
                     return false;
                 }
                 inside.hold();
-                Location held = hand(owner);
-                capsule.moveTo(held);
+                capsule.stayOn(owner);
                 if (run > 2 && Inputs.usedSince(ctx(), owner, InputKey.SNEAK, caughtAt)) {
                     if (shown != null && shown.isActive()) {
                         shown.cancel();
@@ -1014,8 +1118,10 @@ public final class TamerAbility extends Ability {
                 spot = inside.anchor.clone();
             }
             Location to = spot;
-            Location from = hand(owner);
+            // Off the collector's head (where it rode) and along the arc.
+            Location from = owner.getLocation().add(0, owner.getHeight() + OVERHEAD, 0);
             long flight = Math.max(2, Math.min(8, Math.round(from.distance(to) / 2.0)));
+            capsule.busyFor(Long.MAX_VALUE / 4);
             capsule.glide(1);
             Fx.sound(from, Sound.ENTITY_SNOWBALL_THROW, 0.9f, 0.7f);
             Loop.repeat(ctx(), owner, 0, 1, flight, run -> {
@@ -1283,6 +1389,7 @@ public final class TamerAbility extends Ability {
                 Capsule shown = capsule;
                 if (shown != null) {
                     float swell = LEGEND_SIZE * (1 + 0.08f * (run - shakes * interval) / Math.max(1, burstDelay));
+                    shown.busyFor(4);
                     shown.pose(swell, new Quaternionf().rotateZ((float) Math.toRadians(run % 8 == 0 ? 6 : -6)), 2);
                 }
                 Fx.sound(center, Sound.BLOCK_COPPER_BULB_TURN_ON, 0.8f, 1.4f + 0.02f * run);
@@ -1356,5 +1463,23 @@ public final class TamerAbility extends Ability {
     private <T extends Display> T keep(T display) {
         live.add(display);
         return display;
+    }
+
+    /**
+     * Keeps {@code display} riding {@code carrier}: a passenger moves with its carrier's body on every client, frame by
+     * frame, where a display teleported after it every tick trails and wobbles. Mounted again if it was thrown off.
+     */
+    private static void ride(Entity carrier, Display display) {
+        if (!display.isValid() || !carrier.isValid() || !display.getWorld().equals(carrier.getWorld())) {
+            return;
+        }
+        Entity vehicle = display.getVehicle();
+        if (vehicle != null && vehicle.getUniqueId().equals(carrier.getUniqueId())) {
+            return;
+        }
+        if (vehicle != null) {
+            vehicle.removePassenger(display);
+        }
+        carrier.addPassenger(display);
     }
 }

@@ -64,4 +64,23 @@ public final class PaperRules {
                 : net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection()
                         .serialize(customName);
     }
+
+    /**
+     * {@code CraftEntity#teleport0} (Paper 26): a teleport keeps the entities riding the teleported one (a display
+     * mounted over a head moves along), only a player carrying passengers cannot change worlds. MockBukkit still
+     * refuses any teleport of an entity with passengers unless {@code RETAIN_PASSENGERS} is passed (the flag Paper
+     * deprecated when keeping them became the default), so the doubles add it for teleports within the world.
+     */
+    @SuppressWarnings("removal")
+    public static io.papermc.paper.entity.TeleportFlag[] keepPassengers(org.bukkit.entity.Entity entity,
+            org.bukkit.Location to, io.papermc.paper.entity.TeleportFlag... flags) {
+        if (entity.getPassengers().isEmpty() || to.getWorld() == null || !to.getWorld().equals(entity.getWorld())
+                || java.util.Arrays.asList(flags).contains(
+                        io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS)) {
+            return flags;
+        }
+        io.papermc.paper.entity.TeleportFlag[] kept = java.util.Arrays.copyOf(flags, flags.length + 1);
+        kept[flags.length] = io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS;
+        return kept;
+    }
 }

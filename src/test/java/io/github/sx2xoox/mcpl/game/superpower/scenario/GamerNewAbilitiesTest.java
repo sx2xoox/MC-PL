@@ -1252,4 +1252,332 @@ class GamerNewAbilitiesTest {
             s.finishClean();
         }
     }
+
+    // ================================================================== smooth displays on a real client
+
+    /** True if {@code display} rides {@code carrier} (a passenger moves with its carrier's body on every client). */
+    static boolean rides(Entity display, @org.jspecify.annotations.Nullable Entity carrier) {
+        Entity vehicle = display.getVehicle();
+        return carrier != null && vehicle != null && vehicle.getUniqueId().equals(carrier.getUniqueId());
+    }
+
+    /** The middle of a block display's model, relative to its entity location. */
+    static Vector3f middle(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        return new Vector3f(t.getTranslation()).add(leftRotation(display).transform(new Vector3f(t.getScale())
+                .mul(0.5f)));
+    }
+
+    @Test
+    void levelerTagAndRaidSignRideTheirHeads() {
+        try (Scenario s = Scenario.ffa("leveler")) {
+            s.ticks(5);
+            TextDisplay tag = texts(s, "Lv.1").getFirst();
+            assertTrue(rides(tag, s.owner), "the level tag rides the hunter (no per-tick chase behind the head)");
+            assertTrue(tag.getTransformation().getTranslation().y() >= 0.6f - 1.0E-6, "over the name tag");
+            s.place(s.owner, 3.5, 2.5, 90);
+            s.ticks(2);
+            assertEquals(3.5, s.owner.getLocation().getX(), EPSILON, "the hunter still moves with its tag on");
+            assertTrue(rides(tag, s.owner), "and the tag stays on");
+            s.owner.removePassenger(tag);
+            s.ticks(1);
+            assertTrue(rides(tag, s.owner), "thrown off, it is mounted again");
+
+            s.assertSucceeded(s.ultimate(), "레이드 보스");
+            s.ticks(2);
+            TextDisplay sign = texts(s, "RAID BOSS").getFirst();
+            assertTrue(rides(sign, leveler(s).raidBoss()), "the RAID BOSS sign rides the boss");
+            assertTrue(sign.getTransformation().getTranslation().y() >= 0.75f - 1.0E-6);
+            s.ticks(s.paramTicks("boss_duration") + 10);
+            assertTrue(texts(s, "RAID BOSS").isEmpty(), "the sign is gone with the raid");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void isekaiTruckRoadStartsAheadHidesTheTruckAroundItsOwnerAndOnlyHitsTheRoad() {
+        try (Scenario s = Scenario.ffa("isekaitruck")) {
+            s.ticks(5);
+            s.place(s.enemy2, 0.5, -1.0, 0); // right behind the owner, in the road's line: no road there
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.ticks(1);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "트럭 도로");
+            s.h.tickUntil(() -> !blocks(s, Material.OCHRE_FROGLIGHT).isEmpty(), 30, "the first truck");
+            List<BlockDisplay> lamps = blocks(s, Material.OCHRE_FROGLIGHT);
+            assertEquals(2, lamps.size());
+            assertEquals(1.5, lamps.getFirst().getLocation().getZ(), 1.0E-3,
+                    "the road starts a step ahead of the owner, the truck waits there");
+            for (BlockDisplay part : lamps) {
+                assertFalse(s.seenBy(part).contains(s.owner), "the truck around the owner is kept off its camera");
+                assertTrue(s.seenBy(part).contains(s.enemy), "the others see it");
+            }
+            s.ticks(5);
+            for (BlockDisplay part : blocks(s, Material.OCHRE_FROGLIGHT)) {
+                assertTrue(s.seenBy(part).contains(s.owner), "past the owner, the owner sees its truck too");
+            }
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                s.place(s.enemy, 0.5, 6.5, 180);
+                s.place(s.enemy2, 0.5, -1.0, 0);
+            }
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the road is run over: " + s.hits());
+            assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "nothing behind the road's start: " + s.hits());
+            TextDisplay sign = texts(s, "Lv.1").getFirst();
+            assertTrue(rides(sign, s.enemy), "the Lv.1 sign rides the reborn");
+            assertTrue(sign.getTransformation().getTranslation().y() >= 0.55f - 1.0E-6);
+            s.ticks(s.paramTicks("mark_duration") + 5);
+            s.finishClean();
+        }
+    }
+
+    /** Records every hit the admin lands on a training dummy, and whether a truck (its headlights) was there. */
+    private static final class TruckProbe implements org.bukkit.event.Listener {
+        private final Player admin;
+        private final List<String> bodiless = new ArrayList<>();
+        private int hits;
+
+        TruckProbe(Player admin) {
+            this.admin = admin;
+        }
+
+        @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR, ignoreCancelled = true)
+        public void onDamage(org.bukkit.event.entity.EntityDamageEvent event) {
+            if (!(event.getEntity() instanceof org.bukkit.entity.Mannequin dummy)
+                    || !admin.equals(event.getDamageSource().getCausingEntity())) {
+                return;
+            }
+            hits++;
+            Location at = dummy.getLocation();
+            boolean truck = dummy.getWorld().getEntitiesByClass(BlockDisplay.class).stream()
+                    .anyMatch(part -> part.getBlock().getMaterial() == Material.OCHRE_FROGLIGHT
+                            && part.getLocation().distance(at) < 5.5);
+            if (!truck) {
+                bodiless.add("tick " + admin.getServer().getCurrentTick() + " at " + at.toVector());
+            }
+        }
+    }
+
+    @Test
+    void isekaiTruckNeverRunsATruckWithoutItsBodyWithTheRoadTheRushAndSixRebornDummies() {
+        io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness h =
+                io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness.flat();
+        try {
+            TestPlayer admin = h.join("Admin");
+            admin.setOp(true);
+            admin.teleport(new Location(h.flatWorld(), 0.5, Y, 0.5, 0f, 0f));
+            assertTrue(h.server.dispatchCommand(admin, "게임 능력 연습 isekaitruck"));
+            h.tickUntil(() -> h.match() != null && h.match().hasStarted()
+                    && h.match().phase() == io.github.sx2xoox.mcpl.game.superpower.runtime.MatchPhase.FIGHT, 400,
+                    "the practice to start");
+            io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch match = h.match();
+            admin.teleport(new Location(h.flatWorld(), 0.5, Y, 0.5, 0f, 0f));
+            assertEquals(io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch.PracticeResult.OK,
+                    match.placeDummies(admin, 6));
+            List<org.bukkit.entity.Mannequin> dummies = match.dummiesOf(admin);
+            assertEquals(6, dummies.size());
+            // On the road (x 0.5, along +z) and on the crossing around (8.5, 12.5): its lanes run along z at x 2, 8.5
+            // and 15 and along x at z 6, 12.5 and 19. Every dummy is in at least two trucks' way.
+            double[][] spots = {{0.5, 6}, {0.5, 12.5}, {0.5, 19}, {8.5, 12.5}, {15, 6}, {2, 19}};
+            Runnable stand = () -> {
+                for (int i = 0; i < dummies.size(); i++) {
+                    org.bukkit.entity.Mannequin dummy = dummies.get(i);
+                    dummy.teleport(new Location(h.flatWorld(), spots[i][0], Y, spots[i][1], 180f, 0f));
+                    dummy.setVelocity(new Vector());
+                }
+            };
+            stand.run();
+            TruckProbe probe = new TruckProbe(admin);
+            h.server.getPluginManager().registerEvents(probe, org.mockbukkit.mockbukkit.MockBukkit
+                    .createMockPlugin("TruckProbe"));
+            match.useActive(admin);
+            int signs = 0;
+            for (int i = 0; i < 160; i++) {
+                h.ticks(1);
+                stand.run();
+                if (i == 14) {
+                    Location look = admin.getLocation();
+                    Location chest = dummies.get(3).getLocation().add(0, 1.0, 0);
+                    look.setDirection(chest.toVector().subtract(admin.getEyeLocation().toVector()));
+                    admin.teleport(look);
+                    match.setGauge(admin, 100);
+                    assertTrue(match.useUltimate(admin).succeeded(), "러시아워");
+                }
+                signs = Math.max(signs, (int) h.flatWorld().getEntitiesByClass(TextDisplay.class).stream()
+                        .filter(text -> Scenario.plain(text.text()).contains("전생자")).count());
+            }
+            assertTrue(probe.hits >= 10, "the road and the rush hour ran the dummies over: " + probe.hits);
+            assertTrue(signs >= 5, "most dummies were reborn at once (their Lv.1 signs in the budget): " + signs);
+            assertTrue(probe.bodiless.isEmpty(), "every hit came from a truck with its body: " + probe.bodiless);
+            h.ticks(40);
+            assertTrue(h.flatWorld().getEntitiesByClass(BlockDisplay.class).isEmpty(), "every truck is gone");
+            assertEquals(0, match.errors().totalFailures());
+        } finally {
+            h.close();
+        }
+    }
+
+    @Test
+    void tamerLongHoldStillReleasesWithTheCapsuleRidingOverTheCollectorsHead() {
+        try (Scenario s = Scenario.builder("tamer").param("escape_full", 0).param("escape_low", 0)
+                .param("mash_bonus", 0).param("hold_time", 3).start()) {
+            s.ticks(5);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "포획 캡슐");
+            s.h.tickUntil(() -> tamer(s).isCaptured(s.enemy), 20, "the capsule to hit");
+            s.ticks(s.paramTicks("shake_interval") * (int) s.param("shakes") + 10);
+            assertTrue(tamer(s).isCaptured(s.enemy), "held after every shake");
+            for (Material part : List.of(Material.LIGHT_BLUE_CONCRETE, Material.WHITE_CONCRETE, Material.GOLD_BLOCK)) {
+                assertTrue(rides(blocks(s, part).getFirst(), s.owner), "the caught capsule rides the collector");
+            }
+            BlockDisplay band = blocks(s, Material.GOLD_BLOCK).getFirst();
+            assertEquals(0.7, middle(band).y(), 0.01, "over its head, out of its first-person view");
+            assertEquals(0, middle(band).x(), 0.01);
+            assertEquals(0, middle(band).z(), 0.01);
+            s.ticks(30);
+            assertTrue(tamer(s).isCaptured(s.enemy), "still held: the capsule lasts as long as its capture");
+            s.h.tickUntil(() -> !tamer(s).isCaptured(s.enemy), 80, "the release");
+            s.ticks(2);
+            assertEquals(s.param("release_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "dropped out after the long hold, hurt");
+            assertTrue(slowed(s.enemy), "and staggering");
+            s.ticks(20);
+            assertTrue(blocks(s, Material.GOLD_BLOCK).isEmpty(), "the capsule is gone");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tamerReadoutRidesThePreyAndLeavesBeforeTheCapture() {
+        try (Scenario s = tamerScenario(0)) {
+            s.ticks(5);
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(2);
+            TextDisplay readout = texts(s, "포획률").getFirst();
+            assertTrue(rides(readout, s.enemy), "the readout rides the prey (no per-tick chase over a running head)");
+            assertEquals(0.75, readout.getTransformation().getTranslation().y(), 1.0E-6);
+            assertEquals(List.of(s.owner), s.seenBy(readout), "still for the collector alone");
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "포획 캡슐");
+            s.h.tickUntil(() -> tamer(s).isCaptured(s.enemy), 20, "the capsule to hit");
+            assertFalse(readout.isValid(), "no readout rides into the capsule");
+            assertTrue(texts(s, "포획률").isEmpty(), "nor comes back while the prey is inside");
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tamerMashingNeverCutsIntoAShakesWobble() {
+        try (Scenario s = tamerScenario(0)) {
+            s.ticks(5);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "포획 캡슐");
+            s.h.tickUntil(() -> tamer(s).isCaptured(s.enemy), 20, "the capsule to hit");
+            BlockDisplay band = blocks(s, Material.GOLD_BLOCK).getFirst();
+            long shakeAt = -1000;
+            int shakes = 0;
+            int shakeTicks = s.paramTicks("shake_interval") * (int) s.param("shakes");
+            for (int i = 0; i < shakeTicks; i++) {
+                if (i % 2 == 0) {
+                    s.enemy.sendInput(InputKey.JUMP);
+                } else {
+                    s.enemy.sendInput(TestInput.NONE);
+                }
+                s.ticks(1);
+                if (!band.isValid()) {
+                    break;
+                }
+                long now = s.ctx().currentTick();
+                Quaternionf turn = leftRotation(band);
+                if (Math.abs(turn.z()) > 0.15 && now - shakeAt >= 8) {
+                    shakeAt = now; // a shake's first tilt (24°)
+                    shakes++;
+                }
+                if (Math.abs(turn.x()) > 0.03 && Math.abs(turn.z()) < 1.0E-3) {
+                    assertTrue(now - shakeAt >= 8, "a mash wiggle cut into the shake started " + (now - shakeAt)
+                            + " ticks ago");
+                }
+            }
+            s.enemy.sendInput(TestInput.NONE);
+            assertTrue(shakes >= 2, "the capsule shook: " + shakes);
+            s.ticks(80);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void stomperCandyStarsRideAndOrbitTheStomperAndShrinkAway() {
+        try (Scenario s = Scenario.ffa("stomper")) {
+            s.ticks(5);
+            s.assertSucceeded(s.ultimate(), "무적 사탕");
+            s.ticks(1);
+            List<org.bukkit.entity.ItemDisplay> candy = entities(s, org.bukkit.entity.ItemDisplay.class);
+            assertEquals(1, candy.size(), "the candy at the mouth");
+            assertFalse(s.seenBy(candy.getFirst()).contains(s.owner), "not in the stomper's own face");
+            assertTrue(s.seenBy(candy.getFirst()).contains(s.enemy), "the others see it");
+            List<BlockDisplay> stars = entities(s, BlockDisplay.class);
+            assertEquals(2, stars.size(), "two stars");
+            for (BlockDisplay star : stars) {
+                assertTrue(rides(star, s.owner), "the stars ride the stomper");
+            }
+            Vector3f before = middle(stars.getFirst());
+            s.ticks(4);
+            Vector3f after = middle(stars.getFirst());
+            assertTrue(before.distance(after) > 0.2, "they orbit through their transformation: " + before + " -> "
+                    + after);
+            assertEquals(0.8, Math.hypot(after.x(), after.z()), 0.01, "around the body");
+            assertEquals(2, stars.getFirst().getInterpolationDuration(), "each step interpolated over its period");
+            s.h.tickUntil(() -> !stomper(s).isInvincible(), s.paramTicks("candy_duration") + 5, "the candy to end");
+            s.ticks(3);
+            for (BlockDisplay star : stars) {
+                assertTrue(star.isValid(), "still shrinking away (no lifetime cut)");
+            }
+            s.ticks(5);
+            assertTrue(entities(s, BlockDisplay.class).isEmpty(), "the stars are gone");
+            assertTrue(entities(s, org.bukkit.entity.ItemDisplay.class).isEmpty(), "and the candy");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void arcadeCounterRidesTheMasterCalloutsSkipItsCameraAndTheStageStandsOnTheFloor() {
+        try (Scenario s = noGaugeGain("arcade")) {
+            s.ticks(5);
+            s.melee(s.owner, s.enemy, 1);
+            s.ticks(1);
+            s.melee(s.owner, s.enemy, 1);
+            s.ticks(1);
+            TextDisplay counter = texts(s, "HIT!").getFirst();
+            assertTrue(rides(counter, s.owner), "the combo counter rides the master");
+            assertEquals(0.7, counter.getTransformation().getTranslation().y(), 1.0E-6);
+            s.melee(s.owner, s.enemy, 1);
+            s.ticks(1);
+            assertEquals(0.7, counter.getTransformation().getTranslation().y(), 1.0E-6, "it pops in place");
+            s.ticks(s.paramTicks("combo_window") + 12);
+
+            s.ticks(20);
+            s.assertSucceeded(s.active(), "대시 잽");
+            List<TextDisplay> callouts = texts(s, "대시 잽");
+            assertEquals(1, callouts.size(), "the move's name");
+            assertFalse(s.seenBy(callouts.getFirst()).contains(s.owner), "not across the master's own camera");
+            assertTrue(s.seenBy(callouts.getFirst()).contains(s.enemy), "for the others");
+
+            s.ticks(30);
+            s.place(s.owner, 0.5, Y + 3, 0.5, 0, 0); // called in mid-air
+            s.assertSucceeded(s.ultimate(), "라운드 원");
+            s.ticks(1);
+            List<BlockDisplay> stage = new ArrayList<>(blocks(s, Material.LIGHT_BLUE_CONCRETE));
+            stage.addAll(blocks(s, Material.YELLOW_CONCRETE));
+            assertEquals(3, stage.size(), "the floor line and the two posts");
+            for (BlockDisplay part : stage) {
+                assertEquals(Y, part.getLocation().getY(), EPSILON, "the stage stands on the floor");
+            }
+            s.h.tickUntil(() -> !arcade(s).inRound(), s.paramTicks("round_duration") + 5, "the bell");
+            s.ticks(20);
+            s.finishClean();
+        }
+    }
 }

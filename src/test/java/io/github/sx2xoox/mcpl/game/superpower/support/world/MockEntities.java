@@ -87,6 +87,13 @@ public final class MockEntities {
     /** A wolf that can take {@link DamageSource} damage and has the mob flags the summoner sets. */
     public static class TestWolf extends WolfMock implements Hurtable {
 
+        /** Like Paper 26: displays riding it stay mounted through a teleport within the world. */
+        @Override
+        public boolean teleport(Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause,
+                                io.papermc.paper.entity.TeleportFlag... flags) {
+            return super.teleport(location, cause, PaperRules.keepPassengers(this, location, flags));
+        }
+
         /** Like the server: the custom name when set ({@code getName} in legacy section format). */
         @Override
         public String getName() {
@@ -222,6 +229,13 @@ public final class MockEntities {
 
     /** An iron golem that can take {@link DamageSource} damage and has the mob flags the summoner sets. */
     public static class TestIronGolem extends IronGolemMock implements Hurtable {
+
+        /** Like Paper 26: displays riding it stay mounted through a teleport within the world. */
+        @Override
+        public boolean teleport(Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause,
+                                io.papermc.paper.entity.TeleportFlag... flags) {
+            return super.teleport(location, cause, PaperRules.keepPassengers(this, location, flags));
+        }
 
         /** Like the server: the custom name when set ({@code getName} in legacy section format). */
         @Override
@@ -363,6 +377,13 @@ public final class MockEntities {
      * is set.
      */
     public static class TestMannequin extends MannequinMock implements Hurtable {
+
+        /** Like Paper 26: displays riding it stay mounted through a teleport within the world. */
+        @Override
+        public boolean teleport(Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause,
+                                io.papermc.paper.entity.TeleportFlag... flags) {
+            return super.teleport(location, cause, PaperRules.keepPassengers(this, location, flags));
+        }
 
         /** Like the server: the custom name when set ({@code getName} in legacy section format). */
         @Override

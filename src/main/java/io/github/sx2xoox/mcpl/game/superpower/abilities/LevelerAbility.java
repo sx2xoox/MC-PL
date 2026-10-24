@@ -128,7 +128,10 @@ public final class LevelerAbility extends Ability {
     private static final Material EPIC_PANE = Material.PURPLE_STAINED_GLASS;
 
     private static final int MAX_DISPLAYS = 24;
-    private static final double TAG_ABOVE = 0.45;
+    /** The level tag's height over the hunter's head (it rides the hunter, clear of the name tag). */
+    private static final float TAG_ABOVE = 0.6f;
+    /** The RAID BOSS sign's height over the boss's head (it rides the boss). */
+    private static final float SIGN_ABOVE = 0.75f;
     private static final long BAR_PERIOD = 40;
     private static final long SWEEP_TICKS = 4;
     private static final double SLASH_HEIGHT_DOWN = 1.2;
@@ -137,6 +140,8 @@ public final class LevelerAbility extends Ability {
     /** A boss killed within this long of a player's last hit counts as that player's kill. */
     private static final long KILL_CREDIT_TICKS = 100;
     private static final long BAR_VIEWERS_PERIOD = 10;
+    /** Teleport duration of the legendary star flying to its slayer (moved every tick). */
+    private static final int STAR_GLIDE = 2;
 
     // ------------------------------------------------------------------ state
 
@@ -234,26 +239,58 @@ public final class LevelerAbility extends Ability {
         return false;
     }
 
-    /** "Lv.N" over the owner's head for everyone it is not concealed from. */
+    /**
+     * "Lv.N" over the owner's head for everyone it is not concealed from. It rides the owner, so every client moves it
+     * with the body frame by frame (a tag teleported after the hunter every tick slides ahead and trails behind).
+     */
     private void followTag(Player owner) {
-        Location at = Displays.unrotated(owner.getLocation().add(0, owner.getHeight() + TAG_ABOVE, 0));
         TextDisplay shown = tag;
         if (shown == null || !shown.isValid()) {
             if (!reserve(1)) {
                 return;
             }
-            shown = Displays.text(ctx(), owner, at, tagText(), 0.8f, 0, viewer -> !ctx().isConcealedFrom(owner, viewer));
-            shown.setTeleportDuration(2);
-            keep(shown);
+            shown = keep(headText(owner, owner, tagText(), 0.8f, TAG_ABOVE, 0,
+                    viewer -> !ctx().isConcealedFrom(owner, viewer)));
             tag = shown;
             tagLevel = level;
-            return;
-        }
-        if (tagLevel != level) {
+        } else if (tagLevel != level) {
             shown.text(tagText());
             tagLevel = level;
         }
-        Displays.moveTo(shown, at);
+        ride(owner, shown);
+    }
+
+    /** A camera-facing text that rides {@code carrier}, {@code above} blocks over its head. */
+    private TextDisplay headText(Player owner, LivingEntity carrier, Component text, float scale, float above,
+                                 long lifetime, java.util.function.Predicate<? super Player> viewers) {
+        Location seat = Displays.unrotated(carrier.getLocation().add(0, carrier.getHeight(), 0));
+        TextDisplay display = Displays.spawn(ctx(), owner, seat, TextDisplay.class, lifetime, viewers, d -> {
+            d.text(text);
+            d.setBillboard(Display.Billboard.CENTER);
+            d.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+            d.setShadowed(true);
+            d.setTransformation(Displays.centered(0, above, 0, scale, scale, scale, 0, 0, 0));
+        });
+        ride(carrier, display);
+        return display;
+    }
+
+    /**
+     * Keeps {@code display} riding {@code carrier}: a passenger moves with its carrier's body on every client, frame by
+     * frame, where a display teleported after it every tick trails and wobbles. Mounted again if it was thrown off.
+     */
+    private static void ride(Entity carrier, Display display) {
+        if (!display.isValid() || !carrier.isValid() || !display.getWorld().equals(carrier.getWorld())) {
+            return;
+        }
+        Entity vehicle = display.getVehicle();
+        if (vehicle != null && vehicle.getUniqueId().equals(carrier.getUniqueId())) {
+            return;
+        }
+        if (vehicle != null) {
+            vehicle.removePassenger(display);
+        }
+        carrier.addPassenger(display);
     }
 
     private Component tagText() {
@@ -695,22 +732,18 @@ public final class LevelerAbility extends Ability {
             }
         }
 
-        /** "RAID BOSS" over the boss's head, for everyone the boss is not concealed from. */
+        /** "RAID BOSS" riding over the boss's head, for everyone the boss is not concealed from. */
         private void followSign() {
-            Location at = Displays.unrotated(boss.getLocation().add(0, boss.getHeight() + 0.75, 0));
             TextDisplay shown = sign;
             if (shown == null || !shown.isValid()) {
                 if (!reserve(1)) {
                     return;
                 }
-                shown = Displays.text(ctx(), owner, at, Text.mm("<b><" + EPIC_TAG + ">⚔ RAID BOSS ⚔</" + EPIC_TAG
-                        + "></b>"), 0.7f, duration + 4, viewer -> !ctx().isConcealedFrom(boss, viewer));
-                shown.setTeleportDuration(2);
-                keep(shown);
+                shown = keep(headText(owner, boss, Text.mm("<b><" + EPIC_TAG + ">⚔ RAID BOSS ⚔</" + EPIC_TAG
+                        + "></b>"), 0.7f, SIGN_ABOVE, duration + 4, viewer -> !ctx().isConcealedFrom(boss, viewer)));
                 sign = shown;
-                return;
             }
-            Displays.moveTo(shown, at);
+            ride(boss, shown);
         }
 
         // -------------------------------------------------------------- the raid's rules
@@ -797,7 +830,7 @@ public final class LevelerAbility extends Ability {
             ItemDisplay star = keep(Displays.item(ctx(), owner, spot, new ItemStack(Material.NETHER_STAR),
                     Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0), 30));
             Displays.outline(star, EPIC);
-            star.setTeleportDuration(3);
+            star.setTeleportDuration(STAR_GLIDE);
             Displays.animateNextTick(ctx(), owner, star, Displays.centered(0, 0, 0, 0.8f, 0.8f, 0.8f, 180, 0, 0), 8);
             Loop.repeat(ctx(), owner, 10, 1, 14, run -> {
                 if (!star.isValid() || !killer.isValid()) {
@@ -810,9 +843,13 @@ public final class LevelerAbility extends Ability {
                 Displays.moveTo(star, next);
                 Vfx.dot(next, Particle.DUST, run % 2 == 0 ? GOLD_DUST : EPIC_DUST, false);
                 if (t >= 1.0 || next.distanceSquared(to) < 0.3) {
-                    Vfx.cloud(ctx(), to, Particle.TOTEM_OF_UNDYING, 18, 0.4, 0.3, null, false);
-                    Fx.sound(to, Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.6f);
-                    star.remove();
+                    // The clients see the star arrive a glide later: it shrinks into the slayer, then the burst.
+                    Displays.shrinkAway(ctx(), owner, star, STAR_GLIDE + 1);
+                    ctx().runLater(owner, STAR_GLIDE, () -> {
+                        Location into = killer.isValid() ? Fx.body(killer) : to;
+                        Vfx.cloud(ctx(), into, Particle.TOTEM_OF_UNDYING, 18, 0.4, 0.3, null, false);
+                        Fx.sound(into, Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.6f);
+                    });
                     return false;
                 }
                 return true;

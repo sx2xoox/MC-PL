@@ -42,6 +42,8 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
@@ -52,6 +54,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
@@ -163,6 +166,15 @@ public final class StomperAbility extends Ability {
     private static final long ALLY_GUARD = 100;
     private static final long TUNE_STEP = 3;
     private static final long TUNE_FAST = 2;
+    /** The candy's stars: radians per tick, orbit radius, height under the seat over the head (1.1 over the feet). */
+    private static final double STAR_SPEED = 0.35;
+    private static final double STAR_RADIUS = 0.8;
+    private static final float STAR_DROP = -0.7f;
+    /** Ticks between two orbit steps (each interpolated over as long). */
+    private static final long STAR_STEP = 2;
+    private static final int STAR_SHRINK = 4;
+    /** The candy shown at the stomper's mouth (for the others: the stomper's own camera is right behind it). */
+    private static final int BITE_TICKS = 8;
     /** A jaunty tune in note-block pitches (0.5..2.0). */
     private static final float[] TUNE = {1.0f, 1.26f, 1.5f, 1.26f, 1.68f, 1.5f, 1.26f, 1.0f, 1.12f, 1.33f, 1.68f, 2.0f};
 
@@ -345,7 +357,9 @@ public final class StomperAbility extends Ability {
         if (big) {
             Fx.sound(over, Sound.ENTITY_PLAYER_LEVELUP, 0.6f, 1.6f);
         }
-        owner.sendActionBar(Text.mm(line + " <gray>" + chain + "연속 밟기</gray>"));
+        if (!ctx().hasShownPrompt(owner)) {
+            owner.sendActionBar(Text.mm(line + " <gray>" + chain + "연속 밟기</gray>"));
+        }
     }
 
     /** A little sign that pops up and floats away. */
@@ -729,26 +743,43 @@ public final class StomperAbility extends Ability {
             bite();
             owner.showTitle(Title.title(Text.mm(rainbow("무적 사탕!")), Text.mm("<gray>밟고 또 밟으세요</gray>")));
             if (reserve(2)) {
-                Location at = Displays.unrotated(owner.getLocation().add(0, 1.0, 0));
+                // The stars ride the stomper and orbit it through their transformation: every client turns them around
+                // its body as it draws it (a world-placed orbit trails a running stomper and cuts through its camera).
+                Location seat = Displays.unrotated(owner.getLocation().add(0, owner.getHeight(), 0));
                 for (int i = 0; i < 2; i++) {
-                    BlockDisplay star = keep(Displays.block(ctx(), owner, at, RAINBOW_GLASS[i * 3].createBlockData(),
-                            Displays.transform(0, 0, 0, 0.22f, 0.22f, 0.22f, 45, 35, 0), duration + 2));
-                    star.setTeleportDuration(1);
+                    // Removed by end() (with a shrink); the lifetime only backs that up.
+                    BlockDisplay star = keep(Displays.block(ctx(), owner, seat,
+                            RAINBOW_GLASS[i * 3].createBlockData(), orbit(0, i), duration + STAR_SHRINK + 6));
+                    ride(owner, star);
                     stars.add(star);
                 }
             }
             Loop.repeat(ctx(), owner, 1, 1, duration, this::tick, () -> end(true));
         }
 
-        /** Crunch: the candy appears in front of the mouth and bursts into rainbow. */
+        /** Star {@code index} on its orbit around the stomper at {@code run}, relative to the seat over its head. */
+        private static Transformation orbit(long run, int index) {
+            double angle = run * STAR_SPEED + index * Math.PI;
+            return Displays.transform((float) (Math.cos(angle) * STAR_RADIUS), STAR_DROP,
+                    (float) (Math.sin(angle) * STAR_RADIUS), 0.22f, 0.22f, 0.22f, 45, 35, 0);
+        }
+
+        /**
+         * Crunch: the candy appears in front of the mouth and bursts into rainbow. The others see it; the stomper's own
+         * camera is right behind it, so it is hidden from the stomper. An item model is centered on its entity, so it
+         * spins in place (two quarter turns) and then shrinks away.
+         */
         private void bite() {
             Location eye = owner.getEyeLocation();
             Location mouth = Displays.unrotated(eye.clone().add(eye.getDirection().multiply(0.5)).subtract(0, 0.2, 0));
             if (reserve(1)) {
-                BlockDisplay sweet = keep(Displays.block(ctx(), owner, mouth, CANDY.createBlockData(),
-                        Displays.transform(0, 0, 0, 0.3f, 0.3f, 0.3f, 0, 0, 0), 8));
-                Displays.animateNextTick(ctx(), owner, sweet, Displays.transform(0, 0, 0, 0.3f, 0.3f, 0.3f, 180, 0,
-                        0), 5);
+                ItemDisplay sweet = keep(Displays.item(ctx(), owner, mouth, new ItemStack(CANDY),
+                        Displays.centered(0, 0, 0, 0.6f, 0.6f, 0.6f, 0, 0, 0), BITE_TICKS + 2,
+                        viewer -> !viewer.equals(owner)));
+                Displays.animateNextTick(ctx(), owner, sweet, Displays.centered(0, 0, 0, 0.6f, 0.6f, 0.6f, 90, 0, 0),
+                        3);
+                ctx().runLater(owner, 4, () -> Displays.animate(sweet, Displays.centered(0, 0, 0, 0.01f, 0.01f,
+                        0.01f, 180, 0, 0), BITE_TICKS - 4));
             }
             Fx.sound(eye, Sound.ENTITY_GENERIC_EAT, 1.0f, 1.2f);
             ctx().runLater(owner, 6, () -> {
@@ -793,9 +824,11 @@ public final class StomperAbility extends Ability {
                 if (!star.isValid()) {
                     continue;
                 }
-                double angle = run * 0.35 + i * Math.PI;
-                Displays.moveTo(star, Displays.unrotated(feet.clone().add(Math.cos(angle) * 0.8, 1.1, Math.sin(angle)
-                        * 0.8)));
+                ride(owner, star);
+                // A step along the orbit every other tick, interpolated over the same two ticks (chords of 40°).
+                if (run % STAR_STEP == 0) {
+                    Displays.animate(star, orbit(run + STAR_STEP, i), (int) STAR_STEP);
+                }
                 if (run % 3 == 0) {
                     star.setBlock(RAINBOW_GLASS[(int) ((run / 3 + i * 3) % RAINBOW_GLASS.length)].createBlockData());
                 }
@@ -859,7 +892,7 @@ public final class StomperAbility extends Ability {
             for (BlockDisplay star : stars) {
                 if (star.isValid()) {
                     if (visible) {
-                        Displays.shrinkAway(ctx(), owner, star, 4);
+                        Displays.shrinkAway(ctx(), owner, star, STAR_SHRINK);
                     } else {
                         star.remove();
                     }
@@ -901,5 +934,23 @@ public final class StomperAbility extends Ability {
     private <T extends Display> T keep(T display) {
         live.add(display);
         return display;
+    }
+
+    /**
+     * Keeps {@code display} riding {@code carrier}: a passenger moves with its carrier's body on every client, frame by
+     * frame, where a display teleported after it every tick trails and wobbles. Mounted again if it was thrown off.
+     */
+    private static void ride(Entity carrier, Display display) {
+        if (!display.isValid() || !carrier.isValid() || !display.getWorld().equals(carrier.getWorld())) {
+            return;
+        }
+        Entity vehicle = display.getVehicle();
+        if (vehicle != null && vehicle.getUniqueId().equals(carrier.getUniqueId())) {
+            return;
+        }
+        if (vehicle != null) {
+            vehicle.removePassenger(display);
+        }
+        carrier.addPassenger(display);
     }
 }

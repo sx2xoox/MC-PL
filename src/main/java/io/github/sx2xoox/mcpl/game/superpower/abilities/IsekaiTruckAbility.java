@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
@@ -30,6 +31,7 @@ import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
@@ -129,9 +131,10 @@ public final class IsekaiTruckAbility extends Ability {
             new Part(STRIPE, 0, 1.15f, -2.3f, 2.34f, 0.25f, 2.84f),
             new Part(CAB, 0, 1.15f, -0.45f, 2.2f, 1.5f, 1.0f),
             new Part(GLASS, 0, 1.45f, 0.06f, 1.9f, 0.55f, 0.06f),
-            new Part(GRILLE, 0, 0.5f, 0.02f, 2.2f, 0.32f, 0.1f),
-            new Part(LAMP, -0.75f, 0.78f, 0.04f, 0.4f, 0.26f, 0.06f),
-            new Part(LAMP, 0.75f, 0.78f, 0.04f, 0.4f, 0.26f, 0.06f),
+            // Narrower than the cab and behind the lamps' front, so no two parts share a visible face (z-fighting).
+            new Part(GRILLE, 0, 0.5f, 0.02f, 2.16f, 0.32f, 0.1f),
+            new Part(LAMP, -0.75f, 0.78f, 0.04f, 0.4f, 0.26f, 0.08f),
+            new Part(LAMP, 0.75f, 0.78f, 0.04f, 0.4f, 0.26f, 0.08f),
             new Part(WHEEL, 0, 0.3f, -0.5f, 2.4f, 0.6f, 0.6f),
             new Part(WHEEL, 0, 0.3f, -3.0f, 2.4f, 0.6f, 0.6f),
     };
@@ -145,13 +148,22 @@ public final class IsekaiTruckAbility extends Ability {
     private static final double LIFT = 0.45;
     private static final double AHEAD_PUSH = 0.35;
     private static final long ROAD_REVEAL = 6;
-    private static final int MAX_DISPLAYS = 24;
+    /** Room for the road, the crossing, two trucks on each and the Lv.1 signs (a truck lives under a second). */
+    private static final int MAX_DISPLAYS = 40;
     private static final double HEADLIGHT_Y = 0.8;
+    /** The road starts this far ahead of the owner, so the trucks never spawn around it. */
+    private static final double LANE_AHEAD = 1.0;
+    /** Half the truck's width (its wheels) plus a body's half width, for "is someone inside the truck". */
+    private static final double TRUCK_HALF_WIDTH = 1.5;
+    /** The Lv.1 sign's height over the victim's head (it rides the victim). */
+    private static final float SIGN_ABOVE = 0.55f;
 
     // ------------------------------------------------------------------ state
 
     private final List<Display> live = new ArrayList<>();
     private final Map<UUID, Mark> marks = new HashMap<>();
+    /** Display slots promised to trucks that are launched but not built yet. */
+    private int promised;
 
     @Override
     public AbilityInfo info() {
@@ -165,6 +177,7 @@ public final class IsekaiTruckAbility extends Ability {
         }
         marks.clear();
         live.clear();
+        promised = 0;
     }
 
     /** True while {@code entity} is reborn as Lv.1 (it takes more damage from the owner). */
@@ -233,7 +246,7 @@ public final class IsekaiTruckAbility extends Ability {
         });
     }
 
-    /** A Lv.1 rebirth: the sign over the head follows the victim until it wears off. */
+    /** A Lv.1 rebirth: the sign rides over the victim's head until it wears off. */
     private final class Mark {
         private final Player owner;
         private final LivingEntity victim;
@@ -266,21 +279,30 @@ public final class IsekaiTruckAbility extends Ability {
             until = Math.max(until, ctx().currentTick() + duration);
         }
 
+        /**
+         * The sign rides the victim (its client moves it with the body every frame, even while the truck flings it);
+         * mounted again if something threw it off. It leaves a truck's worth of room in the display budget.
+         */
         private void follow() {
-            Location at = Displays.unrotated(victim.getLocation().add(0, victim.getHeight() + 0.55, 0));
             TextDisplay shown = sign;
             if (shown == null || !shown.isValid()) {
-                if (!reserve(1)) {
+                if (!reserve(1 + TRUCK.length)) {
                     return;
                 }
-                shown = Displays.text(ctx(), owner, at, Text.mm("<b><white>Lv.1</white></b> <" + SKY_TAG + ">전생자</"
-                        + SKY_TAG + ">"), 0.7f, 0, viewer -> !ctx().isConcealedFrom(victim, viewer));
-                shown.setTeleportDuration(2);
-                keep(shown);
+                Location at = Displays.unrotated(victim.getLocation().add(0, victim.getHeight(), 0));
+                shown = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, 0,
+                        viewer -> !ctx().isConcealedFrom(victim, viewer), display -> {
+                            display.text(Text.mm("<b><white>Lv.1</white></b> <" + SKY_TAG + ">전생자</" + SKY_TAG
+                                    + ">"));
+                            display.setBillboard(Display.Billboard.CENTER);
+                            display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+                            display.setShadowed(true);
+                            display.setTransformation(Displays.centered(0, SIGN_ABOVE, 0, 0.7f, 0.7f, 0.7f, 0, 0,
+                                    0));
+                        }));
                 sign = shown;
-                return;
             }
-            Displays.moveTo(shown, at);
+            ride(victim, shown);
         }
 
         void clear() {
@@ -298,8 +320,16 @@ public final class IsekaiTruckAbility extends Ability {
 
     // ================================================================== the truck
 
-    /** A lane trucks drive along: from {@code start} along {@code direction} for {@code length}, {@code width} wide. */
-    private record Lane(Location start, Vector direction, double length, double width) {
+    /**
+     * A lane trucks drive along: from {@code start} along {@code direction} for {@code length}, {@code width} wide.
+     * Only the stretch from {@code hitFrom} to {@code hitTo} (the road, or the crossing) runs anyone over; the rest is
+     * where the truck comes from and drives out.
+     */
+    private record Lane(Location start, Vector direction, double length, double width, double hitFrom, double hitTo) {
+
+        Lane(Location start, Vector direction, double length, double width) {
+            this(start, direction, length, width, 0, length);
+        }
 
         Vector right() {
             return new Vector(-direction.getZ(), 0, direction.getX());
@@ -325,7 +355,8 @@ public final class IsekaiTruckAbility extends Ability {
 
     /**
      * One truck: the headlight warning down its lane, then the run from one end to the other, hitting every enemy in
-     * its box once; it stops and crashes at a wall.
+     * its box once; it stops and crashes at a wall. A truck always has its body: the display slots for it are promised
+     * when it is launched, and a truck the budget has no room for is not launched at all.
      */
     private final class Truck {
         private final Player owner;
@@ -337,6 +368,9 @@ public final class IsekaiTruckAbility extends Ability {
         private final Set<UUID> struck = new HashSet<>();
         private final float yaw;
         private double front;
+        private boolean holdsSlots;
+        /** True while the owner stands inside the truck's body (it is hidden from the owner then). */
+        private boolean aroundOwner;
 
         Truck(Player owner, Lane lane, Load load, long warning, boolean wall) {
             this.owner = owner;
@@ -347,7 +381,13 @@ public final class IsekaiTruckAbility extends Ability {
             this.yaw = (float) Math.toDegrees(Math.atan2(-lane.direction().getX(), lane.direction().getZ()));
         }
 
-        void go() {
+        /** Launches the truck; false (nothing happens, no warning) if the display budget has no room for its body. */
+        boolean go() {
+            if (!reserve(TRUCK.length)) {
+                return false;
+            }
+            promised += TRUCK.length;
+            holdsSlots = true;
             honk(lane.start());
             long runTicks = (long) Math.ceil(lane.length() / TRUCK_SPEED) + 2;
             Loop.repeat(ctx(), owner, 0, 1, warning + runTicks, run -> {
@@ -360,6 +400,28 @@ public final class IsekaiTruckAbility extends Ability {
                 }
                 return drive();
             }, this::finish);
+            return true;
+        }
+
+        /** The promised slots are given back (the body was built, or the truck ended before). */
+        private void releaseSlots() {
+            if (holdsSlots) {
+                holdsSlots = false;
+                promised = Math.max(0, promised - TRUCK.length);
+            }
+        }
+
+        /** True if the owner's body is inside the truck whose bumper is at {@code bumperAlong}. */
+        private boolean surrounds(double bumperAlong) {
+            Location at = owner.getLocation();
+            if (!at.getWorld().equals(lane.start().getWorld())) {
+                return false;
+            }
+            double along = lane.along(at);
+            double half = owner.getWidth() / 2 + 0.3;
+            double dy = at.getY() - lane.start().getY();
+            return along + half > bumperAlong - TRUCK_LENGTH && along - half < bumperAlong + 0.2
+                    && Math.abs(lane.across(at)) < TRUCK_HALF_WIDTH && dy < TRUCK_HEIGHT && dy > -owner.getHeight();
         }
 
         /** "빵빵—!" */
@@ -377,7 +439,7 @@ public final class IsekaiTruckAbility extends Ability {
             if (run % 2 != 0) {
                 return;
             }
-            double reach = lane.length() * Math.min(1.0, (run + 2) / (double) warning);
+            double reach = lane.hitTo() * Math.min(1.0, (run + 2) / (double) warning);
             Vector side = lane.right().multiply(lane.width() * 0.3);
             Location from = lane.start().clone().add(0, HEADLIGHT_Y, 0);
             Location to = lane.at(reach).add(0, HEADLIGHT_Y * 0.4, 0);
@@ -388,34 +450,50 @@ public final class IsekaiTruckAbility extends Ability {
             Vfx.dot(from.clone().subtract(side), Particle.END_ROD, null, true);
         }
 
-        /** The truck appears just behind the lane's start, so its bumper crosses the start as the run begins. */
+        /**
+         * The truck appears just behind the lane's start, so its bumper crosses the start as the run begins (in the
+         * slots promised at the launch). Around the owner (standing where it laid the road) it is hidden from the
+         * owner's camera until it has driven past.
+         */
         private void spawn() {
-            if (!reserve(TRUCK.length)) {
-                return;
-            }
+            releaseSlots();
             Location at = Displays.unrotated(lane.start());
             Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
+            front = 0;
+            aroundOwner = surrounds(front);
+            Predicate<Player> viewers = aroundOwner ? viewer -> !viewer.equals(owner) || !aroundOwner : null;
             for (Part part : TRUCK) {
                 BlockDisplay display = keep(Displays.block(ctx(), owner, at, part.material().createBlockData(),
-                        pose(part, rotation), 0));
+                        pose(part, rotation), 0, viewers));
                 display.setTeleportDuration(1);
                 if (part.material() == LAMP) {
                     Displays.outline(display, YELLOW);
                 }
                 parts.add(display);
             }
-            front = 0;
         }
 
-        /** One tick of the run; false once it has reached the end or a wall. */
+        /** One tick of the run; false once it has reached the end or a wall. Never a run without the truck's body. */
         private boolean drive() {
+            if (parts.isEmpty() || !parts.getFirst().isValid()) {
+                return false;
+            }
             double previous = front;
             front = Math.min(lane.length(), front + TRUCK_SPEED);
             Location bumper = lane.at(front);
             for (BlockDisplay part : parts) {
                 Displays.moveTo(part, Displays.unrotated(bumper));
             }
-            sweep(previous - TRUCK_LENGTH, front);
+            if (aroundOwner && !surrounds(front)) {
+                aroundOwner = false;
+                ctx().refreshViewers();
+            }
+            // Only the road (or the crossing) is dangerous: not behind its start, not where the truck drives out.
+            double from = Math.max(lane.hitFrom(), previous - TRUCK_LENGTH);
+            double to = Math.min(lane.hitTo(), front);
+            if (to > from) {
+                sweep(from, to);
+            }
             Location dust = lane.at(Math.max(0, front - TRUCK_LENGTH)).add(0, 0.2, 0);
             Vfx.cloud(ctx(), dust, Particle.CLOUD, 3, 0.6, 0.02, null, false);
             Vfx.dot(bumper.clone().add(0, HEADLIGHT_Y, 0), Particle.END_ROD, null, false);
@@ -425,7 +503,7 @@ public final class IsekaiTruckAbility extends Ability {
             }
             if (front >= lane.length() - 1.0E-6) {
                 if (wall) {
-                    crash(bumper);
+                    crash(bumper, front <= lane.hitTo() + 0.5);
                 }
                 return false;
             }
@@ -479,12 +557,17 @@ public final class IsekaiTruckAbility extends Ability {
             Fx.sound(body, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 0.8f + Fx.jitter(0.1f));
         }
 
-        /** The truck runs into a wall: it stops dead and the crash hurts the enemies around it. */
-        private void crash(Location bumper) {
+        /**
+         * The truck runs into a wall: it stops dead and the crash hurts the enemies around it ({@code hurts}: only a
+         * crash on the dangerous stretch, never one where the truck was only driving out).
+         */
+        private void crash(Location bumper, boolean hurts) {
             double radius = Math.max(0, params().num("crash_radius"));
             Location center = bumper.clone().add(0, 1.0, 0);
-            for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
-                Combat.hit(ctx(), owner, enemy, params().num("crash_damage"));
+            if (hurts) {
+                for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
+                    Combat.hit(ctx(), owner, enemy, params().num("crash_damage"));
+                }
             }
             Vfx.burst(ctx(), center, PALETTE, 1.4, Particle.LARGE_SMOKE, true);
             Vfx.cloud(ctx(), center, Particle.SMOKE, 16, 0.8, 0.04, null, false);
@@ -497,6 +580,7 @@ public final class IsekaiTruckAbility extends Ability {
 
         /** The truck fades out where it stopped. */
         private void finish() {
+            releaseSlots();
             for (BlockDisplay part : parts) {
                 if (part.isValid()) {
                     Displays.shrinkAway(ctx(), owner, part, 4);
@@ -543,14 +627,16 @@ public final class IsekaiTruckAbility extends Ability {
         Vector direction = Motion.horizontalFacing(feet);
         double width = Math.max(1, params().num("road_width"));
         double length = Math.max(2, params().num("road_length"));
-        Location start = Displays.unrotated(feet);
-        Spots.snapToGround(start.getWorld(), start, 1.5);
-        double reach = Spots.arenaReach(ctx(), start, direction, length);
-        double clear = clearRun(start, direction, reach, width);
-        if (clear < 3) {
+        Location base = Displays.unrotated(feet);
+        Spots.snapToGround(base.getWorld(), base, 1.5);
+        // The road starts a step ahead of the owner: its trucks never spawn around the owner's camera.
+        double reach = Spots.arenaReach(ctx(), base, direction, length + LANE_AHEAD);
+        double clear = clearRun(base, direction, reach, width);
+        if (clear - LANE_AHEAD < 3) {
             return ActivationResult.fail("도로를 깔 자리가 없습니다");
         }
-        Lane lane = new Lane(start, direction, clear, width);
+        Location start = base.clone().add(direction.clone().multiply(LANE_AHEAD));
+        Lane lane = new Lane(start, direction, clear - LANE_AHEAD, width);
         boolean wall = clear < reach - 0.5;
         new Road(owner, lane, wall).open();
         return ActivationResult.success();
@@ -747,20 +833,26 @@ public final class IsekaiTruckAbility extends Ability {
             return lanes;
         }
 
-        /** A truck along x (axis 0) or z (axis 1), on the lane {@code offset} from the middle, from a random end. */
+        /**
+         * A truck along x (axis 0) or z (axis 1), on the lane {@code offset} from the middle, from a random end. It
+         * drives on until its tail has left the crossing, but only runs over who is on the crossing (and the step
+         * before it, where its headlights shine from).
+         */
         private void launch(int axis, double offset) {
             boolean flip = ThreadLocalRandom.current().nextBoolean();
             Vector direction = axis == 0 ? new Vector(flip ? -1 : 1, 0, 0) : new Vector(0, 0, flip ? -1 : 1);
             Vector across = new Vector(-direction.getZ(), 0, direction.getX());
             double entry = half + 1;
             Location start = center.clone().subtract(direction.clone().multiply(entry)).add(across.multiply(offset));
-            double length = half * 2 + 2;
+            double crossing = half * 2 + 2;
+            double length = crossing + TRUCK_LENGTH;
             double clear = clearRun(start, direction, length, width);
             boolean wall = clear < length - 0.5;
             if (clear < 1) {
                 return;
             }
-            new Truck(owner, new Lane(start, direction, clear, width), load, warning, wall).go();
+            new Truck(owner, new Lane(start, direction, clear, width, 0, Math.min(crossing, clear)), load, warning,
+                    wall).go();
         }
 
         /** The lane edges in white and the safe squares between them in sky blue. */
@@ -807,13 +899,32 @@ public final class IsekaiTruckAbility extends Ability {
         return !ctx().isConcealedFrom(target, owner);
     }
 
+    /** True if {@code count} more displays fit next to the live ones and those promised to launched trucks. */
     private boolean reserve(int count) {
         live.removeIf(display -> !display.isValid());
-        return live.size() + count <= MAX_DISPLAYS;
+        return live.size() + promised + count <= MAX_DISPLAYS;
     }
 
     private <T extends Display> T keep(T display) {
         live.add(display);
         return display;
+    }
+
+    /**
+     * Keeps {@code display} riding {@code carrier}: a passenger moves with its carrier's body on every client, frame by
+     * frame, where a display teleported after it every tick trails and wobbles. Mounted again if it was thrown off.
+     */
+    private static void ride(Entity carrier, Display display) {
+        if (!display.isValid() || !carrier.isValid() || !display.getWorld().equals(carrier.getWorld())) {
+            return;
+        }
+        Entity vehicle = display.getVehicle();
+        if (vehicle != null && vehicle.getUniqueId().equals(carrier.getUniqueId())) {
+            return;
+        }
+        if (vehicle != null) {
+            vehicle.removePassenger(display);
+        }
+        carrier.addPassenger(display);
     }
 }
