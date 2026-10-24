@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
+import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
@@ -186,7 +187,13 @@ public final class FourGodsAbility extends Ability {
     private static final long FEEDBACK_COOLDOWN = 10;
     /** Followers of a moving player glide this many ticks, like a client's interpolation of the player. */
     private static final int FOLLOW_GLIDE = 3;
+    /** Displays moved every tick glide this many ticks, so packets that arrive bunched do not make them stutter. */
+    private static final int STEP_GLIDE = 2;
+    /** A follower farther than this from its spot was teleported with its target: it is respawned, never glided. */
+    private static final double JUMP = 2.5;
     private static final double LABEL_ABOVE = 0.85;
+    /** How far over the label's foot the stance glyph appears (the label's text is about 0.2 tall). */
+    private static final double GLYPH_OVER_LABEL = 0.3;
 
     // the dragon
     private static final double DRAGON_SPEED = 1.0;
@@ -361,6 +368,12 @@ public final class FourGodsAbility extends Ability {
             label = null;
             return;
         }
+        if (shown != null && shown.isValid() && jumped(shown, at)) {
+            // The owner was teleported (a tortoise swap, someone else's pull): a glide would streak the label across
+            // the gap, so it reappears over the head at once.
+            shown.remove();
+            shown = null;
+        }
         if (shown == null || !shown.isValid()) {
             if (!reserve(1)) {
                 return;
@@ -404,7 +417,8 @@ public final class FourGodsAbility extends Ability {
                 stance.palette.glow(1.0f), false);
         Vfx.cloud(ctx(), head, accent(stance), 6, 0.3, 0.02, null, false);
         if (reserve(1)) {
-            TextDisplay glyph = keep(Displays.text(ctx(), owner, head.clone().add(0, 0.6, 0),
+            // The glyph rises from just above the stance label (text grows up from its foot), never through it.
+            TextDisplay glyph = keep(Displays.text(ctx(), owner, labelSpot(owner).add(0, GLYPH_OVER_LABEL, 0),
                     Text.mm("<b>" + stance.colored(stance.hanja) + "</b>"), 0.4f, 14));
             Displays.animateNextTick(ctx(), owner, glyph, Displays.centered(0, 0.5f, 0, 1.3f, 1.3f, 1.3f, 0, 0, 0), 5);
             ctx().runLater(owner, 8, () -> {
@@ -581,8 +595,8 @@ public final class FourGodsAbility extends Ability {
             for (int i = 0; i < parts; i++) {
                 Material type = i == 0 ? DRAGON_HEAD_BLOCK : SCALE_BLOCK;
                 BlockDisplay part = keep(Displays.block(ctx(), owner, start, type.createBlockData(),
-                        segmentPose(i, 0, 0.05f), life));
-                part.setTeleportDuration(1);
+                        segmentPose(i, 0, 0.001f), life));
+                part.setTeleportDuration(STEP_GLIDE);
                 part.setViewRange(1.5f);
                 body.add(part);
             }
@@ -624,7 +638,9 @@ public final class FourGodsAbility extends Ability {
                 }
                 double tau = head - i * SEGMENT_GAP * (body.size() < DRAGON_SEGMENTS ? 2.5 : 1);
                 Displays.moveTo(part, at(Math.max(0, tau)));
-                Displays.animate(part, segmentPose(i, tick, 1f), 1);
+                // A scale still waiting in the mouth stays hidden there and grows as it swims out: the chain unrolls
+                // from the mouth instead of stacking every glass scale on one point.
+                Displays.animate(part, segmentPose(i, tick, (float) Math.clamp(tau, 0.001, 1.0)), 1);
             }
             Location tip = at(head);
             Vfx.dot(tip, Particle.DUST_COLOR_TRANSITION, Guardian.DRAGON.palette.glow(1.2f), false);
@@ -724,7 +740,10 @@ public final class FourGodsAbility extends Ability {
         private final Vector dir;
         private final double distance;
         private final float yaw;
-        private final List<BlockDisplay> wings = new ArrayList<>();
+        /** The pair the owner sees: where the steps sent so far carried it (its own client runs them at once). */
+        private final List<BlockDisplay> ownWings = new ArrayList<>();
+        /** The pair everyone else sees: on the body where the server sees it, gliding like their view of it. */
+        private final List<BlockDisplay> seenWings = new ArrayList<>();
         private double sent;
         private boolean landed;
 
@@ -739,14 +758,14 @@ public final class FourGodsAbility extends Ability {
         void start() {
             landing.arm(ctx().currentTick(), (long) Math.ceil(distance / BIRD_SPEED) + 60);
             owner.setFallDistance(0);
-            if (reserve(2)) {
-                for (int side = -1; side <= 1; side += 2) {
-                    BlockDisplay wing = keep(Displays.block(ctx(), owner, wingSpot(start), WING_BLOCK.createBlockData(),
-                            wingPose(side, 0.2f, 0), (long) Math.ceil(distance / BIRD_SPEED) + 12));
-                    wing.setTeleportDuration(1);
-                    Displays.outline(wing, Guardian.BIRD.palette.body());
-                    wings.add(wing);
-                }
+            long life = (long) Math.ceil(distance / BIRD_SPEED) + 12;
+            boolean both = reserve(4);
+            if (both || reserve(2)) {
+                // Without room for both pairs, one pair on the server's view of the body is for everyone.
+                spawnWings(seenWings, both ? viewer -> !viewer.equals(owner) : null, FOLLOW_GLIDE, life);
+            }
+            if (both) {
+                spawnWings(ownWings, Displays.owner(owner), 1, life);
             }
             Fx.sound(start, Sound.ENTITY_PHANTOM_FLAP, 1.0f, 1.4f + Fx.jitter(0.1f));
             Fx.sound(start, Sound.ITEM_FIRECHARGE_USE, 0.7f, 1.3f + Fx.jitter(0.1f));
@@ -756,10 +775,23 @@ public final class FourGodsAbility extends Ability {
             Loop.repeat(ctx(), owner, 0, 1, runs, this, this::land);
         }
 
+        private void spawnWings(List<BlockDisplay> pair, @Nullable Predicate<? super Player> viewers, int glide,
+                                long life) {
+            for (int side = -1; side <= 1; side += 2) {
+                BlockDisplay wing = keep(Displays.block(ctx(), owner, wingSpot(start), WING_BLOCK.createBlockData(),
+                        wingPose(side, 0.2f, 0), life, viewers));
+                wing.setTeleportDuration(glide);
+                Displays.outline(wing, Guardian.BIRD.palette.body());
+                pair.add(wing);
+            }
+        }
+
         /**
-         * Where the wings ride: on the bird's back where the steps sent so far have carried it ({@code body}, its
-         * feet). The server sees a flying player a ping late, so following {@code owner.getLocation()} would leave the
-         * wings trailing a block or more behind it.
+         * Where the wings ride: on the bird's back, {@code body} being its feet. The owner's own client runs the steps
+         * sent at once, so its pair rides where they carried it (following the server's view of it would leave the
+         * wings a block or more behind in the owner's eyes). Everyone else sees the owner where the server does, a
+         * ping later and smoothed: their pair rides there and glides like the remote player, or the wings would fly
+         * ahead of the bird for the whole flight.
          */
         private Location wingSpot(Location body) {
             return Displays.unrotated(body.clone().add(0, owner.getHeight() * 0.72, 0)
@@ -801,11 +833,8 @@ public final class FourGodsAbility extends Ability {
             sent += step;
             Location reckoned = start.clone().add(dir.clone().multiply(sent));
             reckoned.setY(owner.getLocation().getY());
-            for (int i = 0; i < wings.size(); i++) {
-                BlockDisplay wing = wings.get(i);
-                Displays.moveTo(wing, wingSpot(reckoned));
-                Displays.animate(wing, wingPose(i == 0 ? -1 : 1, 1f, tick * 1.3), 1);
-            }
+            beat(ownWings, wingSpot(reckoned), tick);
+            beat(seenWings, wingSpot(owner.getLocation()), tick);
             Location body = reckoned.clone().add(0, 0.9, 0);
             Vfx.dot(body, Particle.FLAME, null, false);
             Vfx.trail(body, body.clone().subtract(dir.clone().multiply(2)), Guardian.BIRD.palette.body(), 6, false);
@@ -816,6 +845,15 @@ public final class FourGodsAbility extends Ability {
             return true;
         }
 
+        /** One wing-beat of {@code pair} on the back at {@code spot}. */
+        private void beat(List<BlockDisplay> pair, Location spot, long tick) {
+            for (int i = 0; i < pair.size(); i++) {
+                BlockDisplay wing = pair.get(i);
+                Displays.moveTo(wing, spot);
+                Displays.animate(wing, wingPose(i == 0 ? -1 : 1, 1f, tick * 1.3), 1);
+            }
+        }
+
         void land() {
             if (landed) {
                 return;
@@ -823,7 +861,12 @@ public final class FourGodsAbility extends Ability {
             landed = true;
             owner.setVelocity(dir.clone().multiply(BIRD_GLIDE));
             owner.setFallDistance(0);
-            for (BlockDisplay wing : wings) {
+            for (BlockDisplay wing : ownWings) {
+                if (wing.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, wing, 5);
+                }
+            }
+            for (BlockDisplay wing : seenWings) {
                 if (wing.isValid()) {
                     Displays.shrinkAway(ctx(), owner, wing, 5);
                 }
@@ -1021,7 +1064,7 @@ public final class FourGodsAbility extends Ability {
                             pose(i, yaw, 0), life)));
                 }
                 for (BlockDisplay part : parts) {
-                    part.setTeleportDuration(1);
+                    part.setTeleportDuration(STEP_GLIDE);
                 }
                 Displays.outline(parts.getFirst(), Color.WHITE);
             }
@@ -1655,6 +1698,12 @@ public final class FourGodsAbility extends Ability {
 
     private static boolean isHidden(Player owner, LivingEntity entity) {
         return entity instanceof Player hidden && !owner.canSee(hidden);
+    }
+
+    /** True if {@code display} is far from {@code spot}: what it follows was teleported, a glide would slide across. */
+    private static boolean jumped(Display display, Location spot) {
+        Location at = display.getLocation();
+        return !at.getWorld().equals(spot.getWorld()) || at.distanceSquared(spot) > JUMP * JUMP;
     }
 
     /** True while the owner is invisible: the stance label and aura must not give him away. */

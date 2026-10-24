@@ -135,6 +135,12 @@ public final class OdinAbility extends Ability {
     private static final int MAX_DISPLAYS = 24;
     /** Followers of a moving player glide this many ticks, like a client's interpolation of the player. */
     private static final int FOLLOW_GLIDE = 3;
+    /** Displays moved every tick glide this many ticks, so packets that arrive bunched do not make them stutter. */
+    private static final int STEP_GLIDE = 2;
+    /** A follower farther than this from its spot was teleported with its target: it is respawned, never glided. */
+    private static final double JUMP = 2.5;
+    /** How much of the way to its target the spear turns each tick in its last stretch. */
+    private static final double SPEAR_TURN = 0.35;
 
     // the ravens
     private static final double SHOULDER_SIDE = 0.36;
@@ -142,6 +148,8 @@ public final class OdinAbility extends Ability {
     private static final double RAVEN_SPEED = 0.85;
     private static final double CIRCLE_RADIUS = 0.85;
     private static final double CIRCLE_ABOVE = 0.9;
+    /** Radians Muninn turns on its circle each tick. */
+    private static final double CIRCLE_TURN = 0.16;
     private static final long DIVE_TICKS = 5;
     private static final float RAVEN_SCALE = 1.0f;
 
@@ -299,6 +307,11 @@ public final class OdinAbility extends Ability {
         }
 
         private void render(double spread, double flap, int glide, boolean turn) {
+            render(spread, flap, glide, Math.min(2, glide), turn);
+        }
+
+        /** Moves the raven to {@code at} gliding {@code glide} ticks, its pose turning over {@code interpolation}. */
+        private void render(double spread, double flap, int glide, int interpolation, boolean turn) {
             if (ravensHidden) {
                 // Nothing may fly to or perch on an invisible Odin and give him away.
                 for (BlockDisplay part : parts) {
@@ -318,9 +331,32 @@ public final class OdinAbility extends Ability {
                 }
                 Displays.moveTo(part, at);
                 if (turn) {
-                    Displays.animate(part, pose(i, spread, flap), Math.min(2, glide));
+                    Displays.animate(part, pose(i, spread, flap), interpolation);
                 }
             }
+        }
+
+        /**
+         * True if the raven is far from {@code at}, the spot it follows: Odin or the enemy it circles was teleported
+         * (a swap, a pull), and a glide would slide the bird across the whole gap.
+         */
+        private boolean strayed() {
+            for (BlockDisplay part : parts) {
+                if (part.isValid() && jumped(part, at)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** The raven reappears at {@code at} at once (the next render spawns it there) instead of gliding over. */
+        private void snap() {
+            for (BlockDisplay part : parts) {
+                if (part.isValid()) {
+                    part.remove();
+                }
+            }
+            parts.clear();
         }
 
         boolean home() {
@@ -358,6 +394,9 @@ public final class OdinAbility extends Ability {
             switch (state) {
                 case PERCHED -> {
                     at = shoulder();
+                    if (strayed()) {
+                        snap();
+                    }
                     float body = owner.getBodyYaw();
                     // Now and then the raven turns its head to look around.
                     float look = (float) (Math.sin((tick + (right ? 37 : 0)) * 0.05) * 25);
@@ -381,13 +420,15 @@ public final class OdinAbility extends Ability {
                         recall();
                         return;
                     }
-                    Location goal = circleSpot(enemy, tick);
-                    Vector heading = goal.toVector().subtract(at.toVector());
-                    at = goal;
-                    if (heading.lengthSquared() > 1.0E-6) {
-                        yaw = yawOf(heading);
+                    at = circleSpot(enemy, tick);
+                    if (strayed()) {
+                        snap();
                     }
-                    render(1, 30 * Math.sin(tick * 0.9), 1, true);
+                    // It faces along its circle, never along the step since the last tick: the enemy's server
+                    // position advances 0, 1 or 2 moves a tick, and a heading from that would flip the bird around.
+                    // It glides like the remote player it circles.
+                    yaw = circleYaw(tick);
+                    render(1, 30 * Math.sin(tick * 0.9), FOLLOW_GLIDE, 1, true);
                     if (tick % 4 == 0 && !ravensHidden) {
                         Vfx.dot(at, Particle.DUST, RAVEN_DUST, false);
                     }
@@ -414,9 +455,14 @@ public final class OdinAbility extends Ability {
                 }
                 case RETURNING -> {
                     Location goal = shoulder();
-                    if (fly(goal, tick) < 0.35 || age > 60) {
+                    double left = fly(goal, tick);
+                    if (left < 0.35 || age > 60) {
                         state = State.PERCHED;
                         at = goal;
+                        if (left >= 0.35) {
+                            // Called home before it got there: it lands on the shoulder at once, not in a slide.
+                            snap();
+                        }
                         render(0, 0, FOLLOW_GLIDE, true);
                         if (!ravensHidden) {
                             Fx.sound(at, Sound.ENTITY_PARROT_STEP, 0.6f, 1.0f);
@@ -445,10 +491,19 @@ public final class OdinAbility extends Ability {
             return Math.max(0, distance - RAVEN_SPEED);
         }
 
+        private double circleAngle(long tick) {
+            return tick * CIRCLE_TURN + (right ? Math.PI : 0);
+        }
+
         private Location circleSpot(LivingEntity enemy, long tick) {
-            double angle = tick * 0.16 + (right ? Math.PI : 0);
+            double angle = circleAngle(tick);
             return Displays.unrotated(enemy.getLocation().add(Math.cos(angle) * CIRCLE_RADIUS,
                     enemy.getHeight() + CIRCLE_ABOVE + Math.sin(tick * 0.2) * 0.12, Math.sin(angle) * CIRCLE_RADIUS));
+        }
+
+        /** The way the circle runs at {@code tick} (its tangent): the angle grows, so the bird faces the angle. */
+        private float circleYaw(long tick) {
+            return (float) Math.toDegrees(circleAngle(tick) % TAU);
         }
 
         Location location() {
@@ -689,14 +744,26 @@ public final class OdinAbility extends Ability {
     private final class Mark {
 
         private final LivingEntity enemy;
-        private final @Nullable TextDisplay rune;
-        private final Set<UUID> hiddenFrom = new HashSet<>();
+        private final String glyph;
+        private @Nullable TextDisplay rune;
 
         Mark(LivingEntity enemy, Player owner) {
             this.enemy = enemy;
-            String glyph = RUNES[ThreadLocalRandom.current().nextInt(RUNES.length)];
-            TextDisplay display = keep(Displays.spawn(ctx(), owner, spot(enemy), TextDisplay.class,
-                    Math.max(1, params().ticks("sight_time")) + 10, d -> {
+            this.glyph = RUNES[ThreadLocalRandom.current().nextInt(RUNES.length)];
+            this.rune = spawnRune(owner);
+            if (!isHidden(owner, enemy)) {
+                Vfx.cloud(ctx(), spot(enemy), Particle.ENCHANT, 6, 0.2, 0.3, null, false);
+            }
+        }
+
+        /**
+         * The rune over the enemy, shown to Odin, his allies and spectators. The viewers are filtered inside the
+         * spawn, so no enemy's client ever receives it; the match asks them again as sides change and players fall.
+         */
+        private TextDisplay spawnRune(Player owner) {
+            long life = Math.max(1, sightUntil - ctx().currentTick()) + 10;
+            TextDisplay display = keep(Displays.spawn(ctx(), owner, spot(enemy), TextDisplay.class, life,
+                    Displays.ownerAndAllies(ctx(), owner).or(Displays.spectators(ctx())), d -> {
                         d.text(Text.mm("<b><" + GOLD_TAG + ">" + glyph + "</" + GOLD_TAG + "></b>"));
                         d.setBillboard(Display.Billboard.CENTER);
                         d.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
@@ -706,29 +773,11 @@ public final class OdinAbility extends Ability {
                         d.setTransformation(Displays.centered(0, 0, 0, 1.4f, 1.4f, 1.4f, 0, 0, 0));
                     }));
             display.setTeleportDuration(FOLLOW_GLIDE);
-            this.rune = display;
-            hideFromEnemies(owner);
-            if (!isHidden(owner, enemy)) {
-                Vfx.cloud(ctx(), spot(enemy), Particle.ENCHANT, 6, 0.2, 0.3, null, false);
-            }
+            return display;
         }
 
         private Location spot(LivingEntity target) {
             return Displays.unrotated(target.getLocation().add(0, target.getHeight() + MARK_ABOVE, 0));
-        }
-
-        /** Hidden from every enemy of Odin's; re-checked as players join or switch sides. */
-        private void hideFromEnemies(Player owner) {
-            TextDisplay display = rune;
-            if (display == null) {
-                return;
-            }
-            for (Player online : Bukkit.getOnlinePlayers()) {
-                if (!online.equals(owner) && ctx().isEnemy(owner, online)
-                        && hiddenFrom.add(online.getUniqueId())) {
-                    online.hideEntity(ctx().plugin(), display);
-                }
-            }
         }
 
         void follow(Player owner, long tick) {
@@ -736,8 +785,14 @@ public final class OdinAbility extends Ability {
             if (display == null || !display.isValid()) {
                 return;
             }
-            hideFromEnemies(owner);
-            Displays.moveTo(display, spot(enemy));
+            Location spot = spot(enemy);
+            if (jumped(display, spot)) {
+                // The enemy was teleported: its rune reappears over it at once instead of sliding across.
+                display.remove();
+                rune = reserve(1) ? spawnRune(owner) : null;
+                return;
+            }
+            Displays.moveTo(display, spot);
             if (tick % 10 == 0) {
                 Vfx.dot(spot(enemy).add(0, -0.25, 0), Particle.DUST, GOLD_SMALL, false);
             }
@@ -855,7 +910,7 @@ public final class OdinAbility extends Ability {
                 parts.add(keep(Displays.block(ctx(), owner, tip, SPEARHEAD.createBlockData(), headPose(0.2f), life)));
                 parts.add(keep(Displays.block(ctx(), owner, tip, COLLAR.createBlockData(), collarPose(0.2f), life)));
                 for (BlockDisplay part : parts) {
-                    part.setTeleportDuration(1);
+                    part.setTeleportDuration(STEP_GLIDE);
                     part.setViewRange(2.5f);
                 }
                 Displays.outline(parts.get(0), GOLD);
@@ -1015,7 +1070,7 @@ public final class OdinAbility extends Ability {
             for (int i = 0; i < 3 && reserve(1); i++) {
                 TextDisplay rune = keep(Displays.text(ctx(), owner, body, Text.mm("<b><" + GOLD_TAG + ">" + RUNES[i]
                         + "</" + GOLD_TAG + "></b>"), 1.1f, windowTicks() + slack + 10));
-                rune.setTeleportDuration(1);
+                rune.setTeleportDuration(STEP_GLIDE);
                 rune.setSeeThrough(true);
                 rune.setViewRange(2.0f);
                 ring.add(rune);
@@ -1060,10 +1115,12 @@ public final class OdinAbility extends Ability {
             } else {
                 step = distance / Math.max(1, impactAt - now);
             }
-            if (distance > 1.0E-6) {
-                heading = toTarget.clone().multiply(1 / distance);
-            }
-            tip = Displays.unrotated(tip.clone().add(heading.clone().multiply(Math.min(step, distance))));
+            Vector desired = distance > 1.0E-6 ? toTarget.clone().multiply(1 / distance) : heading.clone();
+            // The spear flies straight at its target but turns to it smoothly: a moving player's server position
+            // steps unevenly, and re-aiming the long shaft at it every tick would swing it back and forth.
+            Vector turned = heading.clone().multiply(1 - SPEAR_TURN).add(desired.clone().multiply(SPEAR_TURN));
+            heading = turned.lengthSquared() > 1.0E-6 ? turned.normalize() : desired.clone();
+            tip = Displays.unrotated(tip.clone().add(desired.multiply(Math.min(step, distance))));
             pose();
             double left = Math.max(0, impactAt - now) / (double) Math.max(1, impactAt - flashAt);
             double radius = 0.7 + 0.8 * left;
@@ -1337,5 +1394,11 @@ public final class OdinAbility extends Ability {
 
     private static boolean concealed(Player owner) {
         return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
+    }
+
+    /** True if {@code display} is far from {@code spot}: what it follows was teleported, a glide would slide across. */
+    private static boolean jumped(Display display, Location spot) {
+        Location at = display.getLocation();
+        return !at.getWorld().equals(spot.getWorld()) || at.distanceSquared(spot) > JUMP * JUMP;
     }
 }

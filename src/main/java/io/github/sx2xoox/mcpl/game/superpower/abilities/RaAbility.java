@@ -132,6 +132,8 @@ public final class RaAbility extends Ability {
     /** Display entities this ability keeps alive at once (optional pieces are skipped beyond it). */
     private static final int MAX_DISPLAYS = 24;
     private static final int FOLLOW_GLIDE = 3;
+    /** A follower farther than this from its spot was teleported with its target: it is respawned, never glided. */
+    private static final double JUMP = 2.5;
     private static final Display.Brightness DIM = new Display.Brightness(5, 5);
 
     // the passive
@@ -141,6 +143,8 @@ public final class RaAbility extends Ability {
     private static final float DISC_SIZE = 0.42f;
     /** How far the disc leans towards the sun's side of the sky. */
     private static final double DISC_LEAN = 0.45;
+    /** Degrees the disc turns each tick (it is posed every 10 ticks, a 15 degree step). */
+    private static final double DISC_TURN = 1.5;
 
     // the active
     /** The sun's elevation in the morning and the evening (degrees above the horizon). */
@@ -310,6 +314,13 @@ public final class RaAbility extends Ability {
         Vector toward = sun().toward();
         Location at = Displays.unrotated(owner.getLocation().add(toward.getX() * DISC_LEAN, owner.getHeight()
                 + DISC_ABOVE, toward.getZ() * DISC_LEAN));
+        if (!disc.isEmpty() && jumped(disc.getFirst(), at)) {
+            // Ra was teleported: the disc reappears over his head at once instead of sliding across the gap.
+            for (BlockDisplay plate : disc) {
+                plate.remove();
+            }
+            disc.clear();
+        }
         if (disc.isEmpty()) {
             if (!reserve(2)) {
                 return;
@@ -349,10 +360,14 @@ public final class RaAbility extends Ability {
         }
     }
 
-    /** Plate {@code index} of the disc (0 gold square, 1 amber square turned 45 degrees), in the camera's frame. */
+    /**
+     * Plate {@code index} of the disc (0 gold square, 1 amber square turned 45 degrees), in the camera's frame. Its
+     * turn wraps after exactly one full turn: a wrap at any other angle would make the client spin it back the short
+     * way.
+     */
     private static Transformation discPose(int index, boolean open, long tick) {
         float size = (open ? DISC_SIZE : DISC_SIZE * 0.65f) * (index == 0 ? 1f : 0.82f);
-        float roll = (index == 0 ? 0 : 45) + (tick % 360) * 1.5f;
+        float roll = (index == 0 ? 0 : 45) + (float) ((tick * DISC_TURN) % 360);
         return Displays.transform(0, 0, index * 0.01f, size, size, 0.02f, 0, 0, roll);
     }
 
@@ -405,7 +420,8 @@ public final class RaAbility extends Ability {
                             .createBlockData(), Displays.transform(0, 0, i * 0.01f, 0.05f, 0.05f, 0.02f, 0, 0, i * 45f),
                             delay + 10));
                     plate.setBillboard(Display.Billboard.CENTER);
-                    plate.setTeleportDuration(1);
+                    // It hangs by a moving target, moved every tick: it glides like the client's view of it.
+                    plate.setTeleportDuration(FOLLOW_GLIDE);
                     plate.setViewRange(2.0f);
                     Displays.animateNextTick(ctx(), owner, plate, Displays.transform(0, 0, i * 0.01f, 0.6f, 0.6f, 0.02f,
                             0, 0, i * 45f + 30f), (int) Math.min(8, delay));
@@ -920,5 +936,11 @@ public final class RaAbility extends Ability {
     /** True while Ra is invisible: his sun disc and its light must not give him away. */
     private static boolean concealed(Player owner) {
         return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
+    }
+
+    /** True if {@code display} is far from {@code spot}: what it follows was teleported, a glide would slide across. */
+    private static boolean jumped(Display display, Location spot) {
+        Location at = display.getLocation();
+        return !at.getWorld().equals(spot.getWorld()) || at.distanceSquared(spot) > JUMP * JUMP;
     }
 }
