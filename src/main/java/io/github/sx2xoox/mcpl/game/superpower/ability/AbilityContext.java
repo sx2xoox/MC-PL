@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.superpower.ability;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.function.Predicate;
 
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
@@ -17,6 +18,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -171,6 +173,114 @@ public interface AbilityContext {
     default double effectScale() {
         return 1.0;
     }
+
+    // ------------------------------------------------------------------ prompts (one channel per player)
+
+    /**
+     * Puts {@code prompt} on {@code target}'s prompt channel for {@code owner}: shown at once if nothing is on the
+     * target's screen (or only a lower-priority prompt, which is pushed back), otherwise queued by priority. See
+     * {@link Prompt} for the whole contract: the answer window starts when the prompt is <em>shown</em>
+     * ({@link Prompt.Builder#onShown}), a prompt that waited too long ends {@link PromptEndReason#UNSEEN} and must have
+     * no consequence, and {@link Prompt.Builder#onEnd} always runs exactly once.
+     *
+     * <p>While a prompt is shown the channel owns the target's action bar: it re-sends the prompt's line every few
+     * ticks, so another action-bar message (an ability's status line, the border warning) flashes over it for at most
+     * a quarter of a second and can never hide it for good. Abilities that write other players' action bars can skip
+     * them while {@link #hasShownPrompt} is true.
+     *
+     * <p>The callbacks run like the owner's other code (an ultimate's prompt counts as the ultimate). The owner's
+     * prompts end with {@link PromptEndReason#OWNER_REVOKED} when its ability is revoked, the target's with
+     * {@link PromptEndReason#TARGET_LEFT} when it leaves play, all with {@link PromptEndReason#MATCH_END} at the end.
+     * A prompt for a target that is not in play (or from an owner that is out) ends right away, before this returns.
+     *
+     * @param owner  the player whose ability asks (may be {@code target} itself, for a vow or a chant of its own)
+     * @param target the player who must read and react
+     * @return the prompt's handle (already ended if it was refused)
+     */
+    PromptHandle prompt(Player owner, Player target, Prompt prompt);
+
+    /** True while a prompt is on {@code player}'s screen (the channel owns the action bar). */
+    boolean hasShownPrompt(Player player);
+
+    /**
+     * Extra ticks to allow when judging how {@code player} reacted: the server hears an input about one round trip
+     * after it showed something. {@code 1 + ceil(ping / 50 ms)}, the ping clamped to 0..350 ms, so 1 to 8 ticks.
+     * Add it to every reaction window and grace period (prompt answers, rules judged by input).
+     */
+    int reactionSlackTicks(Player player);
+
+    // ------------------------------------------------------------------ voluntary input
+
+    /**
+     * The tick ({@link #currentTick()}) {@code player}'s client last pressed {@code key} (released → held), or -1 if
+     * it never did during this match. Recorded from every {@link org.bukkit.event.player.PlayerInputEvent}, so quick
+     * taps between two ticks are not missed. Rules judge such voluntary input, never position or velocity (abilities
+     * push players around); {@code abilities.kit.Inputs} builds the usual checks on this.
+     */
+    long lastPressTick(Player player, InputKey key);
+
+    /** The tick {@code player}'s client last released {@code key} (held → released), or -1. */
+    long lastReleaseTick(Player player, InputKey key);
+
+    /** The tick {@code player} last swung an arm (an attack or a click, {@code PlayerArmSwingEvent}), or -1. */
+    long lastSwingTick(Player player);
+
+    /**
+     * The tick {@code player} was last moved by something else, or -1: a velocity the server gave it (an ability's
+     * push, launch or pull, kit {@code Motion}, vanilla knockback, explosions; anything at least 0.1 blocks per tick,
+     * stopping a player does not count), vanilla knockback and every teleport that changed its position except its own
+     * ender pearls and chorus fruit. Velocities set through {@link #setVoluntaryVelocity} do not count.
+     */
+    long lastDisplacedTick(Player player);
+
+    /** True if {@code player} was displaced (see {@link #lastDisplacedTick}) within the last {@code withinTicks}. */
+    boolean wasDisplaced(Player player, long withinTicks);
+
+    /**
+     * Sets {@code target}'s velocity for movement its own input asked for (a hop the target made with the jump key, a
+     * walk an ability redirects or reverses): unlike any other velocity change it does not count as displacement, so
+     * input rules still judge the target. Everything else (pushes, pulls, knockback) uses {@code setVelocity} or kit
+     * {@code Motion} as usual.
+     */
+    void setVoluntaryVelocity(Player target, Vector velocity);
+
+    /**
+     * True while hard crowd control applied through {@link #addModifier} locks {@code player}'s movement: a modifier
+     * that cuts {@link Attribute#MOVEMENT_SPEED} by 90% or more (multiplicative or scalar), the usual stun, root, prison
+     * or hold. Players under it are exempt from movement rules.
+     *
+     * @param ignoring modifiers this player added do not count (a rule owner's own lock, e.g. the jiangshi talisman
+     *                 that leaves only input-driven hops); null counts everyone's
+     */
+    boolean isMovementLocked(Player player, @Nullable Player ignoring);
+
+    /** Like {@link #isMovementLocked} for {@link Attribute#JUMP_STRENGTH} (jump rules). */
+    boolean isJumpLocked(Player player, @Nullable Player ignoring);
+
+    // ------------------------------------------------------------------ per-viewer visibility
+
+    /**
+     * Makes {@code entity} (a display, a marker; never a player) visible only to the players {@code viewers} accepts.
+     * It is hidden by default ({@code setVisibleByDefault(false)}) and shown per viewer ({@code showEntity}), so players
+     * who join or rejoin never see it unless accepted; the match asks {@code viewers} again every few ticks and right
+     * away when someone joins, leaves or is eliminated, so a changing answer (an ally who is eliminated, a viewer who
+     * starts spectating) is followed. Call it in the tick the entity spawned, before the server sends it to anyone.
+     * Calling it again replaces the filter. It stops when the entity is removed or the owner's ability is revoked (the
+     * entity then stays as it is: tracked entities are removed with the owner anyway). Kit {@code Displays.onlyFor} is
+     * the usual way in.
+     */
+    void showOnlyTo(Player owner, Entity entity, Predicate<? super Player> viewers);
+
+    /**
+     * True if {@code viewer} cannot see {@code target}, so nothing should give away where it is: the target is hidden
+     * from the viewer ({@code hidePlayer}/{@code hideEntity}, kit {@code Stealth}), or it is invisible (effect or flag)
+     * and the viewer is an opponent in play (allies and spectators still see invisible players). Never true for the
+     * target itself.
+     */
+    boolean isConcealedFrom(LivingEntity target, Player viewer);
+
+    /** True for a player watching the match without being in play (an eliminated participant or a spectator). */
+    boolean isSpectator(Player player);
 
     // ------------------------------------------------------------------ owner-scoped resources
 

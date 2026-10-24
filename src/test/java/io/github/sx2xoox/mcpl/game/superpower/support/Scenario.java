@@ -328,7 +328,24 @@ public final class Scenario implements AutoCloseable {
         place(ally(), 1.3, 3.0, 180);
     }
 
-    /** Teleports {@code player} onto the floor at (x, z), looking horizontally at {@code yaw}, standing still. */
+    /**
+     * The scenario's players who can see {@code entity} right now (per-viewer visibility: {@code hideEntity}, displays
+     * hidden by default and shown per viewer, see {@code Displays.onlyFor}).
+     */
+    public List<TestPlayer> seenBy(Entity entity) {
+        List<TestPlayer> viewers = new ArrayList<>();
+        for (TestPlayer player : all()) {
+            if (player.canSee(entity)) {
+                viewers.add(player);
+            }
+        }
+        return viewers;
+    }
+
+    /**
+     * Teleports {@code player} onto the floor at (x, z), looking horizontally at {@code yaw}, standing still. Like any
+     * teleport that moves a player, it displaces the player for input rules ({@code Inputs.DISPLACED_TICKS}).
+     */
     public void place(Player player, double x, double z, float yaw) {
         place(player, x, FlatWorld.SURFACE, z, yaw, 0);
     }

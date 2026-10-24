@@ -20,6 +20,9 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The bookkeeping lives here so the owner is always shown again: call {@link #end} when the stealth breaks and
  * from {@code onRevoke}. A newer {@link #begin} supersedes the expiry of an older one.
+ *
+ * <p>Anything that would give away where a player is (a marker over its head, a prompt's overhead text) checks
+ * {@link AbilityContext#isConcealedFrom} per viewer; the prompt channel does so for its overhead texts.
  */
 public final class Stealth {
 

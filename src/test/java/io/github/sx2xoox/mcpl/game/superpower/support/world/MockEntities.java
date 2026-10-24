@@ -46,7 +46,9 @@ import org.mockbukkit.mockbukkit.inventory.EntityEquipmentMock;
  *
  * <p>What they add: {@code damage(double, DamageSource)} through {@link DamageSimulation} (MockBukkit throws for
  * non-players), body yaw, {@code lookAt}, line of sight, display billboards, arrow colours, the mob flags summons
- * set while spawning, and a recording {@link Pathfinder}.
+ * set while spawning, a recording {@link Pathfinder}, and {@code setVisibleByDefault}/{@code isVisibleByDefault}
+ * with Paper's reset of every viewer (see {@link EntityViewer}; {@code TestPlayer} keeps the per-viewer state, so
+ * {@code viewer.canSee(entity)} answers who sees what).
  */
 public final class MockEntities {
 
@@ -118,6 +120,21 @@ public final class MockEntities {
         public TestWolf(ServerMock server, UUID uuid) {
             super(server, uuid);
             VanillaAttributes.completeMob(attributes, 4.0);
+        }
+
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
         }
 
         @Override
@@ -233,6 +250,21 @@ public final class MockEntities {
         public TestIronGolem(ServerMock server, UUID uuid) {
             super(server, uuid);
             VanillaAttributes.completeMob(attributes, 15.0);
+        }
+
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
         }
 
         @Override
@@ -359,6 +391,21 @@ public final class MockEntities {
         public TestMannequin(ServerMock server, UUID uuid) {
             super(server, uuid);
             VanillaAttributes.completeLiving(attributes);
+        }
+
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
         }
 
         @Override
@@ -539,6 +586,21 @@ public final class MockEntities {
             super(server, uuid);
         }
 
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
+        }
+
         @Override
         public Display.Billboard getBillboard() {
             return billboard;
@@ -589,6 +651,21 @@ public final class MockEntities {
 
         public TestBlockDisplay(ServerMock server, UUID uuid) {
             super(server, uuid);
+        }
+
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
         }
 
         @Override
@@ -643,6 +720,21 @@ public final class MockEntities {
             super(server, uuid);
         }
 
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
+        }
+
         @Override
         public Display.Billboard getBillboard() {
             return billboard;
@@ -675,6 +767,21 @@ public final class MockEntities {
 
         public TestArrow(ServerMock server, UUID uuid) {
             super(server, uuid);
+        }
+
+        private boolean visibleByDefault = true;
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
         }
 
         @Override

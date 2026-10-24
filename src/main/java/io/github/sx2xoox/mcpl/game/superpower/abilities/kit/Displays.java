@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities.kit;
 
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext;
 import net.kyori.adventure.text.Component;
@@ -9,6 +10,7 @@ import org.bukkit.Location;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
@@ -37,6 +39,8 @@ import org.jspecify.annotations.Nullable;
  * {@link #transform} center the shape on the entity location. Item and text displays are already centered.
  * Spawned displays are tracked through {@link AbilityContext#track} (removed when the owner's ability is revoked or
  * the match ends) and additionally removed after {@code lifetimeTicks}.
+ *
+ * <p>Displays only some players may see (owner-only overlays, allies-only markers) go through {@link #onlyFor}.
  */
 public final class Displays {
 
@@ -173,6 +177,44 @@ public final class Displays {
                 display.remove();
             }
         });
+    }
+
+    // ------------------------------------------------------------------ per-viewer visibility
+
+    /**
+     * Makes {@code entity} visible only to the players {@code viewers} accepts (an owner-only overlay, an allies-only
+     * marker) and returns it. It is hidden by default and shown per viewer, so a player who joins or rejoins later
+     * never sees it unless accepted, and the match asks {@code viewers} again every few ticks and whenever someone
+     * joins, leaves or is eliminated (see {@link AbilityContext#showOnlyTo}). Call it right after spawning, in the same
+     * tick:
+     * <pre>{@code
+     * TextDisplay hint = Displays.ownerOnly(ctx(), player(),
+     *         Displays.text(ctx(), player(), at, Text.mm("<gray>약점</gray>"), 0.6f, 60));
+     * BlockDisplay mark = Displays.onlyFor(ctx(), player(), Displays.block(...),
+     *         Displays.ownerAndAllies(ctx(), player()).or(Displays.spectators(ctx())));
+     * }</pre>
+     * Use this instead of {@code hideEntity} loops; never combine both on one entity. Keep owner-only information
+     * rare: public displays are the default.
+     */
+    public static <T extends Entity> T onlyFor(AbilityContext ctx, Player owner, T entity,
+                                               Predicate<? super Player> viewers) {
+        ctx.showOnlyTo(owner, entity, viewers);
+        return entity;
+    }
+
+    /** {@link #onlyFor} the owner alone. */
+    public static <T extends Entity> T ownerOnly(AbilityContext ctx, Player owner, T entity) {
+        return onlyFor(ctx, owner, entity, viewer -> viewer.equals(owner));
+    }
+
+    /** Viewers: the owner and its allies in play (only the owner in free-for-all). */
+    public static Predicate<Player> ownerAndAllies(AbilityContext ctx, Player owner) {
+        return viewer -> viewer.equals(owner) || ctx.isAlly(owner, viewer);
+    }
+
+    /** Viewers: everyone watching without being in play (eliminated participants, spectators, the stream). */
+    public static Predicate<Player> spectators(AbilityContext ctx) {
+        return ctx::isSpectator;
     }
 
     /** Gives {@code display} a colored outline visible through walls (use sparingly: telegraphs, key objects). */

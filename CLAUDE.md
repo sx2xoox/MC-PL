@@ -49,5 +49,8 @@ docs/                          game design docs (Korean), the source of truth fo
 - Every balance number lives in `AbilityInfo` params (seconds, blocks, health points), never hard-coded.
 - Abilities break terrain only through `AbilityContext#breakBlocks` / `breakBlocksAlong` (temporary removal via
   `TempBlockService`, map worlds only by default, restored at match end); never set blocks directly.
+- Lines another player must read and answer (riddles, questions, rules) go through `AbilityContext#prompt`, never raw
+  titles/action bars (the window starts when shown; never punish an `UNSEEN`/`INTERRUPTED` prompt); rules on what a
+  player does judge voluntary input via kit `Inputs` (ping slack, exemptions), never position or velocity.
 - Prefer modern API: data components (`DataComponentTypes`), `Attribute` modifiers keyed by `NamespacedKey`,
   display entities for visuals, `DamageSource.builder`, Adventure components/titles/boss bars.

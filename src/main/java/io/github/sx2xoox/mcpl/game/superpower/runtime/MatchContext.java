@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import io.github.sx2xoox.mcpl.core.Hub;
@@ -20,9 +21,14 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
+import io.github.sx2xoox.mcpl.game.superpower.ability.InputKey;
+import io.github.sx2xoox.mcpl.game.superpower.ability.Prompt;
+import io.github.sx2xoox.mcpl.game.superpower.ability.PromptEndReason;
+import io.github.sx2xoox.mcpl.game.superpower.ability.PromptHandle;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.FluidCollisionMode;
+import org.bukkit.Input;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
@@ -43,6 +49,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
@@ -52,7 +59,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * The {@link AbilityContext} of one superpower match, shared by all abilities. Owns everything abilities create
  * (owner-scoped tasks, tracked entities, summons, tagged projectiles and attribute modifiers) and releases it on
- * revoke and at the end of the match. See {@link AbilityContext} for the contracts.
+ * revoke and at the end of the match. It also hosts the {@link PromptChannel}, the players' voluntary input and
+ * displacement ({@link InputTracker}) and the per-viewer entity filters ({@link ViewerFilters}). See
+ * {@link AbilityContext} for the contracts.
  */
 public final class MatchContext implements AbilityContext {
 
@@ -97,16 +106,43 @@ public final class MatchContext implements AbilityContext {
         final LivingEntity target;
         final Attribute attribute;
         final @Nullable UUID scopeOwner;
+        /** The owner whose ability added it. */
+        final UUID addedBy;
+        final double amount;
+        final AttributeModifier.Operation operation;
         @Nullable BukkitTask expiry;
 
-        ModifierRecord(NamespacedKey key, LivingEntity target, Attribute attribute, @Nullable UUID scopeOwner) {
+        ModifierRecord(NamespacedKey key, LivingEntity target, Attribute attribute, @Nullable UUID scopeOwner,
+                       UUID addedBy, double amount, AttributeModifier.Operation operation) {
             this.key = key;
             this.targetId = target.getUniqueId();
             this.target = target;
             this.attribute = attribute;
             this.scopeOwner = scopeOwner;
+            this.addedBy = addedBy;
+            this.amount = amount;
+            this.operation = operation;
+        }
+
+        /** True for hard crowd control: the attribute cut by {@link #LOCKING_CUT} or more. */
+        boolean locks() {
+            return (operation == AttributeModifier.Operation.MULTIPLY_SCALAR_1
+                    || operation == AttributeModifier.Operation.ADD_SCALAR) && amount <= -LOCKING_CUT;
         }
     }
+
+    /** A movement or jump modifier at least this strong (−90%) locks it ({@link #isMovementLocked}). */
+    static final double LOCKING_CUT = 0.9;
+    /** Ping beyond this many milliseconds earns no more {@link #reactionSlackTicks reaction slack}. */
+    static final int MAX_SLACK_PING = 350;
+    /** Per-viewer filters are asked again this often (and on joins, quits and eliminations). */
+    static final long VIEW_REFRESH_TICKS = 5;
+    /** Failures of the context's own services (prompt channel, viewer filters) are logged under this name. */
+    private static final String RUNTIME = "runtime";
+
+    private final InputTracker inputs = new InputTracker();
+    private final ViewerFilters views;
+    private final PromptChannel prompts;
 
     MatchContext(SuperpowerMatch match) {
         this.match = match;
@@ -115,6 +151,8 @@ public final class MatchContext implements AbilityContext {
         this.guard = match.guard();
         this.nonce = Long.toString(ThreadLocalRandom.current().nextLong(1L << 40), 36);
         this.terrainFx = new TerrainFx(session);
+        this.views = new ViewerFilters(hub.plugin(), guard);
+        this.prompts = new PromptChannel(match, this);
     }
 
     // =================================================================== basics
@@ -475,6 +513,147 @@ public final class MatchContext implements AbilityContext {
         return match.settings().particleScale();
     }
 
+    // =================================================================== prompts
+
+    @Override
+    public PromptHandle prompt(Player owner, Player target, Prompt prompt) {
+        return prompts.submit(owner, target, prompt);
+    }
+
+    @Override
+    public boolean hasShownPrompt(Player player) {
+        return prompts.hasShown(player);
+    }
+
+    @Override
+    public int reactionSlackTicks(Player player) {
+        return reactionSlack(player.getPing());
+    }
+
+    /** {@code 1 + ceil(ping / 50 ms)} with the ping clamped to {@code 0..}{@link #MAX_SLACK_PING}. */
+    static int reactionSlack(int pingMillis) {
+        int ping = Math.clamp(pingMillis, 0, MAX_SLACK_PING);
+        return 1 + (ping + 49) / 50;
+    }
+
+    // =================================================================== voluntary input
+
+    @Override
+    public long lastPressTick(Player player, InputKey key) {
+        return inputs.lastPress(player.getUniqueId(), key);
+    }
+
+    @Override
+    public long lastReleaseTick(Player player, InputKey key) {
+        return inputs.lastRelease(player.getUniqueId(), key);
+    }
+
+    @Override
+    public long lastSwingTick(Player player) {
+        return inputs.lastSwing(player.getUniqueId());
+    }
+
+    @Override
+    public long lastDisplacedTick(Player player) {
+        return inputs.lastDisplaced(player.getUniqueId());
+    }
+
+    @Override
+    public boolean wasDisplaced(Player player, long withinTicks) {
+        long at = inputs.lastDisplaced(player.getUniqueId());
+        return at >= 0 && currentTick() - at <= withinTicks;
+    }
+
+    @Override
+    public void setVoluntaryVelocity(Player target, Vector velocity) {
+        inputs.expectVoluntary(target.getUniqueId(), velocity, currentTick());
+        target.setVelocity(velocity);
+    }
+
+    @Override
+    public boolean isMovementLocked(Player player, @Nullable Player ignoring) {
+        return isLocked(player, Attribute.MOVEMENT_SPEED, ignoring);
+    }
+
+    @Override
+    public boolean isJumpLocked(Player player, @Nullable Player ignoring) {
+        return isLocked(player, Attribute.JUMP_STRENGTH, ignoring);
+    }
+
+    private boolean isLocked(Player player, Attribute attribute, @Nullable Player ignoring) {
+        UUID id = player.getUniqueId();
+        UUID ignored = ignoring == null ? null : ignoring.getUniqueId();
+        for (ModifierRecord record : modifiers.values()) {
+            if (record.attribute == attribute && record.targetId.equals(id) && !record.addedBy.equals(ignored)
+                    && record.locks()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Input from a client ({@link MatchListener}). */
+    void recordInput(Player player, Input input) {
+        inputs.input(player, input, currentTick());
+    }
+
+    void recordSwing(Player player) {
+        inputs.swing(player.getUniqueId(), currentTick());
+    }
+
+    /** The server sends {@code player} a velocity (pushes, launches, knockback; voluntary ones are recognised). */
+    void recordVelocity(Player player, Vector velocity) {
+        inputs.velocity(player.getUniqueId(), velocity, currentTick());
+    }
+
+    /** {@code player} was moved by something else (knockback, a teleport). */
+    void recordDisplaced(Player player) {
+        inputs.displaced(player.getUniqueId(), currentTick());
+    }
+
+    // =================================================================== per-viewer visibility
+
+    @Override
+    public void showOnlyTo(Player owner, Entity entity, Predicate<? super Player> viewers) {
+        UUID ownerId = owner.getUniqueId();
+        if (closed || !match.canOwnResources(ownerId)) {
+            // The owner is out: whatever it shows is being removed; never let it flash for everyone meanwhile.
+            views.hideFromAll(entity);
+            return;
+        }
+        views.add(ownerId, match.abilityIdOf(ownerId), entity, viewers);
+    }
+
+    @Override
+    public boolean isConcealedFrom(LivingEntity target, Player viewer) {
+        if (viewer.equals(target)) {
+            return false;
+        }
+        if (!viewer.canSee(target)) {
+            return true;
+        }
+        boolean invisible = target.isInvisible() || target.hasPotionEffect(PotionEffectType.INVISIBILITY);
+        return invisible && session.isInPlay(viewer) && !isAlly(viewer, target);
+    }
+
+    @Override
+    public boolean isSpectator(Player player) {
+        return session.isSpectator(player);
+    }
+
+    ViewerFilters views() {
+        return views;
+    }
+
+    /** A player joined the server: its new client sees no filtered entity until accepted. */
+    void viewerJoined(Player player) {
+        views.joined(player);
+    }
+
+    void viewerQuit(Player player) {
+        views.quit(player);
+    }
+
     // =================================================================== owner-scoped resources
 
     @Override
@@ -546,7 +725,7 @@ public final class MatchContext implements AbilityContext {
             clampHealth(target);
         }
         ModifierRecord record = new ModifierRecord(key, target, attribute,
-                durationTicks > 0 ? null : owner.getUniqueId());
+                durationTicks > 0 ? null : owner.getUniqueId(), owner.getUniqueId(), amount, operation);
         modifiers.put(key, record);
         if (durationTicks > 0) {
             record.expiry = session.runLater(durationTicks, () -> removeModifier(key));
@@ -685,6 +864,41 @@ public final class MatchContext implements AbilityContext {
                 release(tagged.projectile());
             }
         }
+        guard.run(RUNTIME, "prompt channel", () -> prompts.endOwnedBy(owner, PromptEndReason.OWNER_REVOKED));
+        views.releaseOwner(owner);
+    }
+
+    /** One fight tick, after the abilities' own ticks: the prompt channel and the per-viewer filters. */
+    void tickRuntime(long now) {
+        guard.run(RUNTIME, "prompt channel", prompts::tick);
+        if (now % VIEW_REFRESH_TICKS == 0) {
+            guard.run(RUNTIME, "viewer filters", views::refreshAll);
+        }
+    }
+
+    /**
+     * {@code player} left play (eliminated, dead, quit, spectating): the prompts for it end and every filter is asked
+     * again (an eliminated ally may no longer see team markers, a new spectator may see more).
+     */
+    void leftPlay(Player player) {
+        guard.run(RUNTIME, "prompt channel", () -> prompts.endTargeting(player.getUniqueId(),
+                PromptEndReason.TARGET_LEFT));
+        guard.run(RUNTIME, "viewer filters", views::refreshAll);
+    }
+
+    /** The match is ending: every prompt ends with {@link PromptEndReason#MATCH_END} before abilities are revoked. */
+    void matchEnding() {
+        guard.run(RUNTIME, "prompt channel", () -> prompts.endAll(PromptEndReason.MATCH_END));
+    }
+
+    /** Prompts active (shown or waiting) for {@code player} (tests/diagnostics). */
+    int activePrompts(Player player) {
+        return prompts.activeCount(player);
+    }
+
+    /** Number of live per-viewer filters (tests/diagnostics). */
+    int viewerFilterCount() {
+        return views.size();
     }
 
     private void release(Entity entity) {
@@ -705,6 +919,7 @@ public final class MatchContext implements AbilityContext {
 
     /** Releases everything (match end). Later registrations are released immediately. */
     void dispose() {
+        guard.run(RUNTIME, "prompt channel", prompts::dispose);
         closed = true;
         for (UUID owner : List.copyOf(scopes.keySet())) {
             releaseOwner(owner);
@@ -720,6 +935,8 @@ public final class MatchContext implements AbilityContext {
         }
         knockbackSuppressed.clear();
         ultimateEntities.clear();
+        views.dispose();
+        inputs.clear();
     }
 
     /** Forgets entries of entities that died or were removed. */

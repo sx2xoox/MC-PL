@@ -122,7 +122,7 @@ public final class WorldPhysics {
         boolean groundedBefore = isGrounded(living.getBoundingBox());
         if (groundedBefore && velocity.getY() <= 0 && horizontalSquared(velocity) < 1.0E-12) {
             if (velocity.lengthSquared() > 0) {
-                living.setVelocity(new Vector());
+                setVelocity(living, new Vector());
             }
             land(living);
             setOnGround(living, true);
@@ -170,8 +170,17 @@ public final class WorldPhysics {
         vx = tiny(vx * friction);
         vz = tiny(vz * friction);
         vy = tiny(vy);
-        living.setVelocity(new Vector(vx, vy, vz));
+        setVelocity(living, new Vector(vx, vy, vz));
         setOnGround(living, onGround);
+    }
+
+    /** Physics is the entity's own movement: a player's runs on its client and fires no velocity event. */
+    private static void setVelocity(LivingEntity living, Vector velocity) {
+        if (living instanceof ClientMovement client) {
+            client.setClientVelocity(velocity);
+        } else {
+            living.setVelocity(velocity);
+        }
     }
 
     /** Applies (and resets) the accumulated fall distance like vanilla {@code LivingEntity#causeFallDamage}. */

@@ -271,6 +271,9 @@ public final class SuperpowerMatch implements GameInstance {
             reveals.remove(participant.id());
             revoke(participant);
         }
+        if (ctx != null) {
+            ctx.leftPlay(player);
+        }
         if (dummies != null) {
             dummies.remove(player.getUniqueId());
         }
@@ -288,6 +291,9 @@ public final class SuperpowerMatch implements GameInstance {
                 player.setLevel(0);
                 player.setExp(0f);
             }
+        }
+        if (ctx != null) {
+            ctx.leftPlay(player);
         }
         if (killer != null && phase == MatchPhase.FIGHT) {
             Participant credited = participants.get(killer.getUniqueId());
@@ -329,6 +335,10 @@ public final class SuperpowerMatch implements GameInstance {
         }
         stopped = true;
         try {
+            if (ctx != null) {
+                // Before the revokes, so the prompts end as MATCH_END rather than OWNER_REVOKED (never throws).
+                ctx.matchEnding();
+            }
             for (Participant participant : participants.values()) {
                 try {
                     ChoiceMenu menu = participant.menu;
@@ -620,6 +630,10 @@ public final class SuperpowerMatch implements GameInstance {
             if (stopped) {
                 return;
             }
+        }
+        context().tickRuntime(now);
+        if (stopped) {
+            return;
         }
         BorderController zone = border();
         if (zone.tick(now)) {
@@ -1749,6 +1763,9 @@ public final class SuperpowerMatch implements GameInstance {
         Participant participant = participants.get(victim.getUniqueId());
         if (participant != null) {
             revoke(participant);
+        }
+        if (ctx != null) {
+            ctx.leftPlay(victim);
         }
         if (killer != null && phase == MatchPhase.FIGHT) {
             Participant credited = participants.get(killer.getUniqueId());

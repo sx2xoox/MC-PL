@@ -8,7 +8,15 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 
-/** Velocities, knockback and the server-side ground check. */
+/**
+ * Velocities, knockback and the server-side ground check.
+ *
+ * <p>Every velocity given to a player here (or with {@code setVelocity}) counts as displacement for input rules
+ * ({@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#wasDisplaced}, kit {@link Inputs}): the match
+ * sees it through {@code PlayerVelocityEvent}. Movement the target's own keys asked for (a hop on the jump key, a
+ * reversed walk) goes through
+ * {@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#setVoluntaryVelocity} instead.
+ */
 public final class Motion {
 
     /** Vanilla entity gravity per tick. */

@@ -20,8 +20,16 @@
  *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx} — particle shapes (rings, spheres,
  *     helices, lines, arcs, bursts, shockwaves, trails) and palettes, scaled by the configured effect scale.</li>
  *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays} — block/item/text display entities
- *     with glow, lifetime, interpolated animation and centered transformations.</li>
+ *     with glow, lifetime, interpolated animation and centered transformations, and per-viewer visibility
+ *     ({@code onlyFor}: owner-only overlays, allies-only markers, late joiners included).</li>
+ *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Inputs} — voluntary input for rules ("don't
+ *     move", "don't jump", "don't attack"): held keys, presses since a tick, ping slack and the exemptions for players
+ *     under hard crowd control or moved by something else.</li>
  * </ul>
+ *
+ * <p>Lines another player must read and react to (riddles, questions, rules, warnings) go through the match's prompt
+ * channel, {@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#prompt}, never raw titles or action
+ * bars.
  *
  * <p>Everything here runs on the main thread, like the abilities themselves.
  */
