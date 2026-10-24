@@ -72,24 +72,22 @@ public final class ChuuniAbility extends Ability {
             .color(TextColor.color(0x6B2FD6))
             .difficulty(2)
             .passive("사안(邪眼)",
-                    "{eye_range}블록 안의 적 하나를 {eye_time}초 넘게 노려보면(둘 사이에 붉은 시선이 모두에게 보입니다) "
-                            + "\"…간파했다\" — {eye_window}초 안에 그 적에게 주는 다음 피해가 {eye_bonus}% 늘어납니다(최대 "
-                            + "+{eye_bonus_max}). 한 번에 한 명만 간파하며, 시선을 돌리면 쌓이던 시간이 사라집니다.")
+                    "{eye_range}블록 안의 적 하나를 {eye_time}초 넘게 노려보면 간파해, {eye_window}초 안에 그 적에게 "
+                            + "주는 다음 피해가 {eye_bonus}% 늘어납니다(최대 +{eye_bonus_max}). 시선을 돌리면 처음부터 "
+                            + "다시 노려봐야 합니다.")
             .active("봉인 해제 자세",
-                    "붕대 감긴 오른팔을 얼굴 앞에 대고 최대 {stance_time}초 버팁니다(이동 속도 -{stance_slow}%). 그동안 "
-                            + "받는 피해의 {swallow_share}%를 오른팔이 삼키고, 삼킨 양의 {flame_ratio}배가 흑염으로 쌓입니다"
-                            + "(최대 {flame_max}). 웅크리거나 시간이 다 되면 오른팔을 내질러 앞 {strike_range}블록·"
-                            + "{strike_angle}° 부채꼴의 적에게 {strike_base} + 쌓인 흑염만큼 피해를 주고 약 {strike_push}블록 "
-                            + "밀쳐냅니다. 아무것도 삼키지 못했다면 \"…오늘은 봉인이 단단하군\".",
+                    "최대 {stance_time}초간 오른팔을 얼굴 앞에 대고 버팁니다(이동 속도 -{stance_slow}%). 그동안 받는 "
+                            + "피해의 {swallow_share}%를 오른팔이 삼키고 그 {flame_ratio}배를 흑염으로 쌓습니다(최대 "
+                            + "{flame_max}). 웅크리거나 시간이 다 되면 앞 {strike_range}블록·{strike_angle}° 부채꼴의 "
+                            + "적에게 {strike_base} + 흑염만큼 피해를 주고 약 {strike_push}블록 밀쳐냅니다.",
                     10)
             .ultimate("흑염룡 영창",
-                    "{chant_time}초간 세 줄의 영창을 읊습니다(주변에는 머리 위 글자와 액션바로 보입니다). 그동안 내가 "
-                            + "바라보는 땅에 붉은 궤적이 그려집니다(최대 {trail_length}블록). 영창 중 침묵에 걸리거나, "
-                            + "{shy_range}블록 안의 적들이 벽 너머가 아닌 곳에서 나를 정면으로 합쳐 {shy_time}초 넘게 쳐다보면 "
-                            + "\"보, 보지 마…!\" 부끄러워 실패하고 궁극기 게이지 {fail_refund}%를 돌려받습니다. 성공하면 검은 "
-                            + "불꽃의 용이 {dragon_time}초에 걸쳐 궤적을 따라 낮게 날아가 궤적 {dragon_width}블록 안의 적에게 "
-                            + "{dragon_damage} 피해와 {dragon_darkness}초 어둠을 주고(적마다 한 번), 끝에서 내리꽂혀 반경 "
-                            + "{plunge_radius}블록의 적에게 {plunge_damage} 피해를 줍니다. 흑염은 불이 아니라 불타지 않습니다.")
+                    "{chant_time}초간 영창하며 바라보는 땅에 궤적을 그립니다(최대 {trail_length}블록). 그동안 침묵에 "
+                            + "걸리거나 {shy_range}블록 안의 적들이 벽 너머가 아닌 곳에서 나를 정면으로 합쳐 "
+                            + "{shy_time}초 넘게 쳐다보면 실패하고 궁극기 게이지 {fail_refund}%를 돌려받습니다. "
+                            + "성공하면 흑염룡이 {dragon_time}초에 걸쳐 궤적을 날아 {dragon_width}블록 안의 적에게 "
+                            + "{dragon_damage} 피해와 {dragon_darkness}초 어둠을 주고, 끝에서 반경 "
+                            + "{plunge_radius}블록에 {plunge_damage} 피해를 줍니다.")
             .param("eye_range", 16)
             .param("eye_time", 1.5)
             .param("eye_window", 6)

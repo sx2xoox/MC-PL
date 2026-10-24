@@ -69,22 +69,20 @@ public final class JiangshiAbility extends Ability {
             .color(TextColor.color(0xF2C230))
             .difficulty(2)
             .passive("굳은 몸",
-                    "달릴 수 없는 대신 점프할 때마다 바라보는 방향으로 약 {hop_distance}블록 콩 뛰어오릅니다(낙하 피해 "
-                            + "{fall_guard}% 감소). 착지할 때 {landing_radius}블록 안의 적은 {landing_damage} 피해를 받습니다(같은 "
-                            + "적은 {landing_interval}초마다). 숨이 찬 적(달리고 있거나 {breath_window}초 안에 달린 적)에게 주는 "
-                            + "근접 피해가 {breath_bonus}% 늘어납니다. 자연 회복이 꺼지는 대신 강시의 기로 {qi_interval}초마다 "
-                            + "체력을 {qi_heal} 회복합니다.")
+                    "달릴 수 없는 대신 점프하면 바라보는 쪽으로 약 {hop_distance}블록 뛰어오르고, 착지할 때 "
+                            + "{landing_radius}블록 안의 적에게 {landing_damage} 피해를 줍니다. 달리던 적에게 주는 "
+                            + "근접 피해가 {breath_bonus}% 늘고, 자연 회복 대신 {qi_interval}초마다 {qi_heal} "
+                            + "회복합니다.")
             .active("부적 붙이기",
-                    "노란 부적을 날립니다({range}블록). 처음 맞은 적은 {talisman_damage} 피해를 받고 {talisman_seconds}초간 "
-                            + "이마에 부적이 붙어 강시처럼 굳습니다 — 걷거나 달릴 수 없고 점프로만 한 번에 약 {talisman_hop}블록씩 "
-                            + "콩콩 뛰어 움직입니다(공격과 능력은 쓸 수 있음). 빗나가면 쿨타임이 {miss_refund}% 돌아옵니다.",
+                    "부적을 날려({range}블록) 처음 맞은 적에게 {talisman_damage} 피해를 주고 {talisman_seconds}초간 "
+                            + "강시처럼 굳힙니다. 굳은 적은 걷거나 달릴 수 없고 점프로만 약 {talisman_hop}블록씩 "
+                            + "움직입니다(공격과 능력은 가능). 빗나가면 쿨타임이 {miss_refund}% 돌아옵니다.",
                     9)
             .ultimate("숨 참아!",
-                    "{breath_duration}초간 반경 {breath_radius}블록의 숨결을 쫓습니다. {breath_interval}초마다 크게 숨을 "
-                            + "들이켜는데, {breath_warning}초 전에 \"흐읍—\" 소리와 머리 위 경고가 뜹니다. 들이켜는 순간 스스로 "
-                            + "움직이던(이동·점프 키) 적이나 공격하던(휘두르기·능력) 적은 숨결을 들켜 {caught_damage} 피해와 "
-                            + "{caught_talisman}초 부적을 받습니다(적마다 최대 {caught_max}번). 밀려나거나 끌려가는 건 움직임으로 "
-                            + "치지 않고, 가만히 서 있거나 웅크려 멈춘 적은 그냥 지나칩니다.")
+                    "{breath_duration}초간 반경 {breath_radius}블록에서 {breath_interval}초마다 숨을 "
+                            + "들이켭니다({breath_warning}초 전에 예고). 그 순간 스스로 움직이거나 공격하던 적은 "
+                            + "{caught_damage} 피해와 {caught_talisman}초 부적을 받고(적마다 최대 {caught_max}번), "
+                            + "가만히 멈춘 적은 무사합니다.")
             .param("hop_distance", 3)
             .param("fall_guard", 50)
             .param("landing_radius", 1.5)

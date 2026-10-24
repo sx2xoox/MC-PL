@@ -69,25 +69,21 @@ public final class ArcadeAbility extends Ability {
             .color(TextColor.color(0x2F7BFF))
             .difficulty(3)
             .passive("콤보 카운터",
-                    "근접 공격이나 능력 적중을 {combo_window}초 안에 이어 가면 콤보가 쌓여 머리 위에 'N HIT!'가 뜹니다. "
-                            + "{combo_start}히트부터 히트마다 피해가 {combo_step}%씩 늘어나고(최대 {combo_max}%), "
-                            + "{combo_window}초 끊기면 초기화됩니다. 한 콤보가 {excellent_hits}히트에 이르면 "
-                            + "\"EXCELLENT!\" 궁극기 게이지 {excellent_gauge}%.")
+                    "근접 공격이나 능력 적중을 {combo_window}초 안에 이어 가면 콤보가 쌓입니다. {combo_start}히트부터 "
+                            + "히트마다 피해가 {combo_step}%씩 늘어나고(최대 {combo_max}%), 끊기면 초기화됩니다. 한 "
+                            + "콤보가 {excellent_hits}히트에 이르면 궁극기 게이지를 {excellent_gauge}% 얻습니다.")
             .active("커맨드 기술",
-                    "우클릭 직전 {input_window}초 안에 누른 키 순서로 기술이 바뀝니다(액션바에 입력 기록). 웅크리기→점프 "
-                            + "'솟구치는 어퍼': 제자리에서 {upper_height}블록 솟구치며 반경 {upper_radius}블록의 적에게 "
-                            + "{upper_damage} 피해를 주고 띄우며, 솟는 {upper_guard}초간 무적. 뒤→앞 '회오리 발차기': 앞으로 "
-                            + "{spin_distance}블록 회전하며 닿은 적에게 {spin_damage} 피해 두 번. 웅크리기→앞 '발 쓸기': 앞 "
-                            + "{sweep_range}블록·{sweep_angle}°의 적에게 {sweep_damage} 피해를 주고 {sweep_down}초간 "
-                            + "넘어뜨림(움직일 수 없음). 입력 없음: '대시 잽' — {jab_distance}블록 돌진해 처음 닿은 적에게 "
-                            + "{jab_damage} 피해.",
+                    "우클릭 직전 {input_window}초 안에 누른 키 순서로 기술이 바뀝니다. 웅크리기→점프: "
+                            + "{upper_height}블록 솟구치며 반경 {upper_radius}블록의 적에게 {upper_damage} 피해(솟는 "
+                            + "{upper_guard}초간 무적). 뒤→앞: 앞으로 {spin_distance}블록 회전하며 {spin_damage} 피해 "
+                            + "두 번. 웅크리기→앞: 앞 {sweep_range}블록·{sweep_angle}°의 적에게 {sweep_damage} 피해와 "
+                            + "{sweep_down}초 넘어뜨림. 입력 없음: {jab_distance}블록 돌진해 {jab_damage} 피해.",
                     7)
             .ultimate("라운드 원, 파이트!",
-                    "'ROUND 1 — FIGHT!' {round_duration}초간 나와 반경 {round_radius}블록의 적이 지금 내가 바라보는 방향을 "
-                            + "따라 세운 세로면 하나에 고정됩니다(옆으로 비키는 축이 사라지고 바닥에 스테이지 선). 모두 "
-                            + "앞뒤와 위아래로만 움직이는 2D 격투가 됩니다. 그동안 내 콤보는 {round_combo}배로 쌓이고 커맨드 "
-                            + "기술의 재사용 대기시간이 {round_cooldown}% 줄어듭니다. 끝날 때 가장 많이 맞힌 적에게 'K.O.' "
-                            + "{ko_damage} 피해.")
+                    "{round_duration}초간 나와 반경 {round_radius}블록의 적이 내가 바라보는 방향의 세로면 하나에 "
+                            + "고정되어, 옆으로 비킬 수 없는 2D 격투가 됩니다. 그동안 내 콤보는 {round_combo}배로 "
+                            + "쌓이고 커맨드 기술의 재사용 대기시간이 {round_cooldown}% 줄며, 끝날 때 가장 많이 맞힌 "
+                            + "적에게 {ko_damage} 피해를 줍니다.")
             .ultimateNotStandalone()
             .param("combo_window", 1)
             .param("combo_start", 3)

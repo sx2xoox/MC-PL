@@ -94,29 +94,23 @@ public final class MatryoshkaAbility extends Ability {
             .color(TextColor.color(0xC8102E))
             .difficulty(2)
             .passive("겹겹이",
-                    "인형 껍데기 {shells}겹을 두르고 시작해 1겹마다 몸이 커지고(알맹이 {scale_core}배에 1겹마다 "
-                            + "+{scale_step}배) 받는 피해 -{shell_guard}%, 이동 속도 -{shell_slow}%입니다. 한 번에 "
-                            + "{crack_hit} 이상 맞거나 바깥 껍데기에 피해가 {crack_total} 쌓이면 '딱' 갈라져(그 뒤 "
-                            + "{crack_grace}초간 다음 껍데기는 버팀) 반쪽들이 공격받은 쪽 약 {cover_distance}블록 앞에 "
-                            + "{cover_duration}초간 높이 2의 인형 엄폐물로 서고(공격한 쪽이 없거나 보이는 평평한 빈자리가 "
-                            + "없으면 굴러가 사라짐), 껍데기가 없는 알맹이는 이동 속도 +{core_speed}%, 받는 피해 "
-                            + "+{core_weakness}%입니다. {regrow_delay}초간 피해를 받지 않으면 껍데기가 1겹씩 다시 덮입니다"
-                            + "(커질 머리 위 공간이 있을 때).")
+                    "인형 껍데기 {shells}겹이 1겹마다 받는 피해를 {shell_guard}%, 이동 속도를 {shell_slow}% 줄입니다. "
+                            + "한 번에 {crack_hit} 이상 맞거나 피해가 {crack_total} 쌓이면 1겹이 갈라져 엄폐물이 되고, "
+                            + "{regrow_delay}초간 맞지 않으면 다시 덮입니다. 껍데기가 없으면 이동 속도 +{core_speed}%, "
+                            + "받는 피해 +{core_weakness}%입니다.")
             .active("인형 속 인형",
-                    "큰 인형을 조준한 곳({throw_range}블록 이내, 그 너머로는 계속 떨어짐)으로 던져 적이나 땅에 닿으면 "
-                            + "'퐁' 열리며 반경 {big_radius}블록의 적에게 {big_damage} 피해를 주고, 중간 인형이 "
-                            + "{hop_range}블록 안의 다른 적(없으면 같은 적)에게 깡충 뛰어 {middle_damage} 피해를, 가장 작은 "
-                            + "인형이 또 튀어 {small_damage} 피해와 {small_slow_duration}초간 이동 속도 -{small_slow}%를 "
-                            + "줍니다(벽에 막히고, 한 번에 한 적에게 최대 {doll_cap}). 웅크린 채 쓰면 껍데기 1겹을 벗어 "
-                            + "던져(재생 대기도 다시 시작) 큰 인형의 피해와 그 최대치가 {shed_bonus} 늘어납니다.",
+                    "조준한 곳({throw_range}블록 이내)에 큰 인형을 던져 반경 {big_radius}블록의 적에게 {big_damage} "
+                            + "피해를 줍니다. 이어 중간 인형이 {hop_range}블록 안의 다른 적(없으면 같은 적)에게 튀어 "
+                            + "{middle_damage} 피해를, 작은 인형이 {small_damage} 피해와 {small_slow_duration}초간 "
+                            + "이동 속도 -{small_slow}%를 줍니다. 웅크린 채 쓰면 껍데기 1겹을 벗어 던져 큰 인형의 "
+                            + "피해가 {shed_bonus} 늘어납니다.",
                     9)
             .ultimate("처음부터 다시",
-                    "거대한 인형 껍데기가 {drop_delay}초에 걸쳐 머리 위에서 내려와(땅에 그림자로 예고) 나를 덮으며 반경 "
-                            + "{slam_radius}블록의 적에게 {slam_damage} 피해를 주고 약 {slam_push}블록 밀쳐냅니다. 나는 "
-                            + "껍데기 {shells}겹을 되찾고 {gold_duration}초간 금빛 껍데기 1겹을 더 두르며(머리 위 공간이 "
-                            + "모자라면 쓸 수 없고, 그 사이 좁아지면 들어가는 만큼만), 그동안 갈라진 껍데기의 반쪽들은 "
-                            + "엄폐물 대신 {shard_range}블록 안의 가장 가까운 적에게 날아가 하나에 {shard_damage} 피해를 "
-                            + "줍니다(최대 {shard_max}개, 적이 없으면 엄폐물). 끝날 때 남은 금빛 껍데기는 벗겨집니다.")
+                    "{drop_delay}초 뒤 거대한 인형 껍데기가 나를 덮으며 반경 {slam_radius}블록의 적에게 {slam_damage} "
+                            + "피해를 주고 약 {slam_push}블록 밀쳐냅니다. 껍데기 {shells}겹을 되찾고 "
+                            + "{gold_duration}초간 금빛 껍데기 1겹을 더 두르며, 그동안 갈라지는 껍데기 조각은 엄폐물 대신 "
+                            + "{shard_range}블록 안의 가장 가까운 적에게 날아가 하나에 {shard_damage} 피해를 줍니다(최대 "
+                            + "{shard_max}개). 머리 위 공간이 모자라면 쓸 수 없습니다.")
             // The shells, the crack hook and the golden layer all live in the granted passive.
             .ultimateNotStandalone()
             .param("shells", 3)

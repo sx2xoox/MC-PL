@@ -66,19 +66,17 @@ public final class FrogAbility extends Ability {
             .color(TextColor.color(0x7ACC3B))
             .difficulty(2)
             .passive("청개구리 심보",
-                    "근접·투사체에 받는 바닐라 넉백이 거꾸로 작용합니다: 나를 밀쳐내는 공격은 같은 힘의 "
-                            + "{reverse_share}%로 나를 공격자 쪽으로 끌어당깁니다(뒤집힐 때마다 '거꾸로!' 물방울).")
+                    "근접·투사체에 받는 넉백이 거꾸로 작용해, 나를 밀쳐내는 공격은 같은 힘의 {reverse_share}%로 나를 "
+                            + "공격자 쪽으로 끌어당깁니다.")
             .active("거꾸로 개굴",
-                    "{croak_windup}초간 볼을 부풀렸다가 개굴 울며 앞쪽 {croak_range}블록 부채꼴({croak_angle}°)로 거꾸로 "
-                            + "파동을 퍼뜨립니다. 파동에 닿은 적은 {croak_damage} 피해를 입고 {reverse_duration}초간 "
-                            + "청개구리 심보에 걸려, 땅 위에서 이동 조작이 뒤집힙니다(앞↔뒤, 왼쪽↔오른쪽). 걸린 적의 머리 "
-                            + "위에는 뒤집힌 화살표가 떠 모두에게 보입니다.",
+                    "{croak_windup}초 뒤 앞쪽 {croak_range}블록·{croak_angle}° 부채꼴로 파동을 퍼뜨립니다. 닿은 적은 "
+                            + "{croak_damage} 피해를 입고 {reverse_duration}초간 땅 위에서 이동 조작이 "
+                            + "뒤집힙니다(앞↔뒤, 왼쪽↔오른쪽).",
                     10)
             .ultimate("장맛비",
-                    "{rain_duration}초간 이 자리 반경 {rain_radius}블록에 장맛비가 내립니다(빗방울은 거꾸로 하늘로 "
-                            + "솟구칩니다). 비를 맞는 적은 이동 조작이 뒤집히고, 그 적들이 주는 넉백은 끌어당기는 힘이 "
-                            + "되며, {rain_interval}초마다 개굴 소리와 함께 {rain_damage} 피해를 입습니다. 빗속의 나와 "
-                            + "아군은 이동 속도가 {rain_speed}% 빨라집니다.")
+                    "{rain_duration}초간 이 자리 반경 {rain_radius}블록에 장맛비가 내립니다. 비를 맞는 적은 이동 "
+                            + "조작이 뒤집히고, 그 적들이 주는 넉백은 끌어당기는 힘이 되며, {rain_interval}초마다 "
+                            + "{rain_damage} 피해를 입습니다. 빗속의 나와 아군은 이동 속도가 {rain_speed}% 빨라집니다.")
             .ultimateNotStandalone()
             .param("reverse_share", 60)
             .param("croak_windup", 0.3)

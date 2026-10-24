@@ -76,23 +76,20 @@ public final class BulgasariAbility extends Ability {
             .color(TextColor.color(0xB8683A))
             .difficulty(1)
             .passive("쇠붙이 먹보",
-                    "근접 공격한 적의 갑옷을 갉아 {gnaw_duration}초간 방어력을 {gnaw_armor} 깎습니다(적마다 최대 "
-                            + "{gnaw_max}번 겹침, 같은 적은 {gnaw_cooldown}초마다). 갉아 삼킬 때마다 최대 체력이 "
-                            + "{grow_health} 늘고(그만큼 회복) 몸이 {grow_scale}% 커집니다(최대 {grow_max}번, 쓰러질 "
-                            + "때까지 유지). 대신 불 피해(화상·불·용암과 화염술사·용암술사·드래곤·악마·불사조의 능력)를 "
-                            + "{fire_weakness}% 더 받습니다.")
+                    "근접 공격한 적의 갑옷을 갉아 {gnaw_duration}초간 방어력을 {gnaw_armor} 깎습니다(최대 {gnaw_max}번 "
+                            + "겹침). 갉을 때마다 최대 체력이 {grow_health} 늘고 몸이 커집니다(최대 {grow_max}번, "
+                            + "쓰러질 때까지). 대신 불 피해를 {fire_weakness}% 더 받습니다.")
             .active("칼 씹어먹기",
-                    "앞 {bite_range}블록·{bite_angle}° 안의 적 하나를 덥석 물어 {bite_damage} 피해를 주고 갑옷을 한 번 갉으며, 손에 든 "
-                            + "무기를 우걱우걱 씹습니다. {chew_duration}초간 그 적의 근접 공격은 나에게 피해를 주지 못하고 "
-                            + "먹이가 되어 오히려 내가 {chew_heal} 회복합니다({chew_heal_interval}초마다 한 번, 다른 "
-                            + "사람에게는 그대로 아픕니다). 물 적이 없으면 쿨타임이 {miss_cooldown}%만 돕니다.",
+                    "앞 {bite_range}블록·{bite_angle}° 안의 적 하나를 물어 {bite_damage} 피해를 주고 갑옷을 갉으며 "
+                            + "무기를 씹습니다. {chew_duration}초간 그 적의 근접 공격은 나에게 피해를 주지 못하고 "
+                            + "오히려 내가 {chew_heal} 회복합니다({chew_heal_interval}초마다 한 번). 물 적이 없으면 "
+                            + "쿨타임이 {miss_cooldown}%만 돕니다.",
                     9)
             .ultimate("불가살이",
-                    "{iron_duration}초간 쇳덩이 몸이 됩니다. 적의 근접 공격과 화살·삼지창 같은 일반 투사체는 피해 없이 "
-                            + "꿀꺽 삼켜져 체력을 {iron_heal} 회복합니다({iron_heal_interval}초마다 한 번). 능력 피해는 "
-                            + "그대로 받고 불 피해는 {iron_fire}% 더 받습니다. 끝나기 {spit_warning}초 전부터 몸이 "
-                            + "달아오르며 반경을 알리고, 끝날 때 삼킨 쇳조각을 토해 반경 {spit_radius}블록의 적에게 삼킨 "
-                            + "횟수마다 {spit_damage} 피해(최대 {spit_max})를 주고 밀쳐냅니다.")
+                    "{iron_duration}초간 쇳덩이 몸이 되어 적의 근접 공격과 일반 투사체를 피해 없이 삼키고 {iron_heal} "
+                            + "회복합니다({iron_heal_interval}초마다 한 번). 능력 피해는 그대로, 불 피해는 "
+                            + "{iron_fire}% 더 받습니다. 끝날 때 반경 {spit_radius}블록의 적에게 삼킨 횟수마다 "
+                            + "{spit_damage} 피해(최대 {spit_max})를 주고 밀쳐냅니다.")
             .param("gnaw_armor", 1)
             .param("gnaw_duration", 8)
             .param("gnaw_max", 4)
