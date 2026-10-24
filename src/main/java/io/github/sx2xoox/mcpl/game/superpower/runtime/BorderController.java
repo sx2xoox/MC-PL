@@ -66,6 +66,19 @@ final class BorderController {
         return border.isShrinking() ? State.SHRINKING : State.FINAL;
     }
 
+    /**
+     * How far the border has come: 0 while waiting, 0..1 while shrinking, 1 at its final size (also when it never
+     * moves; see {@link #shrinks()}).
+     */
+    double progress(long fightTicks) {
+        return switch (state(fightTicks)) {
+            case WAITING -> 0.0;
+            case SHRINKING -> shrinkTicks <= 0 ? 1.0
+                    : Math.clamp(1.0 - border.remainingTicks() / (double) shrinkTicks, 0.0, 1.0);
+            case FINAL -> 1.0;
+        };
+    }
+
     long ticksUntilShrink(long fightTicks) {
         return Math.max(0L, delayTicks - fightTicks);
     }

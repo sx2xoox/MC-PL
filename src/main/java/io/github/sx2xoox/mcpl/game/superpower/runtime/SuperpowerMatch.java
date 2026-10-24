@@ -141,6 +141,8 @@ public final class SuperpowerMatch implements GameInstance {
     private SuperpowerSettings settings;
     private @Nullable MatchContext ctx;
     private @Nullable BorderController border;
+    /** Day to night and showers over a plugin map world, null elsewhere and in practice ({@link MatchSky}). */
+    private @Nullable MatchSky sky;
     private @Nullable MatchHud hud;
     /** Loot chests and supply drops, null when loot is off for this match ({@code loot.enabled}). */
     private @Nullable LootManager loot;
@@ -198,6 +200,12 @@ public final class SuperpowerMatch implements GameInstance {
                     + "cannot damage players there. Use Easy or harder for 초능력전쟁.");
         }
         border = new BorderController(session, settings);
+        if (!practice) {
+            sky = MatchSky.create(session, messages, settings, border);
+            if (sky != null) {
+                sky.begin();
+            }
+        }
         hud = new MatchHud(this);
         loot = LootManager.create(game, this, superpowerConfig);
         if (loot != null) {
@@ -361,6 +369,9 @@ public final class SuperpowerMatch implements GameInstance {
                 loot.dispose();
             }
         } finally {
+            if (sky != null) {
+                sky.restore(logger());
+            }
             if (ctx != null) {
                 ctx.dispose();
             }
@@ -644,6 +655,9 @@ public final class SuperpowerMatch implements GameInstance {
             }
         } else if (zone.state(now) == BorderController.State.WAITING && zone.ticksUntilShrink(now) == 200) {
             session.broadcast(messages.prefixed("border.warning", Messages.tag("seconds", 10)));
+        }
+        if (sky != null) {
+            sky.tick(now);
         }
         if (now % 5 == 0) {
             refreshSilences();
@@ -2019,6 +2033,11 @@ public final class SuperpowerMatch implements GameInstance {
             throw new IllegalStateException("The match has not started");
         }
         return border;
+    }
+
+    /** The sky of this match, or null outside plugin map worlds, in practice and before the start. */
+    @Nullable MatchSky sky() {
+        return sky;
     }
 
     public @Nullable Participant participant(UUID id) {

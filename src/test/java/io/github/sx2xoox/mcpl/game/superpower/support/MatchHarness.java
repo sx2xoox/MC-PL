@@ -43,18 +43,18 @@ public final class MatchHarness implements AutoCloseable {
     private final @Nullable FlatWorld flatWorld;
 
     public MatchHarness() {
-        this(false);
+        this(false, "world");
     }
 
-    private MatchHarness(boolean flat) {
+    private MatchHarness(boolean flat, String worldName) {
         MockEntities.TestMannequin.ignoreDropChances = false;
         server = MockBukkit.mock(new TestServer());
         if (flat) {
-            flatWorld = new FlatWorld("world");
+            flatWorld = new FlatWorld(worldName);
             server.addWorld(flatWorld);
         } else {
             flatWorld = null;
-            server.addSimpleWorld("world");
+            server.addSimpleWorld(worldName);
         }
         hub = MockBukkit.load(MCPLPlugin.class).hub();
         game = (SuperpowerGame) hub.games().game(SuperpowerGame.ID);
@@ -68,7 +68,15 @@ public final class MatchHarness implements AutoCloseable {
 
     /** A harness on a {@link FlatWorld} with world physics. */
     public static MatchHarness flat() {
-        return new MatchHarness(true);
+        return new MatchHarness(true, "world");
+    }
+
+    /**
+     * A harness on a {@link FlatWorld} named {@code worldName}, e.g. {@code mcpl_map_test} for a plugin map world
+     * ({@code MapService#isMapWorld} goes by the name).
+     */
+    public static MatchHarness flat(String worldName) {
+        return new MatchHarness(true, worldName);
     }
 
     /** The flat world, or null for the simple world. */

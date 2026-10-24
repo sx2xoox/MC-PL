@@ -13,6 +13,7 @@ import java.util.function.Predicate;
 import io.papermc.paper.math.Position;
 import org.bukkit.Difficulty;
 import org.bukkit.FluidCollisionMode;
+import org.bukkit.GameRules;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -37,6 +38,7 @@ import org.mockbukkit.mockbukkit.world.WorldMock;
  * <ul>
  *     <li>{@link #rayTraceBlocks}, {@link #rayTraceEntities} and {@link #rayTrace} (see {@link RayTracing});</li>
  *     <li>{@link #hasCollisionsIn}: true if the box overlaps (with positive volume) a solid block;</li>
+ *     <li>the clock stands still while {@code advance_time} is off, as on Paper (MockBukkit always advances it);</li>
  *     <li>{@link #strikeLightningEffect}: no-op, recorded in {@link #lightningEffects()};</li>
  *     <li>entity spawning hands out the {@link MockEntities} doubles (displays with billboards, mobs that can be
  *     damaged with a {@code DamageSource}, mannequins, coloured arrows).</li>
@@ -65,6 +67,23 @@ public final class FlatWorld extends WorldMock {
 
     public WorldPhysics physics() {
         return physics;
+    }
+
+    /** Server ticks during which {@code advance_time} was off: MockBukkit's clock ran on, Paper's would not. */
+    private long frozenTicks;
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (!getGameRuleValue(GameRules.ADVANCE_TIME)) {
+            frozenTicks++;
+        }
+    }
+
+    /** MockBukkit's clock minus the frozen ticks ({@code setFullTime} and {@code setTime} go through this). */
+    @Override
+    public long getFullTime() {
+        return super.getFullTime() - frozenTicks;
     }
 
     /**
