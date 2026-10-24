@@ -353,13 +353,42 @@ public final class GameSession {
         return Component.text(plainName(playerId), team == null ? NamedTextColor.WHITE : team.color());
     }
 
+    /**
+     * {@link #name(UUID)} as the match's public lines show it: the kill feed, the elimination titles and the mode's
+     * announcements. While RUNNING the mode may show another name there instead ({@link GameInstance#nameOverride});
+     * everywhere else (the team's own HUD and summaries, the results) the real name stays.
+     */
+    public Component publicName(UUID playerId) {
+        Component alias = state == GameState.RUNNING ? safeNameOverride(playerId) : null;
+        if (alias == null) {
+            return name(playerId);
+        }
+        MatchTeam team = teamByPlayer.get(playerId);
+        return alias.colorIfAbsent(team == null ? NamedTextColor.WHITE : team.color());
+    }
+
+    private @Nullable Component safeNameOverride(UUID playerId) {
+        if (instance == null) {
+            return null;
+        }
+        try {
+            return instance.nameOverride(playerId);
+        } catch (RuntimeException e) {
+            log("nameOverride", e);
+            return null;
+        }
+    }
+
     public Component name(Player player) {
         return name(player.getUniqueId());
     }
 
-    /** {@link #name(UUID)} followed by the mode's {@link GameInstance#playerTag tag}, e.g. {@code Steve(화염술사)}. */
+    /**
+     * {@link #publicName(UUID)} followed by the mode's {@link GameInstance#playerTag tag}, e.g. {@code Steve(화염술사)}:
+     * the kill feed's and the elimination titles' name.
+     */
     public Component displayName(UUID playerId) {
-        Component base = name(playerId);
+        Component base = publicName(playerId);
         Component tag = safeTag(playerId);
         if (tag == null) {
             return base;

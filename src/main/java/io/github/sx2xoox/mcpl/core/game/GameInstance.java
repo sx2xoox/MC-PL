@@ -112,6 +112,15 @@ public interface GameInstance {
     }
 
     /**
+     * A name shown instead of the participant's own in the match's chat lines while RUNNING (kill feed, elimination
+     * titles, announcements), e.g. an ability that hides its owner's name; null (default) for the real name. The
+     * results always show the real name.
+     */
+    default @Nullable Component nameOverride(UUID player) {
+        return null;
+    }
+
+    /**
      * Clean up everything this instance created that the session does not own. Called exactly once (see class
      * docs), possibly without {@link #start()} having been called.
      */

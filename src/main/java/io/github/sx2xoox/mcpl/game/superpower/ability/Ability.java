@@ -2,11 +2,13 @@ package io.github.sx2xoox.mcpl.game.superpower.ability;
 
 import java.util.Objects;
 
+import net.kyori.adventure.text.Component;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * One player's superpower for one match. A new instance is created per player per match (via the factory
@@ -126,6 +128,15 @@ public abstract class Ability {
      */
     public double cooldownMultiplier() {
         return 1.0;
+    }
+
+    /**
+     * A name shown instead of the owner's own name in the match's public lines while the fight runs: the kill feed,
+     * the elimination titles and the ultimate announcements (오디세우스's "아무도"). Null (the default) for the owner's
+     * name. Read every time such a line is shown, so it may change; never shown in the results.
+     */
+    public @Nullable Component publicName() {
+        return null;
     }
 
     // ------------------------------------------------------------------ event hooks (owner only)
