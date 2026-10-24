@@ -43,6 +43,7 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -130,6 +131,13 @@ public final class AnubisAbility extends Ability {
     private static final float HEAVY_TILT = 30f;
     private static final long VERDICT_TICKS = 6;
     private static final long STATUS_PERIOD = 20;
+    /** Mounted scales are sent again once they turned this far (degrees, by at most MAX_TURN) or tilted this far. */
+    private static final float TURN_EPSILON = 2f;
+    private static final float MAX_TURN = 60f;
+    private static final float TILT_EPSILON = 0.5f;
+    /** The judgement's swaying scales and the orbiting feather step this often, gliding over each step. */
+    private static final int SWAY_STEP = 2;
+    private static final int FEATHER_STEP = 2;
 
     // ------------------------------------------------------------------ state
     private final List<Display> live = new ArrayList<>();
@@ -138,6 +146,8 @@ public final class AnubisAbility extends Ability {
     private final Map<UUID, Long> feathers = new HashMap<>();
     private final Map<UUID, ItemDisplay> featherMarks = new HashMap<>();
     private final Map<UUID, LivingEntity> featherBodies = new HashMap<>();
+    /** The tick each feather mark appeared (it grows in from the next tick on). */
+    private final Map<UUID, Long> featherBorn = new HashMap<>();
     private final Map<UUID, MiniScale> scales = new LinkedHashMap<>();
     private final Map<UUID, Integer> shownSin = new HashMap<>();
     private @Nullable SinListener listener;
@@ -168,6 +178,7 @@ public final class AnubisAbility extends Ability {
         feathers.clear();
         featherMarks.clear();
         featherBodies.clear();
+        featherBorn.clear();
         scales.clear();
         shownSin.clear();
         live.clear();
@@ -405,25 +416,28 @@ public final class AnubisAbility extends Ability {
         featherBodies.put(target.getUniqueId(), target);
         ItemDisplay mark = featherMarks.get(target.getUniqueId());
         if ((mark == null || !mark.isValid()) && reserve(1)) {
-            mark = keep(Displays.spawn(ctx(), owner, featherSpot(target, 0), ItemDisplay.class, 0,
+            // Rides the head; its orbit is its offset from the seat, stepped every FEATHER_STEP ticks.
+            long now = ctx().currentTick();
+            mark = keep(Displays.spawn(ctx(), owner, seat(target), ItemDisplay.class, 0,
                     viewer -> !ctx().isConcealedFrom(target, viewer), d -> {
                         d.setItemStack(new ItemStack(Material.FEATHER));
                         d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
-                        d.setTeleportDuration(2);
-                        d.setTransformation(Displays.centered(0, 0, 0, 0.1f, 0.1f, 0.1f, 0, 0, 0));
+                        d.setTransformation(featherPose(now, 0.1f));
                     }));
-            Displays.animateNextTick(ctx(), owner, mark, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, 0, 0, 0), 4);
+            ride(target, mark);
             featherMarks.put(target.getUniqueId(), mark);
+            featherBorn.put(target.getUniqueId(), now);
         }
         Location head = target.getLocation().add(0, target.getHeight() + 0.4, 0);
         Vfx.cloud(ctx(), head, Particle.END_ROD, 5, 0.3, 0.02, null, false);
         Fx.sound(head, Sound.ENTITY_PHANTOM_FLAP, 0.6f, 1.6f);
     }
 
-    private static Location featherSpot(LivingEntity target, long tick) {
+    /** The feather circling the head at {@code tick}: its offset from the seat, its spin and sway. */
+    private static Transformation featherPose(long tick, float scale) {
         double angle = tick * 0.15;
-        return target.getLocation().add(Math.cos(angle) * 0.45, target.getHeight() + 0.35 + Math.sin(tick * 0.3) * 0.05,
-                Math.sin(angle) * 0.45);
+        return Displays.centered((float) (Math.cos(angle) * 0.45), (float) (0.35 + Math.sin(tick * 0.3) * 0.05),
+                (float) (Math.sin(angle) * 0.45), scale, scale, scale, tick * 6f, 0, (float) Math.sin(tick * 0.2) * 20f);
     }
 
     private void tickFeathers(Player owner, long now) {
@@ -438,16 +452,16 @@ public final class AnubisAbility extends Ability {
                 it.remove();
                 featherBodies.remove(entry.getKey());
                 featherMarks.remove(entry.getKey());
+                featherBorn.remove(entry.getKey());
                 if (mark != null && mark.isValid()) {
                     Displays.shrinkAway(ctx(), owner, mark, 4);
                 }
                 continue;
             }
             if (mark != null && mark.isValid()) {
-                Displays.moveTo(mark, featherSpot(body, now));
-                if (now % 4 == 0) {
-                    Displays.animate(mark, Displays.centered(0, 0, 0, 0.55f, 0.55f, 0.55f, now * 6f, 0,
-                            (float) Math.sin(now * 0.2) * 20f), 4);
+                ride(body, mark);
+                if (now % FEATHER_STEP == 0 && featherBorn.getOrDefault(entry.getKey(), now - 1) < now) {
+                    Displays.animate(mark, featherPose(now + FEATHER_STEP, 0.55f), FEATHER_STEP);
                 }
             }
         }
@@ -561,6 +575,12 @@ public final class AnubisAbility extends Ability {
         private @Nullable ItemDisplay feather;
         private @Nullable TextDisplay label;
         private float tilt = LIGHT_TILT;
+        private float sentYaw = Float.NaN;
+        private float sentTilt = Float.NaN;
+        /** The tick heart and feather were put on the pans (-1: not yet), and whether they were posed since. */
+        private long weightsAt = -1;
+        private boolean weightsPosed;
+        private @Nullable String shownSin;
         private boolean over;
 
         GreatScale(Player owner, LivingEntity target, float size, boolean withHeart) {
@@ -568,70 +588,113 @@ public final class AnubisAbility extends Ability {
             this.target = target;
             this.size = size;
             this.withHeart = withHeart;
-            Location at = anchor();
+            Location at = seat(target);
             java.util.function.Predicate<Player> viewers = viewer -> !ctx().isConcealedFrom(target, viewer);
+            float lift = above();
             if (reserve(1)) {
-                beam = keep(Displays.block(ctx(), owner, at, GOLD.createBlockData(), Displays.scaled(0.02f), 0,
-                        viewers));
-                beam.setTeleportDuration(1);
+                beam = keep(Displays.block(ctx(), owner, at, GOLD.createBlockData(),
+                        Displays.transform(0, lift, 0, 0.02f, 0.02f, 0.02f, 0, 0, 0), 0, viewers));
             }
             BlockData pan = Material.GOLD_BLOCK.createBlockData();
             if (reserve(2)) {
-                leftPan = keep(Displays.block(ctx(), owner, at, pan, Displays.scaled(0.02f), 0, viewers));
-                rightPan = keep(Displays.block(ctx(), owner, at, pan, Displays.scaled(0.02f), 0, viewers));
-                leftPan.setTeleportDuration(1);
-                rightPan.setTeleportDuration(1);
+                leftPan = keep(Displays.block(ctx(), owner, at, pan,
+                        Displays.transform(0, lift, 0, 0.02f, 0.02f, 0.02f, 0, 0, 0), 0, viewers));
+                rightPan = keep(Displays.block(ctx(), owner, at, pan,
+                        Displays.transform(0, lift, 0, 0.02f, 0.02f, 0.02f, 0, 0, 0), 0, viewers));
             }
             if (reserve(1)) {
-                label = keep(Displays.spawn(ctx(), owner, at.clone().add(0, 0.45 * size, 0), TextDisplay.class, 0,
-                        viewers, d -> {
-                            d.text(Text.mm("<" + GOLD_TAG + ">⚖</" + GOLD_TAG + ">"));
-                            d.setBillboard(Display.Billboard.CENTER);
-                            d.setBackgroundColor(NO_BACKGROUND);
-                            d.setShadowed(true);
-                            d.setTeleportDuration(1);
-                            d.setTransformation(Displays.centered(0, 0, 0, 0.9f * size, 0.9f * size, 0.9f * size, 0, 0,
-                                    0));
-                        }));
+                // Upright (VERTICAL): its rise over the seat stays vertical whatever the camera's pitch.
+                label = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, 0, viewers, d -> {
+                    d.text(Text.mm("<" + GOLD_TAG + ">⚖</" + GOLD_TAG + ">"));
+                    d.setBillboard(Display.Billboard.VERTICAL);
+                    d.setBackgroundColor(NO_BACKGROUND);
+                    d.setShadowed(true);
+                    d.setTransformation(Displays.centered(0, lift + 0.45f * size, 0, 0.9f * size, 0.9f * size,
+                            0.9f * size, 0, 0, 0));
+                }));
+            }
+            for (Display part : mounted()) {
+                ride(target, part);
             }
             ctx().runLater(owner, 1, () -> pose(2));
         }
 
-        private Location anchor() {
-            return target.getLocation().add(0, target.getHeight() + 1.0 + 0.3 * size, 0);
+        /** How high over the seat (the top of the head) the beam hangs. */
+        private float above() {
+            return 1.0f + 0.3f * size;
         }
 
-        /** Places beam and pans for the current tilt (the pans hang under the beam's ends). */
-        private void pose(int ticks) {
-            if (over) {
-                return;
-            }
-            float yaw = yawToward(target.getLocation(), owner.getLocation());
+        private Location anchor() {
+            return seat(target).add(0, above(), 0);
+        }
+
+        /** The pans' offsets from the beam's middle for the current pose: [heart side, feather side]. */
+        private Vector[] sides(float yaw, float tilt) {
             float half = 0.55f * size;
-            BlockDisplay bar = beam;
-            if (bar != null && bar.isValid()) {
-                Displays.animate(bar, Displays.transform(0, 0, 0, half * 2, 0.06f * size, 0.06f * size, yaw, 0, tilt),
-                        ticks);
-            }
             Vector facing = new Vector(-Math.sin(Math.toRadians(yaw)), 0, Math.cos(Math.toRadians(yaw)));
             Vector right = new Vector(-facing.getZ(), 0, facing.getX());
             double drop = Math.sin(Math.toRadians(tilt)) * half;
             double reach = Math.cos(Math.toRadians(tilt)) * half;
             // A positive roll lowers the local -X end (the heart's side).
-            Vector heartSide = right.clone().multiply(reach).add(new Vector(0, -drop - 0.2 * size, 0));
-            Vector featherSide = right.clone().multiply(-reach).add(new Vector(0, drop - 0.2 * size, 0));
-            placePan(leftPan, heartSide, ticks);
-            placePan(rightPan, featherSide, ticks);
+            return new Vector[] {
+                    right.clone().multiply(reach).add(new Vector(0, -drop - 0.2 * size, 0)),
+                    right.clone().multiply(-reach).add(new Vector(0, drop - 0.2 * size, 0))};
+        }
+
+        /** Where the heart lies, in the world (it is a camera-facing text, so it cannot ride with an offset). */
+        private Location heartSpot() {
+            float yaw = Float.isNaN(sentYaw) ? yawToward(target.getLocation(), owner.getLocation()) : sentYaw;
+            Vector side = sides(yaw, Float.isNaN(sentTilt) ? tilt : sentTilt)[0];
+            return anchor().add(side).add(0, 0.15 * size, 0);
+        }
+
+        /**
+         * Sends beam, pans and weights again when the scale turned toward the jackal or tilted (interpolated over
+         * {@code ticks}, the caller's update period); weights just put on the pans drop in from the next tick on.
+         */
+        private void pose(int ticks) {
+            if (over) {
+                return;
+            }
+            float yaw = yawToward(target.getLocation(), owner.getLocation());
+            long now = ctx().currentTick();
+            boolean weightsDue = weightsAt >= 0 && now > weightsAt && !weightsPosed;
+            boolean moved = Float.isNaN(sentYaw) || Math.abs(wrap(yaw - sentYaw)) >= TURN_EPSILON
+                    || Math.abs(tilt - sentTilt) >= TILT_EPSILON;
+            if (!moved && !weightsDue) {
+                return;
+            }
+            if (moved) {
+                sentYaw = Float.isNaN(sentYaw) ? yaw : turnToward(sentYaw, yaw, MAX_TURN);
+                sentTilt = tilt;
+            }
+            float lift = above();
+            Vector[] sides = sides(sentYaw, sentTilt);
+            Vector heartSide = sides[0].clone().add(new Vector(0, lift, 0));
+            Vector featherSide = sides[1].clone().add(new Vector(0, lift, 0));
+            if (moved) {
+                BlockDisplay bar = beam;
+                if (bar != null && bar.isValid()) {
+                    Displays.animate(bar, Displays.transform(0, lift, 0, 1.1f * size, 0.06f * size, 0.06f * size,
+                            sentYaw, 0, sentTilt), ticks);
+                }
+                placePan(leftPan, heartSide, ticks);
+                placePan(rightPan, featherSide, ticks);
+            }
+            if (weightsAt < 0 || now <= weightsAt) {
+                return; // not on the pans yet, or put there this very tick (they would snap instead of dropping in)
+            }
+            weightsPosed = true;
             TextDisplay red = heart;
             if (red != null && red.isValid()) {
-                Displays.animate(red, Displays.centered((float) heartSide.getX(), (float) heartSide.getY() + 0.15f * size,
-                        (float) heartSide.getZ(), 0.9f * size, 0.9f * size, 0.9f * size, 0, 0, 0), ticks);
+                Displays.animate(red, Displays.centered(0, 0, 0, 0.9f * size, 0.9f * size, 0.9f * size, 0, 0, 0),
+                        ticks);
             }
             ItemDisplay white = feather;
             if (white != null && white.isValid()) {
                 Displays.animate(white, Displays.centered((float) featherSide.getX(),
                         (float) featherSide.getY() + 0.2f * size, (float) featherSide.getZ(), 0.45f * size, 0.45f * size,
-                        0.45f * size, yaw, 0, 30), ticks);
+                        0.45f * size, sentYaw, 0, 30), ticks);
             }
         }
 
@@ -642,21 +705,32 @@ public final class AnubisAbility extends Ability {
             }
         }
 
+        /** Keeps the parts seated on the head; the heart glides after its pan (3 ticks, like a client's lerp). */
         private void follow() {
-            Location at = anchor();
-            for (Display part : parts()) {
-                if (part != null && part.isValid()) {
-                    Displays.moveTo(part, part == label ? at.clone().add(0, 0.45 * size, 0) : at);
-                }
+            for (Display part : mounted()) {
+                ride(target, part);
+            }
+            TextDisplay red = heart;
+            if (red != null && red.isValid() && ctx().currentTick() > weightsAt) {
+                Displays.moveTo(red, heartSpot());
             }
         }
 
-        private List<Display> parts() {
-            List<Display> all = new ArrayList<>(6);
-            for (Display display : new Display[] {beam, leftPan, rightPan, heart, feather, label}) {
+        /** Everything but the heart rides the head. */
+        private List<Display> mounted() {
+            List<Display> all = new ArrayList<>(5);
+            for (Display display : new Display[] {beam, leftPan, rightPan, feather, label}) {
                 if (display != null) {
                     all.add(display);
                 }
+            }
+            return all;
+        }
+
+        private List<Display> parts() {
+            List<Display> all = mounted();
+            if (heart != null) {
+                all.add(heart);
             }
             return all;
         }
@@ -692,35 +766,45 @@ public final class AnubisAbility extends Ability {
             });
         }
 
-        /** Sways with the live sin until {@link #vanish}. */
+        /** Sways with the live sin until {@link #vanish} (posed every {@link #SWAY_STEP} ticks). */
         void sway() {
             follow();
             double sin = sinOf(target);
-            tilt = tiltFor(sin) + (float) Math.sin(ctx().currentTick() * 0.4) * 3f;
-            pose(2);
+            long now = ctx().currentTick();
+            tilt = tiltFor(sin) + (float) Math.sin(now * 0.4) * 3f;
+            if (now % SWAY_STEP == 0) {
+                pose(SWAY_STEP);
+            }
             writeSin(sin);
         }
 
         void placeWeights() {
             Location at = anchor();
             java.util.function.Predicate<Player> viewers = viewer -> !ctx().isConcealedFrom(target, viewer);
+            weightsAt = ctx().currentTick();
             if (withHeart && reserve(1)) {
-                heart = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, 0, viewers, d -> {
-                    d.text(Text.mm("<" + HEART_TAG + ">❤</" + HEART_TAG + ">"));
-                    d.setBillboard(Display.Billboard.CENTER);
-                    d.setBackgroundColor(NO_BACKGROUND);
-                    d.setShadowed(true);
-                    d.setTeleportDuration(1);
-                    d.setTransformation(Displays.centered(0, 0.6f, 0, 0.1f, 0.1f, 0.1f, 0, 0, 0));
-                }));
+                // Starts over its pan and drops onto it (the first glide after the spawn uses its own 3 ticks).
+                heart = keep(Displays.spawn(ctx(), owner, heartSpot().add(0, 0.6, 0), TextDisplay.class, 0, viewers,
+                        d -> {
+                            d.text(Text.mm("<" + HEART_TAG + ">❤</" + HEART_TAG + ">"));
+                            d.setBillboard(Display.Billboard.CENTER);
+                            d.setBackgroundColor(NO_BACKGROUND);
+                            d.setShadowed(true);
+                            d.setTeleportDuration(3);
+                            d.setTransformation(Displays.centered(0, 0, 0, 0.1f, 0.1f, 0.1f, 0, 0, 0));
+                        }));
             }
             if (withHeart && reserve(1)) {
-                feather = keep(Displays.spawn(ctx(), owner, at, ItemDisplay.class, 0, viewers, d -> {
+                float yaw = Float.isNaN(sentYaw) ? 0 : sentYaw;
+                Vector side = sides(yaw, Float.isNaN(sentTilt) ? tilt : sentTilt)[1];
+                feather = keep(Displays.spawn(ctx(), owner, seat(target), ItemDisplay.class, 0, viewers, d -> {
                     d.setItemStack(new ItemStack(Material.FEATHER));
                     d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
-                    d.setTeleportDuration(1);
-                    d.setTransformation(Displays.centered(0, 0.6f, 0, 0.1f, 0.1f, 0.1f, 0, 0, 0));
+                    d.setTransformation(Displays.centered((float) side.getX(),
+                            (float) side.getY() + above() + 0.8f * size, (float) side.getZ(), 0.1f, 0.1f, 0.1f, yaw, 0,
+                            30));
                 }));
+                ride(target, feather);
             }
             Vfx.cloud(ctx(), at, Particle.END_ROD, 4, 0.4, 0.02, null, false);
             Fx.sound(at, Sound.BLOCK_CHAIN_PLACE, 0.8f, 1.3f);
@@ -731,7 +815,11 @@ public final class AnubisAbility extends Ability {
             TextDisplay text = label;
             if (text != null && text.isValid()) {
                 String color = sin >= params().num("guilty_threshold") ? HEART_TAG : GOLD_TAG;
-                text.text(Text.mm("<b><" + color + ">罪 " + sinText(sin) + "</" + color + "></b>"));
+                String line = "<b><" + color + ">罪 " + sinText(sin) + "</" + color + "></b>";
+                if (!line.equals(shownSin)) {
+                    shownSin = line;
+                    text.text(Text.mm(line));
+                }
             }
         }
 
@@ -750,7 +838,7 @@ public final class AnubisAbility extends Ability {
             }
         }
 
-        /** The scale fades (or, for a heavy heart, the beam snaps down first). */
+        /** The scale fades (or, for a heavy heart, the heart sinks first). */
         void vanish(boolean heavy) {
             if (over) {
                 return;
@@ -759,8 +847,9 @@ public final class AnubisAbility extends Ability {
             for (Display part : parts()) {
                 if (part.isValid()) {
                     if (heavy && part == heart) {
-                        Displays.animate(part, Displays.centered(0, -1.2f * size, 0, 1.2f * size, 1.2f * size,
-                                1.2f * size, 0, 0, 0), 4);
+                        Displays.moveTo(part, part.getLocation().add(0, -1.2 * size, 0));
+                        Displays.animate(part, Displays.centered(0, 0, 0, 1.2f * size, 1.2f * size, 1.2f * size, 0, 0,
+                                0), 4);
                         ctx().runLater(owner, 4, () -> {
                             if (part.isValid()) {
                                 Displays.shrinkAway(ctx(), owner, part, 3);
@@ -769,15 +858,6 @@ public final class AnubisAbility extends Ability {
                     } else {
                         Displays.shrinkAway(ctx(), owner, part, 5);
                     }
-                }
-            }
-        }
-
-        void removeNow() {
-            over = true;
-            for (Display part : parts()) {
-                if (part.isValid()) {
-                    part.remove();
                 }
             }
         }
@@ -835,7 +915,7 @@ public final class AnubisAbility extends Ability {
             return true;
         }, () -> {
             for (GreatScale scale : great) {
-                scale.removeNow();
+                scale.vanish(false);
             }
             verdicts(owner, weighed);
             weighing = false;
@@ -928,7 +1008,10 @@ public final class AnubisAbility extends Ability {
         });
     }
 
-    /** The jackal head rises behind the god: black, gold-eared, its eyes burning lapis. */
+    /**
+     * The jackal head rises behind the god: black, gold-eared, its eyes burning lapis. Its parts ride the god (it stays
+     * behind it while it walks during the weighing), turned as it faced at the cast.
+     */
     private void raiseJackal(Player owner, long life) {
         Location feet = owner.getLocation();
         float yaw = feet.getYaw();
@@ -937,6 +1020,8 @@ public final class AnubisAbility extends Ability {
         Location anchor = feet.clone().subtract(facing.clone().multiply(0.9)).add(0, 2.6, 0);
         anchor.setYaw(0);
         anchor.setPitch(0);
+        // The anchor's offset from the seat the parts ride.
+        Vector base = facing.clone().multiply(-0.9).setY(2.6 - owner.getHeight());
         record Part(Material type, double x, double y, double z, float sx, float sy, float sz, float roll) {
         }
         List<Part> parts = List.of(
@@ -952,10 +1037,11 @@ public final class AnubisAbility extends Ability {
                 break;
             }
             Vector offset = right.clone().multiply(part.x()).add(new Vector(0, part.y(), 0))
-                    .add(facing.clone().multiply(part.z()));
-            BlockDisplay piece = keep(Displays.block(ctx(), owner, anchor, part.type().createBlockData(),
+                    .add(facing.clone().multiply(part.z())).add(base);
+            BlockDisplay piece = keep(Displays.block(ctx(), owner, seat(owner), part.type().createBlockData(),
                     Displays.transform((float) offset.getX(), (float) offset.getY() - 1.6f, (float) offset.getZ(),
                             part.sx(), part.sy(), part.sz(), yaw, 0, part.roll()), life));
+            ride(owner, piece);
             if (part.type() == Material.LAPIS_BLOCK) {
                 Displays.outline(piece, Color.fromRGB(0x4F7BFF));
             }
@@ -973,6 +1059,43 @@ public final class AnubisAbility extends Ability {
     }
 
     // ================================================================== helpers
+
+    /** Where a display riding {@code body} sits before its transformation: the top of the body's box. */
+    private static Location seat(LivingEntity body) {
+        return body.getLocation().add(0, body.getHeight(), 0);
+    }
+
+    /**
+     * Seats {@code part} on {@code body} as a passenger (again, after anything dismounted it), so every client moves it
+     * with the body's own model. A mounted part is never teleported (that would dismount it); its transformation
+     * holds its offset from the seat.
+     */
+    private static void ride(LivingEntity body, Display part) {
+        if (!part.isValid() || !body.isValid() || body.isDead() || body.equals(part.getVehicle())) {
+            return;
+        }
+        if (part.isInsideVehicle()) {
+            part.leaveVehicle();
+        }
+        Displays.moveTo(part, seat(body));
+        body.addPassenger(part);
+    }
+
+    /** {@code degrees} wrapped into [-180, 180). */
+    private static float wrap(float degrees) {
+        float d = degrees % 360f;
+        if (d >= 180f) {
+            d -= 360f;
+        } else if (d < -180f) {
+            d += 360f;
+        }
+        return d;
+    }
+
+    /** {@code from} turned toward {@code to} the short way, by at most {@code max} degrees. */
+    private static float turnToward(float from, float to, float max) {
+        return from + Math.clamp(wrap(to - from), -max, max);
+    }
 
     /** A word popping up over {@code target}'s head (hidden from those who cannot see it). */
     private void pop(Player owner, LivingEntity target, String mini, float scale) {

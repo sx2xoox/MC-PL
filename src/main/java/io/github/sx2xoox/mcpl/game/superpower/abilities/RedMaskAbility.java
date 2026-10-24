@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.LongPredicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
@@ -41,6 +42,7 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -90,6 +92,7 @@ public final class RedMaskAbility extends Ability {
             .param("miss_refund", 50)
             .param("question_radius", 12)
             .param("answer_seconds", 2)
+            .param("answer_grace", 0.3)
             .param("ask_speed", 30)
             .param("yes_damage", 3)
             .param("bleed_seconds", 3)
@@ -131,6 +134,16 @@ public final class RedMaskAbility extends Ability {
     private static final double NOD_DEGREES = 30;
     private static final double TURN_DEGREES = 70;
     private static final double CONE_COS = Math.cos(Math.toRadians(45));
+    /** Heights over the head (from the seat a riding display starts at) of the anger mark and the shears mark. */
+    private static final float ANGRY_ABOVE = 0.55f;
+    private static final float MARK_ABOVE = 0.6f;
+    /** The shears snap open and shut in steps this long. */
+    private static final int SNAP_TICKS = 4;
+    /** The mask and shears are sent again once the head turned this far (degrees), by at most {@link #MAX_TURN}. */
+    private static final float TURN_EPSILON = 2f;
+    private static final float MAX_TURN = 60f;
+    /** A turn's interpolation: the 3 ticks a client takes to lerp a remote player's head. */
+    private static final int TURN_TICKS = 3;
 
     // ------------------------------------------------------------------ state
     private final List<Display> live = new ArrayList<>();
@@ -183,10 +196,10 @@ public final class RedMaskAbility extends Ability {
 
     /**
      * True while {@code enemy} has its back to the mask and walks away from it by its own keys (never when pushed,
-     * stunned or rooted, see kit {@link Inputs}).
+     * stunned or rooted, see kit {@link Inputs}; the mask's own stun exempts too: a frozen enemy flees nowhere).
      */
     private boolean flees(Player owner, Player enemy) {
-        if (Inputs.isExempt(ctx(), enemy, InputKey.FORWARD, owner)) {
+        if (Inputs.isExempt(ctx(), enemy, InputKey.FORWARD, null)) {
             return false;
         }
         Vector away = Motion.horizontal(enemy.getLocation().toVector().subtract(owner.getLocation().toVector()));
@@ -375,15 +388,16 @@ public final class RedMaskAbility extends Ability {
         angryBodies.put(target.getUniqueId(), target);
         TextDisplay mark = angryMarks.get(target.getUniqueId());
         if ((mark == null || !mark.isValid()) && reserve(1)) {
-            mark = keep(Displays.spawn(ctx(), owner, angrySpot(target), TextDisplay.class, 0,
+            // Rides the head: no per-tick update, no lag behind a running target.
+            mark = keep(Displays.spawn(ctx(), owner, seat(target), TextDisplay.class, 0,
                     viewer -> !ctx().isConcealedFrom(target, viewer), d -> {
                         d.text(Text.mm("<b><" + MASK_TAG + ">?</" + MASK_TAG + "></b>"));
                         d.setBillboard(Display.Billboard.CENTER);
                         d.setBackgroundColor(NO_BACKGROUND);
                         d.setShadowed(true);
-                        d.setTeleportDuration(1);
-                        d.setTransformation(Displays.centered(0, 0, 0, 1.2f, 1.2f, 1.2f, 0, 0, 0));
+                        d.setTransformation(Displays.centered(0, ANGRY_ABOVE, 0, 1.2f, 1.2f, 1.2f, 0, 0, 0));
                     }));
+            ride(target, mark);
             angryMarks.put(target.getUniqueId(), mark);
             TextDisplay shown = mark;
             ctx().runLater(owner, 12, () -> {
@@ -393,10 +407,6 @@ public final class RedMaskAbility extends Ability {
                 }
             });
         }
-    }
-
-    private static Location angrySpot(LivingEntity target) {
-        return target.getLocation().add(0, target.getHeight() + 0.55, 0);
     }
 
     private void calm(UUID id) {
@@ -417,8 +427,8 @@ public final class RedMaskAbility extends Ability {
                 continue;
             }
             TextDisplay mark = angryMarks.get(id);
-            if (mark != null && mark.isValid()) {
-                Displays.moveTo(mark, angrySpot(body));
+            if (mark != null) {
+                ride(body, mark);
             }
             if (now % 5 == 0 && !(body instanceof Player p && ctx().isConcealedFrom(p, owner))) {
                 Vfx.dot(Fx.body(owner).add(Fx.jitter(0.3f), 0.6, Fx.jitter(0.3f)), Particle.ANGRY_VILLAGER, null,
@@ -526,16 +536,15 @@ public final class RedMaskAbility extends Ability {
 
         void start() {
             if (reserve(1)) {
-                shears = keep(Displays.spawn(ctx(), owner, spot(), ItemDisplay.class, 0,
+                // Rides the head; its spin and snap step every SNAP_TICKS, interpolated over the whole step.
+                shears = keep(Displays.spawn(ctx(), owner, seat(target), ItemDisplay.class, 0,
                         viewer -> !ctx().isConcealedFrom(target, viewer), d -> {
                             d.setItemStack(new ItemStack(Material.SHEARS));
                             d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
-                            d.setTeleportDuration(1);
-                            d.setTransformation(Displays.centered(0, 0, 0, 0.1f, 0.1f, 0.1f, 0, 0, 45));
+                            d.setTransformation(Displays.centered(0, MARK_ABOVE, 0, 0.1f, 0.1f, 0.1f, 0, 0, 45));
                         }));
+                ride(target, shears);
                 Displays.outline(shears, Color.fromRGB(0xB3121F));
-                Displays.animateNextTick(ctx(), owner, shears, Displays.centered(0, 0, 0, 0.7f, 0.7f, 0.7f, 0, 0, 45),
-                        4);
             }
             if (enemy != null) {
                 Prompt prompt = Prompt.builder(Text.mm("<b><" + BLOOD_TAG + ">✂ 가위 자국</" + BLOOD_TAG + "></b> <white>"
@@ -556,7 +565,7 @@ public final class RedMaskAbility extends Ability {
         }
 
         private Location spot() {
-            return target.getLocation().add(0, target.getHeight() + 0.6, 0);
+            return target.getLocation().add(0, target.getHeight() + MARK_ABOVE, 0);
         }
 
         @Override
@@ -571,10 +580,11 @@ public final class RedMaskAbility extends Ability {
             }
             ItemDisplay pair = shears;
             if (pair != null && pair.isValid()) {
-                Displays.moveTo(pair, spot());
-                if (run % 4 == 0) {
-                    float roll = run % 8 == 0 ? 20 : 70;
-                    Displays.animate(pair, Displays.centered(0, 0, 0, 0.7f, 0.7f, 0.7f, run * 6f, 0, roll), 3);
+                ride(target, pair);
+                if (run % SNAP_TICKS == 0) {
+                    float roll = run % (2 * SNAP_TICKS) == 0 ? 20 : 70;
+                    Displays.animate(pair, Displays.centered(0, MARK_ABOVE, 0, 0.7f, 0.7f, 0.7f, run * 6f, 0, roll),
+                            SNAP_TICKS);
                 }
             }
             if (run % 5 == 0 && !(enemy != null && ctx().isConcealedFrom(enemy, owner))) {
@@ -672,7 +682,12 @@ public final class RedMaskAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** The question itself: the mask over the face, the shears in hand, an answer from everyone near. */
+    /**
+     * The question itself: the mask over the face, the shears in hand, an answer from everyone near. Mask and shears
+     * ride her as passengers (so they stay on her face and in her hand however fast she runs), their offsets from the
+     * seat in the transformation, sent again only when her head turned (by at most {@link #MAX_TURN} per update, so
+     * a quick turn never swings them through her head) or the shears snap.
+     */
     private final class Asking {
 
         private final Player owner;
@@ -681,6 +696,9 @@ public final class RedMaskAbility extends Ability {
         private @Nullable ItemDisplay shears;
         private boolean unmasked;
         private int open;
+        private float sentYaw = Float.NaN;
+        private double sentHeight = -1;
+        private long sentSnap = Long.MIN_VALUE;
 
         Asking(Player owner) {
             this.owner = owner;
@@ -692,12 +710,15 @@ public final class RedMaskAbility extends Ability {
             java.util.function.Predicate<Player> others = viewer -> !viewer.equals(owner)
                     && !ctx().isConcealedFrom(owner, viewer);
             if (reserve(2)) {
-                mask = keep(Displays.block(ctx(), owner, owner.getLocation(), Material.WHITE_CONCRETE.createBlockData(),
-                        Displays.scaled(0.02f), window + 30, others));
-                mask.setTeleportDuration(1);
-                shears = keep(Displays.item(ctx(), owner, owner.getLocation(), new ItemStack(Material.SHEARS),
-                        Displays.centered(0, 0, 0, 0.02f, 0.02f, 0.02f, 0, 0, 0), window + 30, others));
-                shears.setTeleportDuration(1);
+                // They outlive the loop (window + 30) and its shrink.
+                float yaw = owner.getLocation().getYaw();
+                Location at = seat(owner);
+                mask = keep(Displays.block(ctx(), owner, at, Material.WHITE_CONCRETE.createBlockData(),
+                        maskPose(yaw, 0.05f, 0, 0), window + 40, others));
+                shears = keep(Displays.item(ctx(), owner, at, new ItemStack(Material.SHEARS),
+                        shearsPose(yaw, 0.02f, 30), window + 40, others));
+                ride(owner, mask);
+                ride(owner, shears);
             }
             Location at = owner.getLocation().add(0, 1.6, 0);
             Fx.sound(at, Sound.ENTITY_VEX_AMBIENT, 1.0f, 0.5f);
@@ -722,34 +743,65 @@ public final class RedMaskAbility extends Ability {
             }, this::finish);
         }
 
-        /** The mask sits over the face and the shears in the right hand, both turned with the body. */
-        private void pose(long run) {
-            Location feet = owner.getLocation();
-            float yaw = feet.getYaw();
-            Vector facing = Motion.horizontalFacing(feet);
-            Vector right = new Vector(-facing.getZ(), 0, facing.getX());
-            double eye = owner.getEyeHeight();
-            BlockDisplay face = mask;
-            if (face != null && face.isValid() && !unmasked) {
-                Displays.moveTo(face, feet);
-                Vector at = facing.clone().multiply(0.34).add(new Vector(0, eye - 0.12, 0));
-                Displays.animate(face, Displays.transform((float) at.getX(), (float) at.getY(), (float) at.getZ(),
-                        0.42f, 0.3f, 0.04f, yaw, 0, 0), 1);
-            }
-            ItemDisplay pair = shears;
-            if (pair != null && pair.isValid()) {
-                Displays.moveTo(pair, feet);
-                Vector at = facing.clone().multiply(0.45).add(right.clone().multiply(0.4)).add(new Vector(0, 1.0, 0));
-                float roll = run % 8 < 4 ? 30 : 75;
-                Displays.animate(pair, Displays.centered((float) at.getX(), (float) at.getY(), (float) at.getZ(), 0.9f,
-                        0.9f, 0.9f, yaw, 0, roll), 2);
-                if (run % 8 == 0) {
-                    Fx.sound(feet, Sound.ENTITY_SHEEP_SHEAR, 0.5f, 1.5f);
-                }
-            }
+        /** Where the mask sits over the face, from the seat. */
+        private Vector maskSpot(float yaw) {
+            Body frame = Body.standing(owner);
+            double scale = frame.height() / 1.8;
+            return facing(yaw).multiply(0.34 * scale).setY(frame.eyeHeight() - 0.12 * scale - frame.height());
         }
 
-        /** "이래도?" — the mask comes off (once) and the red grin shows. */
+        /** The mask over the face (its offset from the seat), {@code pitch}/{@code roll} tilted. */
+        private Transformation maskPose(float yaw, float grow, float pitch, float roll) {
+            double scale = Body.standing(owner).height() / 1.8;
+            Vector at = maskSpot(yaw);
+            return Displays.transform((float) at.getX(), (float) at.getY(), (float) at.getZ(),
+                    (float) (0.42 * scale * grow), (float) (0.3 * scale * grow), (float) (0.04 * scale * grow), yaw, pitch,
+                    roll);
+        }
+
+        /** The shears in the right hand (their offset from the seat), opened by {@code roll} degrees. */
+        private Transformation shearsPose(float yaw, float grow, float roll) {
+            Body frame = Body.standing(owner);
+            double scale = frame.height() / 1.8;
+            Vector facing = facing(yaw);
+            Vector right = new Vector(-facing.getZ(), 0, facing.getX());
+            Vector at = facing.multiply(0.45 * scale).add(right.multiply(0.4 * scale)).setY((1.0 - 1.8) * scale);
+            float s = (float) (0.9 * scale * grow);
+            return Displays.centered((float) at.getX(), (float) at.getY(), (float) at.getZ(), s, s, s, yaw, 0, roll);
+        }
+
+        /** Keeps mask and shears seated and turned with her head; the shears snap every {@link #SNAP_TICKS}. */
+        private void pose(long run) {
+            BlockDisplay face = mask;
+            ItemDisplay pair = shears;
+            for (Display part : new Display[] {unmasked ? null : face, pair}) {
+                if (part != null) {
+                    ride(owner, part);
+                }
+            }
+            float yaw = owner.getLocation().getYaw();
+            double height = Body.standing(owner).height();
+            long snap = run / SNAP_TICKS;
+            boolean turned = Float.isNaN(sentYaw) || Math.abs(wrap(yaw - sentYaw)) >= TURN_EPSILON
+                    || Math.abs(height - sentHeight) > 1.0E-3;
+            if (turned) {
+                sentYaw = Float.isNaN(sentYaw) ? yaw : turnToward(sentYaw, yaw, MAX_TURN);
+                sentHeight = height;
+            }
+            if (face != null && face.isValid() && !unmasked && turned) {
+                Displays.animate(face, maskPose(sentYaw, 1, 0, 0), TURN_TICKS);
+            }
+            if (pair != null && pair.isValid() && (turned || snap != sentSnap)) {
+                float roll = snap % 2 == 0 ? 30 : 75;
+                Displays.animate(pair, shearsPose(sentYaw, 1, roll), turned ? TURN_TICKS : SNAP_TICKS);
+                if (snap != sentSnap && snap % 2 == 0) {
+                    Fx.sound(owner.getLocation(), Sound.ENTITY_SHEEP_SHEAR, 0.5f, 1.5f);
+                }
+            }
+            sentSnap = snap;
+        }
+
+        /** "이래도?" — the mask comes off (once), drops where she stood, and the red grin shows. */
         void unmask() {
             if (unmasked) {
                 return;
@@ -757,8 +809,13 @@ public final class RedMaskAbility extends Ability {
             unmasked = true;
             BlockDisplay face = mask;
             if (face != null && face.isValid()) {
-                float yaw = owner.getLocation().getYaw();
-                Displays.animate(face, Displays.transform(0, 0.1f, 0, 0.42f, 0.3f, 0.04f, yaw, 80, 30), 8);
+                float yaw = Float.isNaN(sentYaw) ? owner.getLocation().getYaw() : sentYaw;
+                Vector at = maskSpot(yaw);
+                float scale = (float) (Body.standing(owner).height() / 1.8);
+                face.leaveVehicle();
+                // Off the face: it falls from the seat it was left at to the ground.
+                Displays.animate(face, Displays.transform((float) at.getX(), (float) (0.1 - owner.getHeight()),
+                        (float) at.getZ(), 0.42f * scale, 0.3f * scale, 0.04f * scale, yaw, 80, 30), 8);
                 ctx().runLater(owner, 9, () -> {
                     if (face.isValid()) {
                         Displays.shrinkAway(ctx(), owner, face, 4);
@@ -785,7 +842,7 @@ public final class RedMaskAbility extends Ability {
             if (asking == this) {
                 asking = null;
             }
-            for (Display display : new Display[] {mask, shears}) {
+            for (Display display : new Display[] {unmasked ? null : mask, shears}) {
                 if (display != null && display.isValid()) {
                     Displays.shrinkAway(ctx(), owner, display, 4);
                 }
@@ -793,7 +850,14 @@ public final class RedMaskAbility extends Ability {
         }
     }
 
-    /** One enemy's question: its answer is the first of a nod, a turn of the head or a crouch. */
+    /**
+     * One enemy's question: its answer is the first of a nod, a turn of the head or a crouch, made by its own input
+     * once the question is on its screen. The head is judged against where it looked when the judging began (the
+     * current showing, plus {@code answer_grace} and the ping slack, kit {@link Inputs#judgeFrom}): a camera already
+     * swinging in a fight as the question appears is no answer. A forced view (pushed, teleported, held by someone
+     * else's hard control) answers nothing; the head is looked at afresh afterwards. A crouch counts once it can be a
+     * reaction to the shown question (from the showing plus the ping slack).
+     */
     private final class Question implements LongPredicate {
 
         private final Player owner;
@@ -803,7 +867,8 @@ public final class RedMaskAbility extends Ability {
         private @Nullable PromptHandle handle;
         private float baseYaw;
         private float basePitch;
-        private long shownAt = -1;
+        /** True once the head's starting look was taken for the current showing. */
+        private boolean based;
         private boolean done;
 
         Question(Player owner, Asking asking, LivingEntity target) {
@@ -827,12 +892,6 @@ public final class RedMaskAbility extends Ability {
                     .title(Text.mm("<b><" + BLOOD_TAG + ">나 예뻐?</" + BLOOD_TAG + "></b>"), Text.mm(options))
                     .maxWait(10)
                     .maxPause(10)
-                    .onShown(shown -> {
-                        Location look = enemy.getLocation();
-                        baseYaw = look.getYaw();
-                        basePitch = look.getPitch();
-                        shownAt = ctx().currentTick();
-                    })
                     .onEnd(this::ended)
                     .build();
             handle = ctx().prompt(owner, enemy, prompt);
@@ -850,10 +909,11 @@ public final class RedMaskAbility extends Ability {
             if (enemy == null || shown == null || !shown.isActive()) {
                 return false;
             }
-            if (!shown.isShown() || shownAt < 0) {
+            if (!shown.isShown()) {
+                based = false; // pushed off the screen: the head is looked at afresh once it is back
                 return true;
             }
-            Answer answer = read(enemy);
+            Answer answer = read(enemy, shown);
             if (answer != null) {
                 resolve(answer);
                 shown.cancel();
@@ -862,12 +922,27 @@ public final class RedMaskAbility extends Ability {
             return true;
         }
 
-        /** The first answer the target's own input gave since the question was shown, or null. */
-        private @Nullable Answer read(Player victim) {
-            if (ctx().lastPressTick(victim, InputKey.SNEAK) >= shownAt) {
+        /** The answer the target's own input gave during the current showing of {@code shown}, or null. */
+        private @Nullable Answer read(Player victim, PromptHandle shown) {
+            long now = ctx().currentTick();
+            // A crouch pressed once the question could have been seen (the showing plus the ping slack).
+            if (ctx().lastPressTick(victim, InputKey.SNEAK) >= Inputs.judgeFrom(ctx(), shown, 0)) {
                 return Answer.SO_SO;
             }
+            if (now < Inputs.judgeFrom(ctx(), shown, params().ticks("answer_grace"))) {
+                return null;
+            }
+            if (ctx().wasDisplaced(victim, Inputs.DISPLACED_TICKS) || ctx().isMovementLocked(victim, owner)) {
+                based = false; // a forced view is no answer
+                return null;
+            }
             Location look = victim.getLocation();
+            if (!based) {
+                based = true;
+                baseYaw = look.getYaw();
+                basePitch = look.getPitch();
+                return null;
+            }
             if (look.getPitch() - basePitch >= NOD_DEGREES) {
                 return Answer.YES;
             }
@@ -964,6 +1039,38 @@ public final class RedMaskAbility extends Ability {
     }
 
     // ================================================================== helpers
+
+    /** Where a display riding {@code body} sits before its transformation: the top of the body's box. */
+    private static Location seat(LivingEntity body) {
+        return body.getLocation().add(0, body.getHeight(), 0);
+    }
+
+    /**
+     * Seats {@code part} on {@code body} as a passenger (again, after anything dismounted it: a death, a respawn), so
+     * every client moves it with the body's own model. A mounted part is never teleported (that would dismount it);
+     * its transformation holds its offset from the seat.
+     */
+    private static void ride(LivingEntity body, Display part) {
+        if (!part.isValid() || !body.isValid() || body.isDead() || body.equals(part.getVehicle())) {
+            return;
+        }
+        if (part.isInsideVehicle()) {
+            part.leaveVehicle();
+        }
+        Displays.moveTo(part, seat(body));
+        body.addPassenger(part);
+    }
+
+    /** The horizontal unit vector a Minecraft yaw (degrees) faces. */
+    private static Vector facing(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+    }
+
+    /** {@code from} turned toward {@code to} the short way, by at most {@code max} degrees. */
+    private static float turnToward(float from, float to, float max) {
+        return from + (float) Math.clamp(wrap(to - from), -max, max);
+    }
 
     /** A word popping up over {@code target}'s head (hidden from those who cannot see it). */
     private void pop(Player owner, LivingEntity target, String mini, float scale) {

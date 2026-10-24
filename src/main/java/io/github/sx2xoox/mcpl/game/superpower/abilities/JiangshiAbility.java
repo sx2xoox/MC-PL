@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.function.LongPredicate;
 import java.util.function.Predicate;
 
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
@@ -46,7 +47,10 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -135,6 +139,18 @@ public final class JiangshiAbility extends Ability {
     private static final double TALISMAN_HITBOX = 0.35;
     /** A swing, shot or cast at most this long before the inhale gives the breath away. */
     private static final long ATTACK_SLACK = 4;
+    /** The mounted look is sent again once the head turned this far (degrees), by at most {@link #MAX_TURN}. */
+    private static final float TURN_EPSILON = 2f;
+    private static final float MAX_TURN = 60f;
+    /** A turn's interpolation: the 3 ticks a client takes to lerp a remote player's head. */
+    private static final int TURN_TICKS = 3;
+    /** The slip flutters in steps this long (interpolated over the whole step). */
+    private static final int FLUTTER_TICKS = 4;
+    /** Text displays are bottom-anchored: a line is 10/40 of a block per unit scale, plus a 1/40 margin. */
+    private static final double SLIP_HEIGHT = (2 * 10 + 1) / 40.0;
+    private static final float THROWN_SCALE = 0.6f;
+    /** A missed slip flutters down over this long before it burns away. */
+    private static final int MISS_DROP_TICKS = 10;
     private static final double READY = 0.05 + 1.0E-6;
     private static final double COOLDOWN_SET = 0.04;
     private static final double GAUGE_DROP = 50;
@@ -352,17 +368,26 @@ public final class JiangshiAbility extends Ability {
     /**
      * The jiangshi's look on a body: the talisman over the forehead and two sleeves stretched forward, seen by everyone
      * but the body itself (it would cover its own view) and those it is hidden from.
+     *
+     * <p>The parts ride the body as passengers, so every client moves them with the body's own model (per-tick
+     * teleports would lead or trail a remote player's lerped model). Their transformations hold the offsets from the
+     * seat (the top of the body's box) and turn with the head; they are sent again only when the head turned (by at
+     * most {@link #MAX_TURN} per update, so a flick never swings them through the head) or the slip flutters.
      */
     private final class Stiffness {
 
         private final LivingEntity body;
         private final List<Display> parts = new ArrayList<>(3);
         private @Nullable TextDisplay slip;
+        private float sentYaw = Float.NaN;
+        private double sentHeight = -1;
+        private long sentFlutter = Long.MIN_VALUE;
 
         Stiffness(Player owner, LivingEntity body, long lifetime) {
             this.body = body;
             Predicate<Player> viewers = viewer -> !viewer.equals(body) && !ctx().isConcealedFrom(body, viewer);
-            Location at = body.getLocation();
+            Location at = seat(body);
+            float yaw = body.getLocation().getYaw();
             if (reserve(1)) {
                 slip = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, lifetime, viewers, d -> {
                     d.text(Text.mm("<b><" + RED_TAG + ">勅</" + RED_TAG + "></b>\n<b><" + RED_TAG + ">令</" + RED_TAG
@@ -371,59 +396,89 @@ public final class JiangshiAbility extends Ability {
                     d.setBackgroundColor(PAPER);
                     d.setShadowed(false);
                     d.setLineWidth(30);
-                    d.setTeleportDuration(1);
-                    d.setTransformation(Displays.centered(0, 1.6f, 0, 0.01f, 0.01f, 0.01f, 0, 0, 0));
+                    d.setTransformation(slipPose(yaw, 0.03, 0));
                 }));
                 parts.add(slip);
             }
             for (int i = 0; i < 2 && reserve(1); i++) {
                 BlockDisplay sleeve = keep(Displays.block(ctx(), owner, at, SLEEVE.createBlockData(),
-                        Displays.transform(0, 1.3f, 0, 0.01f, 0.01f, 0.01f, 0, 0, 0), lifetime, viewers));
-                sleeve.setTeleportDuration(1);
+                        sleevePose(yaw, i == 0 ? 1 : -1, 0.03), lifetime, viewers));
                 parts.add(sleeve);
             }
-            pose();
+            for (Display part : parts) {
+                ride(body, part);
+            }
+            // Posed from the next tick on: the parts grow into place.
         }
 
         boolean valid() {
             return body.isValid() && !body.isDead();
         }
 
-        /** Follows the body and its facing: the slip over the forehead, the sleeves straight ahead. */
+        /** The body's standing frame (a player's sneaking or swimming lowers the seat, and the parts with it). */
+        private Body frame() {
+            return body instanceof Player ? Body.standing(body)
+                    : new Body(body.getWidth(), body.getHeight(), body.getEyeHeight());
+        }
+
+        /** The slip over the forehead, {@code grow} of its full size, fluttering by {@code flutter} degrees. */
+        private Transformation slipPose(float yaw, double grow, float flutter) {
+            Body frame = frame();
+            double scale = frame.height() / 1.8;
+            Vector at = facing(yaw).multiply(0.31 * scale)
+                    .setY(frame.eyeHeight() + 0.08 * scale - frame.height());
+            float s = (float) (0.42 * scale * grow);
+            return Displays.centered((float) at.getX(), (float) at.getY(), (float) at.getZ(), s, s, s, yaw,
+                    -8 + flutter, 0);
+        }
+
+        /** A sleeve stretched straight ahead from the shoulder ({@code sign} 1: right, -1: left). */
+        private Transformation sleevePose(float yaw, double sign, double grow) {
+            double scale = frame().height() / 1.8;
+            Vector facing = facing(yaw);
+            Vector right = new Vector(-facing.getZ(), 0, facing.getX());
+            Vector at = right.multiply(0.33 * scale * sign).add(facing.multiply(0.42 * scale))
+                    .setY((1.32 - 1.8) * scale);
+            float w = (float) (0.22 * scale * grow);
+            return Displays.transform((float) at.getX(), (float) at.getY(), (float) at.getZ(), w, w,
+                    (float) (0.72 * scale * grow), yaw, 0, 0);
+        }
+
+        /** Keeps the parts seated and turned with the head: the slip over the forehead, the sleeves straight ahead. */
         void pose() {
             if (!valid()) {
                 return;
             }
-            Location feet = body.getLocation();
-            float yaw = feet.getYaw();
-            Vector facing = Motion.horizontalFacing(feet);
-            Vector right = new Vector(-facing.getZ(), 0, facing.getX());
-            double scale = body.getHeight() / 1.8;
-            float eye = (float) (body.getEyeHeight());
             for (Display part : parts) {
-                if (part.isValid()) {
-                    Displays.moveTo(part, feet);
-                }
+                ride(body, part);
             }
+            float yaw = body.getLocation().getYaw();
+            double height = frame().height();
+            long flutter = ctx().currentTick() / FLUTTER_TICKS;
+            boolean turned = Float.isNaN(sentYaw) || Math.abs(wrap(yaw - sentYaw)) >= TURN_EPSILON
+                    || Math.abs(height - sentHeight) > 1.0E-3;
+            if (!turned && flutter == sentFlutter) {
+                return;
+            }
+            if (turned) {
+                sentYaw = Float.isNaN(sentYaw) ? yaw : turnToward(sentYaw, yaw, MAX_TURN);
+                sentHeight = height;
+            }
+            sentFlutter = flutter;
+            int ticks = turned ? TURN_TICKS : FLUTTER_TICKS;
             TextDisplay paper = slip;
             if (paper != null && paper.isValid()) {
-                Vector at = facing.clone().multiply(0.31 * scale).add(new Vector(0, eye + 0.08 * scale, 0));
-                float flutter = (float) Math.sin(ctx().currentTick() * 0.5) * 4f;
-                float s = (float) (0.42 * scale);
-                Displays.animate(paper, Displays.centered((float) at.getX(), (float) at.getY(), (float) at.getZ(), s, s,
-                        s, yaw, -8 + flutter, 0), 1);
+                float wave = (float) Math.sin(flutter * Math.PI / 2) * 4f;
+                Displays.animate(paper, slipPose(sentYaw, 1, wave), ticks);
+            }
+            if (!turned) {
+                return;
             }
             int side = 0;
             for (Display part : parts) {
-                if (!(part instanceof BlockDisplay sleeve) || !sleeve.isValid()) {
-                    continue;
+                if (part instanceof BlockDisplay sleeve && sleeve.isValid()) {
+                    Displays.animate(sleeve, sleevePose(sentYaw, side++ == 0 ? 1 : -1, 1), ticks);
                 }
-                double sign = side++ == 0 ? 1 : -1;
-                Vector at = right.clone().multiply(0.33 * scale * sign).add(facing.clone().multiply(0.42 * scale))
-                        .add(new Vector(0, 1.32 * scale, 0));
-                float w = (float) (0.22 * scale);
-                Displays.animate(sleeve, Displays.transform((float) at.getX(), (float) at.getY(), (float) at.getZ(), w,
-                        w, (float) (0.72 * scale), yaw, 0, 0), 1);
             }
         }
 
@@ -624,20 +679,28 @@ public final class JiangshiAbility extends Ability {
 
         void start() {
             if (reserve(1)) {
-                float yaw = (float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ()));
-                paper = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, (long) (range / TALISMAN_SPEED) + 10,
+                // Camera-facing, so the thrower and everyone around see the slip in flight, not only its target.
+                paper = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, (long) (range / TALISMAN_SPEED) + 24,
                         d -> {
                             d.text(Text.mm("<b><" + RED_TAG + ">勅</" + RED_TAG + "></b>\n<b><" + RED_TAG + ">令</"
                                     + RED_TAG + "></b>"));
-                            d.setBillboard(Display.Billboard.FIXED);
+                            d.setBillboard(Display.Billboard.CENTER);
                             d.setBackgroundColor(PAPER);
                             d.setShadowed(false);
                             d.setLineWidth(30);
                             d.setTeleportDuration(1);
-                            d.setTransformation(Displays.centered(0, 0, 0, 0.6f, 0.6f, 0.6f, yaw, 0, 0));
+                            d.setTransformation(spinning(0));
                         }));
             }
             Loop.repeat(ctx(), owner, 1, 1, (long) Math.ceil(range / TALISMAN_SPEED) + 2, this, this::miss);
+        }
+
+        /** The flying slip turned by {@code roll} degrees in screen space, around its own middle. */
+        private static Transformation spinning(float roll) {
+            Vector3f middle = new Vector3f(0, (float) (SLIP_HEIGHT * THROWN_SCALE / 2), 0);
+            Quaternionf turn = new Quaternionf().rotateZ((float) Math.toRadians(roll));
+            return new Transformation(turn.transform(new Vector3f(middle)).negate(), turn,
+                    new Vector3f(THROWN_SCALE), new Quaternionf());
         }
 
         @Override
@@ -673,8 +736,7 @@ public final class JiangshiAbility extends Ability {
             TextDisplay slip = paper;
             if (slip != null && slip.isValid()) {
                 Displays.moveTo(slip, at);
-                float yaw = (float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ()));
-                Displays.animate(slip, Displays.centered(0, 0, 0, 0.6f, 0.6f, 0.6f, yaw, 0, run * 40f), 1);
+                Displays.animate(slip, spinning(run * 40f), 1);
             }
             return true;
         }
@@ -730,9 +792,10 @@ public final class JiangshiAbility extends Ability {
             over = true;
             TextDisplay slip = paper;
             if (slip != null && slip.isValid()) {
-                slip.setTeleportDuration(10);
-                Displays.moveTo(slip, slip.getLocation().add(0, -0.8, 0));
-                ctx().runLater(owner, 8, () -> {
+                // The slower glide must reach the clients before the move, or they lerp the drop in one tick.
+                slip.setTeleportDuration(MISS_DROP_TICKS);
+                ctx().runLater(owner, 1, () -> Displays.moveTo(slip, slip.getLocation().add(0, -0.8, 0)));
+                ctx().runLater(owner, MISS_DROP_TICKS - 1, () -> {
                     if (slip.isValid()) {
                         Vfx.cloud(ctx(), slip.getLocation(), Particle.SMALL_FLAME, 3, 0.1, 0.01, null, false);
                         Displays.shrinkAway(ctx(), owner, slip, 4);
@@ -934,6 +997,48 @@ public final class JiangshiAbility extends Ability {
                 Displays.shrinkAway(ctx(), owner, text, 5);
             }
         });
+    }
+
+    /** Where a display riding {@code body} sits before its transformation: the top of the body's box. */
+    private static Location seat(LivingEntity body) {
+        return body.getLocation().add(0, body.getHeight(), 0);
+    }
+
+    /**
+     * Seats {@code part} on {@code body} as a passenger (again, after anything dismounted it: a death, a respawn). A
+     * mounted part is never teleported (that would dismount it); its transformation holds its offset from the seat.
+     */
+    private static void ride(LivingEntity body, Display part) {
+        if (!part.isValid() || !body.isValid() || body.isDead() || body.equals(part.getVehicle())) {
+            return;
+        }
+        if (part.isInsideVehicle()) {
+            part.leaveVehicle();
+        }
+        Displays.moveTo(part, seat(body));
+        body.addPassenger(part);
+    }
+
+    /** The horizontal unit vector a Minecraft yaw (degrees) faces. */
+    private static Vector facing(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+    }
+
+    /** {@code degrees} wrapped into [-180, 180). */
+    private static float wrap(float degrees) {
+        float d = degrees % 360f;
+        if (d >= 180f) {
+            d -= 360f;
+        } else if (d < -180f) {
+            d += 360f;
+        }
+        return d;
+    }
+
+    /** {@code from} turned toward {@code to} the short way, by at most {@code max} degrees. */
+    private static float turnToward(float from, float to, float max) {
+        return from + Math.clamp(wrap(to - from), -max, max);
     }
 
     private boolean reserve(int count) {

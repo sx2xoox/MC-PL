@@ -78,6 +78,29 @@ class TabooNewAbilitiesTest {
                 .toList();
     }
 
+    /**
+     * Where a flat (face-up) text display's text visibly lies: text displays are bottom-anchored, so the middle of
+     * the text is half its height (11/40 of a block per line and unit scale, 10 without the margin) up its rotated
+     * vertical from the origin plus translation.
+     */
+    private static Location flatCentre(TextDisplay text, int lines) {
+        org.bukkit.util.Transformation t = text.getTransformation();
+        org.joml.Vector3f up = t.getLeftRotation().transform(
+                new org.joml.Vector3f(0, (float) ((lines * 10 + 1) / 80.0) * t.getScale().y, 0));
+        return text.getLocation().add(t.getTranslation().x + up.x, t.getTranslation().y + up.y,
+                t.getTranslation().z + up.z);
+    }
+
+    /** The middle of a display's model: a block display's cube is cornered at its translation. */
+    private static org.joml.Vector3f modelCentre(Display display) {
+        org.bukkit.util.Transformation t = display.getTransformation();
+        org.joml.Vector3f centre = new org.joml.Vector3f(t.getTranslation());
+        if (display instanceof BlockDisplay) {
+            centre.add(t.getLeftRotation().transform(new org.joml.Vector3f(t.getScale()).mul(0.5f)));
+        }
+        return centre;
+    }
+
     private static void assertUnrotated(Entity display, String what) {
         assertEquals(0, display.getLocation().getYaw(), 1.0E-3, what + ": display yaw");
         assertEquals(0, display.getLocation().getPitch(), 1.0E-3, what + ": display pitch");
@@ -284,7 +307,11 @@ class TabooNewAbilitiesTest {
             assertEquals(9, glyphs.size(), "eight ink letters and the seal lie flat around the feet");
             for (TextDisplay glyph : glyphs) {
                 assertUnrotated(glyph, "flat letter");
-                assertTrue(glyph.getLocation().distance(s.enemy.getLocation()) < 1.5, "around the enemy's feet");
+                assertEquals(s.enemy, glyph.getVehicle(), "the letters ride the enemy (no lag behind its feet)");
+                Location lies = flatCentre(glyph, 1);
+                assertTrue(Math.hypot(lies.getX() - s.enemy.getLocation().getX(),
+                        lies.getZ() - s.enemy.getLocation().getZ()) < 1.5, "around the enemy's feet: " + lies);
+                assertEquals(s.enemy.getLocation().getY(), lies.getY(), 0.1, "on the ground");
                 // Laid flat: the text's normal points up.
                 org.joml.Vector3f normal = glyph.getTransformation().getLeftRotation()
                         .transform(new org.joml.Vector3f(0, 0, 1));
@@ -300,6 +327,7 @@ class TabooNewAbilitiesTest {
             assertEquals(s.param("break_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the letters burst");
             assertTrue(slowed(s.enemy), "and the violator staggers");
             assertFalse(texts(s, "犯").isEmpty(), "a red '犯' hangs over the violator");
+            assertEquals(s.enemy, texts(s, "犯").getFirst().getVehicle(), "it rides the violator's head");
             assertTrue(texts(s, "때리지 마라").isEmpty(), "the taboo is lifted");
 
             // Branded: every other hit lands harder.
@@ -419,7 +447,11 @@ class TabooNewAbilitiesTest {
             s.clearHits();
             s.assertSucceeded(s.ultimate(), "금제 결계");
             assertFalse(texts(s, "능력을 쓰지 마라").isEmpty(), "standing: no skills");
-            s.ticks(slack(s, s.enemy) + 2);
+            s.ticks(slack(s, s.enemy2) + 2);
+            s.assertSucceeded(s.match.useActive(s.enemy2), "Blue casts as the rule appears");
+            s.ticks(2);
+            assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "a cast within the grace is no violation");
+            s.ticks(s.paramTicks("judge_grace"));
             s.assertSucceeded(s.match.useActive(s.enemy), "the enemy casts");
             s.ticks(2);
             assertEquals(s.param("barrier_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "a cast inside is punished");
@@ -499,6 +531,9 @@ class TabooNewAbilitiesTest {
             assertEquals(3, entities(s, BlockDisplay.class).stream()
                     .filter(d -> d.getBlock().getMaterial() != Material.CHISELED_SANDSTONE).count(),
                     "a sandstone plate under each picture");
+            assertTrue(entities(s, BlockDisplay.class).stream()
+                    .anyMatch(d -> d.getBlock().getMaterial() == Material.CHISELED_SANDSTONE
+                            && s.enemy.equals(d.getVehicle())), "the tablet rides the riddled head");
 
             // The passive: a riddled enemy hits softer.
             s.clearHits();
@@ -634,7 +669,8 @@ class TabooNewAbilitiesTest {
             s.ticks((int) verdict);
             assertEquals(s.param("light_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "a light heart");
             assertTrue(entities(s, ItemDisplay.class).stream()
-                    .anyMatch(d -> d.getItemStack().getType() == Material.FEATHER), "the feather marks it");
+                    .anyMatch(d -> d.getItemStack().getType() == Material.FEATHER && s.enemy.equals(d.getVehicle())),
+                    "the feather marks it (riding its head)");
 
             // Under the feather its sin counts double: 3 damage dealt weigh 6, a heavy heart.
             s.melee(s.enemy, s.enemy2, 3);
@@ -670,6 +706,7 @@ class TabooNewAbilitiesTest {
                     .filter(d -> d.getBlock().getMaterial() == Material.BLACK_CONCRETE).toList();
             assertEquals(4, jackal.size(), "a black jackal head (head, snout, two ears) rises");
             jackal.forEach(part -> assertUnrotated(part, "jackal"));
+            jackal.forEach(part -> assertEquals(s.owner, part.getVehicle(), "the jackal rides the god"));
             s.ticks(s.paramTicks("weigh_seconds") + 10);
             double guilty = Math.min(s.param("guilty_max"), s.param("guilty_base") + s.param("guilty_per_sin") * 12);
             assertEquals(guilty, s.damageBy(s.owner, s.enemy), EPSILON, "Ammit's jaws close on the guilty");
@@ -725,7 +762,8 @@ class TabooNewAbilitiesTest {
             assertEquals(s.param("snip_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "snip");
             s.ticks(2);
             assertTrue(entities(s, ItemDisplay.class).stream()
-                    .anyMatch(d -> d.getItemStack().getType() == Material.SHEARS), "red shears hang over the head");
+                    .anyMatch(d -> d.getItemStack().getType() == Material.SHEARS && s.enemy.equals(d.getVehicle())),
+                    "red shears hang over the head (riding it)");
             // Facing the mask and walking at it: no cut.
             s.enemy.sendInput(InputKey.FORWARD);
             s.ticks(40);
@@ -762,13 +800,24 @@ class TabooNewAbilitiesTest {
             assertFalse(texts(s, "나 예뻐?").isEmpty(), "the question floats over the heads");
             s.ticks(2);
             assertTrue(speedBonus(s.owner) >= s.param("ask_speed") / 100 - EPSILON, "she closes in while asking");
-            // Red nods ("yes"), Blue crouches ("so-so").
+            assertEquals(s.owner, entities(s, ItemDisplay.class).stream()
+                    .filter(d -> d.getItemStack().getType() == Material.SHEARS).findFirst().orElseThrow().getVehicle(),
+                    "the shears ride her hand");
+            // A camera already swinging as the question appears is no answer: Red turns away and looks down at once.
             Location look = s.enemy.getLocation();
-            s.enemy.setRotation(look.getYaw(), look.getPitch() + 45);
+            s.enemy.setRotation(look.getYaw() + 90, look.getPitch() + 35);
+            s.ticks(s.paramTicks("answer_grace") + slack(s, s.enemy) + 2);
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "a turn within the grace answers nothing");
+            // Then Red nods ("yes"), Blue crouches ("so-so").
+            look = s.enemy.getLocation();
+            s.enemy.setRotation(look.getYaw(), look.getPitch() + 35);
             s.enemy2.sendInput(InputKey.SNEAK);
             s.ticks(2);
             assertEquals(s.param("yes_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "\"이래도?\"");
             assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "\"그저 그래요\" is safe for now");
+            s.ticks(1);
+            assertEquals(s.enemy2, texts(s, "?").stream().filter(d -> Scenario.plain(d.text()).equals("?"))
+                    .findFirst().orElseThrow().getVehicle(), "the anger mark rides Blue's head");
             s.ticks(s.paramTicks("bleed_seconds") + 4);
             assertEquals(s.param("yes_damage") + s.param("bleed_damage") * s.param("bleed_seconds"),
                     s.damageBy(s.owner, s.enemy), EPSILON, "and the wound bleeds");
@@ -854,9 +903,10 @@ class TabooNewAbilitiesTest {
             assertEquals(s.param("talisman_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the talisman hits");
             assertTrue(slowed(s.enemy), "it cannot walk");
             List<TextDisplay> slips = entities(s, TextDisplay.class).stream()
-                    .filter(d -> Scenario.plain(d.text()).contains("勅")
-                            && d.getLocation().distance(s.enemy.getLocation()) < 1.0).toList();
-            assertFalse(slips.isEmpty(), "a talisman on its forehead");
+                    .filter(d -> Scenario.plain(d.text()).contains("勅") && s.enemy.equals(d.getVehicle())).toList();
+            assertFalse(slips.isEmpty(), "a talisman on its forehead (riding it)");
+            assertEquals(2, entities(s, BlockDisplay.class).stream().filter(d -> s.enemy.equals(d.getVehicle()))
+                    .count(), "and both sleeves");
             for (TextDisplay slip : slips) {
                 assertFalse(s.seenBy(slip).contains(s.enemy), "not in front of its own eyes");
                 assertTrue(s.seenBy(slip).contains(s.owner), "everyone else sees it");
@@ -896,6 +946,397 @@ class TabooNewAbilitiesTest {
             assertEquals(max * s.param("caught_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "at most " + max + " catches");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== displays on a real client (regressions)
+
+    /** The horizontal direction (degrees, Minecraft yaw) a display's rotation turns local +Z to. */
+    private static double facingYaw(Display display) {
+        org.joml.Vector3f forward = display.getTransformation().getLeftRotation()
+                .transform(new org.joml.Vector3f(0, 0, 1));
+        return Math.toDegrees(Math.atan2(-forward.x, forward.z));
+    }
+
+    private static double angleBetween(double a, double b) {
+        double d = (a - b) % 360;
+        if (d > 180) {
+            d -= 360;
+        } else if (d < -180) {
+            d += 360;
+        }
+        return Math.abs(d);
+    }
+
+    @Test
+    void jiangshiLookRidesTheBodyTurnsWithTheHeadAndIsGoneBeforeTheRestore() {
+        try (Scenario s = Scenario.ffa("jiangshi")) {
+            settle(s);
+            List<Display> look = entities(s, Display.class).stream().filter(d -> s.owner.equals(d.getVehicle()))
+                    .toList();
+            assertEquals(3, look.size(), "the talisman and both sleeves ride the jiangshi (no per-tick teleports)");
+            for (Display part : look) {
+                assertUnrotated(part, "mounted part");
+                org.joml.Vector3f at = modelCentre(part);
+                // The owner looks +Z: the parts hang in front of its face and arms, below the seat on its head.
+                assertTrue(at.z > 0.2 && at.y < 0, part.getType() + " in front of the body: " + at);
+            }
+            List<BlockDisplay> sleeves = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> s.owner.equals(d.getVehicle())).toList();
+            assertEquals(2, sleeves.size());
+            BlockDisplay sleeve = sleeves.getFirst();
+            org.bukkit.util.Transformation still = sleeve.getTransformation();
+            s.ticks(3);
+            assertEquals(still, sleeve.getTransformation(), "standing still, nothing is sent again");
+
+            // A quick turn is followed, at most 60 degrees per update (never the long way through the head).
+            s.owner.setRotation(170, 0);
+            s.ticks(1);
+            double turned = angleBetween(facingYaw(sleeve), 0);
+            assertTrue(turned > 1 && turned <= 60 + 1.0E-3, "turned by at most 60 degrees: " + turned);
+            assertEquals(3, sleeve.getInterpolationDuration(), "over a remote head's 3-tick lerp");
+            s.ticks(4);
+            assertTrue(angleBetween(facingYaw(sleeve), 170) < 1.0E-3, "then caught up: " + facingYaw(sleeve));
+
+            // The match ends: the parts are gone before anyone is sent back (a vehicle cannot change worlds).
+            List<String> carried = new java.util.ArrayList<>();
+            List<Player> sent = new java.util.ArrayList<>();
+            org.bukkit.event.Listener spy = new org.bukkit.event.Listener() {
+                @org.bukkit.event.EventHandler
+                public void onTeleport(org.bukkit.event.player.PlayerTeleportEvent event) {
+                    if (s.session.state() != io.github.sx2xoox.mcpl.core.game.GameState.RUNNING) {
+                        sent.add(event.getPlayer());
+                        if (!event.getPlayer().getPassengers().isEmpty()) {
+                            carried.add(event.getPlayer().getName());
+                        }
+                    }
+                }
+            };
+            org.bukkit.Bukkit.getPluginManager().registerEvents(spy, s.h.hub.plugin());
+            try {
+                s.finishClean();
+            } finally {
+                org.bukkit.event.HandlerList.unregisterAll(spy);
+            }
+            assertTrue(sent.contains(s.owner), "the jiangshi was sent back");
+            assertTrue(carried.isEmpty(), "nobody carried a mounted display into the restore: " + carried);
+            assertTrue(s.owner.getPassengers().isEmpty());
+        }
+    }
+
+    @Test
+    void jiangshiThrownSlipFacesEveryoneAndAMissFluttersDownSlowly() {
+        try (Scenario s = Scenario.ffa("jiangshi")) {
+            settle(s);
+            s.aimAt(s.owner, new Location(s.world, 0.5, FlatWorld.SURFACE + 1.62, -20));
+            s.assertSucceeded(s.active(), "부적 붙이기 into the air");
+            s.ticks(2);
+            TextDisplay slip = entities(s, TextDisplay.class).stream()
+                    .filter(d -> Scenario.plain(d.text()).contains("勅") && d.getVehicle() == null)
+                    .findFirst().orElseThrow();
+            assertEquals(Display.Billboard.CENTER, slip.getBillboard(), "the thrower sees the slip in flight too");
+            int waited = 0;
+            Location last = slip.getLocation();
+            while (slip.getTeleportDuration() != 10 && waited++ < 40) {
+                last = slip.getLocation();
+                s.ticks(1);
+            }
+            assertEquals(10, slip.getTeleportDuration(), "a miss glides down slowly");
+            double before = slip.getLocation().getY();
+            assertEquals(last.getY(), before, 1.0E-9, "the slower glide is sent a tick before the move");
+            s.ticks(1);
+            assertEquals(before - 0.8, slip.getLocation().getY(), 1.0E-6, "then it drops");
+            assertTrue(slip.isValid(), "and flutters before it burns away");
+            s.ticks(20);
+            assertFalse(slip.isValid());
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void redMaskMaskAndShearsRideHerAndShrinkBeforeTheyExpire() {
+        try (Scenario s = Scenario.ffa("redmask")) {
+            settle(s);
+            s.assertSucceeded(s.ultimate(), "나 예뻐?");
+            s.ticks(1);
+            BlockDisplay mask = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.WHITE_CONCRETE).findFirst().orElseThrow();
+            ItemDisplay shears = entities(s, ItemDisplay.class).stream()
+                    .filter(d -> d.getItemStack().getType() == Material.SHEARS).findFirst().orElseThrow();
+            assertEquals(s.owner, mask.getVehicle(), "the mask rides her face");
+            assertEquals(s.owner, shears.getVehicle(), "the shears ride her hand");
+            assertFalse(s.seenBy(mask).contains(s.owner), "her own mask never covers her view");
+            long shrunk = -1;
+            long tick = 0;
+            while (shears.isValid() && tick++ < 200) {
+                if (shrunk < 0 && shears.getTransformation().getScale().x < 0.01f) {
+                    shrunk = tick;
+                }
+                s.ticks(1);
+            }
+            assertTrue(shrunk > 0, "the shears shrink away at the end");
+            // Seen shrinking the tick after shrinkAway: its 4-tick shrink then runs 3 more ticks to the end.
+            assertTrue(tick - shrunk >= 3, "and are not cut off by their lifetime first: " + (tick - shrunk));
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void redMaskStunnedEnemyFleesNowhere() {
+        try (Scenario s = Scenario.ffa("redmask")) {
+            settle(s);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "나 예뻐?");
+            // Nobody answers: "no" — the shears stun both.
+            int waited = 0;
+            while (!s.ctx().isSilenced(s.enemy) && waited++ < 120) {
+                s.ticks(1);
+            }
+            assertTrue(s.ctx().isSilenced(s.enemy), "no answer: stunned");
+            // Frozen, Red faces away and holds W: it goes nowhere, so it flees nowhere.
+            s.enemy.setRotation(0, 0);
+            s.enemy.sendInput(InputKey.FORWARD);
+            s.ticks(8);
+            for (int i = 0; i < 20 && s.ctx().isSilenced(s.enemy); i++) {
+                assertEquals(0, speedBonus(s.owner), EPSILON, "a stunned enemy gives no chase speed");
+                s.ticks(1);
+            }
+            s.enemy.sendInput();
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sphinxGlyphsLieOnTheirTilesAndTheBoardIsWholeAfterARiddle() {
+        try (Scenario s = Scenario.ffa("sphinx")) {
+            settle(s);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "수수께끼");
+            s.ticks(10);
+            assertGlyphsOnPlates(s, 3, 1.3);
+            // The ultimate right after the riddle: the whole board rises (nine plates, nine pictures, the title).
+            s.assertSucceeded(s.ultimate(), "세 번째 수수께끼");
+            s.ticks(14);
+            assertGlyphsOnPlates(s, 12, 1.3);
+            assertEquals(9, entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getTransformation().getScale().x > 2.5f).count(), "nine board plates");
+            assertFalse(texts(s, "수수께끼").stream().filter(d -> d.getBillboard() == Display.Billboard.CENTER)
+                    .toList().isEmpty(), "and its title");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /** Every flat picture's text lies over the middle of a plate, and fits on it. */
+    private static void assertGlyphsOnPlates(Scenario s, int count, double smallest) {
+        List<TextDisplay> glyphs = entities(s, TextDisplay.class).stream()
+                .filter(text -> text.getBillboard() == Display.Billboard.FIXED).toList();
+        assertEquals(count, glyphs.size(), "pictures");
+        List<BlockDisplay> plates = entities(s, BlockDisplay.class).stream()
+                .filter(d -> d.getBlock().getMaterial() != Material.CHISELED_SANDSTONE
+                        && d.getBlock().getMaterial() != Material.SANDSTONE).toList();
+        for (TextDisplay glyph : glyphs) {
+            Location lies = flatCentre(glyph, 2);
+            BlockDisplay under = plates.stream()
+                    .filter(plate -> Math.abs(plate.getLocation().getX() - lies.getX()) < 0.05
+                            && Math.abs(plate.getLocation().getZ() - lies.getZ()) < 0.05)
+                    .findFirst().orElse(null);
+            assertNotNull(under, "the picture lies over the middle of a plate: " + lies);
+            double size = under.getTransformation().getScale().x;
+            double height = 21 / 40.0 * glyph.getTransformation().getScale().y;
+            assertTrue(size >= smallest - 1.0E-6 && height <= size, "it fits on the plate: " + height + " / " + size);
+        }
+    }
+
+    @Test
+    void sphinxClawsCloseInOnTheVictim() {
+        try (Scenario s = Scenario.ffa("sphinx")) {
+            settle(s);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "수수께끼");
+            s.ticks(s.paramTicks("answer_seconds") + slack(s, s.enemy) + 6);
+            List<BlockDisplay> claws = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.SANDSTONE).toList();
+            assertEquals(3, claws.size(), "three claws burst out");
+            Location feet = s.enemy.getLocation();
+            for (BlockDisplay claw : claws) {
+                org.bukkit.util.Transformation t = claw.getTransformation();
+                org.joml.Vector3f size = t.getScale();
+                org.joml.Vector3f base = new org.joml.Vector3f(t.getTranslation()).add(
+                        t.getLeftRotation().transform(new org.joml.Vector3f(size.x / 2, 0, size.z / 2)));
+                org.joml.Vector3f tip = new org.joml.Vector3f(t.getTranslation()).add(
+                        t.getLeftRotation().transform(new org.joml.Vector3f(size.x / 2, size.y, size.z / 2)));
+                Location at = claw.getLocation();
+                double baseOff = Math.hypot(at.getX() + base.x - feet.getX(), at.getZ() + base.z - feet.getZ());
+                double tipOff = Math.hypot(at.getX() + tip.x - feet.getX(), at.getZ() + tip.z - feet.getZ());
+                assertTrue(tipOff < baseOff - 0.3, "the claw leans in over the victim: " + tipOff + " / " + baseOff);
+            }
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void sphinxBoardRevealsTheAnswerOnlyAfterEveryQuestionEnded() {
+        try (Scenario s = Scenario.ffa("sphinx")) {
+            s.enemy.setPing(250); // a later end of Red's question (its reaction slack)
+            settle(s);
+            s.assertSucceeded(s.ultimate(), "세 번째 수수께끼");
+            int reveals = 0;
+            boolean revealed = false;
+            for (int i = 0; i < 260; i++) {
+                s.ticks(1);
+                boolean shows = texts(s, "정답:").stream().anyMatch(d -> d.getBillboard() == Display.Billboard.CENTER);
+                if (shows) {
+                    assertFalse(s.ctx().hasShownPrompt(s.enemy) || s.ctx().hasShownPrompt(s.enemy2),
+                            "the answer is out while a question is still on screen");
+                    if (!revealed) {
+                        reveals++;
+                    }
+                }
+                revealed = shows;
+            }
+            assertEquals(3, reveals, "three answers came out");
+            assertTrue(entities(s, Display.class).isEmpty(), "the board sank");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void prohibitorKeptTabooSoaksInWithoutSpinning() {
+        try (Scenario s = Scenario.ffa("prohibitor")) {
+            settle(s);
+            writeTaboo(s, s.enemy);
+            Map<TextDisplay, Double> yaws = new java.util.HashMap<>();
+            for (int i = 0; i < s.paramTicks("taboo_duration") + 20 && s.damageBy(s.owner, s.enemy) == 0; i++) {
+                for (TextDisplay glyph : entities(s, TextDisplay.class)) {
+                    if (glyph.getBillboard() == Display.Billboard.FIXED && s.enemy.equals(glyph.getVehicle())
+                            && glyph.getTransformation().getScale().y > 0.1f) {
+                        yaws.put(glyph, facingYawOfFlat(glyph));
+                    }
+                }
+                s.ticks(1);
+            }
+            assertEquals(s.param("keep_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "kept");
+            assertEquals(9, yaws.size(), "eight letters and the seal were watched");
+            for (Map.Entry<TextDisplay, Double> entry : yaws.entrySet()) {
+                TextDisplay glyph = entry.getKey();
+                if (!glyph.isValid() || glyph.getTransformation().getScale().y > 0.1f) {
+                    continue; // the seal shrinks away; only the soaking letters flatten
+                }
+                assertTrue(angleBetween(facingYawOfFlat(glyph), entry.getValue()) < 15,
+                        "a letter soaks in where it lay, keeping its turn: " + facingYawOfFlat(glyph) + " vs "
+                                + entry.getValue());
+            }
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /** The yaw of a flat text's top (its rotated vertical). */
+    private static double facingYawOfFlat(TextDisplay glyph) {
+        org.joml.Vector3f up = glyph.getTransformation().getLeftRotation().transform(new org.joml.Vector3f(0, 1, 0));
+        return Math.toDegrees(Math.atan2(-up.x, up.z));
+    }
+
+    @Test
+    void prohibitorBarrierGivesTheCasterAGraceToLetGoOfTheJump() {
+        try (Scenario s = Scenario.ffa("prohibitor")) {
+            s.place(s.owner, 0.5, FlatWorld.SURFACE + 10, 0.5, 0, 0);
+            settle(s);
+            assertFalse(s.owner.isOnGround(), "still in the air");
+            s.owner.sendInput(InputKey.JUMP);
+            s.ticks(1);
+            s.assertSucceeded(s.ultimate(), "금제 결계 in the air");
+            assertFalse(texts(s, "땅을 떠나지 마라").isEmpty(), "airborne: stay grounded");
+            s.ticks(4);
+            s.owner.sendInput();
+            s.ticks(20);
+            assertTrue(texts(s, "붕괴").isEmpty(), "a jump key let go within the grace does not shatter it");
+            assertFalse(texts(s, "結界").isEmpty(), "the barrier stands");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void prohibitorBarrierCountsPunishmentsPerEnemyAcrossLeavingAndComingBack() {
+        try (Scenario s = Scenario.ffa("prohibitor")) {
+            settle(s);
+            s.owner.setSneaking(true);
+            s.owner.sendInput(InputKey.FORWARD, InputKey.SNEAK);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "금제 결계 (멈추지 마라)");
+            int max = (int) s.param("barrier_max");
+            for (int i = 0; i < 120 && s.hitsBy(s.owner, s.enemy).size() < max; i++) {
+                s.ticks(1);
+            }
+            assertEquals(max, s.hitsBy(s.owner, s.enemy).size(), "punished " + max + " times");
+            double radius = s.param("barrier_radius");
+            s.place(s.enemy, 0.5, radius + 3, 180);
+            s.ticks(3);
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.ticks(s.paramTicks("barrier_duration"));
+            assertEquals(max, s.hitsBy(s.owner, s.enemy).size(), "walking back in starts no fresh count");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anubisScaleRidesTheHeadAndItsWeightsDropIn() {
+        try (Scenario s = Scenario.ffa("anubis")) {
+            settle(s);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "저울질");
+            s.ticks(2);
+            List<BlockDisplay> gold = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.GOLD_BLOCK && s.enemy.equals(d.getVehicle()))
+                    .toList();
+            assertEquals(3, gold.size(), "beam and pans ride the weighed head");
+            ItemDisplay weight = null;
+            for (int i = 0; i < 30 && weight == null; i++) {
+                s.ticks(1);
+                weight = entities(s, ItemDisplay.class).stream()
+                        .filter(d -> d.getItemStack().getType() == Material.FEATHER).findFirst().orElse(null);
+            }
+            assertNotNull(weight, "the feather goes on the scale");
+            assertEquals(s.enemy, weight.getVehicle());
+            assertTrue(weight.getTransformation().getScale().x < 0.2f, "not posed in its spawn tick (no snap)");
+            s.ticks(1);
+            assertTrue(weight.getTransformation().getScale().x > 0.3f, "it drops onto its pan from the next tick on");
+            assertTrue(texts(s, "❤").stream().allMatch(d -> d.getVehicle() == null),
+                    "the heart (camera-facing) follows by itself");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ammitScalesFadeAtTheVerdict() {
+        try (Scenario s = Scenario.ffa("anubis")) {
+            settle(s);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "아미트의 심판");
+            int waited = 0;
+            while (s.damageBy(s.owner, s.enemy2) == 0 && waited++ < 80) {
+                s.ticks(1);
+            }
+            assertEquals(s.param("innocent_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "the verdict");
+            List<BlockDisplay> scales = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.GOLD_BLOCK && d.getVehicle() != null
+                            && !s.owner.equals(d.getVehicle()))
+                    .toList();
+            assertFalse(scales.isEmpty(), "the great scales are still there at the verdict, fading");
+            scales.forEach(scale -> assertTrue(scale.getTransformation().getScale().x < 0.01f, "shrinking"));
+            s.ticks(8);
+            assertTrue(scales.stream().noneMatch(Entity::isValid), "then gone");
             s.assertNoProblems();
             s.finishClean();
         }
