@@ -15,6 +15,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Registry;
@@ -33,6 +34,7 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.BoundingBox;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -187,6 +189,58 @@ class NestingNewAbilitiesTest {
         return entities(s, BlockDisplay.class).stream()
                 .filter(display -> display.getBlock().getMaterial() == type)
                 .toList();
+    }
+
+    /** The lowest point of a block display's model (its unit cube posed by the transformation), in world y. */
+    private static double lowest(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        double low = Double.MAX_VALUE;
+        for (int c = 0; c < 8; c++) {
+            Vector3f corner = new Vector3f(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+            new Quaternionf(t.getRightRotation()).transform(corner);
+            corner.mul(t.getScale());
+            new Quaternionf(t.getLeftRotation()).transform(corner);
+            corner.add(t.getTranslation());
+            low = Math.min(low, corner.y);
+        }
+        return display.getLocation().getY() + low;
+    }
+
+    /** For {@code ticks} ticks, no block display's model reaches into the floor. */
+    private static void watchFloor(Scenario s, int ticks, String what) {
+        for (int i = 0; i < ticks; i++) {
+            s.ticks(1);
+            for (BlockDisplay display : entities(s, BlockDisplay.class)) {
+                double low = lowest(display);
+                assertTrue(low >= FlatWorld.SURFACE - 0.03, what + ": a " + display.getBlock().getMaterial()
+                        + " model sinks " + (FlatWorld.SURFACE - low) + " into the floor at tick " + i + " ("
+                        + display.getLocation().toVector() + ")");
+            }
+        }
+    }
+
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    /** True if a lacquer-red doll display is within {@code reach} of {@code player}'s body. */
+    private static boolean dollNear(Scenario s, Player player, double reach) {
+        Location body = player.getLocation().add(0, player.getHeight() * 0.5, 0);
+        return blockDisplays(s, Material.RED_CONCRETE).stream()
+                .anyMatch(display -> display.getLocation().distance(body) <= reach);
+    }
+
+    /** Ticks until the owner has hit {@code victim}, at most {@code max} ticks; true if it did. */
+    private static boolean tickUntilHit(Scenario s, Player victim, int max) {
+        for (int i = 0; i < max && s.damageBy(s.owner, victim) <= 0; i++) {
+            s.ticks(1);
+        }
+        return s.damageBy(s.owner, victim) > 0;
     }
 
     // ================================================================== info
@@ -535,6 +589,30 @@ class NestingNewAbilitiesTest {
         }
     }
 
+    @Test
+    void whoeverCannotSeeTheOwnerNeverSeesItsBadgeLidOrGiantDoll() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.enemy.hidePlayer(s.ctx().plugin(), s.owner);
+            s.ticks(1);
+            assertFalse(s.enemy.canSee(badge(s)), "the badge is veiled at once, not some ticks later");
+            // The giant doll comes down right onto the owner: it would show where the owner is.
+            s.aimAt(s.owner, s.enemy2);
+            s.assertSucceeded(s.ultimate(), "giant");
+            for (int i = 0; i < s.paramTicks("drop_delay") + 12; i++) {
+                s.ticks(1);
+                for (BlockDisplay part : blockDisplays(s, Material.RED_CONCRETE)) {
+                    assertFalse(s.enemy.canSee(part), "the giant doll is hidden from the enemy at tick " + i);
+                    assertTrue(s.enemy2.canSee(part), "the others see it come down");
+                }
+            }
+            s.enemy.showPlayer(s.ctx().plugin(), s.owner);
+            s.ticks(1);
+            assertTrue(s.enemy.canSee(badge(s)), "seen again");
+            s.finishClean();
+        }
+    }
+
     // ================================================================== active: a doll inside a doll
 
     @Test
@@ -545,6 +623,9 @@ class NestingNewAbilitiesTest {
             s.clearHits();
             s.assertSucceeded(s.active(), "인형 속 인형");
             boolean slowed = false;
+            // The tallest lacquer part next to the victim each time a doll strikes: one size smaller every hop.
+            List<Double> sizes = new ArrayList<>();
+            int seenHits = 0;
             for (int i = 0; i < 80; i++) {
                 s.ticks(1);
                 for (AttributeModifier modifier : s.enemy.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers()) {
@@ -552,7 +633,24 @@ class NestingNewAbilitiesTest {
                 }
                 for (BlockDisplay part : entities(s, BlockDisplay.class)) {
                     assertUnrotated(part, "doll");
-                    assertTrue(part.getLocation().getY() >= FlatWorld.SURFACE - EPSILON, "never under the floor");
+                    assertTrue(lowest(part) >= FlatWorld.SURFACE - 0.03, "no doll model reaches into the floor: "
+                            + lowest(part));
+                }
+                List<Scenario.Hit> byOwner = s.hits().stream().filter(hit -> s.owner.equals(hit.causer())).toList();
+                for (; seenHits < byOwner.size(); seenHits++) {
+                    Entity victim = byOwner.get(seenHits).victim();
+                    Location body = victim.getLocation().add(0, victim.getHeight() * 0.5, 0);
+                    sizes.add(blockDisplays(s, Material.RED_CONCRETE).stream()
+                            .filter(part -> part.getLocation().distance(body) <= 1.8)
+                            .mapToDouble(part -> part.getTransformation().getScale().y)
+                            .max().orElse(0));
+                }
+            }
+            assertEquals(3, sizes.size(), "three dolls struck: " + s.hits());
+            for (int k = 0; k < sizes.size(); k++) {
+                assertTrue(sizes.get(k) > 0.05, "doll " + k + " is there when it strikes: " + sizes);
+                if (k > 0) {
+                    assertTrue(sizes.get(k) < sizes.get(k - 1) - 0.02, "each doll is smaller: " + sizes);
                 }
             }
             // The big doll pops on the aimed enemy, the middle one hops to the other enemy, the small one back.
@@ -605,7 +703,8 @@ class NestingNewAbilitiesTest {
                     s.damageBy(s.owner, s.enemy), EPSILON, "with nobody else around all three land on it");
             assertEquals(s.param("doll_cap"), s.damageBy(s.owner, s.enemy), EPSILON);
 
-            // Crouching sheds a shell for a harder big doll; the cap still holds.
+            // Crouching sheds a shell for a harder big doll: the shed bonus comes on top of the cap, so trading a
+            // shell for offense pays off even against a lone enemy (every doll still lands, the slow too).
             s.readyActive();
             s.layout();
             s.place(s.enemy2, -14.5, -10.5, 0);
@@ -614,11 +713,21 @@ class NestingNewAbilitiesTest {
             s.clearHits();
             s.assertSucceeded(s.active(), "shed and throw");
             assertEquals(2, shells(s), "one shell thrown");
-            s.ticks(80);
+            boolean slowed = false;
+            for (int i = 0; i < 80; i++) {
+                s.ticks(1);
+                for (AttributeModifier modifier : s.enemy.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers()) {
+                    slowed |= Math.abs(modifier.getAmount() + s.param("small_slow") / 100) < EPSILON;
+                }
+            }
             s.owner.setSneaking(false);
-            assertEquals(s.param("doll_cap"), s.damageBy(s.owner, s.enemy), EPSILON, "capped: " + s.hits());
-            assertEquals(s.param("big_damage") + s.param("shed_bonus"),
-                    s.hitsBy(s.owner, s.enemy).getFirst().damage(), EPSILON, "the shed shell hits harder");
+            List<Scenario.Hit> hits = s.hitsBy(s.owner, s.enemy);
+            assertEquals(3, hits.size(), "all three dolls land: " + hits);
+            assertEquals(s.param("big_damage") + s.param("shed_bonus"), hits.getFirst().damage(), EPSILON,
+                    "the shed shell hits harder");
+            assertEquals(s.param("doll_cap") + s.param("shed_bonus"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the shed bonus is on top of the cap: " + hits);
+            assertTrue(slowed, "the smallest doll still slows the lone enemy");
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "shedding costs a shell, not health");
             s.assertNoProblems();
             s.finishClean();
@@ -831,7 +940,274 @@ class NestingNewAbilitiesTest {
         }
     }
 
+    // ================================================================== stealth mid-flight
+
+    @Test
+    void aHoppingDollDropsAnEnemyThatVanishesMidHop() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "throw");
+            assertTrue(tickUntilHit(s, s.enemy, 40), "the big doll popped on the aimed enemy");
+            // The middle doll is on its way to the other enemy when that one vanishes (ninja, shadow, pixie...).
+            s.ticks(6);
+            assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "still in the air");
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            double closest = Double.MAX_VALUE;
+            for (int i = 0; i < 60; i++) {
+                s.ticks(1);
+                Location body = s.enemy2.getLocation().add(0, s.enemy2.getHeight() * 0.5, 0);
+                for (BlockDisplay part : blockDisplays(s, Material.RED_CONCRETE)) {
+                    closest = Math.min(closest, part.getLocation().distance(body));
+                }
+            }
+            assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "the vanished enemy is not hit: " + s.hits());
+            assertTrue(closest > 1.0, "no doll homes onto (and so gives away) the hidden enemy: " + closest);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aGoldenHalfDropsAnEnemyThatVanishes() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, -14.5, -10.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "gold");
+            s.ticks(s.paramTicks("drop_delay") + 4);
+            assertEquals(4, shells(s));
+            s.clearHits();
+            s.healAll();
+            blow(s, s.enemy, 10);
+            assertEquals(3, shells(s), "the golden shell cracked");
+            s.ticks(2);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            double closest = Double.MAX_VALUE;
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                Location body = s.enemy.getLocation().add(0, s.enemy.getHeight() * 0.5, 0);
+                for (BlockDisplay part : blockDisplays(s, Material.GOLD_BLOCK)) {
+                    closest = Math.min(closest, part.getLocation().distance(body));
+                }
+            }
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "the halves lose the vanished enemy: "
+                    + s.hits());
+            assertTrue(closest > 1.0, "no golden half flies into the hidden enemy: " + closest);
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theThrownDollPassesAnEnemyTheOwnerCannotSee() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            // The hidden enemy stands right in the doll's way to the aimed one.
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 0.4, 2.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy2);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "throw");
+            assertTrue(tickUntilHit(s, s.enemy, 40), "the doll flies on to the seen enemy");
+            s.ticks(60);
+            assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "it never pops on the hidden one");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy2);
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== models stay above the floor
+
+    @Test
+    void noDollModelEverSinksIntoTheFloor() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            // A hard fall: no side to stand a cover on, the halves roll away along the floor.
+            s.owner.setNoDamageTicks(0);
+            s.owner.damage(6, DamageSource.builder(DamageType.FALL).build());
+            assertEquals(2, shells(s));
+            watchFloor(s, 24, "rolled halves");
+            // A blow from the enemy: the halves tumble over to the cover.
+            s.healAll();
+            blow(s, s.enemy, 10);
+            assertEquals(1, shells(s));
+            watchFloor(s, 24, "halves flying to the cover");
+            // The thrown doll pops on the floor (nobody near the aimed spot), the inner ones look around.
+            s.place(s.enemy, 9.5, -6.5, 0);
+            s.place(s.enemy2, 12.5, -9.5, 0);
+            s.aimAtFloor(s.owner, -2.5, 5.5);
+            s.assertSucceeded(s.active(), "into the floor");
+            watchFloor(s, 60, "doll popping on the floor");
+            // A shell closes over the owner again: the lid's lower half grows up from the floor.
+            s.layout();
+            watchFloor(s, s.paramTicks("regrow_delay") + 20, "lid");
+            assertEquals(2, shells(s), "a shell grew back");
+            // The giant doll comes down, squashes on the floor and settles over the owner.
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "giant");
+            watchFloor(s, s.paramTicks("drop_delay") + 20, "giant doll");
+            // Golden halves fly at the attacker.
+            s.healAll();
+            blow(s, s.enemy, 10);
+            watchFloor(s, 30, "golden halves");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theGiantDollLandsFlatOnTheFloor() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "giant");
+            assertTrue(tickUntilHit(s, s.enemy, s.paramTicks("drop_delay") + 4), "it lands");
+            // The landing squash flattens it onto the floor: its base stays on the ground, never lifts off it.
+            List<BlockDisplay> giant = blockDisplays(s, Material.RED_CONCRETE).stream()
+                    .filter(part -> part.getTransformation().getScale().y > 1)
+                    .toList();
+            assertFalse(giant.isEmpty(), "the giant doll");
+            double base = giant.stream().mapToDouble(NestingNewAbilitiesTest::lowest).min().orElseThrow();
+            assertEquals(FlatWorld.SURFACE, base, 0.05, "the squashed giant sits on the floor");
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== covers
+
+    @Test
+    void aDiagonalBlowRaisesAStraightCoverAcrossIt() {
+        try (Scenario s = Scenario.ffa(ID)) {
+            s.ticks(10);
+            // The attacker stands south-east, a little more south than east: the cover faces south.
+            s.place(s.enemy, 3.5, 4.0, 135);
+            blow(s, s.enemy, 6);
+            s.ticks(COVER_TICKS);
+            List<Block> blocks = placedBlocks(s);
+            List<Block> base = blocks.stream().filter(b -> b.getY() == FlatWorld.FLOOR_Y + 1).toList();
+            assertEquals(3, base.size(), "a body and two arms: " + blocks);
+            int z = base.getFirst().getZ();
+            for (Block block : base) {
+                assertEquals(z, block.getZ(), "the body and its arms in one straight row across the blow: " + base);
+            }
+            BlockDisplay face = blockDisplays(s, Material.SMOOTH_QUARTZ).getFirst();
+            assertEquals(1, front(face).z, 1.0E-4, "the face looks south like the row: " + front(face));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aCoverNeverStandsOnTheFarSideOfAWall() {
+        try (Scenario s = Scenario.ffa(ID)) {
+            s.ticks(10);
+            // A thin wall between the owner and the cover spot (an arrow came over it from the south).
+            for (int x = -3; x <= 3; x++) {
+                for (int y = 1; y <= 3; y++) {
+                    s.world.getBlockAt(x, FlatWorld.FLOOR_Y + y, 1).setType(Material.STONE);
+                }
+            }
+            Arrow arrow = s.world.spawn(s.owner.getLocation().add(0, 1, 0.3), Arrow.class);
+            arrow.setShooter(s.enemy);
+            arrow.setVelocity(new Vector(0, 0, -1.5));
+            s.owner.setNoDamageTicks(0);
+            s.owner.damage(8, DamageSource.builder(DamageType.ARROW).withCausingEntity(s.enemy)
+                    .withDirectEntity(arrow).build());
+            arrow.remove();
+            assertEquals(2, shells(s));
+            s.ticks(COVER_TICKS + 4);
+            assertEquals(0, s.h.hub.tempBlocks().size(), "no cover behind the wall: "
+                    + placedBlocks(s).stream().filter(b -> b.getType() != Material.STONE).toList());
+            for (int x = -3; x <= 3; x++) {
+                for (int y = 1; y <= 3; y++) {
+                    s.world.getBlockAt(x, FlatWorld.FLOOR_Y + y, 1).setType(Material.AIR);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void waitingForHeadroomSaysSoOnceAndShowsItOnTheBadge() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            crackOnce(s);
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.getBlockAt(x, FlatWorld.FLOOR_Y + 3, z).setType(Material.STONE);
+                }
+            }
+            actionBars(s.owner);
+            s.ticks(s.paramTicks("regrow_delay") + 200);
+            assertEquals(2, shells(s), "no room to grow");
+            List<String> cramped = actionBars(s.owner).stream().filter(bar -> bar.contains("비좁")).toList();
+            assertEquals(1, cramped.size(), "the notice comes once, not over every other action bar: " + cramped);
+            assertTrue(badgeText(s).contains("비좁"), "the badge says why nothing grows: " + badgeText(s));
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.getBlockAt(x, FlatWorld.FLOOR_Y + 3, z).setType(Material.AIR);
+                }
+            }
+            s.ticks(2);
+            assertEquals(3, shells(s));
+            s.finishClean();
+        }
+    }
+
     // ================================================================== budget & cleanup
+
+    @Test
+    void theDollsThatHitAreAlwaysThereEvenWhenCoversFillTheBudget() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            // Three painted covers at once: north, east and west of the owner.
+            for (double[] from : new double[][] {{0.5, -3.5}, {4.5, 0.5}, {-3.5, 0.5}}) {
+                s.place(s.enemy, from[0], from[1], 0);
+                s.healAll();
+                blow(s, s.enemy, 10);
+                s.ticks(s.paramTicks("crack_grace") + 2);
+            }
+            assertEquals(0, shells(s));
+            s.ticks(18);
+            assertTrue(s.h.hub.tempBlocks().size() >= 9, "three covers stand: " + s.h.hub.tempBlocks().size());
+            s.layout();
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "throw");
+            int most = 0;
+            int checked = 0;
+            double seenEnemy = 0;
+            double seenEnemy2 = 0;
+            for (int i = 0; i < 80; i++) {
+                s.ticks(1);
+                most = Math.max(most, entities(s, Display.class).size());
+                for (TestPlayer victim : s.enemies()) {
+                    double dealt = s.damageBy(s.owner, victim);
+                    double before = victim == s.enemy ? seenEnemy : seenEnemy2;
+                    if (dealt > before + EPSILON) {
+                        checked++;
+                        assertTrue(dollNear(s, victim, 1.8), "a doll is there when it hits " + victim.getName()
+                                + " (tick " + i + ", " + entities(s, Display.class).size() + " displays)");
+                    }
+                    if (victim == s.enemy) {
+                        seenEnemy = dealt;
+                    } else {
+                        seenEnemy2 = dealt;
+                    }
+                }
+            }
+            assertEquals(3, checked, "three dolls struck: " + s.hits());
+            assertTrue(most <= 24, "the budget still holds: " + most);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
 
     @Test
     void displaysStayWithinTheBudget() {
