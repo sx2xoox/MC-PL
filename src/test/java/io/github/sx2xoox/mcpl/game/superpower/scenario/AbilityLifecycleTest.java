@@ -165,8 +165,11 @@ class AbilityLifecycleTest {
                         + enemyBefore + " -> " + s.health(s.enemy) + ")");
             }
             // The gambler's dice can backfire, and the creeper's blast scorches itself too (by design).
-            // The oath's unkept vow (nobody struck three times) burns its owner (by design).
-            if (!id.equals("gambler") && !id.equals("creeper") && !id.equals("oath")) {
+            // The oath's unkept vow (nobody struck three times) burns its owner (by design), by its price only.
+            if (id.equals("oath")) {
+                assertTrue(ownerDamage(s) <= s.param("break_damage") + 1.0E-9, "a broken vow costs its price only: "
+                        + s.hits());
+            } else if (!id.equals("gambler") && !id.equals("creeper")) {
                 assertEquals(0, ownerDamage(s), 1.0E-9, id + " active never hurts its owner: " + s.hits());
             }
 
@@ -178,8 +181,11 @@ class AbilityLifecycleTest {
             if (EXPECT.getOrDefault(id, NOT_CHECKED).ultimateHurts()) {
                 assertTrue(s.damageTaken(s.enemy) > 0, id + " ultimate hurts the aimed enemy");
             }
-            // The oath's vow on its life costs health when no enemy falls in time (by design).
-            if (!id.equals("gambler") && !id.equals("oath")) {
+            // The oath's vow on its life costs health when no enemy falls in time (by design), by its price only.
+            if (id.equals("oath")) {
+                assertTrue(ownerDamage(s) <= s.param("life_cost") + 1.0E-9, "an unkept vow on its life costs its "
+                        + "price only: " + s.hits());
+            } else if (!id.equals("gambler")) {
                 assertEquals(0, ownerDamage(s), 1.0E-9, id + " ultimate never hurts its owner: " + s.hits());
             }
             s.assertNoProblems();

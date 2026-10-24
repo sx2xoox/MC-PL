@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -260,7 +261,8 @@ public final class KiWarriorAbility extends Ability {
     }
 
     private static String number(int value) {
-        return String.format("%,d", value);
+        // Never the server's own locale: a German server would read "4.200".
+        return String.format(Locale.ROOT, "%,d", value);
     }
 
     /** A reading gone haywire: digits and junk flickering past the scale. */

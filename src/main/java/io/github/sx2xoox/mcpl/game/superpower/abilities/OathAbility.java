@@ -283,18 +283,28 @@ public final class OathAbility extends Ability {
         }
     }
 
-    /** The oath's own price: dealt as plain damage the vows do not change, never lethal. */
+    /**
+     * The oath's own price: dealt as plain damage the vows do not change, never lethal. It must not shield the owner:
+     * a vanilla hurt starts invulnerability frames (enemy blows up to the price would be ignored for half a second),
+     * so the frames and the last hurt are put back as they were before the price was paid.
+     */
     private void hurtSelf(Player owner, double amount) {
         double damage = Math.min(amount, owner.getHealth() - 1);
         if (damage <= 0 || !ctx().isAlive(owner)) {
             return;
         }
+        int frames = owner.getNoDamageTicks();
+        double lastHurt = owner.getLastDamage();
         selfHurt = true;
         try {
             owner.setNoDamageTicks(0);
             owner.damage(damage, DamageSource.builder(DamageType.MAGIC).build());
         } finally {
             selfHurt = false;
+            if (owner.isValid() && !owner.isDead()) {
+                owner.setNoDamageTicks(frames);
+                owner.setLastDamage(lastHurt);
+            }
         }
     }
 

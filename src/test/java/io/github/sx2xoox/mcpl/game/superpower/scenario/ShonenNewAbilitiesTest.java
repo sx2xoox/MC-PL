@@ -41,6 +41,7 @@ import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
@@ -281,7 +282,10 @@ class ShonenNewAbilitiesTest {
             s.assertSucceeded(s.active(), id + " active");
             followActive(s, 100);
             assertTrue(s.damageBy(s.owner, s.enemy) > 0, id + " active hurts the aimed enemy: " + s.hits());
-            if (!OWNER_PAYS.contains(id)) {
+            if (OWNER_PAYS.contains(id)) {
+                assertTrue(s.damageTaken(s.owner) <= s.param("break_damage") + EPSILON, id + " active costs its "
+                        + "owner the price of a broken vow at most: " + s.hits());
+            } else {
                 assertEquals(0, s.damageTaken(s.owner), EPSILON, id + " active never hurts its owner: " + s.hits());
             }
 
@@ -293,7 +297,10 @@ class ShonenNewAbilitiesTest {
             followUltimate(s, id, 300);
             assertTrue(s.damageBy(s.owner, s.enemy) + s.damageBy(s.owner, s.enemy2) > 0, id + " ultimate hurts: "
                     + s.hits());
-            if (!OWNER_PAYS.contains(id)) {
+            if (OWNER_PAYS.contains(id)) {
+                assertTrue(s.damageTaken(s.owner) <= s.param("life_cost") + EPSILON, id + " ultimate costs its "
+                        + "owner the price of an unkept vow at most: " + s.hits());
+            } else {
                 assertEquals(0, s.damageTaken(s.owner), EPSILON, id + " ultimate never hurts its owner: "
                         + s.hits());
             }
@@ -535,7 +542,10 @@ class ShonenNewAbilitiesTest {
                     "over the head");
             assertEquals(s.enemy.getLocation().getX(), reading.getLocation().getX(), 0.05, "over its head");
             assertUnrotated(reading, "reading");
-            assertTrue(reading.isVisibleByDefault(), "everyone sees the reading");
+            // (EntityMock#isVisibleByDefault is unimplemented: asking it skipped this whole test.)
+            for (Player viewer : List.of(s.owner, s.enemy, s.enemy2)) {
+                assertTrue(viewer.canSee(reading), "everyone sees the reading: " + viewer.getName());
+            }
 
             // The number follows the gauge while it is shown.
             s.match.setGauge(s.enemy, 61);
@@ -557,6 +567,26 @@ class ShonenNewAbilitiesTest {
             assertTrue(texts(s, "전투력").isEmpty(), "and fades");
             s.assertNoProblems();
             s.finishClean();
+        }
+    }
+
+    /** The reading used the JVM's default locale: a German server showed "4.200", a French one "4 200". */
+    @Test
+    void kiwarriorReadsThePowerTheSameOnAnyServerLocale() {
+        java.util.Locale before = java.util.Locale.getDefault();
+        try (Scenario s = noGaugeGain(Scenario.builder("kiwarrior")).start()) {
+            java.util.Locale.setDefault(java.util.Locale.GERMANY);
+            s.match.setGauge(s.enemy, 42);
+            s.aimAt(s.owner, s.enemy);
+            s.ticks(8);
+            List<TextDisplay> readings = texts(s, "전투력");
+            assertEquals(1, readings.size(), "one reading");
+            String text = Scenario.plain(readings.getFirst().text());
+            assertTrue(text.contains("4,200"), "the same digits everywhere: " + text);
+            java.util.Locale.setDefault(before);
+            s.finishClean();
+        } finally {
+            java.util.Locale.setDefault(before);
         }
     }
 
@@ -810,6 +840,33 @@ class ShonenNewAbilitiesTest {
         }
     }
 
+    /**
+     * The credited fall is the fall damage itself, capped at flick_fall_max: the interest used to scale it on the way
+     * in (an enemy that caught the hero's interest mid-flight took 4.8 from a "최대 4" fall, a bored one 3.4).
+     */
+    @Test
+    void boredheroCreditedFallIsNeverScaledByInterest() {
+        try (Scenario s = noGaugeGain(Scenario.builder("boredhero").param("flick_height", 12)).start()) {
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "flick");
+            s.ticks(s.paramTicks("flick_delay") + 6);
+            assertTrue(s.enemy.getLocation().getY() > FlatWorld.SURFACE + 2, "shot up");
+            // Up there it catches the hero's interest.
+            s.melee(s.enemy, s.owner, 5);
+            s.melee(s.enemy, s.owner, 5);
+            s.clearHits();
+            s.tickUntilGrounded(s.enemy, 120);
+            s.ticks(2);
+            List<Scenario.Hit> falls = s.hitsBy(s.owner, s.enemy).stream()
+                    .filter(hit -> hit.type() == DamageType.FALL).toList();
+            assertEquals(1, falls.size(), "the fall is the hero's: " + s.hits());
+            assertEquals(s.param("flick_fall_max"), falls.getFirst().damage(), EPSILON, "exactly the cap, unscaled");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
     @Test
     void boredheroFlickSlamsAnInterestingEnemyIntoTheGround() {
         try (Scenario s = noGaugeGain(Scenario.builder("boredhero")).start()) {
@@ -848,23 +905,23 @@ class ShonenNewAbilitiesTest {
     }
 
     @Test
-    void boredheroSeriousPunchHitsAsHardAsTheEnemyIsHealthy() {
+    void boredheroHardBlowHitsAsHardAsTheEnemyIsHealthy() {
         try (Scenario s = noGaugeGain(Scenario.builder("boredhero")).start()) {
-            // Interest makes no difference to the serious punch.
+            // Interest makes no difference to the hard blow.
             s.melee(s.enemy, s.owner, 5);
             s.melee(s.enemy, s.owner, 5);
             s.healAll();
             s.enemy.setHealth(12);
             s.aimAt(s.owner, s.enemy);
             s.clearHits();
-            s.assertSucceeded(s.ultimate(), "serious");
+            s.assertSucceeded(s.ultimate(), "a bit harder");
             assertEquals(1, s.owner.getAttribute(Attribute.KNOCKBACK_RESISTANCE).getValue(), EPSILON,
-                    "not pushed around while getting serious");
+                    "not pushed around while rolling up its sleeves");
             assertFalse(texts(s, "이번엔 좀 세게").isEmpty(), "says it for everyone to read");
-            s.ticks(s.paramTicks("serious_windup") - 2);
+            s.ticks(s.paramTicks("hard_windup") - 2);
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "takes its time");
             s.ticks(3);
-            double expected = 12 * s.param("serious_share") / 100 + s.param("serious_bonus");
+            double expected = 12 * s.param("hard_share") / 100 + s.param("hard_bonus");
             assertEquals(expected, s.damageBy(s.owner, s.enemy), EPSILON, "half its health + 2");
             assertTrue(s.enemy.getVelocity().length() > 1, "sent flying");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "one enemy only");
@@ -874,15 +931,15 @@ class ShonenNewAbilitiesTest {
     }
 
     @Test
-    void boredheroSeriousPunchIsClamped() {
+    void boredheroHardBlowIsClamped() {
         for (double health : new double[] {4, 100}) {
             try (Scenario s = noGaugeGain(Scenario.builder("boredhero")).start()) {
                 s.enemy.setHealth(health);
                 s.aimAt(s.owner, s.enemy);
                 s.clearHits();
-                s.assertSucceeded(s.ultimate(), "serious");
-                s.ticks(s.paramTicks("serious_windup") + 2);
-                double expected = health < 10 ? s.param("serious_min") : s.param("serious_max");
+                s.assertSucceeded(s.ultimate(), "a bit harder");
+                s.ticks(s.paramTicks("hard_windup") + 2);
+                double expected = health < 10 ? s.param("hard_min") : s.param("hard_max");
                 assertEquals(expected, s.damageBy(s.owner, s.enemy), EPSILON, "health " + health);
                 s.finishClean();
             }
@@ -890,12 +947,12 @@ class ShonenNewAbilitiesTest {
     }
 
     @Test
-    void boredheroSeriousPunchAtNobodyRefundsHalfTheGauge() {
+    void boredheroHardBlowAtNobodyRefundsHalfTheGauge() {
         try (Scenario s = noGaugeGain(Scenario.builder("boredhero")).start()) {
             s.place(s.owner, 0.5, 0.5, 180);
-            s.assertSucceeded(s.ultimate(), "serious");
-            s.ticks(s.paramTicks("serious_windup") + 2);
-            assertEquals(s.param("serious_refund"), s.ctx().gauge(s.owner), EPSILON, "…귀찮네");
+            s.assertSucceeded(s.ultimate(), "a bit harder");
+            s.ticks(s.paramTicks("hard_windup") + 2);
+            assertEquals(s.param("hard_refund"), s.ctx().gauge(s.owner), EPSILON, "…귀찮네");
             assertFalse(texts(s, "귀찮네").isEmpty(), "said for everyone to read");
             assertEquals(0, s.damageTaken(s.enemy) + s.damageTaken(s.enemy2), EPSILON);
             s.finishClean();
@@ -916,6 +973,16 @@ class ShonenNewAbilitiesTest {
 
 
     // ================================================================== 쭉쭉이 rubber
+
+    /** Every action bar {@code player} was sent since the last call, as plain text. */
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new java.util.ArrayList<>();
+        net.kyori.adventure.text.Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
 
     private static double reach(Player player) {
         return attribute(player, Attribute.ENTITY_INTERACTION_RANGE);
@@ -966,6 +1033,51 @@ class ShonenNewAbilitiesTest {
             assertUnrotated(arm.getFirst(), "arm");
             s.finishClean();
         }
+    }
+
+    /**
+     * The shoulders were mirrored: the arm of a wound-up punch shot out of the left shoulder while the player swings
+     * with its right hand.
+     */
+    @Test
+    void rubberStretchedArmShootsOutOfTheRightShoulder() {
+        for (float yaw : new float[] {0, 90}) {
+            try (Scenario s = Scenario.ffa("rubber")) {
+                Vector facing = new Vector(-Math.sin(Math.toRadians(yaw)), 0, Math.cos(Math.toRadians(yaw)));
+                Vector right = new Vector(-facing.getZ(), 0, facing.getX());
+                Location ahead = s.owner.getLocation().add(facing.clone().multiply(2.5));
+                s.place(s.owner, 0.5, 0.5, yaw);
+                s.place(s.enemy, ahead.getX(), ahead.getZ(), yaw + 180);
+                s.ticks(10);
+                s.melee(s.owner, s.enemy, 2);
+                s.ticks(2);
+                List<BlockDisplay> arm = blocks(s, Material.DIAMOND_BLOCK);
+                assertEquals(1, arm.size(), "the arm is out");
+                Vector start = arm.getFirst().getLocation().toVector().subtract(s.owner.getLocation().toVector());
+                assertTrue(start.dot(right) > 0.25, "yaw " + yaw + ": from the right shoulder: " + start);
+                Vector end = beamEnd(arm.getFirst()).subtract(s.enemy.getLocation().toVector()).setY(0);
+                assertTrue(end.length() < 0.4, "yaw " + yaw + ": to the victim: " + end);
+                assertUnrotated(arm.getFirst(), "arm");
+                s.finishClean();
+            }
+        }
+    }
+
+    /** Where a beam display (a bar along its local +Z from its origin) ends, in the world. */
+    private static Vector beamEnd(Display display) {
+        Transformation pose = display.getTransformation();
+        Vector3f scale = pose.getScale();
+        Vector3f tip = leftRotation(display).transform(new Vector3f(scale.x() * 0.5f, scale.y() * 0.5f, scale.z()))
+                .add(pose.getTranslation());
+        return display.getLocation().toVector().add(new Vector(tip.x(), tip.y(), tip.z()));
+    }
+
+    /** Where a box display's middle is, in the world. */
+    private static Vector boxCenter(Display display) {
+        Transformation pose = display.getTransformation();
+        Vector3f half = new Vector3f(pose.getScale()).mul(0.5f);
+        Vector3f middle = leftRotation(display).transform(half).add(pose.getTranslation());
+        return display.getLocation().toVector().add(new Vector(middle.x(), middle.y(), middle.z()));
     }
 
     @Test
@@ -1094,6 +1206,57 @@ class ShonenNewAbilitiesTest {
         }
     }
 
+    /**
+     * The band's arms reach from the shoulder on their own side to their post, whichever way the owner faces (the
+     * mirrored shoulders crossed them in an X in front of the chest), and the strands run across the look, the posts
+     * straight up.
+     */
+    @Test
+    void rubberBandArmsAndStrandsPointTheRightWay() {
+        for (float yaw : new float[] {0, 90}) {
+            try (Scenario s = Scenario.ffa("rubber")) {
+                Vector facing = new Vector(-Math.sin(Math.toRadians(yaw)), 0, Math.cos(Math.toRadians(yaw)));
+                Vector left = new Vector(facing.getZ(), 0, -facing.getX());
+                s.place(s.owner, 0.5, 0.5, yaw);
+                s.place(s.enemy, 0.5 + facing.getX() * 8 + left.getX() * 6, 0.5 + facing.getZ() * 8 + left.getZ() * 6,
+                        yaw + 180);
+                s.place(s.enemy2, 0.5 - facing.getX() * 8, 0.5 - facing.getZ() * 8, yaw);
+                Location floor = s.owner.getLocation().add(facing.clone().multiply(3.5));
+                s.aimAtFloor(s.owner, floor.getX(), floor.getZ());
+                s.assertSucceeded(s.active(), "rubber band");
+                s.ticks(4);
+                Vector owner = s.owner.getLocation().toVector();
+                int arms = 0;
+                for (BlockDisplay part : blocks(s, Material.DIAMOND_BLOCK)) {
+                    assertUnrotated(part, "band part");
+                    Vector axis = rotated(part, new Vector3f(0, 0, 1));
+                    if (part.getLocation().getY() < FlatWorld.SURFACE + 1) {
+                        assertTrue(axis.getY() > 0.99, "yaw " + yaw + ": a post stands up: " + axis);
+                        continue;
+                    }
+                    arms++;
+                    double post = part.getLocation().toVector().subtract(owner).dot(left);
+                    double shoulder = beamEnd(part).subtract(owner).dot(left);
+                    assertTrue(Math.abs(post) > 1, "yaw " + yaw + ": the post is off to one side: " + post);
+                    assertTrue(Math.signum(shoulder) == Math.signum(post) && Math.abs(shoulder) > 0.25,
+                            "yaw " + yaw + ": the arm reaches the shoulder on its post's side (post " + post
+                                    + ", shoulder " + shoulder + ")");
+                    assertTrue(beamEnd(part).getY() > owner.getY() + 1.2, "at shoulder height");
+                }
+                assertEquals(2, arms, "two arms");
+                List<BlockDisplay> strands = blocks(s, Material.PURPLE_CONCRETE);
+                assertEquals(4, strands.size());
+                for (BlockDisplay strand : strands) {
+                    Vector along = rotated(strand, new Vector3f(0, 0, 1));
+                    assertEquals(0, along.dot(facing), 1.0E-3, "yaw " + yaw + ": across the look: " + along);
+                    assertEquals(1, Math.abs(along.dot(left)), 1.0E-3, "yaw " + yaw + ": level: " + along);
+                    assertUnrotated(strand, "strand");
+                }
+                s.finishClean();
+            }
+        }
+    }
+
     @Test
     void rubberBandBouncesAnEnemyBackTheWayItCame() {
         try (Scenario s = noGaugeGain(Scenario.builder("rubber")).start()) {
@@ -1159,13 +1322,44 @@ class ShonenNewAbilitiesTest {
             Interaction part = entities(s, Interaction.class).getFirst();
             for (int i = 0; i < s.param("cut_hits"); i++) {
                 strike(s, s.enemy, part);
+                s.ticks(i + 1 < s.param("cut_hits") ? fullSwing(s.enemy) : 1);
             }
-            s.ticks(1);
             assertTrue(entities(s, Interaction.class).isEmpty(), "툭: the band is gone");
             double after = s.ctx().cooldownRemaining(s.owner);
             assertEquals(before / 2, after, 0.2, "half the cooldown left");
             s.ticks(20);
             assertNoDisplays(s, "the snapped band");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /** Ticks an attack meter takes to refill (vanilla: 20 / attack speed). */
+    private static int fullSwing(Player player) {
+        return (int) Math.ceil(20 / attribute(player, Attribute.ATTACK_SPEED));
+    }
+
+    /**
+     * Every click is a blow to the server, whatever the attack meter: a double click used to cut the band in a tick,
+     * with half the cooldown back.
+     */
+    @Test
+    void rubberBandIsNotCutByClickingFast() {
+        try (Scenario s = Scenario.ffa("rubber")) {
+            s.place(s.enemy, 0.5, 5.0, 180);
+            band(s);
+            Interaction part = entities(s, Interaction.class).getFirst();
+            strike(s, s.enemy, part);
+            for (int i = 0; i < 6; i++) {
+                s.ticks(1);
+                strike(s, s.enemy, part); // every click empties the meter again
+            }
+            s.ticks(1);
+            assertFalse(entities(s, Interaction.class).isEmpty(), "clicking fast is one wound-up blow only");
+            s.ticks(fullSwing(s.enemy));
+            strike(s, s.enemy, part);
+            s.ticks(1);
+            assertTrue(entities(s, Interaction.class).isEmpty(), "a second wound-up blow: 툭");
             s.assertNoProblems();
             s.finishClean();
         }
@@ -1263,8 +1457,16 @@ class ShonenNewAbilitiesTest {
             s.melee(s.enemy, s.owner, 10);
             assertEquals(10 * (1 - s.param("ball_guard") / 100), s.damageTaken(s.owner), EPSILON, "bouncy armour");
 
+            actionBars(s.owner);
+            s.owner.clearSounds();
             s.h.server.getPluginManager().callEvent(new PlayerSwapHandItemsEvent(s.owner, new ItemStack(Material.AIR),
                     new ItemStack(Material.AIR)));
+            List<String> bars = actionBars(s.owner);
+            assertTrue(bars.stream().noneMatch(bar -> bar.contains("궁극기 게이지")),
+                    "the key is the ball's: no 'gauge not full' message: " + bars);
+            assertTrue(s.owner.getHeardSounds().stream().noneMatch(sound -> sound.getSound().contains("note_block.bass")),
+                    "nor the denied note");
+            assertTrue(bars.stream().anyMatch(bar -> bar.contains("피쉬식")), "피쉬식…: " + bars);
             s.ticks(1);
             assertEquals(1, attribute(s.owner, Attribute.SCALE), EPSILON, "F lets the air out");
             assertEquals(base, speed(s.owner), EPSILON);
@@ -1294,6 +1496,167 @@ class ShonenNewAbilitiesTest {
             clearWallAcrossX(s, 6, -3, 4, 3);
             s.assertNoProblems();
             s.finishClean();
+        }
+    }
+
+    /**
+     * A wall the bumped enemy reaches just as it comes down (at the 11th tick of its flight, 0.12 above the floor): the
+     * landing was checked before the wall, so the server saw it "land in the open" and the crash never happened.
+     */
+    @Test
+    void rubberBallCrashCountsRightAsTheEnemyComesDown() {
+        try (Scenario s = noGaugeGain(Scenario.builder("rubber")).start()) {
+            s.place(s.enemy2, -8.5, -8.5, 0);
+            wallAcrossX(s, 9, -3, 4, 3);
+            s.place(s.enemy, 0.5, 2.75, 180);
+            s.assertSucceeded(s.ultimate(), "ball");
+            s.ticks(2);
+            s.clearHits();
+            s.place(s.owner, 0.5, 1.9, 0);
+            s.ticks(30);
+            assertEquals(s.param("bump_damage") + s.param("crash_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "into the wall at the end of the flight: " + s.hits());
+            clearWallAcrossX(s, 9, -3, 4, 3);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A bumped player flies on its own client; with some ping the server still sees it standing where it was bumped
+     * a few ticks later, and the flight ended there as "landed in the open": no crash into the wall it flew into. The
+     * flight is now judged along the path the bump sent it on.
+     */
+    @Test
+    void rubberBallCrashIntoAWallIsJudgedOnTheBumpedPlayersOwnPath() {
+        for (int ping : new int[] {0, 150, 250}) {
+            try (Scenario s = noGaugeGain(Scenario.builder("rubber")).start()) {
+                s.place(s.enemy2, -8.5, -8.5, 0);
+                wallAcrossX(s, 9, -3, 4, 3);
+                s.place(s.enemy, 0.5, 3.0, 180);
+                s.assertSucceeded(s.ultimate(), "ball");
+                s.ticks(2);
+                s.world.physics().setEnabled(false);
+                s.enemy.setPing(ping);
+                LaggingClient client = new LaggingClient(s, s.enemy, 1 + ping / 50);
+                s.clearHits();
+                s.place(s.owner, 0.5, 1.9, 0);
+                for (int i = 0; i < 30; i++) {
+                    client.tick();
+                }
+                s.world.physics().setEnabled(true);
+                assertEquals(s.param("bump_damage") + s.param("crash_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                        ping + " ms: slammed into the wall: " + s.hits());
+                assertTrue(client.at().getZ() < 9 - 0.3 + 1.0E-6, ping + " ms: never through it: " + client.at());
+                s.place(s.enemy, 0.5, 4.5, 180);
+                clearWallAcrossX(s, 9, -3, 4, 3);
+                s.assertNoProblems();
+                s.finishClean();
+            }
+        }
+    }
+
+    /** The billiard rule holds for a lagging player knocked into another one too. */
+    @Test
+    void rubberBallKnocksALaggingPlayerIntoAnother() {
+        try (Scenario s = noGaugeGain(Scenario.builder("rubber")).start()) {
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 0.5, 7.5, 180);
+            s.assertSucceeded(s.ultimate(), "ball");
+            s.ticks(2);
+            s.world.physics().setEnabled(false);
+            s.enemy.setPing(250);
+            LaggingClient client = new LaggingClient(s, s.enemy, 6);
+            s.clearHits();
+            s.place(s.owner, 0.5, 1.9, 0);
+            for (int i = 0; i < 20; i++) {
+                client.tick();
+            }
+            s.world.physics().setEnabled(true);
+            assertEquals(s.param("bump_damage") + s.param("crash_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the bumped one crashed: " + s.hits());
+            assertEquals(s.param("crash_damage"), s.damageBy(s.owner, s.enemy2), EPSILON, "into the other one");
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /**
+     * A player's real client against what the server knows of it (like ControlAbilitiesTest's): it keeps its own
+     * velocity (gravity, drag, friction, stopped by the floor and by walls) until the server sends a new one, and the
+     * server sees where it is {@code lag} ticks late. World physics must be off: this moves the player.
+     */
+    private static final class LaggingClient {
+        /** Marks the velocity the server last sent, to tell whether a skill sent a new one. */
+        private static final double MARK = 1.0E-9;
+        private final Scenario s;
+        private final TestPlayer player;
+        private final java.util.Deque<Location> late = new java.util.ArrayDeque<>();
+        private final Location at;
+        private final Vector velocity = new Vector();
+        private Vector marked = new Vector();
+
+        LaggingClient(Scenario s, TestPlayer player, int lag) {
+            this.s = s;
+            this.player = player;
+            this.at = player.getLocation();
+            for (int i = 0; i < lag; i++) {
+                late.addLast(at.clone());
+            }
+            mark(new Vector());
+        }
+
+        /** Where the player really is (its client). */
+        Location at() {
+            return at.clone();
+        }
+
+        /** One server tick, then one client tick with the velocity the server last sent. */
+        void tick() {
+            s.ticks(1);
+            Vector now = player.getVelocity();
+            if (Double.compare(now.getX(), marked.getX()) != 0 || Double.compare(now.getY(), marked.getY()) != 0
+                    || Double.compare(now.getZ(), marked.getZ()) != 0) {
+                velocity.copy(now);
+                mark(now);
+            }
+            at.add(0, velocity.getY(), 0);
+            boolean grounded = at.getY() <= FlatWorld.SURFACE;
+            if (grounded) {
+                at.setY(FlatWorld.SURFACE);
+            }
+            if (blocked(at.clone().add(velocity.getX(), 0, 0))) {
+                velocity.setX(0);
+            } else {
+                at.add(velocity.getX(), 0, 0);
+            }
+            if (blocked(at.clone().add(0, 0, velocity.getZ()))) {
+                velocity.setZ(0);
+            } else {
+                at.add(0, 0, velocity.getZ());
+            }
+            double vy = (velocity.getY() - 0.08) * 0.98;
+            double friction = grounded ? 0.546 : 0.91;
+            velocity.setX(velocity.getX() * friction).setY(grounded && vy < 0 ? 0 : vy)
+                    .setZ(velocity.getZ() * friction);
+            late.addLast(at.clone());
+            Location seen = late.removeFirst();
+            Location look = player.getLocation();
+            seen.setYaw(look.getYaw());
+            seen.setPitch(look.getPitch());
+            player.teleport(seen);
+            player.setVelocity(marked);
+        }
+
+        private boolean blocked(Location feet) {
+            return s.world.hasCollisionsIn(new BoundingBox(feet.getX() - 0.3, feet.getY() + 0.01, feet.getZ() - 0.3,
+                    feet.getX() + 0.3, feet.getY() + 1.8, feet.getZ() + 0.3));
+        }
+
+        private void mark(Vector sent) {
+            marked = sent.clone().setX(sent.getX() + MARK);
+            player.setVelocity(marked);
         }
     }
 
@@ -1483,6 +1846,83 @@ class ShonenNewAbilitiesTest {
             assertEquals(s.param("strike_base"), s.damageBy(s.owner, s.enemy), EPSILON, "nothing swallowed");
             assertFalse(texts(s, "봉인이 단단하군").isEmpty(), "…오늘은 봉인이 단단하군");
             s.finishClean();
+        }
+    }
+
+    /**
+     * The flame grows with the damage the blow really does (after armor): it read the raw base damage, so one ordinary
+     * sword hit on an armored chuuni filled the flame to its cap.
+     */
+    @Test
+    @SuppressWarnings("deprecation") // DamageModifier: the only way to build an armored hit
+    void chuuniStanceSwallowsTheDamageAfterArmor() {
+        try (Scenario s = noGaugeGain(Scenario.builder("chuuni")).start()) {
+            s.place(s.enemy2, 8.5, -6.5, 180);
+            overTheHead(s);
+            s.assertSucceeded(s.active(), "stance");
+            s.ticks(2);
+            // An 8 sword blow that armor halves: the chuuni feels 4.
+            Map<DamageModifier, Double> modifiers = new EnumMap<>(DamageModifier.class);
+            modifiers.put(DamageModifier.BASE, 8.0);
+            modifiers.put(DamageModifier.ARMOR, -4.0);
+            Map<DamageModifier, Function<? super Double, Double>> functions = new EnumMap<>(DamageModifier.class);
+            functions.put(DamageModifier.BASE, damage -> 0.0);
+            functions.put(DamageModifier.ARMOR, damage -> -damage * 0.5);
+            EntityDamageByEntityEvent blow = new EntityDamageByEntityEvent(s.enemy, s.owner, DamageCause.ENTITY_ATTACK,
+                    DamageSource.builder(DamageType.PLAYER_ATTACK).withCausingEntity(s.enemy).withDirectEntity(s.enemy)
+                            .build(), modifiers, functions, false);
+            s.h.server.getPluginManager().callEvent(blow);
+            double share = s.param("swallow_share") / 100;
+            assertEquals(4 * (1 - share), blow.getFinalDamage(), EPSILON, "half of what it would feel gets through");
+            s.clearHits();
+            s.owner.setSneaking(true);
+            s.ticks(3);
+            double flame = 4 * share * s.param("flame_ratio");
+            assertTrue(flame < s.param("flame_max"), "well below the cap");
+            assertEquals(s.param("strike_base") + flame, s.damageBy(s.owner, s.enemy), EPSILON, "흑염 from what it felt");
+            s.owner.setSneaking(false);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The bandaged forearm is held across the face (in front of it, at right angles to the look), and the thrust
+     * shoots out of the right shoulder along the look, whichever way the chuuni faces.
+     */
+    @Test
+    void chuuniForearmAndThrustPointTheRightWay() {
+        for (float yaw : new float[] {0, 90, -135}) {
+            try (Scenario s = Scenario.ffa("chuuni")) {
+                Vector facing = new Vector(-Math.sin(Math.toRadians(yaw)), 0, Math.cos(Math.toRadians(yaw)));
+                Vector right = new Vector(-facing.getZ(), 0, facing.getX());
+                s.place(s.owner, 0.5, 0.5, yaw);
+                s.place(s.enemy, 0.5 - facing.getX() * 6, 0.5 - facing.getZ() * 6, yaw);
+                s.place(s.enemy2, 0.5 - facing.getX() * 8 + 2, 0.5 - facing.getZ() * 8, yaw);
+                s.assertSucceeded(s.active(), "stance");
+                s.ticks(4);
+                List<BlockDisplay> arm = blocks(s, Material.BONE_BLOCK);
+                assertEquals(1, arm.size(), "the forearm");
+                BlockDisplay forearm = arm.getFirst();
+                assertUnrotated(forearm, "forearm");
+                Vector across = rotated(forearm, new Vector3f(1, 0, 0));
+                assertEquals(0, new Vector(across.getX(), 0, across.getZ()).dot(facing), 1.0E-3,
+                        "yaw " + yaw + ": across the face: " + across);
+                Vector eye = s.owner.getEyeLocation().toVector();
+                double before = boxCenter(forearm).subtract(eye).dot(facing);
+                assertTrue(before > 0.2 && before < 0.6, "yaw " + yaw + ": in front of the face: " + before);
+
+                s.owner.setSneaking(true);
+                s.ticks(2);
+                Vector along = rotated(forearm, new Vector3f(0, 0, 1));
+                assertTrue(along.dot(facing) > 0.99, "yaw " + yaw + ": thrust along the look: " + along);
+                Vector start = beamEnd(forearm).subtract(along.clone().multiply(forearm.getTransformation()
+                        .getScale().z())).subtract(eye);
+                assertTrue(start.dot(right) > 0.2, "yaw " + yaw + ": out of the right shoulder: " + start);
+                assertUnrotated(forearm, "thrust");
+                s.owner.setSneaking(false);
+                s.finishClean();
+            }
         }
     }
 
@@ -1742,6 +2182,54 @@ class ShonenNewAbilitiesTest {
             assertEquals(0, attribute(s.owner, Attribute.KNOCKBACK_RESISTANCE), EPSILON, "the vow is over");
             press(s, s.owner, Keys.NONE);
             s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The server hears the keys a ping late: a short tap within the slack (1 tick + 1 per 50 ms) is forgiven, a held
+     * key is not, at any ping.
+     */
+    @Test
+    void oathSlackGrowsWithThePing() {
+        for (int ping : new int[] {0, 150}) {
+            int slack = 1 + ping / 50;
+            try (Scenario s = noGaugeGain(Scenario.builder("oath")).start()) {
+                s.owner.setPing(ping);
+                s.owner.setSneaking(true);
+                s.assertSucceeded(s.active(), "vow");
+                s.owner.setSneaking(false);
+                s.ticks(10);
+                press(s, s.owner, Keys.BACKWARD);
+                s.ticks(slack);
+                press(s, s.owner, Keys.NONE);
+                s.ticks(5);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON, ping + " ms: a tap of " + slack + " ticks is forgiven");
+                press(s, s.owner, Keys.BACKWARD);
+                s.ticks(slack + 2);
+                assertEquals(s.param("break_damage"), s.damageTaken(s.owner), EPSILON, ping + " ms: held: 위반");
+                press(s, s.owner, Keys.NONE);
+                s.finishClean();
+            }
+        }
+    }
+
+    /**
+     * The price was paid through a vanilla hurt, which starts invulnerability frames: for half a second enemy blows up
+     * to the price were ignored (and bigger ones only dealt the excess), so a broken vow shielded the oath-taker.
+     */
+    @Test
+    void oathPriceNeverShieldsTheOwnerFromTheNextBlow() {
+        try (Scenario s = noGaugeGain(Scenario.builder("oath")).start()) {
+            s.assertSucceeded(s.active(), "vow");
+            s.ticks(s.paramTicks("vow_duration") + 1);
+            assertTrue(s.ctx().isSilenced(s.owner), "the unkept vow was paid for");
+            s.clearHits();
+            s.ticks(1);
+            // A blow straight after the price, without clearing the frames first.
+            s.owner.damage(3, DamageSource.builder(DamageType.PLAYER_ATTACK).withCausingEntity(s.enemy)
+                    .withDirectEntity(s.enemy).build());
+            assertEquals(3, s.damageTaken(s.owner), EPSILON, "the blow lands in full: " + s.hits());
             s.finishClean();
         }
     }

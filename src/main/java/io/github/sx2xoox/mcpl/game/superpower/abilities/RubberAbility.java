@@ -53,7 +53,6 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerItemHeldEvent;
-import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
@@ -92,8 +91,9 @@ public final class RubberAbility extends Ability {
                             + "{band_leash}블록 넘게 멀어지면 풀림). 나와 아군은 그냥 지나가지만, 줄을 넘으려는 적은 줄이 쭉 "
                             + "늘어났다 '팅' — {snap_damage} 피해를 입고 온 쪽으로 약 {snap_bounce}블록 되튕겨 "
                             + "{snap_stagger}초간 휘청입니다(이동 속도 -{stagger_slow}%, 적마다 최대 {snap_max}번, 남에게 "
-                            + "밀려 넘어와도 튕김). 적이 줄을 근접 공격으로 {cut_hits}번 치면 '툭' 끊기고 남은 쿨타임이 "
-                            + "절반으로 줄어듭니다. 웅크리면 줄을 놓아 앞으로 '탁' 튕기며 줄 너머 {release_reach}블록 안의 "
+                            + "밀려 넘어와도 튕김). 줄 너머로 휘두른 적의 근접 공격은 줄에 막히고, 힘을 모은 타격(공격 "
+                            + "게이지 {cut_charge}% 이상) {cut_hits}번에 줄이 '툭' 끊기며 남은 쿨타임이 절반으로 줄어듭니다. "
+                            + "웅크리면 줄을 놓아 앞으로 '탁' 튕기며 줄 너머 {release_reach}블록 안의 "
                             + "적에게 {release_damage} 피해를 주고 약 {release_push}블록 밀쳐냅니다.",
                     9)
             .ultimate("빵빵 부풀기",
@@ -122,6 +122,7 @@ public final class RubberAbility extends Ability {
             .param("stagger_slow", 50)
             .param("snap_max", 2)
             .param("cut_hits", 2)
+            .param("cut_charge", 90)
             .param("release_reach", 2)
             .param("release_damage", 2)
             .param("release_push", 4)
@@ -205,8 +206,17 @@ public final class RubberAbility extends Ability {
     private static final float SHELL_SHARE = 0.8f;
     private static final long FLING_MAX_TICKS = 30;
     private static final double WALL_PROBE = 0.3;
+    /** A player's step-up height: lower bumps never count as a wall. */
+    private static final double STEP_HEIGHT = 0.6;
+    /** Vanilla horizontal friction on the ground (block 0.6 times air 0.91). */
+    private static final double GROUND_FRICTION = 0.546;
+    /** Ticks a landed enemy is still watched while it slides. */
+    private static final int SLIDE_TICKS = 3;
+    /** A mob the server never saw leave the ground (a ceiling right above it) lands after this long. */
+    private static final long NEVER_AIRBORNE_TICKS = 4;
+    /** Farther than this between the reckoned and the server's position: the player went somewhere else. */
+    private static final double RECKON_SLACK = 8;
     private static final double TRANSFER = 0.8;
-    private static final long LANDING_GRACE = 40;
 
     // ------------------------------------------------------------------ state
 
@@ -246,10 +256,7 @@ public final class RubberAbility extends Ability {
         live.clear();
     }
 
-    /**
-     * Other players' input and the knockback the owner takes: arm swings (the attack meter), the band being struck, F to
-     * let the air out of the ball.
-     */
+    /** The owner's arm swings (the attack meter) and the knockback it takes, and enemy blows on the band. */
     private final class RubberListener implements Listener {
 
         @EventHandler(priority = EventPriority.MONITOR)
@@ -292,15 +299,19 @@ public final class RubberAbility extends Ability {
                 current.struck(event.getDamager(), part, event.getCause());
             }
         }
+    }
 
-        /** F again while the ball is up: the air goes out (the match itself cancels the swap). */
-        @EventHandler(priority = EventPriority.MONITOR)
-        public void onSwap(PlayerSwapHandItemsEvent event) {
-            Ball current = ball;
-            if (current != null && event.getPlayer().equals(player()) && ctx().currentTick() > current.started) {
-                current.deflate();
-            }
+    /** F again while the ball is up: the air goes out (the key is the ball's, the match does not deny it). */
+    @Override
+    public boolean onUltimateKey() {
+        Ball current = ball;
+        if (current == null) {
+            return false;
         }
+        if (ctx().currentTick() > current.started) {
+            current.deflate();
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------ passive: stretchy arms
@@ -547,6 +558,8 @@ public final class RubberAbility extends Ability {
         private final Map<UUID, Integer> sides = new HashMap<>();
         private final Map<UUID, Integer> bounces = new HashMap<>();
         private final Map<UUID, Long> resting = new HashMap<>();
+        /** When each enemy last struck the band: its attack meter refills from there. */
+        private final Map<UUID, Long> lastBlow = new HashMap<>();
         private final List<BlockDisplay> strands = new ArrayList<>();
         private final List<BlockDisplay> fixtures = new ArrayList<>();
         private final List<Interaction> hitboxes = new ArrayList<>();
@@ -686,7 +699,7 @@ public final class RubberAbility extends Ability {
                 hitboxes.add(hitbox);
             }
             hideHitboxesFromFriends();
-            Vfx.line(rubber.ctx(), shoulder, point(left, height), 3, Particle.DUST, MINT_DUST, false);
+            Vfx.line(rubber.ctx(), rubber.leftShoulder(owner), point(left, height), 3, Particle.DUST, MINT_DUST, false);
             Vfx.line(rubber.ctx(), shoulder, point(-right, height), 3, Particle.DUST, MINT_DUST, false);
             for (Location anchor : List.of(point(left, 0.1), point(-right, 0.1))) {
                 Vfx.burst(rubber.ctx(), anchor, PALETTE, 0.4, Particle.CRIT, false);
@@ -883,6 +896,14 @@ public final class RubberAbility extends Ability {
             if (attacker == null || !attacker.equals(damager) || !rubber.ctx().isEnemy(owner, attacker)) {
                 return;
             }
+            // Every click is a blow to the server, whatever the attack meter: only a wound-up one counts, and each
+            // click empties the meter again (so clicking fast never cuts the band).
+            long now = rubber.ctx().currentTick();
+            Long last = lastBlow.put(attacker.getUniqueId(), now);
+            if (last != null && meter(attacker, now - last) < rubber.params().num("cut_charge") / 100.0) {
+                Fx.sound(part.getLocation(), Sound.ENTITY_SLIME_SQUISH_SMALL, 0.5f, 1.6f);
+                return;
+            }
             cuts++;
             Location at = part.getLocation().add(0, height * 0.6, 0);
             Fx.sound(at, Sound.BLOCK_NOTE_BLOCK_BANJO, 0.8f, 1.8f);
@@ -890,6 +911,13 @@ public final class RubberAbility extends Ability {
             if (cuts >= Math.max(1, rubber.params().integer("cut_hits"))) {
                 cut(at);
             }
+        }
+
+        /** How full an attack meter is {@code ticks} after it emptied (vanilla: 20 / attack speed ticks to refill). */
+        private static double meter(Player attacker, long ticks) {
+            AttributeInstance speed = attacker.getAttribute(Attribute.ATTACK_SPEED);
+            double full = 20.0 / Math.max(0.1, speed == null ? 4.0 : speed.getValue());
+            return Math.clamp((ticks + 0.5) / full, 0.0, 1.0);
         }
 
         /** "툭": the band snaps in two, the halves whip back to the posts and the arms let go. */
@@ -1081,9 +1109,6 @@ public final class RubberAbility extends Ability {
                 boosts.add(ctx().addModifier(owner, owner, Attribute.JUMP_STRENGTH, jump,
                         Operation.MULTIPLY_SCALAR_1, duration));
             }
-            // A bouncy landing after it went flat again never hurts either (this one outlasts the ball on purpose).
-            ctx().addModifier(owner, owner, Attribute.FALL_DAMAGE_MULTIPLIER, -1.0, Operation.MULTIPLY_SCALAR_1,
-                    duration + LANDING_GRACE);
             if (reach != null) {
                 ctx().removeModifier(owner, reach);
                 reach = null;
@@ -1195,9 +1220,10 @@ public final class RubberAbility extends Ability {
                 if (Combat.isTargetable(ctx(), owner, enemy)) {
                     double distance = Math.max(0, params().num("bump_bounce"));
                     double speed = distance * (1 - AIR_DRAG) / (1 - Math.pow(AIR_DRAG, BOUNCE_AIR_TICKS));
-                    if (Motion.push(enemy, away.clone().multiply(speed).setY(BOUNCE_LIFT), MAX_SPEED)) {
+                    Vector velocity = away.clone().multiply(speed).setY(BOUNCE_LIFT);
+                    if (Motion.push(enemy, velocity, MAX_SPEED)) {
                         enemy.setFallDistance(0);
-                        new Fling(this, enemy, away, speed).start();
+                        new Fling(this, enemy, away, speed, sentBy(enemy, velocity)).start();
                     }
                 }
                 Location contact = Fx.body(enemy);
@@ -1259,6 +1285,13 @@ public final class RubberAbility extends Ability {
     /**
      * An enemy bumped by the ball, watched in flight: hitting a wall or another enemy hurts (both of them), and the other
      * enemy flies on.
+     *
+     * <p>A bumped player flies on its own client, and the server only learns where it is a round trip later (on a laggy
+     * connection it still sees the player standing where it was bumped for several ticks). So a player's flight is
+     * reckoned from the velocity the bump sent it, with vanilla's gravity, drag and friction, and walls and other enemies
+     * are checked along that path, never along the server's lagging view; a mob moves on the server itself, whose view
+     * is exact. Walls and enemies are checked before the landing, so a crash right as the enemy comes down still counts,
+     * and the short slide after the landing is watched too.
      */
     private final class Fling implements LongPredicate {
 
@@ -1266,12 +1299,23 @@ public final class RubberAbility extends Ability {
         private final LivingEntity enemy;
         private final Vector direction;
         private final double speed;
+        /** A player: it moves on its own client, so the server sees it late. */
+        private final boolean clientDriven;
+        /** The player's hitbox where the bump's velocity has carried it so far (reckoned). */
+        private BoundingBox path;
+        /** The reckoned velocity of the player's client. */
+        private final Vector velocity;
+        private boolean airborne;
+        private int slid;
 
-        Fling(Ball ball, LivingEntity enemy, Vector direction, double speed) {
+        Fling(Ball ball, LivingEntity enemy, Vector direction, double speed, Vector sent) {
             this.ball = ball;
             this.enemy = enemy;
             this.direction = direction.clone();
             this.speed = speed;
+            this.clientDriven = enemy instanceof Player;
+            this.path = enemy.getBoundingBox();
+            this.velocity = sent.clone();
         }
 
         void start() {
@@ -1281,36 +1325,92 @@ public final class RubberAbility extends Ability {
         @Override
         public boolean test(long tick) {
             Player owner = player();
-            if (!Combat.isTargetable(ctx(), owner, enemy)) {
+            if (!Combat.isTargetable(ctx(), owner, enemy) || enemy.isInWater()) {
                 return false;
             }
-            if (tick >= 3 && (Motion.isGrounded(enemy) || enemy.isInWater())) {
-                return false; // landed in the open
+            World world = enemy.getWorld();
+            boolean landed;
+            BoundingBox box;
+            if (clientDriven) {
+                landed = reckon(world);
+                box = path;
+                Vector live = enemy.getBoundingBox().getCenter();
+                if (Math.hypot(live.getX() - box.getCenterX(), live.getZ() - box.getCenterZ()) > RECKON_SLACK) {
+                    return false; // it went somewhere else (a teleport, its own skill): nothing to follow
+                }
+            } else {
+                box = enemy.getBoundingBox();
+                boolean grounded = Motion.isGrounded(enemy);
+                airborne |= !grounded;
+                landed = grounded && (airborne || tick >= NEVER_AIRBORNE_TICKS);
             }
-            BoundingBox box = enemy.getBoundingBox();
-            BoundingBox probe = new BoundingBox(box.getMinX() + 0.05, box.getMinY() + 0.3, box.getMinZ() + 0.05,
-                    box.getMaxX() - 0.05, box.getMaxY() - 0.05, box.getMaxZ() - 0.05)
+            // The probe skips the feet, so sliding over the floor or up a small step never counts as a wall.
+            BoundingBox probe = new BoundingBox(box.getMinX() + 0.05, box.getMinY() + STEP_HEIGHT,
+                    box.getMinZ() + 0.05, box.getMaxX() - 0.05, box.getMaxY() - 0.05, box.getMaxZ() - 0.05)
                     .shift(direction.getX() * WALL_PROBE, 0, direction.getZ() * WALL_PROBE);
-            if (enemy.getWorld().hasCollisionsIn(probe)) {
-                wall(owner);
+            if (world.hasCollisionsIn(probe)) {
+                wall(owner, box);
                 return false;
             }
             BoundingBox reach = box.clone().expand(0.3);
-            for (LivingEntity other : ctx().enemiesNear(owner, Fx.body(enemy), 1.5)) {
+            Location at = centerOf(world, box);
+            for (LivingEntity other : ctx().enemiesNear(owner, at, 1.5 + box.getWidthX())) {
                 if (!other.equals(enemy) && reach.overlaps(other.getBoundingBox())) {
-                    knock(owner, other);
+                    knock(owner, other, at);
                     return false;
                 }
             }
             if (tick % 2 == 0 && seen(owner, enemy)) {
-                Vfx.dot(Fx.body(enemy), Particle.DUST, MINT_DUST, false);
+                Vfx.dot(at, Particle.DUST, MINT_DUST, false);
             }
-            return true;
+            // Landed in the open: it slides a little further, then the bump is over.
+            return !landed || slid++ < SLIDE_TICKS;
+        }
+
+        /**
+         * One tick of the player's client: the reckoned hitbox moves by the reckoned velocity (stopped by the floor or
+         * a ceiling), then gravity, drag and friction act on the velocity like vanilla. True once it is on the ground.
+         */
+        private boolean reckon(World world) {
+            double dy = velocity.getY();
+            BoundingBox moved = path.clone().shift(velocity.getX(), 0, velocity.getZ());
+            boolean grounded = false;
+            if (dy != 0 && solid(world, moved.clone().shift(0, dy, 0))) {
+                // The floor (or a ceiling) stops it: as far as it gets.
+                double free = 0;
+                double blocked = dy;
+                for (int i = 0; i < 12; i++) {
+                    double mid = (free + blocked) / 2;
+                    if (solid(world, moved.clone().shift(0, mid, 0))) {
+                        blocked = mid;
+                    } else {
+                        free = mid;
+                    }
+                }
+                grounded = dy < 0;
+                dy = free;
+                velocity.setY(0);
+            }
+            path = moved.shift(0, dy, 0);
+            if (!grounded && velocity.getY() <= 0) {
+                grounded = solid(world, path.clone().shift(0, -0.01, 0));
+            }
+            double friction = grounded ? GROUND_FRICTION : AIR_DRAG;
+            double vy = grounded ? 0 : (velocity.getY() - Motion.GRAVITY) * Motion.DRAG;
+            velocity.setX(velocity.getX() * friction).setY(vy).setZ(velocity.getZ() * friction);
+            return grounded;
+        }
+
+        /** True if blocks collide with {@code box} (narrowed a little at the sides, so a wall alongside is no floor). */
+        private static boolean solid(World world, BoundingBox box) {
+            return world.hasCollisionsIn(new BoundingBox(box.getMinX() + 0.01, box.getMinY(), box.getMinZ() + 0.01,
+                    box.getMaxX() - 0.01, box.getMaxY(), box.getMaxZ() - 0.01));
         }
 
         /** Into a wall: it hurts, and the enemy bounces off a little. */
-        private void wall(Player owner) {
-            Location contact = Fx.body(enemy).add(direction.clone().multiply(enemy.getWidth() * 0.5 + 0.1));
+        private void wall(Player owner, BoundingBox box) {
+            Location contact = centerOf(enemy.getWorld(), box).add(direction.clone()
+                    .multiply(box.getWidthX() * 0.5 + 0.1));
             if (ball.crash(enemy)) {
                 Combat.hit(ctx(), owner, enemy, params().num("crash_damage"));
                 stagger(owner, enemy, params().ticks("crash_stagger"));
@@ -1322,8 +1422,8 @@ public final class RubberAbility extends Ability {
         }
 
         /** Into another enemy: both hurt, and the other one flies on like a billiard ball. */
-        private void knock(Player owner, LivingEntity other) {
-            Location contact = Fx.body(enemy).add(Fx.body(other)).multiply(0.5);
+        private void knock(Player owner, LivingEntity other, Location at) {
+            Location contact = at.clone().add(Fx.body(other)).multiply(0.5);
             if (ball.crash(enemy)) {
                 Combat.hit(ctx(), owner, enemy, params().num("crash_damage"));
                 stagger(owner, enemy, params().ticks("crash_stagger"));
@@ -1335,11 +1435,10 @@ public final class RubberAbility extends Ability {
             if (Combat.isTargetable(ctx(), owner, enemy)) {
                 enemy.setVelocity(direction.clone().multiply(speed * 0.15).setY(0.1));
             }
-            if (Combat.isTargetable(ctx(), owner, other)
-                    && Motion.push(other, direction.clone().multiply(speed * TRANSFER).setY(BOUNCE_LIFT * 0.8),
-                    MAX_SPEED)) {
+            Vector onward = direction.clone().multiply(speed * TRANSFER).setY(BOUNCE_LIFT * 0.8);
+            if (Combat.isTargetable(ctx(), owner, other) && Motion.push(other, onward, MAX_SPEED)) {
                 other.setFallDistance(0);
-                new Fling(ball, other, direction, speed * TRANSFER).start();
+                new Fling(ball, other, direction, speed * TRANSFER, sentBy(other, onward)).start();
             }
             crashFx(owner, contact, other);
         }
@@ -1354,6 +1453,15 @@ public final class RubberAbility extends Ability {
             Vfx.cloud(ctx(), contact, Particle.POOF, 4, 0.2, 0.05, null, false);
             pop(owner, contact.clone().add(0, 0.9, 0), "<b><" + PURPLE_TAG + ">쿵!</" + PURPLE_TAG + "></b>", 1.4f);
         }
+    }
+
+    /** The velocity {@link Motion#push} just gave {@code target} for {@code velocity} (resistance, cap). */
+    private static Vector sentBy(LivingEntity target, Vector velocity) {
+        return Motion.clamp(velocity.clone().multiply(Motion.knockbackFactor(target)), MAX_SPEED);
+    }
+
+    private static Location centerOf(World world, BoundingBox box) {
+        return new Location(world, box.getCenterX(), box.getCenterY(), box.getCenterZ());
     }
 
     /** A rotated cube of the ball's shell: two of them make a roundish ball. */
@@ -1380,7 +1488,8 @@ public final class RubberAbility extends Ability {
     private static Location shoulder(Player owner, int side) {
         Location feet = owner.getLocation();
         Vector facing = Motion.horizontalFacing(feet);
-        Vector left = new Vector(facing.getZ(), 0, -facing.getX()).multiply(-1);
+        // Facing +Z (south), the left hand is +X (east).
+        Vector left = new Vector(facing.getZ(), 0, -facing.getX());
         double scale = owner.getHeight() / 1.8;
         return feet.add(0, 1.35 * scale, 0).add(left.multiply(0.38 * side * scale));
     }

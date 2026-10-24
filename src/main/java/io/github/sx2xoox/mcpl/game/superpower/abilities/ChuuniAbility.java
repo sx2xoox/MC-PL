@@ -357,12 +357,23 @@ public final class ChuuniAbility extends Ability {
             return;
         }
         double share = Math.clamp(params().num("swallow_share") / 100.0, 0.0, 1.0);
-        double swallowed = event.getDamage() * share;
-        if (swallowed <= 0) {
+        double felt = felt(event);
+        if (share <= 0 || felt <= 0) {
             return;
         }
-        event.setDamage(event.getDamage() - swallowed);
-        current.swallow(swallowed);
+        // The base damage shrinks by the share; what the blow would have taken (after armor, resistance and absorption
+        // hearts) minus what it takes now is what the arm swallowed: the flame grows with the damage as players read it.
+        event.setDamage(event.getDamage() * (1 - share));
+        double swallowed = Math.max(0, felt - felt(event));
+        if (swallowed > 0) {
+            current.swallow(swallowed);
+        }
+    }
+
+    /** What the hit takes off health and absorption hearts together, after armor and resistance. */
+    @SuppressWarnings("deprecation") // DamageModifier is the only exact source of the absorbed amount; no replacement
+    private static double felt(EntityDamageEvent event) {
+        return Math.max(0, event.getFinalDamage() - event.getDamage(EntityDamageEvent.DamageModifier.ABSORPTION));
     }
 
     /**

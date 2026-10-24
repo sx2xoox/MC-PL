@@ -48,13 +48,13 @@ import org.jspecify.annotations.Nullable;
  * 심드렁 히어로 — the hero who is far too strong for any fight to be interesting. It shrugs off (and barely returns)
  * the blows of whoever has not yet hurt it much, until that enemy finally catches its interest; its light flick lands a
  * moment late and sends the victim straight up (or, once it is interested, slams it into the ground), and as its
- * ultimate it gets serious for once: one punch at one enemy, as heavy as that enemy is healthy.
+ * ultimate it finally puts some effort in: a single blow at a single enemy, as heavy as that enemy is healthy.
  *
  * <p>Look (stretched t-shirt grey, yawn sky blue, slipper navy): it yawns now and then over its head, a big "!" pops
  * over an enemy that caught its interest (and a small one stays there), the flick is a crisp "딱!" with a little ring on
- * the forehead and a late "띠잉—" that shoots the victim up a streak of light to a twinkle in the sky. The serious
- * punch is staged with focus lines rushing in, its one serious line over its head, then a white flash, a shock ring
- * and a star twinkling high up where the victim flew.
+ * the forehead and a late "띠잉—" that shoots the victim up a streak of light to a twinkle in the sky. The hard blow
+ * is staged with focus lines rushing in and its one line over its head, then a white flash, a shock ring and a star
+ * twinkling high up where the victim flew.
  */
 public final class BoredHeroAbility extends Ability {
 
@@ -69,16 +69,17 @@ public final class BoredHeroAbility extends Ability {
             .active("가볍게 딱밤",
                     "앞의 적({flick_range}블록 이내) 이마에 딱밤을 놓아 {flick_damage} 피해를 줍니다. {flick_delay}초 뒤 "
                             + "늦게 도착한 힘이 그 적을 옆으로 밀지 않고 곧게 약 {flick_height}블록 쏘아 올리며, 떨어지며 받는 "
-                            + "낙하 피해(최대 {flick_fall_max})도 나의 공격으로 기록됩니다. 흥미가 생긴 적은 쏘아 올리는 "
+                            + "낙하 피해(최대 {flick_fall_max}, 흥미 배율 없음)도 나의 공격으로 기록됩니다. 흥미가 생긴 적은 쏘아 올리는 "
                             + "대신 땅에 처박혀 {slam_damage} 피해를 입고 {slam_stun}초간 기절합니다(이동·점프 불가). 앞에 "
                             + "적이 없으면 쿨타임은 돌지 않습니다.",
                     8)
             .ultimate("이번엔 좀 세게",
-                    "{serious_windup}초간 소매를 걷어붙이고 처음으로 진지해집니다(그동안 밀려나지 않음). 이어 앞의 첫 "
-                            + "적({serious_range}블록 이내) 하나에게만 한 방을 날려, 그 적의 지금 체력의 {serious_share}% + "
-                            + "{serious_bonus} 피해(최소 {serious_min}, 최대 {serious_max}; 흥미 배율은 적용되지 않음)를 주고 "
-                            + "멀리 날려 버립니다. 떨어지며 받는 낙하 피해(최대 {flick_fall_max})도 나의 공격으로 기록됩니다. "
-                            + "앞에 아무도 없으면 \"…귀찮네\" 하며 궁극기 게이지 {serious_refund}%를 돌려받습니다.")
+                    "{hard_windup}초간 소매를 걷어붙이고 처음으로 눈빛이 달라집니다(그동안 밀려나지 않음). 이어 앞의 첫 "
+                            + "적({hard_range}블록 이내) 하나에게만 한 방을 날려, 그 적의 지금 체력의 {hard_share}% + "
+                            + "{hard_bonus} 피해(최소 {hard_min}, 최대 {hard_max})를 주고 멀리 날려 버립니다. 떨어지며 받는 "
+                            + "낙하 피해(최대 {flick_fall_max})도 나의 공격으로 기록됩니다(한 방과 낙하 피해에는 흥미 배율이 "
+                            + "적용되지 않음). 앞에 아무도 없으면 \"…귀찮네\" 하며 궁극기 게이지 {hard_refund}%를 "
+                            + "돌려받습니다.")
             .param("interest_threshold", 6)
             .param("bored_guard", 20)
             .param("bored_weak", 15)
@@ -91,13 +92,13 @@ public final class BoredHeroAbility extends Ability {
             .param("flick_fall_max", 4)
             .param("slam_damage", 3)
             .param("slam_stun", 1)
-            .param("serious_windup", 1)
-            .param("serious_range", 4)
-            .param("serious_share", 50)
-            .param("serious_bonus", 2)
-            .param("serious_min", 5)
-            .param("serious_max", 10)
-            .param("serious_refund", 50)
+            .param("hard_windup", 1)
+            .param("hard_range", 4)
+            .param("hard_share", 50)
+            .param("hard_bonus", 2)
+            .param("hard_min", 5)
+            .param("hard_max", 10)
+            .param("hard_refund", 50)
             .build();
 
     private static final String SKY_TAG = "#A8D8F0";
@@ -136,8 +137,8 @@ public final class BoredHeroAbility extends Ability {
     /** A flight never seen off the ground within this long (a ceiling right above) has no fall to credit. */
     private static final long FLIGHT_NEVER_AIRBORNE_TICKS = 12;
 
-    // ultimate: serious punch
-    private static final double SERIOUS_CONE_COS = Math.cos(Math.toRadians(40));
+    // ultimate: the hard blow
+    private static final double HARD_CONE_COS = Math.cos(Math.toRadians(40));
     private static final double PUNCH_SPEED = 1.7;
     private static final double PUNCH_LIFT = 0.85;
 
@@ -146,8 +147,11 @@ public final class BoredHeroAbility extends Ability {
     private final List<Display> live = new ArrayList<>();
     /** Interest per rival (the participant behind a hit, or the entity itself), by id. */
     private final Map<UUID, Interest> interest = new HashMap<>();
-    /** True while the serious punch lands: no interest multiplier on it. */
-    private boolean serious;
+    /**
+     * True while damage that the interest never scales lands: the ultimate's blow and every credited fall (its cap is
+     * the whole fall damage).
+     */
+    private boolean unscaled;
     private boolean windingUp;
     private long nextYawn = Long.MIN_VALUE / 2;
 
@@ -165,7 +169,7 @@ public final class BoredHeroAbility extends Ability {
     public void onRevoke() {
         interest.clear();
         live.clear();
-        serious = false;
+        unscaled = false;
         windingUp = false;
     }
 
@@ -234,7 +238,7 @@ public final class BoredHeroAbility extends Ability {
     /** The interest multiplier: only changes the damage (the victim may still cancel the hit). */
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
-        if (event.isCancelled() || serious) {
+        if (event.isCancelled() || unscaled) {
             return;
         }
         double scale = isInterested(victim)
@@ -613,7 +617,7 @@ public final class BoredHeroAbility extends Ability {
             Location feet = enemy.getLocation();
             double damage = enemy.isInWater() ? 0 : fallDamage(enemy, fallTop - feet.getY());
             if (damage > 0) {
-                Combat.hit(ctx(), owner, enemy, damage, DamageType.FALL);
+                hitUnscaled(owner, enemy, damage, DamageType.FALL);
             }
             if (!shown) {
                 return;
@@ -656,10 +660,10 @@ public final class BoredHeroAbility extends Ability {
     @Override
     public ActivationResult onUltimate() {
         if (windingUp) {
-            return ActivationResult.fail("이미 진지해졌습니다");
+            return ActivationResult.fail("이미 소매를 걷어붙였습니다");
         }
         Player owner = player();
-        long windup = Math.max(1, params().ticks("serious_windup"));
+        long windup = Math.max(1, params().ticks("hard_windup"));
         windingUp = true;
         ctx().addModifier(owner, owner, Attribute.KNOCKBACK_RESISTANCE, 1.0, Operation.ADD_NUMBER, windup + 2);
         Location feet = owner.getLocation();
@@ -697,15 +701,15 @@ public final class BoredHeroAbility extends Ability {
         Vfx.ring(ctx(), owner.getLocation().add(0, 0.1, 0), radius, 16, run * 0.2, Particle.DUST, NAVY_DUST, true);
     }
 
-    /** One punch at one enemy, as heavy as the enemy is healthy; nobody there: "…귀찮네". */
+    /** A single blow at a single enemy, as heavy as the enemy is healthy; nobody there: "…귀찮네". */
     private void punch(Player owner) {
         if (!ctx().isAlive(owner)) {
             return;
         }
-        double range = Math.max(0.5, params().num("serious_range"));
-        LivingEntity target = inFront(owner, range, SERIOUS_CONE_COS);
+        double range = Math.max(0.5, params().num("hard_range"));
+        LivingEntity target = inFront(owner, range, HARD_CONE_COS);
         if (target == null) {
-            double refund = Math.clamp(params().num("serious_refund"), 0, 100);
+            double refund = Math.clamp(params().num("hard_refund"), 0, 100);
             if (refund > 0) {
                 ctx().addGauge(owner, refund);
             }
@@ -715,18 +719,13 @@ public final class BoredHeroAbility extends Ability {
             Fx.sound(owner.getLocation(), Sound.ENTITY_PLAYER_BREATH, 0.8f, 0.6f);
             return;
         }
-        double share = Math.max(0, params().num("serious_share")) / 100.0;
-        double low = Math.max(0, params().num("serious_min"));
-        double high = Math.max(low, params().num("serious_max"));
-        double damage = Math.clamp(target.getHealth() * share + params().num("serious_bonus"), low, high);
+        double share = Math.max(0, params().num("hard_share")) / 100.0;
+        double low = Math.max(0, params().num("hard_min"));
+        double high = Math.max(low, params().num("hard_max"));
+        double damage = Math.clamp(target.getHealth() * share + params().num("hard_bonus"), low, high);
         Location contact = Fx.body(target);
         Vector way = toward(owner, target);
-        serious = true;
-        try {
-            Combat.hit(ctx(), owner, target, damage);
-        } finally {
-            serious = false;
-        }
+        hitUnscaled(owner, target, damage, DamageType.MAGIC);
         if (Combat.isTargetable(ctx(), owner, target)) {
             Motion.push(target, Motion.horizontal(way).multiply(PUNCH_SPEED).setY(PUNCH_LIFT), MAX_SPEED);
             target.setFallDistance(0);
@@ -762,6 +761,17 @@ public final class BoredHeroAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Ability damage the interest does not scale (see {@link #unscaled}). */
+    private void hitUnscaled(Player owner, LivingEntity target, double damage, DamageType type) {
+        boolean before = unscaled;
+        unscaled = true;
+        try {
+            Combat.hit(ctx(), owner, target, damage, type);
+        } finally {
+            unscaled = before;
+        }
+    }
 
     /** A ring standing across {@code normal} (horizontal part), centred on {@code center}. */
     private <T> void verticalRing(Location center, Vector normal, double radius, int points, Particle particle,
