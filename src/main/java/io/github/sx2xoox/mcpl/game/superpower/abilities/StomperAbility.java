@@ -80,24 +80,19 @@ public final class StomperAbility extends Ability {
             .color(TextColor.color(0x3FAF5A))
             .difficulty(1)
             .passive("밟기",
-                    "떨어지며 적의 머리를 밟으면 '뽁!' {stomp_damage} 피해를 주고 {flatten_duration}초간 납작하게 "
-                            + "만들며(이동 속도 -{flatten_slow}%), 나는 약 {bounce_height}블록 높이로 다시 튀어 오릅니다. "
-                            + "땅에 닿지 않고 연속으로 밟으면 한 번마다 피해가 {stomp_bonus}씩 늘어납니다(최대 "
-                            + "{stomp_max}, 같은 적은 {stomp_repeat}초마다). {candy_chain}연속이면 별사탕이 터져 체력 {candy_heal}, {bonus_chain}연속이면 "
-                            + "\"보너스!\" 체력 {bonus_heal}을 회복합니다. 받는 낙하 피해가 {fall_reduction}% 줄어듭니다.")
+                    "떨어지며 적의 머리를 밟으면 {stomp_damage} 피해를 주고 {flatten_duration}초간 느리게 하며 다시 튀어 "
+                            + "오릅니다. 땅에 닿기 전에 연속으로 밟으면 피해가 {stomp_bonus}씩 늘고(최대 {stomp_max}), "
+                            + "{candy_chain}연속과 {bonus_chain}연속에 각각 체력을 {candy_heal}, {bonus_heal} 회복합니다. "
+                            + "낙하 피해가 {fall_reduction}% 줄어듭니다.")
             .active("용수철 발판",
-                    "바라보는 곳({pad_range}블록) 바닥에 폭 {pad_width}블록의 용수철 발판을 {pad_duration}초간 깝니다"
-                            + "(최대 {pad_max}개, 더 깔면 가장 오래된 것이 사라집니다). 발판이 {pad_pop}블록 높이로 튕겨 솟을 "
-                            + "때 그 위의 적은 {pad_damage} 피해를 입고 약 {pad_lift}블록 떠올라 밟기 좋은 먹잇감이 됩니다. "
-                            + "발판을 밟은 나와 아군은 '뿅' 하고 약 {pad_bounce}블록 높이 튀어 오르며, 그 착지에는 낙하 "
-                            + "피해를 받지 않습니다.",
+                    "바라보는 곳({pad_range}블록) 바닥에 용수철 발판을 {pad_duration}초간 깝니다(최대 {pad_max}개). "
+                            + "발판이 솟을 때 그 위의 적은 {pad_damage} 피해를 입고 약 {pad_lift}블록 떠오릅니다. 발판을 밟은 "
+                            + "나와 아군은 약 {pad_bounce}블록 높이 튀어 오르고 그 착지에 낙하 피해를 받지 않습니다.",
                     8)
             .ultimate("무적 사탕",
-                    "반짝이는 무지개 사탕을 깨물어 {candy_duration}초간 무지개빛으로 번쩍이며 신나는 음악이 흐릅니다. "
-                            + "그동안 받는 피해를 모두 무시하고 이동 속도 +{candy_speed}%, 점프력 +{candy_jump}%, 밟기 "
-                            + "피해가 {candy_stomp}배가 되며, 착지할 때마다 반경 {quake_radius}블록에 작은 충격파로 "
-                            + "{quake_damage} 피해를 줍니다(같은 적은 {quake_cooldown}초마다). 대신 근접 공격을 할 수 없고, "
-                            + "끌어당기기·속박 같은 제어는 그대로 받습니다. 끝나기 1초 전에 음악이 빨라집니다.")
+                    "{candy_duration}초간 받는 피해를 모두 무시하고 이동 속도 +{candy_speed}%, 점프력 +{candy_jump}%, 밟기 "
+                            + "피해 {candy_stomp}배가 되며, 착지할 때마다 반경 {quake_radius}블록의 적에게 {quake_damage} "
+                            + "피해를 줍니다. 대신 근접 공격을 할 수 없고, 끌어당기기·속박 같은 제어는 그대로 받습니다.")
             .ultimateNotStandalone()
             .param("stomp_damage", 3)
             .param("stomp_bonus", 1)

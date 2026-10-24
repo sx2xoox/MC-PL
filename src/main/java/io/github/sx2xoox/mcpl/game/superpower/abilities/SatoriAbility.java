@@ -71,19 +71,17 @@ public final class SatoriAbility extends Ability {
             .color(TextColor.color(0x3FC1B0))
             .difficulty(3)
             .passive("노리는 마음",
-                    "{aim_radius}블록 안에서 나를 바라보며 노리는 적의 머리 위에 나에게만 보이는 생각 풍선이 떠오릅니다"
-                            + "(벽 너머로도 보입니다). 대신 마음이 없는 '우연'은 읽지 못해, 낙하·벽 충돌·용암·불 같은 "
-                            + "환경 피해를 {accident_weakness}% 더 받습니다.")
+                    "{aim_radius}블록 안에서 나를 바라보며 노리는 적이 벽 너머로도 나에게 표시됩니다. 대신 낙하·벽 "
+                            + "충돌·용암·불 같은 환경 피해를 {accident_weakness}% 더 받습니다.")
             .active("선읽기",
-                    "조준한 적({read_range}블록 이내)의 마음을 {read_duration}초간 읽습니다(머리 위에 '…'). 그동안 그 적이 "
-                            + "액티브나 궁극기를 쓰거나 나를 공격하면 \"지금 그거 쓰려고 했지?\" 받아쳐, {counter_guard}초간 "
-                            + "그 적의 피해를 받지 않고 그 적은 {counter_damage} 피해와 {counter_stun}초 기절(움직일 수도, 능력을 "
-                            + "쓸 수도 없음)을 입습니다. 아무 일 없이 읽기가 끝나면 쿨타임이 {read_refund}% 돌아옵니다.",
+                    "조준한 적({read_range}블록 이내)의 마음을 {read_duration}초간 읽습니다. 그동안 그 적이 액티브나 "
+                            + "궁극기를 쓰거나 나를 공격하면 받아쳐, {counter_guard}초간 그 적의 피해를 받지 않고 그 적에게 "
+                            + "{counter_damage} 피해와 {counter_stun}초 기절을 줍니다. 아무 일 없이 끝나면 쿨타임이 "
+                            + "{read_refund}% 돌아옵니다.",
                     10)
             .ultimate("다 들린다",
-                    "{ult_duration}초간 반경 {ult_radius}블록 안 모든 적의 마음이 들립니다. 읽힌 적의 머리 위 생각 풍선에 "
-                            + "액티브까지 남은 시간과 궁극기 게이지가 떠올라 나와 아군에게 보이고, 적마다 나를 향한 첫 공격은 "
-                            + "\"그럴 줄 알았어\" 미리 읽고 흘려 냅니다(그 피해 무효). 그동안 읽힌 적에게 주는 내 피해가 "
+                    "{ult_duration}초간 반경 {ult_radius}블록 안 적들의 액티브 쿨타임과 궁극기 게이지가 나와 아군에게 "
+                            + "보이고, 적마다 나를 향한 첫 공격은 무효가 됩니다. 그동안 그 적들에게 주는 내 피해가 "
                             + "{ult_bonus}% 늘어납니다.")
             .ultimateNotStandalone()
             .param("aim_radius", 20)

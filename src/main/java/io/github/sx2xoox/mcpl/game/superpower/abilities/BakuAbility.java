@@ -67,21 +67,18 @@ public final class BakuAbility extends Ability {
             .color(TextColor.color(0xB9A3E3))
             .difficulty(2)
             .passive("악몽 먹기",
-                    "나에게 걸리는 해로운 효과(구속·나약함·실명·멀미·독·위더·어둠·공중 부양…)를 {eat_chance}% 확률로 먹어 "
-                            + "치워 걸리지 않습니다. 먹은 악몽은 머리 위에 검은 거품으로 쌓입니다(최대 {max_nightmares}개).")
+                    "나에게 걸리는 해로운 효과를 {eat_chance}% 확률로 먹어 치워 걸리지 않습니다. 먹은 악몽은 최대 "
+                            + "{max_nightmares}개까지 쌓입니다.")
             .active("꿈 빨아들이기",
-                    "긴 코로 {suck_time}초간 앞쪽 {suck_range}블록 부채꼴({suck_angle}°)을 빨아들여 {suck_damage} 피해를 주고, 맞은 적의 이로운 "
-                            + "효과(신속·힘·저항·재생·점프 강화·화염 저항…)와 흡수 체력을 빼앗아 남은 시간만큼(효과는 최대 "
-                            + "{steal_duration}초, 흡수 체력은 최대 {steal_absorption}) 내가 받습니다. 웅크리고 쓰면 빼앗은 것을 "
-                            + "가장 가까운 아군({gift_range}블록 이내)에게 넘겨 줍니다. 빼앗은 것이 없으면 대신 악몽을 하나 얻고, "
-                            + "아무도 맞지 않으면 쿨타임이 {whiff_refund}% 돌아옵니다.",
+                    "코로 앞쪽 {suck_range}블록·{suck_angle}° 부채꼴을 빨아들여 {suck_damage} 피해를 주고, 맞은 적의 이로운 "
+                            + "효과와 흡수 체력을 빼앗아 내가 받습니다(웅크리고 쓰면 가장 가까운 아군에게). 빼앗은 것이 없으면 "
+                            + "악몽을 하나 얻고, 아무도 맞지 않으면 쿨타임이 {whiff_refund}% 돌아옵니다.",
                     9)
             .ultimate("악몽 토해내기",
-                    "{spew_windup}초 뒤 모은 악몽을 앞쪽 {spew_range}블록 부채꼴({spew_angle}°)로 토해 냅니다. 맞은 적은 악몽 "
-                            + "하나마다 서로 다른 해로운 효과(구속 II·나약함·멀미·독 {curse_duration}초, 실명 {curse_blind}초) "
-                            + "하나와 {nightmare_damage} 피해를 받고, {nightmare_lock}초간 깨지 않는 악몽에 빠져 이로운 효과를 받을 "
-                            + "수 없습니다. 나에게 걸려 있던 해로운 효과도 함께 토해 넘기고(최대 {curse_duration}초) 나는 "
-                            + "깨끗해집니다. 악몽이 없으면 {empty_damage} 피해와 {empty_slow}초 구속 II만 줍니다.")
+                    "{spew_windup}초 뒤 모은 악몽을 앞쪽 {spew_range}블록·{spew_angle}° 부채꼴로 토해 냅니다. 맞은 적은 "
+                            + "악몽 하나마다 해로운 효과 하나와 {nightmare_damage} 피해를 받고, {nightmare_lock}초간 이로운 "
+                            + "효과를 받을 수 없습니다. 내게 걸린 해로운 효과도 함께 넘기고 깨끗해집니다. 악몽이 없으면 "
+                            + "{empty_damage} 피해와 {empty_slow}초 구속 II만 줍니다.")
             .param("eat_chance", 35)
             .param("max_nightmares", 4)
             .param("suck_time", 0.3)

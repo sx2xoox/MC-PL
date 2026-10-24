@@ -92,27 +92,22 @@ public final class TaotieAbility extends Ability {
             .color(TextColor.color(0xB07A3B))
             .difficulty(2)
             .passive("탐식의 가면",
-                    "맛본 적(플레이어와 허수아비)의 얼굴이 청동 가면이 되어 {mask_duration}초간 내 얼굴에 씌워집니다"
-                            + "(모두에게 보임, 한 번에 하나). 가면을 쓴 동안 그 적에게 주는 피해가 {mask_bonus}% 늘고, 내 "
-                            + "궁극기는 한 번 그 적의 궁극기가 됩니다. 따라 할 수 없는 궁극기(허수아비 포함)라면 '맛이 없다!' "
-                            + "— 가면을 뱉고 사흉의 아가리를 쓰며 궁극기 게이지 {tasteless_refund}%를 돌려받습니다.")
+                    "맛본 적의 얼굴을 {mask_duration}초간 가면으로 씁니다(한 번에 하나). 그동안 그 적에게 주는 피해가 "
+                            + "{mask_bonus}% 늘고, 내 궁극기가 한 번 그 적의 궁극기가 됩니다. 따라 할 수 없는 궁극기라면 "
+                            + "사흉의 아가리를 쓰고 게이지 {tasteless_refund}%를 돌려받습니다.")
             .active("한입 맛보기",
-                    "{gulp_duration}초간 청동 아가리를 크게 벌려 앞 {gulp_range}블록·{gulp_angle}° 부채꼴을 "
-                            + "빨아들입니다(점점 강해지고, 그동안 내 이동 속도 −{gulp_slow}%). 입을 벌린 동안 앞쪽 "
-                            + "{swallow_distance}블록 밖에서 온 투사체와 능력 피해는 입으로 들어가 무효가 됩니다. 입에 닿은 "
-                            + "첫 적을 한입 물어 {bite_damage} 피해를 주고 뒤로 뱉어 내며, 그 적을 맛봅니다. 아무도 물지 "
-                            + "못하면 쿨타임이 {miss_cooldown}%만 돕니다.",
+                    "{gulp_duration}초간 아가리를 벌려 앞 {gulp_range}블록·{gulp_angle}° 부채꼴을 빨아들입니다(그동안 "
+                            + "느려짐). 앞쪽 {swallow_distance}블록 밖에서 온 투사체·능력 피해를 막고, 처음 닿은 적을 물어 "
+                            + "{bite_damage} 피해를 주고 뒤로 뱉으며 맛봅니다. 아무도 못 물면 쿨타임이 {miss_cooldown}%만 "
+                            + "돕니다.",
                     10)
             .ultimate("사흉의 아가리",
-                    "(가면이 없을 때) {maw_duration}초간 거대한 아가리가 앞 {maw_range}블록·{maw_angle}° 부채꼴을 "
-                            + "빨아들입니다(그동안 내 이동 속도 −{gulp_slow}%). 적은 끌려오며 {maw_tick_interval}초마다 {maw_tick_damage} 피해를 입고(적마다 "
-                            + "최대 {maw_tick_max}), 앞쪽 {swallow_distance}블록 밖에서 온 투사체·능력 피해는 삼켜집니다. "
-                            + "아가리에 들어온 적(최대 {maw_swallow_max}명)은 {digest_duration}초간 삼켜져 소화됩니다: "
-                            + "보이지 않고 아무것도 못 하며 {digest_damage} 피해를 입고, 이로운 포션 효과와 흡수 체력이 모두 "
-                            + "녹고(녹인 흡수 체력만큼 내가 {digest_absorb_duration}초간 흡수 체력을 얻음, 모두 합쳐 최대 "
-                            + "{digest_absorb_max}) 궁극기 게이지 {digest_gauge}%를 먹힙니다. 그 뒤 앞으로 뱉어져 "
-                            + "{spit_damage} 피해를 입고 {slobber_duration}초간 침 범벅(발광, 이동 속도 −{slobber_slow}%)이 "
-                            + "됩니다. 처음 삼킨 적을 맛봅니다. 앞에 삼킬 적이 없으면 쓸 수 없습니다.")
+                    "(가면이 없을 때) {maw_duration}초간 앞 {maw_range}블록·{maw_angle}° 부채꼴의 적을 빨아들이며 조금씩 "
+                            + "피해를 주고, 앞쪽 {swallow_distance}블록 밖에서 온 투사체·능력 피해를 막습니다. 들어온 적(최대 "
+                            + "{maw_swallow_max}명)은 {digest_duration}초간 삼켜져 아무것도 못 하고 {digest_damage} 피해, "
+                            + "이로운 효과·흡수 체력·궁극기 게이지 {digest_gauge}%를 잃은 뒤 뱉어져 {spit_damage} 피해를 "
+                            + "입고 {slobber_duration}초간 느려집니다. 처음 삼킨 적을 맛봅니다. 앞에 적이 없으면 쓸 수 "
+                            + "없습니다.")
             .param("mask_duration", 20)
             .param("mask_bonus", 15)
             .param("tasteless_refund", 25)

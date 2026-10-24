@@ -69,21 +69,17 @@ public final class EagleAbility extends Ability {
             .difficulty(3)
             .passive("매의 눈",
                     "나보다 {eye_height}블록 이상 낮은 곳에 있고 내 눈에 보이는 {eye_range}블록 안의 적은 발광하고, 그 적에게 "
-                            + "주는 피해가 {eye_bonus}% 늘어납니다. 땅에 부딪히는 피해에는 적용되지 않습니다.")
+                            + "주는 피해가 {eye_bonus}% 늘어납니다(땅에 부딪히는 피해 제외).")
             .active("움켜쥐기",
-                    "바라보는 방향(조준한 적이 있으면 그 적)으로 최대 {snatch_range}블록 활강합니다. 도중에 부딪힌 적을 움켜쥐어 "
-                            + "{snatch_damage} 피해를 주고, {carry_height}블록 높이로 들어 올려 바라보는 쪽으로 최대 "
-                            + "{carry_time}초간 실어 나른 뒤 놓습니다(웅크리면 바로 놓음). 떨어진 적은 땅에 부딪혀 떨어진 높이 "
-                            + "1블록마다 {drop_per_block} 피해(최대 {drop_max})를 입습니다. 이 비행으로는 낙하 피해를 받지 "
-                            + "않습니다.",
+                    "바라보는 방향(조준한 적이 있으면 그 적)으로 최대 {snatch_range}블록 활강해 부딪힌 적을 움켜쥐고 "
+                            + "{snatch_damage} 피해를 줍니다. 적을 들어 올려 최대 {carry_time}초간 실어 나른 뒤 떨어뜨려"
+                            + "(웅크리면 바로) 떨어진 높이 1블록마다 {drop_per_block} 피해(최대 {drop_max})를 줍니다.",
                     8)
             .ultimate("하늘의 제왕",
-                    "조준한 적(없으면 가장 가까운 적, {ult_range}블록 이내)에게 날아가 움켜쥐고 {ult_height}블록 솟구친 뒤, "
-                            + "최대 {flight_time}초간 적을 매단 채 바라보는 방향으로 초당 {flight_speed}블록씩 날아다닙니다. "
-                            + "웅크리거나 시간이 다 되면 바라보는 땅(표시됨, {dive_reach}블록 이내)으로 급강하해 적을 "
-                            + "내리꽂아, 급강하한 높이 1블록마다 {dive_per_block} 피해(최대 {dive_max})를 주고 반경 "
-                            + "{impact_radius}블록의 다른 적에게 {impact_damage} 피해를 주며 튕겨 냅니다. 적을 매단 동안 내가 "
-                            + "{break_damage} 피해를 받으면 놓쳐 버리며, 나는 낙하 피해를 받지 않습니다.")
+                    "조준한 적(없으면 가장 가까운 적, {ult_range}블록 이내)을 움켜쥐고 솟구쳐 최대 {flight_time}초간 바라보는 "
+                            + "방향으로 날아다닙니다. 웅크리거나 시간이 다 되면 바라보는 땅으로 급강하해, 높이 1블록마다 "
+                            + "{dive_per_block} 피해(최대 {dive_max})를 주고 주변의 다른 적에게 {impact_damage} 피해를 줍니다. "
+                            + "적을 매단 동안 {break_damage} 피해를 받으면 놓칩니다.")
             .param("eye_height", 3)
             .param("eye_range", 32)
             .param("eye_bonus", 15)

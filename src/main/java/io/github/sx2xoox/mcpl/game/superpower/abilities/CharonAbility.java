@@ -70,23 +70,19 @@ public final class CharonAbility extends Ability {
             .color(TextColor.color(0x2F8F8A))
             .difficulty(2)
             .passive("노 젓기",
-                    "내 강물 안에서 나와 아군이 물살 쪽을 보고 움직이면 이동 속도가 {row_speed}% 빨라집니다(물살을 "
-                            + "거슬러도 느려지지 않습니다). 내 강물 위에 서 있는 동안 받는 피해가 {row_guard}% 줄어듭니다.")
+                    "내 강물에서 나와 아군은 물살 쪽으로 움직일 때 {row_speed}% 빨라지고, 나는 내 강물 위에서 받는 "
+                            + "피해가 {row_guard}% 줄어듭니다.")
             .active("스틱스 물길",
-                    "바라보는 방향으로 폭 {channel_width}·길이 {channel_length}블록의 유령 강을 {channel_duration}초간 "
-                            + "그립니다(지형을 따라 흐르고 벽에서 멈춥니다). 물살은 나를 향해 흐르고, 강에 들어온 적은 물에 "
-                            + "빠진 손에 붙잡혀 이동 속도가 {channel_slow}% 느려진 채 초속 {channel_current}블록으로 내 "
-                            + "쪽으로 실려 오며 {channel_period}초마다 {channel_damage} 피해를 입습니다(적마다 최대 "
-                            + "{channel_max_hits}번). 웅크리고 쓰면 물살이 나에게서 멀어지는 쪽으로 흘러 나와 아군의 "
-                            + "도주로가 됩니다.",
+                    "바라보는 방향으로 길이 {channel_length}블록의 유령 강을 {channel_duration}초간 그립니다. 물살은 나를 "
+                            + "향해 흘러, 강에 든 적을 느리게 하며 내 쪽으로 실어 오고 {channel_period}초마다 "
+                            + "{channel_damage} 피해를 줍니다(적마다 최대 {channel_max_hits}번). 웅크리고 쓰면 물살이 반대로 "
+                            + "흘러 나와 아군의 도주로가 됩니다.",
                     10)
             .ultimate("뱃삯을 내라",
-                    "바라보는 방향으로 폭 {styx_width}·길이 {styx_length}블록의 큰 스틱스강이 {styx_duration}초간 전장을 "
-                            + "가르고 내 배가 나타납니다. 강 위에서는 웅크리지 않는 한 바라보는 방향으로 초속 "
-                            + "{boat_speed}블록으로 노를 저어 나아가고, 강 끝이나 둑, 낭떠러지 앞에서는 멈춥니다. 강을 건너는 적(한쪽 둑으로 들어가 반대쪽 둑으로 "
-                            + "나감)은 뱃삯으로 궁극기 게이지 {fare_gauge}%를 빼앗기고(모자라면 {fare_damage} 피해), 강 안의 "
-                            + "적은 초속 {styx_current}블록으로 하류로 끌려가며 {styx_period}초마다 {styx_damage} 피해를 "
-                            + "입습니다(적마다 최대 {styx_max_hits}번).")
+                    "바라보는 방향으로 길이 {styx_length}블록의 큰 스틱스강을 {styx_duration}초간 펼칩니다. 강 위에서는 "
+                            + "배를 타고 바라보는 방향으로 나아갑니다(웅크리면 멈춤). 강 안의 적은 하류로 끌려가며 "
+                            + "{styx_period}초마다 {styx_damage} 피해를 입고(최대 {styx_max_hits}번), 강을 가로질러 건넌 적은 "
+                            + "궁극기 게이지 {fare_gauge}%를 빼앗깁니다(모자라면 {fare_damage} 피해).")
             .param("row_speed", 60)
             .param("row_guard", 20)
             .param("channel_length", 16)

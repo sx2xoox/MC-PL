@@ -70,26 +70,19 @@ public final class OdinAbility extends Ability {
             .color(TextColor.color(0xE2B54A))
             .difficulty(2)
             .passive("후긴과 무닌",
-                    "까마귀 두 마리가 어깨에 앉아 있습니다. 적이 나를 공격하면 무닌(기억)이 마지막으로 공격한 그 적의 "
-                            + "머리 위로 날아가 {memory_time}초간 맴돕니다(모두에게 보입니다). 그동안 내가 그 적을 맞히면 "
-                            + "후긴(생각)이 함께 내리꽂혀 {revenge_damage} 복수 피해를 줍니다(한 번). 복수한 뒤 두 까마귀는 "
-                            + "어깨로 돌아와 {raven_rest}초간 쉽니다.")
+                    "마지막으로 나를 공격한 적의 머리 위에 까마귀가 {memory_time}초간 맴돕니다. 그동안 그 적을 "
+                            + "맞히면 {revenge_damage} 복수 피해를 한 번 더 주고, 까마귀는 {raven_rest}초간 쉽니다.")
             .active("미미르의 샘",
-                    "지혜의 대가로 체력 {wisdom_cost}를 바칩니다(체력 {wisdom_floor} 아래로는 내려가지 않습니다). "
-                            + "{sight_time}초간 {sight_radius}블록 안의 적(가까운 {sight_max}명까지) 머리 위에 나와 아군에게만 "
-                            + "보이는 룬이 떠 벽 너머로도 보이고, 그동안 내 다음 적중(궁니르 말고는 무엇이든)에 "
-                            + "{rune_damage} 룬 피해가 더해집니다.",
+                    "체력 {wisdom_cost}를 바쳐(체력 {wisdom_floor} 아래로는 줄지 않음) {sight_time}초간 "
+                            + "{sight_radius}블록 안의 적(가까운 {sight_max}명까지)을 나와 아군이 벽 너머로도 봅니다. 그동안 "
+                            + "내 다음 적중(궁니르 제외)에 {rune_damage} 피해가 더해집니다.",
                     10)
             .ultimate("궁니르",
-                    "조준한 적({spear_range}블록 이내)에게 절대 빗나가지 않는 창을 던집니다. 창은 초속 {spear_speed}블록으로 "
-                            + "벽을 돌아 날아가며 대상 말고는 무엇에도 막히지 않습니다. 대상 {warn_distance}블록 앞에서 대상 "
-                            + "주위에 룬 고리가 번쩍이고(날카로운 소리) 마지막 {slow_distance}블록은 초속 {slow_speed}블록으로 "
-                            + "느려집니다. 번쩍인 뒤 대상의 첫 근접 휘두르기만 판정합니다: 창이 느려진 뒤(늦게는 핑만큼 여유)이고 "
-                            + "직전 {parry_lockout}초 동안 휘두르지 않았다면 창을 쳐 내어 {parry_damage} 피해만 받고 "
-                            + "{parry_haste}초간 신속을 얻습니다('자격 있는 자'). 너무 이르거나 연타 중이거나 휘두르지 못하면 "
-                            + "{spear_damage} 피해를 받고 약 {spear_knockback}블록 밀려납니다(룬 일격·후긴의 복수는 붙지 "
-                            + "않습니다). 대상이 먼저 쓰러지거나 내 눈에서 사라지면 창이 돌아와 게이지 {spear_refund}%를 "
-                            + "돌려받습니다. 창은 늦어도 {spear_time}초 안에 닿습니다.")
+                    "조준한 적({spear_range}블록 이내)에게 벽을 돌아 날아가는, 빗나가지 않는 창을 던집니다. 대상 주위에 "
+                            + "룬 고리가 번쩍인 뒤 창이 느려졌을 때 근접 공격을 휘두르면(연타 제외) 창을 쳐 내어 "
+                            + "{parry_damage} 피해만 받고 {parry_haste}초간 신속을 얻습니다. 실패하면 {spear_damage} 피해를 "
+                            + "받고 밀려납니다. 대상이 먼저 쓰러지거나 보이지 않게 되면 게이지 {spear_refund}%를 "
+                            + "돌려받습니다.")
             .ultimateNotStandalone()
             .param("memory_time", 8)
             .param("revenge_damage", 3)

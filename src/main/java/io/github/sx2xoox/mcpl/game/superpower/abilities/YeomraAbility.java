@@ -70,23 +70,18 @@ public final class YeomraAbility extends Ability {
             .color(TextColor.color(0x8E1B24))
             .difficulty(2)
             .passive("업경 잔상",
-                    "{echo_radius}블록 안의 적마다 {rewind_seconds}초 전에 서 있던 자리에 희미한 푸른 잔상이 나에게만 "
-                            + "보이고, 조준한 적은 그 자리까지 지나온 발자취가 점선으로 이어집니다. 업경대가 그 적을 "
-                            + "되돌려 놓을 자리와 길입니다.")
+                    "{echo_radius}블록 안의 적마다 {rewind_seconds}초 전에 서 있던 자리가 나에게만 잔상으로 보입니다. "
+                            + "업경대가 그 적을 되돌려 놓을 자리입니다.")
             .active("업경대",
-                    "조준한 적({mirror_range}블록 이내)의 {rewind_seconds}초 전 자리에 업경대가 솟아 그 적을 비춥니다. "
-                            + "{mirror_windup}초 뒤 그 적은 자기가 지나온 발자취를 거슬러 {rewind_time}초 만에 업경대 앞으로 "
-                            + "끌려가고(지금 막힌 곳에서는 멈춤) {mirror_damage} 피해를 입습니다. 그동안 거의 움직이지 "
-                            + "않은 적({karma_still}블록 미만)은 끌려가는 대신 업보를 심판받아 {karma_damage} 피해를 "
-                            + "입습니다.",
+                    "조준한 적({mirror_range}블록 이내)을 지나온 길을 따라 {rewind_seconds}초 전 자리로 끌고 가 "
+                            + "{mirror_damage} 피해를 줍니다(지금 막힌 곳에서는 멈춤). 그동안 거의 움직이지 않은 적은 "
+                            + "끌려가는 대신 {karma_damage} 피해를 입습니다.",
                     10)
             .ultimate("저승사자 출두",
                     "{reaper_range}블록 안의 가까운 적 최대 {reaper_count}명에게 저승사자를 한 명씩 보냅니다. 저승사자는 "
-                            + "대상에게서 {reaper_spawn}블록 떨어진 땅(내가 더 가까우면 내 곁)에서 차례로 솟아나, "
-                            + "{reaper_duration}초 동안 대상의 이름을 부르며 초속 {reaper_speed}블록(대상이 한 명뿐이면 "
-                            + "{reaper_solo_speed}블록)으로 벽도 지나 곧장 걸어갑니다. 저승사자는 공격받지 않고, 대상에게 "
-                            + "닿으면 {reaper_damage} 피해를 주고 {reaper_bind}초간 명부의 사슬로 묶은 뒤 사라집니다. 걸어서 "
-                            + "따돌릴 수는 있어도 떨쳐 낼 수는 없습니다.")
+                            + "{reaper_duration}초간 벽도 지나 대상에게 곧장 걸어가며 공격받지 않고, 닿으면 {reaper_damage} "
+                            + "피해를 주고 {reaper_bind}초간 묶습니다. 멈춰 있으면 붙잡히지만 걸어서 달아나면 따돌릴 수 "
+                            + "있습니다.")
             .param("echo_radius", 20)
             .param("rewind_seconds", 2)
             .param("mirror_range", 18)
