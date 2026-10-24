@@ -20,6 +20,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.RayTracing;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.TestSkinParts;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.VanillaAttributes;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics;
+import io.papermc.paper.entity.TeleportFlag;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import net.kyori.adventure.key.Key;
@@ -36,6 +37,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.event.player.PlayerInputEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.Plugin;
@@ -43,6 +45,7 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 import org.mockbukkit.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.entity.EntityMock;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 
 /**
@@ -502,5 +505,75 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
     public void setRotation(float yaw, float pitch) {
         io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.checkRotation(yaw, pitch);
         super.setRotation(yaw, pitch);
+    }
+
+    // ------------------------------------------------------------------ passengers
+
+    /**
+     * Like Paper 26.3, a teleport within the world keeps the passengers on and puts them back on the body
+     * ({@code CraftEntity#teleport0} teleports with {@code PassengerTeleportationMode.POSITION_RIDER}), and a teleport
+     * to another world is refused while anything rides the player ({@code CraftPlayer#teleport0}). MockBukkit refuses
+     * every teleport of an entity with passengers instead.
+     */
+    @Override
+    public boolean teleport(Location location, PlayerTeleportEvent.TeleportCause cause, TeleportFlag... flags) {
+        List<Entity> riders = List.copyOf(getPassengers());
+        if (riders.isEmpty()) {
+            return super.teleport(location, cause, flags);
+        }
+        if (location.getWorld() != null && !location.getWorld().equals(getWorld())) {
+            return false;
+        }
+        riders.forEach(Entity::leaveVehicle);
+        boolean moved = super.teleport(location, cause, flags);
+        for (Entity rider : riders) {
+            if (rider.isValid()) {
+                addPassenger(rider);
+            }
+        }
+        positionRiders();
+        return moved;
+    }
+
+    /** Passengers stay on the body wherever it moves (the server puts every rider back on its vehicle each tick). */
+    @Override
+    public void setLocation(Location location) {
+        super.setLocation(location);
+        positionRiders();
+    }
+
+    /** A new passenger sits on top of the body at once. */
+    @Override
+    public boolean addPassenger(Entity passenger) {
+        boolean added = super.addPassenger(passenger);
+        if (added) {
+            positionRiders();
+        }
+        return added;
+    }
+
+    /** Like Paper, every passenger gets off (MockBukkit only forgets them: they would still name this vehicle). */
+    @Override
+    public boolean eject() {
+        List<Entity> riders = List.copyOf(getPassengers());
+        riders.forEach(Entity::leaveVehicle);
+        return !riders.isEmpty();
+    }
+
+    /** Puts every passenger on top of the body (a player's passenger attachment point), keeping its own rotation. */
+    private void positionRiders() {
+        List<Entity> riders = getPassengers();
+        if (riders.isEmpty()) {
+            return;
+        }
+        Location seat = getLocation().add(0, getHeight(), 0);
+        for (Entity rider : riders) {
+            if (rider instanceof EntityMock mock && rider.isValid()) {
+                Location at = seat.clone();
+                at.setYaw(rider.getLocation().getYaw());
+                at.setPitch(rider.getLocation().getPitch());
+                mock.setLocation(at);
+            }
+        }
     }
 }

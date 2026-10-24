@@ -121,14 +121,15 @@ class NestingNewAbilitiesTest {
         return speed.getValue() / speed.getBaseValue();
     }
 
-    /** The shell count over the owner's head. */
+    /** The shell count over the owner's head (riding it, or kept over it while it cannot). */
     private static TextDisplay badge(Scenario s) {
         List<TextDisplay> badges = entities(s, TextDisplay.class).stream()
                 .filter(text -> {
                     String plain = Scenario.plain(text.text());
                     return plain.contains("✿") || plain.contains("알맹이") || plain.isEmpty();
                 })
-                .filter(text -> text.getLocation().getY() > s.owner.getLocation().getY() + s.owner.getHeight())
+                .filter(text -> s.owner.equals(text.getVehicle())
+                        || text.getLocation().getY() > s.owner.getLocation().getY() + s.owner.getHeight())
                 .toList();
         assertEquals(1, badges.size(), "one shell badge over the owner's head: " + badges.size());
         return badges.getFirst();
@@ -204,6 +205,33 @@ class NestingNewAbilitiesTest {
             low = Math.min(low, corner.y);
         }
         return display.getLocation().getY() + low;
+    }
+
+    /** The highest point of a block display's model, in world y. */
+    private static double highest(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        double high = -Double.MAX_VALUE;
+        for (int c = 0; c < 8; c++) {
+            Vector3f corner = new Vector3f(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+            new Quaternionf(t.getRightRotation()).transform(corner);
+            corner.mul(t.getScale());
+            new Quaternionf(t.getLeftRotation()).transform(corner);
+            corner.add(t.getTranslation());
+            high = Math.max(high, corner.y);
+        }
+        return display.getLocation().getY() + high;
+    }
+
+    /** Minecraft's yaw (0 = south, 90 = west) of the way a display's model faces. */
+    private static double facingYaw(Display display) {
+        Vector3f look = front(display);
+        return Math.toDegrees(Math.atan2(-look.x, look.z));
+    }
+
+    /** The angle in degrees between two display poses (their left rotations). */
+    private static double turn(Quaternionf from, Quaternionf to) {
+        double dot = Math.abs(from.dot(to)) / Math.sqrt(from.lengthSquared() * to.lengthSquared());
+        return Math.toDegrees(2 * Math.acos(Math.min(1, dot)));
     }
 
     /** For {@code ticks} ticks, no block display's model reaches into the floor. */
@@ -282,10 +310,35 @@ class NestingNewAbilitiesTest {
             for (TestPlayer viewer : s.all()) {
                 assertTrue(viewer.canSee(badge), viewer.getName() + " reads the shells");
             }
-            // It follows the owner.
+            // It rides the owner's head (every client carries it with the body), its text lifted over it.
+            assertEquals(s.owner, badge.getVehicle(), "the badge rides the owner");
+            assertEquals(0.75, badge.getTransformation().getTranslation().y, 1.0E-4, "floating over the head");
             s.place(s.owner, 5.5, 2.5, 0);
             s.ticks(2);
-            assertEquals(5.5, badge(s).getX(), 0.3);
+            assertEquals(5.5, badge(s).getX(), 0.3, "it goes along with a teleport");
+            assertEquals(s.owner, badge(s).getVehicle(), "and stays on");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theBadgeRidesTheHeadAndGetsBackOnAfterItGotOff() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            TextDisplay badge = badge(s);
+            // A crack pops the badge: still lifted over the head the whole way.
+            s.healAll();
+            blow(s, s.enemy, 10);
+            for (int i = 0; i < 10; i++) {
+                s.ticks(1);
+                assertEquals(s.owner, badge.getVehicle(), "on the head at tick " + i);
+                assertEquals(0.75, badge.getTransformation().getTranslation().y, 1.0E-4, "lifted at tick " + i);
+            }
+            // Knocked off its seat (a respawn, a world change): it gets back on by itself.
+            badge.leaveVehicle();
+            s.ticks(1);
+            assertEquals(s.owner, badge.getVehicle(), "back on the head");
+            assertEquals(s.owner.getY() + s.owner.getHeight(), badge.getY(), 1.0E-6, "on top of the body");
             s.finishClean();
         }
     }
@@ -326,6 +379,14 @@ class NestingNewAbilitiesTest {
             assertEquals(6 * guard(s, 3), s.damageTaken(s.owner), EPSILON, "the blow itself is still softened");
             assertEquals(2, shells(s), "6 x 0.76 = 4.56 cracks a shell at once");
 
+            // The gold seam of the lower half stays just under its rim (no face in the plane of the rim's top).
+            BlockDisplay seam = blockDisplays(s, Material.GOLD_BLOCK).getFirst();
+            BlockDisplay base = blockDisplays(s, Material.RED_CONCRETE).stream()
+                    .filter(part -> part.getLocation().distance(seam.getLocation()) < 1.0E-6)
+                    .findFirst().orElseThrow();
+            assertTrue(highest(seam) < highest(base) - 0.003, "the seam band under the rim: " + highest(seam)
+                    + " vs " + highest(base));
+
             // Right away the halves spring off the body, out of the owner's own view.
             s.ticks(1);
             List<BlockDisplay> halves = blockDisplays(s, Material.RED_CONCRETE);
@@ -334,9 +395,16 @@ class NestingNewAbilitiesTest {
                 assertUnrotated(half, "half");
                 assertFalse(s.owner.canSee(half), "not in the owner's face while they leave");
                 assertTrue(s.enemy.canSee(half), "everyone else sees them");
+                assertEquals(2, half.getTeleportDuration(), "moved every tick: the kit's smooth teleports");
             }
-            assertTrue(entities(s, TextDisplay.class).stream()
-                    .anyMatch(text -> Scenario.plain(text.text()).contains("딱")), "딱!");
+            TextDisplay crackWord = entities(s, TextDisplay.class).stream()
+                    .filter(text -> Scenario.plain(text.text()).contains("딱")).findFirst().orElseThrow();
+            assertTrue(crackWord.getY() > s.owner.getY() + s.owner.getHeight() + 0.75 + 0.3,
+                    "딱! pops over the badge, not on top of it: " + (crackWord.getY() - s.owner.getY()));
+            s.ticks(2);
+            for (BlockDisplay half : blockDisplays(s, Material.RED_CONCRETE)) {
+                assertTrue(s.owner.canSee(half), "the owner sees them once they are off its body");
+            }
 
             s.ticks(COVER_TICKS);
             // The enemy stands 4 blocks ahead (+z): the cover stands 1.5 blocks ahead, between the two.
@@ -358,6 +426,8 @@ class NestingNewAbilitiesTest {
             assertEquals(1, look.z, 1.0E-4, "the face looks south, at the attacker: " + look);
             assertEquals(2, blockDisplays(s, Material.BLACK_CONCRETE).size(), "two eyes");
             assertEquals(1, blockDisplays(s, Material.GOLD_BLOCK).size(), "a gold seam");
+            assertTrue(highest(blockDisplays(s, Material.GOLD_BLOCK).getFirst()) < body.getY() + 1 - 0.003,
+                    "the seam's top stays under the body block's top face (no film on top of it)");
             Location faceAt = face.getLocation();
             assertEquals(65.5, faceAt.getY(), EPSILON, "on the head block");
 
@@ -604,11 +674,46 @@ class NestingNewAbilitiesTest {
                 for (BlockDisplay part : blockDisplays(s, Material.RED_CONCRETE)) {
                     assertFalse(s.enemy.canSee(part), "the giant doll is hidden from the enemy at tick " + i);
                     assertTrue(s.enemy2.canSee(part), "the others see it come down");
+                    assertFalse(part.isVisibleByDefault(), "filtered inside its spawn, never sent to the enemy");
                 }
             }
             s.enemy.showPlayer(s.ctx().plugin(), s.owner);
             s.ticks(1);
             assertTrue(s.enemy.canSee(badge(s)), "seen again");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void whoeverCannotSeeTheOwnerNeverReceivesTheCrackedHalvesOrTheCrack() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.enemy.hidePlayer(s.ctx().plugin(), s.owner);
+            s.ticks(1);
+            // The other enemy cracks a shell: its halves and the "딱" come off a body the first enemy cannot see.
+            blow(s, s.enemy2, 10);
+            assertEquals(2, shells(s));
+            List<Display> veiled = new ArrayList<>(blockDisplays(s, Material.RED_CONCRETE));
+            entities(s, TextDisplay.class).stream().filter(text -> Scenario.plain(text.text()).contains("딱"))
+                    .forEach(veiled::add);
+            assertTrue(veiled.size() >= 3, "two halves and the word: " + veiled.size());
+            for (int i = 0; i < 4; i++) {
+                for (Display display : veiled) {
+                    if (display.isValid()) {
+                        assertFalse(display.isVisibleByDefault(), "filtered inside its spawn: " + display.getType());
+                        assertFalse(s.enemy.canSee(display), "hidden from the enemy at tick " + i);
+                        assertTrue(s.enemy2.canSee(display), "the attacker sees it at tick " + i);
+                    }
+                }
+                s.ticks(1);
+            }
+            s.enemy.showPlayer(s.ctx().plugin(), s.owner);
+            s.ticks(1);
+            for (Display display : veiled) {
+                if (display.isValid()) {
+                    assertTrue(s.enemy.canSee(display), "seen again as soon as the owner is: " + display.getType());
+                }
+            }
             s.finishClean();
         }
     }
@@ -1156,6 +1261,196 @@ class NestingNewAbilitiesTest {
             }
             s.ticks(2);
             assertEquals(3, shells(s));
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== smooth on a real client
+
+    @Test
+    void theThrownDollLeavesTheHandSmallRocksSmoothlyAndNeverGoesThroughAWall() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.place(s.enemy, 8.5, 0.5, 90);
+            s.place(s.enemy2, -8.5, 8.5, 90);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "throw east");
+            // Out of the owner's face: small, and an arm's length in front of its eyes.
+            BlockDisplay face = blockDisplays(s, Material.SMOOTH_QUARTZ).getFirst();
+            double full = 0.34 * 0.8;
+            assertTrue(face.getTransformation().getScale().x < full * 0.5, "it leaves the hand small");
+            assertTrue(face.getX() - s.owner.getX() > 0.6, "in front of the eyes: " + (face.getX() - s.owner.getX()));
+            for (BlockDisplay part : entities(s, BlockDisplay.class)) {
+                assertEquals(2, part.getTeleportDuration(), "moved every tick: the kit's smooth teleports");
+            }
+            s.ticks(1);
+            assertEquals(full, face.getTransformation().getScale().x, 1.0E-4, "and grows to full size");
+            assertEquals(2, face.getInterpolationDuration(), "over 2 ticks");
+            // It rocks from side to side in steps the client blends into one sway.
+            Quaternionf last = new Quaternionf(face.getTransformation().getLeftRotation());
+            double biggest = 0;
+            for (int i = 0; i < 12 && face.isValid(); i++) {
+                s.ticks(1);
+                if (s.damageBy(s.owner, s.enemy) > 0) {
+                    break; // it popped open: the lid flies off
+                }
+                Quaternionf now = face.getTransformation().getLeftRotation();
+                biggest = Math.max(biggest, turn(last, now));
+                last = new Quaternionf(now);
+            }
+            assertTrue(biggest > 3 && biggest < 25, "a smooth rock, not a twitch: " + biggest + " degrees per pose");
+            s.finishClean();
+        }
+
+        // A wall right in front of the owner: the doll leaves the hand on this side of it.
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.place(s.owner, 0.5, 0.5, 0);
+            wall(s, 1, Material.STONE);
+            s.aimAtFloor(s.owner, 0.5, 6.5);
+            s.assertSucceeded(s.active(), "into the wall");
+            for (BlockDisplay part : entities(s, BlockDisplay.class)) {
+                assertTrue(part.getZ() < 1.0, "on the owner's side of the wall: " + part.getZ());
+            }
+            s.ticks(20);
+            wall(s, 1, Material.AIR);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theInnerDollsNeverSpinRoundOverTheEnemyTheyHopBackOnto() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            // A lone enemy to the east: the middle and the small doll hop back onto it from right where it was hit.
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.place(s.enemy, 6.5, 0.5, 90);
+            s.place(s.enemy2, -14.5, -10.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "throw east");
+            int seen = 0;
+            for (int i = 0; i < 80; i++) {
+                // It shuffles from side to side under the dolls.
+                s.place(s.enemy, 6.5, i % 2 == 0 ? 0.65 : 0.35, 90);
+                s.ticks(1);
+                for (BlockDisplay face : blockDisplays(s, Material.SMOOTH_QUARTZ)) {
+                    double width = face.getTransformation().getScale().x;
+                    if (width < 0.1 || width > 0.26) {
+                        continue; // the big doll's face, a doll still coming out, or one shrinking away
+                    }
+                    Vector3f look = front(face);
+                    double offEast = Math.toDegrees(Math.atan2(Math.abs(look.z), look.x));
+                    assertTrue(offEast < 60, "an inner doll faces the way it was thrown at tick " + i + ": " + look);
+                    seen++;
+                }
+            }
+            assertEquals(3, s.hitsBy(s.owner, s.enemy).size(), "all three dolls land on it: " + s.hits());
+            assertTrue(seen > 4, "the inner dolls were watched: " + seen);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theGiantDollTurnsAQuarterWhateverTheMouseDoesThenFollowsTheOwner() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            s.place(s.owner, 0.5, 0.5, 0);
+            s.assertSucceeded(s.ultimate(), "giant");
+            int drop = s.paramTicks("drop_delay");
+            float mouse = 0;
+            double lastYaw = 0;
+            for (int i = 0; i < drop; i++) {
+                // Flicking the camera round and round while it falls.
+                mouse = (mouse + 170) % 360;
+                s.owner.setRotation(mouse, 0);
+                s.ticks(1);
+                for (BlockDisplay face : blockDisplays(s, Material.SMOOTH_QUARTZ)) {
+                    double yaw = facingYaw(face);
+                    assertTrue(yaw >= lastYaw - 0.5 && yaw <= 90.5, "a steady quarter turn at tick " + i + ": "
+                            + yaw + " after " + lastYaw);
+                    lastYaw = yaw;
+                }
+            }
+            assertEquals(90, lastYaw, 0.5, "it lands a quarter turned");
+            List<BlockDisplay> giant = blockDisplays(s, Material.RED_CONCRETE);
+            assertFalse(giant.isEmpty(), "landed");
+            for (BlockDisplay part : giant) {
+                assertEquals(3, part.getTeleportDuration(), "it follows the body as other clients draw it");
+                assertFalse(s.owner.canSee(part), "over the owner now, out of its camera");
+            }
+            // It squashes and settles onto the regrown body without turning back, following the owner all along.
+            double body = 1.8 * scale(s.owner);
+            for (int i = 0; i < 3 + 6; i++) {
+                s.place(s.owner, 0.5 + 0.2 * (i + 1), 0.5, mouse);
+                s.ticks(1);
+                for (BlockDisplay face : blockDisplays(s, Material.SMOOTH_QUARTZ)) {
+                    assertEquals(90, facingYaw(face), 0.5, "no twist back at tick " + i);
+                }
+                for (BlockDisplay part : blockDisplays(s, Material.RED_CONCRETE)) {
+                    assertEquals(s.owner.getX(), part.getX(), 1.0E-6, "the giant follows the owner at tick " + i);
+                }
+                if (i >= 2 && i < 8) {
+                    // Settling (it shrinks away at the end): snugly onto the regrown body, not the old one.
+                    BlockDisplay face = blockDisplays(s, Material.SMOOTH_QUARTZ).getFirst();
+                    assertEquals(0.34 * body * 1.1, face.getTransformation().getScale().x, 1.0E-3,
+                            "it settles onto the regrown body at tick " + i);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aRegrownShellClosesStaysOnAMomentAndFollowsTheOwner() {
+        try (Scenario s = noGaugeGain(Scenario.builder(ID)).start()) {
+            s.ticks(10);
+            crackOnce(s);
+            for (int i = 0; i < s.paramTicks("regrow_delay") + 40 && shells(s) < 3; i++) {
+                s.ticks(1);
+            }
+            assertEquals(3, shells(s), "a shell grows back");
+            double height = 1.8 * scale(s.owner);
+            double width = 0.6 * scale(s.owner) * 1.25;
+            List<BlockDisplay> lid = blockDisplays(s, Material.RED_CONCRETE);
+            assertEquals(2, lid.size(), "the cap and the cup");
+            for (BlockDisplay half : lid) {
+                assertEquals(3, half.getTeleportDuration(), "it follows the body as other clients draw it");
+                assertFalse(half.isVisibleByDefault(), "filtered inside its spawn");
+                assertEquals(width, half.getTransformation().getScale().x, 1.0E-4, "as wide as the regrown shell");
+            }
+            int closed = 0;
+            int lasted = 0;
+            for (int i = 0; i < 30; i++) {
+                // The owner walks east while it closes.
+                s.place(s.owner, 0.5 + 0.15 * (i + 1), 0.5, 0);
+                s.ticks(1);
+                List<BlockDisplay> left = blockDisplays(s, Material.RED_CONCRETE);
+                if (left.isEmpty()) {
+                    break;
+                }
+                lasted++;
+                double feet = s.owner.getY();
+                BlockDisplay cup = null;
+                BlockDisplay cap = null;
+                for (BlockDisplay half : left) {
+                    assertEquals(s.owner.getX(), half.getX(), 1.0E-6, "the lid follows the owner at tick " + i);
+                    if (Math.abs(half.getY() - feet) < 1.0E-6) {
+                        cup = half;
+                    } else {
+                        cap = half;
+                    }
+                }
+                if (cup != null && cap != null
+                        && Math.abs(cup.getTransformation().getScale().y - height / 2) < 1.0E-4
+                        && Math.abs(cap.getY() - (feet + height * 0.75)) < 1.0E-4) {
+                    closed++;
+                }
+            }
+            assertTrue(closed >= 3, "the closed shell stays on a moment before it shrinks away: " + closed);
+            assertTrue(lasted <= 20, "and then it is gone: " + lasted);
+            s.assertNoProblems();
             s.finishClean();
         }
     }

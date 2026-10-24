@@ -192,16 +192,28 @@ public final class MatryoshkaAbility extends Ability {
     private static final int PUSH_AIR_TICKS = 11;
     private static final double PUSH_LIFT = 0.42;
 
+    /**
+     * Teleport duration of the models that follow the owner's body (the lid, the landed giant doll): other clients
+     * draw a player from a position every 2 ticks smoothed over 3, so 3 keeps them on the body there.
+     */
+    private static final int FOLLOW_GLIDE = 3;
+
     // passive
     private static final long SEAM_PERIOD = 10;
-    private static final double BADGE_LIFT = 0.75;
+    /** The badge rides the owner's head (top of its box): its text floats this far over it. */
+    private static final float BADGE_LIFT = 0.75f;
     private static final float BADGE_SCALE = 0.85f;
+    /** "딱" pops this far over the badge, never on top of it. */
+    private static final double CRACK_WORD_LIFT = 0.45;
     /** A freshly grown body is not hurt by the blocks it grew into (the client settles it) for this long. */
     private static final long BREATH_TICKS = 20;
     private static final long CRAMP_FX_PERIOD = 40;
     private static final int HALF_FLIGHT = 4;
     private static final int ROLL_TICKS = 8;
     private static final int LID_TICKS = 6;
+    /** The closed lid stays on (still following the owner) this long after the click, then shrinks away. */
+    private static final int LID_HOLD = 3;
+    private static final int LID_FADE = 3;
     /** How wide a shell's halves are, relative to the body they came off. */
     private static final float SHELL_WIDEN = 1.25f;
     /** A cover block stands on ground at most this far below its own floor (a path yes; a slab, a carpet no). */
@@ -215,8 +227,20 @@ public final class MatryoshkaAbility extends Ability {
     private static final double[] DOLL_HEIGHTS = {0.8, 0.6, 0.42};
     private static final double DOLL_HIT = 0.45;
     private static final int MAX_FLIGHT = 60;
+    /** The thrown doll leaves the hand this far in front of the eyes (per body size), out of the owner's face. */
+    private static final double HAND_REACH = 0.7;
+    /** It leaves the hand this small and grows to full size over its first {@link #THROW_GROW} ticks. */
+    private static final float THROW_START_SCALE = 0.3f;
+    private static final int THROW_GROW = 2;
+    /** Rocking from side to side: degrees and radians per tick (one rock in about 14 ticks). */
+    private static final double ROCK_DEGREES = 22;
+    private static final double ROCK_RATE = 0.45;
     private static final long POP_DELAY = 4;
     private static final double HOP_HIT = 1.6;
+    /** A hop shorter than this (horizontally) keeps the throw's facing instead of aiming at the enemy. */
+    private static final double HOP_AIM_MIN = 0.4;
+    /** A hopping doll turns after its enemy only while it is farther than this from it (horizontally). */
+    private static final double HOP_REAIM = 0.5;
     private static final int HOP_MIN_TICKS = 7;
     private static final int HOP_MAX_TICKS = 16;
     private static final double MAX_THROW_SPEED = 2.0;
@@ -265,18 +289,21 @@ public final class MatryoshkaAbility extends Ability {
     private static final List<Part> TOP_HALF = List.of(
             new Part(LACQUER, GILT, 0, 0, 0, 1, 1, 1),
             new Part(CREAM, CREAM, 0, 0.1f, 0.505f, 0.55f, 0.55f, 0.02f));
-    /** The lower half of a cracked shell: lacquer base with the gold seam on its rim. */
+    /**
+     * The lower half of a cracked shell: lacquer base with the gold seam on its rim (the band's top stays just under
+     * the rim, never in the plane of the base's top face).
+     */
     private static final List<Part> BOTTOM_HALF = List.of(
             new Part(LACQUER, GILT, 0, 0, 0, 1, 1, 1),
-            new Part(GILT, LACQUER, 0, 0.45f, 0, 1.04f, 0.1f, 1.04f));
+            new Part(GILT, LACQUER, 0, 0.44f, 0, 1.04f, 0.1f, 1.04f));
 
     /** The face painted on the cover's head block (relative to the block's center, its front to +Z). */
     private static final List<Part> COVER_FACE = List.of(
             new Part(CREAM, CREAM, 0, -0.03f, 0.505f, 0.62f, 0.56f, 0.02f),
             new Part(INK, INK, -0.13f, 0.03f, 0.52f, 0.08f, 0.1f, 0.02f),
             new Part(INK, INK, 0.13f, 0.03f, 0.52f, 0.08f, 0.1f, 0.02f));
-    /** The gold seam around the top of the cover's body block. */
-    private static final Part COVER_SEAM = new Part(GILT, GILT, 0, 0.47f, 0, 1.03f, 0.07f, 1.03f);
+    /** The gold seam around the top of the cover's body block (its top just under the block's top face). */
+    private static final Part COVER_SEAM = new Part(GILT, GILT, 0, 0.46f, 0, 1.03f, 0.07f, 1.03f);
 
     // ------------------------------------------------------------------ state
 
@@ -287,9 +314,10 @@ public final class MatryoshkaAbility extends Ability {
      * pop up, the halves flying off, the lid and the little dolls that fizzle. The dolls that hit never go unseen.
      */
     private final List<Display> optional = new ArrayList<>();
-    /** Models sitting on the owner's body (the lid, the giant doll): hidden from whoever cannot see the owner. */
-    private final List<Prop> worn = new ArrayList<>();
-    /** Viewers the head badge is hidden from (they cannot see the owner). */
+    /**
+     * Viewers who cannot see the owner: the head badge is hidden from them, and so is every model on or coming off
+     * the owner's body (those filter their viewers inside their spawn, see {@link Sight}).
+     */
     private final Set<UUID> veiled = new HashSet<>();
     /** Shells that cracked while the gold lasts, waiting for the golden loop to fling their halves. */
     private final Deque<Spill> pendingShards = new ArrayDeque<>();
@@ -334,9 +362,18 @@ public final class MatryoshkaAbility extends Ability {
         Bukkit.getPluginManager().registerEvents(created, ctx().plugin());
         hooks = created;
         if (makeRoom(1)) {
-            TextDisplay label = keep(Displays.text(ctx(), owner, badgeSpot(owner), Component.empty(), BADGE_SCALE, 0));
-            label.setTeleportDuration(1);
+            // Its lift is in the transformation: it rides the head (the top of the owner's box), so every client
+            // carries it with the body itself, never a moment behind or ahead of it.
+            TextDisplay label = keep(Displays.spawn(ctx(), owner, badgeSpot(owner, bodyHeight()),
+                    TextDisplay.class, 0, display -> {
+                        display.text(Component.empty());
+                        display.setBillboard(Display.Billboard.CENTER);
+                        display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+                        display.setShadowed(true);
+                        display.setTransformation(badgePose(BADGE_SCALE));
+                    }));
             badge = label;
+            mountBadge(owner, label);
         }
         refreshBadge(false);
     }
@@ -350,7 +387,6 @@ public final class MatryoshkaAbility extends Ability {
         // Modifiers, tasks, displays and temporary blocks are released by the context.
         live.clear();
         optional.clear();
-        worn.clear();
         veiled.clear();
         pendingShards.clear();
         badge = null;
@@ -410,11 +446,25 @@ public final class MatryoshkaAbility extends Ability {
         if (oldSpeed != null) {
             ctx().removeModifier(owner, oldSpeed);
         }
-        // The badge keeps to the new head at once (not a tick late, inside a grown head).
+        // A badge that rides the head goes up and down with it; one that could not get on keeps to the new head at
+        // once (not a tick late, inside a grown head). The server resizes the box only on the owner's next tick.
         TextDisplay label = badge;
-        if (label != null && label.isValid()) {
-            Displays.moveTo(label, badgeSpot(owner));
+        if (label != null && label.isValid() && !owner.equals(label.getVehicle())) {
+            Displays.moveTo(label, badgeSpot(owner, bodyHeight()));
         }
+    }
+
+    /**
+     * The owner's standing height with the shells it wears now. Read this, not {@code getHeight()}, right after the
+     * size changed: the server only resizes the owner's box on its next tick.
+     */
+    private double bodyHeight() {
+        return Body.PLAYER.height() * scaleFor(shells);
+    }
+
+    /** The owner's standing width with the shells it wears now (see {@link #bodyHeight()}). */
+    private double bodyWidth() {
+        return Body.PLAYER.width() * scaleFor(shells);
     }
 
     /** True if the owner could stand up at {@code scale} where it is (no ceiling in its grown head). */
@@ -536,7 +586,8 @@ public final class MatryoshkaAbility extends Ability {
         if (spill.golden()) {
             Fx.sound(waist, Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1.0f, 1.2f + Fx.jitter(0.08f));
         }
-        pop(owner, owner.getLocation().add(0, owner.getHeight() + 0.35, 0),
+        // Over the badge (which pops at the same moment), never on top of it.
+        pop(owner, owner.getLocation().add(0, bodyHeight() + BADGE_LIFT + CRACK_WORD_LIFT, 0),
                 "<b><" + (spill.golden() ? GOLD_TAG : RED_TAG) + ">딱!</" + (spill.golden() ? GOLD_TAG : RED_TAG)
                         + "></b>", 1.3f, true);
     }
@@ -562,19 +613,16 @@ public final class MatryoshkaAbility extends Ability {
         Location topStart = origin.clone().add(0, spill.height() / 4, 0);
         Location bottomStart = origin.clone().add(0, -spill.height() / 4, 0);
         float yaw = spill.yaw();
-        Prop top = new Prop(topStart, TOP_HALF, TOP_HALF.size(), halfScale, spill.golden(), yaw, 30, false);
-        Prop bottom = new Prop(bottomStart, BOTTOM_HALF, BOTTOM_HALF.size(), halfScale, spill.golden(), yaw, 30,
-                false);
-        for (Prop half : List.of(top, bottom)) {
-            half.veil();
-            // Out of the owner's own view while they leave its body.
-            half.hideFrom(owner);
-            ctx().runLater(owner, 2, () -> half.showTo(owner));
-        }
+        // Out of the owner's own view while they leave its body, and never seen by whoever cannot see the owner.
+        Prop top = new Prop(topStart, TOP_HALF, TOP_HALF.size(), halfScale, new Vector3f(), spill.golden(), yaw, 30,
+                false, Sight.LEAVING);
+        Prop bottom = new Prop(bottomStart, BOTTOM_HALF, BOTTOM_HALF.size(), halfScale, new Vector3f(),
+                spill.golden(), yaw, 30, false, Sight.LEAVING);
+        ctx().runLater(owner, 2, () -> showToOwner(top, bottom));
         if (plan == null) {
             Vector way = from != null ? from : Motion.horizontalFacing(owner.getLocation());
-            roll(owner, top, topStart, way.clone().rotateAroundY(0.5), true);
-            roll(owner, bottom, bottomStart, way.clone().rotateAroundY(-0.5), false);
+            roll(owner, top, topStart, way.clone().rotateAroundY(0.5), yaw, true);
+            roll(owner, bottom, bottomStart, way.clone().rotateAroundY(-0.5), yaw, false);
             return;
         }
         Location headAt = plan.base().getRelative(BlockFace.UP).getLocation().add(0.5, 0.5, 0.5);
@@ -589,8 +637,11 @@ public final class MatryoshkaAbility extends Ability {
         });
     }
 
-    /** A half rolls away along the ground, tumbling over (the top one hops off in a somersault), and is gone. */
-    private void roll(Player owner, Prop half, Location start, Vector way, boolean hop) {
+    /**
+     * A half rolls away along the ground, tumbling over (the top one hops off in a somersault), and is gone. It
+     * turns from {@code yaw} (the way it faced on the body) to the way it rolls on the way, never in one tick.
+     */
+    private void roll(Player owner, Prop half, Location start, Vector way, float yaw, boolean hop) {
         Vector flat = Motion.horizontal(way);
         if (flat.lengthSquared() < 1.0E-6) {
             flat = new Vector(0, 0, 1);
@@ -603,7 +654,7 @@ public final class MatryoshkaAbility extends Ability {
         Spots.snapToGround(end.getWorld(), end, 3);
         Location from = start.clone();
         Location to = end;
-        fly(owner, half, from, to, ROLL_TICKS, hop ? 0.8 : 0.15, yawOf(flat), 0, hop ? 360 : 270, () -> {
+        fly(owner, half, from, to, ROLL_TICKS, hop ? 0.8 : 0.15, yaw, wrap(yawOf(flat) - yaw), hop ? 360 : 270, () -> {
             to.getWorld().spawnParticle(Particle.POOF, to, Vfx.n(ctx(), 4), 0.15, 0.1, 0.15, 0.02);
             Fx.sound(to, Sound.BLOCK_WOOD_FALL, 0.7f, 1.2f + Fx.jitter(0.1f));
             half.vanish(4);
@@ -786,18 +837,29 @@ public final class MatryoshkaAbility extends Ability {
         Player owner = player();
         long now = ctx().currentTick();
         TextDisplay label = badge;
-        if (label != null && label.isValid()) {
-            Displays.moveTo(label, badgeSpot(owner));
+        // Back on the head after it got off (a respawn, a world change); until then it keeps to the head itself.
+        if (label != null && label.isValid() && !mountBadge(owner, label)) {
+            Displays.moveTo(label, badgeSpot(owner, owner.getHeight()));
         }
         // Every tick: an owner who turns invisible or hidden must not be given away even for a moment.
         refreshBadge(false);
-        veilBadge(owner);
-        worn.removeIf(Prop::isEmpty);
-        for (Prop prop : worn) {
-            prop.veil();
-        }
+        veil(owner);
         regrow(owner, now);
         ambient(owner, tick);
+    }
+
+    /** Seats the badge on the owner's head; true once it rides it. */
+    private static boolean mountBadge(Player owner, TextDisplay label) {
+        if (owner.equals(label.getVehicle())) {
+            return true;
+        }
+        if (!owner.isValid() || owner.isDead() || !owner.getWorld().equals(label.getWorld())) {
+            return false;
+        }
+        if (label.isInsideVehicle()) {
+            label.leaveVehicle();
+        }
+        return owner.addPassenger(label) && owner.equals(label.getVehicle());
     }
 
     /** After a quiet while a new shell closes over the owner, one at a time, if there is room to grow. */
@@ -841,50 +903,70 @@ public final class MatryoshkaAbility extends Ability {
 
     /**
      * A shell closes over the owner like a lid: the cap comes down from above, the base grows up out of the floor
-     * like a cup (its rim rising, its bottom staying on the ground), and they meet at the waist with a click.
+     * like a cup (its rim rising, its bottom staying on the ground), and they meet at the waist with a click. The
+     * closed shell stays on a moment, then shrinks away; it follows the owner all along. The shell is the size of
+     * the regrown body (the server has not resized the owner's box yet).
      */
     private void closeLid(Player owner) {
-        float width = (float) (owner.getWidth() * SHELL_WIDEN);
-        float height = (float) owner.getHeight();
+        float width = (float) (bodyWidth() * SHELL_WIDEN);
+        float height = (float) bodyHeight();
         Vector3f halfScale = new Vector3f(width, height / 2, width);
         float flat = height / 2 * 0.15f;
         float yaw = owner.getLocation().getYaw();
         Quaternionf facing = rotation(yaw, 0, 0);
-        Location waist = waist(owner);
-        Prop top = new Prop(waist.clone().add(0, height, 0), TOP_HALF, TOP_HALF.size(), halfScale, false, yaw,
-                LID_TICKS + 8, false);
-        Prop bottom = new Prop(owner.getLocation().add(0, flat / 2, 0), BOTTOM_HALF, BOTTOM_HALF.size(),
-                new Vector3f(width, flat, width), false, yaw, LID_TICKS + 8, false);
-        for (Prop half : List.of(top, bottom)) {
-            half.hideFrom(owner);
-            half.veil();
-            worn.add(half);
-        }
-        Loop.repeat(ctx(), owner, 1, 1, LID_TICKS, i -> {
-            double t = (i + 1.0) / LID_TICKS;
-            double eased = 1 - (1 - t) * (1 - t);
-            Location center = waist(owner);
-            top.moveTo(center.clone().add(0, height * (1 - eased) + height / 4, 0));
-            float rim = (float) (flat + (height / 2 - flat) * eased);
-            bottom.pose(facing, new Vector3f(width, rim, width), 1);
-            bottom.moveTo(owner.getLocation().add(0, rim / 2, 0));
+        int clickAt = LID_TICKS + 1;
+        int fadeAt = clickAt + LID_HOLD;
+        int steps = fadeAt + LID_FADE;
+        long lifetime = steps + 8;
+        // The cap's pivot is its center; the cup's pivot stays on the floor at the owner's feet and its rim rises by
+        // its own transformation, so its bottom never leaves the ground while it grows.
+        Prop top = new Prop(owner.getLocation().add(0, height * 1.75, 0), TOP_HALF, TOP_HALF.size(), halfScale,
+                new Vector3f(), false, yaw, lifetime, false, Sight.WORN);
+        Prop bottom = new Prop(owner.getLocation(), BOTTOM_HALF, BOTTOM_HALF.size(), new Vector3f(width, flat, width),
+                new Vector3f(0, flat / 2, 0), false, yaw, lifetime, false, Sight.WORN);
+        top.glide(FOLLOW_GLIDE);
+        bottom.glide(FOLLOW_GLIDE);
+        Loop.repeat(ctx(), owner, 1, 1, steps, i -> {
+            Location feet = owner.getLocation();
+            Location center = feet.clone().add(0, height * 0.5, 0);
+            if (i < LID_TICKS) {
+                double t = (i + 1.0) / LID_TICKS;
+                double eased = 1 - (1 - t) * (1 - t);
+                top.moveTo(center.clone().add(0, height * (1 - eased) + height / 4, 0));
+                if (i % 2 == 0) {
+                    // Every 2 ticks, to where the rim is 2 ticks on: one interpolation flows into the next.
+                    double ahead = Math.min(1, (i + 2.0) / LID_TICKS);
+                    float rim = (float) (flat + (height / 2 - flat) * (1 - (1 - ahead) * (1 - ahead)));
+                    bottom.pose(facing, new Vector3f(width, rim, width), new Vector3f(0, rim / 2, 0), 2);
+                }
+            } else {
+                top.moveTo(center.clone().add(0, height / 4, 0));
+            }
+            bottom.moveTo(feet);
+            if (i == clickAt) {
+                Vfx.ring(ctx(), center, width * 0.7, 16, 0, Particle.DUST_COLOR_TRANSITION, GOLD_FLASH, false);
+                flowers(center, width * 0.5, 2);
+                Fx.sound(center, Sound.BLOCK_WOODEN_TRAPDOOR_CLOSE, 1.0f, 1.25f + Fx.jitter(0.05f));
+                Fx.sound(center, Sound.BLOCK_BAMBOO_WOOD_BUTTON_CLICK_ON, 1.0f, 1.4f);
+                Fx.sound(center, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.7f, 0.8f + 0.2f * shells);
+            } else if (i == fadeAt) {
+                top.vanish(LID_FADE);
+                bottom.vanish(LID_FADE);
+            }
             return true;
-        }, () -> {
-            Location center = waist(owner);
-            Vfx.ring(ctx(), center, width * 0.7, 16, 0, Particle.DUST_COLOR_TRANSITION, GOLD_FLASH, false);
-            flowers(center, width * 0.5, 2);
-            Fx.sound(center, Sound.BLOCK_WOODEN_TRAPDOOR_CLOSE, 1.0f, 1.25f + Fx.jitter(0.05f));
-            Fx.sound(center, Sound.BLOCK_BAMBOO_WOOD_BUTTON_CLICK_ON, 1.0f, 1.4f);
-            Fx.sound(center, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.7f, 0.8f + 0.2f * shells);
-            top.vanish(3);
-            bottom.vanish(3);
         });
     }
 
     // ------------------------------------------------------------------ badge & ambience
 
-    private static Location badgeSpot(Player owner) {
-        return Displays.unrotated(owner.getLocation().add(0, owner.getHeight() + BADGE_LIFT, 0));
+    /** Where the badge rides: the top of the owner's box ({@code height} tall); its text floats over it. */
+    private static Location badgeSpot(Player owner, double height) {
+        return Displays.unrotated(owner.getLocation().add(0, height, 0));
+    }
+
+    /** The badge's pose: {@code scale}, lifted {@link #BADGE_LIFT} over the head it rides. */
+    private static Transformation badgePose(float scale) {
+        return Displays.centered(0, BADGE_LIFT, 0, scale, scale, scale, 0, 0, 0);
     }
 
     private static Location waist(Player owner) {
@@ -907,10 +989,8 @@ public final class MatryoshkaAbility extends Ability {
             label.text(Text.mm(mini));
         }
         if (pop) {
-            float big = BADGE_SCALE * 1.4f;
-            Displays.animate(label, Displays.centered(0, 0, 0, big, big, big, 0, 0, 0), 2);
-            ctx().runLater(player(), 3, () -> Displays.animate(label,
-                    Displays.centered(0, 0, 0, BADGE_SCALE, BADGE_SCALE, BADGE_SCALE, 0, 0, 0), 4));
+            Displays.animate(label, badgePose(BADGE_SCALE * 1.4f), 2);
+            ctx().runLater(player(), 3, () -> Displays.animate(label, badgePose(BADGE_SCALE), 4));
         }
     }
 
@@ -956,12 +1036,15 @@ public final class MatryoshkaAbility extends Ability {
         return (r << 16) | (g << 8) | b;
     }
 
-    /** The badge is hidden from everyone who cannot see the owner (it would give its place away). */
-    private void veilBadge(Player owner) {
+    /**
+     * The badge is hidden from everyone who cannot see the owner (it would give its place away), at once. The models
+     * on or coming off its body filter their viewers by the same rule ({@link Prop#seenBy}): when somebody's view of
+     * the owner changes, they are asked again right away instead of at the next periodic check.
+     */
+    private void veil(Player owner) {
         TextDisplay label = badge;
-        if (label == null || !label.isValid()) {
-            return;
-        }
+        boolean shown = label != null && label.isValid();
+        boolean changed = false;
         Set<UUID> present = new HashSet<>();
         for (Player viewer : owner.getWorld().getPlayers()) {
             if (viewer.equals(owner)) {
@@ -971,14 +1054,23 @@ public final class MatryoshkaAbility extends Ability {
             present.add(id);
             if (!viewer.canSee(owner)) {
                 if (veiled.add(id)) {
-                    viewer.hideEntity(ctx().plugin(), label);
+                    changed = true;
+                    if (shown) {
+                        viewer.hideEntity(ctx().plugin(), label);
+                    }
                 }
             } else if (veiled.remove(id)) {
-                viewer.showEntity(ctx().plugin(), label);
+                changed = true;
+                if (shown) {
+                    viewer.showEntity(ctx().plugin(), label);
+                }
             }
         }
         // Somebody who left the world no longer counts as one the owner hides from (they are veiled again on return).
-        veiled.retainAll(present);
+        changed |= veiled.retainAll(present);
+        if (changed) {
+            ctx().refreshViewers();
+        }
     }
 
     /** True if the owner is invisible or hidden from somebody: its own glints would give it away. */
@@ -1067,13 +1159,26 @@ public final class MatryoshkaAbility extends Ability {
                 + "겹</white> <gray>남음</gray>"));
     }
 
+    /**
+     * Where the doll leaves the hand: down to the right, an arm's length in front of the eyes (out of the owner's
+     * face), never on the far side of a wall right in front of it.
+     */
     private static Location hand(Player owner) {
         Location eye = owner.getEyeLocation();
         Vector facing = Motion.horizontalFacing(eye);
         // Facing +Z (south), the right hand is -X (west).
         Vector right = new Vector(-facing.getZ(), 0, facing.getX());
-        double scale = owner.getHeight() / Body.PLAYER.height();
-        return eye.add(facing.multiply(0.4 * scale)).add(right.multiply(0.35 * scale)).subtract(0, 0.45 * scale, 0);
+        double scale = Body.scaleOf(owner);
+        Vector reach = facing.multiply(HAND_REACH * scale).add(right.multiply(0.35 * scale))
+                .add(new Vector(0, -0.45 * scale, 0));
+        double length = reach.length();
+        Vector unit = reach.clone().multiply(1 / length);
+        RayTraceResult wall = eye.getWorld().rayTraceBlocks(eye, unit, length, FluidCollisionMode.NEVER, true);
+        if (wall != null) {
+            double clear = Math.max(0, wall.getHitPosition().distance(eye.toVector()) - 0.2);
+            return eye.add(unit.multiply(clear));
+        }
+        return eye.add(reach);
     }
 
     /**
@@ -1104,9 +1209,10 @@ public final class MatryoshkaAbility extends Ability {
             this.apex = 0.35 + length * 0.09;
             this.shed = shed;
             this.at = start.clone();
+            // It leaves the hand small and grows on its way (a full-size doll would fill the owner's view).
             float size = (float) DOLL_HEIGHTS[0];
-            this.doll = new Prop(start, DOLL, DOLL_PARTS[0], new Vector3f(size), golden, yawOf(delta),
-                    MAX_FLIGHT + 30, true);
+            this.doll = new Prop(start, DOLL, DOLL_PARTS[0], new Vector3f(size * THROW_START_SCALE), golden,
+                    yawOf(delta), MAX_FLIGHT + 30, true);
         }
 
         void start() {
@@ -1122,6 +1228,10 @@ public final class MatryoshkaAbility extends Ability {
 
         @Override
         public boolean test(long i) {
+            if (i == 0) {
+                // Out of the hand, it grows to full size (a tick after its spawn, so the client animates it).
+                doll.pose(rotation(yawOf(delta), 0, 0), new Vector3f((float) DOLL_HEIGHTS[0]), THROW_GROW);
+            }
             Location next;
             if (i < arcTicks) {
                 double t = (i + 1.0) / arcTicks;
@@ -1156,8 +1266,9 @@ public final class MatryoshkaAbility extends Ability {
                 open(show(at), null);
                 return false;
             }
-            if (i % 2 == 0) {
-                float roll = (float) (Math.sin(i * 0.9) * 22);
+            if (i % 2 == 0 && i > 0) {
+                // Rocking slower than it is posed (every 2 ticks), so the rock reads as one smooth sway.
+                float roll = (float) (Math.sin(i * ROCK_RATE) * ROCK_DEGREES);
                 doll.pose(rotation(yawOf(step), 0, roll), doll.scale(), 2);
             }
             at = next;
@@ -1223,7 +1334,7 @@ public final class MatryoshkaAbility extends Ability {
             Quaternionf facing = rotation(yawOf(delta), 0, 0);
             // The lid (head and face) flies up spinning, the body squashes and is gone.
             for (int index : new int[] {HEAD, FACE_PART}) {
-                doll.posePart(index, rotation(yawOf(delta) + 150, 0, 25), doll.scale(),
+                doll.posePart(index, rotation(yawOf(delta) + 150, 0, 25), new Vector3f(size),
                         new Vector3f(0, size * 0.75f, 0), 5);
             }
             // Squashed onto its own bottom (the model spans -0.5..0.5 of its size): the base stays where it was.
@@ -1344,6 +1455,12 @@ public final class MatryoshkaAbility extends Ability {
         private final float size;
         private Location at;
         private Location end;
+        /**
+         * The way it faces in flight: at its enemy, or (a hop that starts on top of it, onto the enemy the doll before
+         * hit) the way the doll was thrown. It turns after a moving enemy only while that one is still a way off, so
+         * it never spins round on the spot over the enemy it lands on.
+         */
+        private float yaw;
 
         Hop(Throw thrown, int stage, Location from, LivingEntity target) {
             this.thrown = thrown;
@@ -1356,8 +1473,10 @@ public final class MatryoshkaAbility extends Ability {
             this.apex = 0.8 + distance * 0.12;
             this.at = this.from.clone();
             this.size = (float) DOLL_HEIGHTS[stage];
-            this.doll = new Prop(from, DOLL, DOLL_PARTS[stage], new Vector3f(size * 0.3f), false,
-                    yawOf(end.toVector().subtract(from.toVector())), ticks + 30, true);
+            Vector way = level(end.toVector().subtract(from.toVector()));
+            this.yaw = way.lengthSquared() >= HOP_AIM_MIN * HOP_AIM_MIN ? yawOf(way) : yawOf(thrown.delta);
+            this.doll = new Prop(from, DOLL, DOLL_PARTS[stage], new Vector3f(size * 0.3f), false, yaw, ticks + 30,
+                    true);
         }
 
         private static Location aimOf(LivingEntity target) {
@@ -1397,7 +1516,10 @@ public final class MatryoshkaAbility extends Ability {
                 }
             }
             at = next;
-            float yaw = yawOf(end.toVector().subtract(at.toVector()));
+            Vector left = level(end.toVector().subtract(at.toVector()));
+            if (left.lengthSquared() > HOP_REAIM * HOP_REAIM) {
+                yaw = yawOf(left);
+            }
             if (i == 0) {
                 doll.pose(rotation(yaw, 0, 0), new Vector3f(size * 0.85f, size * 1.2f, size * 0.85f), 2);
             } else if (i % 2 == 0) {
@@ -1422,8 +1544,8 @@ public final class MatryoshkaAbility extends Ability {
                     && at.distance(Fx.body(target)) <= HOP_HIT;
             double damage = Math.max(0, params().num(stage == 1 ? "middle_damage" : "small_damage"));
             boolean hit = close && thrown.strike(target, damage);
-            doll.pose(rotation(yawOf(end.toVector().subtract(from.toVector())), 0, 0),
-                    new Vector3f(size * 1.2f, size * 0.75f, size * 1.2f), 2);
+            // It lands facing the way it flew.
+            doll.pose(rotation(yaw, 0, 0), new Vector3f(size * 1.2f, size * 0.75f, size * 1.2f), 2);
             ctx().runLater(owner, 4, () -> doll.vanish(4));
             if (hit) {
                 if (stage == DOLL_HEIGHTS.length - 1) {
@@ -1452,7 +1574,7 @@ public final class MatryoshkaAbility extends Ability {
             Location top = at.clone();
             Location ground = at.clone();
             Spots.snapToGround(ground.getWorld(), ground, 8);
-            doll.pose(rotation(yawOf(end.toVector().subtract(from.toVector())), 0, 0), new Vector3f(size), 2);
+            doll.pose(rotation(yaw, 0, 0), new Vector3f(size), 2);
             Location rest = doll.above(ground);
             Vector drop = rest.toVector().subtract(top.toVector());
             Loop.repeat(ctx(), owner, 1, 1, DROP_TICKS, k -> {
@@ -1522,17 +1644,21 @@ public final class MatryoshkaAbility extends Ability {
         private final Prop giant;
         private final double radius;
         private final float width;
+        /**
+         * The way it faces as it starts to fall (the owner's facing then): it turns a quarter from there on the way
+         * down, whatever the owner does with its mouse meanwhile.
+         */
+        private final float baseYaw;
 
         Descent(Player owner) {
             this.owner = owner;
             this.ticks = Math.max(1, params().ticks("drop_delay"));
             this.radius = Math.max(0, params().num("slam_radius"));
             this.width = (float) (GIANT_HEIGHT * DOLL.getFirst().sx());
-            this.giant = new Prop(spot(0), DOLL, DOLL.size(), new Vector3f((float) GIANT_HEIGHT), false,
-                    owner.getLocation().getYaw(), ticks + SETTLE_TICKS + 30, true);
+            this.baseYaw = owner.getLocation().getYaw();
             // It comes down onto the owner: nobody who cannot see the owner sees it either.
-            giant.veil();
-            worn.add(giant);
+            this.giant = new Prop(spot(0), DOLL, DOLL.size(), new Vector3f((float) GIANT_HEIGHT), new Vector3f(),
+                    false, baseYaw, ticks + SETTLE_TICKS + 30, true, Sight.VEILED);
         }
 
         /** The giant's center when it has fallen {@code t} (0..1) of the way. */
@@ -1554,7 +1680,12 @@ public final class MatryoshkaAbility extends Ability {
         public boolean test(long i) {
             double t = (i + 1.0) / ticks;
             giant.moveTo(spot(t));
-            giant.pose(rotation(owner.getLocation().getYaw() + (float) (t * 90), 0, 0), giant.scale(), 2);
+            if (i % 2 == 0) {
+                // Every 2 ticks, to the turn it has 2 ticks on: each interpolation ends as the next one starts, and
+                // the last one ends on the quarter turn it lands with.
+                double ahead = Math.min(1, (i + 2.0) / ticks);
+                giant.pose(rotation(baseYaw + (float) (ahead * 90), 0, 0), giant.scale(), 2);
+            }
             Location ground = owner.getLocation().add(0, 0.08, 0);
             // The doll's shadow grows and darkens under it; the blast radius rings it.
             double shadow = width / 2 * (0.3 + 0.7 * t);
@@ -1570,13 +1701,18 @@ public final class MatryoshkaAbility extends Ability {
         private void land() {
             descending = false;
             giant.moveTo(owner.getLocation().add(0, GIANT_HEIGHT / 2, 0));
-            giant.hideFrom(owner);
-            slam(owner, giant);
+            // Over the owner now, around its camera; it follows the body as the other clients draw it.
+            giant.hideFromOwner();
+            giant.glide(FOLLOW_GLIDE);
+            slam(owner, giant, baseYaw + 90);
         }
     }
 
-    /** The giant doll covers the owner: enemies around are knocked out, every shell comes back and a golden one. */
-    private void slam(Player owner, Prop giant) {
+    /**
+     * The giant doll covers the owner: enemies around are knocked out, every shell comes back and a golden one. The
+     * giant keeps the facing {@code yaw} it landed with.
+     */
+    private void slam(Player owner, Prop giant, float yaw) {
         Location feet = owner.getLocation();
         Location center = Fx.body(owner);
         double radius = Math.max(0, params().num("slam_radius"));
@@ -1620,24 +1756,32 @@ public final class MatryoshkaAbility extends Ability {
         applySize(owner);
         refreshBadge(true);
 
-        // The giant squashes flat onto the floor, then settles over the owner and shrinks onto its body, leaving a
-        // golden shimmer. Its pivot stays half its height over the feet; the lift keeps its bottom on the ground (the
-        // model spans -0.5..0.5 of its size) while it squashes and shrinks.
-        float body = (float) owner.getHeight();
+        // The giant squashes flat onto the floor, then settles over the owner and shrinks onto its body (the regrown
+        // body: the server resizes the owner's box only on its next tick), leaving a golden shimmer. Its pivot stays
+        // half its height over the feet and follows them every tick until it is gone; the lift keeps its bottom on
+        // the ground (the model spans -0.5..0.5 of its size) while it squashes and shrinks.
+        float body = (float) bodyHeight();
         float giantHeight = (float) GIANT_HEIGHT;
-        giant.pose(rotation(feet.getYaw(), 0, 0), new Vector3f(giantHeight * 1.05f, giantHeight * 0.88f,
-                giantHeight * 1.05f), new Vector3f(0, -giantHeight * 0.06f, 0), 2);
-        ctx().runLater(owner, 3, () -> {
+        Quaternionf facing = rotation(yaw, 0, 0);
+        giant.pose(facing, new Vector3f(giantHeight * 1.05f, giantHeight * 0.88f, giantHeight * 1.05f),
+                new Vector3f(0, -giantHeight * 0.06f, 0), 2);
+        long settleAt = 3;
+        long goneAt = settleAt + SETTLE_TICKS;
+        Loop.repeat(ctx(), owner, 1, 1, goneAt + 2, k -> {
+            long tick = k + 1;
             giant.moveTo(owner.getLocation().add(0, giantHeight / 2, 0));
-            giant.pose(rotation(feet.getYaw(), 0, 0), new Vector3f(body * 1.1f),
-                    new Vector3f(0, body * 0.55f - giantHeight / 2, 0), SETTLE_TICKS);
-        });
-        ctx().runLater(owner, 3 + SETTLE_TICKS, () -> {
-            giant.vanish(2);
-            Location waist = waist(owner);
-            Vfx.sphere(ctx(), waist, owner.getWidth() * 1.1, 30, Particle.DUST_COLOR_TRANSITION, GOLD_FLASH, true);
-            Fx.sound(waist, Sound.ITEM_ARMOR_EQUIP_GOLD, 1.0f, 1.0f);
-            Fx.sound(waist, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.0f, 1.2f);
+            if (tick == settleAt) {
+                giant.pose(facing, new Vector3f(body * 1.1f), new Vector3f(0, body * 0.55f - giantHeight / 2, 0),
+                        SETTLE_TICKS);
+            } else if (tick == goneAt) {
+                giant.vanish(2);
+                Location waist = waist(owner);
+                Vfx.sphere(ctx(), waist, owner.getWidth() * 1.1, 30, Particle.DUST_COLOR_TRANSITION, GOLD_FLASH,
+                        true);
+                Fx.sound(waist, Sound.ITEM_ARMOR_EQUIP_GOLD, 1.0f, 1.0f);
+                Fx.sound(waist, Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 1.0f, 1.2f);
+            }
+            return true;
         });
         World world = feet.getWorld();
         Location ground = feet.clone().add(0, 0.1, 0);
@@ -1710,16 +1854,20 @@ public final class MatryoshkaAbility extends Ability {
             return;
         }
         Vector3f halfScale = new Vector3f(spill.width(), spill.height() / 2, spill.width());
+        List<Prop> halves = new ArrayList<>();
         for (int k = 0; k < count; k++) {
             shardsLeft--;
             List<Part> model = k == 0 ? TOP_HALF : BOTTOM_HALF;
             Location start = origin.clone().add(0, (k == 0 ? 1 : -1) * spill.height() / 4, 0);
-            Prop half = new Prop(start, model, model.size(), halfScale, true, spill.yaw(), SHARD_TICKS + 20, true);
-            half.veil();
-            half.hideFrom(owner);
-            ctx().runLater(owner, 2, () -> half.showTo(owner));
+            // Facing its enemy from the start (its flight keeps that facing), out of the owner's own view while it
+            // leaves its body.
+            float toward = yawOf(Fx.body(target).toVector().subtract(start.toVector()));
+            Prop half = new Prop(start, model, model.size(), halfScale, new Vector3f(), true, toward,
+                    SHARD_TICKS + 20, true, Sight.LEAVING);
+            halves.add(half);
             new Shard(owner, half, start, target).start();
         }
+        ctx().runLater(owner, 2, () -> showToOwner(halves.toArray(Prop[]::new)));
     }
 
     /**
@@ -1799,13 +1947,15 @@ public final class MatryoshkaAbility extends Ability {
             return true;
         }
 
-        /** Its enemy vanished: the half drops straight down where it is and breaks into gold dust. */
+        /**
+         * Its enemy vanished: the half drops straight down where it is, posed as it was in flight (no turn towards
+         * anything), and breaks into gold dust.
+         */
         private void drop() {
             dropping = true;
             Location top = at.clone();
             Location ground = at.clone();
             Spots.snapToGround(ground.getWorld(), ground, 8);
-            half.pose(rotation(yawOf(Motion.horizontalFacing(top)), 0, 0), half.scale(), 2);
             Location rest = half.above(ground);
             Vector fall = rest.toVector().subtract(top.toVector());
             Loop.repeat(ctx(), owner, 1, 1, DROP_TICKS, k -> {
@@ -1832,33 +1982,68 @@ public final class MatryoshkaAbility extends Ability {
 
     // ================================================================== models in flight
 
+    /** Who sees a model of the doll. */
+    private enum Sight {
+        /** Everyone (a thrown doll and the dolls inside it). */
+        PUBLIC,
+        /** Whoever sees the owner, the owner too: it comes down onto the owner's body (the giant doll). */
+        VEILED,
+        /**
+         * Whoever sees the owner, and the owner itself once {@code showToOwner} lets it (the halves springing off its
+         * body would fill its view while they leave it).
+         */
+        LEAVING,
+        /** Whoever sees the owner, but not the owner: it closes over its body, around its camera (the lid). */
+        WORN
+    }
+
+    /** Lets the owner see {@code props} it was kept from ({@link Sight#LEAVING}), at once. */
+    private void showToOwner(Prop... props) {
+        for (Prop prop : props) {
+            prop.ownerSees = true;
+        }
+        ctx().refreshViewers();
+    }
+
     /** A little model of block displays sharing one pivot (the parts' boxes are posed around it). */
     private final class Prop {
 
         private final List<BlockDisplay> parts = new ArrayList<>();
         private final List<Part> specs = new ArrayList<>();
-        /** Viewers it is hidden from because they cannot see the owner. */
-        private final Set<UUID> veiledFrom = new HashSet<>();
+        /** Only whoever sees the owner sees it (it sits on or comes off the owner's body). */
+        private final boolean veiled;
+        /** The owner sees it (read by the viewer filter, see {@link #seenBy}). */
+        private boolean ownerSees;
         private Vector3f scale;
 
-        /**
-         * The first {@code count} parts of {@code model}. An {@code essential} model (a doll that strikes) makes the
-         * optional displays give way to it; any other is skipped when the display budget is spent.
-         */
+        /** A model everyone sees, posed around its pivot {@code at}. */
         Prop(Location at, List<Part> model, int count, Vector3f scale, boolean golden, float yaw, long lifetime,
              boolean essential) {
+            this(at, model, count, scale, new Vector3f(), golden, yaw, lifetime, essential, Sight.PUBLIC);
+        }
+
+        /**
+         * The first {@code count} parts of {@code model}, posed {@code lift} over the pivot {@code at}. An
+         * {@code essential} model (a doll that strikes) makes the optional displays give way to it; any other is
+         * skipped when the display budget is spent. Its viewers ({@code sight}) are filtered inside the spawn, so
+         * nobody it is kept from ever receives it.
+         */
+        Prop(Location at, List<Part> model, int count, Vector3f scale, Vector3f lift, boolean golden, float yaw,
+             long lifetime, boolean essential, Sight sight) {
             this.scale = new Vector3f(scale);
+            this.veiled = sight != Sight.PUBLIC;
+            this.ownerSees = sight == Sight.PUBLIC || sight == Sight.VEILED;
             int used = Math.min(count, model.size());
             if (!(essential ? makeRoom(used) : reserve(used))) {
                 return;
             }
             Quaternionf rotation = rotation(yaw, 0, 0);
-            Vector3f none = new Vector3f();
             for (Part part : model.subList(0, used)) {
                 Material material = golden ? part.golden() : part.material();
+                // The kit's teleport duration (2) for a model moved every tick: smooth even when two moves reach a
+                // client in one of its ticks.
                 BlockDisplay display = Displays.block(ctx(), player(), at, material.createBlockData(),
-                        part.transform(rotation, this.scale, none), lifetime);
-                display.setTeleportDuration(1);
+                        part.transform(rotation, this.scale, lift), lifetime, veiled ? this::seenBy : null);
                 if (essential) {
                     keep(display);
                 } else {
@@ -1932,28 +2117,26 @@ public final class MatryoshkaAbility extends Ability {
             return pivot;
         }
 
-        /** Hides it from everyone who cannot see the owner (it sits on or comes off the owner's body). */
-        void veil() {
+        /**
+         * The viewer filter of a veiled model: the owner as {@link #ownerSees} says, anybody else only while they see
+         * the owner (asked again whenever that changes, see {@link #veil}).
+         */
+        boolean seenBy(Player viewer) {
             Player owner = player();
-            for (Player viewer : owner.getWorld().getPlayers()) {
-                if (!viewer.equals(owner) && !viewer.canSee(owner) && veiledFrom.add(viewer.getUniqueId())) {
-                    hideFrom(viewer);
-                }
-            }
+            return viewer.equals(owner) ? ownerSees : !veiled || viewer.canSee(owner);
         }
 
-        void hideFrom(Player viewer) {
-            for (BlockDisplay part : parts) {
-                if (part.isValid()) {
-                    viewer.hideEntity(ctx().plugin(), part);
-                }
-            }
+        /** Keeps it out of the owner's view from now on (it closed over the owner's body). */
+        void hideFromOwner() {
+            ownerSees = false;
+            ctx().refreshViewers();
         }
 
-        void showTo(Player viewer) {
+        /** How smoothly (in ticks) every client slides it to where it is moved. */
+        void glide(int ticks) {
             for (BlockDisplay part : parts) {
                 if (part.isValid()) {
-                    viewer.showEntity(ctx().plugin(), part);
+                    part.setTeleportDuration(ticks);
                 }
             }
         }
@@ -2047,6 +2230,11 @@ public final class MatryoshkaAbility extends Ability {
         return (float) Math.toDegrees(Math.atan2(-flat.getX(), flat.getZ()));
     }
 
+    /** The horizontal part of {@code vector}, its length kept (unlike {@link Motion#horizontal}). */
+    private static Vector level(Vector vector) {
+        return new Vector(vector.getX(), 0, vector.getZ());
+    }
+
     /** Little painted flowers of dust: a gold heart and five red or blue petals, lying flat. */
     private void flowers(Location center, double spread, int count) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
@@ -2065,19 +2253,16 @@ public final class MatryoshkaAbility extends Ability {
         }
     }
 
-    /** A word popping up and fading; {@code veiled}: hidden from whoever cannot see the owner. */
+    /**
+     * A word popping up and fading; {@code veiledText}: never sent to whoever cannot see the owner (filtered inside
+     * the spawn, so not even its text reaches them).
+     */
     private void pop(Player owner, Location at, String mini, float scale, boolean veiledText) {
         if (!reserve(1)) {
             return;
         }
-        TextDisplay text = keepOptional(Displays.text(ctx(), owner, at, Text.mm(mini), 0.3f, 20));
-        if (veiledText) {
-            for (Player viewer : owner.getWorld().getPlayers()) {
-                if (!viewer.equals(owner) && !viewer.canSee(owner)) {
-                    viewer.hideEntity(ctx().plugin(), text);
-                }
-            }
-        }
+        TextDisplay text = keepOptional(Displays.text(ctx(), owner, at, Text.mm(mini), 0.3f, 20,
+                veiledText ? viewer -> viewer.equals(owner) || viewer.canSee(owner) : null));
         Displays.animateNextTick(ctx(), owner, text, Displays.centered(0, 0.3f, 0, scale, scale, scale, 0, 0, 0), 4);
         ctx().runLater(owner, 12, () -> {
             if (text.isValid()) {
