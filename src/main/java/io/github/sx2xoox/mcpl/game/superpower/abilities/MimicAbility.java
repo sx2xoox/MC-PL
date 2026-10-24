@@ -23,6 +23,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.game.superpower.loot.LootSettings;
 import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
 import net.kyori.adventure.text.Component;
@@ -30,6 +31,7 @@ import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.FluidCollisionMode;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -47,10 +49,12 @@ import org.bukkit.block.data.Directional;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Vehicle;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -60,8 +64,10 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
@@ -80,10 +86,11 @@ import org.jspecify.annotations.Nullable;
  * chests that snap at whoever lands next to, opens or kicks them; the ultimate scatters a whole pile of chests and
  * hides among them — some hold real treasure, some bite, and one of them is the mimic.
  *
- * <p>The chests are real (temporary) chest blocks, so they look, sparkle and collide exactly like the loot chests;
- * opening or punching them is handled by this ability's own listener, after the arena protection has denied the
- * vanilla use (the same pattern as the loot chests). Like a loot chest, a mimic chest never opens for a click with the
- * ability item (that click is the clicker's own skill) or while sneaking with something in hand.
+ * <p>The chests are real (temporary) chest blocks, so they look and collide exactly like the loot chests and sparkle
+ * like an unopened one (at the default hint radius); opening or punching them is handled by this ability's own
+ * listener, after the arena protection has denied the vanilla use (the same pattern as the loot chests). Like a loot
+ * chest, a mimic chest never opens for a click with the ability item (that click is the clicker's own skill) or while
+ * sneaking with something in hand, and each one springs its surprise once (a held button repeats the click).
  *
  * <p>Unlike the stealth of the 그림자 or the traps of the 사냥꾼, the mimic hides in plain sight as an object everybody
  * can see, and only bites the one who decides to open it: the counterplay is suspicion (punch or shoot a chest from
@@ -100,10 +107,10 @@ public final class MimicAbility extends Ability {
             .color(TextColor.color(0xE3B23C))
             .difficulty(1)
             .passive("보물 상자 흉내",
-                    "{disguise_delay}초 동안 가만히 서 있으면 전리품 상자와 똑같은 보물 상자로 변신합니다. 적의 눈에는 내 몸과 "
-                            + "이름이 사라지고 상자만 보이며, 움직이거나 공격하거나 피해를 받으면 풀립니다. 그 상자를 연(우클릭한) "
-                            + "적은 덥석 물려 {disguise_bite} 피해를 받고 {disguise_grab}초간 붙잡힙니다(때리면 물지 않고 정체만 "
-                            + "드러납니다). 상자에서 튀어나온 뒤 "
+                    "{disguise_delay}초 동안 가만히 서 있으면 전리품 상자와 똑같은 보물 상자로 변신합니다(최대 "
+                            + "{disguise_max}초). 적의 눈에는 내 몸과 이름이 사라지고 상자만 보이며, 움직이거나 공격하거나(쏘거나 "
+                            + "던져도) 피해를 받으면 풀립니다. 그 상자를 연(우클릭한) 적은 덥석 물려 {disguise_bite} 피해를 받고 "
+                            + "{disguise_grab}초간 붙잡힙니다(때리면 물지 않고 정체만 드러납니다). 상자에서 튀어나온 뒤 "
                             + "{ambush_window}초 안의 첫 근접 공격은 {ambush_bonus} 추가 피해를 줍니다.")
             .active("미끼 상자",
                     "조준한 곳({bait_range}블록 이내)에 보물 상자를 던집니다. 떨어진 자리 반경 {land_radius}블록의 적은 뚜껑에 "
@@ -120,6 +127,7 @@ public final class MimicAbility extends Ability {
                             + "보입니다. 움직이면 언제든 튀어나오고, 남은 상자는 {leftover}초 뒤 사라집니다.")
             .ultimateNotStandalone()
             .param("disguise_delay", 1.5)
+            .param("disguise_max", 45)
             .param("disguise_bite", 6)
             .param("disguise_grab", 1.5)
             .param("ambush_window", 2)
@@ -180,11 +188,11 @@ public final class MimicAbility extends Ability {
     private static final double STILL_MOVE = 0.03;
     private static final double STILL_FALL = 0.06;
     private static final long DISGUISE_RETRY = 10;
-    /** The longest a disguise lasts before the mimic stretches its legs (its temporary block expires). */
-    private static final long DISGUISE_MAX = 20 * 45;
     private static final long CREAK_PERIOD = 100;
+    /** Like an unopened normal loot chest's nearby hint: as often, as near (the default radius), as high. */
     private static final long SPARKLE_PERIOD = 20;
-    private static final double SPARKLE_RADIUS = 6;
+    private static final double SPARKLE_RADIUS = LootSettings.DEFAULT_HINT_RADIUS;
+    private static final double SPARKLE_HEIGHT = 0.85;
     private static final long PROMPT_PERIOD = 20;
 
     // the bite
@@ -227,6 +235,11 @@ public final class MimicAbility extends Ability {
         final long expires;
         @Nullable TextDisplay marker;
         boolean gone;
+        /**
+         * It has bitten, healed or snapped already: a real client repeats the use every 4 ticks while the button is held
+         * (and a double click is two uses), and the chest stays a few ticks for its lid to shut. One chest, one surprise.
+         */
+        boolean spent;
 
         FakeChest(Block block, Kind kind, long expires) {
             this.block = block;
@@ -281,7 +294,7 @@ public final class MimicAbility extends Ability {
         }
         for (FakeChest chest : new ArrayList<>(chests.values())) {
             chest.gone = true;
-            ctx().restoreTempBlock(chest.block);
+            restoreOwn(chest);
         }
         chests.clear();
         baits.clear();
@@ -339,7 +352,7 @@ public final class MimicAbility extends Ability {
         baits.remove(chest);
         remove(chest.marker);
         chest.marker = null;
-        ctx().restoreTempBlock(chest.block);
+        restoreOwn(chest);
         if (puff) {
             Location center = chest.center();
             World world = center.getWorld();
@@ -350,8 +363,21 @@ public final class MimicAbility extends Ability {
         }
     }
 
+    /**
+     * Gives the chest's block back early, only while it is still this chest: once its time is up the temporary block
+     * came back on its own, and whatever stands there since (another ability's temporary block, a loot chest) is not
+     * the mimic's to take away.
+     */
+    private void restoreOwn(FakeChest chest) {
+        if (ctx().currentTick() < chest.expires && chest.block.getType() == CHEST) {
+            ctx().restoreTempBlock(chest.block);
+        }
+    }
+
+    /** The mimic's chest at {@code block}, null if there is none or the block is no longer that chest. */
     private @Nullable FakeChest chestAt(@Nullable Block block) {
-        return block == null ? null : chests.get(block);
+        FakeChest chest = block == null ? null : chests.get(block);
+        return chest == null || block.getType() != CHEST ? null : chest;
     }
 
     /** The lid of a chest flips open (and shuts again {@link #LID_SHUT} ticks later). */
@@ -419,12 +445,41 @@ public final class MimicAbility extends Ability {
             }
         }
 
+        /** Shooting or throwing anything from inside the chest is attacking too (a bow shot sends no punch). */
+        @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+        public void onLaunch(ProjectileLaunchEvent event) {
+            if (!player().equals(event.getEntity().getShooter())) {
+                return;
+            }
+            Pile current = pile;
+            if (hideout != null) {
+                popOut("<gray>쏘려다 정체가 드러났습니다</gray>", false);
+            } else if (current != null && current.sneaking) {
+                current.comeOut("<gray>쏘려다 정체가 드러났습니다</gray>");
+            }
+        }
+
         @EventHandler(priority = EventPriority.MONITOR)
         public void onProjectileHit(ProjectileHitEvent event) {
             FakeChest chest = chestAt(event.getHitBlock());
             ProjectileSource shooter = event.getEntity().getShooter();
             if (chest != null && shooter instanceof Player player) {
                 punched(player, chest);
+            }
+        }
+
+        /** Whoever joins (an enemy rejoining the match is a new player object) never reads the pile's markers. */
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onJoin(PlayerJoinEvent event) {
+            Player joined = event.getPlayer();
+            if (readsMarkers(joined)) {
+                return;
+            }
+            for (FakeChest chest : chests.values()) {
+                TextDisplay marker = chest.marker;
+                if (marker != null && marker.isValid()) {
+                    joined.hideEntity(ctx().plugin(), marker);
+                }
             }
         }
 
@@ -451,7 +506,11 @@ public final class MimicAbility extends Ability {
         return !player.isSneaking() || (main.isEmpty() && player.getInventory().getItemInOffHand().isEmpty());
     }
 
-    /** The chest the player's arm swing was aimed at, within its block reach and without anything in between. */
+    /**
+     * The chest the player's arm swing was aimed at, within its block reach and without anything in between. Every
+     * punch swings the arm, a blow at a player too: like the client's crosshair (and Paper's own punch trace), a body
+     * the player can see and hit in front of the chest takes the punch, not the chest.
+     */
     private @Nullable FakeChest aimedChest(Player player) {
         AttributeInstance reach = player.getAttribute(Attribute.BLOCK_INTERACTION_RANGE);
         double range = reach == null ? 4.5 : Math.max(1, reach.getValue());
@@ -460,42 +519,54 @@ public final class MimicAbility extends Ability {
         if (!(direction.lengthSquared() > 1.0E-8)) {
             return null;
         }
-        RayTraceResult hit = player.getWorld().rayTraceBlocks(eye, direction, range, FluidCollisionMode.NEVER, true);
-        return hit == null ? null : chestAt(hit.getHitBlock());
+        RayTraceResult hit = player.getWorld().rayTrace(eye, direction, range, FluidCollisionMode.NEVER, false, 0.0,
+                entity -> takesPunch(player, entity));
+        return hit == null || hit.getHitEntity() != null ? null : chestAt(hit.getHitBlock());
     }
 
-    /** Somebody opened a chest: what is inside depends on whose chest it is and who opened it. */
+    /** An entity a punch of {@code player} lands on rather than passing through: a visible body, a hitbox, a vehicle. */
+    private static boolean takesPunch(Player player, Entity entity) {
+        if (entity.equals(player) || !entity.isValid()
+                || !(entity instanceof LivingEntity || entity instanceof Interaction || entity instanceof Vehicle)) {
+            return false;
+        }
+        if (entity instanceof Player other) {
+            return other.getGameMode() != GameMode.SPECTATOR && player.canSee(other);
+        }
+        return player.canSee(entity);
+    }
+
+    /**
+     * Somebody opened a chest: what is inside depends on whose chest it is and who opened it. Only the first opening
+     * counts ({@link FakeChest#spent}): the chest stays a few ticks for its lid to shut.
+     */
     private void opened(Player opener, FakeChest chest) {
         Player owner = player();
-        if (chest.gone || opener.equals(owner) || !ctx().isAlive(opener)) {
+        if (chest.gone || chest.spent || opener.equals(owner) || !ctx().isAlive(opener)) {
             return;
         }
         boolean enemy = ctx().isEnemy(owner, opener);
+        if (chest.kind != Kind.TREASURE && !enemy) {
+            return;
+        }
+        chest.spent = true;
         switch (chest.kind) {
             case TREASURE -> treasure(opener, chest);
             case DISGUISE -> {
-                if (enemy) {
-                    bite(chest, opener, params().num("disguise_bite"), params().ticks("disguise_grab"));
-                    popOut(null, false);
-                }
+                bite(chest, opener, params().num("disguise_bite"), params().ticks("disguise_grab"));
+                popOut(null, false);
             }
             case SELF -> {
-                if (enemy) {
-                    bite(chest, opener, params().num("mimic_bite"), params().ticks("mimic_grab"));
-                    popOut(null, true);
-                }
+                bite(chest, opener, params().num("mimic_bite"), params().ticks("mimic_grab"));
+                popOut(null, true);
             }
             case BAIT -> {
-                if (enemy) {
-                    bite(chest, opener, params().num("bait_bite"), params().ticks("bait_grab"));
-                    ctx().runLater(owner, LID_SHUT + 2, () -> removeChest(chest, true));
-                }
+                bite(chest, opener, params().num("bait_bite"), params().ticks("bait_grab"));
+                ctx().runLater(owner, LID_SHUT + 2, () -> removeChest(chest, true));
             }
             case FAKE -> {
-                if (enemy) {
-                    bite(chest, opener, params().num("fake_bite"), params().ticks("fake_grab"));
-                    ctx().runLater(owner, LID_SHUT + 2, () -> removeChest(chest, true));
-                }
+                bite(chest, opener, params().num("fake_bite"), params().ticks("fake_grab"));
+                ctx().runLater(owner, LID_SHUT + 2, () -> removeChest(chest, true));
             }
         }
     }
@@ -503,7 +574,8 @@ public final class MimicAbility extends Ability {
     /** Somebody punched or shot a chest: a bait snaps back and goes, the pile's chests show what they are. */
     private void punched(Player puncher, FakeChest chest) {
         Player owner = player();
-        if (chest.gone || puncher.equals(owner) || !ctx().isAlive(puncher) || !ctx().isEnemy(owner, puncher)) {
+        if (chest.gone || chest.spent || puncher.equals(owner) || !ctx().isAlive(puncher)
+                || !ctx().isEnemy(owner, puncher)) {
             return;
         }
         long now = ctx().currentTick();
@@ -514,10 +586,14 @@ public final class MimicAbility extends Ability {
         lastPunch.put(puncher.getUniqueId(), now);
         switch (chest.kind) {
             case BAIT -> {
+                chest.spent = true;
                 snap(chest, puncher, params().num("bait_snap"));
                 ctx().runLater(owner, 4, () -> removeChest(chest, true));
             }
-            case DISGUISE -> popOut("<gray>들켰다! 누군가 상자를 걷어찼습니다</gray>", false);
+            case DISGUISE -> {
+                chest.spent = true;
+                popOut("<gray>들켰다! 누군가 상자를 걷어찼습니다</gray>", false);
+            }
             default -> opened(puncher, chest);
         }
     }
@@ -697,7 +773,7 @@ public final class MimicAbility extends Ability {
         }
         nextTry = now + DISGUISE_RETRY;
         Block feet = at.getBlock();
-        FakeChest chest = place(feet, facing(owner), Kind.DISGUISE, DISGUISE_MAX);
+        FakeChest chest = place(feet, facing(owner), Kind.DISGUISE, Math.max(1, params().ticks("disguise_max")));
         if (chest != null) {
             disguise(owner, chest, "<" + GOLD + "><b>보물 상자 흉내</b></" + GOLD + "> <gray>움직이면 풀립니다</gray>");
         }
@@ -767,6 +843,7 @@ public final class MimicAbility extends Ability {
             return;
         }
         hideout = null;
+        chest.spent = true;
         Player owner = player();
         stealth.end(ctx(), owner);
         clearInvisibility(owner);
@@ -833,15 +910,21 @@ public final class MimicAbility extends Ability {
         }
     }
 
-    /** The ambush: the first melee blow right after jumping out hits harder. Attacking from inside breaks it. */
+    /**
+     * The ambush: the first melee blow right after jumping out hits harder. Attacking from inside breaks it, with an
+     * arrow or a trident as much as with a fist.
+     */
     @Override
     public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
         Player owner = player();
-        if (event.isCancelled() || ctx().isAbilityDamage() || !owner.equals(event.getDamager())) {
+        if (event.isCancelled() || ctx().isAbilityDamage() || !owner.equals(ctx().resolveAttacker(event.getDamager()))) {
             return;
         }
         if (hideout != null) {
             popOut(null, false);
+        }
+        if (!owner.equals(event.getDamager())) {
+            return;
         }
         long now = ctx().currentTick();
         if (now <= ambushUntil) {
@@ -859,17 +942,23 @@ public final class MimicAbility extends Ability {
         }
     }
 
-    /** Every mimic chest twinkles like an unopened loot chest for the viewers close to it. */
+    /**
+     * Every mimic chest twinkles like an unopened normal loot chest's nearby hint (the same white sparkle, as high, as
+     * often, within its default radius) for the viewers close to it, until it has been opened.
+     */
     private void sparkle() {
         int count = Vfx.n(ctx(), 2);
         List<Player> viewers = new ArrayList<>(ctx().alivePlayers());
         for (FakeChest chest : chests.values()) {
-            Location center = chest.center();
+            if (chest.spent) {
+                continue;
+            }
+            Location base = chest.block.getLocation().add(0.5, SPARKLE_HEIGHT, 0.5);
             for (Player viewer : viewers) {
-                if (viewer.getWorld().equals(center.getWorld())
-                        && viewer.getLocation().distanceSquared(center) <= SPARKLE_RADIUS * SPARKLE_RADIUS) {
-                    viewer.spawnParticle(Particle.WAX_OFF, center.getX(), center.getY() - 0.1, center.getZ(), count,
-                            0.3, 0.25, 0.3, 0.0);
+                if (viewer.getWorld().equals(base.getWorld())
+                        && viewer.getLocation().distanceSquared(base) <= SPARKLE_RADIUS * SPARKLE_RADIUS) {
+                    viewer.spawnParticle(Particle.WAX_OFF, base.getX(), base.getY(), base.getZ(), count, 0.3, 0.25,
+                            0.3, 0.0);
                 }
             }
         }
@@ -888,13 +977,14 @@ public final class MimicAbility extends Ability {
     @Override
     public ActivationResult onActive() {
         Player owner = player();
-        if (hideout != null) {
-            popOut(null, false);
-        }
         double range = Math.max(1, params().num("bait_range"));
         Location landing = landing(owner, range);
         if (landing == null) {
+            // A throw that never happens does not give the mimic away.
             return ActivationResult.fail("<gray>상자를 던질 곳이 없습니다</gray>");
+        }
+        if (hideout != null) {
+            popOut(null, false);
         }
         new Throw(owner, hand(owner), landing).launch();
         return ActivationResult.success();
@@ -1049,7 +1139,9 @@ public final class MimicAbility extends Ability {
                 bite(chest, enemy, params().num("land_damage"), params().ticks("land_grab"));
             } else {
                 Combat.hit(ctx(), owner, enemy, Math.max(0, params().num("land_damage")));
-                grab(enemy, params().ticks("land_grab"));
+                if (Combat.isTargetable(ctx(), owner, enemy)) {
+                    grab(enemy, params().ticks("land_grab"));
+                }
             }
         }
         if (chest == null) {
@@ -1112,15 +1204,16 @@ public final class MimicAbility extends Ability {
             return ActivationResult.fail("<gray>이미 보물 무더기 속에 있습니다</gray>");
         }
         FakeChest disguise = hideout;
+        int extra = Math.max(0, params().integer("pile_treasures")) + Math.max(0, params().integer("pile_fakes"));
+        List<Location> spots = pileSpots(owner, extra, disguise);
+        if (spots.isEmpty()) {
+            // Nothing happens, so the disguise (if any) holds.
+            return ActivationResult.fail("<gray>상자를 숨길 자리가 없습니다</gray>");
+        }
         if (disguise != null) {
             popOut(null, false);
             // Its spot is one of the pile's: the chest goes right away, not after the lid flips.
             removeChest(disguise, false);
-        }
-        int extra = Math.max(0, params().integer("pile_treasures")) + Math.max(0, params().integer("pile_fakes"));
-        List<Location> spots = pileSpots(owner, extra);
-        if (spots.isEmpty()) {
-            return ActivationResult.fail("<gray>상자를 숨길 자리가 없습니다</gray>");
         }
         new Pile(owner, spots).start();
         return ActivationResult.success();
@@ -1128,20 +1221,25 @@ public final class MimicAbility extends Ability {
 
     /**
      * The mimic's own spot first, then up to {@code count} free spots on solid ground within the radius, apart from each
-     * other: each must fit the mimic (it may end up hiding in any of them).
+     * other: each must fit the mimic (it may end up hiding in any of them). A disguised mimic's own spot is its chest's
+     * (checked when it was placed; the chest itself is in the way of the checks now).
      */
-    private List<Location> pileSpots(Player owner, int count) {
+    private List<Location> pileSpots(Player owner, int count, @Nullable FakeChest disguise) {
         World world = owner.getWorld();
         Location center = owner.getLocation();
         double radius = Math.max(1.5, params().num("pile_radius"));
         Body body = Body.standing(owner);
         List<Location> spots = new ArrayList<>();
         Location own = center.getBlock().getLocation().add(0.5, 0, 0.5);
-        Spots.snapToGround(world, own, 1.1);
-        if (Spots.isSafe(ctx(), own, body) && freeForChest(own.getBlock(), true)) {
+        if (disguise != null && disguise.block.equals(center.getBlock())) {
             spots.add(own);
         } else {
-            return spots;
+            Spots.snapToGround(world, own, 1.1);
+            if (Spots.isSafe(ctx(), own, body) && freeForChest(own.getBlock(), true)) {
+                spots.add(own);
+            } else {
+                return spots;
+            }
         }
         ThreadLocalRandom random = ThreadLocalRandom.current();
         for (int tries = 0; tries < SPOT_TRIES && spots.size() < count + 1; tries++) {
@@ -1335,7 +1433,11 @@ public final class MimicAbility extends Ability {
         return faces[ThreadLocalRandom.current().nextInt(faces.length)];
     }
 
-    /** A small marker over a pile chest that only the mimic and its allies see. */
+    /**
+     * A small marker over a pile chest that only the mimic and its allies see: hidden from everyone else in the tick it
+     * spawns, and from whoever joins later (an enemy rejoining the match is a new player object that would see every
+     * entity; see {@link Hooks#onJoin}).
+     */
     private void mark(FakeChest chest) {
         if (!room(1)) {
             return;
@@ -1351,11 +1453,17 @@ public final class MimicAbility extends Ability {
                 Math.max(1, chest.expires - ctx().currentTick())));
         marker.setSeeThrough(true);
         for (Player online : Bukkit.getOnlinePlayers()) {
-            if (!online.equals(owner) && !ctx().isAlly(owner, online)) {
+            if (!readsMarkers(online)) {
                 online.hideEntity(ctx().plugin(), marker);
             }
         }
         chest.marker = marker;
+    }
+
+    /** The mimic and its team read the pile's markers; nobody else does. */
+    private boolean readsMarkers(Player viewer) {
+        Player owner = player();
+        return viewer.equals(owner) || ctx().isAlly(owner, viewer);
     }
 
     // ================================================================== helpers

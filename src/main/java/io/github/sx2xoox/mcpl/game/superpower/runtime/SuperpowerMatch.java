@@ -1204,7 +1204,8 @@ public final class SuperpowerMatch implements GameInstance {
             player.sendActionBar(messages.get("ultimate.used-quiet", Messages.tag("ultimate", ultimate)));
             return;
         }
-        session.broadcast(messages.prefixed("ultimate.announce", Messages.tag("player", session.name(player)),
+        Component name = session.publicName(player.getUniqueId());
+        session.broadcast(messages.prefixed("ultimate.announce", Messages.tag("player", name),
                 Messages.tag("ability", AbilityTexts.name(info)), Messages.tag("ultimate", ultimate)));
         Feedback.title(player, messages.get("ultimate.title", Messages.tag("ultimate", ultimate)),
                 messages.get("ultimate.subtitle", Messages.tag("ability", AbilityTexts.name(info))), 0, 30, 10);

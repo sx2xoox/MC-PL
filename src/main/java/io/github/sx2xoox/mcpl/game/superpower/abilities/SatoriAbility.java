@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -38,8 +39,13 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -150,6 +156,11 @@ public final class SatoriAbility extends Ability {
     private static final double GAUGE_DROP = 50;
     private static final long TYPE_PERIOD = 5;
     private static final float READ_LABEL_SCALE = 0.9f;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final long THREAD_PERIOD = 3;
 
     // ultimate: everything is heard
@@ -173,9 +184,12 @@ public final class SatoriAbility extends Ability {
     /** Until which tick each enemy's damage to the satori is void (the counter's guard), by entity id. */
     private final Map<UUID, Long> guardUntil = new HashMap<>();
     private final List<Display> live = new ArrayList<>();
+    /** The balloons only some players may see, and who may (see {@link #privateText}). */
+    private final Map<Display, Set<UUID>> privateDisplays = new HashMap<>();
     private int lastAimerCount;
     private @Nullable Read read;
     private @Nullable Hearing hearing;
+    private @Nullable Listener newcomers;
 
     @Override
     public AbilityInfo info() {
@@ -183,10 +197,23 @@ public final class SatoriAbility extends Ability {
     }
 
     @Override
+    public void onGrant() {
+        Listener listener = new Newcomers();
+        Bukkit.getPluginManager().registerEvents(listener, ctx().plugin());
+        newcomers = listener;
+    }
+
+    @Override
     public void onRevoke() {
+        Listener listener = newcomers;
+        newcomers = null;
+        if (listener != null) {
+            HandlerList.unregisterAll(listener);
+        }
         aimers.clear();
         guardUntil.clear();
         live.clear();
+        privateDisplays.clear();
         read = null;
         hearing = null;
     }
@@ -215,7 +242,7 @@ public final class SatoriAbility extends Ability {
         if (tick % SCAN_PERIOD == 0) {
             scanAimers(owner, now);
         }
-        followBalloons(tick);
+        followBalloons();
         if (tick % AURA_PERIOD == 0) {
             aura(owner);
         }
@@ -331,7 +358,7 @@ public final class SatoriAbility extends Ability {
         Location at = balloonSpot(aimer.enemy);
         TextDisplay balloon = keep(privateText(owner, at, balloonText(false), BALLOON_SCALE * 0.4f, BALLOON, 0,
                 List.of(owner)));
-        balloon.setTeleportDuration(2);
+        balloon.setTeleportDuration(FOLLOW_LERP);
         Displays.animateNextTick(ctx(), owner, balloon, Displays.centered(0, 0, 0, BALLOON_SCALE, BALLOON_SCALE,
                 BALLOON_SCALE, 0, 0, 0), 4);
         aimer.balloon = balloon;
@@ -352,10 +379,11 @@ public final class SatoriAbility extends Ability {
         }
     }
 
-    private void followBalloons(long tick) {
-        if (tick % 2 != 0) {
-            return;
-        }
+    /**
+     * The balloons follow their enemies every tick and glide as long as a client lerps a moving player
+     * ({@link #FOLLOW_LERP}), so they keep pace with the heads instead of trailing and jittering behind them.
+     */
+    private void followBalloons() {
         for (Aimer aimer : aimers.values()) {
             TextDisplay balloon = aimer.balloon;
             if (balloon != null && balloon.isValid() && balloon.getWorld().equals(aimer.enemy.getWorld())) {
@@ -525,7 +553,7 @@ public final class SatoriAbility extends Ability {
             if (room(1)) {
                 label = keep(Displays.text(ctx(), owner, head.clone().add(0, 0.25, 0), dots(0),
                         READ_LABEL_SCALE * 0.4f, ticks + 30));
-                label.setTeleportDuration(1);
+                label.setTeleportDuration(FOLLOW_LERP);
                 Displays.animateNextTick(ctx(), owner, label, Displays.centered(0, 0, 0, READ_LABEL_SCALE,
                         READ_LABEL_SCALE, READ_LABEL_SCALE, 0, 0, 0), 4);
             }
@@ -883,7 +911,6 @@ public final class SatoriAbility extends Ability {
                 scan();
             }
             boolean text = run % HEARD_TEXT_PERIOD == 0;
-            boolean follow = run % 2 == 0;
             for (Heard entry : heard.values()) {
                 if (!entry.inside) {
                     continue;
@@ -893,7 +920,7 @@ public final class SatoriAbility extends Ability {
                 boolean hidden = isHidden(owner, enemy);
                 if (balloon != null && balloon.isValid()) {
                     balloon.setViewRange(hidden ? 0f : 1.5f);
-                    if (follow && balloon.getWorld().equals(enemy.getWorld())) {
+                    if (balloon.getWorld().equals(enemy.getWorld())) {
                         Displays.moveTo(balloon, heardSpot(enemy));
                     }
                     if (text) {
@@ -971,7 +998,7 @@ public final class SatoriAbility extends Ability {
             }
             TextDisplay balloon = keep(privateText(owner, heardSpot(entry.enemy), heardText(entry), HEARD_SCALE * 0.4f,
                     HEARD_BALLOON, ticks + 10, viewers));
-            balloon.setTeleportDuration(2);
+            balloon.setTeleportDuration(FOLLOW_LERP);
             Displays.animateNextTick(ctx(), owner, balloon, Displays.centered(0, 0, 0, HEARD_SCALE, HEARD_SCALE,
                     HEARD_SCALE, 0, 0, 0), 5);
             entry.balloon = balloon;
@@ -1063,7 +1090,9 @@ public final class SatoriAbility extends Ability {
 
     /**
      * A text display only {@code viewers} see (through walls), with a balloon background. Hidden from everyone else in
-     * the same tick it spawns (before the server sends it to anybody), so it never flashes for an enemy.
+     * the same tick it spawns (before the server sends it to anybody), so it never flashes for an enemy, and from
+     * whoever joins later (an enemy rejoining the match is a new player object that would see every entity; see
+     * {@link Newcomers}).
      */
     private TextDisplay privateText(Player owner, Location at, Component text, float scale, Color background,
                                     long lifetime, List<Player> viewers) {
@@ -1081,7 +1110,27 @@ public final class SatoriAbility extends Ability {
                 online.hideEntity(ctx().plugin(), display);
             }
         }
+        Set<UUID> allowed = new HashSet<>();
+        for (Player viewer : viewers) {
+            allowed.add(viewer.getUniqueId());
+        }
+        privateDisplays.put(display, allowed);
         return display;
+    }
+
+    /** Whoever joins (or rejoins) the server never sees the balloons that are not theirs. */
+    private final class Newcomers implements Listener {
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onJoin(PlayerJoinEvent event) {
+            Player joined = event.getPlayer();
+            privateDisplays.keySet().removeIf(display -> !display.isValid());
+            for (Map.Entry<Display, Set<UUID>> entry : privateDisplays.entrySet()) {
+                if (!entry.getValue().contains(joined.getUniqueId())) {
+                    joined.hideEntity(ctx().plugin(), entry.getKey());
+                }
+            }
+        }
     }
 
     /** A word popping up and shrinking away, for everyone. */

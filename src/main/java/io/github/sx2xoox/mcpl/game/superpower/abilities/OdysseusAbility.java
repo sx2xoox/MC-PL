@@ -2,12 +2,15 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongPredicate;
+import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
@@ -40,11 +43,13 @@ import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.AbstractArrow;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -59,6 +64,7 @@ import org.bukkit.event.entity.EntityPotionEffectEvent;
 import org.bukkit.event.entity.EntityRemoveEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -83,8 +89,9 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The "아무도" name goes through the match's name hook ({@link Ability#publicName}); the name tag over the head is hidden
  * from enemies on their own scoreboards (never the server's main one) and replaced by a "아무도" tag only they see.
- * Riders of the horse are hidden from enemies per viewer, their damage is cancelled and they are held at their seat
- * every tick; other abilities' non-damage effects may still reach them (accepted).
+ * Riders of the horse (each in a seat of its own that fits its body) are hidden from enemies per viewer, their damage
+ * is cancelled and they are kept inside the hull every tick; an ally gets off alone by crouching again. Other
+ * abilities' non-damage effects may still reach them (accepted).
  *
  * <p>Look: weathered wood, the sea of Ithaca and bronze. The stake is a long pale shaft with a glowing ember tip that
  * thrusts out and back in a shower of sparks; the blinded enemy carries an owner-only crossed eye counting down. The
@@ -108,8 +115,8 @@ public final class OdysseusAbility extends Ability {
             .ultimate("트로이 목마",
                     "조준한 곳({horse_range}블록 이내)에 바퀴 달린 거대한 선물 목마를 세웁니다. 나와 반경 {board_radius}블록 "
                             + "안에서 웅크리고 있던 아군이 곧바로 올라타 숨고, 처음 {board_window}초 동안은 목마에 붙어 웅크린 아군도 "
-                            + "탈 수 있습니다. 숨은 사람은 보이지 않고 피해를 받지 않습니다. 적이 목마에 닿거나 무엇으로든 맞히면, "
-                            + "내가 웅크리면, {horse_duration}초가 지나면 문이 열려 모두 튀어나오며 반경 {burst_radius}블록의 적에게 "
+                            + "탈 수 있습니다(탄 아군은 다시 웅크리면 혼자 내립니다). 숨은 사람은 보이지 않고 피해를 받지 "
+                            + "않습니다. 적이 목마에 닿거나 무엇으로든 맞히면, 내가 웅크리면, {horse_duration}초가 지나면 문이 열려 모두 튀어나오며 반경 {burst_radius}블록의 적에게 "
                             + "{burst_damage} 피해를 주고 띄웁니다. 튀어나온 사람은 {charge_duration}초간 주는 피해가 "
                             + "{charge_damage}%, 이동 속도가 {charge_speed}% 늘어납니다.")
             .param("giant_ratio", 1.15)
@@ -171,6 +178,11 @@ public final class OdysseusAbility extends Ability {
     private static final long NAME_PERIOD = 20;
     private static final long TAG_PERIOD = 5;
     private static final double TAG_ABOVE = 0.5;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final long GIANT_MARK_PERIOD = 10;
     private static final double GIANT_MARK_RANGE = 20;
     private static final long GIANT_FX_PERIOD = 10;
@@ -192,6 +204,9 @@ public final class OdysseusAbility extends Ability {
     private static final double TOUCH_MARGIN = 0.25;
     private static final double BOARD_REACH = 1.6;
     private static final double SEAT_SLIP = 0.3;
+    /** Where the riders sit, along the horse (blocks from its middle): each one gets a seat of its own if it fits. */
+    private static final double[] SEATS = {0, 0.65, -0.65, 1.2, -1.2};
+    private static final double SEAT_GAP = 0.5;
     /** How far in front of an aimed enemy the gift is set down (it must not open the moment it stands). */
     private static final double BEFORE_TARGET = 2.6;
     private static final long RISE_TICKS = 6;
@@ -207,6 +222,8 @@ public final class OdysseusAbility extends Ability {
     private final Map<UUID, @Nullable String> nameBoards = new HashMap<>();
     private final Map<UUID, Long> giantFx = new HashMap<>();
     private final List<Display> live = new ArrayList<>();
+    /** The displays only some players may see, and who may (see {@link #privateText}). */
+    private final Map<Display, Predicate<Player>> privateDisplays = new HashMap<>();
     private final LandingGuard landing = new LandingGuard();
     private @Nullable Listener glowGuard;
     private @Nullable TextDisplay nameTag;
@@ -246,6 +263,7 @@ public final class OdysseusAbility extends Ability {
         vanished.clear();
         giantFx.clear();
         live.clear();
+        privateDisplays.clear();
         nameTag = null;
     }
 
@@ -314,8 +332,16 @@ public final class OdysseusAbility extends Ability {
 
     // ================================================================== passive: Nobody
 
-    /** No glowing light on Nobody: the effect is refused the moment it would land. */
+    /**
+     * The passive's listener: no glowing light on Nobody (the effect is refused the moment it would land), and nobody
+     * who joins sees what is not theirs to see.
+     */
     private final class GlowGuard implements Listener {
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onJoin(PlayerJoinEvent event) {
+            hidePrivateFrom(event.getPlayer());
+        }
 
         @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
         public void onEffect(EntityPotionEffectEvent event) {
@@ -443,7 +469,11 @@ public final class OdysseusAbility extends Ability {
         return "mcpl_nb_" + owner.getUniqueId().toString().substring(0, 8);
     }
 
-    /** The "아무도" tag over the head: shown to the enemies who can see the owner, to nobody else. */
+    /**
+     * The "아무도" tag over the head: shown to the enemies who can see the owner, to nobody else (re-checked for every
+     * player who joins). It follows every tick and glides as long as a client lerps a moving player ({@link
+     * #FOLLOW_LERP}), so it keeps pace with the body instead of trailing and jittering behind it.
+     */
     private void updateNameTag(Player owner) {
         TextDisplay tag = nameTag;
         if (tag == null || !tag.isValid()) {
@@ -457,10 +487,19 @@ public final class OdysseusAbility extends Ability {
                 d.setShadowed(false);
                 d.setTransformation(Displays.centered(0, 0, 0, 1, 1, 1, 0, 0, 0));
             }));
-            tag.setTeleportDuration(1);
+            tag.setTeleportDuration(FOLLOW_LERP);
             nameTag = tag;
         }
         Displays.moveTo(tag, tagSpot(owner));
+        syncNameTag(owner);
+    }
+
+    /** Shows the tag to exactly the enemies who can see Nobody right now (call it whenever that changes). */
+    private void syncNameTag(Player owner) {
+        TextDisplay tag = nameTag;
+        if (tag == null || !tag.isValid()) {
+            return;
+        }
         boolean concealed = owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
         for (Player viewer : Bukkit.getOnlinePlayers()) {
             boolean show = !concealed && !viewer.equals(owner) && ctx().isAlive(viewer) && ctx().isEnemy(owner, viewer)
@@ -481,7 +520,16 @@ public final class OdysseusAbility extends Ability {
 
     private boolean isGiant(LivingEntity victim) {
         double ratio = Math.max(1.0, params().num("giant_ratio"));
-        return victim.getHeight() >= player().getHeight() * ratio - 1.0E-6;
+        return standingHeight(victim) >= standingHeight(player()) * ratio - 1.0E-6;
+    }
+
+    /**
+     * How tall {@code entity} stands: a player-shaped body by its scale alone (crouching, swimming, gliding or
+     * crawling never shrinks it, so a crouching Nobody does not make everyone a giant), any other body by its hitbox.
+     */
+    private static double standingHeight(LivingEntity entity) {
+        return entity instanceof Player || entity instanceof Mannequin ? Body.standing(entity).height()
+                : entity.getHeight();
     }
 
     /** Over every giant within reach, a bronze eye only Nobody sees: the one-eyed giant to bring down. */
@@ -673,7 +721,7 @@ public final class OdysseusAbility extends Ability {
         long blind = params().ticks("stake_blind");
         if (blind > 0) {
             victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, (int) Math.min(Integer.MAX_VALUE,
-                    blind + 10), 0, false, true, true));
+                    blind), 0, false, true, true));
         }
         long vanish = params().ticks("vanish_duration");
         if (vanish > 0) {
@@ -713,14 +761,11 @@ public final class OdysseusAbility extends Ability {
             Vfx.cloud(ctx(), body, Particle.DUST, 10, 0.35, 0, MIST, false);
             Fx.sound(body, Sound.ENTITY_ILLUSIONER_MIRROR_MOVE, 0.6f, 1.2f);
             if (room(1)) {
-                mark = keep(Displays.text(ctx(), owner, markSpot(), markText(), 0.6f, until - ctx().currentTick() + 5));
-                mark.setTeleportDuration(2);
-                for (Player online : Bukkit.getOnlinePlayers()) {
-                    if (!online.equals(owner)) {
-                        online.hideEntity(ctx().plugin(), mark);
-                    }
-                }
+                mark = keep(privateText(owner, markSpot(), markText(), 0.6f, until - ctx().currentTick() + 5,
+                        viewer -> viewer.equals(owner)));
+                mark.setTeleportDuration(FOLLOW_LERP);
             }
+            syncNameTag(owner);
         }
 
         void tick(long tick, long now) {
@@ -732,7 +777,9 @@ public final class OdysseusAbility extends Ability {
                 return;
             }
             TextDisplay label = mark;
-            if (label != null && label.isValid() && tick % 2 == 0) {
+            if (label != null && label.isValid()) {
+                // A victim hidden from Nobody (stealth) must not be given away by its mark.
+                label.setViewRange(isHidden(owner, victim) ? 0f : 1.5f);
                 Displays.moveTo(label, markSpot());
                 if (tick % 4 == 0) {
                     label.text(markText());
@@ -761,6 +808,7 @@ public final class OdysseusAbility extends Ability {
             }
             remove(mark);
             mark = null;
+            syncNameTag(owner);
             if (struck && ctx().isAlive(owner)) {
                 owner.sendActionBar(Text.mm("<gray>공격해서 모습이 드러났습니다</gray>"));
             }
@@ -866,14 +914,20 @@ public final class OdysseusAbility extends Ability {
             new Part(RIBBON, 0.42f, 0.28f, 0.14f, -0.22f, 2.95f, 0, 0, -30));
     private static final int DOOR_INDEX = 15;
 
-    /** A rider of the horse: who, and the modifiers holding it in its seat. */
+    /** A rider of the horse: who, its seat, the modifiers holding it there and whether it was crouching. */
     private static final class Rider {
         final Player player;
+        final Location seat;
+        final long boardedAt;
         final List<NamespacedKey> holds = new ArrayList<>(2);
         final List<UUID> hiddenFrom = new ArrayList<>();
+        boolean wasSneaking;
 
-        Rider(Player player) {
+        Rider(Player player, Location seat, long boardedAt) {
             this.player = player;
+            this.seat = seat;
+            this.boardedAt = boardedAt;
+            this.wasSneaking = player.isSneaking();
         }
     }
 
@@ -891,8 +945,10 @@ public final class OdysseusAbility extends Ability {
         private final long ticks;
         private final long window;
         private final Map<UUID, Rider> riders = new LinkedHashMap<>();
+        /** Allies who got off on their own (or found no room): they do not climb in again. */
+        private final Set<UUID> left = new HashSet<>();
         private final List<BlockDisplay> parts = new ArrayList<>();
-        private @Nullable Interaction body;
+        private final List<Interaction> bodies = new ArrayList<>(2);
         private @Nullable TextDisplay countdown;
         private boolean registered;
         private boolean released;
@@ -952,28 +1008,36 @@ public final class OdysseusAbility extends Ability {
                         (int) RISE_TICKS));
                 index++;
             }
-            Interaction hitbox = at.getWorld().spawn(spot.clone(), Interaction.class, interaction -> {
-                interaction.setPersistent(false);
-                interaction.setInteractionWidth((float) (HORSE_HALF_LENGTH * 2));
-                interaction.setInteractionHeight((float) HORSE_HEIGHT);
-                interaction.setResponsive(true);
-            });
-            ctx().track(owner, hitbox);
-            ctx().runLater(owner, life, () -> {
-                if (hitbox.isValid()) {
-                    hitbox.remove();
-                }
-            });
-            body = hitbox;
-            if (room(1)) {
-                countdown = keep(Displays.text(ctx(), owner, spot.clone().add(0, HORSE_HEIGHT + 0.5, 0),
-                        countdownText(ticks), 0.7f, life));
-                for (Player online : Bukkit.getOnlinePlayers()) {
-                    if (!online.equals(owner) && !ctx().isAlly(owner, online)) {
-                        online.hideEntity(ctx().plugin(), countdown);
+            // Interaction boxes are always square and axis-aligned: two of them, front and back along the turned
+            // horse, follow its length far better than one big square.
+            Vector forward = forward();
+            double along = HORSE_HALF_LENGTH - HORSE_HALF_WIDTH;
+            for (int sign = -1; sign <= 1; sign += 2) {
+                Location center = spot.clone().add(forward.clone().multiply(sign * along));
+                Interaction hitbox = at.getWorld().spawn(Displays.unrotated(center), Interaction.class, interaction -> {
+                    interaction.setPersistent(false);
+                    interaction.setInteractionWidth((float) (HORSE_HALF_WIDTH * 2 + 0.1));
+                    interaction.setInteractionHeight((float) HORSE_HEIGHT);
+                    interaction.setResponsive(true);
+                });
+                ctx().track(owner, hitbox);
+                ctx().runLater(owner, life, () -> {
+                    if (hitbox.isValid()) {
+                        hitbox.remove();
                     }
-                }
+                });
+                bodies.add(hitbox);
             }
+            if (room(1)) {
+                countdown = keep(privateText(owner, spot.clone().add(0, HORSE_HEIGHT + 0.5, 0), countdownText(ticks),
+                        0.7f, life, viewer -> viewer.equals(owner) || ctx().isAlly(owner, viewer)));
+            }
+        }
+
+        /** The horse's front, horizontally (yaw 0 is south, +Z). */
+        private Vector forward() {
+            double angle = Math.toRadians(yaw);
+            return new Vector(-Math.sin(angle), 0, Math.cos(angle));
         }
 
         /** {@code part} grown by {@code grow}, turned with the horse, rocked {@code rock} degrees, pushed out by {@code burst}. */
@@ -996,16 +1060,23 @@ public final class OdysseusAbility extends Ability {
                     + "초</" + SEA + "> <gray>· 웅크리면 출격</gray>");
         }
 
-        /** {@code player} climbs in: hidden from every enemy, see-through for the team, held in the seat. */
+        /** {@code player} climbs in: hidden from every enemy, see-through for the team, held in its seat. */
         private void board(Player player) {
-            if (riders.containsKey(player.getUniqueId()) || opened || !ctx().isAlive(player)) {
+            UUID id = player.getUniqueId();
+            if (riders.containsKey(id) || left.contains(id) || opened || !ctx().isAlive(player)) {
                 return;
             }
-            Location seat = spot.clone();
+            Location seat = seatFor(player);
+            if (seat == null) {
+                // The spot was checked for Nobody's body only: a bigger ally does not fit under a low ceiling.
+                left.add(id);
+                player.sendActionBar(Text.mm("<gray>목마 안이 좁아 탈 수 없습니다</gray>"));
+                return;
+            }
             seat.setYaw(player.getLocation().getYaw());
             seat.setPitch(player.getLocation().getPitch());
-            Rider rider = new Rider(player);
-            riders.put(player.getUniqueId(), rider);
+            Rider rider = new Rider(player, seat.clone(), ctx().currentTick());
+            riders.put(id, rider);
             Location from = Fx.body(player);
             player.teleport(seat);
             player.setVelocity(new Vector(0, REST_FALL, 0));
@@ -1025,7 +1096,42 @@ public final class OdysseusAbility extends Ability {
             Vfx.trail(from, center(), SEA_COLOR, 8, false);
             Vfx.cloud(ctx(), from, Particle.DUST, 8, 0.3, 0, MIST, false);
             Fx.sound(seat, Sound.BLOCK_WOODEN_DOOR_CLOSE, 0.9f, 0.8f + Fx.jitter(0.05f));
-            player.sendActionBar(Text.mm("<" + BRONZE + "><b>트로이 목마</b></" + BRONZE + "> <gray>안에 숨었습니다</gray>"));
+            player.sendActionBar(Text.mm("<" + BRONZE + "><b>트로이 목마</b></" + BRONZE + "> <gray>안에 숨었습니다"
+                    + (player.equals(owner) ? "" : " · 다시 웅크리면 내립니다") + "</gray>"));
+            syncNameTag(owner);
+        }
+
+        /**
+         * A seat of its own along the horse that is safe for {@code player}'s body (riders sharing one spot push each
+         * other apart on their clients and would be pulled back again and again); a shared one if there is no other,
+         * null if none fits.
+         */
+        private @Nullable Location seatFor(Player player) {
+            Body body = Body.standing(player);
+            Vector forward = forward();
+            Location shared = null;
+            for (double offset : SEATS) {
+                Location seat = spot.clone().add(forward.clone().multiply(offset));
+                if ((offset != 0 && !onGround(seat)) || !Spots.isSafe(ctx(), seat, body)) {
+                    continue;
+                }
+                if (!seatTaken(seat)) {
+                    return seat;
+                }
+                if (shared == null) {
+                    shared = seat;
+                }
+            }
+            return shared;
+        }
+
+        private boolean seatTaken(Location seat) {
+            for (Rider rider : riders.values()) {
+                if (horizontal(rider.seat, seat) < SEAT_GAP) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @Override
@@ -1064,20 +1170,33 @@ public final class OdysseusAbility extends Ability {
             return true;
         }
 
-        /** Riders stay in their seats: anything that moved them is undone (no stale velocity is ever replayed). */
+        /**
+         * Riders stay inside the horse: one pushed out of its hull is put back in its seat (no stale velocity is ever
+         * replayed), a nudge inside it is left alone. An ally crouching anew gets off on its own.
+         */
         private void holdRiders() {
+            long now = ctx().currentTick();
             for (Iterator<Rider> it = riders.values().iterator(); it.hasNext(); ) {
                 Rider rider = it.next();
                 Player player = rider.player;
                 if (!player.isOnline() || !ctx().isAlive(player)) {
                     letOut(rider, false);
                     it.remove();
+                    syncNameTag(owner);
+                    continue;
+                }
+                boolean sneaking = player.isSneaking();
+                boolean fresh = sneaking && !rider.wasSneaking;
+                rider.wasSneaking = sneaking;
+                if (fresh && !player.equals(owner) && now - rider.boardedAt >= SNEAK_GRACE) {
+                    it.remove();
+                    getOff(rider);
                     continue;
                 }
                 Location at = player.getLocation();
-                if (!at.getWorld().equals(spot.getWorld()) || horizontal(at, spot) > SEAT_SLIP
-                        || Math.abs(at.getY() - spot.getY()) > SEAT_SLIP) {
-                    Location seat = spot.clone();
+                if (!at.getWorld().equals(spot.getWorld()) || !inBox(at, 0)
+                        || Math.abs(at.getY() - rider.seat.getY()) > SEAT_SLIP) {
+                    Location seat = rider.seat.clone();
                     seat.setYaw(at.getYaw());
                     seat.setPitch(at.getPitch());
                     player.teleport(seat);
@@ -1085,6 +1204,22 @@ public final class OdysseusAbility extends Ability {
                 }
                 player.setFallDistance(0);
             }
+        }
+
+        /** An ally steps out on its own: seen again and free, out the side door, but without the burst or the charge. */
+        private void getOff(Rider rider) {
+            Player player = rider.player;
+            left.add(player.getUniqueId());
+            letOut(rider, true);
+            Vector side = forward().crossProduct(new Vector(0, 1, 0));
+            Vector out = Motion.horizontal(player.getLocation().toVector().subtract(spot.toVector()));
+            if (out.lengthSquared() < 1.0E-4) {
+                out = side;
+            }
+            player.setVelocity(Motion.clamp(out.normalize().multiply(EXIT_SPEED).setY(EXIT_SPEED * 0.6), MAX_SPEED));
+            Fx.sound(player.getLocation(), Sound.BLOCK_WOODEN_TRAPDOOR_OPEN, 0.7f, 1.2f + Fx.jitter(0.05f));
+            player.sendActionBar(Text.mm("<gray>목마에서 내렸습니다</gray>"));
+            syncNameTag(owner);
         }
 
         /** An enemy's body within the horse's box (plus a hair): it touched the gift. */
@@ -1112,12 +1247,15 @@ public final class OdysseusAbility extends Ability {
             return Math.abs(side) <= HORSE_HALF_WIDTH + margin && Math.abs(forward) <= HORSE_HALF_LENGTH + margin;
         }
 
-        /** An enemy's arrow (or any projectile) inside the horse: it was hit. */
+        /**
+         * An enemy's arrow (or any projectile) flying into the horse: it was hit. Arrows lying in the ground or stuck
+         * in a wall from earlier stay entities: they never count, or the gift would open the moment it stands.
+         */
         private boolean projectileInside() {
             BoundingBox box = BoundingBox.of(spot.clone().add(0, HORSE_HEIGHT / 2, 0), HORSE_HALF_LENGTH,
                     HORSE_HEIGHT / 2, HORSE_HALF_LENGTH);
             for (Entity entity : spot.getWorld().getNearbyEntities(box)) {
-                if (entity instanceof Projectile projectile && isEnemyShot(projectile)
+                if (entity instanceof Projectile projectile && inFlight(projectile) && isEnemyShot(projectile)
                         && inBox(projectile.getLocation(), 0.1)) {
                     return true;
                 }
@@ -1241,11 +1379,12 @@ public final class OdysseusAbility extends Ability {
             parts.clear();
             remove(countdown);
             countdown = null;
-            Interaction hitbox = body;
-            body = null;
-            if (hitbox != null && hitbox.isValid()) {
-                hitbox.remove();
+            for (Interaction hitbox : bodies) {
+                if (hitbox.isValid()) {
+                    hitbox.remove();
+                }
             }
+            bodies.clear();
         }
 
         /** A rider comes out: seen again, free to move, no longer see-through. */
@@ -1265,6 +1404,9 @@ public final class OdysseusAbility extends Ability {
             }
             if (fx && player.isOnline()) {
                 Vfx.cloud(ctx(), Fx.body(player), Particle.DUST, 6, 0.3, 0, WOOD_DUST, false);
+            }
+            if (player.equals(owner)) {
+                syncNameTag(owner);
             }
         }
 
@@ -1345,21 +1487,21 @@ public final class OdysseusAbility extends Ability {
 
         @EventHandler(priority = EventPriority.MONITOR)
         public void onPunch(PrePlayerAttackEntityEvent event) {
-            if (body != null && event.getAttacked().equals(body) && ctx().isEnemy(owner, event.getPlayer())) {
+            if (isBody(event.getAttacked()) && ctx().isEnemy(owner, event.getPlayer())) {
                 requestOpen("<gray>누군가 선물을 두드렸다!</gray>");
             }
         }
 
         @EventHandler(priority = EventPriority.MONITOR)
         public void onPoke(PlayerInteractEntityEvent event) {
-            if (body != null && event.getRightClicked().equals(body) && ctx().isEnemy(owner, event.getPlayer())) {
+            if (isBody(event.getRightClicked()) && ctx().isEnemy(owner, event.getPlayer())) {
                 requestOpen("<gray>누군가 선물을 열어 보려 했다!</gray>");
             }
         }
 
         @EventHandler(priority = EventPriority.MONITOR)
         public void onShot(ProjectileHitEvent event) {
-            if (body != null && body.equals(event.getHitEntity()) && isEnemyShot(event.getEntity())) {
+            if (isBody(event.getHitEntity()) && isEnemyShot(event.getEntity())) {
                 requestOpen("<gray>선물이 맞았다!</gray>");
             }
         }
@@ -1384,13 +1526,17 @@ public final class OdysseusAbility extends Ability {
             if (released || opened) {
                 return;
             }
-            if (parts.contains(removed) || removed.equals(body) || removed.equals(countdown)) {
+            if (parts.contains(removed) || isBody(removed) || removed.equals(countdown)) {
                 for (Rider rider : new ArrayList<>(riders.values())) {
                     letOut(rider, false);
                 }
                 riders.clear();
                 release();
             }
+        }
+
+        private boolean isBody(@Nullable Entity entity) {
+            return entity instanceof Interaction hitbox && bodies.contains(hitbox);
         }
 
         private void requestOpen(String reason) {
@@ -1451,6 +1597,46 @@ public final class OdysseusAbility extends Ability {
 
     private static Location head(LivingEntity entity) {
         return entity.getLocation().add(0, entity.getHeight() + HEAD_GAP, 0);
+    }
+
+    /**
+     * A camera-facing text display at {@code at} that only the players {@code viewer} accepts see: hidden from everyone
+     * else in the tick it spawns, and from whoever joins later (an enemy rejoining the match is a new player object
+     * that would see every entity), see {@link #hidePrivateFrom}.
+     */
+    private TextDisplay privateText(Player owner, Location at, Component text, float scale, long life,
+                                    Predicate<Player> viewer) {
+        TextDisplay display = Displays.text(ctx(), owner, at, text, scale, life);
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (!viewer.test(online)) {
+                online.hideEntity(ctx().plugin(), display);
+            }
+        }
+        privateDisplays.put(display, viewer);
+        return display;
+    }
+
+    /** A player joined (or rejoined) the server: the private displays it may not see are hidden from it too. */
+    private void hidePrivateFrom(Player joined) {
+        privateDisplays.keySet().removeIf(display -> !display.isValid());
+        for (Map.Entry<Display, Predicate<Player>> entry : privateDisplays.entrySet()) {
+            if (!entry.getValue().test(joined)) {
+                joined.hideEntity(ctx().plugin(), entry.getKey());
+            }
+        }
+        syncNameTag(player());
+    }
+
+    /** True if {@code feet} stand right on the ground (not over a step down or a hole). */
+    private static boolean onGround(Location feet) {
+        RayTraceResult ground = feet.getWorld().rayTraceBlocks(feet.clone().add(0, 0.05, 0), new Vector(0, -1, 0), 0.1,
+                FluidCollisionMode.NEVER, true);
+        return ground != null;
+    }
+
+    /** A projectile still flying: not an arrow lying in the ground or stuck in a wall. */
+    private static boolean inFlight(Projectile projectile) {
+        return projectile.isValid() && !(projectile instanceof AbstractArrow arrow && arrow.isInBlock());
     }
 
     private static boolean isHidden(Player owner, LivingEntity entity) {

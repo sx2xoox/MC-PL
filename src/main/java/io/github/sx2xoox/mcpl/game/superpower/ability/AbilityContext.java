@@ -224,9 +224,11 @@ public interface AbilityContext {
 
     /**
      * Restores a temporary block before its time, as if it expired now (a fake chest that is opened, a disguise that
-     * ends the moment its owner moves). Only for blocks the calling ability placed itself with {@link #placeTempBlock};
-     * never another ability's or the match's own temporary blocks (loot chests). Returns false if the block is not
-     * temporary (then it simply expires on its own).
+     * ends the moment its owner moves). Meant only for blocks the calling ability placed itself with
+     * {@link #placeTempBlock}, never another ability's or the match's own temporary blocks (loot chests): the service
+     * does not know who placed a block and restores whatever temporary block is there, so the caller checks that the
+     * block is still its own (its time not up yet, still the block it placed) before calling this. Returns false if
+     * the block is not temporary (then it simply expires on its own).
      */
     default boolean restoreTempBlock(Block block) {
         return false;

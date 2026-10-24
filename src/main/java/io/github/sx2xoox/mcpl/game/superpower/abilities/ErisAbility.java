@@ -160,6 +160,11 @@ public final class ErisAbility extends Ability {
 
     // the fairest
     private static final double CROWN_ABOVE = 0.22;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final float CROWN_SIZE = 0.42f;
     private static final float BAND = 0.07f;
     private static final float SPIKE = 0.12f;
@@ -695,7 +700,11 @@ public final class ErisAbility extends Ability {
                 + "가져갔습니다</gray>", Placeholder.component("name", enemy.name())));
     }
 
-    /** A gold band of four bars with four spikes and a ruby in front, turning slowly over the fairest's head. */
+    /**
+     * A gold band of four bars with four spikes and a ruby in front, turning slowly over the fairest's head. It follows
+     * the head every tick and glides as long as a client lerps a moving player ({@link #FOLLOW_LERP}), so it stays on
+     * a running head instead of trailing behind it.
+     */
     private void buildCrown(Player owner, Fairest crowned, long ticks) {
         Location at = crownSpot(crowned.enemy);
         if (room(10)) {
@@ -703,15 +712,16 @@ public final class ErisAbility extends Ability {
                 Material material = i == 8 ? RUBY : CROWN_GOLD;
                 BlockDisplay part = keep(Displays.block(ctx(), owner, at, material.createBlockData(),
                         crownPart(i, 0, 0.05f), ticks + 10));
-                part.setTeleportDuration(2);
+                part.setTeleportDuration(FOLLOW_LERP);
                 crowned.crown.add(part);
             }
             for (int i = 0; i < crowned.crown.size(); i++) {
                 Displays.animateNextTick(ctx(), owner, crowned.crown.get(i), crownPart(i, 0, 1), 5);
             }
-            crowned.title = keep(Displays.text(ctx(), owner, at.clone().add(0, 0.45, 0),
+            TextDisplay title = keep(Displays.text(ctx(), owner, titleSpot(crowned.enemy),
                     Text.mm("<b><" + GOLD + ">가장 아름다운 자</" + GOLD + "></b>"), 0.55f, ticks + 10));
-            crowned.title.setTeleportDuration(2);
+            title.setTeleportDuration(FOLLOW_LERP);
+            crowned.title = title;
         }
     }
 
@@ -746,6 +756,10 @@ public final class ErisAbility extends Ability {
         return enemy.getLocation().add(0, enemy.getHeight() + CROWN_ABOVE, 0);
     }
 
+    private static Location titleSpot(LivingEntity enemy) {
+        return crownSpot(enemy).add(0, 0.45, 0);
+    }
+
     private void tickFairest(Player owner, long tick, long now) {
         if (fairest.isEmpty()) {
             return;
@@ -759,9 +773,8 @@ public final class ErisAbility extends Ability {
                 it.remove();
                 continue;
             }
-            if (tick % 2 != 0) {
-                continue;
-            }
+            // Every tick it follows the head; every other tick the crown turns a little further.
+            boolean turn = tick % 2 == 0;
             boolean hidden = isHidden(owner, enemy);
             Location at = crownSpot(enemy);
             float yaw = (tick * CROWN_SPIN) % 360f;
@@ -770,13 +783,18 @@ public final class ErisAbility extends Ability {
                 if (part.isValid()) {
                     part.setViewRange(hidden ? 0f : 1.5f);
                     Displays.moveTo(part, at);
-                    Displays.animate(part, crownPart(i, yaw, 1), 2);
+                    if (turn) {
+                        Displays.animate(part, crownPart(i, yaw, 1), 2);
+                    }
                 }
             }
             TextDisplay title = crowned.title;
             if (title != null && title.isValid()) {
                 title.setViewRange(hidden ? 0f : 1.5f);
-                Displays.moveTo(title, at.clone().add(0, 0.45, 0));
+                Displays.moveTo(title, titleSpot(enemy));
+            }
+            if (!turn) {
+                continue;
             }
             if (!hidden && tick % 6 == 0) {
                 Vfx.dot(at.clone().add(Math.cos(tick * 0.5) * 0.35, 0.1, Math.sin(tick * 0.5) * 0.35), Particle.WAX_ON,
@@ -886,7 +904,7 @@ public final class ErisAbility extends Ability {
                     seeded++;
                     ItemDisplay seed = keep(Displays.item(ctx(), owner, seedSpot(enemy), new ItemStack(SEED),
                             Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), ticks + 15));
-                    seed.setTeleportDuration(2);
+                    seed.setTeleportDuration(FOLLOW_LERP);
                     Displays.animateNextTick(ctx(), owner, seed, seedPose(0), 6);
                     entry.seed = seed;
                 }
@@ -929,8 +947,8 @@ public final class ErisAbility extends Ability {
             }
             if (run % 2 == 0) {
                 drawChains(run);
-                moveSeeds(run);
             }
+            moveSeeds(run);
             return true;
         }
 
@@ -1043,7 +1061,9 @@ public final class ErisAbility extends Ability {
                 boolean hidden = isHidden(owner, entry.enemy);
                 seed.setViewRange(hidden ? 0f : 1.5f);
                 Displays.moveTo(seed, seedSpot(entry.enemy));
-                Displays.animate(seed, seedPose(run * 9f), 2);
+                if (run % 2 == 0) {
+                    Displays.animate(seed, seedPose(run * 9f), 2);
+                }
                 if (!hidden && run % 6 == 0) {
                     Vfx.dot(seedSpot(entry.enemy).add(0, -0.15, 0), Particle.DUST, entry.chains > 0 ? CRIMSON_SMALL
                             : PURPLE_DUST, false);

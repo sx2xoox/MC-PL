@@ -140,6 +140,12 @@ public final class BakuAbility extends Ability {
     private static final double BUBBLE_ABOVE = 0.55;
     private static final double BUBBLE_ORBIT = 0.42;
     private static final float BUBBLE_SIZE = 0.2f;
+    private static final double HEAD_GAP = 0.15;
+    /**
+     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
+     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     */
+    private static final int FOLLOW_LERP = 3;
     private static final long EAT_FX_PERIOD = 6;
 
     // active: the trunk
@@ -158,6 +164,8 @@ public final class BakuAbility extends Ability {
     /** Enemies in an unbreakable nightmare (no beneficial effects), until when. */
     private final Map<UUID, Long> locked = new HashMap<>();
     private final List<BlockDisplay> bubbles = new ArrayList<>();
+    /** How big the bubbles orbit: swollen while the ultimate winds up. */
+    private float bubbleScale = BUBBLE_SIZE;
     private final List<Display> live = new ArrayList<>();
     private int nightmares;
     private long lastEatFx = Long.MIN_VALUE / 2;
@@ -268,32 +276,46 @@ public final class BakuAbility extends Ability {
                 + "먹었습니다 · 악몽 " + nightmares + "/" + max + (grew ? "" : " (가득)") + "</gray>"));
     }
 
-    /** As many black bubbles as nightmares, orbiting over the head (hidden from the baku's own eyes). */
+    /**
+     * As many black bubbles as nightmares, orbiting over the head (hidden from the baku's own eyes). They follow the
+     * head every tick, gliding as long as a client lerps a moving player ({@link #FOLLOW_LERP}), and orbit through
+     * their transformation, so they keep pace with a running baku instead of trailing and jittering behind it.
+     */
     private void syncBubbles(Player owner) {
         bubbles.removeIf(bubble -> !bubble.isValid());
         while (bubbles.size() > nightmares) {
             BlockDisplay bubble = bubbles.removeLast();
-            Vfx.cloud(ctx(), bubble.getLocation(), Particle.SQUID_INK, 3, 0.1, 0.01, null, false);
+            Vfx.cloud(ctx(), head(owner).add(0, BUBBLE_ABOVE, 0), Particle.SQUID_INK, 3, 0.1, 0.01, null, false);
             bubble.remove();
         }
         while (bubbles.size() < nightmares && room(1)) {
-            BlockDisplay bubble = keep(Displays.block(ctx(), owner, head(owner).add(0, BUBBLE_ABOVE, 0),
-                    BUBBLE.createBlockData(), bubblePose(0.02f, 0), 0));
-            bubble.setTeleportDuration((int) BUBBLE_PERIOD);
+            BlockDisplay bubble = keep(Displays.block(ctx(), owner, bubbleCenter(owner), BUBBLE.createBlockData(),
+                    bubblePose(0.02f, 0, 0, 0), 0));
+            bubble.setTeleportDuration(FOLLOW_LERP);
             owner.hideEntity(ctx().plugin(), bubble);
-            Displays.animateNextTick(ctx(), owner, bubble, bubblePose(BUBBLE_SIZE, 0), 5);
+            Displays.animateNextTick(ctx(), owner, bubble, bubblePose(bubbleScale, 0, 0, 0), 5);
             bubbles.add(bubble);
         }
     }
 
-    private static Transformation bubblePose(float size, float spin) {
-        return Displays.transform(0, 0, 0, size, size, size, spin, 35, 45);
+    /**
+     * A bubble of {@code size}, turned {@code spin} degrees, at {@code angle} round the orbit around
+     * {@link #bubbleCenter}, bobbing by {@code bob}.
+     */
+    private static Transformation bubblePose(float size, float spin, double angle, double bob) {
+        return Displays.transform((float) (Math.cos(angle) * BUBBLE_ORBIT), (float) bob,
+                (float) (Math.sin(angle) * BUBBLE_ORBIT), size, size, size, spin, 35, 45);
+    }
+
+    /** The middle of the bubbles' orbit, over the head. */
+    private static Location bubbleCenter(Player owner) {
+        return head(owner).add(0, BUBBLE_ABOVE, 0);
     }
 
     @Override
     public void onTick(long tick) {
         Player owner = player();
-        if (!bubbles.isEmpty() && tick % BUBBLE_PERIOD == 0) {
+        if (!bubbles.isEmpty()) {
             orbitBubbles(owner, tick);
         }
         if (tick % 100 == 0) {
@@ -304,19 +326,20 @@ public final class BakuAbility extends Ability {
     }
 
     private void orbitBubbles(Player owner, long tick) {
-        Location center = head(owner).add(0, BUBBLE_ABOVE, 0);
+        Location center = bubbleCenter(owner);
+        boolean orbit = tick % BUBBLE_PERIOD == 0;
         int count = bubbles.size();
         for (int i = 0; i < count; i++) {
             BlockDisplay bubble = bubbles.get(i);
             if (!bubble.isValid()) {
                 continue;
             }
-            double angle = tick * 0.08 + i * Math.PI * 2 / count;
-            double bob = 0.06 * Math.sin(tick * 0.15 + i);
-            Displays.moveTo(bubble, center.clone().add(Math.cos(angle) * BUBBLE_ORBIT, bob,
-                    Math.sin(angle) * BUBBLE_ORBIT));
-            if (tick % 8 == 0) {
-                Displays.animate(bubble, bubblePose(BUBBLE_SIZE, (tick * 6f) % 360f), 8);
+            Displays.moveTo(bubble, center);
+            if (orbit) {
+                double angle = tick * 0.08 + i * Math.PI * 2 / count;
+                double bob = 0.06 * Math.sin(tick * 0.15 + i);
+                Displays.animate(bubble, bubblePose(bubbleScale, (tick * 6f) % 360f, angle, bob),
+                        (int) BUBBLE_PERIOD);
             }
         }
         if (tick % 10 == 0 && !owner.isInvisible()) {
@@ -607,11 +630,8 @@ public final class BakuAbility extends Ability {
             Fx.sound(mouth, Sound.BLOCK_RESPAWN_ANCHOR_CHARGE, 1.0f, 0.6f);
             Fx.sound(mouth, Sound.ENTITY_PHANTOM_AMBIENT, 1.0f, 0.5f);
             Fx.sound(mouth, Sound.AMBIENT_CAVE, 0.6f, 1.4f);
-            for (BlockDisplay bubble : bubbles) {
-                if (bubble.isValid()) {
-                    Displays.animate(bubble, bubblePose(BUBBLE_SIZE * 1.8f, 90), (int) windup);
-                }
-            }
+            // The nightmares swell over the head while it winds up (the orbit grows them).
+            bubbleScale = BUBBLE_SIZE * 1.8f;
             Loop.repeat(ctx(), owner, 0, 1, windup, this, this::spew);
         }
 
@@ -639,6 +659,7 @@ public final class BakuAbility extends Ability {
         }
 
         private void spew() {
+            bubbleScale = BUBBLE_SIZE;
             Location eye = owner.getEyeLocation();
             int count = nightmares;
             List<LivingEntity> victims = new ArrayList<>();
@@ -722,7 +743,8 @@ public final class BakuAbility extends Ability {
                 Fx.nausea(victim, ticks);
             } else if (PotionEffectType.BLINDNESS.equals(type)) {
                 long blind = Math.max(1, params().ticks("curse_blind"));
-                victim.addPotionEffect(new PotionEffect(type, (int) blind + 10, 0, false, true, true));
+                victim.addPotionEffect(new PotionEffect(type, (int) Math.min(Integer.MAX_VALUE, blind), 0, false, true,
+                        true));
             } else {
                 int amplifier = PotionEffectType.SLOWNESS.equals(type) ? 1 : 0;
                 victim.addPotionEffect(new PotionEffect(type, (int) ticks, amplifier, false, true, true));
@@ -818,7 +840,7 @@ public final class BakuAbility extends Ability {
     }
 
     private static Location head(Entity entity) {
-        return entity.getLocation().add(0, entity.getHeight() + 0.15, 0);
+        return entity.getLocation().add(0, entity.getHeight() + HEAD_GAP, 0);
     }
 
     /** The direction +Z points at after a yaw and pitch (yaw 0 is south, pitch positive is down). */

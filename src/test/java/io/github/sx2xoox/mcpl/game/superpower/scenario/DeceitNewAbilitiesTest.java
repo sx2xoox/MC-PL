@@ -24,6 +24,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.papermc.paper.event.player.PlayerArmSwingEvent;
 import org.bukkit.Input;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -36,6 +37,7 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.Arrow;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
@@ -43,6 +45,7 @@ import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -1174,6 +1177,8 @@ class DeceitNewAbilitiesTest {
             assertEquals(s.param("stake_damage"), s.damageBy(s.owner, s.enemy), 1.0E-6, "the first enemy");
             assertEquals(0, s.damageBy(s.owner, s.enemy2), EPSILON, "only the first");
             assertTrue(s.enemy.hasPotionEffect(PotionEffectType.BLINDNESS), "blinded");
+            assertTrue(s.enemy.getPotionEffect(PotionEffectType.BLINDNESS).getDuration() <= s.paramTicks("stake_blind"),
+                    "for the stake's time, not longer than the text says");
             assertFalse(s.enemy.canSee(s.owner), "Nobody is gone from its eyes");
             assertTrue(s.enemy2.canSee(s.owner), "but not from the others'");
             List<TextDisplay> marks = texts(s, "⊘");
@@ -1234,13 +1239,21 @@ class DeceitNewAbilitiesTest {
             s.ticks(10);
             assertTrue(inHorse(s, s.owner), "the owner climbed in");
             assertTrue(inHorse(s, s.ally()), "the crouching ally too");
-            assertTrue(s.owner.getLocation().distance(s.ally().getLocation()) < 0.5, "both in the same horse");
+            double apart = s.owner.getLocation().distance(s.ally().getLocation());
+            assertTrue(apart >= 0.5 && apart < 1.6, "both in the same horse, each in a seat of its own (riders sharing "
+                    + "one spot push each other out and get pulled back): " + apart);
             List<BlockDisplay> parts = entities(s, BlockDisplay.class);
             assertTrue(parts.size() >= 16, "a big wooden horse: " + parts.size());
             for (BlockDisplay part : parts) {
                 assertUnrotated(part, "horse");
             }
-            assertEquals(1, entities(s, org.bukkit.entity.Interaction.class).size(), "something to hit");
+            assertEquals(2, entities(s, org.bukkit.entity.Interaction.class).size(),
+                    "something to hit, front and back along the horse");
+            // A nudge inside the hull is left alone (no rubber-banding while teammates push each other).
+            Location seat = s.ally().getLocation();
+            s.ally().teleport(seat.clone().add(0.5, 0, 0));
+            s.ticks(1);
+            assertEquals(seat.getX() + 0.5, s.ally().getLocation().getX(), 1.0E-6, "still inside: not pulled back");
             // Riders take no damage; the blow opens the gift.
             s.clearHits();
             s.melee(s.enemy, s.owner, 6);
@@ -1550,6 +1563,14 @@ class DeceitNewAbilitiesTest {
             Vector offset = centerOf(head).subtract(spot.toVector());
             assertTrue(offset.getX() < -1.0, "the head is in front, toward -x: " + offset);
             assertEquals(0, offset.getZ(), 0.2, "and not off to the side: " + offset);
+            // The hitboxes follow the turned horse: one in front, one behind, along -x.
+            List<org.bukkit.entity.Interaction> boxes = entities(s, org.bukkit.entity.Interaction.class);
+            assertEquals(2, boxes.size());
+            for (org.bukkit.entity.Interaction box : boxes) {
+                Vector from = box.getLocation().toVector().subtract(spot.toVector());
+                assertEquals(0, from.getZ(), 0.3, "along the horse, not across it: " + from);
+                assertTrue(Math.abs(from.getX()) > 0.3, "front or back: " + from);
+            }
             s.finishClean();
         }
     }
@@ -1618,10 +1639,15 @@ class DeceitNewAbilitiesTest {
     void odysseusAliasOnlyShowsWhileTheFightRuns() {
         try (Scenario s = Scenario.ffa("odysseus")) {
             s.ticks(5);
-            assertEquals("아무도", Scenario.plain(s.session.name(s.owner)), "Nobody while the fight runs");
-            assertEquals("Red", Scenario.plain(s.session.name(s.enemy)), "everybody else keeps their name");
+            assertEquals("아무도", Scenario.plain(s.session.publicName(s.owner.getUniqueId())),
+                    "Nobody in the public lines while the fight runs");
+            assertEquals("Owner", Scenario.plain(s.session.name(s.owner)),
+                    "but only there: the team's HUD, the summaries and every other line keep the real name");
+            assertEquals("Red", Scenario.plain(s.session.publicName(s.enemy.getUniqueId())),
+                    "everybody else keeps their name");
             s.finishMatch();
-            assertEquals("Owner", Scenario.plain(s.session.name(s.owner)), "the results show the real name");
+            assertEquals("Owner", Scenario.plain(s.session.publicName(s.owner.getUniqueId())),
+                    "the results show the real name");
             s.assertNoProblems();
             s.assertCleanWorld();
         }
@@ -1640,6 +1666,306 @@ class DeceitNewAbilitiesTest {
             s.eliminateOwner(null);
             s.ticks(1);
             assertNull(s.enemy.getScoreboard().getEntryTeam(s.owner.getName()), "the tag is back");
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== review fixes: real client sequences
+
+    @Test
+    void odysseusCrouchingNeverMakesEveryoneAGiant() {
+        try (Scenario s = Scenario.ffa("odysseus")) {
+            s.ticks(5);
+            // A crouching body is 1.5 tall, a standing one 1.8: 1.8 >= 1.5 x 1.15 must not make a normal enemy a giant.
+            s.owner.setSneaking(true);
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4, s.damageBy(s.owner, s.enemy), 1.0E-6, "crouch-hitting a normal-sized enemy: no bonus");
+            s.owner.setSneaking(false);
+            s.enemy.setSneaking(true);
+            s.enemy.getAttribute(Attribute.SCALE).addModifier(new AttributeModifier(
+                    new org.bukkit.NamespacedKey("test", "giant"), 0.3, AttributeModifier.Operation.ADD_NUMBER,
+                    org.bukkit.inventory.EquipmentSlotGroup.ANY));
+            s.clearHits();
+            s.melee(s.owner, s.enemy, 4);
+            assertEquals(4 * (1 + s.param("giant_bonus") / 100), s.damageBy(s.owner, s.enemy), 1.0E-6,
+                    "a giant is a giant even while it crouches");
+            s.enemy.getAttribute(Attribute.SCALE).removeModifier(new org.bukkit.NamespacedKey("test", "giant"));
+            s.enemy.setSneaking(false);
+            s.finishClean();
+        }
+    }
+
+    private static void removeArrows(Scenario s) {
+        for (Arrow arrow : entities(s, Arrow.class)) {
+            arrow.remove();
+        }
+    }
+
+    @Test
+    void odysseusLeftoverArrowsNeverOpenTheHorse() {
+        try (Scenario s = Scenario.ffa("odysseus")) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            // An enemy's arrow from earlier lies in the floor right where the gift will stand.
+            Arrow lying = s.world.spawnArrow(new Location(s.world, 0.5, FlatWorld.SURFACE + 3, 6.0),
+                    new Vector(0, -1, 0), 1.0f, 0f);
+            lying.setShooter(s.enemy);
+            s.ticks(20);
+            assertTrue(lying.isInBlock(), "it stuck in the floor");
+            s.aimAtFloor(s.owner, 0.5, 6.5);
+            s.assertSucceeded(s.ultimate(), "트로이 목마");
+            s.ticks(10);
+            assertTrue(inHorse(s, s.owner), "an arrow lying in the ground is no hit: the gift stays shut");
+            // A flying one is.
+            Arrow shot = s.world.spawnArrow(new Location(s.world, 0.5, FlatWorld.SURFACE + 2, 11.5),
+                    new Vector(0, 0, -1), 1.5f, 0f);
+            shot.setShooter(s.enemy);
+            s.ticks(6);
+            assertFalse(inHorse(s, s.owner), "an arrow flying into the gift opens it");
+            removeArrows(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void odysseusRidingAllyGetsOffByCrouchingAgain() {
+        try (Scenario s = Scenario.teams("odysseus")) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.ally().setSneaking(true);
+            s.aimAtFloor(s.owner, 0.5, 6.5);
+            s.assertSucceeded(s.ultimate(), "트로이 목마");
+            s.ticks(10);
+            assertTrue(inHorse(s, s.ally()), "the ally crouching for its own reasons was taken in");
+            assertTrue(rooted(s.ally()));
+            // Still holding the same crouch does nothing; a fresh one lets it off on its own.
+            s.ally().setSneaking(false);
+            s.ticks(2);
+            s.ally().setSneaking(true);
+            s.ticks(2);
+            assertFalse(inHorse(s, s.ally()), "a fresh crouch gets the ally off");
+            assertTrue(s.enemy.canSee(s.ally()), "seen again");
+            assertFalse(rooted(s.ally()), "free to move");
+            assertTrue(inHorse(s, s.owner), "the gift stays shut for the others");
+            s.ticks(10);
+            assertFalse(inHorse(s, s.ally()), "crouching by the horse it does not climb back in");
+            s.ally().setSneaking(false);
+            s.ticks(s.paramTicks("horse_duration"));
+            assertFalse(inHorse(s, s.owner), "the time is up");
+            assertTrue(s.owner.getAttribute(Attribute.MOVEMENT_SPEED).getModifiers().stream()
+                    .anyMatch(m -> m.getAmount() > 0), "the riders burst out charged");
+            assertFalse(s.ally().getAttribute(Attribute.MOVEMENT_SPEED).getModifiers().stream()
+                    .anyMatch(m -> m.getAmount() > 0), "the one who got off early is not");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void odysseusAllyTooBigForTheHorseStaysOut() {
+        try (Scenario s = Scenario.teams("odysseus")) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            // A low roof over the gift's spot: room for Nobody's body, not for a giant ally's.
+            for (int x = -1; x <= 2; x++) {
+                for (int z = 4; z <= 8; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 3, z, Material.STONE);
+                }
+            }
+            org.bukkit.NamespacedKey big = new org.bukkit.NamespacedKey("test", "big");
+            s.ally().getAttribute(Attribute.SCALE).addModifier(new AttributeModifier(big, 1.0,
+                    AttributeModifier.Operation.ADD_NUMBER, org.bukkit.inventory.EquipmentSlotGroup.ANY));
+            s.ally().setSneaking(true);
+            s.aimAtFloor(s.owner, 0.5, 6.5);
+            s.assertSucceeded(s.ultimate(), "트로이 목마");
+            s.ticks(10);
+            assertTrue(inHorse(s, s.owner), "Nobody fits");
+            assertFalse(inHorse(s, s.ally()), "the giant ally does not");
+            assertFalse(rooted(s.ally()), "and is not held");
+            assertFalse(FlatWorld.isIn(s.ally(), Material.STONE), "never pinned inside the roof");
+            s.ally().setSneaking(false);
+            s.ally().getAttribute(Attribute.SCALE).removeModifier(big);
+            s.ticks(s.paramTicks("horse_duration") + 30);
+            for (int x = -1; x <= 2; x++) {
+                for (int z = 4; z <= 8; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y + 3, z, Material.AIR);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mimicHeldRightClickBitesOnlyOnce() {
+        try (Scenario s = Scenario.ffa("mimic")) {
+            s.ticks(5);
+            Block chest = disguised(s);
+            s.clearHits();
+            open(s, s.enemy, chest);
+            s.ticks(1);
+            open(s, s.enemy, chest); // a quick double click
+            s.ticks(3);
+            open(s, s.enemy, chest); // the client repeats the use every 4 ticks while the button is held
+            assertEquals(s.param("disguise_bite"), s.damageBy(s.owner, s.enemy), 1.0E-6, "one disguise, one bite");
+            assertEquals(1, s.hitsBy(s.owner, s.enemy).size());
+            s.ticks(s.paramTicks("disguise_grab") + 5);
+            // A bait the same.
+            s.place(s.enemy, 12.5, 12.5, 180);
+            s.place(s.enemy2, -12.5, 12.5, 180);
+            s.aimAtFloor(s.owner, -3.5, 6.5);
+            s.assertSucceeded(s.active(), "미끼 상자");
+            s.ticks(20);
+            Block bait = chestsAway(s).getFirst();
+            s.clearHits();
+            for (int i = 0; i < 3; i++) {
+                open(s, s.enemy2, bait);
+                s.ticks(4);
+            }
+            assertEquals(s.param("bait_bite"), s.damageBy(s.owner, s.enemy2), 1.0E-6, "one bait, one bite");
+            punch(s, s.enemy2, bait);
+            assertEquals(s.param("bait_bite"), s.damageBy(s.owner, s.enemy2), 1.0E-6,
+                    "nor a snap on top while its lid shuts");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mimicSwingAtSomebodyInFrontOfAChestNeverPunchesTheChest() {
+        try (Scenario s = Scenario.ffa("mimic")) {
+            s.ticks(5);
+            s.place(s.enemy2, 0.5, 2.5, 180);
+            s.place(s.enemy, 0.5, 4.0, 180);
+            Block chest = disguised(s);
+            Location aim = chest.getLocation().add(0.5, 0.5, 0.5);
+            // The enemy swings at the player standing between it and the chest (every punch swings the arm).
+            s.aimAt(s.enemy, aim);
+            s.h.server.getPluginManager().callEvent(new PlayerArmSwingEvent(s.enemy, EquipmentSlot.HAND));
+            assertFalse(s.enemy.canSee(s.owner), "the blow is the player's: the chest is untouched");
+            assertEquals(Material.CHEST, chest.getType());
+            // With nobody in the way the punch finds the chest.
+            s.place(s.enemy2, 8.5, 2.5, 180);
+            s.aimAt(s.enemy, aim);
+            s.h.server.getPluginManager().callEvent(new PlayerArmSwingEvent(s.enemy, EquipmentSlot.HAND));
+            assertTrue(s.enemy.canSee(s.owner), "a punch at the chest itself gives the mimic away");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mimicShootingFromInsideTheChestBreaksTheDisguise() {
+        try (Scenario s = Scenario.ffa("mimic")) {
+            s.ticks(5);
+            disguised(s);
+            // A bow shot sends no punch: the launch itself gives the mimic away.
+            Arrow loosed = s.world.spawnArrow(s.owner.getEyeLocation().add(0, 0, 0.5), new Vector(0, 0, 1), 2.0f, 0f);
+            loosed.setShooter(s.owner);
+            s.h.server.getPluginManager().callEvent(new ProjectileLaunchEvent(loosed));
+            assertTrue(s.enemy.canSee(s.owner), "shooting is attacking");
+            removeArrows(s);
+            // An arrow that hits gives it away as much as a fist.
+            disguised(s);
+            Location eye = s.owner.getEyeLocation();
+            Vector toward = s.enemy.getLocation().add(0, 1.0, 0).toVector().subtract(eye.toVector()).normalize();
+            Arrow arrow = s.world.spawnArrow(eye.clone().add(toward.clone().multiply(0.6)), toward, 2.0f, 0f);
+            arrow.setShooter(s.owner);
+            s.clearHits();
+            s.ticks(5);
+            assertTrue(s.damageBy(s.owner, s.enemy) > 0, "the arrow hit");
+            assertTrue(s.enemy.canSee(s.owner), "an arrow from inside the chest gives the mimic away");
+            removeArrows(s);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void mimicNeverTakesAwayATemporaryBlockThatIsNoLongerItsChest() {
+        try (Scenario s = Scenario.ffa("mimic")) {
+            s.ticks(5);
+            s.place(s.enemy, 12.5, 12.5, 180);
+            s.place(s.enemy2, -12.5, 12.5, 180);
+            s.aimAtFloor(s.owner, -3.5, 6.5);
+            s.assertSucceeded(s.active(), "미끼 상자");
+            s.ticks(20);
+            Block bait = chestsAway(s).getFirst();
+            // Its block comes back (as when its time is up) and another ability puts its own temporary block there.
+            assertTrue(s.ctx().restoreTempBlock(bait));
+            assertTrue(s.ctx().placeTempBlock(bait, Material.ICE.createBlockData(), 2000));
+            s.clearHits();
+            punch(s, s.enemy, bait);
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "ice is no bait");
+            s.ticks(s.paramTicks("bait_duration") + 10);
+            assertEquals(Material.ICE, bait.getType(), "the mimic only ever takes its own chest away");
+            assertTrue(s.ctx().restoreTempBlock(bait));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void privateDisplaysStayHiddenFromWhoeverJoinsLater() {
+        try (Scenario s = Scenario.teams("mimic")) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 9.5, 9.5, 180);
+            s.assertSucceeded(s.ultimate(), "보물 무더기");
+            s.ticks(14);
+            List<TextDisplay> markers = entities(s, TextDisplay.class).stream()
+                    .filter(text -> Scenario.plain(text.text()).matches(".*(보물|가짜|나).*")).toList();
+            assertFalse(markers.isEmpty());
+            TestPlayer late = s.h.join("Late");
+            s.ticks(1);
+            for (TextDisplay marker : markers) {
+                assertFalse(late.canSee(marker), "a player who joins later (a rejoining enemy) never reads the pile");
+            }
+            s.finishClean();
+        }
+        try (Scenario s = Scenario.ffa("odysseus")) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 3.0, 180);
+            s.place(s.enemy2, 0.5, 4.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "외눈박이의 말뚝");
+            s.ticks(4);
+            TextDisplay mark = texts(s, "⊘").getFirst();
+            TestPlayer late = s.h.join("Late");
+            s.ticks(1);
+            assertFalse(late.canSee(mark), "nor Nobody's mark over its blinded enemy");
+            s.finishClean();
+        }
+        try (Scenario s = Scenario.ffa("satori")) {
+            lookAway(s);
+            s.ticks(20);
+            s.aimAt(s.enemy, s.owner);
+            s.ticks(12);
+            TextDisplay balloon = privateBalloons(s).getFirst();
+            TestPlayer late = s.h.join("Late");
+            s.ticks(1);
+            assertFalse(late.canSee(balloon), "nor the satori's thought balloon");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bakuBlindingNightmareLastsExactlyItsTime() {
+        try (Scenario s = Scenario.builder("baku").param("eat_chance", 100).param("max_nightmares", 5).start()) {
+            s.ticks(5);
+            for (PotionEffectType curse : List.of(PotionEffectType.SLOWNESS, PotionEffectType.HUNGER,
+                    PotionEffectType.MINING_FATIGUE, PotionEffectType.WEAKNESS, PotionEffectType.POISON)) {
+                s.owner.addPotionEffect(new PotionEffect(curse, 100, 0));
+            }
+            assertEquals(5, bubbles(s).size(), "five nightmares: every curse goes out");
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "악몽 토해내기");
+            s.ticks(s.paramTicks("spew_windup") + 2);
+            PotionEffect blind = s.enemy.getPotionEffect(PotionEffectType.BLINDNESS);
+            assertNotNull(blind, "the blinding nightmare is among them");
+            assertTrue(blind.getDuration() <= s.paramTicks("curse_blind"), "실명 " + s.param("curse_blind")
+                    + "초 as the text says: " + blind.getDuration());
             s.finishClean();
         }
     }
