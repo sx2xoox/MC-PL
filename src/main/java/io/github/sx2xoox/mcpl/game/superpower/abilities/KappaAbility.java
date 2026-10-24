@@ -71,12 +71,9 @@ public final class KappaAbility extends Ability {
             .color(TextColor.color(0x4F8A3C))
             .difficulty(2)
             .passive("머리 접시",
-                    "머리 위 접시에 물이 차 있으면 내 근접 피해가 {plate_bonus}%, 내가 주는 넉백이 {plate_knockback}% "
-                            + "늘어납니다. 나보다 {spill_height}블록 이상 높은 곳의 적에게 맞거나 머리에 투사체를 맞으면 "
-                            + "물이 쏟아집니다. {bow_range}블록 안의 적이 나를 바라보며 웅크려 절하면(같은 적은 "
-                            + "{bow_cooldown}초마다) 나도 따라 절하느라 {bow_freeze}초간 멈추고 물을 쏟습니다. 빈 접시로는 "
-                            + "근접 피해가 {empty_penalty}%, 이동 속도가 {empty_slow}% 줄고, 물에 들어가거나 비를 맞거나 "
-                            + "{refill_time}초가 지나면 다시 찹니다.")
+                    "접시에 물이 차 있으면 근접 피해가 {plate_bonus}%, 넉백이 {plate_knockback}% 늘고, 비면 근접 피해와 "
+                            + "이동 속도가 줄어듭니다. 위에서 맞거나 머리에 투사체를 맞거나 적이 나를 보며 웅크려 절하면 물이 "
+                            + "쏟아지고, {refill_time}초 뒤나 물·비에 닿으면 다시 찹니다.")
             .active("씨름 한판",
                     "앞 {sumo_range}블록 안의 적에게 샅바를 걸어, 둘 사이에 반경 {sumo_radius}블록의 씨름판을 "
                             + "{sumo_duration}초간 깝니다. 판 안에서 그 적에게 주는 내 근접 넉백이 {sumo_knockback}배가 "

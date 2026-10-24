@@ -79,8 +79,8 @@ public final class SansinAbility extends Ability {
                     "적에게 받은 피해가 {honest_need}만큼 쌓이면 산신령이 정직함을 알아보고 금도끼를 약속합니다. 다음 "
                             + "금도끼 은도끼는 반드시 금도끼가 되며, 약속이 지켜지기 전에는 피해가 더 쌓이지 않습니다.")
             .active("금도끼 은도끼",
-                    "도끼를 던져({axe_range}블록) 맞은 적에게 {axe_damage} 피해를 주고 '이 도끼가 네 도끼냐?' 묻습니다. "
-                            + "금도끼면 {gold_damage} 추가 피해, 은도끼면 {silver_damage} 추가 피해와 {silver_time}초간 "
+                    "도끼를 던져({axe_range}블록) 맞은 적에게 {axe_damage} 피해를 주고 금·은·쇠도끼 중 하나가 "
+                            + "나옵니다. 금도끼면 {gold_damage} 추가 피해, 은도끼면 {silver_damage} 추가 피해와 {silver_time}초간 "
                             + "이동 속도 -{silver_slow}%, 쇠도끼면 {iron_damage} 추가 피해와 약 {iron_push}블록 넉백을 "
                             + "줍니다. 멀리서 정확히 맞힐수록 금도끼가 잘 나오고({gold_min}~{gold_max}%), 나머지는 은과 쇠가 "
                             + "반반입니다.",

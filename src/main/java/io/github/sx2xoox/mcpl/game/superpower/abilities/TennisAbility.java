@@ -60,13 +60,9 @@ public final class TennisAbility extends Ability {
             .color(TextColor.color(0xCDEB3A))
             .difficulty(2)
             .passive("랠리",
-                    "내 공이 적을 맞히면 내 쪽으로 튕겨 돌아와 {rally_window}초간 눈앞에 떠 있습니다. 그 공을 근접 "
-                            + "공격으로 치면({rally_reach}블록 안) 쿨타임 없이 바라보는 방향으로 다시 날아가고, 랠리마다 "
-                            + "공의 속도와 피해가 {rally_bonus}%씩 늘어납니다(최대 {rally_max}랠리). 적도 날아오는 공을 "
-                            + "근접 공격으로 받아칠 수 있습니다(공이 {return_reach}블록 안에 왔을 때, 또는 맞기 직전 "
-                            + "{return_window}초 안에 휘둘렀을 때) — 받아친 공은 해 없이 나에게 돌아오고 랠리가 끊기며 "
-                            + "상대가 점수를 얻습니다. 내 공이 맞히면 내가 점수를 얻고, 머리 위 15-30-40 점수판에서 먼저 "
-                            + "{game_points}점을 따면 \"게임!\" — 궁극기 게이지가 {game_gauge}% 찹니다.")
+                    "내 공이 적을 맞히면 눈앞에 돌아와, 근접 공격으로 치면 다시 날아가며 랠리마다 {rally_bonus}%씩 강해집니다. "
+                            + "적은 근접 공격으로 공을 받아칠 수 있습니다. 맞히면 내가, 받아치면 상대가 점수를 얻고, 내가 먼저 "
+                            + "{game_points}점을 따면 궁극기 게이지가 {game_gauge}% 찹니다.")
             .active("서브",
                     "{serve_toss}초간 공을 띄웠다가 라켓으로 강하게 쳐서 바라보는 방향으로 빠른 직선 공을 날립니다"
                             + "({serve_range}블록, 초속 {serve_speed}블록). 공은 땅이나 벽에 한 번 튕길 수 있고, 처음 "

@@ -68,23 +68,20 @@ public final class LevelerAbility extends Ability {
             .color(TextColor.color(0x3BA0FF))
             .difficulty(1)
             .passive("레벨 업",
-                    "적에게 피해를 줄 때마다 경험치가 차오르고(액션바), {xp_per_level} 피해마다 \"[시스템] 레벨이 "
-                            + "올랐습니다!\" — 체력을 {level_heal} 회복하고, 레벨마다 주는 피해가 {level_damage}%, 이동 "
-                            + "속도가 {level_speed}% 늘어납니다(최대 Lv.{max_level}). 레벨은 쓰러질 때까지 유지되고, 머리 "
-                            + "위의 'Lv.N'은 모두에게 보입니다.")
+                    "적에게 {xp_per_level} 피해를 줄 때마다 레벨이 올라 체력을 {level_heal} 회복하고, 레벨마다 주는 "
+                            + "피해가 {level_damage}%, 이동 속도가 {level_speed}% 늘어납니다(최대 Lv.{max_level}). 레벨은 "
+                            + "쓰러질 때까지 유지되며 모두에게 보입니다.")
             .active("스킬: 검기",
                     "레벨에 따라 커지는 검기를 휘두릅니다. Lv.1은 앞 {slash_range}블록·{slash_angle}° 안의 적에게 "
-                            + "{slash_damage} 피해를 주고, 레벨이 오를 때마다 범위가 {slash_range_step}블록, 각도가 "
-                            + "{slash_angle_step}°(최대 360°, 전방위), 피해가 {slash_damage_step}씩 늘어납니다. 벽 너머는 "
-                            + "베지 못하며, 휘두른 자리에 상태창 같은 푸른 창이 뜹니다.",
+                            + "{slash_damage} 피해를 주고, 레벨마다 범위가 {slash_range_step}블록, 각도가 "
+                            + "{slash_angle_step}°(최대 360°), 피해가 {slash_damage_step}씩 늘어납니다. 벽 너머는 베지 "
+                            + "못합니다.",
                     8)
             .ultimate("레이드 보스 지정",
-                    "{boss_range}블록 안에서 가장 위협적인 적(남은 체력이 가장 많은 적, 같으면 궁극기 게이지가 높은 적)을 "
-                            + "레이드 보스로 지정합니다. {boss_duration}초간 모든 플레이어의 화면에 보스 체력바가 뜨고, "
-                            + "보스는 {boss_scale}% 커지며 흡수 체력 {boss_absorption}을 얻지만 모든 플레이어가 보스에게 "
-                            + "주는 피해가 {boss_bonus}% 늘어납니다. 보스를 쓰러뜨린 사람은 '전설 드랍'으로 체력 "
-                            + "{drop_heal} 회복과 궁극기 게이지 {drop_gauge}%를 얻고, 내가 쓰러뜨리면 레벨이 "
-                            + "{boss_levels} 오릅니다.")
+                    "{boss_range}블록 안에서 남은 체력이 가장 많은 적을 {boss_duration}초간 레이드 보스로 지정합니다. "
+                            + "보스는 커지고 흡수 체력 {boss_absorption}을 얻지만 모두가 보스에게 주는 피해가 {boss_bonus}% "
+                            + "늘어납니다. 보스를 쓰러뜨린 사람은 체력 {drop_heal} 회복과 궁극기 게이지 {drop_gauge}%를 얻고, "
+                            + "내가 쓰러뜨리면 레벨이 {boss_levels} 오릅니다.")
             .ultimateNotStandalone()
             .param("xp_per_level", 10)
             .param("max_level", 5)

@@ -94,21 +94,16 @@ public final class CirceAbility extends Ability {
                             + "노리지 않고, 나를 쫓던 몹도 {tame_interval}초마다 나를 놓쳐 머뭇거립니다(주인이 다시 시키면 "
                             + "다시 덤빕니다). 몹에게 주는 내 근접 피해는 {beast_multiplier}배가 됩니다.")
             .active("돼지가 되어라",
-                    "마법 포도주 잔을 포물선으로 던집니다(최대 {cup_range}블록). 처음 맞은 적은 {pig_duration}초간 "
-                            + "돼지가 됩니다: 몸이 숨겨지고 돼지 모습으로 걷거나(이동 속도 -{pig_slow}%) 뛸 수는 있지만 "
-                            + "공격하거나 능력을 쓸 수 없고, 피해를 받아도 풀리지 않습니다. 끝나면 연기와 함께 돌아오며 "
-                            + "{unpig_damage} 피해를 입습니다. 빗나가면 떨어진 자리에 {puddle_duration}초간 반경 "
-                            + "{puddle_radius}블록 포도주 웅덩이가 생겨 밟은 적의 이동 속도가 {puddle_slow}% 느려집니다.",
+                    "포도주 잔을 포물선으로 던집니다({cup_range}블록). 처음 맞은 적은 {pig_duration}초간 돼지가 되어 "
+                            + "{pig_slow}% 느리게 움직일 뿐 공격하거나 능력을 쓸 수 없고(피해를 받아도 풀리지 않음), 풀릴 때 "
+                            + "{unpig_damage} 피해를 입습니다. 빗나가면 밟은 적이 {puddle_slow}% 느려지는 웅덩이가 "
+                            + "{puddle_duration}초간 남습니다.",
                     11)
             .ultimate("키르케의 연회",
-                    "내 자리에 잔이 놓인 연회 식탁을 차립니다. {feast_warning}초 동안 반경 {feast_radius}블록의 빛의 "
-                            + "고리가 경고하고(그사이 고리 밖으로 달아날 수 있음), 그때 고리 안에 있는 적은 모두 "
-                            + "{feast_duration}초간 "
-                            + "무작위 동물이 됩니다 — 돼지(이동 속도 -{feast_pig_slow}%), 닭(점프력 "
-                            + "-{feast_chicken_jump}%, 천천히 떨어짐), 토끼(계속 깡충거리며 이동 속도 "
-                            + "+{feast_rabbit_speed}%), 양(넉백 {feast_sheep_knockback}배). 동물은 공격하거나 능력을 쓸 "
-                            + "수 없고, 그동안 나와 아군이 동물에게 주는 피해가 {feast_bonus}% 늘어납니다. 풀릴 때 "
-                            + "{feast_release_damage} 피해를 입습니다.")
+                    "연회 식탁을 차리고 {feast_warning}초 뒤 반경 {feast_radius}블록 안의 적을 모두 {feast_duration}초간 "
+                            + "무작위 동물(돼지·닭·토끼·양)로 바꿉니다. 그 전에 경고 고리 밖으로 달아나면 피할 수 있습니다. "
+                            + "동물은 공격하거나 능력을 쓸 수 없고, 그동안 나와 아군이 동물에게 주는 피해가 {feast_bonus}% "
+                            + "늘며, 풀릴 때 {feast_release_damage} 피해를 입습니다.")
             .param("tame_radius", 8)
             .param("tame_interval", 1)
             .param("beast_multiplier", 2)

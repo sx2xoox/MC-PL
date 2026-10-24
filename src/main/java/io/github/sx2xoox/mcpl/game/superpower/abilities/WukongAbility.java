@@ -71,19 +71,16 @@ public final class WukongAbility extends Ability {
                     "근접 공격이 여의봉 휘두르기가 되어, 맞은 적 옆 {sweep_radius}블록 안의 다른 적에게도 그 피해의 "
                             + "{sweep_share}%를 줍니다.")
             .active("여의봉아 늘어나라",
-                    "여의봉이 바라보는 방향으로 순식간에 최대 {pole_length}블록 늘어나 처음 닿는 블록에서 멈춥니다. 처음 "
-                            + "찔린 적은 {pole_damage} 피해를 입고 봉 끝까지 밀려나며, 봉 끝과 벽 사이에 끼면 {pin_damage} "
-                            + "추가 피해와 함께 {pin_stagger}초간 휘청입니다(이동·공격 속도 {stagger_slow}% 감소). 적 없이 벽이나 땅을 "
-                            + "찌르면 그 면에서 튕기듯 장대뛰기로 약 {vault_height}블록 튀어 나갑니다(바닥을 보고 찌르면 "
-                            + "수직으로). 허공을 찌르면 쿨타임이 {miss_refund}% 돌아옵니다.",
+                    "여의봉을 바라보는 방향으로 최대 {pole_length}블록 늘립니다. 처음 찔린 적은 {pole_damage} 피해를 "
+                            + "입고 봉 끝까지 밀려나며, 벽에 끼면 {pin_damage} 추가 피해와 함께 {pin_stagger}초간 휘청입니다. "
+                            + "적 없이 벽이나 땅을 찌르면 그 면에서 약 {vault_height}블록 튀어 나가고, 허공을 찌르면 쿨타임이 "
+                            + "{miss_refund}% 돌아옵니다.",
                     8)
             .ultimate("여의봉 천주",
-                    "여의봉이 {pillar_rise}초에 걸쳐 앞에서 {pillar_height}블록 높이로 솟구치고, 바라보는 방향의 땅에 "
-                            + "그림자 선(폭 {pillar_width}블록, 길이 {pillar_length}블록)이 그려집니다. 이어 기둥이 그 선을 "
-                            + "따라 쓰러져 깔린 적에게 {pillar_damage} 피해를 주고 {pillar_flat}초간 납작하게 눌러 이동 속도를 "
-                            + "{pillar_slow}% 늦춥니다. 선 위의 벽이나 건물(몸 높이의 엄폐물)에 부딪히면 기둥이 거기서 부러져 "
-                            + "그림자도 거기까지만 그려지고 그 너머는 무사합니다(전투 맵에서는 선을 따라 지형이 갈라지고 부딪힌 "
-                            + "엄폐물도 부서집니다). 바로 앞이 막혀 있으면 쓸 수 없습니다.")
+                    "{pillar_rise}초 동안 여의봉이 하늘로 솟구치며 앞쪽 땅에 {pillar_length}블록 길이의 그림자 선을 "
+                            + "그린 뒤, 그 선을 따라 쓰러져 깔린 적에게 {pillar_damage} 피해를 주고 {pillar_flat}초간 "
+                            + "{pillar_slow}% 느리게 합니다. 선 위의 벽이나 엄폐물에 부딪히면 거기서 부러져 그 너머는 "
+                            + "무사합니다. 바로 앞이 막혀 있으면 쓸 수 없습니다.")
             .param("sweep_radius", 1.5)
             .param("sweep_share", 50)
             .param("pole_length", 12)

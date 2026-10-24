@@ -75,27 +75,20 @@ public final class AtlasAbility extends Ability {
             .color(TextColor.color(0xB07A3B))
             .difficulty(1)
             .passive("천공의 어깨",
-                    "하늘을 떠받친 몸이라 높이 뜨지 않습니다. 띄워지면 곧바로 땅으로 내려앉으며 발밑에 충격파를 일으켜 "
-                            + "반경 {anchor_radius}블록의 적에게 {anchor_damage} 피해를 주고 밀쳐냅니다(충격파는 "
-                            + "{anchor_cooldown}초마다). 땅에서 {air_height}블록 넘게 뜬 적에게 주는 근접·투사체 피해가 "
-                            + "{air_bonus}% 늘고, 그 적을 근접 공격하면 땅으로 내리꽂습니다.")
+                    "띄워져도 곧바로 땅으로 내려앉으며 반경 {anchor_radius}블록의 적에게 {anchor_damage} 피해를 주고 "
+                            + "밀쳐냅니다. 공중에 뜬 적에게 주는 근접·투사체 피해가 {air_bonus}% 늘고, 그 적을 근접 공격하면 "
+                            + "땅으로 내리꽂습니다.")
             .active("하늘의 무게",
-                    "별빛 고리가 {weight_delay}초 동안 반경 {weight_radius}블록을 덮은 뒤 하늘 한 조각의 무게가 "
-                            + "떨어집니다. 땅을 디딘 적은 {weight_damage} 피해를 입고 {heavy_duration}초간 무거워져 점프할 "
-                            + "수 없고 이동 속도가 {heavy_slow}% 줄며 빨리 떨어집니다. 공중에 뜬 적(비행·도약·띄워진 적)은 "
-                            + "땅으로 내리꽂혀 {air_damage} 피해를 입습니다.",
+                    "{weight_delay}초 뒤 반경 {weight_radius}블록에 하늘의 무게가 떨어집니다. 땅을 디딘 적은 "
+                            + "{weight_damage} 피해를 입고 {heavy_duration}초간 점프할 수 없으며 이동 속도가 {heavy_slow}% "
+                            + "줄고, 공중에 뜬 적은 땅으로 내리꽂혀 {air_damage} 피해를 입습니다.",
                     9)
             .ultimate("하늘 떠넘기기",
-                    "거대한 천구를 {sky_range}블록 안의 조준한 적(없으면 가장 가까운 적)에게 {throw_time}초 동안 포물선으로 "
-                            + "던져 하늘을 짊어지게 합니다. 짊어진 사람은 최대 {sky_duration}초간 이동 속도가 {sky_slow}% "
-                            + "줄고 1초마다 {sky_tick}부터 {sky_tick_growth}씩 커지는 피해를 입습니다. 짊어진 사람은 다른 "
-                            + "플레이어를 무엇으로든 맞히거나 몸으로 부딪혀(아틀라스에게는 맞혀서만) 하늘을 떠넘길 수 "
-                            + "있고(시간은 계속 흐르며, 방금 "
-                            + "넘겨준 사람에게는 {pass_immunity}초 동안 되넘길 수 없음), 시간이 다 되면 들고 있던 사람 위로 "
-                            + "하늘이 무너져 {collapse_damage} 피해, 주변 {collapse_radius}블록의 다른 적은 "
-                            + "{collapse_splash} 피해를 입습니다. 하늘이 아틀라스에게 넘어오면 가뿐히 짊어지고, "
-                            + "{globe_hold}초 안에 쓰는 다음 액티브가 바로 천구 투척({globe_range}블록 안의 조준한 곳, "
-                            + "반경 {globe_radius}블록의 적에게 {globe_damage} 피해)으로 바뀝니다.")
+                    "{sky_range}블록 안의 조준한 적(없으면 가장 가까운 적)에게 하늘을 던져 짊어지게 합니다. 짊어진 "
+                            + "사람은 느려지고 점점 커지는 피해를 입으며, 다른 플레이어를 맞히거나 부딪혀(나에게는 맞혀서만) "
+                            + "하늘을 넘길 수 있습니다. {sky_duration}초가 지나면 들고 있던 사람이 {collapse_damage} 피해를 "
+                            + "입습니다. 하늘이 내게 넘어오면 {globe_hold}초 안의 다음 액티브가 천구 투척(반경 "
+                            + "{globe_radius}블록, {globe_damage} 피해)으로 바뀝니다.")
             .ultimateNotStandalone()
             .param("anchor_radius", 2.5)
             .param("anchor_damage", 1)

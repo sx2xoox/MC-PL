@@ -83,27 +83,21 @@ public final class MagicalGirlAbility extends Ability {
             .color(TextColor.color(0xFF79B9))
             .difficulty(2)
             .passive("우정의 리본",
-                    "하트로 치유한 아군은 {ribbon_duration}초간 분홍 리본으로 나와 이어집니다. 그 아군이 적에게 받는 "
-                            + "피해의 {ribbon_share}%를 내가 대신 받고, 내게 오는 몫은 리본이 {ribbon_cushion}% 줄여 "
-                            + "줍니다. 리본은 그 아군을 볼 수 있는 모두에게 보이며 {ribbon_range}블록 넘게 멀어지면 "
-                            + "끊어집니다.")
+                    "하트로 치유한 아군은 {ribbon_duration}초간 리본으로 나와 이어져, 그 아군이 적에게 받는 피해의 "
+                            + "{ribbon_share}%를 내가 {ribbon_cushion}% 줄여 대신 받습니다. {ribbon_range}블록 넘게 멀어지면 "
+                            + "리본이 끊어집니다.")
             .active("하트 스틱",
-                    "마법봉을 휘둘러 하트를 날립니다({heart_range}블록). 처음 맞은 적에게 {heart_damage} 피해를 주고 "
-                            + "튕겨 나가, {bounce_range}블록 안에서 가장 많이 다친 아군(없으면 {heart_range}블록 안의 나)을 "
-                            + "{heart_heal} 회복시키고 "
-                            + "다시 그 근처의 다른 적에게 {bounce_damage} 피해를 주는 식으로 적과 아군을 번갈아 최대 "
-                            + "{bounces}번 맞힙니다(같은 대상은 한 번씩, 벽 너머로나 숨은 아군에게는 튕기지 않음).",
+                    "하트를 날립니다({heart_range}블록). 처음 맞은 적에게 {heart_damage} 피해를 주고 튕겨 나가 근처에서 "
+                            + "가장 다친 아군(없으면 나)을 {heart_heal} 회복시키고, 다시 다른 적에게 {bounce_damage} 피해를 "
+                            + "주는 식으로 적과 아군을 번갈아 최대 {bounces}번 맞힙니다.",
                     9)
             .ultimate("변신!",
-                    "{transform_time}초간 리본과 빛에 감싸여 변신합니다. 그동안 피해를 받지 않고 밀려나지도 않지만 "
-                            + "움직일 수 없으며, 변신 중에 나를 공격한 적은 '변신 중엔 공격 금지!' 별에 맞아 {star_damage} "
-                            + "피해를 입고 {star_root}초간 묶입니다(적마다 한 번). 이어서 {girl_duration}초간 마법소녀가 "
-                            + "되어 공중에서 한 번 더 뛸 수 있고(약 {double_jump}블록) 천천히 내려오며 낙하 피해를 받지 "
-                            + "않고, 하트 스틱의 쿨타임이 {girl_cooldown}초로 줄고 하트가 최대 {girl_bounces}번 튕깁니다. "
-                            + "끝날 때(F를 다시 누르면 일찍) '사랑의 피날레': 조준한 곳({finale_range}블록)에 "
-                            + "{finale_delay}초 뒤 거대한 하트가 떨어져 반경 {finale_radius}블록의 적에게 {finale_damage} "
-                            + "피해(내 {finale_ally_range}블록 안의 아군 1명마다 +{finale_ally_bonus}, 최대 "
-                            + "+{finale_ally_max})를 주고, 그 안의 나와 아군을 {finale_heal} 회복시킵니다.")
+                    "{transform_time}초간 변신하는 동안 피해와 넉백을 받지 않지만 움직일 수 없고, 그때 나를 공격한 적은 "
+                            + "{star_damage} 피해를 입고 {star_root}초간 묶입니다. 이어서 {girl_duration}초간 이단 점프와 "
+                            + "느린 낙하(낙하 피해 없음)를 얻고, 하트 스틱은 쿨타임이 {girl_cooldown}초로 줄고 최대 "
+                            + "{girl_bounces}번 튕깁니다. 끝날 때(F를 다시 누르면 일찍) 조준한 곳에 거대한 하트가 떨어져 반경 {finale_radius}블록의 적에게 "
+                            + "{finale_damage} 피해(주변 아군마다 +{finale_ally_bonus})를 주고 나와 아군을 {finale_heal} "
+                            + "회복시킵니다.")
             .ultimateNotStandalone()
             .param("ribbon_duration", 6)
             .param("ribbon_share", 25)
