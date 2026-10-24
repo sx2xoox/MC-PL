@@ -31,7 +31,6 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
-import org.bukkit.block.TileState;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
@@ -76,6 +75,8 @@ public final class MatchContext implements AbilityContext {
     private final Map<UUID, Integer> knockbackSuppressed = new HashMap<>();
     /** Owners whose ultimate code is running right now (nesting depth): {@link #asUltimate}. */
     private final Map<UUID, Integer> ultimateDepth = new HashMap<>();
+    /** Blocks abilities placed through {@link #placeTempBlock} and what they placed (only these can be restored early). */
+    private final Map<Block, BlockData> abilityTempBlocks = new HashMap<>();
     /** Entities created by ultimate code (tracked, summoned or tagged), by entity id. */
     private final Set<UUID> ultimateEntities = new HashSet<>();
     private int abilityDamageDepth;
@@ -609,13 +610,17 @@ public final class MatchContext implements AbilityContext {
         if (closed) {
             return false;
         }
-        return session.placeTempBlock(block, data, durationTicks);
+        boolean placed = session.placeTempBlock(block, data, durationTicks);
+        if (placed) {
+            abilityTempBlocks.put(block, block.getBlockData());
+        }
+        return placed;
     }
 
     @Override
     public boolean restoreTempBlock(Block block) {
-        // Never a block with a block entity: abilities cannot place those, so it is a loot chest (or the like).
-        if (closed || !hub.tempBlocks().isTemporary(block) || block.getState(false) instanceof TileState) {
+        BlockData placed = closed ? null : abilityTempBlocks.remove(block);
+        if (placed == null || !hub.tempBlocks().isTemporary(block) || !block.getBlockData().equals(placed)) {
             return false;
         }
         return hub.tempBlocks().restore(block);

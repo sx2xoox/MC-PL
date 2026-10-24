@@ -223,13 +223,13 @@ public interface AbilityContext {
     boolean placeTempBlock(Block block, BlockData data, long durationTicks);
 
     /**
-     * Restores a temporary block this ability placed with {@link #placeTempBlock} before its time is up: the original
-     * comes back at once and the spot can hold a new temporary block right away (setting the block back by hand would
-     * leave it marked temporary until the original expiry). Only call it for blocks the ability placed itself (check
-     * that the block is still what it put there: it may have expired and the spot been reused); a block with a block
-     * entity (a loot chest) is never restored.
+     * Restores a temporary block this ability placed with {@link #placeTempBlock} before its time is up (a wall that
+     * opens early, a cleared row): the original comes back at once (with the other half of a double plant) and the spot
+     * can hold a new temporary block right away (setting the block back by hand would leave it marked temporary until
+     * the original expiry). Only blocks placed through {@link #placeTempBlock} that still hold what was placed can be
+     * restored, so loot chests and other systems' blocks are never touched.
      *
-     * @return false if the block is not temporary (already restored, or never placed) or has a block entity
+     * @return false if the block is not such a temporary block (already restored, expired, or never placed here)
      */
     default boolean restoreTempBlock(Block block) {
         return false;
