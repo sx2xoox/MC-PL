@@ -65,19 +65,16 @@ public final class SphinxAbility extends Ability {
                     "내 수수께끼를 풀고 있는 적은 정신이 팔려 나에게 주는 피해가 {riddle_guard}% 줄어듭니다. 적이 내 "
                             + "수수께끼를 틀릴 때마다 궁극기 게이지를 {wrong_gauge}% 얻습니다.")
             .active("수수께끼",
-                    "조준한 적({range}블록 이내)의 머리 위에 그림 하나(해·달·별·사람·뱀)가 새겨진 수수께끼 석판을 띄우고(모두에게 "
-                            + "보이고 대상은 액션바로도 봅니다), 그 적 주위 {tile_distance}블록에 그림이 새겨진 사암 타일 3개를 "
-                            + "솟게 합니다. {answer_seconds}초 안에 석판과 같은 그림의 타일을 밟아야 합니다 — 맞히면 석판이 "
-                            + "부서지며 {right_damage} 피해만 받고, 틀린 타일에 서 있거나 아무것도 밟지 않으면 모래 발톱에 "
-                            + "{claw_damage} 피해와 {claw_silence}초 침묵을 받습니다. 나와 아군은 정답 타일 앞을 막아 방해할 수 "
-                            + "있습니다.",
+                    "조준한 적({range}블록)의 머리 위에 그림 하나를 띄우고 주위에 그림 타일 3개를 솟게 합니다. "
+                            + "{answer_seconds}초 뒤 같은 그림의 타일을 밟고 있으면 {right_damage} 피해만 받고, 틀리거나 아무것도 "
+                            + "밟지 않으면 {claw_damage} 피해와 {claw_silence}초 침묵을 받습니다. 나와 아군은 정답 타일을 막아 "
+                            + "방해할 수 있습니다.",
                     10)
             .ultimate("세 번째 수수께끼",
-                    "크게 포효하며 발밑에 3×3 거대한 그림 타일판(타일 하나 3×3블록)을 펼치고 반경 {board_radius}블록 안의 "
-                            + "적에게 수수께끼 3개를 연달아 냅니다(각 {riddle_seconds}초, 판 위의 큰 글자와 액션바). 매번 정답 "
-                            + "그림 칸 위에 있지 않은 적은 {miss_damage} 피해와 {miss_seconds}초간 {miss_slow}% 둔화(겹침)를 "
-                            + "받습니다. 셋 다 틀린 적은 \"정답은 인간이었다\" {all_wrong_damage} 피해와 {all_wrong_silence}초 "
-                            + "침묵을 받고, 셋 다 맞힌 적이 있으면 스핑크스가 분해 비틀거리며 {oedipus_damage} 피해를 입습니다.")
+                    "발밑에 거대한 그림 타일판을 펼치고 반경 {board_radius}블록의 적에게 수수께끼 3개를 연달아 냅니다(각 "
+                            + "{riddle_seconds}초). 매번 정답 칸 위에 없는 적은 {miss_damage} 피해와 {miss_seconds}초 둔화를 "
+                            + "받고, 셋 다 틀리면 {all_wrong_damage} 피해와 {all_wrong_silence}초 침묵을 더 받습니다. 셋 다 "
+                            + "맞힌 적마다 나는 {oedipus_damage} 피해를 입고 비틀거립니다.")
             .param("riddle_guard", 30)
             .param("wrong_gauge", 8)
             .param("range", 18)

@@ -80,14 +80,13 @@ public final class PuppeteerAbility extends Ability {
             .color(TextColor.color(0xE0314B))
             .difficulty(3)
             .passive("실",
-                    "근접 공격이나 능력으로 맞힌 적에게 {thread_duration}초간 붉은 실을 엮습니다. 실에 엮인 적이 나에게서 "
+                    "근접 공격이나 능력으로 맞힌 적에게 {thread_duration}초간 실을 엮습니다. 실에 엮인 적이 나에게서 "
                             + "{leash_range}블록보다 멀어지면 실이 팽팽하게 당겨져 이동 속도가 {leash_slow}% 느려집니다.")
             .active("꼭두각시",
-                    "조준한 적(없으면 실에 엮인 가장 가까운 적, {puppet_range}블록 이내)에게 조종 실을 걸어 {attach_damage} "
-                            + "피해를 주고, {puppet_duration}초간 내 움직임(걷기·점프)을 그대로 따라 하게 만듭니다. 조종당하는 "
-                            + "적은 스스로 움직이거나 능력을 쓸 수 없고(용암·불이나 낭떠러지로는 끌려가지 않습니다), 벽에 "
-                            + "부딪히면 {bump_damage} 피해(최대 {bump_max}번)를 받으며, 조종이 끝나면 실이 끊어지며 "
-                            + "{snap_damage} 피해를 받습니다. 실에 엮인 적은 {thread_bonus}초 더 오래 조종합니다.",
+                    "조준한 적(없으면 실에 엮인 가장 가까운 적, {puppet_range}블록)에게 조종 실을 걸어 {attach_damage} "
+                            + "피해를 주고, {puppet_duration}초간 내 걷기와 점프를 그대로 따라 하게 만듭니다. 조종당하는 적은 "
+                            + "스스로 움직이거나 능력을 쓸 수 없고, 벽에 부딪히면 {bump_damage} 피해, 조종이 끝날 때 "
+                            + "{snap_damage} 피해를 받습니다.",
                     12)
             .ultimate("인형극",
                     "거대한 십자 조종대를 띄우고 {ult_windup}초 뒤 반경 {ult_radius}블록 안의 적(실에 엮인 적은 "

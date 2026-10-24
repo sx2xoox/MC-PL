@@ -91,12 +91,9 @@ public final class MidasAbility extends Ability {
             .color(TextColor.color(0xF2C230))
             .difficulty(1)
             .passive("황금 손",
-                    "근접 공격할 때마다 적의 갑옷 한 부위를 {gild_duration}초간 황금으로 바꿉니다(가슴→다리→신발→투구 "
-                            + "순으로 쌓여 최대 {gild_max}부위). 모두에게 금 갑옷으로 보이고 방어력도 금 갑옷만큼 "
-                            + "떨어집니다(철 갑옷이면 가슴 −1·다리 −2·신발 −1). 황금은 무릅니다: 내가 아닌 누구든(아군, "
-                            + "개인전에서는 다른 적도) 금 부위가 있는 적을 무엇으로든 맞히면 한 부위가 쨍그랑 깨지며 그 "
-                            + "공격의 피해가 {shatter_bonus} 늘어납니다(같은 적은 {shatter_cooldown}초마다). 내 손은 금을 "
-                            + "깨지 않습니다.")
+                    "근접 공격할 때마다 적의 갑옷 한 부위를 {gild_duration}초간 금 갑옷으로 바꿔 방어력을 떨어뜨립니다"
+                            + "(최대 {gild_max}부위). 나 말고 누구든 도금된 적을 맞히면 한 부위가 깨지며 그 공격의 피해가 "
+                            + "{shatter_bonus} 늘어납니다.")
             .active("금화 세례",
                     "앞쪽 {coin_spread}° 부채꼴로 금화 {coin_count}닢을 튕겨 날립니다({coin_range}블록). 금화는 처음 맞은 "
                             + "적에게 {coin_damage} 피해를 주고(적마다 최대 {coin_max_hits}닢) 갑옷 한 부위를 도금합니다"

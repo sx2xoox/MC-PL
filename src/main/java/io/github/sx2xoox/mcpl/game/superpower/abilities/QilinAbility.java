@@ -76,27 +76,20 @@ public final class QilinAbility extends Ability {
             .color(TextColor.color(0xE8B931))
             .difficulty(1)
             .passive("인자한 짐승",
-                    "살아 있는 것을 해치기 싫어 내 근접 피해가 {melee_penalty}% 약합니다. 대신 근접 공격이 적중할 때마다 "
-                            + "{heal_radius}블록 안에서 가장 많이 다친 아군(나는 제외)의 체력을 {heal_amount} 회복시키고, "
-                            + "구름 발판을 하나 얻습니다(최대 1개, {step_duration}초 유지). 공중에서 점프하면 발밑에 구름이 "
-                            + "피어나 약 {step_height}블록 더 뛰어오릅니다. 구름을 밟고 다녀 낙하 피해를 받지 않습니다.")
+                    "근접 피해가 {melee_penalty}% 약한 대신, 근접 공격이 맞을 때마다 {heal_radius}블록 안에서 가장 다친 "
+                            + "아군을 {heal_amount} 회복시키고 구름 발판을 얻어 공중에서 한 번 더 뛸 수 있습니다. 낙하 피해를 "
+                            + "받지 않습니다.")
             .active("구름다리",
-                    "바라보는 방향으로 길이 {bridge_length}블록·폭 {bridge_width}블록의 구름다리를 {bridge_duration}초간 "
-                            + "놓습니다. 수평으로 쓰면 발 높이의 평평한 다리가 구덩이와 틈을 메우고, 위나 아래를 보고 쓰면 반 "
-                            + "칸씩 오르내리는 계단이 되어 최대 {bridge_rise}블록 높이까지 걸어서 오를 수 있습니다. 누구나 "
-                            + "건널 수 있으며 다리 위의 나와 아군은 이동 속도가 {bridge_speed}% 빨라집니다. 다리가 솟아오르는 "
-                            + "길목의 적은 {bridge_damage} 피해를 입고 {bridge_lift}블록 떠오릅니다. 다리가 사라질 때(내가 "
-                            + "쓰러지면 바로) 다리 위의 아군은 천천히 내려옵니다.",
+                    "바라보는 방향으로 {bridge_length}블록 길이의 구름다리를 {bridge_duration}초간 놓습니다. 위나 아래를 "
+                            + "보고 쓰면 최대 {bridge_rise}블록 높이까지 오르내리는 계단이 됩니다. 누구나 건널 수 있고 다리 "
+                            + "위의 나와 아군은 {bridge_speed}% 빨라지며, 다리가 솟는 길목의 적은 {bridge_damage} 피해를 입고 "
+                            + "떠오릅니다.",
                     10)
             .ultimate("상서로운 구름",
-                    "반경 {cloud_radius}블록의 구름 대지를 {cloud_height}블록 위(머리 위가 막혀 있으면 더 낮게)에 펼치고 "
-                            + "나와 반경 {cloud_radius}블록 안의 아군(머리 위가 막힌 아군은 빼고)을 그 위로 띄워 올립니다. "
-                            + "{cloud_duration}초 동안 구름 위의 나와 아군은 1초마다 체력을 {cloud_heal} 회복하고 구름 "
-                            + "아래의 적에게 주는 피해가 {cloud_bonus}% "
-                            + "늘며, 구름에 오르려는 적은 미끄러져 떨어집니다. 구름 그림자 아래의 적은 이동 속도가 "
-                            + "{shadow_slow}% 느려지고 1초마다 울리는 발굽 소리에 {hoof_damage} 피해를 입습니다. 구름에 "
-                            + "오르지 못했거나 구름에서 떨어진 아군, 그리고 구름이 걷힐 때(내가 쓰러지면 바로) 구름 위의 모두는 "
-                            + "천천히 내려옵니다.")
+                    "{cloud_height}블록 위에 반경 {cloud_radius}블록의 구름을 펼치고 주변 아군과 함께 올라탑니다. "
+                            + "{cloud_duration}초 동안 구름 위의 나와 아군은 1초마다 {cloud_heal} 회복하고 아래의 적에게 주는 피해가 "
+                            + "{cloud_bonus}% 늘며, 적은 구름에 오를 수 없습니다. 구름 그림자 아래의 적은 {shadow_slow}% "
+                            + "느려지고 1초마다 {hoof_damage} 피해를 입습니다. 구름이 걷히면 천천히 내려옵니다.")
             .ultimateNotStandalone()
             .param("melee_penalty", 20)
             .param("heal_radius", 10)

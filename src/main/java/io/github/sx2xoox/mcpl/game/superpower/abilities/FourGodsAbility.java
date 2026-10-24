@@ -79,30 +79,21 @@ public final class FourGodsAbility extends Ability {
             .color(TextColor.color(0x2E8BD8))
             .difficulty(3)
             .passive("사신의 순환",
-                    "수호신 자세가 액티브를 쓸 때마다 청룡 → 주작 → 백호 → 현무 순서(동 → 남 → 서 → 북)로 돌아갑니다. "
-                            + "지금과 다음 수호신이 머리 위 이름과 발밑 기운의 색으로 모두에게 보입니다. 청룡: 공격 속도 "
-                            + "+{dragon_attack_speed}%. 주작: 이동 속도 +{bird_speed}%, 낙하 피해 없음. 백호: 근접 피해 "
-                            + "+{tiger_melee}%. 현무: 받는 피해 -{tortoise_guard}%.")
+                    "액티브를 쓸 때마다 자세가 청룡 → 주작 → 백호 → 현무 순으로 바뀌며, 지금과 다음 자세는 모두에게 "
+                            + "보입니다. 청룡: 공격 속도 +{dragon_attack_speed}%. 주작: 이동 속도 +{bird_speed}%, 낙하 피해 "
+                            + "없음. 백호: 근접 피해 +{tiger_melee}%. 현무: 받는 피해 -{tortoise_guard}%.")
             .active("사신 소환",
-                    "지금의 수호신을 부른 뒤 다음 수호신으로 넘어갑니다. 청룡: 용의 혼이 앞 {dragon_length}블록을 "
-                            + "물결치며 지나가(벽에 막힙니다) 닿은 적에게 {dragon_damage} 피해를 주고 약 {dragon_drag}블록 "
-                            + "끌고 갑니다. 주작: 바라보는 쪽으로 {bird_distance}블록 낮게 날아가며 {bird_trail}초간 불깃털 "
-                            + "길(폭 {bird_width}블록)을 남깁니다. 길 위의 나와 아군은 이동 속도 +{trail_speed}%·점프 높이 "
-                            + "+{trail_jump}블록, 적은 0.5초마다 {trail_damage} 피해(불 아님)를 받습니다. 백호: "
-                            + "{tiger_range}블록 안의 조준한 적에게 호랑이 혼이 덮쳐 {tiger_damage} 피해를 주고 "
-                            + "{tiger_stagger}초간 휘청이게 합니다(이동·공격 속도 {stagger_slow}% 감소). 현무: "
-                            + "{tortoise_range}블록 안의 보이는(벽 너머는 안 됨) 가장 가까운 아군(없으면 적)과 자리를 "
-                            + "맞바꿉니다. 아군이면 둘 다, "
-                            + "적이면 나만 {tortoise_shell}초간 저항 II(받는 피해 40% 감소)를 얻고, 그 적은 "
-                            + "{tortoise_slow}초간 구속 II에 걸립니다.",
+                    "지금 자세의 수호신을 부릅니다. 청룡: 앞 {dragon_length}블록을 휩쓸어 {dragon_damage} 피해를 주고 "
+                            + "밀어냅니다. 주작: {bird_distance}블록 날아가며 {bird_trail}초간 나와 아군은 빨라지고 적은 피해를 "
+                            + "입는 길을 남깁니다. 백호: 조준한 적({tiger_range}블록)을 덮쳐 {tiger_damage} 피해를 주고 "
+                            + "휘청이게 합니다. 현무: {tortoise_range}블록 안의 가장 가까운 아군(없으면 적)과 자리를 바꾸고 "
+                            + "{tortoise_shell}초간 저항 II를 얻습니다.",
                     6)
             .ultimate("사신 결계",
-                    "사방에 네 수호신을 세워 {ult_duration}초간 반경 {ult_radius}블록의 정사각 결계를 칩니다. 동·남·서·북 "
-                            + "네 구역의 힘이 {ult_rotate}초마다 시계 방향으로 한 칸씩 돌아가며(바닥 색이 함께 돕니다) 그 구역의 "
-                            + "적에게 듭니다. 청룡: 0.5초마다 {ult_dragon_damage} 피해 + 가운데로 끌림. 주작: 0.5초마다 "
-                            + "{ult_bird_damage} 피해 + 살짝 띄움. 백호: 초당 {ult_tiger_dps} 피해 + 이동 속도 "
-                            + "-{ult_tiger_slow}%. 현무: 점프 불가 + 이동 속도 -{ult_tortoise_slow}%. 결계 한가운데"
-                            + "({ult_center}블록 이내)의 나는 네 자세의 힘을 모두 받습니다.")
+                    "{ult_duration}초간 반경 {ult_radius}블록의 정사각 결계를 칩니다. 동·남·서·북 네 구역의 힘이 "
+                            + "{ult_rotate}초마다 시계 방향으로 돌며 그 구역의 적에게 듭니다. 청룡: 약한 피해와 끌어당김. "
+                            + "주작: 약한 피해와 띄움. 백호: 초당 {ult_tiger_dps} 피해와 둔화. 현무: 점프 불가와 둔화. "
+                            + "한가운데의 나는 네 자세의 힘을 모두 받습니다.")
             .ultimateNotStandalone()
             .param("dragon_attack_speed", 15)
             .param("bird_speed", 15)

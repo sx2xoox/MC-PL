@@ -88,12 +88,10 @@ public final class MinerAbility extends Ability {
                             + "자리의 지형이 반경 {rock_block_radius}블록 부서집니다.",
                     10)
             .ultimate("광산 수레",
-                    "앞쪽 땅을 따라 {cart_length}블록 레일을 깔고 {cart_delay}초 뒤 광석을 가득 실은 수레를 밀어 보냅니다. "
-                            + "점점 빨라지는 수레는 레일 위에 선 적을 쓸어 담아 {cart_damage} 피해를 주고 싣고 달립니다. "
-                            + "레일 끝에서 수레가 뒤집히면 쏟아진 광석이 반경 {crash_radius}블록의 적(실린 적 포함)에게 "
-                            + "{crash_damage} 피해를 주고 {crash_slow_duration}초간 이동 속도를 {crash_slow}% 늦추며, 실린 "
-                            + "적은 레일 끝 너머 안전한 땅으로 최대 {toss_distance}블록 굴러떨어집니다. 전투 맵에서는 수레가 "
-                            + "뒤집힌 자리의 지형이 반경 {crash_block_radius}블록 부서집니다.")
+                    "앞쪽 땅을 따라 {cart_length}블록 레일을 깔고 {cart_delay}초 뒤 수레를 밀어 보냅니다. 수레는 레일 "
+                            + "위의 적을 쓸어 담아 {cart_damage} 피해를 주고 싣고 달리다 레일 끝에서 뒤집혀, 반경 "
+                            + "{crash_radius}블록의 적에게 {crash_damage} 피해를 주고 {crash_slow_duration}초간 "
+                            + "{crash_slow}% 느리게 합니다. 전투 맵에서는 그 자리의 지형도 부서집니다.")
             .param("fatigue_duration", 3)
             .param("fatigue_level", 2)
             .param("vein_duration", 5)
