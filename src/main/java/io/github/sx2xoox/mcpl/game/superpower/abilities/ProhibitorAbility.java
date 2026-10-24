@@ -39,6 +39,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -114,6 +115,11 @@ public final class ProhibitorAbility extends Ability {
     private static final Particle.DustTransition SEAL_FADE = SEAL.fade(1.2f);
     private static final Particle.DustTransition INK_FADE = INK.fade(1.0f);
 
+    /**
+     * The cap for optional displays (pops, the seal stamp). The ring's letters, the barrier's charms and scroll and the
+     * violator marks carry the rules themselves: they are always spawned (bounded: one ring, one barrier, one mark per
+     * enemy) and count against this cap, so the optional ones step aside when it is crowded.
+     */
     private static final int MAX_DISPLAYS = 24;
     private static final double TAU = Math.PI * 2;
     private static final int RING_GLYPHS = 8;
@@ -124,7 +130,14 @@ public final class ProhibitorAbility extends Ability {
     private static final String[] RING_TEXT = {"禁", "制", "律", "令"};
     private static final int BARRIER_SLIPS = 12;
     private static final String[] SLIP_TEXT = {"禁", "封", "止", "律"};
-    private static final double MARK_ABOVE = 0.55;
+    private static final float MARK_ABOVE = 0.55f;
+    /** The ring's letters orbit in steps this long (each interpolated over the whole step). */
+    private static final int RING_STEP = 2;
+    private static final double RING_SPIN = 0.05;
+    /** The barrier's charms bob in steps this long, gliding over each. */
+    private static final int SLIP_GLIDE = 4;
+    /** A lifted barrier's charms float up over this long. */
+    private static final int SLIP_RISE = 10;
 
     /** Cooldown rises above this from "ready" when a skill was just used. */
     private static final double READY = 0.05 + 1.0E-6;
@@ -173,24 +186,22 @@ public final class ProhibitorAbility extends Ability {
         violators.put(target.getUniqueId(), ctx().currentTick() + ticks);
         violatorBodies.put(target.getUniqueId(), target);
         TextDisplay mark = violatorMarks.get(target.getUniqueId());
-        if ((mark == null || !mark.isValid()) && reserve(1)) {
+        if (mark == null || !mark.isValid()) {
+            // Rides the head: no per-tick update, no lag behind a running violator.
             Player owner = player();
-            mark = keep(Displays.spawn(ctx(), owner, markSpot(target), TextDisplay.class, 0,
+            mark = keep(Displays.spawn(ctx(), owner, seat(target), TextDisplay.class, 0,
                     viewer -> !ctx().isConcealedFrom(target, viewer), d -> {
                         d.text(Text.mm("<b><" + SEAL_TAG + ">犯</" + SEAL_TAG + "></b>"));
                         d.setBillboard(Display.Billboard.CENTER);
                         d.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
                         d.setShadowed(true);
-                        d.setTeleportDuration(1);
-                        d.setTransformation(Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0));
+                        d.setTransformation(Displays.centered(0, MARK_ABOVE, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0));
                     }));
-            Displays.animateNextTick(ctx(), owner, mark, Displays.centered(0, 0, 0, 1.3f, 1.3f, 1.3f, 0, 0, 0), 4);
+            ride(target, mark);
+            Displays.animateNextTick(ctx(), owner, mark, Displays.centered(0, MARK_ABOVE, 0, 1.3f, 1.3f, 1.3f, 0, 0,
+                    0), 4);
             violatorMarks.put(target.getUniqueId(), mark);
         }
-    }
-
-    private static Location markSpot(LivingEntity target) {
-        return target.getLocation().add(0, target.getHeight() + MARK_ABOVE, 0);
     }
 
     @Override
@@ -212,8 +223,8 @@ public final class ProhibitorAbility extends Ability {
                 }
                 continue;
             }
-            if (mark != null && mark.isValid()) {
-                Displays.moveTo(mark, markSpot(body));
+            if (mark != null) {
+                ride(body, mark);
             }
             if (tick % 6 == 0 && !(body instanceof Player p && ctx().isConcealedFrom(p, player()))) {
                 Location head = body.getLocation().add(0, body.getHeight() + 0.2, 0);
@@ -318,6 +329,8 @@ public final class ProhibitorAbility extends Ability {
         private final long drawTicks;
         private final long duration;
         private final List<TextDisplay> glyphs = new ArrayList<>();
+        /** The tick each letter was laid (it grows into the ring from the next tick on). */
+        private final List<Long> laid = new ArrayList<>();
         private @Nullable TextDisplay seal;
         private @Nullable Taboo taboo;
         private @Nullable PromptHandle rule;
@@ -325,6 +338,8 @@ public final class ProhibitorAbility extends Ability {
         private long landedAt = -1;
         private long mobEnd = Long.MAX_VALUE;
         private double phase;
+        /** The seat height the ring's offsets were last sent for (a crouch lowers the seat). */
+        private double sentHeight = -1;
         private boolean over;
 
         Writing(Player owner, LivingEntity target) {
@@ -349,6 +364,22 @@ public final class ProhibitorAbility extends Ability {
             return ringCenter().add(Math.cos(angle) * RING_RADIUS, 0, Math.sin(angle) * RING_RADIUS);
         }
 
+        /**
+         * Letter {@code index} of the ring, flat on the ground at the feet: the letters ride the target (so they stay at
+         * its feet on every screen, its own included), their place on the turning ring is their offset from the seat.
+         */
+        private Transformation glyphPose(int index, double height, float sx, float sy, float sz) {
+            double angle = phase + index * TAU / RING_GLYPHS;
+            float yaw = (float) Math.toDegrees(angle) + 90f;
+            return flat(Math.cos(angle) * RING_RADIUS, GROUND_LIFT - height, Math.sin(angle) * RING_RADIUS, sx, sy, sz,
+                    yaw);
+        }
+
+        /** The vermilion seal under the feet, {@code lift} over the ground. */
+        private Transformation sealPose(double height, float scale, double lift) {
+            return flat(0, GROUND_LIFT + lift - height, 0, scale, scale, scale, 0);
+        }
+
         @Override
         public boolean test(long run) {
             if (over) {
@@ -360,6 +391,7 @@ public final class ProhibitorAbility extends Ability {
             }
             if (taboo == null) {
                 draw(run);
+                follow(run);
                 if (run + 1 >= drawTicks) {
                     close();
                 }
@@ -388,22 +420,22 @@ public final class ProhibitorAbility extends Ability {
         /** The brush lays the letters one by one around the feet. */
         private void draw(long run) {
             int due = (int) Math.min(RING_GLYPHS, Math.ceil((run + 1) * (double) RING_GLYPHS / drawTicks));
-            while (glyphs.size() < due && reserve(1)) {
+            double height = target.getHeight();
+            while (glyphs.size() < due) {
+                // The letters are the rule itself: always drawn (also while a barrier is up).
                 int index = glyphs.size();
                 Location at = glyphSpot(index);
                 String text = RING_TEXT[index % RING_TEXT.length];
-                float yaw = (float) Math.toDegrees(phase + index * TAU / RING_GLYPHS) + 90f;
-                TextDisplay glyph = keep(Displays.spawn(ctx(), owner, at, TextDisplay.class, 0, d -> {
+                TextDisplay glyph = keep(Displays.spawn(ctx(), owner, seat(target), TextDisplay.class, 0, d -> {
                     d.text(Text.mm("<b><" + INK_TAG + ">" + text + "</" + INK_TAG + "></b>"));
                     d.setBillboard(Display.Billboard.FIXED);
                     d.setBackgroundColor(PAPER);
                     d.setShadowed(false);
-                    d.setTeleportDuration(1);
-                    d.setTransformation(Displays.centered(0, 0, 0, 0.1f, 0.1f, 0.1f, yaw, -90, 0));
+                    d.setTransformation(glyphPose(index, height, 0.1f, 0.1f, 0.1f));
                 }));
-                Displays.animateNextTick(ctx(), owner, glyph, Displays.centered(0, 0, 0, GLYPH_SCALE, GLYPH_SCALE,
-                        GLYPH_SCALE, yaw, -90, 0), 3);
+                ride(target, glyph);
                 glyphs.add(glyph);
+                laid.add(ctx().currentTick());
                 Vfx.cloud(ctx(), at.clone().add(0, 0.1, 0), Particle.SQUID_INK, 2, 0.12, 0.01, null, false);
                 Vfx.dot(at.clone().add(0, 0.15, 0), Particle.DUST, INK_DUST, false);
                 Fx.sound(at, Sound.ITEM_BRUSH_BRUSHING_GENERIC, 0.5f, 1.3f + index * 0.06f);
@@ -425,17 +457,16 @@ public final class ProhibitorAbility extends Ability {
             taboo = kind;
             Location center = ringCenter();
             if (reserve(1)) {
-                TextDisplay stamp = keep(Displays.spawn(ctx(), owner, center, TextDisplay.class, 0, d -> {
+                double height = target.getHeight();
+                TextDisplay stamp = keep(Displays.spawn(ctx(), owner, seat(target), TextDisplay.class, 0, d -> {
                     d.text(Text.mm("<b><" + PAPER_TAG + ">禁</" + PAPER_TAG + "></b>"));
                     d.setBillboard(Display.Billboard.FIXED);
                     d.setBackgroundColor(SEAL_PAPER);
                     d.setShadowed(false);
-                    d.setTeleportDuration(1);
-                    d.setTransformation(Displays.centered(0, 0.6f, 0, SEAL_SCALE * 1.5f, SEAL_SCALE * 1.5f,
-                            SEAL_SCALE * 1.5f, 0, -90, 0));
+                    d.setTransformation(sealPose(height, SEAL_SCALE * 1.5f, 0.6));
                 }));
-                Displays.animateNextTick(ctx(), owner, stamp, Displays.centered(0, 0, 0, SEAL_SCALE, SEAL_SCALE,
-                        SEAL_SCALE, 0, -90, 0), 3);
+                ride(target, stamp);
+                Displays.animateNextTick(ctx(), owner, stamp, sealPose(height, SEAL_SCALE, 0), 3);
                 seal = stamp;
             }
             Vfx.ring(ctx(), center.clone().add(0, 0.05, 0), RING_RADIUS + 0.2, 20, 0, Particle.DUST_COLOR_TRANSITION,
@@ -495,23 +526,36 @@ public final class ProhibitorAbility extends Ability {
             }
         }
 
-        /** The letters follow the feet and turn slowly; ink drips from them. */
+        /**
+         * The letters ride the feet and turn slowly (in {@link #RING_STEP} steps); ink drips from them. When a crouch
+         * moves the seat they ride, their offsets follow at once, so the ring stays on the ground.
+         */
         private void follow(long run) {
-            phase += 0.05;
+            phase += RING_SPIN;
+            double height = target.getHeight();
+            boolean crouched = sentHeight >= 0 && Math.abs(height - sentHeight) > 1.0E-3;
+            boolean step = run % RING_STEP == 0 || crouched;
+            if (step) {
+                sentHeight = height;
+            }
+            long now = ctx().currentTick();
             for (int i = 0; i < glyphs.size(); i++) {
                 TextDisplay glyph = glyphs.get(i);
-                if (glyph.isValid()) {
-                    Displays.moveTo(glyph, glyphSpot(i));
-                    if (run % 3 == 0) {
-                        float yaw = (float) Math.toDegrees(phase + i * TAU / RING_GLYPHS) + 90f;
-                        Displays.animate(glyph, Displays.centered(0, 0, 0, GLYPH_SCALE, GLYPH_SCALE, GLYPH_SCALE,
-                                yaw, -90, 0), 3);
+                long age = now - laid.get(i);
+                if (glyph.isValid() && age > 0) {
+                    ride(target, glyph);
+                    if (step || age == 1) {
+                        Displays.animate(glyph, glyphPose(i, height, GLYPH_SCALE, GLYPH_SCALE, GLYPH_SCALE),
+                                crouched ? 0 : RING_STEP);
                     }
                 }
             }
             TextDisplay stamp = seal;
             if (stamp != null && stamp.isValid()) {
-                Displays.moveTo(stamp, ringCenter());
+                ride(target, stamp);
+                if (crouched) {
+                    Displays.animate(stamp, sealPose(height, SEAL_SCALE, 0), 0);
+                }
             }
             if (run % 4 == 0 && !(enemy != null && ctx().isConcealedFrom(enemy, owner))) {
                 Location at = glyphSpot((int) (run / 4) % RING_GLYPHS).add(0, 0.1, 0);
@@ -535,8 +579,7 @@ public final class ProhibitorAbility extends Ability {
             }
             TextDisplay stamp = seal;
             if (stamp != null && stamp.isValid()) {
-                Displays.animate(stamp, Displays.centered(0, 0.4f, 0, SEAL_SCALE * 1.6f, SEAL_SCALE * 1.6f,
-                        SEAL_SCALE * 1.6f, 0, -90, 0), 2);
+                Displays.animate(stamp, sealPose(target.getHeight(), SEAL_SCALE * 1.6f, 0.4), 2);
                 ctx().runLater(owner, 3, () -> {
                     if (stamp.isValid()) {
                         Displays.shrinkAway(ctx(), owner, stamp, 3);
@@ -562,10 +605,12 @@ public final class ProhibitorAbility extends Ability {
         private void honour() {
             over = true;
             Location center = ringCenter();
-            for (TextDisplay glyph : glyphs) {
+            double height = target.getHeight();
+            for (int i = 0; i < glyphs.size(); i++) {
+                TextDisplay glyph = glyphs.get(i);
                 if (glyph.isValid()) {
-                    Displays.animate(glyph, Displays.centered(0, 0, 0, GLYPH_SCALE * 1.4f, 0.02f, GLYPH_SCALE * 1.4f,
-                            0, -90, 0), 6);
+                    // Each letter soaks in where it lies, keeping its turn on the ring.
+                    Displays.animate(glyph, glyphPose(i, height, GLYPH_SCALE * 1.4f, 0.02f, GLYPH_SCALE * 1.4f), 6);
                     ctx().runLater(owner, 6, () -> {
                         if (glyph.isValid()) {
                             Displays.shrinkAway(ctx(), owner, glyph, 6);
@@ -596,6 +641,7 @@ public final class ProhibitorAbility extends Ability {
                 }
             }
             glyphs.clear();
+            laid.clear();
             TextDisplay stamp = seal;
             if (stamp != null && stamp.isValid()) {
                 Displays.shrinkAway(ctx(), owner, stamp, 4);
@@ -642,21 +688,27 @@ public final class ProhibitorAbility extends Ability {
         return ActivationResult.success();
     }
 
+    /** How often one enemy was punished by one barrier: kept when it walks out and back in. */
+    private static final class Tally {
+        long lastPunish = Long.MIN_VALUE / 2;
+        int punished;
+    }
+
     /** How one judged player (an enemy or the caster) stands with the barrier's rule. */
     private static final class Judged {
         final Player player;
         final @Nullable PromptHandle handle;
+        final Tally tally;
         long lastMove;
-        long lastPunish = Long.MIN_VALUE / 2;
-        int punished;
         double lastCooldown;
         double lastGauge;
         long lastJudgedJump = Long.MIN_VALUE / 2;
         boolean baselined;
 
-        Judged(Player player, @Nullable PromptHandle handle, long now, double cooldown, double gauge) {
+        Judged(Player player, @Nullable PromptHandle handle, Tally tally, long now, double cooldown, double gauge) {
             this.player = player;
             this.handle = handle;
+            this.tally = tally;
             this.lastMove = now;
             this.lastCooldown = cooldown;
             this.lastGauge = gauge;
@@ -674,6 +726,7 @@ public final class ProhibitorAbility extends Ability {
         private final List<TextDisplay> slips = new ArrayList<>();
         private @Nullable TextDisplay scroll;
         private final Map<UUID, Judged> judged = new LinkedHashMap<>();
+        private final Map<UUID, Tally> tallies = new HashMap<>();
         private @Nullable Judged self;
         private boolean over;
 
@@ -699,7 +752,18 @@ public final class ProhibitorAbility extends Ability {
         }
 
         void raise() {
-            for (int i = 0; i < BARRIER_SLIPS && reserve(1); i++) {
+            // The scroll and the charms are the barrier itself: always raised, the scroll first.
+            Location top = center.clone().add(0, 3.8, 0);
+            TextDisplay hanging = keep(Displays.spawn(ctx(), owner, top, TextDisplay.class, 0, d -> {
+                d.text(Text.mm(scrollText(duration)));
+                d.setBillboard(Display.Billboard.VERTICAL);
+                d.setBackgroundColor(PAPER);
+                d.setShadowed(false);
+                d.setTransformation(Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0));
+            }));
+            Displays.animateNextTick(ctx(), owner, hanging, Displays.centered(0, 0, 0, 2.0f, 2.0f, 2.0f, 0, 0, 0), 6);
+            scroll = hanging;
+            for (int i = 0; i < BARRIER_SLIPS; i++) {
                 Location at = slipSpot(i, 0);
                 String text = SLIP_TEXT[i % SLIP_TEXT.length];
                 TextDisplay slip = keep(Displays.spawn(ctx(), owner, at.clone().add(0, -1.2, 0), TextDisplay.class, 0,
@@ -709,25 +773,12 @@ public final class ProhibitorAbility extends Ability {
                             d.setBillboard(Display.Billboard.VERTICAL);
                             d.setBackgroundColor(PAPER);
                             d.setShadowed(false);
-                            d.setTeleportDuration(3);
+                            d.setTeleportDuration(SLIP_GLIDE);
                             d.setTransformation(Displays.centered(0, 0, 0, 1.1f, 1.1f, 1.1f, 0, 0, 0));
                         }));
                 slips.add(slip);
                 int delay = 1 + i / 2;
                 ctx().runLater(owner, delay, () -> Displays.moveTo(slip, at));
-            }
-            if (reserve(1)) {
-                Location top = center.clone().add(0, 3.8, 0);
-                TextDisplay hanging = keep(Displays.spawn(ctx(), owner, top, TextDisplay.class, 0, d -> {
-                    d.text(Text.mm(scrollText(duration)));
-                    d.setBillboard(Display.Billboard.VERTICAL);
-                    d.setBackgroundColor(PAPER);
-                    d.setShadowed(false);
-                    d.setTransformation(Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0));
-                }));
-                Displays.animateNextTick(ctx(), owner, hanging, Displays.centered(0, 0, 0, 2.0f, 2.0f, 2.0f, 0, 0, 0),
-                        6);
-                scroll = hanging;
             }
             Location ground = center.clone().add(0, 0.1, 0);
             Vfx.shockwave(ctx(), owner, ground, 0.5, radius, 8, Particle.DUST_COLOR_TRANSITION, SEAL_FADE, true);
@@ -739,7 +790,8 @@ public final class ProhibitorAbility extends Ability {
             ctx().announce(Text.mm("<b><" + SEAL_TAG + ">結界</" + SEAL_TAG + "></b> <white>금제 결계의 규칙: "
                     + rule.words + "</white> <gray>(" + Fx.seconds(duration) + "초)</gray>"));
             long now = ctx().currentTick();
-            self = new Judged(owner, promptFor(owner, true), now, ctx().cooldownRemaining(owner), ctx().gauge(owner));
+            self = new Judged(owner, promptFor(owner, true), new Tally(), now, ctx().cooldownRemaining(owner),
+                    ctx().gauge(owner));
             Loop.repeat(ctx(), owner, 1, 1, duration, this, () -> end(false));
         }
 
@@ -795,7 +847,9 @@ public final class ProhibitorAbility extends Ability {
                         || !contains(enemy.getLocation()) || ctx().isConcealedFrom(enemy, owner)) {
                     continue;
                 }
-                judged.put(enemy.getUniqueId(), new Judged(enemy, promptFor(enemy, false), now,
+                // Walking back in only shows the rule again: the punishments so far still count.
+                Tally tally = tallies.computeIfAbsent(enemy.getUniqueId(), id -> new Tally());
+                judged.put(enemy.getUniqueId(), new Judged(enemy, promptFor(enemy, false), tally, now,
                         ctx().cooldownRemaining(enemy), ctx().gauge(enemy)));
             }
             Iterator<Judged> it = judged.values().iterator();
@@ -808,7 +862,8 @@ public final class ProhibitorAbility extends Ability {
                     continue;
                 }
                 if (!contains(enemy.getLocation())) {
-                    if (!Inputs.isExempt(ctx(), enemy, InputKey.FORWARD, owner) && shown(entry)) {
+                    if (!Inputs.isExempt(ctx(), enemy, InputKey.FORWARD, owner) && shown(entry)
+                            && now >= Inputs.judgeFrom(ctx(), entry.handle, params().ticks("judge_grace"))) {
                         violate(entry, now, "결계 이탈!");
                     }
                     cancel(entry);
@@ -843,7 +898,9 @@ public final class ProhibitorAbility extends Ability {
                 entry.lastMove = now;
                 return false;
             }
-            long from = Inputs.judgeFrom(ctx(), handle, 0);
+            // "Don't stop" has its own grace (stop_grace); jumping and casting get the usual one to let go of the key
+            // (the caster had to be airborne to pick "stay grounded").
+            long from = Inputs.judgeFrom(ctx(), handle, rule == Rule.KEEP_MOVING ? 0 : params().ticks("judge_grace"));
             if (now < from) {
                 entry.lastMove = now;
                 return false;
@@ -877,12 +934,13 @@ public final class ProhibitorAbility extends Ability {
 
         /** An enemy broke the rule (or walked out): a vermilion bolt from the nearest charm, the punishment. */
         private void violate(Judged entry, long now, String line) {
-            if (entry.punished >= Math.max(0, params().integer("barrier_max"))
-                    || now - entry.lastPunish < params().ticks("barrier_interval")) {
+            Tally tally = entry.tally;
+            if (tally.punished >= Math.max(0, params().integer("barrier_max"))
+                    || now - tally.lastPunish < params().ticks("barrier_interval")) {
                 return;
             }
-            entry.punished++;
-            entry.lastPunish = now;
+            tally.punished++;
+            tally.lastPunish = now;
             Player enemy = entry.player;
             Location body = Fx.body(enemy);
             Location from = nearestSlip(body);
@@ -977,9 +1035,10 @@ public final class ProhibitorAbility extends Ability {
                         }
                     });
                 } else {
-                    slip.setTeleportDuration(10);
-                    Displays.moveTo(slip, slip.getLocation().add(0, 2.5, 0));
-                    ctx().runLater(owner, 8, () -> {
+                    // The slower glide must reach the clients before the move, or they lerp it in the old 4 ticks.
+                    slip.setTeleportDuration(SLIP_RISE);
+                    ctx().runLater(owner, 1, () -> Displays.moveTo(slip, slip.getLocation().add(0, 2.5, 0)));
+                    ctx().runLater(owner, SLIP_RISE - 1, () -> {
                         if (slip.isValid()) {
                             Displays.shrinkAway(ctx(), owner, slip, 5);
                         }
@@ -1015,6 +1074,45 @@ public final class ProhibitorAbility extends Ability {
     }
 
     // ================================================================== helpers
+
+    /**
+     * Flat text (laid face up) centered on ({@code x}, {@code y}, {@code z}) from the entity, its top toward
+     * {@code -facing(yaw)}. Text displays are bottom-anchored: a line runs 11/40 of a block per unit scale from the
+     * origin toward its top, so the origin moves half of that the other way.
+     */
+    private static Transformation flat(double x, double y, double z, float sx, float sy, float sz, float yaw) {
+        double half = (10 + 1) / 80.0 * sy;
+        Vector toward = facing(yaw).multiply(half);
+        return Displays.centered((float) (x + toward.getX()), (float) y, (float) (z + toward.getZ()), sx, sy, sz, yaw,
+                -90, 0);
+    }
+
+    /** The horizontal unit vector a Minecraft yaw (degrees) faces. */
+    private static Vector facing(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+    }
+
+    /** Where a display riding {@code body} sits before its transformation: the top of the body's box. */
+    private static Location seat(LivingEntity body) {
+        return body.getLocation().add(0, body.getHeight(), 0);
+    }
+
+    /**
+     * Seats {@code part} on {@code body} as a passenger (again, after anything dismounted it), so every client moves it
+     * with the body's own model. A mounted part is never teleported (that would dismount it); its transformation
+     * holds its offset from the seat.
+     */
+    private static void ride(LivingEntity body, Display part) {
+        if (!part.isValid() || !body.isValid() || body.isDead() || body.equals(part.getVehicle())) {
+            return;
+        }
+        if (part.isInsideVehicle()) {
+            part.leaveVehicle();
+        }
+        Displays.moveTo(part, seat(body));
+        body.addPassenger(part);
+    }
 
     /** A word popping up over {@code target}'s head and fading (hidden from those who cannot see it). */
     private void pop(Player owner, LivingEntity target, String mini, float scale) {

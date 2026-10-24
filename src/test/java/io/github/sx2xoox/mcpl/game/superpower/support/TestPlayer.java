@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.superpower.support;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -20,6 +21,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.RayTracing;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.TestSkinParts;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.VanillaAttributes;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics;
+import io.papermc.paper.entity.TeleportFlag;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import net.kyori.adventure.key.Key;
@@ -36,6 +38,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.event.player.PlayerInputEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.Plugin;
@@ -96,6 +99,25 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
     public TestPlayer(ServerMock server, String name) {
         super(server, name);
         VanillaAttributes.completePlayer(attributes);
+    }
+
+    /**
+     * Like Paper since 1.21.10 ({@code CraftPlayer#teleport0}): a teleport within the world keeps the passengers riding
+     * (mounted displays; MockBukkit still refuses such a teleport unless the deprecated RETAIN_PASSENGERS is passed),
+     * and a player carrying passengers cannot change worlds.
+     */
+    @Override
+    @SuppressWarnings("removal")
+    public boolean teleport(Location location, PlayerTeleportEvent.TeleportCause cause, TeleportFlag... flags) {
+        if (!hasPassengers()) {
+            return super.teleport(location, cause, flags);
+        }
+        if (location.getWorld() != null && !location.getWorld().equals(getWorld())) {
+            return false;
+        }
+        TeleportFlag[] keep = Arrays.copyOf(flags, flags.length + 1);
+        keep[flags.length] = TeleportFlag.EntityState.RETAIN_PASSENGERS;
+        return super.teleport(location, cause, keep);
     }
 
     /** Like the server: absorption is clamped to the {@link Attribute#MAX_ABSORPTION} attribute. */

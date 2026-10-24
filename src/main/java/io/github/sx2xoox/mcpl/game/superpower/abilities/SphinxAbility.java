@@ -40,6 +40,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.util.Transformation;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -107,13 +110,17 @@ public final class SphinxAbility extends Ability {
     private static final Particle.DustOptions GOLD_DUST = new Particle.DustOptions(Color.fromRGB(0xE2B33C), 0.9f);
     private static final Particle.DustTransition GOLD_GLOW = ROYAL.glow(1.2f);
     private static final Particle.DustTransition SAND_FADE = SAND.fade(1.3f);
-    private static final Color TILE_PAPER = Color.fromARGB(230, 0xD8, 0xC0, 0x8A);
     private static final Color NO_BACKGROUND = Color.fromARGB(0, 0, 0, 0);
     private static final Material TILE = Material.SMOOTH_SANDSTONE;
     private static final Material TILE_ALT = Material.CUT_SANDSTONE;
     private static final Material TABLET = Material.CHISELED_SANDSTONE;
     private static final Material CLAW = Material.SANDSTONE;
 
+    /**
+     * The cap for optional displays (claws, pops). Tiles, tablets and the board title are the riddle itself: they are
+     * always spawned (one riddle and one board at a time, at most 26) and count against this cap, so the optional ones
+     * step aside while the board is up.
+     */
     private static final int MAX_DISPLAYS = 24;
     private static final double TAU = Math.PI * 2;
     /** The riddle's tiles: width (blocks) and how far around a tile the feet still count. */
@@ -122,10 +129,22 @@ public final class SphinxAbility extends Ability {
     private static final double BOARD_STEP = 3.0;
     private static final double FEET_SLACK = 0.3;
     private static final double TILE_HEIGHT = 0.14;
+    /** Glyph scales: a tile's two text lines must fit on it (a line is 10/40 of a block per unit scale). */
+    private static final float SMALL_GLYPH = 2.3f;
+    private static final float BOARD_GLYPH = 5.2f;
+    private static final int GLYPH_LINES = 2;
+    /** The tablet spins this high over the head (from the seat it rides). */
+    private static final float TABLET_ABOVE = 1.75f;
+    private static final int TABLET_STEP = 4;
+    /** Claws rise this far from the feet and lean in by this much when they close. */
+    private static final double CLAW_RADIUS = 0.75;
+    private static final float CLAW_CLOSE = 30f;
     private static final long PROMPT_WAIT = 20;
     private static final long CLAW_TICKS = 10;
     private static final long BOARD_RISE = 12;
     private static final long REVEAL_TICKS = 8;
+    /** The largest reaction slack the match gives (ping clamped at 350 ms). */
+    private static final long MAX_SLACK = 8;
 
     // ------------------------------------------------------------------ state
     private final List<Display> live = new ArrayList<>();
@@ -363,18 +382,17 @@ public final class SphinxAbility extends Ability {
             order.remove(answer);
             order.addFirst(answer);
             for (int i = 0; i < spots.size(); i++) {
-                tiles.add(new Tile(owner, spots.get(i), order.get(i), SMALL_TILE, 2.6f, i % 2 == 0 ? TILE : TILE_ALT,
-                        i));
+                tiles.add(new Tile(owner, spots.get(i), order.get(i), SMALL_TILE, SMALL_GLYPH,
+                        i % 2 == 0 ? TILE : TILE_ALT, i));
             }
-            if (reserve(1)) {
-                Location head = tabletSpot();
-                BlockDisplay cube = keep(Displays.block(ctx(), owner, head, TABLET.createBlockData(),
-                        Displays.scaled(0.05f), 0, viewer -> !ctx().isConcealedFrom(target, viewer)));
-                cube.setTeleportDuration(1);
-                Displays.animateNextTick(ctx(), owner, cube, Displays.transform(0, 0, 0, 0.45f, 0.45f, 0.12f, 0, 0,
-                        0), 4);
-                tablet = cube;
-            }
+            // The tablet rides the head (no lag behind a target running to a tile) and spins in TABLET_STEP steps.
+            BlockDisplay cube = keep(Displays.block(ctx(), owner, seat(target), TABLET.createBlockData(),
+                    Displays.transform(0, TABLET_ABOVE, 0, 0.05f, 0.05f, 0.05f, 0, 0, 0), 0,
+                    viewer -> !ctx().isConcealedFrom(target, viewer)));
+            ride(target, cube);
+            Displays.animateNextTick(ctx(), owner, cube, Displays.transform(0, TABLET_ABOVE, 0, 0.45f, 0.45f, 0.12f, 0,
+                    0, 0), TABLET_STEP);
+            tablet = cube;
             Location feet = target.getLocation().add(0, 0.1, 0);
             Vfx.shockwave(ctx(), owner, feet, 0.4, Math.max(1.6, params().num("tile_distance")) + 0.6, 6,
                     Particle.DUST_COLOR_TRANSITION, SAND_FADE, false);
@@ -383,7 +401,7 @@ public final class SphinxAbility extends Ability {
         }
 
         private Location tabletSpot() {
-            return target.getLocation().add(0, target.getHeight() + 1.75, 0);
+            return seat(target).add(0, TABLET_ABOVE, 0);
         }
 
         @Override
@@ -404,9 +422,10 @@ public final class SphinxAbility extends Ability {
             }
             BlockDisplay cube = tablet;
             if (cube != null && cube.isValid()) {
-                Displays.moveTo(cube, tabletSpot());
-                if (run % 4 == 0) {
-                    Displays.animate(cube, Displays.transform(0, 0, 0, 0.45f, 0.45f, 0.12f, run * 9f, 0, 0), 4);
+                ride(target, cube);
+                if (run % TABLET_STEP == 0) {
+                    Displays.animate(cube, Displays.transform(0, TABLET_ABOVE, 0, 0.45f, 0.45f, 0.12f, run * 9f, 0, 0),
+                            TABLET_STEP);
                 }
             }
             if (run % 3 == 0) {
@@ -503,19 +522,19 @@ public final class SphinxAbility extends Ability {
         }
     }
 
-    /** Sandstone claws burst out of the ground and close on {@code target}. */
+    /** Sandstone claws burst out of the ground around {@code target} and close in on it. */
     private void claws(Player owner, LivingEntity target) {
         Location feet = target.getLocation();
         for (int i = 0; i < 3 && reserve(1); i++) {
             double angle = i * TAU / 3;
-            float yaw = (float) Math.toDegrees(Math.atan2(-Math.cos(angle), Math.sin(angle)));
-            Location at = feet.clone().add(Math.cos(angle) * 0.7, 0.2, Math.sin(angle) * 0.7);
+            // Faces the feet (like yawToward(at, feet)): its tip leans in toward the victim when it closes.
+            float yaw = (float) Math.toDegrees(Math.atan2(Math.cos(angle), -Math.sin(angle)));
+            Location at = feet.clone().add(Math.cos(angle) * CLAW_RADIUS, 0, Math.sin(angle) * CLAW_RADIUS);
             BlockDisplay claw = keep(Displays.block(ctx(), owner, at, CLAW.createBlockData(),
-                    Displays.transform(0, -0.9f, 0, 0.18f, 1.3f, 0.18f, yaw, 0, 0), CLAW_TICKS + 8));
-            Displays.animateNextTick(ctx(), owner, claw, Displays.transform(0, 0.4f, 0, 0.18f, 1.3f, 0.18f, yaw, 0,
-                    0), 3);
-            ctx().runLater(owner, 4, () -> Displays.animate(claw, Displays.transform(0, 0.4f, 0, 0.18f, 1.3f, 0.18f,
-                    yaw, 35, 0), 3));
+                    rooted(-1.35f, 0.18f, 1.3f, 0.18f, yaw, 0), CLAW_TICKS + 8));
+            Displays.animateNextTick(ctx(), owner, claw, rooted(-0.05f, 0.18f, 1.3f, 0.18f, yaw, 0), 3);
+            ctx().runLater(owner, 4, () -> Displays.animate(claw, rooted(-0.05f, 0.18f, 1.3f, 0.18f, yaw, CLAW_CLOSE),
+                    3));
             ctx().runLater(owner, CLAW_TICKS, () -> {
                 if (claw.isValid()) {
                     Displays.shrinkAway(ctx(), owner, claw, 6);
@@ -534,6 +553,49 @@ public final class SphinxAbility extends Ability {
         return Material.SAND.createBlockData();
     }
 
+    /**
+     * A block display standing on its base: the base's middle at {@code baseY} over the entity, pitched (toward the
+     * yaw's facing) around that base, so it bends over instead of seesawing around its middle.
+     */
+    private static Transformation rooted(float baseY, float sx, float sy, float sz, float yaw, float pitch) {
+        Quaternionf rotation = new Quaternionf()
+                .rotateY((float) Math.toRadians(-yaw))
+                .rotateX((float) Math.toRadians(pitch));
+        Vector3f foot = rotation.transform(new Vector3f(sx * 0.5f, 0, sz * 0.5f));
+        return new Transformation(new Vector3f(-foot.x, baseY - foot.y, -foot.z), rotation, new Vector3f(sx, sy, sz),
+                new Quaternionf());
+    }
+
+    /**
+     * Flat text (pitch -90) centered on the entity. Text displays are bottom-anchored: laid flat, their lines run from
+     * the origin toward -Z by {@code (lines * 10 + 1) / 40} blocks per unit scale, so they move half of that toward +Z.
+     */
+    private static Transformation flatText(float scale, int lines) {
+        float half = (float) ((lines * 10 + 1) / 80.0 * scale);
+        return Displays.centered(0, 0, half, scale, scale, scale, 0, -90, 0);
+    }
+
+    /** Where a display riding {@code body} sits before its transformation: the top of the body's box. */
+    private static Location seat(LivingEntity body) {
+        return body.getLocation().add(0, body.getHeight(), 0);
+    }
+
+    /**
+     * Seats {@code part} on {@code body} as a passenger (again, after anything dismounted it), so every client moves it
+     * with the body's own model. A mounted part is never teleported (that would dismount it); its transformation
+     * holds its offset from the seat.
+     */
+    private static void ride(LivingEntity body, Display part) {
+        if (!part.isValid() || !body.isValid() || body.isDead() || body.equals(part.getVehicle())) {
+            return;
+        }
+        if (part.isInsideVehicle()) {
+            part.leaveVehicle();
+        }
+        Displays.moveTo(part, seat(body));
+        body.addPassenger(part);
+    }
+
     // ================================================================== tiles
 
     /** A picture tile lying on the ground: a sandstone plate with its glyph and word on top. */
@@ -545,7 +607,6 @@ public final class SphinxAbility extends Ability {
         private final Player owner;
         private @Nullable BlockDisplay plate;
         private @Nullable TextDisplay glyph;
-        private final float glyphScale;
 
         Tile(Player owner, Location ground, Picture picture, double size, float glyphScale, Material stone,
              int order) {
@@ -553,30 +614,24 @@ public final class SphinxAbility extends Ability {
             this.picture = picture;
             this.center = ground.clone();
             this.size = size;
-            this.glyphScale = glyphScale;
             float s = (float) size;
-            boolean full = reserve(2);
-            if (full) {
-                Location at = center.clone().add(0, TILE_HEIGHT / 2, 0);
-                BlockDisplay block = keep(Displays.block(ctx(), owner, at, stone.createBlockData(),
-                        Displays.transform(0, -0.4f, 0, s, (float) TILE_HEIGHT, s, 0, 0, 0), 0));
-                ctx().runLater(owner, 1 + order, () -> Displays.animate(block, Displays.transform(0, 0, 0, s,
-                        (float) TILE_HEIGHT, s, 0, 0, 0), 5));
-                plate = block;
-            }
-            if (full || reserve(1)) {
-                Location top = center.clone().add(0, TILE_HEIGHT + 0.02, 0);
-                TextDisplay text = keep(Displays.spawn(ctx(), owner, top, TextDisplay.class, 0, d -> {
-                    d.text(Text.mm(glyphText(false)));
-                    d.setBillboard(Display.Billboard.FIXED);
-                    d.setBackgroundColor(full ? NO_BACKGROUND : TILE_PAPER);
-                    d.setShadowed(false);
-                    d.setTransformation(Displays.centered(0, 0, 0, 0.05f, 0.05f, 0.05f, 0, -90, 0));
-                }));
-                ctx().runLater(owner, 3 + order, () -> Displays.animate(text, Displays.centered(0, 0, 0,
-                        glyphScale, glyphScale, glyphScale, 0, -90, 0), 4));
-                glyph = text;
-            }
+            // Plate and glyph are the riddle itself: always spawned (the answer is never an invisible square).
+            Location at = center.clone().add(0, TILE_HEIGHT / 2, 0);
+            BlockDisplay block = keep(Displays.block(ctx(), owner, at, stone.createBlockData(),
+                    Displays.transform(0, -0.4f, 0, s, (float) TILE_HEIGHT, s, 0, 0, 0), 0));
+            ctx().runLater(owner, 1 + order, () -> Displays.animate(block, Displays.transform(0, 0, 0, s,
+                    (float) TILE_HEIGHT, s, 0, 0, 0), 5));
+            plate = block;
+            Location top = center.clone().add(0, TILE_HEIGHT + 0.02, 0);
+            TextDisplay text = keep(Displays.spawn(ctx(), owner, top, TextDisplay.class, 0, d -> {
+                d.text(Text.mm(glyphText(false)));
+                d.setBillboard(Display.Billboard.FIXED);
+                d.setBackgroundColor(NO_BACKGROUND);
+                d.setShadowed(false);
+                d.setTransformation(flatText(0.05f, GLYPH_LINES));
+            }));
+            ctx().runLater(owner, 3 + order, () -> Displays.animate(text, flatText(glyphScale, GLYPH_LINES), 4));
+            glyph = text;
             Vfx.cloud(ctx(), center.clone().add(0, 0.3, 0), Particle.BLOCK, 10, size * 0.4, 0.08, sandData(), false);
         }
 
@@ -654,7 +709,13 @@ public final class SphinxAbility extends Ability {
             }
             TextDisplay text = glyph;
             if (text != null && text.isValid()) {
-                Displays.shrinkAway(ctx(), owner, text, 4);
+                // Shrinks into the tile's middle (its centering offset shrinks with it).
+                Displays.animate(text, flatText(0.001f, GLYPH_LINES), 4);
+                ctx().runLater(owner, 4, () -> {
+                    if (text.isValid()) {
+                        text.remove();
+                    }
+                });
             }
         }
     }
@@ -684,6 +745,21 @@ public final class SphinxAbility extends Ability {
 
         Score(LivingEntity body) {
             this.body = body;
+        }
+    }
+
+    /** One riddle on the board: the prompts still open, and whether its answer is out. */
+    private static final class Round {
+        final int index;
+        final Picture answer;
+        final List<PromptHandle> handles = new ArrayList<>();
+        int open;
+        boolean timeUp;
+        boolean revealed;
+
+        Round(int index, Picture answer) {
+            this.index = index;
+            this.answer = answer;
         }
     }
 
@@ -731,23 +807,21 @@ public final class SphinxAbility extends Ability {
                     }
                     int ring = Math.abs(i) + Math.abs(j);
                     Material stone = (i + j) % 2 == 0 ? TILE : TILE_ALT;
-                    tiles.add(new Tile(owner, spot, layout.get(index++), BOARD_TILE, 5.2f, stone, ring * 2));
+                    tiles.add(new Tile(owner, spot, layout.get(index++), BOARD_TILE, BOARD_GLYPH, stone, ring * 2));
                 }
             }
-            if (reserve(1)) {
-                TextDisplay text = keep(Displays.spawn(ctx(), owner, center.clone().add(0, 5.0, 0), TextDisplay.class, 0,
-                        d -> {
-                            d.text(Text.mm("<b><" + GOLD_TAG + ">세 번째 수수께끼</" + GOLD_TAG + "></b>\n<" + SAND_TAG
-                                    + ">스핑크스가 묻는다</" + SAND_TAG + ">"));
-                            d.setBillboard(Display.Billboard.CENTER);
-                            d.setBackgroundColor(Color.fromARGB(150, 0x17, 0x14, 0x1F));
-                            d.setLineWidth(220);
-                            d.setShadowed(true);
-                            d.setTransformation(Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0));
-                        }));
-                Displays.animateNextTick(ctx(), owner, text, Displays.centered(0, 0, 0, 1.8f, 1.8f, 1.8f, 0, 0, 0), 6);
-                title = text;
-            }
+            TextDisplay text = keep(Displays.spawn(ctx(), owner, center.clone().add(0, 5.0, 0), TextDisplay.class, 0,
+                    d -> {
+                        d.text(Text.mm("<b><" + GOLD_TAG + ">세 번째 수수께끼</" + GOLD_TAG + "></b>\n<" + SAND_TAG
+                                + ">스핑크스가 묻는다</" + SAND_TAG + ">"));
+                        d.setBillboard(Display.Billboard.CENTER);
+                        d.setBackgroundColor(Color.fromARGB(150, 0x17, 0x14, 0x1F));
+                        d.setLineWidth(220);
+                        d.setShadowed(true);
+                        d.setTransformation(Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0));
+                    }));
+            Displays.animateNextTick(ctx(), owner, text, Displays.centered(0, 0, 0, 1.8f, 1.8f, 1.8f, 0, 0, 0), 6);
+            title = text;
             Location chest = owner.getLocation().add(0, 1.2, 0);
             Fx.sound(chest, Sound.ENTITY_RAVAGER_ROAR, 1.4f, 0.8f);
             Fx.sound(chest, Sound.ENTITY_ENDER_DRAGON_GROWL, 0.6f, 1.4f);
@@ -759,7 +833,9 @@ public final class SphinxAbility extends Ability {
             ctx().announce(Text.mm("<b><" + GOLD_TAG + ">스핑크스</" + GOLD_TAG + "></b> <white>세 번째 수수께끼가 "
                     + "시작됩니다 — 정답 그림 칸 위에 서라!</white>"));
             ctx().runLater(owner, BOARD_RISE, () -> ask(0));
-            Loop.repeat(ctx(), owner, 1, 2, (BOARD_RISE + 3 * (riddleTicks + gapTicks + REVEAL_TICKS) + 40) / 2,
+            // Runs until the board closes: a round lasts until its last prompt ended (at most its fallback).
+            long roundTicks = 3 * riddleTicks + MAX_SLACK + 4 + REVEAL_TICKS + gapTicks;
+            Loop.repeat(ctx(), owner, 1, 2, (BOARD_RISE + 3 * roundTicks + 40) / 2,
                     run -> {
                         if (over) {
                             return false;
@@ -817,7 +893,9 @@ public final class SphinxAbility extends Ability {
             }
             Fx.sound(center, Sound.BLOCK_BELL_USE, 1.0f, 0.7f + index * 0.15f);
             Fx.sound(center, Sound.ENTITY_ILLUSIONER_CAST_SPELL, 0.7f, 0.6f);
+            Round asked = new Round(index, answer);
             List<LivingEntity> mobs = new ArrayList<>();
+            long longest = riddleTicks;
             for (LivingEntity entity : ctx().enemiesNear(owner, center, radius)) {
                 if (entity instanceof Player enemy && ctx().isConcealedFrom(enemy, owner)) {
                     continue;
@@ -826,6 +904,8 @@ public final class SphinxAbility extends Ability {
                 score.lastOnAnswer = Long.MIN_VALUE / 2;
                 riddle(entity, 1);
                 if (entity instanceof Player enemy) {
+                    boolean[] closed = {false};
+                    asked.open++;
                     Prompt prompt = Prompt.builder(Text.mm("<b><" + GOLD_TAG + ">" + (index + 1) + "/3</" + GOLD_TAG
                                     + "></b> <white>" + answer.riddle + "</white> <gray>— 정답 그림 칸 위에 서라!</gray>"),
                                     riddleTicks)
@@ -834,9 +914,23 @@ public final class SphinxAbility extends Ability {
                                     + "></b> <" + LAPIS_TAG + "><b>?</b></" + LAPIS_TAG + ">"))
                             .maxWait(riddleTicks / 2)
                             .maxPause(riddleTicks / 2)
-                            .onEnd((handle, reason) -> answered(score, answer, index, reason))
+                            .onEnd((handle, reason) -> {
+                                answered(score, answer, index, reason);
+                                if (!closed[0]) {
+                                    closed[0] = true;
+                                    asked.open--;
+                                    settle(asked);
+                                }
+                            })
                             .build();
-                    score.handle = ctx().prompt(owner, enemy, prompt);
+                    PromptHandle handle = ctx().prompt(owner, enemy, prompt);
+                    score.handle = handle;
+                    asked.handles.add(handle);
+                    if (!handle.isActive() && !closed[0]) {
+                        closed[0] = true; // refused at once
+                        asked.open--;
+                    }
+                    longest = Math.max(longest, riddleTicks + ctx().reactionSlackTicks(enemy));
                 } else {
                     mobs.add(entity);
                 }
@@ -848,12 +942,42 @@ public final class SphinxAbility extends Ability {
                         judge(score, answer, true);
                     }
                 }
-                reveal(answer);
+                asked.timeUp = true;
+                settle(asked);
             });
-            if (index + 1 < riddles.size()) {
-                ctx().runLater(owner, riddleTicks + REVEAL_TICKS + gapTicks, () -> ask(index + 1));
+            // A prompt waits at most riddleTicks / 2 for the screen and may be pushed back about as long again: one
+            // still open after that is dropped (no verdict), so the answer comes out at last.
+            ctx().runLater(owner, longest + riddleTicks + 2, () -> {
+                if (asked.revealed || over) {
+                    return;
+                }
+                for (PromptHandle handle : asked.handles) {
+                    if (handle.isActive()) {
+                        handle.cancel();
+                    }
+                }
+                asked.timeUp = true;
+                asked.open = 0;
+                settle(asked);
+            });
+        }
+
+        /**
+         * The answer comes out (gold square, title) only once every asked enemy's prompt has ended and the riddle's
+         * time is up: an enemy whose question came late never sees the solution before its own verdict. The next riddle
+         * (or the board's end) follows the reveal.
+         */
+        private void settle(Round asked) {
+            if (over || asked.revealed || !asked.timeUp || asked.open > 0) {
+                return;
+            }
+            asked.revealed = true;
+            reveal(asked.answer);
+            int next = asked.index + 1;
+            if (next < riddles.size()) {
+                ctx().runLater(owner, REVEAL_TICKS + gapTicks, () -> ask(next));
             } else {
-                ctx().runLater(owner, riddleTicks + REVEAL_TICKS + gapTicks, this::close);
+                ctx().runLater(owner, REVEAL_TICKS + gapTicks, this::close);
             }
         }
 
