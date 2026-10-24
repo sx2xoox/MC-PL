@@ -612,6 +612,14 @@ public final class MatchContext implements AbilityContext {
     }
 
     @Override
+    public boolean restoreTempBlock(Block block) {
+        if (closed) {
+            return false;
+        }
+        return session.hub().tempBlocks().restore(block);
+    }
+
+    @Override
     public int breakBlocks(Player owner, Location center, double radius) {
         if (closed || !(radius > 0) || !session.isAlive(owner) || center.getWorld() == null) {
             return 0;

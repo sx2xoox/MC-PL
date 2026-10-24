@@ -311,6 +311,17 @@ public final class SuperpowerMatch implements GameInstance {
         return AbilityTexts.name(info);
     }
 
+    /** The name a participant's ability shows instead of the player's own (see {@link Ability#publicName}). */
+    @Override
+    public @Nullable Component nameOverride(UUID playerId) {
+        Participant participant = participants.get(playerId);
+        Ability ability = participant == null ? null : participant.ability;
+        if (ability == null || participant.abilityId == null) {
+            return null;
+        }
+        return guard.call(participant.abilityId, "publicName", ability::publicName);
+    }
+
     @Override
     public void stop() {
         if (stopped) {

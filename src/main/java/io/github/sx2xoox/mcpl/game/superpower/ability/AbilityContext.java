@@ -222,6 +222,16 @@ public interface AbilityContext {
      */
     boolean placeTempBlock(Block block, BlockData data, long durationTicks);
 
+    /**
+     * Restores a temporary block before its time, as if it expired now (a fake chest that is opened, a disguise that
+     * ends the moment its owner moves). Only for blocks the calling ability placed itself with {@link #placeTempBlock};
+     * never another ability's or the match's own temporary blocks (loot chests). Returns false if the block is not
+     * temporary (then it simply expires on its own).
+     */
+    default boolean restoreTempBlock(Block block) {
+        return false;
+    }
+
     // ------------------------------------------------------------------ terrain
 
     /**

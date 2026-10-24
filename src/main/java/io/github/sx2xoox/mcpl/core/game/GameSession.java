@@ -347,10 +347,29 @@ public final class GameSession {
         return offline != null ? offline : playerId.toString().substring(0, 8);
     }
 
-    /** The player name in their team color (white in free-for-all). */
+    /**
+     * The player name in their team color (white in free-for-all). While RUNNING the mode may show another name
+     * instead ({@link GameInstance#nameOverride}).
+     */
     public Component name(UUID playerId) {
         MatchTeam team = teamByPlayer.get(playerId);
+        Component alias = state == GameState.RUNNING ? safeNameOverride(playerId) : null;
+        if (alias != null) {
+            return alias.colorIfAbsent(team == null ? NamedTextColor.WHITE : team.color());
+        }
         return Component.text(plainName(playerId), team == null ? NamedTextColor.WHITE : team.color());
+    }
+
+    private @Nullable Component safeNameOverride(UUID playerId) {
+        if (instance == null) {
+            return null;
+        }
+        try {
+            return instance.nameOverride(playerId);
+        } catch (RuntimeException e) {
+            log("nameOverride", e);
+            return null;
+        }
     }
 
     public Component name(Player player) {
