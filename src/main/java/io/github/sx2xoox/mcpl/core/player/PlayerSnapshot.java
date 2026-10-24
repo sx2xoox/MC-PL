@@ -316,6 +316,8 @@ public final class PlayerSnapshot {
         if (player.isInsideVehicle()) {
             player.leaveVehicle();
         }
+        // Paper refuses to move a player who carries passengers (e.g. an ability's display) to another world.
+        player.eject();
         player.setFallDistance(0f);
         return player.teleport(saved, PlayerTeleportEvent.TeleportCause.PLUGIN);
     }
