@@ -62,22 +62,19 @@ public final class AnubisAbility extends Ability {
             .color(TextColor.color(0xD9A93A))
             .difficulty(2)
             .passive("심장의 무게",
-                    "{sin_range}블록 안 적마다 '죄'를 셉니다 — 최근 {sin_window}초간 누구에게든(플레이어·소환수) 준 피해입니다. "
-                            + "나는 적마다 머리 옆에서 기우는 작은 금 저울을 보고, 적은 자기 죄를 액션바로 봅니다. 죄 1당 그 적에게 "
-                            + "주는 내 피해가 {sin_bonus}% 늘어납니다(최대 {sin_bonus_max}%, 저울질과 아미트의 심판에는 적용되지 "
-                            + "않음).")
+                    "{sin_range}블록 안 적마다 최근 {sin_window}초간 누구에게든 준 피해를 죄로 셉니다. 죄 1당 그 적에게 "
+                            + "주는 내 피해가 {sin_bonus}% 늘어납니다(최대 {sin_bonus_max}%, 저울질·아미트의 심판 제외).")
             .active("저울질",
-                    "조준한 적({range}블록 이내)의 머리 위에 저울을 듭니다. {weigh_delay}초 뒤 심장과 깃털을 올려 — 죄가 "
-                            + "{heavy_threshold} 이상이면 '무거운 심장': {heavy_base} + 죄×{heavy_per_sin} 피해(최대 "
-                            + "{heavy_max})와 {sand_hand}초간 모래 손(점프 불가, 이동 {sand_slow}% 감소). 그보다 가벼우면 '가벼운 "
-                            + "심장': {light_damage} 피해와 {feather_seconds}초간 깃털 표식(그동안 얻는 죄 {feather_multiplier}배).",
+                    "{weigh_delay}초 뒤 조준한 적({range}블록 이내)의 죄를 잽니다. 죄가 {heavy_threshold} 이상이면 "
+                            + "{heavy_base} + 죄×{heavy_per_sin} 피해(최대 {heavy_max})를 주고 {sand_hand}초간 점프를 막고 "
+                            + "{sand_slow}% 느리게 합니다. 가벼우면 {light_damage} 피해를 주고, {feather_seconds}초간 그 적이 "
+                            + "얻는 죄가 {feather_multiplier}배가 됩니다.",
                     10)
             .ultimate("아미트의 심판",
-                    "등 뒤로 자칼 머리가 솟고 {weigh_seconds}초간 {judge_radius}블록 안 모든 적의 머리 위에 거대한 저울이 "
-                            + "떠오릅니다(그동안 준 피해도 죄에 더해집니다). 이어 심판 — 죄가 {guilty_threshold} 이상인 적은 땅에서 "
-                            + "솟은 아미트의 턱에 물려 {guilty_base} + 죄×{guilty_per_sin} 피해(최대 {guilty_max})와 {jaw_hold}초 "
-                            + "붙잡기를 받고, 그중 죄가 가장 많은 적은 궁극기 게이지 {gauge_loss}%를 잃습니다. 무고한 적은 "
-                            + "{innocent_damage} 피해와 깃털 표식을 받습니다.")
+                    "{weigh_seconds}초간 {judge_radius}블록 안 모든 적의 죄를 잰 뒤 심판합니다. 죄가 {guilty_threshold} "
+                            + "이상인 적은 {guilty_base} + 죄×{guilty_per_sin} 피해(최대 {guilty_max})와 {jaw_hold}초 붙잡기를 "
+                            + "받고, 죄가 가장 많은 적은 궁극기 게이지 {gauge_loss}%를 잃습니다. 무고한 적은 {innocent_damage} "
+                            + "피해를 받고 {feather_seconds}초간 얻는 죄가 {feather_multiplier}배가 됩니다.")
             .ultimateNotStandalone()
             .param("sin_range", 24)
             .param("sin_window", 10)

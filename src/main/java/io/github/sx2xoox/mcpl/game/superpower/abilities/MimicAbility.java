@@ -107,24 +107,19 @@ public final class MimicAbility extends Ability {
             .color(TextColor.color(0xE3B23C))
             .difficulty(1)
             .passive("보물 상자 흉내",
-                    "{disguise_delay}초 동안 가만히 서 있으면 전리품 상자와 똑같은 보물 상자로 변신합니다(최대 "
-                            + "{disguise_max}초). 적의 눈에는 내 몸과 이름이 사라지고 상자만 보이며, 움직이거나 공격하거나(쏘거나 "
-                            + "던져도) 피해를 받으면 풀립니다. 그 상자를 연(우클릭한) 적은 덥석 물려 {disguise_bite} 피해를 받고 "
-                            + "{disguise_grab}초간 붙잡힙니다(때리면 물지 않고 정체만 드러납니다). 상자에서 튀어나온 뒤 "
+                    "{disguise_delay}초간 가만히 있으면 전리품 상자로 변신하고, 움직이거나 공격하거나 맞으면 풀립니다. "
+                            + "상자를 연 적은 물려 {disguise_bite} 피해를 받고 {disguise_grab}초간 붙잡힙니다. 변신이 풀린 뒤 "
                             + "{ambush_window}초 안의 첫 근접 공격은 {ambush_bonus} 추가 피해를 줍니다.")
             .active("미끼 상자",
-                    "조준한 곳({bait_range}블록 이내)에 보물 상자를 던집니다. 떨어진 자리 반경 {land_radius}블록의 적은 뚜껑에 "
-                            + "물려 {land_damage} 피해를 받고 {land_grab}초간 붙잡힙니다. 상자는 {bait_duration}초간 전리품 "
-                            + "상자처럼 반짝이며 미끼로 남습니다(최대 {max_baits}개). 적이 열면 덥석 {bait_bite} 피해와 "
-                            + "{bait_grab}초 붙잡기를, 적이 때리거나 쏘면 되물어 {bait_snap} 피해를 주고 사라집니다.",
+                    "조준한 곳({bait_range}블록 이내)에 보물 상자를 던져 떨어진 자리의 적에게 {land_damage} 피해를 주고 "
+                            + "{land_grab}초간 붙잡습니다. 상자는 {bait_duration}초간 미끼로 남아(최대 {max_baits}개) 적이 "
+                            + "열면 {bait_bite} 피해와 {bait_grab}초 붙잡기를, 때리거나 쏘면 {bait_snap} 피해를 줍니다.",
                     9)
             .ultimate("보물 무더기",
-                    "주위 {pile_radius}블록에 보물 상자를 뿌리고(진짜 보물 {pile_treasures}개, 가짜 {pile_fakes}개) 연기 속에서 "
-                            + "나도 그중 하나로 숨습니다(최대 {pile_duration}초). 상자는 열거나 때려야 정체가 드러납니다: 진짜 "
-                            + "보물은 연 사람을 {treasure_heal} 회복시키고 금화를 쏟고, 가짜는 덥석 {fake_bite} 피해와 "
-                            + "{fake_grab}초 붙잡기, 나는 덥석 {mimic_bite} 피해와 {mimic_grab}초 붙잡기를 주며 튀어나와 "
-                            + "{dash_duration}초간 이동 속도가 {dash_speed}% 빨라집니다. 나와 아군 눈에는 상자마다 작은 표시가 "
-                            + "보입니다. 움직이면 언제든 튀어나오고, 남은 상자는 {leftover}초 뒤 사라집니다.")
+                    "주위 {pile_radius}블록에 보물 상자를 뿌리고 그중 하나로 숨습니다(최대 {pile_duration}초). 상자를 "
+                            + "열거나 때리면 진짜 보물({pile_treasures}개)은 {treasure_heal} 회복시키고, 가짜({pile_fakes}개)는 "
+                            + "{fake_bite} 피해와 {fake_grab}초 붙잡기를, 나는 {mimic_bite} 피해와 {mimic_grab}초 붙잡기를 "
+                            + "주며 튀어나와 {dash_duration}초간 {dash_speed}% 빨라집니다. 움직이면 언제든 튀어나옵니다.")
             .ultimateNotStandalone()
             .param("disguise_delay", 1.5)
             .param("disguise_max", 45)

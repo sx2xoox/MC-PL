@@ -89,25 +89,18 @@ public final class RokurokubiAbility extends Ability {
             .color(TextColor.color(0xF29A38))
             .difficulty(3)
             .passive("목 빼고 엿보기",
-                    "웅크린 채 {peek_delay}초 가만히 있으면 목이 {peek_height}블록 위로 쭉 늘어나 엄폐물 너머를 엿봅니다"
-                            + "(머리 위가 막혀 있으면 그만큼만, 너무 낮으면 엿보지 못함). 그 높이에서 보이는 {peek_range}블록 "
-                            + "안의 적은 "
-                            + "{peek_glow}초간 발광합니다({peek_interval}초마다 갱신). 엿보는 머리는 모두에게 보입니다.")
+                    "웅크린 채 {peek_delay}초 가만히 있으면 목이 {peek_height}블록 위로 늘어나 엄폐물 너머를 엿봅니다. "
+                            + "그 높이에서 보이는 {peek_range}블록 안의 적은 발광합니다. 엿보는 머리는 모두에게 보입니다.")
             .active("늘어나는 목",
-                    "머리를 날려 목을 최대 {neck_length}블록까지 늘입니다. {neck_time}초 동안 머리는 내 시선을 따라 "
-                            + "휘어져 날아가 모퉁이를 돌 수 있고(벽은 뚫지 못함), 처음 닿은 적을 물어 {bite_damage} 피해를 "
-                            + "주고 {bite_slow_time}초간 이동 속도를 {bite_slow}% 늦춥니다. 나와 직선으로 보이지 않는 "
-                            + "적(꺾여 들어가 문 적)은 {corner_bonus} 피해를 더 받습니다. 목을 늘이는 동안 몸은 제자리에 "
-                            + "묶입니다.",
+                    "머리를 날려 목을 최대 {neck_length}블록까지 늘입니다. 머리는 내 시선을 따라 휘어져 모퉁이를 돌 수 "
+                            + "있고(벽은 못 뚫음), 처음 닿은 적을 물어 {bite_damage} 피해를 주고 {bite_slow_time}초간 "
+                            + "{bite_slow}% 느리게 합니다. 모퉁이 너머의 적은 {corner_bonus} 피해를 더 받습니다. 그동안 몸은 "
+                            + "제자리에 묶입니다.",
                     8)
             .ultimate("누케쿠비",
-                    "{head_duration}초간 머리가 몸에서 빠져 날아다닙니다. 나는 작은 머리가 되어 자유롭게 날며(달려서 날면 "
-                            + "달리기보다 {head_speed}% 빠르고, 느려지는 효과도 그대로 받음) 닿는 적을 물어 {head_bite} 피해를 "
-                            + "주고 체력을 {head_heal} 회복합니다(같은 적은 {head_bite_interval}초마다). 머리 없는 몸은 그 "
-                            + "자리에 남고, 몸이 받는 피해는 "
-                            + "{body_share}배로 나에게 들어옵니다. 끝나면(F를 다시 누르면 일찍) 머리가 몸으로 돌아가는데, "
-                            + "그동안 몸이 {body_limit} 이상 피해를 입었거나 {body_push}블록 넘게 밀려났다면 제대로 붙지 "
-                            + "못해 {misfit_stun}초간 기절합니다.")
+                    "{head_duration}초간 머리가 몸에서 빠져 날아다니며, 닿는 적을 물어 {head_bite} 피해를 주고 "
+                            + "{head_heal} 회복합니다. 남은 몸이 받는 피해는 {body_share}배로 나에게 들어옵니다. 끝날 때(F로 "
+                            + "일찍 끝낼 수 있음) 몸이 {body_limit} 이상 피해를 입었거나 밀려났다면 {misfit_stun}초간 기절합니다.")
             .ultimateNotStandalone()
             .param("peek_delay", 0.5)
             .param("peek_height", 3)

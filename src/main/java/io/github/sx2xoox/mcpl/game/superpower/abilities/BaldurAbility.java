@@ -66,24 +66,19 @@ public final class BaldurAbility extends Ability {
             .color(TextColor.color(0xF2DD8C))
             .difficulty(2)
             .passive("겨우살이의 약점",
-                    "근접·투사체·능력 세 가지 피해 중 지금의 약점이 아닌 피해와 그 밖의 피해(낙하·불 등)는 "
-                            + "{sworn_reduction}% 줄고, 약점 종류의 피해는 {weak_bonus}% 늘어납니다. 약점은 "
-                            + "{weak_period}초마다 근접 → 투사체 → 능력 순서로 바뀌며, 머리 위의 빛나는 겨우살이 아이콘"
-                            + "(칼·화살·룬)으로 모두에게 보입니다(바뀌기 1초 전에 깜박입니다).")
+                    "근접·투사체·능력 중 지금의 약점이 아닌 피해(낙하·불 등 포함)는 {sworn_reduction}% 줄고, 약점 "
+                            + "피해는 {weak_bonus}% 늘어납니다. 약점은 {weak_period}초마다 근접 → 투사체 → 능력 순으로 바뀌며 "
+                            + "머리 위 아이콘으로 모두에게 보입니다.")
             .active("찬란한 빛",
-                    "몸에서 빛이 터져 반경 {burst_radius}블록의 적에게 {burst_damage} 피해를 주고 약 {burst_knockback}블록 "
-                            + "밀쳐 내며 {burst_blind}초간 눈을 멀게 합니다. 그리고 약점이 곧바로 다음 종류로 넘어갑니다"
-                            + "(불리한 약점을 건너뛸 수 있습니다).",
+                    "빛이 터져 반경 {burst_radius}블록의 적에게 {burst_damage} 피해를 주고 밀쳐 내며 {burst_blind}초간 "
+                            + "실명시킵니다. 약점이 곧바로 다음 종류로 넘어갑니다.",
                     10)
             .ultimate("겨우살이를 쥔 자",
-                    "{mistletoe_time}초간 {mistletoe_range}블록 안의 적 하나(플레이어 우선, 무작위)를 뺀 모든 것에 "
-                            + "무적이 됩니다. 그 적에게 빛나는 겨우살이 화살이 날아가 쥐어져 모두가 누가 쥐었는지 봅니다"
-                            + "(\"발두르를 쓰러뜨릴 수 있는 건 당신뿐\"). 쥔 자의 공격은 약점과 상관없이 {holder_bonus}% 더 "
-                            + "아프지만, 쥔 자 말고는 {mistletoe_range}블록 안에 적이 없는 1:1에서는 평소의 약점 규칙을 "
-                            + "따릅니다. 그동안 1초마다 반경 {aura_radius}블록 안의 적에게 {aura_damage} 피해를 줍니다. 쥔 자가 "
-                            + "쓰러지면 {pass_range}블록 안의 가장 가까운 다른 적에게 넘어가고(없으면 {mistletoe_range}블록 안에 "
-                            + "적이 올 때까지 아무도 쥐지 못해 아무것도 그를 해치지 못합니다), {pass_range}블록 넘게 멀어지면 그 "
-                            + "안의 가장 가까운 다른 적에게 넘어갑니다(없으면 그대로 쥡니다).")
+                    "{mistletoe_time}초간 {mistletoe_range}블록 안의 적 하나(플레이어 우선)에게 겨우살이를 쥐여 주고, "
+                            + "그 적 말고는 무엇에도 해를 입지 않습니다. 쥔 자는 모두에게 표시되며 그 공격은 {holder_bonus}% "
+                            + "더 아픕니다(1:1이면 평소 약점 규칙). 그동안 1초마다 반경 {aura_radius}블록의 적에게 "
+                            + "{aura_damage} 피해를 줍니다. 쥔 자가 쓰러지거나 {pass_range}블록 넘게 멀어지면 가장 가까운 "
+                            + "다른 적에게 넘어갑니다.")
             .ultimateNotStandalone()
             .param("sworn_reduction", 40)
             .param("weak_bonus", 25)

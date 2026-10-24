@@ -62,23 +62,20 @@ public final class ProhibitorAbility extends Ability {
             .color(TextColor.color(0xC8231E))
             .difficulty(3)
             .passive("금기의 대가",
-                    "금기를 어긴 적은 {violator_duration}초간 '위반자'가 됩니다(머리 위 붉은 '犯' 글자, 모두에게 보임). 위반자에게 "
-                            + "주는 피해가 {violator_bonus}% 늘고, 위반자가 또 금기를 어기면 그 위반 피해가 {violator_repeat}배가 "
-                            + "됩니다.")
+                    "금기를 어긴 적은 {violator_duration}초간 위반자가 됩니다. 위반자에게 주는 피해가 {violator_bonus}% "
+                            + "늘고, 위반자가 또 금기를 어기면 그 위반 피해가 {violator_repeat}배가 됩니다.")
             .active("금제의 글자",
-                    "붓을 휘둘러 조준한 적({range}블록 이내)의 발밑에 먹 글자 고리를 그립니다({draw_seconds}초). 고리가 닫히는 "
-                            + "순간 그 적이 하던 행동이 {taboo_duration}초간 금기가 됩니다 — 달리던 중이면 '달리지 마라', 공중이면 "
-                            + "'뛰지 마라', 그 밖에는 '때리지 마라'(근접·투사체). 판정은 금기가 화면에 뜬 뒤 {judge_grace}초 + 핑만큼 "
-                            + "뒤부터(공중이었다면 착지한 뒤부터) 그 적의 입력으로 합니다. 어기면 글자가 터져 {break_damage} 피해와 "
-                            + "{break_stagger}초 경직을 받고 금기가 풀립니다. 끝까지 지키면 먹이 번지며 {keep_damage} 피해만 받습니다.",
+                    "조준한 적({range}블록 이내)에게 금기를 새겨, 그 순간 하던 행동을 {taboo_duration}초간 금지합니다. "
+                            + "달리던 중이면 달리기, 공중이면 점프, 그 밖에는 공격(근접·투사체)이 금지됩니다. 어기면 "
+                            + "{break_damage} 피해와 {break_stagger}초 경직을 받고 금기가 풀리며, 끝까지 지키면 "
+                            + "{keep_damage} 피해만 받습니다.",
                     10)
             .ultimate("금제 결계",
-                    "발밑에 반경 {barrier_radius}블록의 결계를 {barrier_duration}초간 펼치고, 그 순간의 내 자세로 규칙을 정해 "
-                            + "공표합니다 — 웅크리면 '멈추지 마라'(이동 키를 {stop_grace}초 넘게 떼면 위반), 공중이면 '땅을 떠나지 "
-                            + "마라'(점프 키), 그 밖에는 '능력을 쓰지 마라'. 결계 안의 적이 규칙을 어기거나 걸어서 결계 밖으로 나가면 "
-                            + "{barrier_damage} 피해와 {barrier_stagger}초 경직을 받습니다({barrier_interval}초마다 최대 1번, 적마다 "
-                            + "최대 {barrier_max}번). 제어에 걸려 있거나 남에게 밀려난 적은 판정하지 않습니다. 규칙은 나에게도 "
-                            + "적용되어 내가 어기면 결계가 즉시 깨집니다. 결계 안에서 내가 주는 피해가 {barrier_bonus}% 늘어납니다.")
+                    "반경 {barrier_radius}블록의 결계를 {barrier_duration}초간 펼치고 시전할 때의 자세로 규칙을 정합니다. "
+                            + "웅크리면 멈추기(이동 키를 {stop_grace}초 넘게 떼기), 공중이면 점프, 그 밖에는 능력 사용이 "
+                            + "금지됩니다. 결계 안의 적이 규칙을 어기거나 걸어 나가면 {barrier_damage} 피해와 "
+                            + "{barrier_stagger}초 경직을 받습니다(적마다 최대 {barrier_max}번). 내가 어기면 결계가 깨집니다. "
+                            + "결계 안에서 내가 주는 피해가 {barrier_bonus}% 늘어납니다.")
             .ultimateNotStandalone()
             .param("violator_duration", 6)
             .param("violator_bonus", 20)
