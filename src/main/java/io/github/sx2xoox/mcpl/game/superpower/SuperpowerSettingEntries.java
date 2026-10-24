@@ -15,10 +15,10 @@ import org.bukkit.configuration.MemoryConfiguration;
 
 /**
  * The 초능력전쟁 entries of the settings menu and {@code /게임 설정} ({@link SuperpowerGame#settings()}): match flow
- * and border, effects, loot chests. Every entry reads the live {@code games.superpower} section and writes through
- * {@link HubConfig#setGameValue}, with the ranges of {@link SuperpowerSettings#read} and {@link LootSettings#read};
- * a match reads the section when it starts, so changes apply to the next match. Texts: {@code superpower.yml} →
- * {@code settings.*}.
+ * and border, the sky (day to night, rain), effects, loot chests. Every entry reads the live {@code games.superpower}
+ * section and writes through {@link HubConfig#setGameValue}, with the ranges of {@link SuperpowerSettings#read} and
+ * {@link LootSettings#read}; a match reads the section when it starts, so changes apply to the next match. Texts:
+ * {@code superpower.yml} → {@code settings.*}.
  */
 final class SuperpowerSettingEntries {
 
@@ -84,6 +84,26 @@ final class SuperpowerSettingEntries {
                 .number(decimal(SuperpowerSettings.BORDER_FINAL), store(SuperpowerSettings.BORDER_FINAL, true),
                         defaults.getDouble(SuperpowerSettings.BORDER_FINAL));
 
+        Setting dayNight = toggle("superpower.day-night", "밤낮", "day-night", Material.DAYLIGHT_DETECTOR,
+                "settings.day-night", SuperpowerSettings.SKY_DAY_NIGHT);
+        double rainFallback = defaults.getDouble(SuperpowerSettings.SKY_RAIN_CHANCE);
+        Setting rainChance = Setting.builder("superpower.rain-chance")
+                .command("비확률", "rain-chance")
+                .icon(Material.WATER_BUCKET)
+                .text(messages, "settings.rain-chance")
+                .path(path(SuperpowerSettings.SKY_RAIN_CHANCE))
+                .range(0, 100).steps(5, 25).integer().unit(Setting.Unit.PERCENT)
+                // Shown and typed in percent, stored as 0..1 like the reader expects.
+                .number(() -> 100 * SuperpowerSettings.rainChance(
+                                live().getDouble(SuperpowerSettings.SKY_RAIN_CHANCE, rainFallback)),
+                        value -> config.setGameValue(SuperpowerGame.ID, SuperpowerSettings.SKY_RAIN_CHANCE,
+                                Math.round(value) / 100.0),
+                        100 * rainFallback);
+        Setting rainMin = rainSeconds("superpower.rain-min", "최소", "min", Material.LIGHT_BLUE_DYE,
+                "settings.rain-min", SuperpowerSettings.SKY_RAIN_MIN);
+        Setting rainMax = rainSeconds("superpower.rain-max", "최대", "max", Material.BLUE_DYE,
+                "settings.rain-max", SuperpowerSettings.SKY_RAIN_MAX);
+
         Setting particles = Setting.builder("superpower.particles")
                 .command("파티클", "particles")
                 .icon(Material.BLAZE_POWDER)
@@ -145,6 +165,8 @@ final class SuperpowerSettingEntries {
         return List.of(
                 new SettingsSection("superpower.match", Material.NETHER_STAR, messages, "settings.section.match",
                         List.of(mode, rerolls, prep, timeLimit, borderDelay, borderShrink, borderFinal)),
+                new SettingsSection("superpower.sky", Material.SUNFLOWER, messages, "settings.section.sky",
+                        List.of(dayNight, rainChance, rainMin, rainMax)),
                 new SettingsSection("superpower.effects", Material.FIREWORK_ROCKET, messages,
                         "settings.section.effects", List.of(particles, teamAbilities, announce, killFeed)),
                 new SettingsSection("superpower.loot", Material.BUNDLE, messages, "settings.section.loot",
@@ -173,6 +195,15 @@ final class SuperpowerSettingEntries {
                             String key, int max, int step, int bigStep) {
         return Setting.builder(id).command(korean, english).icon(icon).text(messages, text).path(path(key))
                 .range(0, max).steps(step, bigStep).integer().unit(Setting.Unit.SECONDS)
+                .number(decimal(key), store(key, true), defaults.getDouble(key));
+    }
+
+    /** {@code 비시간 최소|최대}: rain seconds in the reader's range. */
+    private Setting rainSeconds(String id, String korean, String english, Material icon, String text, String key) {
+        return Setting.builder(id).command(List.of("비시간", korean), List.of("rain-seconds", english)).icon(icon)
+                .text(messages, text).path(path(key))
+                .range(SuperpowerSettings.MIN_RAIN_SECONDS, SuperpowerSettings.MAX_RAIN_SECONDS).steps(10, 60)
+                .integer().unit(Setting.Unit.SECONDS)
                 .number(decimal(key), store(key, true), defaults.getDouble(key));
     }
 

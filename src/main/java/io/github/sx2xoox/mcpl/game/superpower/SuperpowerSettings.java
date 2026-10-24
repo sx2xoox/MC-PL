@@ -37,6 +37,10 @@ import org.jspecify.annotations.Nullable;
  * @param abilityItemMaterial    base item of the ability item (rendered with the ability icon model)
  * @param particleScale          multiplier for ability particle counts ({@code AbilityContext#effectScale()}),
  *                               {@value #MIN_PARTICLE_SCALE}..{@value #MAX_PARTICLE_SCALE}
+ * @param dayNight               in a plugin map world the fight starts at noon and night falls while the border shrinks
+ * @param rainChance             chance (0..1) that it rains for a while during a fight in a plugin map world
+ * @param rainMinTicks           shortest shower
+ * @param rainMaxTicks           longest shower (never below {@code rainMinTicks})
  */
 public record SuperpowerSettings(
         SelectionMode selectionMode,
@@ -58,7 +62,11 @@ public record SuperpowerSettings(
         boolean showAbilityInKillFeed,
         boolean showTeamAbilities,
         Material abilityItemMaterial,
-        double particleScale
+        double particleScale,
+        boolean dayNight,
+        double rainChance,
+        int rainMinTicks,
+        int rainMaxTicks
 ) {
 
     public static final String MODE = "selection.mode";
@@ -81,6 +89,10 @@ public record SuperpowerSettings(
     public static final String TEAM_ABILITIES = "show-team-abilities";
     public static final String ABILITY_ITEM = "ability-item";
     public static final String PARTICLE_SCALE = "effects.particle-scale";
+    public static final String SKY_DAY_NIGHT = "sky.day-night";
+    public static final String SKY_RAIN_CHANCE = "sky.rain-chance";
+    public static final String SKY_RAIN_MIN = "sky.rain-seconds.min";
+    public static final String SKY_RAIN_MAX = "sky.rain-seconds.max";
 
     public static final double MIN_PARTICLE_SCALE = 0.25;
     public static final double MAX_PARTICLE_SCALE = 2.0;
@@ -90,6 +102,9 @@ public record SuperpowerSettings(
     public static final int MAX_BORDER_SECONDS = 7200;
     /** Upper bound of {@code border.final-diameter}: the diameter of the largest arena. */
     public static final int MAX_BORDER_FINAL = 2 * HubConfig.MAX_RADIUS;
+    public static final double DEFAULT_RAIN_CHANCE = 0.35;
+    public static final int MIN_RAIN_SECONDS = 5;
+    public static final int MAX_RAIN_SECONDS = 600;
 
     public static final List<String> DEFAULT_KIT = List.of(
             "IRON_HELMET", "IRON_CHESTPLATE", "IRON_LEGGINGS", "IRON_BOOTS", "IRON_SWORD",
@@ -100,15 +115,15 @@ public record SuperpowerSettings(
     }
 
     /**
-     * These settings for a practice session ({@code /게임 능력 연습}): no reveal, prep phase or rerolls, no time limit
-     * and a border that never shrinks. Kit, gauge, effects and the ability item stay as configured, so abilities
-     * behave and look exactly like in a real match.
+     * These settings for a practice session ({@code /게임 능력 연습}): no reveal, prep phase or rerolls, no time limit,
+     * a border that never shrinks and a sky that never changes. Kit, gauge, effects and the ability item stay as
+     * configured, so abilities behave and look exactly like in a real match.
      */
     public SuperpowerSettings forPractice() {
         return new SuperpowerSettings(SelectionMode.RANDOM, 0, 0, choiceTicks, 0, 0, kit, gaugePerDamageDealt,
                 gaugePerDamageTaken, gaugePerSecond, announceUltimates, ultimateLockTicks, borderDelayTicks,
                 borderShrinkTicks, Double.MAX_VALUE, borderDamagePerSecond, showAbilityInKillFeed, showTeamAbilities,
-                abilityItemMaterial, particleScale);
+                abilityItemMaterial, particleScale, false, 0.0, rainMinTicks, rainMaxTicks);
     }
 
     /** The kit as fresh copies, safe to put into an inventory. */
@@ -183,6 +198,21 @@ public record SuperpowerSettings(
         d.set(PARTICLE_SCALE, 1.0);
         d.setComments("effects", List.of("연출"));
         d.setComments(PARTICLE_SCALE, List.of("파티클 양 배율 (0.25~2.0, 서버가 버거우면 낮추세요)"));
+
+        d.set(SKY_DAY_NIGHT, true);
+        d.setComments("sky", List.of(
+                "하늘 (전투 맵 월드 mcpl_map_* 에서만 바뀝니다. 일반 월드와 능력 연습은 그대로이고,",
+                "경기가 끝나거나 중지되면 맵 월드는 다시 정오·맑음으로 돌아옵니다)"));
+        d.setComments(SKY_DAY_NIGHT, List.of(
+                "낮에 시작해 자기장이 줄어드는 동안 해가 지고, 자기장이 다 줄면 밤입니다 (마지막 싸움은 밤에)",
+                "늑대인간·천문학자·팬텀·빛의 사도처럼 낮밤을 타는 능력이 제 힘을 냅니다."));
+        d.set(SKY_RAIN_CHANCE, DEFAULT_RAIN_CHANCE);
+        d.setComments(SKY_RAIN_CHANCE, List.of(
+                "경기 중 한동안 비가 내릴 확률 (0~1, 0.35 = 35%. 1보다 크면 퍼센트로 읽습니다: 35 = 35%)",
+                "전투 중 무작위 시점에 내리며 천둥·번개는 없습니다. 수류술사·낚시꾼·갓파가 비를 반깁니다."));
+        d.set(SKY_RAIN_MIN, 60);
+        d.setComments("sky.rain-seconds", List.of("비가 내리는 시간(초): 최소~최대 사이에서 무작위 (5~600)"));
+        d.set(SKY_RAIN_MAX, 120);
     }
 
     /** Reads the live section; invalid values fall back to the defaults (with a console warning). */
@@ -207,6 +237,7 @@ public record SuperpowerSettings(
             }
             kit.addAll(parsed);
         }
+        int rainMin = seconds(s.getDouble(SKY_RAIN_MIN, 60), MIN_RAIN_SECONDS, MAX_RAIN_SECONDS);
         return new SuperpowerSettings(
                 mode,
                 clamp(s.getInt(REROLLS, 1), 0, MAX_REROLLS),
@@ -228,7 +259,23 @@ public record SuperpowerSettings(
                 s.getBoolean(TEAM_ABILITIES, true),
                 item,
                 Math.max(MIN_PARTICLE_SCALE,
-                        Math.min(MAX_PARTICLE_SCALE, finite(s.getDouble(PARTICLE_SCALE, 1.0), 1.0))));
+                        Math.min(MAX_PARTICLE_SCALE, finite(s.getDouble(PARTICLE_SCALE, 1.0), 1.0))),
+                s.getBoolean(SKY_DAY_NIGHT, true),
+                rainChance(s.getDouble(SKY_RAIN_CHANCE, DEFAULT_RAIN_CHANCE)),
+                rainMin,
+                Math.max(rainMin, seconds(s.getDouble(SKY_RAIN_MAX, 120), MIN_RAIN_SECONDS, MAX_RAIN_SECONDS)));
+    }
+
+    /**
+     * The rain chance as 0..1 from the configured value: 0..1 as is, above 1 read as percent (35 = 35%), clamped to
+     * 0..1 (the reader and the settings menu agree on it).
+     */
+    public static double rainChance(double configured) {
+        double value = finite(configured, DEFAULT_RAIN_CHANCE);
+        if (value > 1.0) {
+            value /= 100.0;
+        }
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     /**

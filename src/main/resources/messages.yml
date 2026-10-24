@@ -199,6 +199,7 @@ settings:
     count: "<white><value>개"
     times: "<white><value>회"
     multiplier: "<white>×<value>"
+    percent: "<white><value>%"
   # 명령어로 바꿨을 때 (채팅)
   changed: "<gray><name></gray> <dark_gray>→</dark_gray> <value> <dark_gray>(config.yml 에 저장됨)"
   unchanged: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>(이미 이 값입니다)"

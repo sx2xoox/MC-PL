@@ -40,7 +40,9 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
         PLAYERS("players"),
         COUNT("count"),
         TIMES("times"),
-        MULTIPLIER("multiplier");
+        MULTIPLIER("multiplier"),
+        /** Whole percent (0..100). */
+        PERCENT("percent");
 
         private final String key;
 
@@ -367,6 +369,7 @@ public abstract sealed class Setting permits Setting.Toggle, Setting.Number, Set
                 case COUNT -> english ? "count" : "개수";
                 case TIMES -> english ? "times" : "횟수";
                 case MULTIPLIER -> english ? "scale" : "배율";
+                case PERCENT -> english ? "percent" : "퍼센트";
             };
         }
     }

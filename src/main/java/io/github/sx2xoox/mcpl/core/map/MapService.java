@@ -37,12 +37,15 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Map worlds are fixed at noon in clear weather, spawn no mobs and keep their blocks: fluids do not flow, leaves do
  * not decay, grass does not spread, and only admins can break or place blocks outside a match (see
- * {@link MapWorldListener}).
+ * {@link MapWorldListener}). A mode may change the sky during a match (초능력전쟁: day to night, rain) and puts it
+ * back with {@link #resetSky(World)}; loading a map world resets it too, so a crash mid-match leaves no night behind.
  */
 public final class MapService {
 
     /** Prefix of every map world name; only worlds with it are ever deleted. */
     public static final String WORLD_PREFIX = "mcpl_map_";
+    /** The time of day of a map world outside matches (noon). */
+    public static final long NOON = 6000;
 
     private final JavaPlugin plugin;
     private final Map<String, ArenaMap> maps = new LinkedHashMap<>();
@@ -77,7 +80,11 @@ public final class MapService {
         if (maps.putIfAbsent(map.id(), map) != null) {
             throw new IllegalArgumentException("Map already registered: " + map.id());
         }
-        if (hasWorldFolder(map) && Bukkit.getWorld(worldName(map)) == null) {
+        World loaded = Bukkit.getWorld(worldName(map));
+        if (loaded != null) {
+            // Loaded before us (another plugin, a reload): it still gets the map world rules and a noon sky.
+            applyRules(loaded, map);
+        } else if (hasWorldFolder(map)) {
             try {
                 load(map);
             } catch (RuntimeException e) {
@@ -183,12 +190,23 @@ public final class MapService {
         world.setGameRule(GameRules.SPAWN_WANDERING_TRADERS, false);
         world.setGameRule(GameRules.MOB_GRIEFING, false);
         world.setGameRule(GameRules.RANDOM_TICK_SPEED, 0);
-        world.setTime(6000);
-        world.setStorm(false);
-        world.setThundering(false);
+        resetSky(world);
         World main = Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().getFirst();
         world.setDifficulty(main != null && main != world ? main.getDifficulty() : Difficulty.NORMAL);
         world.setSpawnLocation(center(map, world));
+    }
+
+    /** Noon in clear weather: how a map world looks outside matches (a no-op when it already does). */
+    public static void resetSky(World world) {
+        if (world.hasStorm()) {
+            world.setStorm(false);
+        }
+        if (world.isThundering()) {
+            world.setThundering(false);
+        }
+        if (!world.isFixedTime() && world.getTime() != NOON) {
+            world.setTime(NOON);
+        }
     }
 
     /** Unloads the map's world (moving anyone in it to the main world's spawn) and deletes its folder. */

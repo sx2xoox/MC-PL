@@ -79,6 +79,13 @@ border:
   subtitle: "<red>⚠ 자기장이 줄어들기 시작합니다"
   outside: "<red><bold>⚠ 자기장 밖입니다!</bold></red> <gray>안쪽으로 이동하세요"
 
+# 하늘 (전투 맵 월드에서만, config.yml → games.superpower.sky)
+sky:
+  sunset: "<#ffb347>☀ 해가 저뭅니다</#ffb347> <gray>곧 밤이 찾아옵니다."
+  night: "<#9fa8ff>☾ 밤이 되었습니다</#9fa8ff> <gray>어둠 속에서 강해지는 능력을 조심하세요."
+  rain-start: "<aqua>☂ 비가 내리기 시작합니다</aqua> <gray>잠시 뒤에 그칩니다."
+  rain-stop: "<gray>☀ 비가 그쳤습니다"
+
 result:
   time-limit: "제한 시간 종료 · 킬 수 → 남은 체력 순으로 결정"
 
@@ -293,6 +300,10 @@ settings:
       name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>진행"
       lore:
         - "<gray>능력 배정, 준비·제한 시간, 자기장"
+    sky:
+      name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>하늘"
+      lore:
+        - "<gray>전투 맵에서 낮이 밤으로 바뀌고 가끔 비가 내립니다"
     effects:
       name: "<gradient:#a78bfa:#f472b6><bold>초능력전쟁</bold></gradient> <gray>연출"
       lore:
@@ -341,6 +352,27 @@ settings:
     name: "최종 자기장 크기"
     lore:
       - "<gray>다 줄어든 자기장 한 변의 길이(블록)"
+  day-night:
+    name: "낮과 밤"
+    lore:
+      - "<gray>전투 맵에서 낮에 시작해 자기장이 줄어드는 동안 해가 지고,"
+      - "<gray>자기장이 다 줄면 밤이 됩니다. 마지막 싸움은 밤에 벌어집니다."
+      - "<gray>늑대인간·천문학자·팬텀·빛의 사도가 낮밤에 따라 달라집니다."
+      - "<gray>일반 월드와 능력 연습에서는 시간이 바뀌지 않습니다."
+  rain-chance:
+    name: "비 올 확률"
+    lore:
+      - "<gray>전투 맵에서 경기 중 무작위 시점에 한동안 비가 내릴 확률"
+      - "<gray>천둥·번개는 없고, 수류술사·낚시꾼·갓파가 비를 반깁니다."
+    zero: "<red>비 안 옴"
+  rain-min:
+    name: "비 시간 (최소)"
+    lore:
+      - "<gray>비가 내리는 가장 짧은 시간. 최소~최대 사이에서 무작위로 정합니다."
+  rain-max:
+    name: "비 시간 (최대)"
+    lore:
+      - "<gray>비가 내리는 가장 긴 시간. 최소보다 짧으면 최소 시간 동안 내립니다."
   particles:
     name: "파티클 양"
     lore:
