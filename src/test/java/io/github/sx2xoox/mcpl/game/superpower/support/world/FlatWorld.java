@@ -2,8 +2,10 @@ package io.github.sx2xoox.mcpl.game.superpower.support.world;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -239,6 +241,9 @@ public final class FlatWorld extends WorldMock {
 
     // ------------------------------------------------------------------ entities
 
+    /** Entities whose spawn consumer is running ({@link #spawn}). */
+    private final Set<UUID> spawning = new HashSet<>();
+
     @Override
     public LightningStrike strikeLightningEffect(Location location) {
         lightningEffects.add(location.clone());
@@ -248,16 +253,36 @@ public final class FlatWorld extends WorldMock {
         return bolt;
     }
 
+    /**
+     * Like Paper, an entity is not {@code isValid()} while its spawn consumer runs (it is added to the world only
+     * afterwards); the {@link MockEntities} doubles ask {@link #isSpawning}.
+     */
     @Override
     @SuppressWarnings({"unchecked", "rawtypes"})
     public <T extends Entity> T spawn(Location location, Class<T> clazz, @Nullable Consumer<? super T> function,
                                       CreatureSpawnEvent.SpawnReason reason, boolean randomizeData,
                                       boolean callSpawnEvent) {
         Class substitute = MockEntities.SUBSTITUTES.get(clazz);
-        if (substitute == null) {
-            return super.spawn(location, clazz, function, reason, randomizeData, callSpawnEvent);
-        }
-        return (T) super.spawn(location, substitute, (Consumer) function, reason, randomizeData, callSpawnEvent);
+        // MockBukkit runs the consumer right before it registers the entity (and removes an entity that is not valid
+        // when its spawn event fires), so the mark ends with the consumer, as Paper adds the entity right after it.
+        Consumer<Entity> marked = entity -> {
+            spawning.add(entity.getUniqueId());
+            try {
+                if (function != null) {
+                    ((Consumer) function).accept(entity);
+                }
+            } finally {
+                spawning.remove(entity.getUniqueId());
+            }
+        };
+        return substitute == null
+                ? (T) super.spawn(location, (Class) clazz, (Consumer) marked, reason, randomizeData, callSpawnEvent)
+                : (T) super.spawn(location, substitute, (Consumer) marked, reason, randomizeData, callSpawnEvent);
+    }
+
+    /** True while {@code entity}'s spawn consumer runs (not in the world yet). */
+    public boolean isSpawning(Entity entity) {
+        return spawning.contains(entity.getUniqueId());
     }
 
     /** Like Paper, refuses particles with missing or mistyped data (MockBukkit accepts anything). */

@@ -20,6 +20,11 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The bookkeeping lives here so the owner is always shown again: call {@link #end} when the stealth breaks and
  * from {@code onRevoke}. A newer {@link #begin} supersedes the expiry of an older one.
+ *
+ * <p>Anything that would give away where a player is (a marker over its head, a prompt's overhead text) checks
+ * {@link AbilityContext#isConcealedFrom} per viewer; the prompt channel does so for its overhead texts. Hiding or
+ * showing the owner here asks every per-viewer filter again at once ({@link AbilityContext#refreshViewers()}), so
+ * such markers vanish in the same tick as the owner.
  */
 public final class Stealth {
 
@@ -49,10 +54,15 @@ public final class Stealth {
         if (!active) {
             return;
         }
+        boolean changed = false;
         for (Player viewer : ctx.alivePlayers()) {
             if (!viewer.equals(owner) && ctx.isEnemy(owner, viewer) && hiddenFrom.add(viewer.getUniqueId())) {
                 viewer.hidePlayer(ctx.plugin(), owner);
+                changed = true;
             }
+        }
+        if (changed) {
+            ctx.refreshViewers();
         }
     }
 
@@ -74,6 +84,7 @@ public final class Stealth {
             }
         }
         hiddenFrom.clear();
+        ctx.refreshViewers();
         return true;
     }
 

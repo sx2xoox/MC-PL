@@ -1,14 +1,19 @@
 package io.github.sx2xoox.mcpl.game.superpower.runtime;
 
+import java.util.Objects;
 import java.util.UUID;
 
+import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import io.papermc.paper.event.entity.TameableDeathMessageEvent;
+import io.papermc.paper.event.player.PlayerArmSwingEvent;
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.damage.DamageType;
@@ -31,25 +36,35 @@ import org.bukkit.event.entity.EntitySpawnEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.ExplosionPrimeEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerExpChangeEvent;
+import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Bukkit events of one superpower match (registered through the session, so it is unregistered when the match
- * stops): ability input, ability-item protection, hook routing, the ultimate gauge, summon behaviour and the block
- * safety of everything abilities create.
+ * stops): ability input, ability-item protection, hook routing, the ultimate gauge, summon behaviour, the block
+ * safety of everything abilities create, the players' voluntary input and displacement, and joins and quits for the
+ * per-viewer entity filters.
  */
 final class MatchListener implements Listener {
+
+    /** A teleport moving a player less than this (squared blocks) only turns it. */
+    private static final double TELEPORT_EPSILON = 1.0E-4;
 
     private final SuperpowerMatch match;
     private final GameSession session;
@@ -153,7 +168,8 @@ final class MatchListener implements Listener {
             Participant taker = match.participant(victim.getUniqueId());
             Ability ability = taker == null ? null : taker.ability;
             if (ability != null && session.isInPlay(victim)) {
-                guard.run(taker.abilityId, "onTakeDamage", () -> ability.onTakeDamage(event));
+                ctx().runOwnCode(victim.getUniqueId(),
+                        () -> guard.run(taker.abilityId, "onTakeDamage", () -> ability.onTakeDamage(event)));
             }
         }
     }
@@ -383,6 +399,96 @@ final class MatchListener implements Listener {
         }
         event.setCancelled(true);
         match.handleSwap(player);
+    }
+
+    // =================================================================== voluntary input & displacement
+
+    /** Every input change of a client (key presses and releases for input-based rules). */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onInput(PlayerInputEvent event) {
+        ctx().recordInput(event.getPlayer(), event.getInput());
+    }
+
+    /**
+     * Arm swings count even when something cancelled the event: the player still swung. Paper fires it for either hand
+     * and for block and item use too, so attack rules read {@link #onAttackTried} instead.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onSwing(PlayerArmSwingEvent event) {
+        ctx().recordSwing(event.getPlayer());
+    }
+
+    /** A melee attack the player tried, also one something cancelled (the player still attacked). */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onAttackTried(PrePlayerAttackEntityEvent event) {
+        ctx().recordAttack(event.getPlayer());
+    }
+
+    /**
+     * A projectile the player shot or threw with an item; projectiles its ability code launches are ability skills,
+     * not attacks.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onProjectileLaunched(ProjectileLaunchEvent event) {
+        if (event.getEntity().getShooter() instanceof Player shooter && !ctx().isOwnCode(shooter)
+                && !match.guard().isRunningAbilityCode()) {
+            ctx().recordAttack(shooter);
+        }
+    }
+
+    /**
+     * Every velocity the server sends a player: abilities' pushes, launches and pulls (also through kit
+     * {@code Motion}), vanilla knockback and explosions. Fired when the velocity is sent, later in the same tick.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onVelocity(PlayerVelocityEvent event) {
+        ctx().recordVelocity(event.getPlayer(), event.getVelocity());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onKnockbackTaken(EntityKnockbackEvent event) {
+        if (event.getEntity() instanceof Player player) {
+            ctx().recordDisplaced(player);
+        }
+    }
+
+    /**
+     * Teleports that move a player displace it, except its own ender pearls and chorus fruit; a teleport that only
+     * turns the player (same position) does not.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onTeleport(PlayerTeleportEvent event) {
+        PlayerTeleportEvent.TeleportCause cause = event.getCause();
+        if (cause == PlayerTeleportEvent.TeleportCause.ENDER_PEARL
+                || cause == PlayerTeleportEvent.TeleportCause.CONSUMABLE_EFFECT) {
+            return;
+        }
+        Location from = event.getFrom();
+        Location to = event.getTo();
+        if (!Objects.equals(from.getWorld(), to.getWorld()) || from.distanceSquared(to) > TELEPORT_EPSILON) {
+            ctx().recordDisplaced(event.getPlayer());
+        }
+    }
+
+    /** The end of every server tick: shown prompts take the action bar back from later senders. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onServerTickEnd(ServerTickEndEvent event) {
+        if (fighting()) {
+            ctx().serverTickEnd();
+        }
+    }
+
+    // =================================================================== per-viewer visibility
+
+    /** A joining client sees no filtered entity until its filter accepts it (also players who rejoin). */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onJoin(PlayerJoinEvent event) {
+        ctx().viewerJoined(event.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuit(PlayerQuitEvent event) {
+        ctx().viewerQuit(event.getPlayer());
     }
 
     /** The XP bar shows the ultimate gauge: vanilla experience never changes it. */

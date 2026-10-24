@@ -360,6 +360,22 @@ class PracticeModeTest {
     }
 
     @Test
+    void aPracticePlayerWaitingToRespawnIsNoSpectatorForAbilities() {
+        SuperpowerMatch match = practice("probe");
+        MatchContext ctx = match.context();
+        assertFalse(ctx.isSpectator(admin));
+        admin.setNoDamageTicks(0);
+        admin.damage(10_000, DamageSource.builder(DamageType.GENERIC_KILL).build());
+        assertTrue(admin.isDead());
+        assertTrue(match.session().isSpectator(admin), "the session counts everyone out of play");
+        assertFalse(ctx.isSpectator(admin), "but it still plays: spectators-only displays stay hidden from it");
+        admin.respawn();
+        h.server.getPluginManager().callEvent(new PlayerPostRespawnEvent(admin, admin.getLocation(), false, false,
+                false, PlayerRespawnEvent.RespawnReason.DEATH));
+        assertFalse(ctx.isSpectator(admin));
+    }
+
+    @Test
     void practiceCommandsAreRefusedInARealMatch() {
         TestPlayer other = h.join("Other");
         place(other, 4.5, 4.5, 180f);

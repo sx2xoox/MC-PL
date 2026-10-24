@@ -30,7 +30,10 @@ import org.mockbukkit.mockbukkit.MockBukkit;
  *
  * <p>{@link #MatchHarness()} uses MockBukkit's simple world (no block shapes, no physics). {@link #flat()} uses a
  * {@link FlatWorld} instead: real ray tracing, collisions and line of sight, and a {@link
- * io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics} step after every server tick.
+ * io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics} step after every server tick. Per-viewer
+ * visibility ({@code setVisibleByDefault}: prompts with an overhead text, {@code Displays} with {@code viewers}) only
+ * works in the flat world: the simple world spawns MockBukkit's own entities, which throw
+ * {@code UnimplementedOperationException} for it.
  */
 public final class MatchHarness implements AutoCloseable {
 

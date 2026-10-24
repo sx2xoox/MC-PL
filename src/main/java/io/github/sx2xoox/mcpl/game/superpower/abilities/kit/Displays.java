@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.superpower.abilities.kit;
 
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext;
 import net.kyori.adventure.text.Component;
@@ -9,6 +10,7 @@ import org.bukkit.Location;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
@@ -37,6 +39,13 @@ import org.jspecify.annotations.Nullable;
  * {@link #transform} center the shape on the entity location. Item and text displays are already centered.
  * Spawned displays are tracked through {@link AbilityContext#track} (removed when the owner's ability is revoked or
  * the match ends) and additionally removed after {@code lifetimeTicks}.
+ *
+ * <p>Displays only some players may see (owner-only overlays, allies-only markers) are spawned with a {@code viewers}
+ * filter: {@link #text(AbilityContext, Player, Location, Component, float, long, Predicate)},
+ * {@link #block(AbilityContext, Player, Location, BlockData, Transformation, long, Predicate)},
+ * {@link #item(AbilityContext, Player, Location, ItemStack, Transformation, long, Predicate)} or
+ * {@link #spawn(AbilityContext, Player, Location, Class, long, Predicate, Consumer)}, which hide them inside the spawn,
+ * before any client receives them (see {@link #onlyFor}).
  */
 public final class Displays {
 
@@ -51,7 +60,17 @@ public final class Displays {
     /** A block display centered on {@code at}. */
     public static BlockDisplay block(AbilityContext ctx, Player owner, Location at, BlockData data,
                                      Transformation start, long lifetimeTicks) {
-        return spawn(ctx, owner, at, BlockDisplay.class, lifetimeTicks, display -> {
+        return block(ctx, owner, at, data, start, lifetimeTicks, null);
+    }
+
+    /**
+     * A block display centered on {@code at}, seen only by the players {@code viewers} accepts (null: everyone), hidden
+     * inside the spawn ({@link #onlyFor}).
+     */
+    public static BlockDisplay block(AbilityContext ctx, Player owner, Location at, BlockData data,
+                                     Transformation start, long lifetimeTicks,
+                                     @Nullable Predicate<? super Player> viewers) {
+        return spawn(ctx, owner, at, BlockDisplay.class, lifetimeTicks, viewers, display -> {
             display.setBlock(data);
             display.setTransformation(start);
         });
@@ -60,7 +79,17 @@ public final class Displays {
     /** An item display centered on {@code at}. */
     public static ItemDisplay item(AbilityContext ctx, Player owner, Location at, ItemStack item,
                                    Transformation start, long lifetimeTicks) {
-        return spawn(ctx, owner, at, ItemDisplay.class, lifetimeTicks, display -> {
+        return item(ctx, owner, at, item, start, lifetimeTicks, null);
+    }
+
+    /**
+     * An item display centered on {@code at}, seen only by the players {@code viewers} accepts (null: everyone), hidden
+     * inside the spawn ({@link #onlyFor}).
+     */
+    public static ItemDisplay item(AbilityContext ctx, Player owner, Location at, ItemStack item,
+                                   Transformation start, long lifetimeTicks,
+                                   @Nullable Predicate<? super Player> viewers) {
+        return spawn(ctx, owner, at, ItemDisplay.class, lifetimeTicks, viewers, display -> {
             display.setItemStack(item);
             display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
             display.setTransformation(start);
@@ -70,7 +99,20 @@ public final class Displays {
     /** A camera-facing text display (no background) centered on {@code at}. */
     public static TextDisplay text(AbilityContext ctx, Player owner, Location at, Component text, float scale,
                                    long lifetimeTicks) {
-        return spawn(ctx, owner, at, TextDisplay.class, lifetimeTicks, display -> {
+        return text(ctx, owner, at, text, scale, lifetimeTicks, null);
+    }
+
+    /**
+     * A camera-facing text display (no background) centered on {@code at}, seen only by the players {@code viewers}
+     * accepts (null: everyone), hidden inside the spawn so no other client ever receives the text:
+     * <pre>{@code
+     * TextDisplay hint = Displays.text(ctx(), player(), at, Text.mm("<gray>약점</gray>"), 0.6f, 60,
+     *         Displays.owner(player()));
+     * }</pre>
+     */
+    public static TextDisplay text(AbilityContext ctx, Player owner, Location at, Component text, float scale,
+                                   long lifetimeTicks, @Nullable Predicate<? super Player> viewers) {
+        return spawn(ctx, owner, at, TextDisplay.class, lifetimeTicks, viewers, display -> {
             display.text(text);
             display.setBillboard(Display.Billboard.CENTER);
             display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
@@ -86,6 +128,17 @@ public final class Displays {
      */
     public static <T extends Display> T spawn(AbilityContext ctx, Player owner, Location at, Class<T> type,
                                               long lifetimeTicks, @Nullable Consumer<? super T> setup) {
+        return spawn(ctx, owner, at, type, lifetimeTicks, null, setup);
+    }
+
+    /**
+     * {@link #spawn(AbilityContext, Player, Location, Class, long, Consumer)} seen only by the players {@code viewers}
+     * accepts (null: everyone): {@link AbilityContext#showOnlyTo} runs inside the spawn, after {@code setup}, so no
+     * other client ever receives the display or its text.
+     */
+    public static <T extends Display> T spawn(AbilityContext ctx, Player owner, Location at, Class<T> type,
+                                              long lifetimeTicks, @Nullable Predicate<? super Player> viewers,
+                                              @Nullable Consumer<? super T> setup) {
         T display = at.getWorld().spawn(unrotated(at), type, d -> {
             d.setPersistent(false);
             d.setBrightness(FULL_BRIGHT);
@@ -96,6 +149,9 @@ public final class Displays {
             d.setInterpolationDelay(0);
             if (setup != null) {
                 setup.accept(d);
+            }
+            if (viewers != null) {
+                ctx.showOnlyTo(owner, d, viewers);
             }
         });
         ctx.track(owner, display);
@@ -173,6 +229,58 @@ public final class Displays {
                 display.remove();
             }
         });
+    }
+
+    // ------------------------------------------------------------------ per-viewer visibility
+
+    /**
+     * Makes {@code entity} visible only to the players {@code viewers} accepts (an owner-only overlay, an allies-only
+     * marker) and returns it. It is hidden by default and shown per viewer, so a player who joins or rejoins later
+     * never sees it unless accepted, and the match asks {@code viewers} again every few ticks and whenever someone
+     * joins, leaves or is eliminated (see {@link AbilityContext#showOnlyTo}).
+     *
+     * <p><b>Prefer the spawning overloads with {@code viewers}</b> ({@code text}, {@code block}, {@code item},
+     * {@code spawn}): they filter inside the spawn, before the server sends the entity to anyone. This method is for
+     * an entity spawned elsewhere; call it inside that entity's spawn consumer when you can
+     * ({@code world.spawn(at, type, e -> Displays.onlyFor(ctx(), player(), e, viewers))}). Called after the spawn, the
+     * clients around already received the entity (its spawn and its text) once:
+     * <pre>{@code
+     * TextDisplay hint = Displays.text(ctx(), player(), at, Text.mm("<gray>약점</gray>"), 0.6f, 60,
+     *         Displays.owner(player()));
+     * BlockDisplay mark = Displays.block(ctx(), player(), at, data, Displays.scaled(0.5f), 80,
+     *         Displays.ownerAndAllies(ctx(), player()).or(Displays.spectators(ctx())));
+     * }</pre>
+     * Use this instead of {@code hideEntity} loops; never combine both on one entity. Keep owner-only information
+     * rare: public displays are the default.
+     *
+     * <p>Tests: the {@code Scenario} worlds' display doubles implement Paper's per-viewer visibility
+     * ({@code Scenario#seenBy}); MockBukkit's plain entities (and the simple world of {@code new MatchHarness()})
+     * throw {@code UnimplementedOperationException} from {@code setVisibleByDefault}.
+     */
+    public static <T extends Entity> T onlyFor(AbilityContext ctx, Player owner, T entity,
+                                               Predicate<? super Player> viewers) {
+        ctx.showOnlyTo(owner, entity, viewers);
+        return entity;
+    }
+
+    /** {@link #onlyFor} the owner alone. */
+    public static <T extends Entity> T ownerOnly(AbilityContext ctx, Player owner, T entity) {
+        return onlyFor(ctx, owner, entity, owner(owner));
+    }
+
+    /** Viewers: the owner alone. */
+    public static Predicate<Player> owner(Player owner) {
+        return viewer -> viewer.equals(owner);
+    }
+
+    /** Viewers: the owner and its allies in play (only the owner in free-for-all). */
+    public static Predicate<Player> ownerAndAllies(AbilityContext ctx, Player owner) {
+        return viewer -> viewer.equals(owner) || ctx.isAlly(owner, viewer);
+    }
+
+    /** Viewers: everyone watching without being in play (eliminated participants, spectators, the stream). */
+    public static Predicate<Player> spectators(AbilityContext ctx) {
+        return ctx::isSpectator;
     }
 
     /** Gives {@code display} a colored outline visible through walls (use sparingly: telegraphs, key objects). */
