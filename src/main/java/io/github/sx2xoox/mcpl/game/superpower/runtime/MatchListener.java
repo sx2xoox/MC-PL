@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.runtime;
 import java.util.Objects;
 import java.util.UUID;
 
+import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
@@ -10,6 +11,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import io.papermc.paper.event.entity.TameableDeathMessageEvent;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
@@ -34,6 +36,7 @@ import org.bukkit.event.entity.EntitySpawnEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.ExplosionPrimeEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -165,7 +168,8 @@ final class MatchListener implements Listener {
             Participant taker = match.participant(victim.getUniqueId());
             Ability ability = taker == null ? null : taker.ability;
             if (ability != null && session.isInPlay(victim)) {
-                guard.run(taker.abilityId, "onTakeDamage", () -> ability.onTakeDamage(event));
+                ctx().runOwnCode(victim.getUniqueId(),
+                        () -> guard.run(taker.abilityId, "onTakeDamage", () -> ability.onTakeDamage(event)));
             }
         }
     }
@@ -405,10 +409,31 @@ final class MatchListener implements Listener {
         ctx().recordInput(event.getPlayer(), event.getInput());
     }
 
-    /** Arm swings count even when something cancelled the event: the player still swung. */
+    /**
+     * Arm swings count even when something cancelled the event: the player still swung. Paper fires it for either hand
+     * and for block and item use too, so attack rules read {@link #onAttackTried} instead.
+     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onSwing(PlayerArmSwingEvent event) {
         ctx().recordSwing(event.getPlayer());
+    }
+
+    /** A melee attack the player tried, also one something cancelled (the player still attacked). */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onAttackTried(PrePlayerAttackEntityEvent event) {
+        ctx().recordAttack(event.getPlayer());
+    }
+
+    /**
+     * A projectile the player shot or threw with an item; projectiles its ability code launches are ability skills,
+     * not attacks.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onProjectileLaunched(ProjectileLaunchEvent event) {
+        if (event.getEntity().getShooter() instanceof Player shooter && !ctx().isOwnCode(shooter)
+                && !match.guard().isRunningAbilityCode()) {
+            ctx().recordAttack(shooter);
+        }
     }
 
     /**
@@ -442,6 +467,14 @@ final class MatchListener implements Listener {
         Location to = event.getTo();
         if (!Objects.equals(from.getWorld(), to.getWorld()) || from.distanceSquared(to) > TELEPORT_EPSILON) {
             ctx().recordDisplaced(event.getPlayer());
+        }
+    }
+
+    /** The end of every server tick: shown prompts take the action bar back from later senders. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onServerTickEnd(ServerTickEndEvent event) {
+        if (fighting()) {
+            ctx().serverTickEnd();
         }
     }
 

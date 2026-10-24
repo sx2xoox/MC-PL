@@ -48,9 +48,15 @@ import org.mockbukkit.mockbukkit.inventory.EntityEquipmentMock;
  * non-players), body yaw, {@code lookAt}, line of sight, display billboards, arrow colours, the mob flags summons
  * set while spawning, a recording {@link Pathfinder}, and {@code setVisibleByDefault}/{@code isVisibleByDefault}
  * with Paper's reset of every viewer (see {@link EntityViewer}; {@code TestPlayer} keeps the per-viewer state, so
- * {@code viewer.canSee(entity)} answers who sees what).
+ * {@code viewer.canSee(entity)} answers who sees what), and Paper's {@code isValid()} that is false while the spawn
+ * consumer runs (MockBukkit's entities are valid from their construction).
  */
 public final class MockEntities {
+
+    /** False while {@code entity}'s spawn consumer runs in a {@link FlatWorld} (Paper adds it to the world after). */
+    static boolean inWorld(Entity entity) {
+        return !(entity.getLocation().getWorld() instanceof FlatWorld flat && flat.isSpawning(entity));
+    }
 
     /** Requested Bukkit class to the double spawned for it. */
     public static final Map<Class<? extends Entity>, Class<? extends Entity>> SUBSTITUTES = Map.of(
@@ -135,6 +141,12 @@ public final class MockEntities {
                 EntityViewer.defaultChanging(this);
                 visibleByDefault = visible;
             }
+        }
+
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
         }
 
         @Override
@@ -265,6 +277,12 @@ public final class MockEntities {
                 EntityViewer.defaultChanging(this);
                 visibleByDefault = visible;
             }
+        }
+
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
         }
 
         @Override
@@ -406,6 +424,12 @@ public final class MockEntities {
                 EntityViewer.defaultChanging(this);
                 visibleByDefault = visible;
             }
+        }
+
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
         }
 
         @Override
@@ -601,6 +625,12 @@ public final class MockEntities {
             }
         }
 
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
+        }
+
         @Override
         public Display.Billboard getBillboard() {
             return billboard;
@@ -666,6 +696,12 @@ public final class MockEntities {
                 EntityViewer.defaultChanging(this);
                 visibleByDefault = visible;
             }
+        }
+
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
         }
 
         @Override
@@ -735,6 +771,12 @@ public final class MockEntities {
             }
         }
 
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
+        }
+
         @Override
         public Display.Billboard getBillboard() {
             return billboard;
@@ -782,6 +824,12 @@ public final class MockEntities {
                 EntityViewer.defaultChanging(this);
                 visibleByDefault = visible;
             }
+        }
+
+        /** Like Paper: not valid while its spawn consumer runs (not in the world yet). */
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
         }
 
         @Override

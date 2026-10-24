@@ -18,17 +18,23 @@ import org.bukkit.Input;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier.Operation;
+import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Snowball;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerInputEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerVelocityEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
 
 /**
  * Voluntary input for rules (kit {@code Inputs} and the context's input history): held keys, presses and releases
- * between ticks, swings, ping slack, and the exemptions for hard crowd control and displacement.
+ * between ticks, swings and attacks, ping slack, and the exemptions for hard crowd control, displacement and riding,
+ * each covering exactly its own stretch of time; a player's own ability moving it is no displacement.
  */
 class VoluntaryInputTest {
 
@@ -254,6 +260,175 @@ class VoluntaryInputTest {
             assertFalse(Inputs.breaksWalking(ctx, s.enemy2, from, null));
             s.ticks(1);
             assertTrue(Inputs.breaksWalking(ctx, s.enemy2, from, null), "still holding it when the window ends");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aKeyTappedAndReleasedDuringAStunNeverCountsAfterIt() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            long from = ctx.currentTick();
+            s.ticks(5);
+            ctx.addModifier(s.enemy2, s.enemy, Attribute.MOVEMENT_SPEED, -1.0, Operation.MULTIPLY_SCALAR_1, 40);
+            s.ticks(10);
+            s.enemy.sendInput(InputKey.FORWARD);          // the natural reaction to a stun
+            s.ticks(20);
+            s.enemy.sendInput();
+            s.ticks(11);
+            assertFalse(ctx.isMovementLocked(s.enemy, null), "the stun is over");
+            assertFalse(Inputs.isExempt(ctx, s.enemy, InputKey.FORWARD, null));
+            assertFalse(Inputs.breaks(ctx, s.enemy, InputKey.FORWARD, from, null),
+                    "keys mashed while stunned never count once the stun ends");
+            assertTrue(Inputs.usedSince(ctx, s.enemy, InputKey.FORWARD, from), "the raw history still has the tap");
+            assertTrue(Inputs.breaks(ctx, s.enemy, InputKey.FORWARD, from, s.enemy2),
+                    "a stun of the rule owner's own exempts nothing");
+
+            // A tap right after the stun ended does count.
+            s.enemy.sendInput(InputKey.FORWARD);
+            s.enemy.sendInput();
+            assertTrue(Inputs.breaks(ctx, s.enemy, InputKey.FORWARD, from, null));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aJumpLockExemptsOnlyTheJumpKey() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            long from = ctx.currentTick();
+            ctx.addModifier(s.owner, s.enemy, Attribute.JUMP_STRENGTH, -1.0, Operation.MULTIPLY_SCALAR_1, 10);
+            s.enemy.sendInput(InputKey.JUMP, InputKey.LEFT);
+            s.enemy.sendInput();
+            s.ticks(12);
+            assertFalse(Inputs.breaks(ctx, s.enemy, InputKey.JUMP, from, null), "the jump was locked");
+            assertTrue(Inputs.breaks(ctx, s.enemy, InputKey.LEFT, from, null), "walking was not");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aWalkBeforeALaterPushStillCountsWhenTheRuleIsJudgedAtItsEnd() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            long from = ctx.currentTick();
+            s.enemy.sendInput(InputKey.BACKWARD);
+            s.ticks(4);
+            s.enemy.sendInput();
+            s.ticks(10);
+            Motion.push(s.enemy, new Vector(0.9, 0.2, 0), 2.0);
+            s.ticks(2);
+            assertTrue(Inputs.isDisplaced(ctx, s.enemy), "pushed just now");
+            assertTrue(Inputs.breaksWalking(ctx, s.enemy, from, null),
+                    "a walk made before the push is judged even while the player is pushed afterwards");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void movementAPlayersOwnAbilityMakesIsNoDisplacement() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            // The enemy's own code (a hook, a task, a prompt callback) dashes and blinks it.
+            ctx.runOwnCode(s.enemy.getUniqueId(), () -> {
+                s.enemy.setVelocity(new Vector(1.2, 0.4, 0));
+                s.enemy.teleport(s.enemy.getLocation().add(0, 0, 3), PlayerTeleportEvent.TeleportCause.PLUGIN);
+            });
+            assertFalse(ctx.wasDisplaced(s.enemy, Inputs.DISPLACED_TICKS), "its own dash and blink");
+            assertFalse(Inputs.isExempt(ctx, s.enemy, InputKey.FORWARD, null));
+
+            // Someone else's code moving it is displacement, also nested inside the enemy's own code.
+            ctx.runOwnCode(s.enemy.getUniqueId(), () -> ctx.runOwnCode(s.owner.getUniqueId(),
+                    () -> s.enemy.setVelocity(new Vector(0, 0.8, 0.9))));
+            assertTrue(ctx.wasDisplaced(s.enemy, Inputs.DISPLACED_TICKS), "pushed by the owner's code");
+            ctx.runOwnCode(s.owner.getUniqueId(),
+                    () -> s.enemy2.teleport(s.enemy2.getLocation().add(2, 0, 0)));
+            assertTrue(ctx.wasDisplaced(s.enemy2, Inputs.DISPLACED_TICKS), "pulled by the owner's code");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aVelocityTheOwnCodeSetIsRecognisedWhenTheServerSendsItLater() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            // On Paper the velocity event fires when the tracker sends the velocity, after the code returned.
+            Vector dash = new Vector(1.1, 0.3, 0);
+            ctx.runOwnCode(s.enemy.getUniqueId(), () -> s.enemy.setClientVelocity(dash));
+            s.h.server.getPluginManager().callEvent(new PlayerVelocityEvent(s.enemy, dash.clone().multiply(0.98)));
+            assertFalse(ctx.wasDisplaced(s.enemy, Inputs.DISPLACED_TICKS), "its own dash, slightly damped");
+            s.h.server.getPluginManager().callEvent(new PlayerVelocityEvent(s.enemy, new Vector(-0.9, 0.4, 0)));
+            assertTrue(ctx.wasDisplaced(s.enemy, Inputs.DISPLACED_TICKS), "a different velocity is a push");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void anAbilitysOwnBlinkLeavesItsOwnerJudged() {
+        try (Scenario s = Scenario.ffa("blink")) {
+            s.ticks((int) Inputs.DISPLACED_TICKS + 1);
+            MatchContext ctx = s.ctx();
+            s.place(s.owner, 0.5, 0.5, 180);
+            s.ticks((int) Inputs.DISPLACED_TICKS + 1);
+            long from = ctx.currentTick();
+            s.owner.sendInput(InputKey.FORWARD);
+            s.assertSucceeded(s.active(), "점멸");
+            assertFalse(ctx.wasDisplaced(s.owner, Inputs.DISPLACED_TICKS), "a blink of its own");
+            assertTrue(Inputs.breaksWalking(ctx, s.owner, from, null), "so walking under a rule still counts");
+            s.owner.sendInput();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void ridingExemptsTheWalkingKeys() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            long from = ctx.currentTick();
+            ArmorStand seat = s.world.spawn(s.enemy.getLocation(), ArmorStand.class);
+            seat.addPassenger(s.enemy);
+            assertTrue(s.enemy.isInsideVehicle());
+            s.ticks(1);
+            s.enemy.sendInput(InputKey.FORWARD);
+            s.ticks(3);
+            s.enemy.sendInput();
+            seat.removePassenger(s.enemy);
+            seat.remove();
+            s.ticks((int) Inputs.DISPLACED_TICKS + 2);
+            assertFalse(Inputs.breaksWalking(ctx, s.enemy, from, null), "it steered the seat");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void attacksAreMeleeAttemptsAndItemProjectilesNotEverySwing() {
+        try (Scenario s = settled()) {
+            MatchContext ctx = s.ctx();
+            long now = ctx.currentTick();
+            s.enemy.swingArm();                            // opening a chest, placing a block
+            s.enemy.swingArm(EquipmentSlot.OFF_HAND);
+            assertEquals(now, ctx.lastSwingTick(s.enemy));
+            assertEquals(-1, ctx.lastAttackTick(s.enemy), "a swing is no attack");
+            assertFalse(Inputs.breaksAttack(ctx, s.enemy, now));
+            assertTrue(Inputs.breaksSwing(ctx, s.enemy, now), "but it is a swing");
+
+            s.enemy.attackAttempt(s.owner);
+            assertEquals(now, ctx.lastAttackTick(s.enemy));
+            assertTrue(Inputs.attackedSince(ctx, s.enemy, now));
+            assertTrue(Inputs.breaksAttack(ctx, s.enemy, now));
+
+            s.ticks(1);
+            Snowball thrown = s.world.spawn(s.enemy2.getEyeLocation(), Snowball.class);
+            thrown.setShooter(s.enemy2);
+            s.h.server.getPluginManager().callEvent(new ProjectileLaunchEvent(thrown));
+            assertEquals(ctx.currentTick(), ctx.lastAttackTick(s.enemy2), "a snowball it threw");
+            Snowball cast = s.world.spawn(s.owner.getEyeLocation(), Snowball.class);
+            cast.setShooter(s.owner);
+            ctx.runOwnCode(s.owner.getUniqueId(),
+                    () -> s.h.server.getPluginManager().callEvent(new ProjectileLaunchEvent(cast)));
+            assertEquals(-1, ctx.lastAttackTick(s.owner), "its ability's projectile is a skill, not an attack");
+            thrown.remove();
+            cast.remove();
             s.finishClean();
         }
     }

@@ -33,10 +33,17 @@ public interface PromptHandle {
     /** True if the prompt has been on the target's screen at least once. */
     boolean wasShown();
 
-    /** The tick the prompt was first shown, or -1 if it never was. The answer window starts here, not at submission. */
+    /**
+     * The tick the prompt was first shown, or -1 if it never was. The answer window starts here, not at submission. A
+     * rule judged continuously starts from {@link #showingSinceTick()} instead (kit {@code Inputs.judgeFrom(ctx,
+     * handle, grace)}), so a push-back in between does not leave input made off screen in the judged stretch.
+     */
     long shownAtTick();
 
-    /** The tick the current showing began (the first show or the resume after a push-back), or -1 when not shown. */
+    /**
+     * The tick the current showing began (the first show or the resume after a push-back), or -1 when not shown. Input
+     * before it was made while the target could not read the prompt.
+     */
     long showingSinceTick();
 
     /**
@@ -48,6 +55,12 @@ public interface PromptHandle {
 
     /** Ticks the prompt has been on screen so far, all showings together. */
     long shownTicks();
+
+    /**
+     * The on-screen ticks this prompt gets for its target: {@link Prompt#durationTicks()} plus the target's reaction
+     * slack ({@link Prompt.Builder#reactionSlack}, fixed when it is first shown; until then from the current ping).
+     */
+    long windowTicks();
 
     /** On-screen ticks left before it ends as {@link PromptEndReason#EXPIRED} (0 once ended). */
     long remainingTicks();

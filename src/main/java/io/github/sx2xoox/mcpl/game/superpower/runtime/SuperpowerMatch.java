@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -299,7 +300,7 @@ public final class SuperpowerMatch implements GameInstance {
             Participant credited = participants.get(killer.getUniqueId());
             Ability ability = credited == null ? null : credited.ability;
             if (ability != null && session.isInPlay(killer)) {
-                guard.run(credited.abilityId, "onKill", () -> ability.onKill(player));
+                ownCode(credited, () -> guard.run(credited.abilityId, "onKill", () -> ability.onKill(player)));
             }
         }
         if (!deferWinCheck) {
@@ -560,7 +561,7 @@ public final class SuperpowerMatch implements GameInstance {
                 continue;
             }
             participant.granted = true;
-            guard.run(participant.abilityId, "onGrant", ability::onGrant);
+            ownCode(participant, () -> guard.run(participant.abilityId, "onGrant", ability::onGrant));
             if (stopped) {
                 return;
             }
@@ -604,7 +605,7 @@ public final class SuperpowerMatch implements GameInstance {
             return false;
         }
         participant.granted = true;
-        guard.run(participant.abilityId, "onGrant", ability::onGrant);
+        ownCode(participant, () -> guard.run(participant.abilityId, "onGrant", ability::onGrant));
         return true;
     }
 
@@ -626,7 +627,7 @@ public final class SuperpowerMatch implements GameInstance {
             if (player == null || !session.isInPlay(player)) {
                 continue;
             }
-            guard.run(participant.abilityId, "onTick", () -> ability.onTick(now));
+            ownCode(participant, () -> guard.run(participant.abilityId, "onTick", () -> ability.onTick(now)));
             if (stopped) {
                 return;
             }
@@ -1117,8 +1118,8 @@ public final class SuperpowerMatch implements GameInstance {
             return;
         }
         Ability ability = participant.ability;
-        if (ability != null && Boolean.TRUE.equals(guard.call(participant.abilityId, "onUltimateKey",
-                ability::onUltimateKey))) {
+        if (ability != null && Boolean.TRUE.equals(ownCode(participant,
+                () -> guard.call(participant.abilityId, "onUltimateKey", ability::onUltimateKey)))) {
             return; // the ability took the key (e.g. to end its running ultimate)
         }
         useUltimate(player);
@@ -1147,7 +1148,7 @@ public final class SuperpowerMatch implements GameInstance {
             return ActivationResult.fail("cooldown");
         }
         String id = participant.abilityId;
-        ActivationResult result = guard.call(id, "onActive", ability::onActive);
+        ActivationResult result = ownCode(participant, () -> guard.call(id, "onActive", ability::onActive));
         if (result == null) {
             deny(player, messages.get("input.error"));
             return ActivationResult.fail("error");
@@ -1193,7 +1194,7 @@ public final class SuperpowerMatch implements GameInstance {
         String id = participant.abilityId;
         // Everything the ultimate does, now or later, counts as the ultimate: it never refills the caster's gauge.
         ActivationResult result = context().asUltimate(participant.id(),
-                () -> guard.call(id, "onUltimate", ability::onUltimate));
+                () -> ownCode(participant, () -> guard.call(id, "onUltimate", ability::onUltimate)));
         if (result == null) {
             deny(player, messages.get("input.error"));
             return ActivationResult.fail("error");
@@ -1771,7 +1772,7 @@ public final class SuperpowerMatch implements GameInstance {
             Participant credited = participants.get(killer.getUniqueId());
             Ability ability = credited == null ? null : credited.ability;
             if (ability != null && session.isInPlay(killer)) {
-                guard.run(credited.abilityId, "onKill", () -> ability.onKill(victim));
+                ownCode(credited, () -> guard.run(credited.abilityId, "onKill", () -> ability.onKill(victim)));
             }
         }
         Location home = homes.get(victim.getUniqueId());
@@ -1793,6 +1794,9 @@ public final class SuperpowerMatch implements GameInstance {
             messages.send(player, "fight.ability-error");
         }
         syncXp(participant, player);
+        if (ctx != null) {
+            ctx.viewersChanged();
+        }
         messages.send(player, "practice.respawned");
     }
 
@@ -1814,6 +1818,7 @@ public final class SuperpowerMatch implements GameInstance {
         Participant participant = participants.computeIfAbsent(player.getUniqueId(), id -> new Participant(player));
         enterPractice(participant, player);
         grantPractice(participant, player);
+        ctx.viewersChanged();
     }
 
     /** True for a practice session ({@code /게임 능력 연습}). */
@@ -1983,6 +1988,24 @@ public final class SuperpowerMatch implements GameInstance {
         return fightTicks;
     }
 
+    /**
+     * Runs a hook of {@code participant}'s ability as its own code (movement it gives its owner is no displacement,
+     * see {@link MatchContext#asOwnCode}); plainly before the match context exists.
+     */
+    private void ownCode(Participant participant, Runnable hook) {
+        MatchContext context = ctx;
+        if (context == null) {
+            hook.run();
+        } else {
+            context.runOwnCode(participant.id(), hook);
+        }
+    }
+
+    private <T> @Nullable T ownCode(Participant participant, Supplier<@Nullable T> hook) {
+        MatchContext context = ctx;
+        return context == null ? hook.get() : context.asOwnCode(participant.id(), hook);
+    }
+
     /** The ability context of this match (abilities receive it in {@link Ability#bind}). */
     public MatchContext context() {
         if (ctx == null) {
@@ -2048,7 +2071,7 @@ public final class SuperpowerMatch implements GameInstance {
         Ability ability = participant.ability;
         participant.ability = null;
         if (ability != null && participant.granted) {
-            guard.run(participant.abilityId, "onRevoke", ability::onRevoke);
+            ownCode(participant, () -> guard.run(participant.abilityId, "onRevoke", ability::onRevoke));
         }
         if (ctx != null) {
             ctx.releaseOwner(participant.id());

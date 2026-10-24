@@ -919,8 +919,9 @@ class TradeNewAbilitiesTest {
                         "at the hip: " + chamber.getLocation().toVector());
             }
             s.h.tickUntil(() -> shells(s).size() == rounds, 20, "the shells to be dumped");
+            // Below the assertion's tolerance: a shell still falling through 0.04..0.05 must not end the wait.
             s.h.tickUntil(() -> shells(s).stream().allMatch(shell -> shell.getLocation().getY()
-                    < FlatWorld.SURFACE + 0.05), 30, "the shells to land");
+                    < FlatWorld.SURFACE + 0.04), 30, "the shells to land");
             for (ItemDisplay shell : shells(s)) {
                 assertEquals(FlatWorld.SURFACE + 0.03, shell.getLocation().getY(), 0.01, "a shell lies on the floor");
             }

@@ -9,8 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerSettings;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Inputs;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Stealth;
+import io.github.sx2xoox.mcpl.game.superpower.ability.InputKey;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Prompt;
 import io.github.sx2xoox.mcpl.game.superpower.ability.PromptEndReason;
 import io.github.sx2xoox.mcpl.game.superpower.ability.PromptHandle;
@@ -30,9 +33,10 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 /**
- * The prompt channel ({@code AbilityContext#prompt}): one prompt on a player's screen at a time, the queue order,
- * priority push-backs, the answer window starting when a prompt is shown, unseen expiry, cleanup and the public
- * overhead text.
+ * The prompt channel ({@code AbilityContext#prompt}): one prompt on a player's screen at a time, the queue order (also
+ * for prompts chained from onEnd), priority push-backs and resumes, the answer window starting when a prompt is shown
+ * (plus the reaction slack), rules judged per showing, unseen expiry, the action bar winning every tick, titles,
+ * cleanup and the public overhead text.
  */
 class PromptChannelTest {
 
@@ -44,8 +48,10 @@ class PromptChannelTest {
         boolean shownAtEnd;
     }
 
+    /** A logged prompt of exactly {@code ticks} on screen (no reaction slack; see {@code theTargetsReactionSlackExtendsTheWindow}). */
     private static Prompt.Builder prompt(Scenario s, String text, long ticks, Log log) {
         return Prompt.builder(Text.mm(text), ticks)
+                .reactionSlack(false)
                 .onShown(handle -> log.shown.add(s.ctx().currentTick()))
                 .onEnd((handle, reason) -> {
                     log.end = reason;
@@ -227,7 +233,7 @@ class PromptChannelTest {
         try (Scenario s = scenario()) {
             MatchContext ctx = s.ctx();
             Log low = new Log();
-            ctx.prompt(s.owner, s.enemy, prompt(s, "low", 40, low).priority(Prompt.LOW).maxWait(5).build());
+            ctx.prompt(s.owner, s.enemy, prompt(s, "low", 40, low).priority(Prompt.LOW).maxPause(5).build());
             s.ticks(5);
             ctx.prompt(s.owner, s.enemy, prompt(s, "high", 20, new Log()).priority(Prompt.HIGH).build());
             s.ticks(5);
@@ -439,6 +445,7 @@ class PromptChannelTest {
                 .configure(h -> h.settings().set(SuperpowerSettings.GAUGE_SECOND, 0)).start()) {
             MatchContext ctx = s.ctx();
             Prompt punishing = Prompt.builder(Component.text("숨 참아!"), 2)
+                    .reactionSlack(false)
                     .onEnd((handle, reason) -> ctx.damage(handle.owner(), handle.target(), 4))
                     .build();
             s.match.setGauge(s.owner, 0);
@@ -470,6 +477,216 @@ class PromptChannelTest {
             s.enemy.setPing(120);
             assertEquals(4, s.ctx().reactionSlackTicks(s.enemy));
             assertEquals(1, s.ctx().reactionSlackTicks(s.owner));
+        }
+    }
+
+    @Test
+    void aRuleIsJudgedOnlyFromItsCurrentShowingAndFollowsTheScreen() {
+        try (Scenario s = scenario()) {
+            s.ticks((int) Inputs.DISPLACED_TICKS + 1);
+            MatchContext ctx = s.ctx();
+            List<String> screen = new ArrayList<>();
+            PromptHandle rule = ctx.prompt(s.owner, s.enemy, prompt(s, "움직이지 마라", 200, new Log())
+                    .onPushedBack(h -> screen.add("off@" + ctx.currentTick()))
+                    .onResumed(h -> screen.add("on@" + ctx.currentTick()))
+                    .build());
+            long grace = 5;
+            s.ticks(10);
+            assertFalse(Inputs.breaksWalking(ctx, s.enemy, Inputs.judgeFrom(ctx, rule, grace), s.owner));
+
+            // A riddle of higher priority takes the screen for 30 ticks; the target walks meanwhile.
+            long pushed = ctx.currentTick();
+            ctx.prompt(s.enemy2, s.enemy, prompt(s, "수수께끼", 30, new Log()).priority(Prompt.HIGH).build());
+            assertEquals(List.of("off@" + pushed), screen);
+            assertEquals(Long.MAX_VALUE, Inputs.judgeFrom(ctx, rule, grace), "never judged while off the screen");
+            s.ticks(5);
+            s.enemy.sendInput(InputKey.FORWARD);
+            s.ticks(10);
+            s.enemy.sendInput();
+            s.ticks(15);
+            assertTrue(rule.isShown(), "the rule is back");
+            assertEquals(List.of("off@" + pushed, "on@" + (pushed + 30)), screen);
+            long from = Inputs.judgeFrom(ctx, rule, grace);
+            assertEquals(pushed + 30 + grace + ctx.reactionSlackTicks(s.enemy), from,
+                    "a fresh grace from the resume on");
+            assertFalse(Inputs.breaksWalking(ctx, s.enemy, from, s.owner),
+                    "walking while the rule was off the screen is never punished");
+            s.ticks((int) (from - ctx.currentTick()));
+            assertFalse(Inputs.breaksWalking(ctx, s.enemy, from, s.owner));
+            s.enemy.sendInput(InputKey.BACKWARD);
+            assertTrue(Inputs.breaksWalking(ctx, s.enemy, from, s.owner), "walking now breaks it");
+            s.enemy.sendInput();
+            rule.cancel();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aLongHighPromptOfTheTargetsOwnPausesEnemyPromptsWithoutCancellingThem() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            Log rule = new Log();
+            PromptHandle handle = ctx.prompt(s.owner, s.enemy, prompt(s, "금제", 80, rule).build());
+            s.ticks(10);
+            // The target chants its own ultimate for three seconds: far beyond the 2 s maxWait of the rule.
+            Log chant = new Log();
+            ctx.prompt(s.enemy, s.enemy, prompt(s, "영창", 60, chant).priority(Prompt.HIGH).build());
+            s.ticks(59);
+            assertTrue(handle.isActive(), "only paused");
+            assertNull(rule.end);
+            s.ticks(1);
+            assertEquals(PromptEndReason.EXPIRED, chant.end);
+            assertTrue(handle.isShown(), "the rule comes back after the chant");
+            assertEquals(70, handle.remainingTicks());
+            s.ticks(70);
+            assertEquals(PromptEndReason.EXPIRED, rule.end, "and is judged in full");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void aPromptSubmittedFromOnEndQueuesBehindTheWaitingOnes() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            List<String> order = new ArrayList<>();
+            Prompt second = prompt(s, "second step", 10, new Log()).priority(Prompt.LOW).maxWait(100)
+                    .onShown(h -> order.add("chained")).build();
+            ctx.prompt(s.owner, s.enemy, prompt(s, "first step", 10, new Log()).priority(Prompt.LOW)
+                    .onEnd((h, reason) -> ctx.prompt(s.owner, s.enemy, second)).build());
+            ctx.prompt(s.enemy2, s.enemy, prompt(s, "waiting", 10, new Log()).priority(Prompt.HIGH)
+                    .onShown(h -> order.add("high")).build());
+            ctx.prompt(s.enemy2, s.enemy, prompt(s, "earlier low", 10, new Log()).priority(Prompt.LOW)
+                    .maxWait(100).onShown(h -> order.add("earlier low")).build());
+            assertEquals(List.of("high"), order, "the high prompt pushed the first step back");
+            s.ticks(10);
+            assertEquals(List.of("high"), order);
+            s.ticks(10);
+            assertEquals(List.of("high", "earlier low"), order,
+                    "the chained step waits behind a prompt submitted before it");
+            s.ticks(10);
+            assertEquals(List.of("high", "earlier low", "chained"), order);
+            s.ticks(10);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theActionBarIsTheLastOneOfEveryTickAndAgainAtTheTickEnd() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            ctx.prompt(s.owner, s.enemy, prompt(s, "나 예뻐?", 100, new Log()).build());
+            // Another ability's status line, sent every tick from its own tick or a timer.
+            for (int i = 0; i < 12; i++) {
+                s.enemy.sendActionBar(Component.text("상태줄"));
+                s.ticks(1);
+                assertEquals("나 예뻐?", lastActionBar(s.enemy), "tick " + i + ": the prompt wins the tick");
+            }
+            s.enemy.sendActionBar(Component.text("늦은 상태줄"));
+            s.h.server.getPluginManager().callEvent(new ServerTickEndEvent(1, 50.0, 0));
+            assertEquals("나 예뻐?", lastActionBar(s.enemy), "a later sender loses at the end of the tick");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theTargetsReactionSlackExtendsTheWindow() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            s.enemy.setPing(120);
+            int slack = ctx.reactionSlackTicks(s.enemy);
+            assertEquals(4, slack);
+            Log answered = new Log();
+            Log exact = new Log();
+            Prompt question = Prompt.builder(Component.text("나 예뻐?"), 20)
+                    .onEnd((h, reason) -> {
+                        answered.end = reason;
+                        answered.endTick = ctx.currentTick();
+                    }).build();
+            long start = ctx.currentTick();
+            PromptHandle handle = ctx.prompt(s.owner, s.enemy, question);
+            PromptHandle countdown = ctx.prompt(s.owner, s.enemy2, prompt(s, "3", 20, exact).build());
+            assertEquals(20 + slack, handle.windowTicks(), "the window of this target");
+            assertEquals(20, countdown.windowTicks(), "slack turned off");
+            s.ticks(20);
+            assertEquals(PromptEndReason.EXPIRED, exact.end);
+            assertTrue(handle.isShown(), "an answer in the last ping still arrives in time");
+            s.ticks(slack);
+            assertEquals(PromptEndReason.EXPIRED, answered.end);
+            assertEquals(start + 20 + slack, answered.endTick);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void theEliminationTitleIsNotClearedByThePromptsThatEndWithIt() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            Log question = new Log();
+            Log vow = new Log();
+            ctx.prompt(s.owner, s.enemy, prompt(s, "나 예뻐?", 100, question)
+                    .title(Text.mm("<red>나 예뻐?</red>"), null).build());
+            ctx.prompt(s.enemy2, s.enemy2, prompt(s, "맹세", 100, vow)
+                    .title(Text.mm("<gold>맹세</gold>"), null).build());
+            int enemyClears = s.enemy.titleClears();
+            int enemy2Clears = s.enemy2.titleClears();
+            s.session.eliminate(s.enemy, null);
+            s.session.eliminate(s.enemy2, null);
+            assertEquals(PromptEndReason.TARGET_LEFT, question.end);
+            assertTrue(vow.end == PromptEndReason.TARGET_LEFT || vow.end == PromptEndReason.OWNER_REVOKED);
+            assertEquals(enemyClears, s.enemy.titleClears(), "the elimination title stays");
+            assertEquals(enemy2Clears, s.enemy2.titleClears(), "also for a prompt of its own");
+            s.assertNoProblems();
+        }
+    }
+
+    @Test
+    void anExpiredTitleDoesNotLingerOverTheNextPromptsLine() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            ctx.prompt(s.owner, s.enemy, prompt(s, "나 예뻐?", 20, new Log())
+                    .title(Text.mm("<red>나 예뻐?</red>"), null).build());
+            PromptHandle next = ctx.prompt(s.owner, s.enemy, prompt(s, "다음", 20, new Log()).build());
+            int clears = s.enemy.titleClears();
+            s.ticks(20);
+            assertTrue(next.isShown());
+            assertEquals(clears + 1, s.enemy.titleClears(), "the old question is taken down for the new line");
+            s.ticks(20);
+            assertEquals(clears + 1, s.enemy.titleClears(), "an expiry with nothing after it just fades");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void promptsSubmittedWhileTheMatchEndsEndAsMatchEnd() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            Log chained = new Log();
+            Log first = new Log();
+            ctx.prompt(s.owner, s.owner, prompt(s, "vow", 400, first)
+                    .onEnd((h, reason) -> {
+                        first.end = reason;
+                        ctx.prompt(s.owner, s.owner, prompt(s, "next", 40, chained).build());
+                    })
+                    .build());
+            s.finishMatch();
+            assertEquals(PromptEndReason.MATCH_END, first.end);
+            assertEquals(PromptEndReason.MATCH_END, chained.end, "refused as the match end, not as a revoke");
+            assertTrue(chained.shown.isEmpty());
+            s.assertNoProblems();
+            s.assertCleanWorld();
+        }
+    }
+
+    @Test
+    void aNowOrNeverPromptOnABusyScreenEndsUnseenAtOnce() {
+        try (Scenario s = scenario()) {
+            MatchContext ctx = s.ctx();
+            ctx.prompt(s.owner, s.enemy, prompt(s, "busy", 30, new Log()).build());
+            Log now = new Log();
+            PromptHandle handle = ctx.prompt(s.owner, s.enemy, prompt(s, "now", 10, now).maxWait(0).build());
+            assertFalse(handle.isActive(), "ended before prompt(...) returned");
+            assertEquals(PromptEndReason.UNSEEN, now.end);
+            s.finishClean();
         }
     }
 }

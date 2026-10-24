@@ -20,16 +20,24 @@
  *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx} — particle shapes (rings, spheres,
  *     helices, lines, arcs, bursts, shockwaves, trails) and palettes, scaled by the configured effect scale.</li>
  *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays} — block/item/text display entities
- *     with glow, lifetime, interpolated animation and centered transformations, and per-viewer visibility
- *     ({@code onlyFor}: owner-only overlays, allies-only markers, late joiners included).</li>
+ *     with glow, lifetime, interpolated animation and centered transformations, and per-viewer visibility (the
+ *     overloads with {@code viewers}, filtered inside the spawn: owner-only overlays, allies-only markers, late
+ *     joiners included).</li>
  *     <li>{@link io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Inputs} — voluntary input for rules ("don't
- *     move", "don't jump", "don't attack"): held keys, presses since a tick, ping slack and the exemptions for players
- *     under hard crowd control or moved by something else.</li>
+ *     move", "don't jump", "don't attack"): held keys, presses since a tick, attacks, ping slack, judging from a
+ *     prompt's current showing, and the exemptions for players under hard crowd control or moved by something
+ *     else.</li>
  * </ul>
  *
  * <p>Lines another player must read and react to (riddles, questions, rules, warnings) go through the match's prompt
  * channel, {@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#prompt}, never raw titles or action
  * bars.
+ *
+ * <p>Tests: use {@code Scenario} (its flat world's entity doubles implement Paper's per-viewer visibility, are not
+ * {@code isValid()} inside their spawn consumer like on Paper, and {@code TestPlayer} has settable input, swings and
+ * attacks). MockBukkit's own entities, e.g. in the simple world of {@code new MatchHarness()}, throw
+ * {@code UnimplementedOperationException} from {@code setVisibleByDefault}, so prompts with an overhead text and
+ * per-viewer displays fail there.
  *
  * <p>Everything here runs on the main thread, like the abilities themselves.
  */

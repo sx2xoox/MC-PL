@@ -11,10 +11,11 @@ import org.bukkit.util.Vector;
 /**
  * Velocities, knockback and the server-side ground check.
  *
- * <p>Every velocity given to a player here (or with {@code setVelocity}) counts as displacement for input rules
+ * <p>Every velocity given to another player here (or with {@code setVelocity}) counts as displacement for input rules
  * ({@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#wasDisplaced}, kit {@link Inputs}): the match
- * sees it through {@code PlayerVelocityEvent}. Movement the target's own keys asked for (a hop on the jump key, a
- * reversed walk) goes through
+ * sees it through {@code PlayerVelocityEvent}. A velocity an ability gives its own owner from its own code (a dash, a
+ * leap) is the owner's own movement and does not exempt it. Movement the target's own keys asked for (a hop on the
+ * jump key, a reversed walk) goes through
  * {@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#setVoluntaryVelocity} instead.
  */
 public final class Motion {

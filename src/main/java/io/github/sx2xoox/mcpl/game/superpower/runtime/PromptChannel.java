@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.superpower.runtime;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,16 +32,23 @@ import org.jspecify.annotations.Nullable;
  * The prompt channel of one match ({@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#prompt}):
  * per target player one {@link Prompt} on screen at a time (action bar, public text over the head, optional title),
  * the others waiting by priority, then submission. A strictly higher priority pushes the shown prompt back (it keeps
- * the on-screen time it had left). Ticked once per fight tick after the abilities ({@link #tick()}).
+ * the on-screen time it had left and comes back first among its priority). Ticked once per fight tick after the
+ * abilities ({@link #tick()}).
  *
- * <p>Action bar: the shown prompt's line is re-sent every {@link #REFRESH_TICKS} ticks, so vanilla never fades it and
- * any other action-bar message of the match (abilities' status lines, the border warning) is overwritten again within
- * a quarter of a second. When the last prompt of a player ends early or expires, its action bar is cleared.
+ * <p>Action bar: the shown prompt's line is sent again every tick after the abilities' ticks (abilities' status lines
+ * sent from {@code onTick} come earlier in the tick, so the prompt's line is the last one the client gets) and once
+ * more at the end of the server tick ({@link #reassertActionBars()}, after ability timers and events). Another
+ * action-bar message can therefore only flash over a prompt for one tick. When the last prompt of a player ends early
+ * or expires, its action bar is cleared.
+ *
+ * <p>Titles: only the shown prompt has one. A prompt ending early clears it (unless the target left play: the session
+ * shows its own elimination title then); an expired one fades out, unless the next prompt shown has no title, which
+ * clears it so the old question does not linger over the new line.
  */
 final class PromptChannel {
 
-    /** The shown prompt's action bar is sent again this often. */
-    static final long REFRESH_TICKS = 5;
+    /** The shown prompt's action bar is sent again this often (every tick). */
+    static final long REFRESH_TICKS = 1;
     /** At most this many prompts wait for one player; beyond that the lowest-priority, newest one is dropped. */
     static final int MAX_WAITING = 8;
     /** The overhead text floats this far over the top of the target's head (above the name tag and most markers). */
@@ -48,8 +56,8 @@ final class PromptChannel {
     static final float OVERHEAD_SCALE = 0.9f;
     private static final Color OVERHEAD_BACKGROUND = Color.fromARGB(0x60, 0, 0, 0);
     private static final int OVERHEAD_LINE_WIDTH = 240;
-    private static final int TITLE_FADE_IN = 3;
-    private static final int TITLE_FADE_OUT = 6;
+    static final int TITLE_FADE_IN = 3;
+    static final int TITLE_FADE_OUT = 6;
 
     /** Waiting order: higher priority first, then the earlier submission. */
     private static final Comparator<Entry> ORDER = Comparator.<Entry>comparingInt(entry -> -entry.prompt.priority())
@@ -59,6 +67,8 @@ final class PromptChannel {
     private final MatchContext ctx;
     private final GameSession session;
     private final Map<UUID, Lane> lanes = new LinkedHashMap<>();
+    /** Per target, the tick until which a prompt's title may still be on its screen (shown or fading out). */
+    private final Map<UUID, Long> titleUntil = new HashMap<>();
     private long sequence;
     private boolean closed;
 
@@ -109,11 +119,21 @@ final class PromptChannel {
         Lane lane = lanes.computeIfAbsent(target.getUniqueId(), id -> new Lane(target));
         lane.target = target;
         Entry shown = lane.shown;
-        if (shown == null) {
+        if (shown == null && lane.waiting.isEmpty()) {
             show(lane, entry, now);
+        } else if (shown == null) {
+            // Submitted while the screen changes hands (from another prompt's onEnd): the queue decides.
+            enqueue(lane, entry, now);
+            promote(lane, now);
         } else if (prompt.priority() > shown.prompt.priority()) {
             pushBack(lane, shown, now);
             show(lane, entry, now);
+            Consumer<PromptHandle> onPushedBack = shown.prompt.onPushedBack();
+            if (onPushedBack != null && shown.isActive() && !shown.isShown()) {
+                callback(shown, "prompt onPushedBack", () -> onPushedBack.accept(shown));
+            }
+        } else if (prompt.maxWaitTicks() == 0) {
+            finish(entry, PromptEndReason.UNSEEN);
         } else {
             enqueue(lane, entry, now);
         }
@@ -152,17 +172,32 @@ final class PromptChannel {
             }
             promote(lane, now);
             for (Entry waiting : List.copyOf(lane.waiting)) {
-                if (waiting.ended == null && waiting.waitingSince >= 0
-                        && waiting.waitedTicks(now) >= waiting.prompt.maxWaitTicks()) {
-                    end(lane, waiting, waiting.wasShown() ? PromptEndReason.INTERRUPTED : PromptEndReason.UNSEEN, now);
+                if (waiting.ended != null || waiting.waitingSince < 0) {
+                    continue;
+                }
+                long waited = now - waiting.waitingSince;
+                if (!waiting.wasShown() && waited >= waiting.prompt.maxWaitTicks()) {
+                    end(lane, waiting, PromptEndReason.UNSEEN, now);
+                } else if (waiting.wasShown() && waited >= waiting.prompt.maxPauseTicks()) {
+                    end(lane, waiting, PromptEndReason.INTERRUPTED, now);
                 }
             }
             Entry current = lane.shown;
             if (current != null) {
-                render(lane, current, now);
+                render(lane, current);
             }
             if (lane.shown == null && lane.waiting.isEmpty()) {
                 lanes.remove(lane.id, lane);
+            }
+        }
+    }
+
+    /** The end of a server tick: every shown prompt sends its action bar once more (after every other sender). */
+    void reassertActionBars() {
+        for (Lane lane : lanes.values()) {
+            Entry shown = lane.shown;
+            if (shown != null && shown.ended == null && lane.target.isOnline()) {
+                lane.target.sendActionBar(shown.actionBar);
             }
         }
     }
@@ -183,15 +218,16 @@ final class PromptChannel {
         boolean first = entry.shownAt < 0;
         if (first) {
             entry.shownAt = now;
+            entry.window = entry.windowFor(entry.target);
         }
         entry.showingSince = now;
-        entry.stopWaiting(now);
-        sendActionBar(entry, now);
+        entry.stopWaiting();
+        sendActionBar(entry);
         updateOverhead(entry);
         showTitle(entry, now);
-        Consumer<PromptHandle> onShown = entry.prompt.onShown();
-        if (first && onShown != null) {
-            callback(entry, "prompt onShown", () -> onShown.accept(entry));
+        Consumer<PromptHandle> hook = first ? entry.prompt.onShown() : entry.prompt.onResumed();
+        if (hook != null) {
+            callback(entry, first ? "prompt onShown" : "prompt onResumed", () -> hook.accept(entry));
         }
     }
 
@@ -204,10 +240,9 @@ final class PromptChannel {
         lane.waiting.add(entry);
     }
 
-    private void render(Lane lane, Entry entry, long now) {
-        if (now - entry.lastActionBar >= REFRESH_TICKS) {
-            sendActionBar(entry, now);
-        }
+    private void render(Lane lane, Entry entry) {
+        // Every tick (REFRESH_TICKS): the last action bar of the tick wins on the client.
+        sendActionBar(entry);
         TextDisplay display = entry.display;
         if (display != null && display.isValid() && display.getWorld().equals(lane.target.getWorld())) {
             display.teleport(overheadSpot(lane.target));
@@ -219,8 +254,7 @@ final class PromptChannel {
         }
     }
 
-    private void sendActionBar(Entry entry, long now) {
-        entry.lastActionBar = now;
+    private void sendActionBar(Entry entry) {
         entry.target.sendActionBar(entry.actionBar);
     }
 
@@ -239,7 +273,6 @@ final class PromptChannel {
         Player target = entry.target;
         TextDisplay spawned = target.getWorld().spawn(overheadSpot(target), TextDisplay.class, d -> {
             d.setPersistent(false);
-            d.setVisibleByDefault(false);
             d.text(text);
             d.setBillboard(Display.Billboard.CENTER);
             d.setAlignment(TextDisplay.TextAlignment.CENTER);
@@ -252,12 +285,13 @@ final class PromptChannel {
             d.setTeleportDuration(1);
             d.setTransformation(new Transformation(new Vector3f(), new Quaternionf(),
                     new Vector3f(OVERHEAD_SCALE, OVERHEAD_SCALE, OVERHEAD_SCALE), new Quaternionf()));
+            // Inside the spawn, before any client receives it: everyone reads it but the target itself (it has the
+            // action bar) and whoever the target is hidden from.
+            ctx.views().add(null, entry.abilityId, d,
+                    viewer -> !viewer.equals(target) && !ctx.isConcealedFrom(target, viewer));
         });
         session.track(spawned);
         entry.display = spawned;
-        // Everyone reads it but the target itself (it has the action bar) and whoever the target is hidden from.
-        ctx.views().add(null, entry.abilityId, spawned,
-                viewer -> !viewer.equals(target) && !ctx.isConcealedFrom(target, viewer));
     }
 
     private static Location overheadSpot(Player target) {
@@ -268,27 +302,37 @@ final class PromptChannel {
     }
 
     private void showTitle(Entry entry, long now) {
+        UUID id = entry.target.getUniqueId();
         if (entry.title == null && entry.subtitle == null) {
-            if (entry.titleShown) {
+            boolean lingering = titleUntil.getOrDefault(id, Long.MIN_VALUE) > now;
+            if (entry.titleShown || lingering) {
+                // Its own old title, or an expired prompt's still fading out over this prompt's line.
                 entry.titleShown = false;
+                titleUntil.remove(id);
                 entry.target.clearTitle();
             }
             return;
         }
         long stay = Math.max(1, entry.remaining(now));
-        Title.Times times = Title.Times.times(Ticks.duration(entry.titleShown ? 0 : TITLE_FADE_IN),
-                Ticks.duration(stay), Ticks.duration(TITLE_FADE_OUT));
+        int fadeIn = entry.titleShown ? 0 : TITLE_FADE_IN;
+        Title.Times times = Title.Times.times(Ticks.duration(fadeIn), Ticks.duration(stay),
+                Ticks.duration(TITLE_FADE_OUT));
         entry.target.showTitle(Title.title(entry.title == null ? Component.empty() : entry.title,
                 entry.subtitle == null ? Component.empty() : entry.subtitle, times));
         entry.titleShown = true;
+        titleUntil.put(id, now + fadeIn + stay + TITLE_FADE_OUT);
     }
 
-    /** Takes the prompt's displays off the screen; an early end also clears its title (an expiry lets it fade). */
+    /**
+     * Takes the prompt's displays off the screen. An early end also clears its title while the target still plays (a
+     * target that left play keeps the session's own title, e.g. the elimination); an expiry lets it fade.
+     */
     private void hideDisplays(Entry entry, boolean early) {
         removeDisplay(entry);
         if (entry.titleShown) {
             entry.titleShown = false;
-            if (early && entry.target.isOnline()) {
+            if (early && inPlay(entry.target)) {
+                titleUntil.remove(entry.target.getUniqueId());
                 entry.target.clearTitle();
             }
         }
@@ -319,7 +363,7 @@ final class PromptChannel {
             lane.shown = null;
         } else {
             lane.waiting.remove(entry);
-            entry.stopWaiting(now);
+            entry.stopWaiting();
         }
         finish(entry, reason);
     }
@@ -405,19 +449,18 @@ final class PromptChannel {
         }
     }
 
-    /** Ends every prompt (the match ends). */
-    void endAll(PromptEndReason reason) {
+    /**
+     * The match ends: later submissions (also from the onEnd callbacks that run now) are refused with
+     * {@link PromptEndReason#MATCH_END}, then every prompt ends with it.
+     */
+    void close() {
+        closed = true;
         long now = ctx.currentTick();
         for (Lane lane : List.copyOf(lanes.values())) {
-            endLane(lane, reason, now);
+            endLane(lane, PromptEndReason.MATCH_END, now);
         }
         lanes.clear();
-    }
-
-    /** Ends everything with {@link PromptEndReason#MATCH_END}; later submissions are refused. */
-    void dispose() {
-        endAll(PromptEndReason.MATCH_END);
-        closed = true;
+        titleUntil.clear();
     }
 
     boolean hasShown(Player player) {
@@ -451,10 +494,10 @@ final class PromptChannel {
         long showingSince = -1;
         /** On-screen ticks of earlier showings (before a push-back). */
         long shownBefore;
+        /** The tick it began waiting (submitted to a busy screen or pushed back), -1 while not waiting. */
         long waitingSince = -1;
-        /** Ticks of earlier waits (before a showing). */
-        long waitedBefore;
-        long lastActionBar = Long.MIN_VALUE / 2;
+        /** On-screen ticks it gets: the duration plus the target's reaction slack, fixed when first shown. */
+        long window = -1;
         boolean titleShown;
         @Nullable TextDisplay display;
         @Nullable PromptEndReason ended;
@@ -473,6 +516,10 @@ final class PromptChannel {
             this.subtitle = prompt.subtitle();
         }
 
+        long windowFor(Player player) {
+            return prompt.durationTicks() + (prompt.addsReactionSlack() ? ctx.reactionSlackTicks(player) : 0);
+        }
+
         /** Folds the current showing into {@link #shownBefore} (it is taken off the screen now). */
         void accumulate(long now) {
             if (showingSince >= 0) {
@@ -481,17 +528,8 @@ final class PromptChannel {
             }
         }
 
-        /** Leaves the queue, keeping the time it waited. */
-        void stopWaiting(long now) {
-            if (waitingSince >= 0) {
-                waitedBefore += Math.max(0, now - waitingSince);
-                waitingSince = -1;
-            }
-        }
-
-        /** Ticks spent waiting so far, all waits together. */
-        long waitedTicks(long now) {
-            return waitedBefore + (waitingSince >= 0 ? Math.max(0, now - waitingSince) : 0);
+        void stopWaiting() {
+            waitingSince = -1;
         }
 
         long shownTicks(long now) {
@@ -499,7 +537,7 @@ final class PromptChannel {
         }
 
         long remaining(long now) {
-            return Math.max(0, prompt.durationTicks() - shownTicks(now));
+            return Math.max(0, windowTicks() - shownTicks(now));
         }
 
         @Override
@@ -553,6 +591,11 @@ final class PromptChannel {
         }
 
         @Override
+        public long windowTicks() {
+            return window >= 0 ? window : windowFor(target);
+        }
+
+        @Override
         public long remainingTicks() {
             return ended == null ? remaining(ctx.currentTick()) : 0;
         }
@@ -566,7 +609,7 @@ final class PromptChannel {
         public void setActionBar(Component actionBar) {
             this.actionBar = Objects.requireNonNull(actionBar, "actionBar");
             if (isShown()) {
-                sendActionBar(this, ctx.currentTick());
+                sendActionBar(this);
             }
         }
 

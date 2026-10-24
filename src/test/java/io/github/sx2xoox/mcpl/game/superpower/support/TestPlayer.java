@@ -21,6 +21,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.TestSkinParts;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.VanillaAttributes;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.title.Title;
@@ -372,7 +373,22 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
 
     /** The client swings the main arm (an attack or a click), as the server reports it. */
     public void swingArm() {
-        getServer().getPluginManager().callEvent(new PlayerArmSwingEvent(this, EquipmentSlot.HAND));
+        swingArm(EquipmentSlot.HAND);
+    }
+
+    /** The client swings {@code hand} ({@link EquipmentSlot#HAND} or {@link EquipmentSlot#OFF_HAND}). */
+    public void swingArm(EquipmentSlot hand) {
+        getServer().getPluginManager().callEvent(new PlayerArmSwingEvent(this, hand));
+    }
+
+    /**
+     * The client attacks {@code target} in melee, as a server reports it before any damage logic: a
+     * {@code PrePlayerAttackEntityEvent} and the arm swing (no damage is dealt; use {@code attack(Entity)} of
+     * MockBukkit or damage helpers for that).
+     */
+    public void attackAttempt(Entity target) {
+        getServer().getPluginManager().callEvent(new PrePlayerAttackEntityEvent(this, target, true));
+        swingArm();
     }
 
     // ------------------------------------------------------------------ titles
