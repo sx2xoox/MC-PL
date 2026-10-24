@@ -74,28 +74,21 @@ public final class TenguAbility extends Ability {
             .color(TextColor.color(0xC8281E))
             .difficulty(2)
             .passive("콧대",
-                    "맞지 않고 적을 맞힐 때마다(근접·화살·능력, {nose_interval}초에 한 번) 코가 한 단계 길어집니다(최대 "
-                            + "{nose_max}단계). 한 단계마다 내가 주는 피해가 {nose_bonus}% 늘어납니다. 적에게 맞으면 콧대가 "
-                            + "꺾여 처음으로 돌아가고, {nose_max}단계에서 꺾이면 {snap_stagger}초간 휘청입니다(이동 속도 "
-                            + "-{snap_slow}%).")
+                    "맞지 않고 적을 맞힐 때마다(근접·화살·능력) 코가 한 단계 길어져 단계마다 주는 피해가 {nose_bonus}% "
+                            + "늘어납니다(최대 {nose_max}단계). 적에게 맞으면 처음으로 돌아가고, 최대 단계에서 꺾이면 "
+                            + "{snap_stagger}초간 휘청입니다.")
             .active("요술 부채",
-                    "빨간 면으로 부쳐 앞쪽 {fan_range}블록 부채꼴({fan_angle}°)의 적에게 {fan_damage} 피해를 주고 "
-                            + "{shrink_duration}초간 {shrink_scale}배로 작게 만듭니다. 작아진 적은 근접 피해가 "
-                            + "{shrink_melee}% 줄고 공격 사거리가 {shrink_reach}블록 짧아지며 받는 넉백이 "
-                            + "{shrink_knockback}% 늘어납니다. 웅크리고 쓰면 흰 면으로 부쳐 나와 앞쪽의 아군을 "
-                            + "{grow_duration}초간 {grow_scale}배로 크게 만듭니다(근접 피해 +{grow_melee}%, 공격 사거리 "
-                            + "+{grow_reach}블록, 머리 위가 막히면 원래 크기로). 부채는 바람을 일으키지 않아 아무도 밀지 "
-                            + "않습니다.",
+                    "앞쪽 {fan_range}블록 부채꼴의 적에게 {fan_damage} 피해를 주고 {shrink_duration}초간 {shrink_scale}배로 "
+                            + "작게 만듭니다(근접 피해 -{shrink_melee}%, 공격 사거리 -{shrink_reach}블록, 받는 넉백 "
+                            + "+{shrink_knockback}%). 웅크리고 쓰면 대신 나와 앞쪽 아군을 {grow_duration}초간 "
+                            + "{grow_scale}배로 키웁니다(근접 피해 +{grow_melee}%, 공격 사거리 +{grow_reach}블록).",
                     8)
             .ultimate("소인국",
-                    "큰 부채를 {ult_windup}초간 치켜들어(바닥에 부채꼴이 빛남) 휘두르면, 앞쪽 {ult_range}블록 "
-                            + "부채꼴({ult_angle}°)의 적을 {ult_duration}초간 {tiny_scale}배 소인으로 만들고, 나는 "
-                            + "{giant_scale}배로 커집니다(머리 위가 막히면 원래 크기로). 소인은 근접 피해가 {tiny_melee}% 줄고 "
-                            + "공격 사거리가 {tiny_reach}블록 짧아지며 넉백을 {tiny_knockback}배로 받습니다. 그동안(거인이 "
-                            + "되지 못해도) 소인에게 주는 내 근접 피해가 {giant_melee}% 늘고, 뛰었다가 "
-                            + "소인 {stomp_radius}블록 안에 착지하면 짓밟아 {stomp_damage} 피해를 줍니다(같은 적은 "
-                            + "{stomp_cooldown}초마다). 작아진 적은 좁은 곳에서는 원래 크기로 돌아갈 자리가 생길 때까지(최대 "
-                            + "{regrow_wait}초) 작은 채로 남습니다.")
+                    "{ult_windup}초간 큰 부채를 치켜들었다 휘둘러 앞쪽 {ult_range}블록 부채꼴의 적을 {ult_duration}초간 "
+                            + "{tiny_scale}배 소인으로 만들고(근접 피해 -{tiny_melee}%, 공격 사거리 -{tiny_reach}블록, 넉백 "
+                            + "{tiny_knockback}배), 나는 {giant_scale}배로 커집니다. 그동안 소인에게 주는 근접 피해가 "
+                            + "{giant_melee}% 늘고, 뛰었다가 소인 {stomp_radius}블록 안에 착지하면 짓밟아 {stomp_damage} "
+                            + "피해를 줍니다.")
             .ultimateNotStandalone()
             .param("nose_max", 4)
             .param("nose_bonus", 6)

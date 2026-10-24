@@ -80,7 +80,7 @@ public final class DokkaebiAbility extends Ability {
                             + "주고 혹을 붙입니다. 날아간 도깨비불은 {wisp_recharge}초 뒤 다시 피어납니다.")
             .active("뚝딱 방망이",
                     "방망이를 내리쳐 앞쪽 {club_reach}블록 안의 적에게 {club_damage} 피해를 주고 살짝 띄우며 혹을 붙입니다. "
-                            + "혹({bump_duration}초 유지)이 {bump_max}개 쌓이면 '뚝딱!' 터져 {bump_pop_damage} 피해와 "
+                            + "혹({bump_duration}초 유지)이 {bump_max}개 쌓이면 터져 {bump_pop_damage} 피해와 "
                             + "{bump_stun}초 기절(이동·점프 불가)을 주고, 그 뒤 {bump_immunity}초간은 혹이 붙지 않습니다.",
                     8)
             .ultimate("도깨비 감투",

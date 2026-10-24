@@ -69,28 +69,21 @@ public final class CardGamerAbility extends Ability {
             .color(TextColor.color(0xD9A93A))
             .difficulty(3)
             .passive("드로우",
-                    "{draw_interval}초마다 덱에서 카드를 한 장 뽑아 손패에 더합니다(최대 {hand_max}장, 시작할 때 "
-                            + "{start_hand}장). 몬스터·마법·함정이 {monster_chance} : {spell_chance} : {trap_chance} "
-                            + "비율로 나오고, {legend_chance}% 확률로 금빛 '전설의 카드'가 나옵니다(뽑으면 모두에게 금빛 "
-                            + "뒷면이 반짝입니다). 손패는 등 뒤에 부채꼴로 떠 있고 앞면은 나에게만 보입니다.")
+                    "{draw_interval}초마다 카드를 한 장 뽑습니다(최대 {hand_max}장, 시작할 때 {start_hand}장). "
+                            + "몬스터·마법·함정이 {monster_chance} : {spell_chance} : {trap_chance} 비율로 나오고, "
+                            + "{legend_chance}% 확률로 전설의 카드가 나옵니다. 손패 앞면은 나에게만 보입니다.")
             .active("카드 발동",
-                    "손패 맨 앞 카드를 씁니다(손패가 있어야 함). 웅크리고 쓰면 대신 맨 앞 카드를 맨 뒤로 넘깁니다(쿨타임 "
-                            + "{shuffle_cooldown}초). 몬스터: 카드를 던져({monster_range}블록) 맞은 적의 머리를 몬스터의 "
-                            + "아가리가 덮쳐 {monster_damage} 피해. 마법: 나와 {spell_radius}블록 안 아군의 체력을 "
-                            + "{spell_heal} 회복하고 곧바로 한 장 더 뽑습니다. 함정: 발밑에 뒷면으로 {trap_duration}초간 "
-                            + "덮어 둡니다(최대 {trap_max}장). {trap_arm}초 뒤부터 카드 {trap_radius}블록 안에서 적이 "
-                            + "달리거나 점프하면 '함정 카드 발동!' — {trap_damage} 피해, {trap_silence}초 침묵, "
-                            + "{trap_root}초 속박(카드 소모). 걷거나 웅크려 지나가면 무사합니다. 전설의 카드: 조준한 곳"
-                            + "({legend_range}블록)에 {legend_delay}초 뒤 거대한 황금 마수가 내리꽂혀 반경 {legend_radius}"
-                            + "블록의 적에게 {legend_damage} 피해를 주고 약 {legend_knockback}블록 날려 보냅니다(전투 "
-                            + "맵에서는 지형도 부숩니다).",
+                    "손패 맨 앞 카드를 씁니다(웅크리면 맨 뒤로 넘김). 몬스터: 던져 맞은 적에게 {monster_damage} 피해. "
+                            + "마법: 나와 주변 아군 체력 {spell_heal} 회복, 한 장 더 뽑기. 함정: 발밑에 깔아 "
+                            + "{trap_radius}블록 안에서 달리거나 점프한 적에게 {trap_damage} 피해, {trap_root}초 속박, "
+                            + "{trap_silence}초 침묵. "
+                            + "전설: 조준한 곳 반경 {legend_radius}블록의 적에게 {legend_damage} 피해를 주고 날려 보냅니다.",
                     2)
             .ultimate("내 턴!",
-                    "\"내 턴! 드로우!\" — 손패를 {turn_hand}장까지 가득 채우고 {turn_duration}초간 내 턴이 됩니다. "
-                            + "그동안 카드 발동의 쿨타임이 {turn_cooldown}초로 줄고, 카드를 쓸 때마다 한 장씩 다시 뽑으며"
-                            + "(최대 {turn_hand}장), 전설의 카드가 나올 확률이 {turn_legend_chance}%로 오릅니다. 턴이 "
-                            + "끝나면 '턴 종료' — 이번 턴에 쓴 카드 한 장마다 반경 {turn_end_radius}블록의 적에게 "
-                            + "{turn_end_damage} 피해를 줍니다(최대 {turn_end_max}). 남은 카드는 손에 남습니다.")
+                    "손패를 {turn_hand}장까지 채우고 {turn_duration}초간 내 턴이 됩니다. 그동안 카드 발동 쿨타임이 "
+                            + "{turn_cooldown}초로 줄고, 쓸 때마다 한 장씩 다시 뽑으며 전설의 카드 확률이 "
+                            + "{turn_legend_chance}%로 오릅니다. 턴이 끝나면 쓴 카드 한 장마다 반경 {turn_end_radius}블록의 "
+                            + "적에게 {turn_end_damage} 피해를 줍니다(최대 {turn_end_max}).")
             .ultimateNotStandalone()
             .param("draw_interval", 6)
             .param("hand_max", 3)

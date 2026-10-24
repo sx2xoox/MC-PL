@@ -88,21 +88,17 @@ public final class TamerAbility extends Ability {
                     "내가 맞힌 적의 머리 위에 {info_duration}초간 체력 바와 '포획률'(체력이 낮을수록 높음)이 나에게만 "
                             + "보입니다. 체력이 {homing_health}% 이하인 적에게는 캡슐이 살짝 휘어 날아갑니다.")
             .active("포획 캡슐",
-                    "캡슐을 포물선으로 던집니다({throw_range}블록). 맞은 적은 하늘빛과 함께 캡슐 속에 갇혀 피해를 받지 "
-                            + "않고, 캡슐이 {shake_interval}초마다 {shakes}번 덜컹입니다. 덜컹일 때마다 탈출 판정 — 체력이 "
-                            + "가득하면 {escape_full}%, {low_health}% 이하면 {escape_low}%, 갇힌 적이 점프를 연타할 때마다 "
-                            + "{mash_bonus}%씩(최대 {mash_max}%) 오릅니다. 탈출하면 {escape_damage} 피해만 받고 튀어나옵니다. "
-                            + "끝까지 버티면 \"잡았다!\" 캡슐이 내 손으로 돌아오고, {hold_time}초 안에 웅크리면 바라보는 곳"
-                            + "({release_range}블록)에 던져 풀어 주며 아니면 내 앞에 풀립니다. 풀려난 적은 떨어지며 "
-                            + "{release_damage} 피해를 입고 {stagger_duration}초간 휘청입니다(이동 속도 -{stagger_slow}%). "
-                            + "아무도 맞히지 못하면 재사용 대기시간이 {miss_refund}% 돌아옵니다.",
+                    "캡슐을 던져({throw_range}블록) 맞은 적을 가둡니다(갇힌 동안 피해를 받지 않음). 캡슐은 {shakes}번 "
+                            + "흔들리고 그때마다 탈출할 수 있습니다(체력이 낮을수록 어렵고, 점프를 연타하면 쉬워짐). 탈출하면 "
+                            + "{escape_damage} 피해만 받고, 끝까지 잡은 적은 웅크려 바라보는 곳에 던지거나 내 앞에 풀어 "
+                            + "{release_damage} 피해를 주고 {stagger_duration}초간 휘청이게 합니다. 빗나가면 쿨타임이 "
+                            + "{miss_refund}% 돌아옵니다.",
                     11)
             .ultimate("전설의 포획",
-                    "조준한 곳({legend_range}블록) 하늘에서 거대한 캡슐이 {legend_fall}초간 그림자를 드리우며 내려옵니다. "
-                            + "떨어지면 반경 {legend_radius}블록의 적을 모두 빨아들여 함께 {shakes}번 덜컹입니다(적마다 따로 "
-                            + "탈출 판정, 체력이 낮을수록 잘 잡힘). 탈출한 적은 {legend_escape_damage} 피해를 입고 튕겨 "
-                            + "나가며, 끝까지 잡힌 적은 {legend_burst_delay}초 뒤 캡슐이 '펑' 터져 {legend_damage} 피해를 "
-                            + "입고 사방으로 흩어집니다.")
+                    "조준한 곳({legend_range}블록)에 {legend_fall}초 뒤 거대한 캡슐이 떨어져 반경 {legend_radius}블록의 적을 "
+                            + "모두 가두고 {shakes}번 흔들립니다(적마다 탈출 판정, 체력이 낮을수록 잘 잡힘). 탈출한 적은 "
+                            + "{legend_escape_damage} 피해를 입고 튕겨 나가며, 끝까지 잡힌 적은 {legend_burst_delay}초 뒤 "
+                            + "캡슐이 터져 {legend_damage} 피해를 입습니다.")
             .param("info_duration", 6)
             .param("homing_health", 30)
             .param("throw_range", 18)

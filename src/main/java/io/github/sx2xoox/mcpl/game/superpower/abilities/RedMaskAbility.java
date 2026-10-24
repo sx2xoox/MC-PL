@@ -66,19 +66,16 @@ public final class RedMaskAbility extends Ability {
                             + "빨라집니다(최대 {chase_max}%, 아무도 도망치지 않으면 1초마다 {chase_fade}%씩 사라짐). 도망치던 "
                             + "적에게 주는 첫 근접 공격은 {flee_bonus} 추가 피해를 줍니다.")
             .active("도망쳐도 소용없어",
-                    "앞 {snip_range}블록 안의 적 하나를 가위로 싹둑 — {snip_damage} 피해와 {mark_duration}초간 가위 "
-                            + "자국(머리 위 붉은 가위, 모두에게 보임)을 남깁니다. 가위 자국이 난 적이 나에게 등을 보이고 멀어지는 "
-                            + "동안 1초마다 \"어디 가?\" {mark_damage} 피해를 받습니다(최대 {mark_max}번). 돌아서서 마주하거나 "
-                            + "다가오면 피해가 없습니다. 앞에 적이 없으면 쿨타임이 {miss_refund}% 돌아옵니다.",
+                    "앞 {snip_range}블록 안의 적 하나를 가위로 베어 {snip_damage} 피해를 주고 {mark_duration}초간 가위 "
+                            + "자국을 남깁니다. 자국이 난 적은 나에게 등을 보이고 멀어지는 동안 1초마다 {mark_damage} 피해를 "
+                            + "받습니다(최대 {mark_max}번). 앞에 적이 없으면 쿨타임이 {miss_refund}% 돌아옵니다.",
                     10)
             .ultimate("나 예뻐?",
-                    "반경 {question_radius}블록 안 모든 적에게 \"나 예뻐?\"라고 묻습니다({answer_seconds}초, 머리 위 글자와 "
-                            + "화면에 선택지). 묻는 동안 나는 이동 속도가 {ask_speed}% 빨라집니다. 고개를 끄덕이면(아래를 보면) "
-                            + "'예' — \"이래도?\" {yes_damage} 피해와 {bleed_seconds}초 출혈(1초마다 {bleed_damage}). 고개를 크게 "
-                            + "돌리면 '아니오' — 가위로 {no_damage} 피해와 {no_stun}초 기절. 웅크리면 '그저 그래요' — 그 자리에선 "
-                            + "무사하지만 {so_so_seconds}초간 나를 화나게 해, 그 적이 {chase_range}블록 안에 있는 동안 내 이동 "
-                            + "속도가 {angry_speed}% 빨라지고 그 적에게 주는 다음 근접 공격이 {angry_bonus} 추가 피해와 "
-                            + "{angry_stun}초 기절을 줍니다. 대답하지 않으면 '아니오'입니다.")
+                    "반경 {question_radius}블록의 적에게 질문을 던지고 {answer_seconds}초간 답을 기다립니다(그동안 내 이동 "
+                            + "속도 +{ask_speed}%). 끄덕이면(아래를 보면) {yes_damage} 피해와 {bleed_seconds}초 출혈, 고개를 "
+                            + "크게 돌리거나 답하지 않으면 {no_damage} 피해와 {no_stun}초 기절을 받습니다. 웅크리면 무사하지만 "
+                            + "{so_so_seconds}초간 나를 화나게 해, 그 적 근처에서 내 이동 속도가 {angry_speed}% 빨라지고 그 "
+                            + "적에게 주는 다음 근접 공격이 {angry_bonus} 추가 피해와 {angry_stun}초 기절을 줍니다.")
             .ultimateNotStandalone()
             .param("chase_range", 16)
             .param("chase_step", 6)

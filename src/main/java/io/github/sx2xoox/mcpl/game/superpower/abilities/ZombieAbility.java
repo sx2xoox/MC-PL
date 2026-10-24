@@ -99,13 +99,11 @@ public final class ZombieAbility extends Ability {
                             + "절반만 돕니다.",
                     8)
             .ultimate("좀비 아포칼립스",
-                    "땅을 울리는 신음과 함께 반경 {ult_radius}블록의 적을 모두 감염시킵니다. {rise_delay}초 동안 감염이 "
-                            + "끓어오른 뒤 {horde_range}블록 안의 감염된 적마다 그 적의 얼굴을 한 좀비가 몸에서 "
-                            + "{zombies_per}마리씩(원래 감염돼 있던 적에게서는 {zombies_infected}마리, 모두 합쳐 최대 "
-                            + "{max_zombies}마리) 터져 나와 {zombie_duration}초간 그 적을 쫓습니다(놓치면 {chase_range}블록 "
-                            + "안의 다른 적). 좀비(체력 {zombie_health}, 공격력 {zombie_damage}, 일반 좀비의 {zombie_speed}% "
-                            + "속도)에게 물린 적은 다시 감염되고, 쓰러진 좀비는 터지며 {spread_radius}블록 안의 감염되지 않은 "
-                            + "적을 {spread_duration}초간 감염시킵니다.")
+                    "반경 {ult_radius}블록의 적을 모두 감염시키고, {rise_delay}초 뒤 감염된 적마다 좀비가 "
+                            + "{zombies_per}마리씩(이미 감염돼 있던 적은 {zombies_infected}마리, 최대 {max_zombies}마리) 터져 "
+                            + "나와 {zombie_duration}초간 그 적을 쫓습니다. 좀비(체력 {zombie_health}, 공격력 "
+                            + "{zombie_damage})에게 물리면 다시 감염되고, 쓰러진 좀비는 터지며 {spread_radius}블록 안의 적을 "
+                            + "감염시킵니다.")
             .ultimateNotStandalone()
             .param("infect_duration", 5)
             .param("infect_damage", 0.5)

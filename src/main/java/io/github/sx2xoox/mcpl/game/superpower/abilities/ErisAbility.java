@@ -76,12 +76,11 @@ public final class ErisAbility extends Ability {
                     "최근 {opportunist_window}초 안에 다른 누군가(다른 플레이어나 소환수)에게 피해를 받은 적에게 주는 내 피해가 "
                             + "{opportunist_bonus}% 늘어납니다. 그런 적의 머리 위에는 나에게만 보이는 진홍 불씨가 깜박입니다.")
             .active("불화의 사과",
-                    "조준한 곳({apple_range}블록 이내)에 황금 사과를 던집니다. 사과는 떨어지고 {apple_arm}초 뒤부터 "
-                            + "{apple_duration}초간 빛나며 처음 닿은 사람이 가져갑니다. 적이 가지면 {bait_heal} 회복하는 대신 {fairest_duration}초간 '가장 아름다운 자'가 "
-                            + "되어 빛나고(발광) 황금 왕관을 쓰며, 자신의 적들에게 받는 모든 피해가 {fairest_bonus}% 늘어납니다. "
-                            + "나나 아군이 가지면 {friend_heal} 회복합니다. 아무도 줍지 않으면 사과가 터져 반경 {burst_radius}블록의 "
-                            + "적에게 {burst_damage} 피해를 주고 {discord_duration}초간 불화에 빠뜨립니다(그동안 내 어부지리가 늘 "
-                            + "적용됩니다).",
+                    "조준한 곳({apple_range}블록 이내)에 황금 사과를 던집니다. {apple_duration}초 안에 처음 닿은 사람이 "
+                            + "가져가며, 적이 주우면 {bait_heal} 회복하지만 {fairest_duration}초간 빛나며 받는 피해가 "
+                            + "{fairest_bonus}% 늘고, 나나 아군이 주우면 {friend_heal} 회복합니다. 아무도 줍지 않으면 터져 반경 "
+                            + "{burst_radius}블록의 적에게 {burst_damage} 피해를 주고, {discord_duration}초간 그 적들에게 "
+                            + "어부지리가 늘 적용됩니다.",
                     9)
             .ultimate("불화의 씨앗",
                     "반경 {ult_radius}블록의 적 모두에게 {ult_duration}초간 불화의 씨앗을 심습니다. 씨앗이 심긴 두 적이 "

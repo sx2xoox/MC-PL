@@ -78,12 +78,10 @@ public final class CassandraAbility extends Ability {
                             + "내리는 다음 예언(액티브)은 {fate_haste}% 더 빨리 떨어지고 범위가 {fate_radius}블록 넓어집니다. 예언이 "
                             + "적을 맞히면 예언 쿨타임이 {hit_refund}초 줄어듭니다.")
             .active("예언",
-                    "조준한 적({prophecy_range}블록 이내)이 {prophecy_delay}초 뒤에 서 있을 곳을 예언합니다. 최근 움직임대로 "
-                            + "나아간 곳(최대 {prophecy_lead}블록 앞, 벽 너머나 낭떠러지 밖은 제외)에 모두에게 보이는 "
-                            + "파멸의 인장이 새겨지고, {prophecy_delay}초 뒤 하늘에서 운명의 창이 떨어져 반경 "
-                            + "{prophecy_radius}블록 안의 적에게 {prophecy_damage} 피해를 주고 {prophecy_slow}초간 이동 "
-                            + "속도를 {prophecy_slow_amount}% 늦춥니다. 가만히 있던 적에게는 발밑에, 달리던 적에게는 가는 "
-                            + "길에 떨어지니 피하려면 움직임을 바꿔야 합니다.",
+                    "조준한 적({prophecy_range}블록 이내)이 지금 움직임대로 {prophecy_delay}초 뒤에 서 있을 곳에 모두에게 "
+                            + "보이는 인장을 새깁니다. {prophecy_delay}초 뒤 그곳에 창이 떨어져 반경 {prophecy_radius}블록의 "
+                            + "적에게 {prophecy_damage} 피해를 주고 {prophecy_slow}초간 {prophecy_slow_amount}% 느리게 "
+                            + "합니다. 피하려면 움직임을 바꿔야 합니다.",
                     9)
             .ultimate("트로이의 멸망",
                     "{ult_windup}초간 머리 위에 거대한 눈을 뜬 뒤 반경 {ult_radius}블록 안의 적 모두(최대 "
