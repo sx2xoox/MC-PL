@@ -99,6 +99,8 @@ class AbilityLifecycleTest {
             case "healer" -> s.owner.setHealth(s.owner.getHealth() - 8);
             // The frying pan only reaches 3.5 blocks.
             case "chef" -> s.place(s.enemy, 0.5, 3.0, 180f);
+            // The red-ink note only writes names it learned in a fight: exchange a blow first.
+            case "cursenote" -> s.melee(s.owner, s.enemy, 1);
             default -> {
             }
         }
