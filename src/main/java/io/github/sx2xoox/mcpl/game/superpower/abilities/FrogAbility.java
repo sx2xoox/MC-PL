@@ -117,9 +117,19 @@ public final class FrogAbility extends Ability {
     private static final double CONE_HEIGHT = 3;
     private static final long RAIN_REFRESH = 6;
     private static final int RAIN_DROPS = 14;
-    private static final int CLOUD_PUFFS = 6;
+    /** The cloud: a centre puff and two rings of puffs (at these shares of the rain radius) that overlap. */
+    private static final int INNER_PUFFS = 4;
+    private static final int OUTER_PUFFS = 7;
+    private static final double INNER_RING = 0.3;
+    private static final double OUTER_RING = 0.7;
+    /** A puff is this much wider than the gap to its neighbours, so neighbours overlap. */
+    private static final double PUFF_OVERLAP = 1.3;
     private static final double CLOUD_HEIGHT = 5.5;
     private static final int FOLLOW_LERP = 3;
+    /** The croak's throat sac follows the frog's chin by a teleport every tick, smoothed over this many ticks. */
+    private static final int SAC_LERP = 2;
+    /** A reversed walk is not set for this long (plus the victim's ping) after something else moved the victim. */
+    private static final long PUSH_GRACE = 6;
     private static final int MAX_DISPLAYS = 24;
 
     // ------------------------------------------------------------------ state
@@ -325,10 +335,12 @@ public final class FrogAbility extends Ability {
     /**
      * The victim's own walk, turned around: its client cannot walk (speed locked), so every tick on the ground its keys
      * are read and the opposite walk is set as a fresh velocity (its own input asked for it, so input rules still judge
-     * it). In the air it keeps its momentum.
+     * it). In the air it keeps its momentum, and right after a push or knockback the walk waits: the server still sees
+     * the victim on the ground until its client reports the flight, and a walk set then would cancel the push.
      */
     private void drive(Player victim) {
-        if (!Motion.isGrounded(victim)) {
+        if (!Motion.isGrounded(victim)
+                || ctx().wasDisplaced(victim, PUSH_GRACE + ctx().reactionSlackTicks(victim))) {
             return;
         }
         Input input = victim.getCurrentInput();
@@ -364,11 +376,16 @@ public final class FrogAbility extends Ability {
         BlockDisplay[] sac = new BlockDisplay[2];
         for (int i = 0; i < 2; i++) {
             if (room(1)) {
-                sac[i] = keep(Displays.block(ctx(), owner, chin(owner), BUBBLE.createBlockData(),
-                        Displays.transform(0, 0, 0, 0.1f, 0.1f, 0.1f, i * 45f, i * 45f, 0), windup + 2));
-                sac[i].setTeleportDuration(1);
+                float turn = i * 45f;
+                // Not for the frog itself: right under its chin the sac would fill its own view and trail its camera.
+                sac[i] = keep(Displays.spawn(ctx(), owner, chin(owner), BlockDisplay.class, windup + 2,
+                        viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer), display -> {
+                            display.setBlock(BUBBLE.createBlockData());
+                            display.setTransformation(Displays.transform(0, 0, 0, 0.1f, 0.1f, 0.1f, turn, turn, 0));
+                            display.setTeleportDuration(SAC_LERP);
+                        }));
                 Displays.animateNextTick(ctx(), owner, sac[i], Displays.transform(0, 0, 0, 0.55f, 0.5f, 0.55f,
-                        i * 45f, i * 45f, 0), (int) Math.max(1, windup - 1));
+                        turn, turn, 0), (int) Math.max(1, windup - 1));
             }
         }
         Fx.sound(owner.getLocation(), Sound.ENTITY_FROG_AMBIENT, 1.0f, 0.7f);
@@ -464,22 +481,7 @@ public final class FrogAbility extends Ability {
         rain = created;
         long duration = Math.max(1, params().ticks("rain_duration"));
         long interval = Math.max(1, params().ticks("rain_interval"));
-        for (int k = 0; k < CLOUD_PUFFS; k++) {
-            if (!room(1)) {
-                break;
-            }
-            double angle = k * Math.PI * 2 / CLOUD_PUFFS;
-            double spread = k == 0 ? 0 : radius * 0.35;
-            Location puff = center.clone().add(Math.cos(angle) * spread, CLOUD_HEIGHT + (k % 2) * 0.4,
-                    Math.sin(angle) * spread);
-            float size = k == 0 ? 3.2f : 2.4f;
-            BlockDisplay part = keep(Displays.block(ctx(), owner, puff, (k % 2 == 0 ? CLOUD : CLOUD_LIGHT)
-                    .createBlockData(), Displays.transform(0, 0, 0, 0.1f, 0.1f, 0.1f, k * 23f, 0, 0), duration + 12));
-            part.setViewRange(2.5f);
-            Displays.animateNextTick(ctx(), owner, part,
-                    Displays.transform(0, 0, 0, size, size * 0.45f, size, k * 23f, 0, 0), 10);
-            created.cloud.add(part);
-        }
+        raiseCloud(owner, created, duration + 12);
         owner.showTitle(Title.title(Text.mm("<b><gradient:#8EC9E8:#7ACC3B>장맛비</gradient></b>"),
                 Text.mm("<gray>비가 거꾸로 솟습니다 · 빗속의 적은 모든 게 반대로</gray>")));
         Fx.sound(center, Sound.WEATHER_RAIN, 1.5f, 0.8f);
@@ -488,6 +490,47 @@ public final class FrogAbility extends Ability {
         Loop.repeat(ctx(), owner, 0, 1, duration, i -> rainStep(owner, created, i, interval),
                 () -> endRain(owner, created));
         return ActivationResult.success();
+    }
+
+    /**
+     * The grey cloud over the whole rain: a centre puff and an inner and an outer ring of puffs, each ring's puffs as
+     * wide as {@link #PUFF_OVERLAP} times the gap to their neighbours (so they overlap), at alternating heights. A
+     * puff's model sits on its entity (the culling box covers it), so a cloud half out of view is still drawn.
+     */
+    private void raiseCloud(Player owner, Rain r, long lifetime) {
+        double radius = r.radius;
+        double inner = radius * INNER_RING;
+        double outer = radius * OUTER_RING;
+        double innerSize = PUFF_OVERLAP * 2 * inner * Math.sin(Math.PI / INNER_PUFFS);
+        double outerSize = PUFF_OVERLAP * 2 * outer * Math.sin(Math.PI / OUTER_PUFFS);
+        List<double[]> puffs = new ArrayList<>();
+        puffs.add(new double[] {0, 0, PUFF_OVERLAP * inner});
+        for (int k = 0; k < INNER_PUFFS; k++) {
+            double angle = k * Math.PI * 2 / INNER_PUFFS + Math.PI / 4;
+            puffs.add(new double[] {Math.cos(angle) * inner, Math.sin(angle) * inner, innerSize});
+        }
+        for (int k = 0; k < OUTER_PUFFS; k++) {
+            double angle = k * Math.PI * 2 / OUTER_PUFFS;
+            puffs.add(new double[] {Math.cos(angle) * outer, Math.sin(angle) * outer, outerSize});
+        }
+        for (int k = 0; k < puffs.size() && room(1); k++) {
+            double[] puff = puffs.get(k);
+            float size = (float) Math.max(1.5, puff[2]);
+            float thick = Math.clamp(size * 0.35f, 0.8f, 1.8f);
+            float yaw = k * 23f;
+            Material block = k % 2 == 0 ? CLOUD : CLOUD_LIGHT;
+            Location at = r.center.clone().add(puff[0], CLOUD_HEIGHT - thick * 0.5 + (k % 2) * 0.4, puff[1]);
+            BlockDisplay part = keep(Displays.spawn(ctx(), owner, at, BlockDisplay.class, lifetime, display -> {
+                display.setBlock(block.createBlockData());
+                display.setTransformation(Displays.transform(0, thick * 0.5f, 0, 0.1f, 0.1f, 0.1f, yaw, 0, 0));
+                display.setViewRange(2.5f);
+                display.setDisplayWidth(size * 1.5f);
+                display.setDisplayHeight(thick);
+            }));
+            Displays.animateNextTick(ctx(), owner, part,
+                    Displays.transform(0, thick * 0.5f, 0, size, thick, size, yaw, 0, 0), 10);
+            r.cloud.add(part);
+        }
     }
 
     private boolean rainStep(Player owner, Rain r, long i, long interval) {

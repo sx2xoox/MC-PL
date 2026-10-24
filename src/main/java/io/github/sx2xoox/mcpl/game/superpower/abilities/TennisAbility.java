@@ -124,6 +124,13 @@ public final class TennisAbility extends Ability {
     /** A ball that hangs in front of the prodigy: this far ahead of the eyes, a little below them. */
     private static final double FLOAT_AHEAD = 1.6;
     private static final double FLOAT_BELOW = 0.25;
+    /** A hanging ball bobs this much up and down (through its shape: the ball itself stays put). */
+    private static final float FLOAT_BOB = 0.06f;
+    /** The toss rises this far straight up from the hand. */
+    private static final double TOSS_HEIGHT = 1.3;
+    /** For the first flight ticks a ball can only be returned this close (it is still at the prodigy's racket). */
+    private static final double EARLY_RETURN_REACH = 2;
+    private static final long EARLY_RETURN_TICKS = 2;
     private static final double BOUNCE_DAMP = 0.8;
     private static final double FACING_DOT = 0.2;
     private static final double PUSH_LIFT = 0.3;
@@ -152,8 +159,12 @@ public final class TennisAbility extends Ability {
         final List<BlockDisplay> parts = new ArrayList<>();
         final Set<UUID> struck = new HashSet<>();
         Location pos;
+        /** Where the toss left the hand (the toss goes straight up from here, wherever the prodigy turns). */
+        final Location tossFrom;
         Vector velocity = new Vector();
         Mode mode = Mode.TOSS;
+        /** The bob of a hanging ball, in its shape. */
+        float bob;
         int rally;
         boolean bounced;
         boolean broken;
@@ -164,6 +175,7 @@ public final class TennisAbility extends Ability {
 
         Ball(Location pos) {
             this.pos = pos;
+            this.tossFrom = pos.clone();
         }
 
         void setMode(Mode next, long now) {
@@ -172,12 +184,19 @@ public final class TennisAbility extends Ability {
         }
 
         void place() {
+            place(true);
+        }
+
+        /** Spins the ball and (with {@code move}) moves it to {@link #pos}; a hanging ball stays where it is. */
+        void place(boolean move) {
             spin++;
             for (int i = 0; i < parts.size(); i++) {
                 BlockDisplay part = parts.get(i);
-                Displays.moveTo(part, pos);
+                if (move) {
+                    Displays.moveTo(part, pos);
+                }
                 if (spin % 2 == 0) {
-                    Displays.animate(part, ballShape(i, spin * 25f, BALL_SIZE), 2);
+                    Displays.animate(part, ballShape(i, spin * 25f, BALL_SIZE, bob), 2);
                 }
             }
         }
@@ -375,10 +394,14 @@ public final class TennisAbility extends Ability {
     }
 
     private static Transformation ballShape(int part, float spin, float size) {
+        return ballShape(part, spin, size, 0);
+    }
+
+    private static Transformation ballShape(int part, float spin, float size, float lift) {
         return switch (part) {
-            case 0 -> Displays.transform(0, 0, 0, size, size, size, spin, 0, 0);
-            case 1 -> Displays.transform(0, 0, 0, size * 0.92f, size * 0.92f, size * 0.92f, spin + 45, 45, 0);
-            default -> Displays.transform(0, 0, 0, size * 1.02f, size * 0.12f, size * 1.02f, spin * 0.5f, 0, 30);
+            case 0 -> Displays.transform(0, lift, 0, size, size, size, spin, 0, 0);
+            case 1 -> Displays.transform(0, lift, 0, size * 0.92f, size * 0.92f, size * 0.92f, spin + 45, 45, 0);
+            default -> Displays.transform(0, lift, 0, size * 1.02f, size * 0.12f, size * 1.02f, spin * 0.5f, 0, 30);
         };
     }
 
@@ -405,10 +428,11 @@ public final class TennisAbility extends Ability {
         long now = ctx().currentTick();
         switch (b.mode) {
             case TOSS -> {
+                // Straight up from the hand it left: a toss that followed the prodigy's eyes would swing across its
+                // own screen whenever it turned (the server hears the turn a round trip late).
                 long age = now - b.modeSince;
                 double t = Math.min(1, (double) age / toss);
-                b.pos = owner.getEyeLocation().add(Motion.horizontalFacing(owner.getLocation()).multiply(0.45))
-                        .add(0, 0.2 + 0.7 * Math.sin(t * Math.PI * 0.5), 0);
+                b.pos = b.tossFrom.clone().add(0, TOSS_HEIGHT * Math.sin(t * Math.PI * 0.5), 0);
                 b.place();
                 if (age >= toss) {
                     serve(owner, b, now);
@@ -558,12 +582,18 @@ public final class TennisAbility extends Ability {
         return best;
     }
 
-    /** An enemy player swung at the ball within its reach, facing it: the ball goes back. */
+    /**
+     * An enemy player swung at the ball coming at it, within its reach and facing it: the ball goes back. Right after
+     * the stroke the ball is still at the prodigy's racket, so then it must already be close.
+     */
     private boolean enemyReturns(Player owner, Ball b, long now) {
         double reach = Math.max(0, params().num("return_reach"));
+        if (now - b.modeSince < EARLY_RETURN_TICKS) {
+            reach = Math.min(reach, EARLY_RETURN_REACH);
+        }
         for (LivingEntity enemy : ctx().enemiesNear(owner, b.pos, reach)) {
             if (!b.struck.contains(enemy.getUniqueId()) && enemy.getEyeLocation().distance(b.pos) <= reach
-                    && returnsBall(enemy, b, now)) {
+                    && approaches(b, enemy) && returnsBall(enemy, b, now)) {
                 returned(owner, b, enemy, now);
                 b.place();
                 return true;
@@ -572,14 +602,24 @@ public final class TennisAbility extends Ability {
         return false;
     }
 
-    /** True if {@code enemy} (a player) swung within the return window (plus its ping) facing the ball. */
+    /** True while the ball flies towards {@code enemy}'s eyes: a ball flying past or away cannot be returned. */
+    private static boolean approaches(Ball b, LivingEntity enemy) {
+        Vector toEye = enemy.getEyeLocation().toVector().subtract(b.pos.toVector());
+        return b.velocity.dot(toEye) > 0;
+    }
+
+    /**
+     * True if {@code enemy} (a player) swung facing the ball within the return window (plus its ping), and not before
+     * this stroke: a swing from before the ball was hit (an enemy busy hitting the prodigy) returns nothing.
+     */
     private boolean returnsBall(LivingEntity enemy, Ball b, long now) {
         if (!(enemy instanceof Player player)) {
             return false;
         }
-        long window = params().ticks("return_window") + ctx().reactionSlackTicks(player);
+        long slack = ctx().reactionSlackTicks(player);
+        long window = params().ticks("return_window") + slack;
         long swing = ctx().lastSwingTick(player);
-        if (swing < 0 || now - swing > window || swing < b.modeSince - window) {
+        if (swing < 0 || now - swing > window || swing < b.modeSince - slack) {
             return false;
         }
         Vector toBall = b.pos.toVector().subtract(player.getEyeLocation().toVector());
@@ -632,6 +672,7 @@ public final class TennisAbility extends Ability {
     }
 
     private void back(Player owner, Ball b, long now) {
+        b.bob = 0;
         Location target = b.broken ? Fx.body(owner) : floatSpot(owner);
         Vector to = target.toVector().subtract(b.pos.toVector());
         double distance = to.length();
@@ -656,19 +697,25 @@ public final class TennisAbility extends Ability {
         b.place();
     }
 
-    /** The ball hangs in front of the prodigy: a swing at it is the next rally. */
+    /**
+     * The ball hangs where it came back to, in front of the prodigy: a swing within reach of it is the next rally. It
+     * stays put in the world and bobs only through its shape: a ball that followed the prodigy's eyes would swing
+     * across its own screen at every turn (the server hears the turn a round trip late), right where it must swing.
+     */
     private void hover(Player owner, Ball b, long now) {
-        Location spot = floatSpot(owner).add(0, Math.sin((now - b.modeSince) * 0.4) * 0.06, 0);
-        b.pos = spot;
-        b.place();
+        b.bob = (float) (Math.sin((now - b.modeSince) * 0.4) * FLOAT_BOB);
+        b.place(false);
+        Location spot = b.pos.clone().add(0, b.bob, 0);
         if (now % 3 == 0) {
             Vfx.dot(spot.clone().add(Fx.jitter(0.2f), Fx.jitter(0.2f), Fx.jitter(0.2f)), Particle.DUST, LIME_DUST,
                     false);
         }
         long swing = ctx().lastSwingTick(owner);
-        if (swing >= b.modeSince && owner.getEyeLocation().distance(spot) <= Math.max(0.5,
-                params().num("rally_reach"))) {
+        Location eye = owner.getEyeLocation();
+        if (swing >= b.modeSince && eye.getWorld().equals(spot.getWorld())
+                && eye.distance(spot) <= Math.max(0.5, params().num("rally_reach"))) {
             b.rally++;
+            b.bob = 0;
             serve(owner, b, now);
             owner.sendActionBar(Text.mm("<b><" + LIME_TAG + ">랠리 ×" + b.rally + "</" + LIME_TAG + "></b> <gray>피해 ×"
                     + AbilityInfo.formatNumber(bonus(b.rally)) + "</gray>"));
@@ -680,6 +727,8 @@ public final class TennisAbility extends Ability {
         }
         if (now >= b.floatUntil) {
             b.setMode(Mode.DROP, now);
+            b.pos = spot;
+            b.bob = 0;
             b.velocity = new Vector(0, 0.05, 0);
             b.rally = 0;
         }

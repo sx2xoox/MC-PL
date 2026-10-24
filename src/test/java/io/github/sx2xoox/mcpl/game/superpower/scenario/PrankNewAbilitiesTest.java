@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -18,13 +19,16 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.FrogAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.KappaAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.TennisAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.YagwanggwiAbility;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.ability.InputKey;
+import io.github.sx2xoox.mcpl.game.superpower.ability.Prompt;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -38,6 +42,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
@@ -331,7 +336,7 @@ class PrankNewAbilitiesTest {
             s.ticks(s.paramTicks("draw_interval") * 3);
             assertEquals(s.param("hand_max"), cards(s).hand().size(), EPSILON, "never more than a full hand");
 
-            // The fan: backs for everyone, faces for the owner alone, all turned by the transformation only.
+            // The fan: backs for everyone else, faces for the owner alone, all turned by the transformation only.
             s.place(s.owner, 0.5, 0.5, 90);
             s.ticks(3);
             List<BlockDisplay> backs = blocks(s, Material.BLUE_GLAZED_TERRACOTTA);
@@ -340,7 +345,9 @@ class PrankNewAbilitiesTest {
             Vector facing = s.owner.getLocation().getDirection().setY(0).normalize();
             for (BlockDisplay back : backs) {
                 assertUnrotated(back, "card back");
-                assertTrue(s.enemy.canSee(back) && s.owner.canSee(back), "the backs are public");
+                assertTrue(s.enemy.canSee(back) && !s.owner.canSee(back),
+                        "the backs are for the others: the owner sees its faces there");
+                assertEquals(2, back.getTeleportDuration(), "a per-tick follower smooths over 2 ticks");
                 Vector3f normal = forward(rotationOf(back));
                 assertTrue(Math.abs(normal.x * facing.getX() + normal.z * facing.getZ()) > 0.95,
                         "the card stands across the back: " + normal);
@@ -363,6 +370,13 @@ class PrankNewAbilitiesTest {
             s.aimAt(s.owner, s.enemy);
             s.clearHits();
             s.assertSucceeded(s.active(), "monster card");
+            s.h.tickUntil(() -> blocks(s, Material.ORANGE_TERRACOTTA).size() == 2, 10, "the jaws");
+            s.place(s.enemy, 1.5, 5.5, 180);
+            s.ticks(1);
+            Location bitten = s.enemy.getEyeLocation().add(0, 0.1, 0);
+            for (BlockDisplay jaw : blocks(s, Material.ORANGE_TERRACOTTA)) {
+                assertTrue(jaw.getLocation().distance(bitten) < 1.0E-6, "the jaws stay on the head they bite");
+            }
             s.ticks(10);
             assertEquals(s.param("monster_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the jaws bite");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "only the first enemy on the line");
@@ -420,6 +434,11 @@ class PrankNewAbilitiesTest {
             assertTrue(s.ctx().isSilenced(s.enemy), "silenced");
             assertTrue(locked(s.enemy), "bound in place");
             assertFalse(texts(s, "함정 카드 발동").isEmpty(), "the shout is shown");
+            BlockDisplay sprung = blocks(s, Material.PURPLE_CONCRETE).stream().filter(s.enemy::canSee).findFirst()
+                    .orElseThrow();
+            Vector3f length = rotationOf(sprung).transform(new Vector3f(0, 0, 1));
+            assertTrue(length.y > 0.99, "the card stands up by a quarter turn: " + length);
+            assertTrue(sprung.getTransformation().getScale().y < 0.05f, "and keeps its thin axis");
             s.enemy.sendInput();
             s.ticks(s.paramTicks("trap_root") + 2);
             assertFalse(locked(s.enemy), "the bind wears off");
@@ -490,6 +509,80 @@ class PrankNewAbilitiesTest {
             assertFalse(cards(s).isTurn(), "the turn ends");
             double pulse = Math.min(s.param("turn_end_max"), 2 * s.param("turn_end_damage"));
             assertEquals(2 * s.param("monster_damage") + pulse, s.damageBy(s.owner, s.enemy), EPSILON, "턴 종료");
+            assertEquals(s.param("hand_max"), cards(s).hand().size(), EPSILON, "back to a normal hand");
+            assertEquals(s.param("hand_max"), blocks(s, Material.BLUE_GLAZED_TERRACOTTA).size()
+                    + blocks(s, Material.GOLD_BLOCK).size(), EPSILON, "the extra cards are gone");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cardgamerDrawnCardGrowsFromTheChestAndTheHandHidesWithTheDuelist() {
+        try (Scenario s = Scenario.ffa("cardgamer")) {
+            s.ticks(2);
+            cards(s).rigHand(Card.MONSTER);
+            int before = cards(s).hand().size();
+            s.h.tickUntil(() -> cards(s).hand().size() > before, s.paramTicks("draw_interval") + 5, "a draw");
+            // The draw tick: the new card waits at the chest, tiny, so the clients have it before it grows.
+            List<BlockDisplay> drawn = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getTransformation().getScale().x < 0.05f).toList();
+            assertEquals(2, drawn.size(), "its back and its face");
+            Location chest = s.owner.getLocation().add(0, s.owner.getHeight() * 0.95, 0);
+            for (BlockDisplay part : drawn) {
+                assertTrue(part.getLocation().distance(chest) < 1.0E-6, "still at the chest");
+            }
+            s.ticks(1);
+            for (BlockDisplay part : drawn) {
+                assertTrue(part.getTransformation().getScale().x > 0.2f, "it grows into the fan");
+                assertTrue(part.getLocation().distance(chest) > 0.2, "and moves there");
+            }
+            s.owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 200, 0));
+            s.ctx().refreshViewers();
+            for (BlockDisplay back : blocks(s, Material.BLUE_GLAZED_TERRACOTTA)) {
+                assertFalse(s.enemy.canSee(back), "an invisible duelist's hand is not seen either");
+            }
+
+            cards(s).rigHand(Card.LEGEND);
+            BlockDisplay gold = blocks(s, Material.GOLD_BLOCK).getFirst();
+            assertTrue(gold.isGlowing(), "a moment of gold as the legend arrives");
+            s.ticks(25);
+            assertFalse(gold.isGlowing(), "then no outline through walls");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cardgamerLegendBeastComesWholeDuringATurnAndStandsOnTheGround() {
+        try (Scenario s = Scenario.builder("cardgamer").param("legend_delay", 1.2).start()) {
+            s.ticks(5);
+            cards(s).rigHand();
+            Card[] monsters = new Card[16];
+            java.util.Arrays.fill(monsters, Card.MONSTER);
+            cards(s).stackDeck(monsters);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "my turn");
+            s.ticks(14);
+            cards(s).rigHand(Card.TRAP, Card.TRAP, Card.LEGEND, Card.MONSTER, Card.MONSTER, Card.MONSTER);
+            int gap = (int) Math.ceil(s.param("turn_cooldown") * 20) + 1;
+            s.assertSucceeded(s.active(), "a trap");
+            s.ticks(gap);
+            s.assertSucceeded(s.active(), "another trap");
+            s.ticks(gap);
+            assertEquals(2, cards(s).trapCount());
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "the legend");
+            s.ticks(gap);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "a monster bites while the beast comes");
+            assertEquals(6, cards(s).hand().size(), "a full hand of six");
+            s.h.tickUntil(() -> blocks(s, Material.QUARTZ_BLOCK).size() == 2, 30, "the beast with both horns");
+            assertEquals(4, blocks(s, Material.GOLD_BLOCK).size(), "body, head and both arms");
+            s.ticks(6);
+            BlockDisplay body = blocks(s, Material.GOLD_BLOCK).stream()
+                    .max(java.util.Comparator.comparingDouble(d -> d.getTransformation().getScale().x)).orElseThrow();
+            assertEquals(0, body.getTransformation().getTranslation().y, 0.01, "the body stands on the ring");
             s.assertNoProblems();
             s.finishClean();
         }
@@ -601,6 +694,76 @@ class PrankNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON, "no fall damage");
             assertModifierFree(s.owner, "after the landing");
             assertNoDisplays(s, "smash");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tennisTossGoesStraightUpWhereverTheProdigyTurns() {
+        try (Scenario s = Scenario.ffa("tennis")) {
+            s.ticks(5);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "serve");
+            s.ticks(2);
+            BlockDisplay ball = blocks(s, Material.LIME_WOOL).getFirst();
+            Location tossed = ball.getLocation();
+            s.owner.setRotation(100, -20);
+            s.ticks(2);
+            assertEquals("TOSS", tennis(s).ballState());
+            Location now = ball.getLocation();
+            assertEquals(tossed.getX(), now.getX(), 1.0E-6, "the toss does not follow the turn: x");
+            assertEquals(tossed.getZ(), now.getZ(), 1.0E-6, "z");
+            assertTrue(now.getY() > tossed.getY(), "it rises");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tennisHangingBallStaysPutWhileTheProdigyTurnsAndMoves() {
+        try (Scenario s = Scenario.ffa("tennis")) {
+            s.ticks(5);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "serve");
+            tickUntilState(s, "FLOAT", 60);
+            s.ticks(1);
+            List<BlockDisplay> ball = List.of(blocks(s, Material.LIME_WOOL).getFirst(),
+                    blocks(s, Material.LIME_CONCRETE_POWDER).getFirst(), blocks(s, Material.WHITE_CONCRETE).getFirst());
+            List<Location> before = ball.stream().map(Entity::getLocation).toList();
+            s.place(s.owner, 1.1, 0.9, 140);
+            s.ticks(3);
+            assertEquals("FLOAT", tennis(s).ballState());
+            for (int i = 0; i < ball.size(); i++) {
+                assertTrue(ball.get(i).getLocation().distance(before.get(i)) < 1.0E-6,
+                        "the hanging ball stays where it came back to");
+            }
+            s.owner.swingArm();
+            s.ticks(1);
+            assertEquals(1, tennis(s).rally(), "a swing within reach still rallies it");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void tennisOnlyAFreshSwingAtAnIncomingBallReturnsIt() {
+        try (Scenario s = Scenario.ffa("tennis")) {
+            s.ticks(5);
+            // One enemy right in front, swinging at the prodigy before the serve; one beside it, swinging after.
+            s.place(s.enemy, 0.5, 2.5, 180);
+            s.place(s.enemy2, 2.5, 0.5, 90);
+            s.ticks(1);
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "serve");
+            s.enemy.swingArm();
+            s.ticks(s.paramTicks("serve_toss"));
+            s.aimAt(s.enemy2, s.owner.getEyeLocation().add(0, 0.6, 0.5));
+            s.enemy2.swingArm();
+            s.ticks(4);
+            assertEquals(0, tennis(s).rivalPoints(), "neither a stale swing nor one at a ball flying away returns it");
+            assertEquals(s.param("serve_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the serve hits");
             s.assertNoProblems();
             s.finishClean();
         }
@@ -770,6 +933,113 @@ class PrankNewAbilitiesTest {
         }
     }
 
+    @Test
+    void kappaGreatRingDuringABoutRaisesAWholeRingOfBalesAlongTheCircle() {
+        try (Scenario s = Scenario.ffa("kappa")) {
+            s.ticks(5);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "bout");
+            s.ticks(1);
+            s.assertSucceeded(s.ultimate(), "the great ring right on top of the bout");
+            s.ticks(10);
+            List<BlockDisplay> bales = blocks(s, Material.HAY_BLOCK);
+            assertEquals(16, bales.size(), "the whole great ring, not an arc");
+            Vector center = new Vector();
+            for (BlockDisplay bale : bales) {
+                center.add(bale.getLocation().toVector());
+            }
+            center.multiply(1.0 / bales.size());
+            for (BlockDisplay bale : bales) {
+                assertUnrotated(bale, "bale");
+                Vector radial = bale.getLocation().toVector().subtract(center).setY(0).normalize();
+                Vector3f along = rotationOf(bale).transform(new Vector3f(1, 0, 0));
+                assertEquals(0, along.x * radial.getX() + along.z * radial.getZ(), 0.02,
+                        "the bale's long side lies along the circle");
+            }
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void kappaDishJumpsWithATeleportAndTipsForwardAsOne() {
+        try (Scenario s = Scenario.ffa("kappa")) {
+            s.ticks(5);
+            List<BlockDisplay> plates = blocks(s, Material.WHITE_CONCRETE);
+            assertEquals(2, plates.size());
+            assertTrue(Math.abs(plates.get(0).getTransformation().getScale().y
+                    - plates.get(1).getTransformation().getScale().y) > 1.0E-3, "no two faces share a plane");
+
+            // A teleport: the dish takes duration 0 first, then jumps, then smooths again (no slide across the map).
+            s.place(s.owner, 12.5, 0.5, 0);
+            s.ticks(1);
+            for (BlockDisplay plate : plates) {
+                assertEquals(0, plate.getTeleportDuration(), "set before the move");
+                assertTrue(plate.getLocation().distance(s.owner.getLocation()) > 8, "not moved yet");
+            }
+            s.ticks(1);
+            Location head = s.owner.getLocation().add(0, s.owner.getHeight() + 0.06, 0);
+            for (BlockDisplay plate : plates) {
+                assertTrue(plate.getLocation().distance(head) < 1.0E-6, "on the head again");
+            }
+            s.ticks(1);
+            for (BlockDisplay plate : plates) {
+                assertEquals(3, plate.getTeleportDuration(), "smooth again");
+            }
+
+            // The bow tips the whole dish forward, every piece about the same axis.
+            s.place(s.enemy, 12.5, 3.5, 180);
+            s.aimAt(s.enemy, s.owner);
+            s.ticks(2);
+            s.enemy.sendInput(InputKey.SNEAK);
+            s.ticks(2);
+            assertFalse(kappa(s).isPlateFull(), "bowed");
+            Vector facing = Motion.horizontalFacing(s.owner.getLocation());
+            List<Display> dish = new ArrayList<>(blocks(s, Material.LIGHT_GRAY_CONCRETE));
+            dish.addAll(blocks(s, Material.LIGHT_BLUE_STAINED_GLASS));
+            assertEquals(3, dish.size());
+            Vector3f first = rotationOf(dish.getFirst()).transform(new Vector3f(0, 1, 0));
+            for (Display piece : dish) {
+                Vector3f up = rotationOf(piece).transform(new Vector3f(0, 1, 0));
+                assertTrue(up.x * facing.getX() + up.z * facing.getZ() > 0.5, "tipped forward: " + up);
+                assertTrue(up.distance(first) < 1.0E-4, "all pieces alike");
+            }
+            s.enemy.sendInput();
+            s.ticks(s.paramTicks("bow_freeze") + 6);
+            for (Display piece : dish) {
+                assertTrue(rotationOf(piece).transform(new Vector3f(0, 1, 0)).y > 0.999, "upright again");
+            }
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void kappaRivalWhoNeverSawTheRuleLosesOnlyWhenPushedOut() {
+        try (Scenario s = Scenario.ffa("kappa")) {
+            s.ticks(30);
+            // Something else holds the rival's screen: the bout's rule is never shown.
+            s.ctx().prompt(s.owner, s.enemy, Prompt.builder(Text.mm("<gray>다른 일</gray>"), 200)
+                    .priority(Prompt.HIGH).build());
+            s.aimAt(s.owner, s.enemy);
+            s.clearHits();
+            s.assertSucceeded(s.active(), "bout");
+            for (int i = 0; i < 8; i++) {
+                s.enemy.setClientVelocity(new Vector(0, 0, 0.5));
+                s.ticks(1);
+            }
+            assertTrue(s.enemy.getLocation().getZ() > 2.5 + s.param("sumo_radius"), "walked out of the ring");
+            assertTrue(kappa(s).inBout(), "walking out of a rule it never saw is no loss");
+            assertEquals(0, s.damageTaken(s.enemy), EPSILON);
+            s.enemy.setVelocity(new Vector(0, 0.1, 0.4));
+            s.ticks(2);
+            assertFalse(kappa(s).inBout(), "pushed out, it loses");
+            assertEquals(s.param("sumo_damage"), s.damageBy(s.owner, s.enemy), EPSILON);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 야광귀 yagwanggwi
 
     private static YagwanggwiAbility ghost(Scenario s) {
@@ -848,7 +1118,13 @@ class PrankNewAbilitiesTest {
             s.ticks(s.paramTicks("brush_cooldown") + 2);
             assertTrue(s.enemy2.hasPotionEffect(PotionEffectType.DARKNESS), "the night darkens the enemies around");
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "never brushed");
-            s.ticks(s.paramTicks("night_duration") + 20);
+            BlockDisplay worn = blocks(s, Material.HAY_BLOCK).getFirst();
+            boolean thrownItself = false;
+            for (int i = 0; i < s.paramTicks("night_duration") + 20; i++) {
+                s.ticks(1);
+                thrownItself |= worn.isValid() && worn.getTeleportDuration() == 1;
+            }
+            assertTrue(thrownItself, "the worn sandal itself flies back from the waist");
             assertEquals(s.param("brush_damage") + s.param("return_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "the pair flew back at dawn");
             assertEquals(0, ghost(s).pairCount(), "every pair thrown back");
@@ -857,6 +1133,35 @@ class PrankNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertModifierFree(s.enemy, "dawn");
             assertModifierFree(s.owner, "dawn");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void yagwanggwiWornSandalsTurnWithTheGhostAndHideWithIt() {
+        try (Scenario s = Scenario.ffa("yagwanggwi")) {
+            s.ticks(5);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "snatch");
+            s.h.tickUntil(() -> !blocks(s, Material.HAY_BLOCK).isEmpty(), 10, "the stolen sandal");
+            BlockDisplay sandal = blocks(s, Material.HAY_BLOCK).getFirst();
+            assertTrue(sandal.isGlowing(), "it glows on its way to the waist");
+            s.ticks(8);
+            assertFalse(sandal.isGlowing(), "a worn sandal does not glow through walls");
+
+            s.owner.setBodyYaw(90);
+            s.ticks(1);
+            Vector3f expected = new Quaternionf().rotateY((float) Math.toRadians(-(90 + 180)))
+                    .rotateX((float) Math.toRadians(75)).transform(new Vector3f(0, 0, 1));
+            Vector3f actual = rotationOf(sandal).transform(new Vector3f(0, 0, 1));
+            assertTrue(actual.distance(expected) < 1.0E-3, "turned with the body at once: " + actual);
+
+            assertTrue(s.enemy.canSee(sandal));
+            s.owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 200, 0));
+            s.ctx().refreshViewers();
+            assertFalse(s.enemy.canSee(sandal), "an invisible ghost's sandals hide with it");
+            assertTrue(s.owner.canSee(sandal));
             s.assertNoProblems();
             s.finishClean();
         }
@@ -956,6 +1261,65 @@ class PrankNewAbilitiesTest {
             assertModifierFree(s.owner, "after the rain");
             assertModifierFree(s.enemy, "after the rain");
             assertNotNull(s.owner);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void frogReversedWalkNeverCancelsAPushAndTheSacStaysOutOfTheFrogsView() {
+        try (Scenario s = Scenario.ffa("frog")) {
+            s.ticks(5);
+            s.place(s.enemy2, 6.5, 0.5, 90);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "croak");
+            s.ticks(1);
+            List<BlockDisplay> sac = blocks(s, Material.WHITE_STAINED_GLASS);
+            assertEquals(2, sac.size(), "the throat sac");
+            for (BlockDisplay part : sac) {
+                assertFalse(s.owner.canSee(part), "not under the frog's own chin");
+                assertTrue(s.enemy.canSee(part), "everyone else sees it swell");
+            }
+            s.ticks(s.paramTicks("croak_windup") + 8);
+            assertTrue(frog(s).isReversed(s.enemy));
+            s.enemy.sendInput(InputKey.FORWARD);
+            s.ticks(2);
+            double x = s.enemy.getLocation().getX();
+            s.enemy.setVelocity(new Vector(1.0, 0, 0));
+            s.ticks(6);
+            assertTrue(s.enemy.getLocation().getX() - x > 1.6, "the push carries the enemy on: "
+                    + (s.enemy.getLocation().getX() - x));
+            s.enemy.sendInput();
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void frogRainCloudCoversTheRain() {
+        try (Scenario s = Scenario.ffa("frog")) {
+            s.ticks(5);
+            Location center = s.owner.getLocation();
+            s.assertSucceeded(s.ultimate(), "monsoon");
+            s.ticks(12);
+            List<BlockDisplay> puffs = new ArrayList<>(blocks(s, Material.GRAY_WOOL));
+            puffs.addAll(blocks(s, Material.LIGHT_GRAY_WOOL));
+            assertEquals(12, puffs.size(), "a centre puff and two rings");
+            double radius = s.param("rain_radius");
+            for (BlockDisplay puff : puffs) {
+                assertUnrotated(puff, "puff");
+                assertTrue(puff.getDisplayWidth() >= puff.getTransformation().getScale().x,
+                        "the culling box covers the puff");
+            }
+            for (double share = 0; share <= 0.8 + 1.0E-9; share += 0.1) {
+                for (int deg = 0; deg < 360; deg += 5) {
+                    double px = center.getX() + Math.cos(Math.toRadians(deg)) * share * radius;
+                    double pz = center.getZ() + Math.sin(Math.toRadians(deg)) * share * radius;
+                    boolean covered = puffs.stream().anyMatch(puff -> Math.hypot(puff.getLocation().getX() - px,
+                            puff.getLocation().getZ() - pz) <= puff.getTransformation().getScale().x / 2);
+                    assertTrue(covered, "the cloud covers the rain at " + share + " / " + deg + "°");
+                }
+            }
             s.assertNoProblems();
             s.finishClean();
         }

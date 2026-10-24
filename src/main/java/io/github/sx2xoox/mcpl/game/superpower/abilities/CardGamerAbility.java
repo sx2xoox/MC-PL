@@ -57,7 +57,8 @@ import org.jspecify.annotations.Nullable;
  * duelist's own turn: a full hand, nearly no cooldown, a redraw after every card and a better shot at the legend.
  *
  * <p>Look (card gold, trap purple, spell green, monster orange): the hand floats in a fan behind the back (patterned
- * card backs for everyone, coloured faces for the owner; a legendary card has a gold back that everyone sees glint).
+ * card backs for everyone else, coloured faces in the same spots for the owner; a legendary card has a gold back that
+ * flashes as it arrives and glints after).
  * A thrown monster card spins out and a pair of orange jaws with red eyes snaps shut on the target's head. A spell
  * lights a green circle and sends healing motes to allies. A trap lies flat on the ground and flips up in a purple
  * flash ("함정 카드 발동!"), chains of purple light binding the runner. The legendary beast falls out of the sky onto a
@@ -81,9 +82,10 @@ public final class CardGamerAbility extends Ability {
                     2)
             .ultimate("내 턴!",
                     "손패를 {turn_hand}장까지 채우고 {turn_duration}초간 내 턴이 됩니다. 그동안 카드 발동 쿨타임이 "
-                            + "{turn_cooldown}초로 줄고, 쓸 때마다 한 장씩 다시 뽑으며 전설의 카드 확률이 "
-                            + "{turn_legend_chance}%로 오릅니다. 턴이 끝나면 쓴 카드 한 장마다 반경 {turn_end_radius}블록의 "
-                            + "적에게 {turn_end_damage} 피해를 줍니다(최대 {turn_end_max}).")
+                            + "{turn_cooldown}초로 줄고, 쓸 때마다 한 장씩 다시 뽑으며 첫 전설의 카드가 나올 때까지 그 "
+                            + "확률이 {turn_legend_chance}%로 오릅니다. 턴이 끝나면 {hand_max}장을 넘는 카드는 버리고, 쓴 "
+                            + "카드 한 장마다 반경 {turn_end_radius}블록의 적에게 {turn_end_damage} 피해를 줍니다(최대 "
+                            + "{turn_end_max}).")
             .ultimateNotStandalone()
             .param("draw_interval", 6)
             .param("hand_max", 3)
@@ -180,14 +182,22 @@ public final class CardGamerAbility extends Ability {
     private static final float CARD_WIDTH = 0.32f;
     private static final float CARD_HEIGHT = 0.46f;
     private static final float CARD_DEPTH = 0.015f;
-    /** The two faces of a card in the hand sit this far apart, the owner's face nearer the back. */
-    private static final double FACE_GAP = 0.012;
     private static final double FAN_BEHIND = 0.42;
     private static final double FAN_HEIGHT = 1.15;
     private static final double FAN_SPACING = 0.2;
     private static final float FAN_TILT = 14;
     private static final float RELAYOUT_YAW = 1.5f;
-    private static final int FOLLOW_LERP = 3;
+    /** The hand and the turn label follow the duelist by a teleport every tick, smoothed over this many ticks. */
+    private static final int FOLLOW_LERP = 2;
+    /** A duelist that moved farther than this in one tick was teleported: what follows it jumps instead of sliding. */
+    private static final double FOLLOW_JUMP = 2;
+    /** A drawn card's shape grows into the fan over this many ticks (a one-off change); a turning body re-sends 2. */
+    private static final int LAYOUT_TICKS = 3;
+    private static final int TURNING_LAYOUT_TICKS = 2;
+    /** A legend in the hand glows through walls only this long after the draw, then glints now and then. */
+    private static final long LEGEND_GLOW_TICKS = 20;
+    private static final long LEGEND_GLINT_PERIOD = 15;
+    private static final double GLINT_RANGE = 32;
     private static final long HUD_PERIOD = 60;
     private static final long TURN_HUD_PERIOD = 10;
 
@@ -195,6 +205,9 @@ public final class CardGamerAbility extends Ability {
     private static final double CARD_STEP = 1.5;
     private static final double CARD_HITBOX = 0.35;
     private static final int JAW_SNAP_TICKS = 3;
+    /** The jaws hold on this long after the snap, then shrink away over {@link #JAW_FADE_TICKS}. */
+    private static final int JAW_HOLD_TICKS = 4;
+    private static final int JAW_FADE_TICKS = 5;
     private static final double TRAP_FIND_GROUND = 6;
     private static final double TRAP_HEIGHT = 2.5;
     /** A mob counts as running or jumping above these speeds (blocks per tick): mobs have no input. */
@@ -210,16 +223,22 @@ public final class CardGamerAbility extends Ability {
 
     // ------------------------------------------------------------------ state
 
-    /** One card in the hand: its public back and the face only the owner sees. */
+    /**
+     * One card in the hand: its back for everyone else and the face only the owner sees, both at the same spot (each
+     * viewer sees one of them, so a card counts once in the display budget).
+     */
     private static final class HandCard {
         final Card kind;
         final BlockDisplay back;
         final BlockDisplay face;
+        /** The tick the card was drawn: it is laid out from the next tick, once the clients have it. */
+        final long bornTick;
 
-        HandCard(Card kind, BlockDisplay back, BlockDisplay face) {
+        HandCard(Card kind, BlockDisplay back, BlockDisplay face, long bornTick) {
             this.kind = kind;
             this.back = back;
             this.face = face;
+            this.bornTick = bornTick;
         }
 
         void remove() {
@@ -263,6 +282,11 @@ public final class CardGamerAbility extends Ability {
     private @Nullable TextDisplay turnLabel;
     private float laidYaw = Float.NaN;
     private int laidCount = -1;
+    private long laidTick = Long.MIN_VALUE / 2;
+    /** Where the duelist stood at the last layout, and the steps of a jump (1: duration 0 sent, 2: moved there). */
+    private @Nullable Location followAt;
+    private int followJump;
+    private boolean turnLegendDrawn;
     private long lastHud = Long.MIN_VALUE / 2;
     private boolean hudDirty = true;
 
@@ -291,6 +315,8 @@ public final class CardGamerAbility extends Ability {
         live.clear();
         turn = false;
         turnLabel = null;
+        followAt = null;
+        followJump = 0;
     }
 
     @Override
@@ -353,12 +379,22 @@ public final class CardGamerAbility extends Ability {
             draw(true);
             nextDraw = now + params().ticks("draw_interval");
         }
-        layoutHand(owner);
-        tickTraps(owner, now);
-        TextDisplay label = turnLabel;
-        if (label != null && label.isValid()) {
-            Displays.moveTo(label, owner.getLocation().add(0, owner.getHeight() + 0.75, 0));
+        if (!holdForJump(owner.getLocation())) {
+            layoutHand(owner, now);
+            TextDisplay label = turnLabel;
+            if (label != null && label.isValid()) {
+                Displays.moveTo(label, owner.getLocation().add(0, owner.getHeight() + 0.75, 0));
+            }
+            followAt = owner.getLocation();
         }
+        if (tick % LEGEND_GLINT_PERIOD == 0) {
+            for (HandCard card : hand) {
+                if (card.kind == Card.LEGEND && card.back.isValid() && now - card.bornTick >= LEGEND_GLOW_TICKS) {
+                    glint(owner, card.back.getLocation());
+                }
+            }
+        }
+        tickTraps(owner, now);
         if (turn && tick % 4 == 0) {
             Vfx.ring(ctx(), owner.getLocation().add(0, 0.1, 0), 1.1, 10, tick * 0.2, Particle.DUST, GOLD_DUST,
                     false);
@@ -379,8 +415,12 @@ public final class CardGamerAbility extends Ability {
 
     private Card rollCard() {
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        double legend = Math.max(0, params().num(turn ? "turn_legend_chance" : "legend_chance")) / 100.0;
+        boolean boosted = turn && !turnLegendDrawn;
+        double legend = Math.max(0, params().num(boosted ? "turn_legend_chance" : "legend_chance")) / 100.0;
         if (random.nextDouble() < legend) {
+            if (turn) {
+                turnLegendDrawn = true;
+            }
             return Card.LEGEND;
         }
         double monster = Math.max(0, params().num("monster_chance"));
@@ -397,21 +437,38 @@ public final class CardGamerAbility extends Ability {
         return roll < monster + spell ? Card.SPELL : Card.TRAP;
     }
 
-    /** Adds a card at the back of the hand with its two displays (the drawn card grows into the fan). */
+    /**
+     * Adds a card at the back of the hand with its two displays: the back for everyone else (not while the duelist is
+     * hidden from them) and the face for the owner alone, at the same spot. The drawn card appears small at the chest
+     * and grows into the fan from the next tick ({@link #layoutHand}).
+     */
     private void addCard(Card kind, boolean announce) {
         Player owner = player();
         Location spot = owner.getLocation().add(0, owner.getHeight() * 0.95, 0);
         Transformation tiny = Displays.scaled(0.01f);
-        BlockDisplay back = Displays.block(ctx(), owner, spot, (kind == Card.LEGEND ? LEGEND_BACK : BACK)
-                .createBlockData(), tiny, 0);
-        back.setTeleportDuration(FOLLOW_LERP);
-        BlockDisplay face = Displays.block(ctx(), owner, spot, faceOf(kind).createBlockData(), tiny, 0,
-                Displays.owner(owner));
-        face.setTeleportDuration(FOLLOW_LERP);
+        Material backType = kind == Card.LEGEND ? LEGEND_BACK : BACK;
+        BlockDisplay back = Displays.spawn(ctx(), owner, spot, BlockDisplay.class, 0,
+                viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer), display -> {
+                    display.setBlock(backType.createBlockData());
+                    display.setTransformation(tiny);
+                    display.setTeleportDuration(FOLLOW_LERP);
+                });
+        BlockDisplay face = Displays.spawn(ctx(), owner, spot, BlockDisplay.class, 0, Displays.owner(owner),
+                display -> {
+                    display.setBlock(faceOf(kind).createBlockData());
+                    display.setTransformation(tiny);
+                    display.setTeleportDuration(FOLLOW_LERP);
+                });
         if (kind == Card.LEGEND) {
+            // A moment of gold outline as it arrives; after that it only glints (an outline shows through walls).
             Displays.outline(back, GOLD_COLOR);
+            ctx().runLater(owner, LEGEND_GLOW_TICKS, () -> {
+                if (back.isValid()) {
+                    back.setGlowing(false);
+                }
+            });
         }
-        hand.add(new HandCard(kind, back, face));
+        hand.add(new HandCard(kind, back, face, ctx().currentTick()));
         laidCount = -1;
         hudDirty = true;
         if (!announce) {
@@ -452,9 +509,10 @@ public final class CardGamerAbility extends Ability {
     /**
      * Lays the hand out in a fan behind the owner's back: each card stands upright facing the way the body faces,
      * tilted around its own normal like a fan. Positions follow every tick; the rotation is re-sent only when the body
-     * turned or the hand changed.
+     * turned or the hand changed. A card drawn this tick is left where it spawned until the next tick, so the clients
+     * have it (small, at the chest) before it slides and grows into the fan.
      */
-    private void layoutHand(Player owner) {
+    private void layoutHand(Player owner, long now) {
         int n = hand.size();
         if (n == 0) {
             return;
@@ -464,25 +522,92 @@ public final class CardGamerAbility extends Ability {
         Vector forward = Motion.horizontalFacing(rotated(owner.getLocation(), yaw));
         Vector right = new Vector(-forward.getZ(), 0, forward.getX());
         boolean relayout = n != laidCount || Float.isNaN(laidYaw) || Math.abs(wrap(yaw - laidYaw)) > RELAYOUT_YAW;
+        // A body turning on re-sends the shapes every tick: then they interpolate over 2 ticks, not 3.
+        int ticks = n == laidCount && now - laidTick <= 1 ? TURNING_LAYOUT_TICKS : LAYOUT_TICKS;
+        boolean newborn = false;
         for (int i = 0; i < n; i++) {
             HandCard card = hand.get(i);
+            if (card.bornTick >= now) {
+                newborn = true;
+                continue;
+            }
             double t = i - (n - 1) / 2.0;
             Location spot = owner.getLocation()
                     .add(0, (FAN_HEIGHT - Math.abs(t) * 0.04) * scale, 0)
                     .subtract(forward.clone().multiply(FAN_BEHIND * scale))
                     .add(right.clone().multiply(t * FAN_SPACING * scale));
-            Displays.moveTo(card.back, spot.clone().subtract(forward.clone().multiply(FACE_GAP)));
-            Displays.moveTo(card.face, spot.clone().add(forward.clone().multiply(FACE_GAP)));
+            Displays.moveTo(card.back, spot);
+            Displays.moveTo(card.face, spot);
             if (relayout) {
                 Transformation shape = Displays.transform(0, 0, 0, CARD_WIDTH * (float) scale,
                         CARD_HEIGHT * (float) scale, CARD_DEPTH, yaw, 0, (float) (-t * FAN_TILT));
-                Displays.animate(card.back, shape, 3);
-                Displays.animate(card.face, shape, 3);
+                Displays.animate(card.back, shape, ticks);
+                Displays.animate(card.face, shape, ticks);
             }
         }
         if (relayout) {
             laidYaw = yaw;
-            laidCount = n;
+            laidTick = now;
+            // A newborn card is laid out next tick, with the whole fan.
+            laidCount = newborn ? -1 : n;
+        }
+    }
+
+    /**
+     * True while the hand and the turn label must hold still for a jump. A duelist that moved farther than
+     * {@link #FOLLOW_JUMP} since the last layout was teleported: its followers get teleport duration 0 first and move a
+     * tick later, once the clients have it, so they jump with it instead of sliding across the map; then they smooth
+     * again. They also hold while it is in another world.
+     */
+    private boolean holdForJump(Location feet) {
+        if (followJump == 1) {
+            followJump = 2;
+            return false;
+        }
+        if (followJump == 2) {
+            followDuration(FOLLOW_LERP);
+            followJump = 0;
+        }
+        Location last = followAt;
+        if (last == null) {
+            return false;
+        }
+        if (!last.getWorld().equals(feet.getWorld())) {
+            return true;
+        }
+        if (last.distanceSquared(feet) > FOLLOW_JUMP * FOLLOW_JUMP) {
+            followDuration(0);
+            followJump = 1;
+            return true;
+        }
+        return false;
+    }
+
+    private void followDuration(int ticks) {
+        for (HandCard card : hand) {
+            if (card.back.isValid()) {
+                card.back.setTeleportDuration(ticks);
+            }
+            if (card.face.isValid()) {
+                card.face.setTeleportDuration(ticks);
+            }
+        }
+        TextDisplay label = turnLabel;
+        if (label != null && label.isValid()) {
+            label.setTeleportDuration(ticks);
+        }
+    }
+
+    /** A gold glint on a legend in the hand, for everyone who may see the duelist (no outline through walls). */
+    private void glint(Player owner, Location at) {
+        for (Player viewer : owner.getWorld().getPlayers()) {
+            if (viewer.equals(owner) || ctx().isConcealedFrom(owner, viewer)
+                    || viewer.getLocation().distanceSquared(at) > GLINT_RANGE * GLINT_RANGE) {
+                continue;
+            }
+            viewer.spawnParticle(Particle.DUST, at.clone().add(Fx.jitter(0.12f), Fx.jitter(0.18f), Fx.jitter(0.12f)),
+                    2, 0.04, 0.04, 0.04, 0, GOLD_DUST);
+            viewer.spawnParticle(Particle.END_ROD, at, 1, 0.05, 0.08, 0.05, 0);
         }
     }
 
@@ -719,19 +844,37 @@ public final class CardGamerAbility extends Ability {
         }
         Fx.sound(head, Sound.ENTITY_RAVAGER_ROAR, 0.5f, 1.6f + Fx.jitter(0.1f));
         Vfx.cloud(ctx(), head, Particle.DUST, 10, 0.4, 0, MONSTER_DUST, false);
+        if (!parts.isEmpty()) {
+            // The jaws stay on the head they bite, also when the bite knocks it back.
+            World world = head.getWorld();
+            Loop.repeat(ctx(), owner, 1, 1, JAW_SNAP_TICKS + JAW_HOLD_TICKS + JAW_FADE_TICKS, i -> {
+                if (!victim.isValid() || !victim.getWorld().equals(world)) {
+                    return false;
+                }
+                Location at = victim.getEyeLocation().add(0, 0.1, 0);
+                boolean any = false;
+                for (BlockDisplay part : parts) {
+                    if (part.isValid()) {
+                        Displays.moveTo(part, at);
+                        any = true;
+                    }
+                }
+                return any;
+            });
+        }
         ctx().runLater(owner, JAW_SNAP_TICKS, () -> {
             Location at = victim.isValid() ? victim.getEyeLocation() : head;
             Fx.sound(at, Sound.ENTITY_EVOKER_FANGS_ATTACK, 1.0f, 0.9f + Fx.jitter(0.1f));
             Fx.sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.8f, 0.7f);
             Vfx.burst(ctx(), at, MONSTER_FX, 0.7, Particle.CRIT, false);
             Combat.hit(ctx(), owner, victim, params().num("monster_damage"));
-            for (BlockDisplay part : parts) {
-                ctx().runLater(owner, 6, () -> {
+            ctx().runLater(owner, JAW_HOLD_TICKS, () -> {
+                for (BlockDisplay part : parts) {
                     if (part.isValid()) {
-                        Displays.shrinkAway(ctx(), owner, part, 5);
+                        Displays.shrinkAway(ctx(), owner, part, JAW_FADE_TICKS);
                     }
-                });
-            }
+                }
+            });
         });
     }
 
@@ -759,12 +902,17 @@ public final class CardGamerAbility extends Ability {
         Vfx.ring(ctx(), ground, 0.9, 14, 0.3, Particle.END_ROD, null, false);
         Vfx.helix(ctx(), feet, 0.8, 2.0, 1.0, 2, 10, 0, Particle.DUST_COLOR_TRANSITION, SPELL_FX.glow(0.9f), false);
         if (room(1)) {
+            float yaw = owner.getLocation().getYaw();
             BlockDisplay card = keep(Displays.block(ctx(), owner, chest.clone().add(0, 0.9, 0),
                     SPELL_FACE.createBlockData(), Displays.transform(0, 0, 0, CARD_WIDTH, CARD_HEIGHT, CARD_DEPTH,
-                            owner.getLocation().getYaw(), 0, 0), 14));
-            Displays.animateNextTick(ctx(), owner, card, Displays.transform(0, 0.6f, 0, CARD_WIDTH * 1.4f,
-                    CARD_HEIGHT * 1.4f, CARD_DEPTH, owner.getLocation().getYaw() + 180, 0, 0), 10);
-            ctx().runLater(owner, 11, () -> {
+                            yaw, 0, 0), 14));
+            // The half turn in two quarter turns: one 180° step would spin either way and swing the card's centre off
+            // its axis (the centring moves in a straight line while the turn is an arc).
+            Displays.animateNextTick(ctx(), owner, card, Displays.transform(0, 0.3f, 0, CARD_WIDTH * 1.2f,
+                    CARD_HEIGHT * 1.2f, CARD_DEPTH, yaw + 90, 0, 0), 5);
+            ctx().runLater(owner, 6, () -> Displays.animate(card, Displays.transform(0, 0.6f, 0, CARD_WIDTH * 1.4f,
+                    CARD_HEIGHT * 1.4f, CARD_DEPTH, yaw + 180, 0, 0), 5));
+            ctx().runLater(owner, 12, () -> {
                 if (card.isValid()) {
                     Vfx.burst(ctx(), card.getLocation().add(0, 0.6, 0), SPELL_FX, 0.6, Particle.END_ROD, false);
                     card.remove();
@@ -869,7 +1017,8 @@ public final class CardGamerAbility extends Ability {
     /** "함정 카드 발동!": the card flips up in a purple flash and binds the runner. */
     private void spring(Player owner, Trap trap, LivingEntity victim) {
         Location card = trap.center.clone().add(0, 0.05, 0);
-        Displays.animate(trap.card, Displays.transform(0, 0.55f, 0, 0.5f, 0.72f, CARD_DEPTH * 2, trap.yaw, 0, 0), 3);
+        // The card keeps its axes and stands up by a quarter turn (its long side up), not by trading scales.
+        Displays.animate(trap.card, Displays.transform(0, 0.45f, 0, 0.5f, CARD_DEPTH * 2, 0.72f, trap.yaw, -90, 0), 3);
         trap.card.setBlock(TRAP_FACE.createBlockData());
         Displays.outline(trap.card, TRAP_COLOR);
         ctx().runLater(owner, 18, () -> {
@@ -977,23 +1126,22 @@ public final class CardGamerAbility extends Ability {
     private void dropBeast(Player owner, Location center, float yaw) {
         Vector forward = Motion.horizontalFacing(rotated(center, yaw));
         Vector right = new Vector(-forward.getZ(), 0, forward.getX());
-        // x right, y up, z forward, size, pitch, roll, block
+        // x right, y up (centres; the body and the landed arms stand on the ground), z forward, size, pitch, roll
         double[][] parts = {
-                {0, 1.4, 0, 2.2, 2.0, 1.6, 0, 0},
-                {0, 2.95, 0.45, 1.3, 1.1, 1.2, 0, 0},
-                {-1.45, 1.6, 0.4, 0.6, 1.6, 0.6, -35, 0},
-                {1.45, 1.6, 0.4, 0.6, 1.6, 0.6, -35, 0},
-                {-0.45, 3.75, 0.45, 0.18, 0.7, 0.18, 0, 20},
-                {0.45, 3.75, 0.45, 0.18, 0.7, 0.18, 0, -20},
-                {-0.3, 3.05, 1.06, 0.22, 0.14, 0.06, 0, 0},
-                {0.3, 3.05, 1.06, 0.22, 0.14, 0.06, 0, 0},
+                {0, 1.0, 0, 2.2, 2.0, 1.6, 0, 0},
+                {0, 2.55, 0.45, 1.3, 1.1, 1.2, 0, 0},
+                {-1.45, 1.2, 0.4, 0.6, 1.6, 0.6, -35, 0},
+                {1.45, 1.2, 0.4, 0.6, 1.6, 0.6, -35, 0},
+                {-0.45, 3.35, 0.45, 0.18, 0.7, 0.18, 0, 20},
+                {0.45, 3.35, 0.45, 0.18, 0.7, 0.18, 0, -20},
+                {-0.3, 2.65, 1.06, 0.22, 0.14, 0.06, 0, 0},
+                {0.3, 2.65, 1.06, 0.22, 0.14, 0.06, 0, 0},
         };
         Material[] blocks = {BEAST, BEAST, BEAST, BEAST, HORN, HORN, EYE, EYE};
         List<BlockDisplay> beast = new ArrayList<>();
+        // The beast comes whole: older effects (jaws, thrown cards, shouts) make way for it.
+        makeRoom(owner, parts.length);
         for (int p = 0; p < parts.length; p++) {
-            if (!room(1)) {
-                break;
-            }
             double[] part = parts[p];
             Vector off = right.clone().multiply(part[0]).add(forward.clone().multiply(part[2]));
             float x = (float) off.getX();
@@ -1067,6 +1215,7 @@ public final class CardGamerAbility extends Ability {
         long duration = Math.max(1, params().ticks("turn_duration"));
         turn = true;
         turnUsed = 0;
+        turnLegendDrawn = false;
         turnUntil = now + duration;
         hudDirty = true;
         ctx().reduceCooldown(owner, Math.max(0, ctx().cooldownRemaining(owner)) + 1);
@@ -1111,6 +1260,15 @@ public final class CardGamerAbility extends Ability {
         if (label != null && label.isValid()) {
             label.remove();
         }
+        // Back to a normal hand: the cards over the hand size go, from the back (a plain puff: the faces stay secret).
+        int max = handMax();
+        while (hand.size() > max) {
+            HandCard extra = hand.removeLast();
+            if (extra.back.isValid()) {
+                Vfx.cloud(ctx(), extra.back.getLocation(), Particle.DUST, 4, 0.12, 0, GOLD_DUST, false);
+            }
+            extra.remove();
+        }
         Location feet = owner.getLocation();
         double radius = Math.max(0.5, params().num("turn_end_radius"));
         double damage = Math.min(Math.max(0, params().num("turn_end_max")),
@@ -1136,10 +1294,29 @@ public final class CardGamerAbility extends Ability {
 
     // ================================================================== display budget
 
-    /** Room for {@code count} more effect displays next to the hand and the traps. */
+    /**
+     * Room for {@code count} more effect displays next to the hand and the traps. A hand card counts once: each viewer
+     * sees only one of its two displays (the owner its face, everyone else its back).
+     */
     private boolean room(int count) {
         live.removeIf(display -> !display.isValid());
-        return live.size() + hand.size() * 2 + traps.size() + count <= MAX_DISPLAYS;
+        return live.size() + hand.size() + traps.size() + count <= MAX_DISPLAYS;
+    }
+
+    /** Makes room for {@code count} displays by shrinking away the oldest effects (never the turn label). */
+    private void makeRoom(Player owner, int count) {
+        live.removeIf(display -> !display.isValid());
+        int over = live.size() + hand.size() + traps.size() + count - MAX_DISPLAYS;
+        Iterator<Display> it = live.iterator();
+        while (over > 0 && it.hasNext()) {
+            Display oldest = it.next();
+            if (oldest.equals(turnLabel)) {
+                continue;
+            }
+            it.remove();
+            Displays.shrinkAway(ctx(), owner, oldest, 3);
+            over--;
+        }
     }
 
     private <T extends Display> T keep(T display) {
