@@ -2,11 +2,15 @@ package io.github.sx2xoox.mcpl.game.superpower.scenario;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.BaldurAbility;
@@ -438,6 +442,10 @@ class DivineNewAbilitiesTest {
                 s.assertSucceeded(s.active(), "summon");
                 assertEquals(next, ability.stance(), "the stance turns on");
                 s.ticks(100);
+                // A label left behind by a teleport (the flight, the swap, the layout) reappears over the head.
+                labels = entities(s, TextDisplay.class);
+                assertEquals(1, labels.size(), "one label over the head");
+                label = labels.getFirst();
                 assertTrue(text(label).startsWith(koreanOf(next), text(label).indexOf(' ') + 1),
                         "the label follows: " + text(label));
                 assertEquals(next == Guardian.DRAGON ? 0.15 : 0, modifierSum(s.owner, Attribute.ATTACK_SPEED),
@@ -797,6 +805,8 @@ class DivineNewAbilitiesTest {
                 assertTrue(s.owner.canSee(rune), "Odin sees it");
                 assertTrue(s.ally().canSee(rune), "so does his ally");
                 assertFalse(s.enemy.canSee(rune) || s.enemy2.canSee(rune), "the enemies do not");
+                assertEquals(Set.of(s.owner, s.ally()), Set.copyOf(s.seenBy(rune)), "Odin's side only");
+                assertFalse(rune.isVisibleByDefault(), "hidden inside its spawn: no enemy's client ever receives it");
                 assertTrue(rune.isSeeThrough(), "through walls");
                 assertUnrotated(rune, "rune");
             }
@@ -1406,6 +1416,9 @@ class DivineNewAbilitiesTest {
                     .filter(d -> d.getLocation().distance(over) < 0.6).toList();
             assertEquals(2, smallSun.size(), "a little sun beside the target, on the sun's side: "
                     + entities(s, BlockDisplay.class).stream().map(Entity::getLocation).toList());
+            for (BlockDisplay plate : smallSun) {
+                assertEquals(3, plate.getTeleportDuration(), "it glides like the moving target it hangs by");
+            }
             assertEquals(0, s.damageTaken(s.enemy), EPSILON, "not yet");
             s.ticks(s.paramTicks("ray_delay"));
             assertEquals(s.param("ray_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "the sun burns");
@@ -1678,7 +1691,11 @@ class DivineNewAbilitiesTest {
 
     // ------------------------------------------------------------------ 사방신
 
-    /** Facing east the wings still spread across the flight, and they fly with the steps sent, not behind them. */
+    /**
+     * Facing east the wings still spread across the flight. The owner's pair flies with the steps sent, not behind
+     * them (its own client runs them at once); everyone else's pair rides the body where the server sees it, gliding
+     * like their view of the bird, so it never flies ahead of it.
+     */
     @Test
     void fourGodsBirdWingsSpreadAcrossTheFlightAndKeepUpWithIt() {
         try (Scenario s = Scenario.ffa("fourgods")) {
@@ -1689,9 +1706,20 @@ class DivineNewAbilitiesTest {
             s.world.physics().setEnabled(false);
             s.assertSucceeded(s.active(), "주작");
             s.ticks(4);
-            List<BlockDisplay> wings = entities(s, BlockDisplay.class).stream()
+            List<BlockDisplay> pairs = entities(s, BlockDisplay.class).stream()
                     .filter(d -> d.getBlock().getMaterial() == Material.RED_STAINED_GLASS).toList();
-            assertEquals(2, wings.size(), "two wings");
+            assertEquals(4, pairs.size(), "a pair of wings for the owner, a pair for everyone else");
+            List<BlockDisplay> wings = pairs.stream().filter(d -> s.seenBy(d).equals(List.of(s.owner))).toList();
+            List<BlockDisplay> seen = pairs.stream().filter(d -> !s.seenBy(d).contains(s.owner)).toList();
+            assertEquals(2, wings.size(), "the owner's own pair");
+            assertEquals(2, seen.size(), "everyone else's pair");
+            for (BlockDisplay wing : seen) {
+                assertTrue(s.seenBy(wing).containsAll(s.enemies()), "the others see their pair");
+                assertEquals(3, wing.getTeleportDuration(), "it glides like the others' view of the bird");
+            }
+            double seenMiddle = (boxCenter(seen.get(0)).getX() + boxCenter(seen.get(1)).getX()) / 2;
+            assertEquals(s.owner.getLocation().getX(), seenMiddle, 0.4,
+                    "the others' pair rides the body where the server sees it, never ahead of it");
             Vector a = boxCenter(wings.get(0));
             Vector b = boxCenter(wings.get(1));
             Vector across = a.clone().subtract(b);
@@ -1733,6 +1761,8 @@ class DivineNewAbilitiesTest {
                 if (body == null || head == null) {
                     continue;
                 }
+                assertEquals(2, body.getTeleportDuration(), "moved every tick, it glides two: bunched packets do not "
+                        + "make it stutter");
                 Vector forward = rotated(body, 0, 0, 1);
                 if (Math.abs(forward.getY()) < 0.15) {
                     continue; // level: any frame would do
@@ -2093,6 +2123,375 @@ class DivineNewAbilitiesTest {
                 assertTrue(Math.abs(rotated(rod, 0, 1, 0).dot(out)) > 0.98, "a rod lies along its ray: " + out);
             }
             s.ticks(30);
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== smooth on a real client
+
+    static boolean shown(Display display) {
+        return display.getTransformation().getScale().x() > 0.01f;
+    }
+
+    /** The far end of a staff or beam box that starts at its display's location and runs along its own z. */
+    static Vector farEnd(BlockDisplay shaft) {
+        return shaft.getLocation().toVector().add(rotated(shaft, 0, 0, shaft.getTransformation().getScale().z()));
+    }
+
+    /** The degrees between two rotations. */
+    static double degreesBetween(Quaternionf a, Quaternionf b) {
+        double dot = Math.abs(a.x() * b.x() + a.y() * b.y() + a.z() * b.z() + a.w() * b.w());
+        return Math.toDegrees(2 * Math.acos(Math.min(1.0, dot)));
+    }
+
+    /**
+     * An owner teleported far (a swap, someone else's pull) has the passive's displays reappear over him at once: a
+     * glide over the whole gap would streak them across.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("abilities")
+    void passiveDisplaysReappearAtOnceOverATeleportedOwner(String id) {
+        try (Scenario s = Scenario.ffa(id)) {
+            s.ticks(5);
+            Set<UUID> before = entities(s, Display.class).stream().map(Entity::getUniqueId).collect(Collectors.toSet());
+            assertEquals(passiveDisplays(id), before.size(), id + ": the passive shows");
+            s.place(s.owner, 12.5, 12.5, 0);
+            s.ticks(1);
+            List<Display> after = entities(s, Display.class);
+            assertEquals(passiveDisplays(id), after.size(), id + ": the passive still shows: " + after);
+            for (Display display : after) {
+                assertFalse(before.contains(display.getUniqueId()), id + ": the " + display.getType()
+                        + " reappeared over the owner instead of gliding across the gap");
+                assertTrue(display.getLocation().distance(s.owner.getLocation()) < 3, id + ": over the owner: "
+                        + display.getLocation());
+            }
+            s.ticks(5);
+            assertEquals(passiveDisplays(id), entities(s, Display.class).size(), id + ": and it stays");
+            assertAllUnrotated(s, id);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    /** The dragon's scales unroll from its mouth (never stacked on one point) and glide two ticks a step. */
+    @Test
+    void fourGodsDragonUnrollsFromItsMouth() {
+        try (Scenario s = Scenario.ffa("fourgods")) {
+            s.place(s.enemy, -10.5, -10.5, 0);
+            s.place(s.enemy2, -12.5, 10.5, 0);
+            s.ticks(2);
+            s.assertSucceeded(s.active(), "청룡");
+            s.ticks(1);
+            List<BlockDisplay> scales = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.LIGHT_BLUE_STAINED_GLASS
+                            || d.getBlock().getMaterial() == Material.CYAN_STAINED_GLASS).toList();
+            assertEquals(7, scales.size(), "the head and six scales");
+            for (BlockDisplay a : scales) {
+                for (BlockDisplay b : scales) {
+                    if (a != b && shown(a) && shown(b)) {
+                        assertTrue(a.getLocation().distance(b.getLocation()) > 0.2,
+                                "no two glass scales nested on one point: " + a.getLocation());
+                    }
+                }
+            }
+            assertTrue(scales.stream().anyMatch(d -> !shown(d)), "the tail still waits in the mouth, hidden");
+            for (BlockDisplay scale : scales) {
+                assertEquals(2, scale.getTeleportDuration(), "moved every tick, it glides two");
+            }
+            s.ticks(4);
+            assertTrue(scales.stream().allMatch(DivineNewAbilitiesTest::shown), "the whole chain swam out");
+            s.ticks(30);
+            assertOnlyPassiveDisplays(s, "the dragon dissolved");
+            s.finishClean();
+        }
+    }
+
+    /** The new guardian's glyph rises from above the stance label, never through it. */
+    @Test
+    void fourGodsStanceGlyphRisesAboveTheLabel() {
+        try (Scenario s = Scenario.ffa("fourgods")) {
+            s.ticks(3);
+            TextDisplay label = entities(s, TextDisplay.class).stream().filter(t -> text(t).contains("›")).findFirst()
+                    .orElse(null);
+            assertNotNull(label, "the stance label");
+            s.assertSucceeded(s.active(), "청룡");
+            TextDisplay glyph = entities(s, TextDisplay.class).stream()
+                    .filter(t -> !text(t).contains("›") && text(t).contains("朱雀")).findFirst().orElse(null);
+            assertNotNull(glyph, "the bird's glyph");
+            // Text grows up from its foot: the label (scale 0.75) is about 0.2 tall.
+            assertTrue(glyph.getLocation().getY() >= label.getLocation().getY() + 0.25,
+                    "the glyph starts over the label: " + glyph.getLocation().getY() + " vs " + label.getLocation().getY());
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    /** Muninn circling a moving enemy faces along its circle and glides like the enemy it circles. */
+    @Test
+    void odinMuninnCirclesSmoothlyOverAnEnemyThatMovesUnevenly() {
+        try (Scenario s = Scenario.ffa("odin")) {
+            s.ticks(3);
+            s.melee(s.enemy, s.owner, 2);
+            s.ticks(20);
+            double x = 0.5;
+            // A player's server position advances 0, 1 or 2 moves a tick, as its packets arrive.
+            double[] steps = {0, 0.5, 0, 0.6, 0.1, 0, 0.5, 0, 0.6, 0.2, 0, 0.5, 0, 0.6};
+            Float last = null;
+            BlockDisplay body = null;
+            for (double step : steps) {
+                x += step;
+                s.place(s.enemy, x, 4.5, 180);
+                s.ticks(1);
+                body = displaysNear(s, headOf(s.enemy), 2.0).stream()
+                        .filter(d -> Math.abs(d.getTransformation().getScale().z() - 0.32f) < 1.0E-3).findFirst()
+                        .orElse(null);
+                assertNotNull(body, "Muninn circles over the enemy");
+                Vector forward = rotated(body, 0, 0, 1);
+                float yaw = (float) Math.toDegrees(Math.atan2(-forward.getX(), forward.getZ()));
+                if (last != null) {
+                    float turn = Math.abs(((yaw - last) % 360 + 540) % 360 - 180);
+                    assertTrue(turn < 15, "it turns along its circle, not with each uneven step: " + turn);
+                }
+                last = yaw;
+            }
+            assertEquals(3, body.getTeleportDuration(), "it glides like the enemy it circles");
+            s.finishClean();
+        }
+    }
+
+    /** Mímir's rune reappears at once over an enemy that was teleported, still for Odin's side only. */
+    @Test
+    void odinMimirRuneFollowsATeleportedEnemyAtOnce() {
+        try (Scenario s = Scenario.teams("odin")) {
+            s.ticks(3);
+            s.assertSucceeded(s.active(), "미미르의 샘");
+            s.ticks(2);
+            TextDisplay rune = runeOver(s, s.enemy);
+            assertNotNull(rune, "a rune over the enemy");
+            assertEquals(3, rune.getTeleportDuration(), "it glides like the enemy it marks");
+            s.place(s.enemy, 10.5, 10.5, 0);
+            s.ticks(1);
+            TextDisplay moved = runeOver(s, s.enemy);
+            assertNotNull(moved, "the rune over the teleported enemy");
+            assertNotEquals(rune.getUniqueId(), moved.getUniqueId(), "it reappeared there instead of gliding across");
+            assertEquals(text(rune), text(moved), "the same rune");
+            assertEquals(Set.of(s.owner, s.ally()), Set.copyOf(s.seenBy(moved)), "still for Odin's side only");
+            assertFalse(moved.isVisibleByDefault(), "filtered inside its spawn");
+            s.ticks(s.paramTicks("sight_time"));
+            s.finishClean();
+        }
+    }
+
+    static TextDisplay runeOver(Scenario s, LivingEntity enemy) {
+        Location over = headOf(enemy).add(0, 0.7, 0);
+        return entities(s, TextDisplay.class).stream()
+                .filter(t -> RUNES.contains(text(t).trim()) && t.getLocation().distance(over) < 0.6).findFirst()
+                .orElse(null);
+    }
+
+    /** Gungnir's spear and rune ring glide two ticks, and the shaft turns smoothly onto a target that strafes. */
+    @Test
+    void odinGungnirTurnsSmoothlyOntoAStrafingTarget() {
+        try (Scenario s = gungnir()) {
+            s.assertSucceeded(s.ultimate(), "궁니르");
+            s.h.tickUntil(() -> ringAround(s, s.enemy).size() >= 3, 60, "the rune ring");
+            List<TextDisplay> ring = ringAround(s, s.enemy);
+            BlockDisplay shaft = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.STRIPPED_DARK_OAK_WOOD).findFirst().orElse(null);
+            assertNotNull(shaft, "the spear");
+            double x = 0.5;
+            double[] steps = {0.6, 0, -0.6, 0, 0.6, 0, -0.6, 0, 0.6, 0, -0.6, 0, 0.6, 0, -0.6, 0, 0.6, 0, -0.6, 0};
+            Vector last = rotated(shaft, 0, 0, 1);
+            double worst = 0;
+            for (double step : steps) {
+                x += step;
+                s.place(s.enemy, x, 20.5, 180);
+                s.ticks(1);
+                if (s.damageTaken(s.enemy) > 0) {
+                    break;
+                }
+                Vector along = rotated(shaft, 0, 0, 1);
+                worst = Math.max(worst, Math.toDegrees(along.angle(last)));
+                last = along;
+            }
+            assertTrue(worst < 25, "the shaft never swings with each step of its target: " + worst);
+            for (TextDisplay rune : ring) {
+                assertEquals(2, rune.getTeleportDuration(), "the ring runes glide two ticks");
+            }
+            assertEquals(2, shaft.getTeleportDuration(), "the spear glides two ticks");
+            s.ticks(80);
+            assertEquals(s.param("spear_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "it still strikes");
+            s.finishClean();
+        }
+    }
+
+    static BlockDisplay extendedShaft(Scenario s) {
+        return entities(s, BlockDisplay.class).stream()
+                .filter(d -> d.getBlock().getMaterial() == Material.RED_CONCRETE
+                        && d.getTransformation().getScale().z() > 0.5f).findFirst().orElse(null);
+    }
+
+    /** Vaulting off the floor, the staff stays in the sage's hand and planted on the floor while he flies up. */
+    @Test
+    void wukongVaultStaffStaysBetweenTheHandAndTheFloorItPushesOff() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            s.place(s.owner, 0.5, Y, 0.5, 0, 90);
+            s.assertSucceeded(s.active(), "장대뛰기");
+            Vector contact = new Vector(0.5, FlatWorld.SURFACE, 0.5);
+            for (int i = 0; i < 5; i++) {
+                // The staff is placed on the tick, before the world moves the sage on.
+                Location eye = s.owner.getEyeLocation();
+                s.ticks(1);
+                BlockDisplay shaft = extendedShaft(s);
+                assertNotNull(shaft, "the staff is out, tick " + i);
+                assertTrue(shaft.getLocation().distance(eye) < 0.8, "in the sage's hand, tick " + i + ": "
+                        + shaft.getLocation() + " vs the eye " + eye);
+                assertTrue(farEnd(shaft).distance(contact) < 0.1, "planted on the floor, tick " + i + ": "
+                        + farEnd(shaft));
+                assertEquals(3, shaft.getTeleportDuration(), "it follows the hand like the sage's own glide");
+            }
+            assertTrue(s.owner.getLocation().getY() > FlatWorld.SURFACE + 2, "the sage flew up");
+            s.tickUntilGrounded(s.owner, 80);
+            s.ticks(5);
+            assertOnlyPassiveDisplays(s, "the staff came back");
+            s.finishClean();
+        }
+    }
+
+    /**
+     * The skewering staff reaches the enemy where the server (and so every client) sees it, never the steps sent ahead
+     * of it: here the server never sees the enemy move (world physics off).
+     */
+    @Test
+    void wukongSkeweringStaffStaysOnTheEnemyAsItIsSeen() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.world.physics().setEnabled(false);
+            s.assertSucceeded(s.active(), "여의봉아 늘어나라");
+            for (int i = 0; i < 5; i++) {
+                s.ticks(1);
+                BlockDisplay shaft = extendedShaft(s);
+                assertNotNull(shaft, "the staff is out, tick " + i);
+                Vector far = farEnd(shaft);
+                assertTrue(s.enemy.getBoundingBox().expand(0.6).contains(far), "the tip stays on the enemy, tick " + i
+                        + ": " + far);
+            }
+            s.world.physics().setEnabled(true);
+            s.ticks(30);
+            assertOnlyPassiveDisplays(s, "the staff shrank back");
+            s.finishClean();
+        }
+    }
+
+    /** The shadow plate lies flat only as far as the ground is level: never floating past a step, nor sunk in one. */
+    @Test
+    void wukongShadowPlateStopsAtAStep() {
+        try (Scenario s = Scenario.ffa("wukong")) {
+            s.ticks(3);
+            wall(s, -3, 4, 7, 1); // a one-block step across the line: no cover, the pillar falls over it
+            s.place(s.owner, 0.5, Y, 0.5, 0, 0);
+            s.place(s.enemy, -12.5, 12.5, 0);
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.assertSucceeded(s.ultimate(), "여의봉 천주");
+            s.ticks(s.paramTicks("pillar_rise"));
+            BlockDisplay plate = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.BLACK_STAINED_GLASS).findFirst().orElse(null);
+            assertNotNull(plate, "the shadow plate");
+            assertTrue(boxMaxZ(plate) <= 7 + 0.05, "it stops before the step: " + boxMaxZ(plate));
+            assertTrue(boxMaxZ(plate) > 6, "and lies on the level ground up to it: " + boxMaxZ(plate));
+            s.ticks(60);
+            assertOnlyPassiveDisplays(s, "the staff shrank back");
+            clearWall(s, -3, 4, 7, 1);
+            s.finishClean();
+        }
+    }
+
+    /** The weakness label stands clear under the icon, even at the top of the icon's blink. */
+    @Test
+    void baldurLabelStandsClearOfTheBlinkingIcon() {
+        try (Scenario s = Scenario.ffa("baldur")) {
+            s.ticks(2);
+            ItemDisplay shown = icon(s);
+            assertNotNull(shown, "the icon");
+            TextDisplay label = entities(s, TextDisplay.class).stream().filter(t -> text(t).contains("약점"))
+                    .findFirst().orElse(null);
+            assertNotNull(label, "the label");
+            double gap = shown.getLocation().getY() - label.getLocation().getY();
+            // The icon is centred (half its top blink scale of 0.95 hangs under its centre); the label's text (scale
+            // 0.45, a quarter block a line) grows up from its foot.
+            assertTrue(gap - 0.95 / 2 >= 0.45 * 0.25 - 1.0E-6, "the label clears the blinking icon: " + gap);
+            s.finishClean();
+        }
+    }
+
+    static List<ItemDisplay> darts(Scenario s) {
+        return entities(s, ItemDisplay.class).stream().filter(d -> d.getItemStack().getType() == Material.ARROW)
+                .toList();
+    }
+
+    /** The mistletoe dart reappears at once over a holder teleported away, and flies on as it is to the next holder. */
+    @Test
+    void baldurMistletoeDartFollowsATeleportAtOnceAndFliesOnToTheNextHolder() {
+        try (Scenario s = Scenario.ffa("baldur")) {
+            s.ticks(2);
+            s.place(s.enemy2, 0.5, 26.5, 180);
+            s.assertSucceeded(s.ultimate(), "겨우살이를 쥔 자");
+            s.ticks(8);
+            assertEquals(1, darts(s).size(), "one dart");
+            ItemDisplay dart = darts(s).getFirst();
+            assertTrue(dart.getLocation().distance(headOf(s.enemy)) < 1.0, "over its holder");
+
+            s.place(s.enemy, 6.5, 10.5, 180); // teleported (a swap), still within reach
+            s.ticks(1);
+            assertEquals(1, darts(s).size(), "still one dart");
+            ItemDisplay moved = darts(s).getFirst();
+            assertNotEquals(dart.getUniqueId(), moved.getUniqueId(), "it reappeared instead of gliding across");
+            assertTrue(moved.getLocation().distance(headOf(s.enemy)) < 1.0, "over the holder at once");
+            assertEquals(0.9f, moved.getTransformation().getScale().x(), 1.0E-3, "at full size at once");
+
+            s.place(s.enemy, 0.5, 31.5, 180); // strays: the mistletoe passes on
+            s.place(s.enemy2, 0.5, 10.5, 180);
+            s.ticks(1);
+            assertEquals(1, darts(s).size(), "still one dart");
+            assertEquals(moved.getUniqueId(), darts(s).getFirst().getUniqueId(), "the same dart flies on");
+            assertEquals(0.9f, darts(s).getFirst().getTransformation().getScale().x(), 1.0E-3,
+                    "it flies on as it is, never popping small to regrow");
+            s.ticks(7);
+            assertTrue(moved.getLocation().distance(headOf(s.enemy2)) < 1.0, "it reached the new holder: "
+                    + moved.getLocation());
+            s.ticks(s.paramTicks("mistletoe_time"));
+            assertOnlyPassiveDisplays(s, "the dart faded");
+            s.finishClean();
+        }
+    }
+
+    /** The sun disc turns on and on without spinning back: its turn wraps after exactly one full turn. */
+    @Test
+    void raSunDiscNeverSpinsBack() {
+        try (Scenario s = Scenario.ffa("ra")) {
+            s.ticks(10);
+            BlockDisplay plate = entities(s, BlockDisplay.class).stream()
+                    .filter(d -> d.getBlock().getMaterial() == Material.GOLD_BLOCK).findFirst().orElse(null);
+            assertNotNull(plate, "the disc");
+            Quaternionf last = leftRotation(plate);
+            double worst = 0;
+            int turns = 0;
+            for (int i = 0; i < 400; i++) {
+                s.ticks(1);
+                Quaternionf now = leftRotation(plate);
+                double step = degreesBetween(last, now);
+                if (step > 0.01) {
+                    turns++;
+                    worst = Math.max(worst, step);
+                }
+                last = now;
+            }
+            assertTrue(turns >= 30, "the disc keeps turning: " + turns);
+            assertTrue(worst <= 20, "every turn is a small step forward, never a spin back: " + worst);
+            assertTrue(plate.isValid(), "the same disc all along");
             s.finishClean();
         }
     }

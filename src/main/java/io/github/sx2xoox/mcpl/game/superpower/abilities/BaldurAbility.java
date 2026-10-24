@@ -116,9 +116,16 @@ public final class BaldurAbility extends Ability {
     /** Display entities this ability keeps alive at once (optional pieces are skipped beyond it). */
     private static final int MAX_DISPLAYS = 24;
     private static final int FOLLOW_GLIDE = 3;
+    /** A follower farther than this from its spot was teleported with its target: it is respawned, never glided. */
+    private static final double JUMP = 2.5;
     private static final long FEEDBACK_COOLDOWN = 8;
     private static final long BLINK_TICKS = 20;
     private static final double ICON_ABOVE = 0.95;
+    /**
+     * How far under the icon's centre the weakness label stands: clear of the icon's foot even at the top of a blink
+     * (the icon is centred, the label's text grows up from its foot).
+     */
+    private static final double LABEL_BELOW = 0.6;
     private static final int RAYS = 8;
     private static final double KNOCK_UP = 0.35;
     private static final double MAX_PUSH = 1.5;
@@ -260,7 +267,22 @@ public final class BaldurAbility extends Ability {
             label = null;
             return;
         }
+        if (shown != null && shown.isValid() && jumped(shown, at)) {
+            // The god was teleported: icon and label reappear over his head at once instead of sliding across.
+            shown.remove();
+            TextDisplay text = label;
+            if (text != null && text.isValid()) {
+                text.remove();
+            }
+            shown = null;
+            label = null;
+        }
         if (shown == null || !shown.isValid()) {
+            TextDisplay stale = label;
+            if (stale != null && stale.isValid()) {
+                stale.remove();
+            }
+            label = null;
             if (!reserve(2)) {
                 return;
             }
@@ -269,7 +291,8 @@ public final class BaldurAbility extends Ability {
             shown.setTeleportDuration(FOLLOW_GLIDE);
             shown.setViewRange(1.0f);
             icon = shown;
-            TextDisplay text = keep(Displays.text(ctx(), owner, at.clone().add(0, -0.42, 0), labelText(), 0.45f, 0));
+            TextDisplay text = keep(Displays.text(ctx(), owner, at.clone().add(0, -LABEL_BELOW, 0), labelText(), 0.45f,
+                    0));
             text.setTeleportDuration(FOLLOW_GLIDE);
             text.setViewRange(1.0f);
             label = text;
@@ -278,7 +301,7 @@ public final class BaldurAbility extends Ability {
         Displays.moveTo(shown, at);
         TextDisplay text = label;
         if (text != null && text.isValid()) {
-            Displays.moveTo(text, at.clone().add(0, -0.42, 0));
+            Displays.moveTo(text, at.clone().add(0, -LABEL_BELOW, 0));
         }
         long left = nextTurn - now;
         if (left <= BLINK_TICKS && left > 0) {
@@ -582,14 +605,20 @@ public final class BaldurAbility extends Ability {
         private void give(LivingEntity next, boolean passed) {
             holder = next;
             ItemDisplay old = dart;
-            // The dart flies from the god (or from the hand that held it) to its new holder.
-            Location from = old != null && old.isValid() ? Displays.unrotated(old.getLocation()) : chest(owner);
-            if (old != null && old.isValid()) {
-                old.remove();
-            }
-            dart = null;
             Location at = dartSpot(next);
-            showDart(next, from);
+            if (old != null && old.isValid() && !isHidden(owner, next)) {
+                // The dart flies on from the hand that held it, as it is (a new one would pop up small and regrow).
+                flightFrom = Displays.unrotated(old.getLocation());
+                flightAge = 0;
+                old.setTeleportDuration(1);
+            } else {
+                if (old != null && old.isValid()) {
+                    old.remove();
+                }
+                dart = null;
+                // The dart flies from the god to its first holder.
+                showDart(next, chest(owner), true);
+            }
             Fx.sound(at, Sound.BLOCK_AZALEA_LEAVES_PLACE, 1.0f, 1.0f);
             Fx.sound(at, Sound.ENTITY_ARROW_SHOOT, 0.7f, 0.6f);
             ctx().announce(Text.mm("<" + GREEN_TAG + ">❦</" + GREEN_TAG + "> <white><holder></white><gray>이(가) "
@@ -605,22 +634,25 @@ public final class BaldurAbility extends Ability {
 
         /**
          * The glowing mistletoe dart over the holder's head, pointing down, outlined for everyone to see. It flies
-         * there from {@code from} (or appears in place, with {@code from} null).
+         * there from {@code from} (or appears in place, with {@code from} null), growing from small if {@code grow}.
          */
-        private void showDart(LivingEntity target, @Nullable Location from) {
+        private void showDart(LivingEntity target, @Nullable Location from, boolean grow) {
             if (isHidden(owner, target) || !reserve(1)) {
                 return;
             }
             Location at = from != null ? from : dartSpot(target);
             flightFrom = at.clone();
             flightAge = from != null ? 0 : DART_FLIGHT;
+            org.bukkit.util.Transformation full = Displays.centered(0, 0, 0, 0.9f, 0.9f, 0.9f, 0, 0, -135);
             ItemDisplay made = keep(Displays.item(ctx(), owner, at, new ItemStack(MISTLETOE_DART),
-                    Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, -135), duration + 10));
+                    grow ? Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, -135) : full, duration + 10));
             made.setTeleportDuration(from != null ? 1 : FOLLOW_GLIDE);
             made.setBillboard(Display.Billboard.VERTICAL);
             made.setViewRange(3.0f);
             Displays.outline(made, GREEN);
-            Displays.animateNextTick(ctx(), owner, made, Displays.centered(0, 0, 0, 0.9f, 0.9f, 0.9f, 0, 0, -135), 5);
+            if (grow) {
+                Displays.animateNextTick(ctx(), owner, made, full, 5);
+            }
             dart = made;
             Vfx.cloud(ctx(), at, Particle.TINTED_LEAVES, 10, 0.3, 0.05, GREEN, true);
         }
@@ -664,11 +696,16 @@ public final class BaldurAbility extends Ability {
                     dart = null;
                 } else if (flightAge < DART_FLIGHT) {
                     fly(shown, current);
+                } else if (jumped(shown, dartSpot(current))) {
+                    // The holder was teleported: its dart reappears over it at once instead of sliding across.
+                    shown.remove();
+                    dart = null;
+                    showDart(current, null, false);
                 } else {
                     Displays.moveTo(shown, dartSpot(current));
                 }
             } else if (current != null && (shown == null || !shown.isValid()) && tick % 5 == 0) {
-                showDart(current, null);
+                showDart(current, null, true);
             }
             if (current != null && tick % 5 == 0 && !isHidden(owner, current)) {
                 // A green thread of light from the holder to the god.
@@ -833,5 +870,11 @@ public final class BaldurAbility extends Ability {
 
     private static Location chest(Player owner) {
         return Displays.unrotated(owner.getLocation().add(0, owner.getHeight() * 0.6, 0));
+    }
+
+    /** True if {@code display} is far from {@code spot}: what it follows was teleported, a glide would slide across. */
+    private static boolean jumped(Display display, Location spot) {
+        Location at = display.getLocation();
+        return !at.getWorld().equals(spot.getWorld()) || at.distanceSquared(spot) > JUMP * JUMP;
     }
 }

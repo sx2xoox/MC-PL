@@ -123,6 +123,8 @@ public final class WukongAbility extends Ability {
     /** Display entities this ability keeps alive at once (optional pieces are skipped beyond it). */
     private static final int MAX_DISPLAYS = 24;
     private static final int FOLLOW_GLIDE = 3;
+    /** A follower farther than this from its spot was teleported with its target: it is respawned, never glided. */
+    private static final double JUMP = 2.5;
     private static final long FEEDBACK_COOLDOWN = 6;
 
     // the staff on the back
@@ -144,6 +146,13 @@ public final class WukongAbility extends Ability {
     private static final double MIN_RISE = 0.45;
     /** Air ticks a vault flies, to judge how far it carries (for the arena border). */
     private static final double VAULT_AIR_TICKS = 14;
+    /**
+     * The skewering staff's length follows the driven enemy as clients see it, over about the ticks a client takes to
+     * interpolate an entity's move.
+     */
+    private static final int SEEN_GLIDE = 3;
+    /** Below this share of the staff along the ground, the drive's length along the staff is not stretched further. */
+    private static final double MIN_FLAT_SHARE = 0.3;
 
     // the pillar
     private static final float PILLAR_THICKNESS = 1.1f;
@@ -159,6 +168,9 @@ public final class WukongAbility extends Ability {
     private static final double COVER_HEIGHT = 1.5;
     /** The pillar needs at least this much open line ahead to fall. */
     private static final double MIN_FALL = 2.0;
+    /** The shadow plate is laid flat as far as the ground stays within this of the base's height. */
+    private static final double PLATE_STEP_HEIGHT = 0.4;
+    private static final double PLATE_SAMPLE = 0.25;
 
     // ------------------------------------------------------------------ state
 
@@ -199,6 +211,14 @@ public final class WukongAbility extends Ability {
     /** The staff rides diagonally across the sage's back, turned with his body. */
     private void followBack(Player owner) {
         backStaff.removeIf(part -> !part.isValid());
+        Location at = backSpot(owner);
+        if (!backStaff.isEmpty() && jumped(backStaff.getFirst(), at)) {
+            // The sage was teleported: the staff reappears on his back at once instead of sliding across the gap.
+            for (BlockDisplay part : backStaff) {
+                part.remove();
+            }
+            backStaff.clear();
+        }
         if (concealed(owner)) {
             // Nothing may float over an invisible sage and give him away.
             for (BlockDisplay part : backStaff) {
@@ -211,7 +231,6 @@ public final class WukongAbility extends Ability {
             if (!reserve(3)) {
                 return;
             }
-            Location at = backSpot(owner);
             backYaw = owner.getBodyYaw();
             for (int i = 0; i < 3; i++) {
                 BlockDisplay part = keep(Displays.block(ctx(), owner, at, (i == 0 ? SHAFT : CAP).createBlockData(),
@@ -222,7 +241,6 @@ public final class WukongAbility extends Ability {
             }
             return;
         }
-        Location at = backSpot(owner);
         float body = owner.getBodyYaw();
         boolean turn = Float.isNaN(backYaw) || Math.abs(body - backYaw) > 3;
         if (turn) {
@@ -374,9 +392,12 @@ public final class WukongAbility extends Ability {
             new Drive(owner, hand, dir, skewered, enemyDistance, blockDistance).start();
             return ActivationResult.success();
         }
-        Pole pole = new Pole(owner, hand, dir, blockDistance, null);
+        // With nobody on it, the staff plants on the face it hits and the sage vaults off it.
+        Location planted = wall != null && wall.getHitBlockFace() != null
+                ? wall.getHitPosition().toLocation(world) : null;
+        Pole pole = new Pole(owner, hand, dir, blockDistance, null, planted, length);
         pole.start();
-        if (wall != null && wall.getHitBlockFace() != null) {
+        if (planted != null) {
             vault(owner, dir, wall);
         } else {
             missed(owner);
@@ -452,31 +473,43 @@ public final class WukongAbility extends Ability {
 
     /**
      * The extended staff: a red shaft from the hand with a gold cap on its tip, grown at once (or as far as it drives a
-     * skewered enemy), held a moment and pulled back.
+     * skewered enemy), held a moment and pulled back. Unless it skewers someone, it stays in the sage's hand; planted
+     * on the face he vaults off, its far end stays on that face while he flies away from it.
      */
     private final class Pole implements LongPredicate {
 
         private final Player owner;
-        private final Location base;
-        private final Vector dir;
-        private final float yaw;
-        private final float pitch;
+        private Location base;
+        private Vector dir;
+        private float yaw;
+        private float pitch;
         private final @Nullable Drive drive;
+        /** Where a vaulting staff is planted, or null. */
+        private final @Nullable Location planted;
+        private final double maxLength;
         private final List<BlockDisplay> parts = new ArrayList<>();
         private double length;
         private long held;
         private boolean retracting;
         private long retractRun;
 
-        Pole(Player owner, Location base, Vector dir, double length, @Nullable Drive drive) {
+        Pole(Player owner, Location base, Vector dir, double length, @Nullable Drive drive,
+             @Nullable Location planted, double maxLength) {
             this.owner = owner;
             this.base = Displays.unrotated(base);
             this.dir = dir.clone();
             this.yaw = yawOf(dir);
-            double horizontal = Math.sqrt(dir.getX() * dir.getX() + dir.getZ() * dir.getZ());
-            this.pitch = (float) Math.toDegrees(Math.atan2(-dir.getY(), horizontal));
+            this.pitch = pitchOf(dir);
             this.length = Math.max(0.3, length);
             this.drive = drive;
+            this.planted = planted == null ? null : planted.clone();
+            this.maxLength = Math.max(this.length, maxLength);
+        }
+
+        private void aim(Vector direction) {
+            dir = direction.clone();
+            yaw = yawOf(direction);
+            pitch = pitchOf(direction);
         }
 
         void start() {
@@ -487,12 +520,39 @@ public final class WukongAbility extends Ability {
                 parts.add(keep(Displays.block(ctx(), owner, base, CAP.createBlockData(), cap(0.3), 40)));
                 for (BlockDisplay part : parts) {
                     part.setViewRange(2.0f);
+                    if (drive == null) {
+                        // It follows the sage's hand every tick, like his client's view of him.
+                        part.setTeleportDuration(FOLLOW_GLIDE);
+                    }
                 }
             }
-            if (drive == null) {
+            if (drive == null && planted == null) {
                 ctx().runLater(owner, 1, () -> grow(length, (int) EXTEND_TICKS));
             }
             Loop.repeat(ctx(), owner, 1, 1, 40, this, this::done);
+        }
+
+        /**
+         * The staff stays in the sage's hand. A planted one is turned and stretched from the hand to the face it
+         * pushes off (up to its full length) unless only the hand is to follow ({@code repose} false, while it is
+         * pulled back in).
+         */
+        private void follow(boolean repose) {
+            base = Displays.unrotated(hand(owner));
+            for (BlockDisplay part : parts) {
+                Displays.moveTo(part, base);
+            }
+            Location contact = planted;
+            if (!repose || contact == null || !contact.getWorld().equals(base.getWorld())) {
+                return;
+            }
+            Vector toContact = contact.toVector().subtract(base.toVector());
+            double distance = toContact.length();
+            if (distance < 0.05) {
+                return;
+            }
+            aim(toContact.multiply(1 / distance));
+            grow(Math.min(distance, maxLength), 1);
         }
 
         /** The shaft from the hand to {@code reach}: its box starts at the hand, so only its length interpolates. */
@@ -530,11 +590,27 @@ public final class WukongAbility extends Ability {
         public boolean test(long tick) {
             if (retracting) {
                 retractRun++;
+                if (drive == null) {
+                    follow(false);
+                }
                 return retractRun < RETRACT_TICKS + 1;
             }
-            if (drive != null && !drive.over) {
+            if (drive != null) {
+                if (!drive.over) {
+                    return true;
+                }
+                // The driven enemy has come to rest (at the wall or the staff's end): the staff holds on to the body
+                // as everyone sees it arrive, then pulls back.
+                double seen = drive.seenLength();
+                if (Math.abs(seen - length) > 0.05) {
+                    grow(seen, SEEN_GLIDE);
+                }
+                if (++held >= HOLD_TICKS) {
+                    retract();
+                }
                 return true;
             }
+            follow(true);
             if (tick % 2 == 0) {
                 Location tip = tip();
                 Vfx.dot(tip, Particle.DUST_COLOR_TRANSITION, GOLD_GLOW, false);
@@ -584,6 +660,9 @@ public final class WukongAbility extends Ability {
         private final Pole pole;
         private final double startX;
         private final double startZ;
+        private final double flatShare;
+        private final double startLength;
+        private final double maxLength;
         private double distance;
         private double traveled;
         boolean over;
@@ -599,10 +678,24 @@ public final class WukongAbility extends Ability {
             this.startX = feet.getX();
             this.startZ = feet.getZ();
             // Drive it until the front of its body meets the staff's end (along the ground).
-            double flatShare = Math.sqrt(dir.getX() * dir.getX() + dir.getZ() * dir.getZ());
+            this.flatShare = Math.sqrt(dir.getX() * dir.getX() + dir.getZ() * dir.getZ());
             double toEnd = (poleLength - enemyDistance - AIM_ASSIST) * flatShare - 0.05;
             this.distance = Math.max(0, Spots.arenaReach(ctx(), feet, flat, Math.max(0, toEnd)));
-            this.pole = new Pole(owner, hand, dir, Math.max(0.3, enemyDistance), this);
+            this.startLength = Math.max(0.3, enemyDistance);
+            this.maxLength = Math.max(startLength, poleLength);
+            this.pole = new Pole(owner, hand, dir, startLength, this, null, maxLength);
+        }
+
+        /**
+         * How long the staff is to reach the enemy where everyone sees it: by its position on the server, which a
+         * driven player reaches a ping after its own client (others see it there, smoothed) and where clients see a
+         * mob after its tracker's next update. The steps sent ahead of the body judge the crush, never the look.
+         */
+        double seenLength() {
+            Location feet = target.getLocation();
+            double moved = (feet.getX() - startX) * flat.getX() + (feet.getZ() - startZ) * flat.getZ();
+            double along = Math.max(0, moved) / Math.max(MIN_FLAT_SHARE, flatShare);
+            return Math.min(maxLength, startLength + along);
         }
 
         void start() {
@@ -640,7 +733,10 @@ public final class WukongAbility extends Ability {
             target.setVelocity(Motion.clamp(flat.clone().multiply(step).setY(DRIVE_SINK), MAX_SPEED));
             target.setFallDistance(0);
             traveled += step;
-            pole.grow(pole.length + step, 1);
+            if (tick > 0) {
+                // The skewer itself (the first tick) is instant; then the staff follows the body as it is seen.
+                pole.grow(seenLength(), SEEN_GLIDE);
+            }
             Location body = Fx.body(target);
             Vfx.trail(body, body.clone().subtract(flat.clone().multiply(1.5)), GOLD, 5, false);
             Vfx.dot(body.clone().subtract(flat.clone().multiply(0.4)), Particle.CLOUD, null, false);
@@ -680,7 +776,6 @@ public final class WukongAbility extends Ability {
             over = true;
             target.setVelocity(flat.clone().multiply(0.15));
             target.setFallDistance(0);
-            pole.retract();
         }
 
         /** Crushed between the staff and the wall. */
@@ -716,7 +811,6 @@ public final class WukongAbility extends Ability {
             Fx.sound(contact, Sound.BLOCK_ANVIL_LAND, 0.5f, 1.3f + Fx.jitter(0.1f));
             owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">⚡ 벽에 끼웠다!</" + GOLD_TAG + "> <white>+"
                     + AbilityInfo.formatNumber(params().num("pin_damage")) + "</white>"));
-            pole.retract();
         }
 
         void finish() {
@@ -725,7 +819,6 @@ public final class WukongAbility extends Ability {
                 if (target.isValid() && !target.isDead()) {
                     target.setVelocity(new Vector(0, -0.05, 0));
                 }
-                pole.retract();
             }
         }
     }
@@ -784,6 +877,8 @@ public final class WukongAbility extends Ability {
         private double coverTop;
         /** The stretch of the line the pillar crushes: the shadow, cut short by the cover. */
         private double crushLength;
+        /** How much of it the shadow plate covers: as far as the ground is level (particles paint the rest). */
+        private double plateLength;
         private boolean broken;
 
         Pillar(Player owner, Location base, Vector dir) {
@@ -816,6 +911,26 @@ public final class WukongAbility extends Ability {
                 coverTop = 0;
             }
             crushLength = Math.min(length, stop);
+            plateLength = levelLength(crushLength);
+        }
+
+        /**
+         * How far from the base the ground along the line stays level (within a small step of the base's height),
+         * up to {@code max}: a flat plate laid past a step down would float, past a step up it would sink into the
+         * ground, its outline glowing through.
+         */
+        private double levelLength(double max) {
+            double[] across = {-halfWidth * 0.8, 0, halfWidth * 0.8};
+            for (double along = PLATE_SAMPLE; along <= max + 1.0E-6; along += PLATE_SAMPLE) {
+                for (double offset : across) {
+                    Location at = ground(base.clone().add(dir.clone().multiply(along)).add(side.clone()
+                            .multiply(offset)));
+                    if (Math.abs(at.getY() - base.getY()) > PLATE_STEP_HEIGHT) {
+                        return Math.max(0, along - PLATE_SAMPLE);
+                    }
+                }
+            }
+            return max;
         }
 
         /** How high above the base the cover found {@code cover} blocks ahead rises. */
@@ -907,7 +1022,7 @@ public final class WukongAbility extends Ability {
         /** The shadow on the ground, {@code grown} of its full length out from the base. */
         private Transformation shadowPose(double grown) {
             float w = (float) (halfWidth * 2);
-            return upright(-w / 2, 0.03f, 0, w, 0.02f, (float) Math.max(0.01, crushLength * grown), 0);
+            return upright(-w / 2, 0.03f, 0, w, 0.02f, (float) Math.max(0.01, plateLength * grown), 0);
         }
 
         private void pose(double full, double extent, double tilt, int ticks) {
@@ -965,10 +1080,10 @@ public final class WukongAbility extends Ability {
             if (fall < TOPPLE_TICKS) {
                 if (fall == 0) {
                     // The line may have changed while the pillar rose (cover broken or raised): look again.
-                    double before = crushLength;
+                    double before = plateLength;
                     survey();
                     BlockDisplay plate = shadow;
-                    if (plate != null && Math.abs(before - crushLength) > 1.0E-6) {
+                    if (plate != null && Math.abs(before - plateLength) > 1.0E-6) {
                         Displays.animate(plate, shadowPose(1), 2);
                     }
                     Fx.sound(base, Sound.ENTITY_IRON_GOLEM_DAMAGE, 1.0f, 0.5f);
@@ -1196,6 +1311,12 @@ public final class WukongAbility extends Ability {
         return (float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ()));
     }
 
+    /** The pitch (degrees, positive down) a direction points along, in the display convention. */
+    private static float pitchOf(Vector direction) {
+        double horizontal = Math.sqrt(direction.getX() * direction.getX() + direction.getZ() * direction.getZ());
+        return (float) Math.toDegrees(Math.atan2(-direction.getY(), horizontal));
+    }
+
     /** {@code local} (x left, y up, z forward) turned to face {@code yaw}. */
     private static Vector rotate(Vector local, float yaw) {
         double rad = Math.toRadians(yaw);
@@ -1249,5 +1370,11 @@ public final class WukongAbility extends Ability {
     /** True while the owner is invisible: the passive's staff and motes must not give him away. */
     private static boolean concealed(Player owner) {
         return owner.isInvisible() || owner.hasPotionEffect(PotionEffectType.INVISIBILITY);
+    }
+
+    /** True if {@code display} is far from {@code spot}: what it follows was teleported, a glide would slide across. */
+    private static boolean jumped(Display display, Location spot) {
+        Location at = display.getLocation();
+        return !at.getWorld().equals(spot.getWorld()) || at.distanceSquared(spot) > JUMP * JUMP;
     }
 }
