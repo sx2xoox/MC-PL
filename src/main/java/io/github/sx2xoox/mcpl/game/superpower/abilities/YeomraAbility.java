@@ -25,6 +25,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Color;
+import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -41,6 +42,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BoundingBox;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
@@ -69,8 +71,8 @@ public final class YeomraAbility extends Ability {
             .difficulty(2)
             .passive("업경 잔상",
                     "{echo_radius}블록 안의 적마다 {rewind_seconds}초 전에 서 있던 자리에 희미한 푸른 잔상이 나에게만 "
-                            + "보이고, 그 자리까지 지나온 발자취가 점선으로 이어집니다. 업경대가 그 적을 되돌려 놓을 "
-                            + "자리와 길입니다.")
+                            + "보이고, 조준한 적은 그 자리까지 지나온 발자취가 점선으로 이어집니다. 업경대가 그 적을 "
+                            + "되돌려 놓을 자리와 길입니다.")
             .active("업경대",
                     "조준한 적({mirror_range}블록 이내)의 {rewind_seconds}초 전 자리에 업경대가 솟아 그 적을 비춥니다. "
                             + "{mirror_windup}초 뒤 그 적은 자기가 지나온 발자취를 거슬러 {rewind_time}초 만에 업경대 앞으로 "
@@ -148,8 +150,8 @@ public final class YeomraAbility extends Ability {
     /** An afterimage closer than this to the enemy is not drawn (it is standing on it). */
     private static final double ECHO_MIN = 0.4;
     private static final int MAX_ECHOES = 6;
-    /** A rewind destination this little above the ground is put down on it. */
-    private static final double DESTINATION_SNAP = 1.25;
+    /** The mirror stands on ground at most this far below the spot meant for it (else on the past spot itself). */
+    private static final double MIRROR_SNAP = 1.25;
 
     // the mirror
     private static final long MIRROR_STAY = 12;
@@ -163,6 +165,8 @@ public final class YeomraAbility extends Ability {
     /** A reaper touches its target when it comes this close to its hitbox. */
     private static final double TOUCH = 0.35;
     private static final int REAPER_PARTS = 6;
+    /** The least of a reaper that may walk: its robe and its face (a reaper is never sent without a body). */
+    private static final int MIN_REAPER_PARTS = 3;
 
     /** Where every watched enemy was on the last ticks, by entity id. */
     private final Map<UUID, Track> tracks = new HashMap<>();
@@ -271,6 +275,11 @@ public final class YeomraAbility extends Ability {
     private void drawEchoes(Player owner) {
         long now = ctx().currentTick();
         int drawn = 0;
+        // The trail of steps is the mirror's preview: only for the enemy in the king's sights.
+        LivingEntity aimed = ctx().findTarget(owner, params().num("mirror_range"));
+        int bodyPoints = Vfx.n(ctx(), 5);
+        int headPoints = Math.max(3, Vfx.n(ctx(), 6));
+        int stepPoints = Vfx.n(ctx(), 8);
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), params().num("echo_radius"))) {
             if (drawn >= MAX_ECHOES || isHidden(owner, enemy)) {
                 continue;
@@ -286,14 +295,14 @@ public final class YeomraAbility extends Ability {
             }
             drawn++;
             double height = enemy.getHeight();
-            // The silhouette: a body line and a ring for the head.
-            for (int i = 0; i < 5; i++) {
-                double y = height * (0.1 + 0.15 * i);
+            // The silhouette: a body line and a ring for the head (counts follow the effect scale).
+            for (int i = 0; i < bodyPoints; i++) {
+                double y = height * (0.1 + 0.6 * i / Math.max(1, bodyPoints - 1));
                 owner.spawnParticle(Particle.DUST, past.getX(), past.getY() + y, past.getZ(), 1, 0, 0, 0, 0, ECHO_DUST);
             }
             double headY = past.getY() + height * 0.88;
-            for (int i = 0; i < 6; i++) {
-                double angle = i * TAU / 6 + now * 0.05;
+            for (int i = 0; i < headPoints; i++) {
+                double angle = i * TAU / headPoints + now * 0.05;
                 owner.spawnParticle(Particle.DUST, past.getX() + Math.cos(angle) * 0.2, headY,
                         past.getZ() + Math.sin(angle) * 0.2, 1, 0, 0, 0, 0, ECHO_HEAD);
             }
@@ -304,8 +313,11 @@ public final class YeomraAbility extends Ability {
             if (now % (ECHO_PERIOD * 2) == 0) {
                 owner.spawnParticle(Particle.SOUL_FIRE_FLAME, past.getX(), headY + 0.3, past.getZ(), 1, 0, 0, 0, 0);
             }
-            // The trail of footsteps back to it.
-            int stride = Math.max(1, path.size() / 8);
+            if (!enemy.equals(aimed)) {
+                continue;
+            }
+            // The trail of footsteps back to it: the way the mirror would drag it.
+            int stride = Math.max(1, path.size() / stepPoints);
             for (int i = 0; i < path.size(); i += stride) {
                 Sample sample = path.get(i);
                 owner.spawnParticle(Particle.DUST, sample.x(), sample.y() + 0.08, sample.z(), 1, 0, 0, 0, 0,
@@ -359,8 +371,8 @@ public final class YeomraAbility extends Ability {
             List<Sample> past = pathSince(target, cast - rewindTicks());
             this.karma = past.size() < 2 || length(past) < Math.max(0, params().num("karma_still"));
             Location origin = past.isEmpty() ? target.getLocation() : past.getFirst().at(world);
-            Location ground = origin.clone();
-            Spots.snapToGround(world, ground, DESTINATION_SNAP);
+            // The enemy may have been in the air back then (knocked up, falling): the mirror stands under it.
+            Location ground = settled(world, origin);
             Vector toTarget = target.getLocation().toVector().subtract(ground.toVector());
             // An enemy judged where it stands faces a mirror set before it, between it and the king.
             if (karma || toTarget.setY(0).lengthSquared() < 0.25) {
@@ -370,14 +382,12 @@ public final class YeomraAbility extends Ability {
                     toOwner = new Vector(0, 0, 1);
                 }
                 Location front = target.getLocation().add(toOwner.clone().multiply(1.4));
-                Spots.snapToGround(world, front, 2);
-                this.spot = Displays.unrotated(front);
+                this.spot = Displays.unrotated(standOn(world, front, settled(world, target.getLocation())));
                 this.yaw = yawOf(toOwner.clone().multiply(-1));
             } else {
                 // It stands just behind the past spot, facing the enemy: the enemy is pulled up in front of it.
                 Location behind = ground.clone().subtract(Motion.horizontal(toTarget).multiply(1.1));
-                Spots.snapToGround(world, behind, 2);
-                this.spot = Displays.unrotated(behind);
+                this.spot = Displays.unrotated(standOn(world, behind, ground));
                 this.yaw = yawOf(toTarget);
             }
         }
@@ -442,11 +452,8 @@ public final class YeomraAbility extends Ability {
                 return false;
             }
             long step = tick - windup + 1;
-            if (!pull(step)) {
-                judge();
-                return false;
-            }
-            if (step >= rewind) {
+            if (!pull(step) || step >= rewind) {
+                land();
                 judge();
                 return false;
             }
@@ -491,13 +498,6 @@ public final class YeomraAbility extends Ability {
             Location to = path.get(index).at(world);
             to.setYaw(from.getYaw());
             to.setPitch(from.getPitch());
-            if (step >= rewind) {
-                Location settled = to.clone();
-                Spots.snapToGround(world, settled, DESTINATION_SNAP);
-                if (isSafe(settled)) {
-                    to = settled;
-                }
-            }
             if (!isSafe(to)) {
                 return false;
             }
@@ -507,6 +507,25 @@ public final class YeomraAbility extends Ability {
             stop();
             stepsDone++;
             return true;
+        }
+
+        /**
+         * The rewind is over (or blocked on the way): the enemy is put down on the ground straight under it, since
+         * the step it ended on may have been in the air (it was knocked up, swinging, falling then). The mirror never
+         * leaves it hanging to take fall damage.
+         */
+        private void land() {
+            if (stepsDone == 0 || !target.isValid()) {
+                return;
+            }
+            Location at = target.getLocation();
+            Location ground = settled(world, at);
+            if (ground.getY() < at.getY() - 1.0E-6 && isSafe(ground)) {
+                trail(at, ground);
+                target.teleport(ground);
+            }
+            target.setFallDistance(0);
+            stop();
         }
 
         private boolean isSafe(Location feet) {
@@ -626,6 +645,16 @@ public final class YeomraAbility extends Ability {
         if (targets.isEmpty()) {
             return ActivationResult.fail("저승사자가 데려갈 자가 없습니다");
         }
+        // Every reaper's body is spawned (still underground) right now, so a later one never rises invisible: the
+        // display budget is shared out first, and a reaper that would have no body is not sent at all.
+        displays.removeIf(display -> !display.isValid());
+        int room = MAX_DISPLAYS - displays.size();
+        int size = reaperSize(room, targets.size());
+        int sent = Math.min(targets.size(), room / size);
+        if (sent <= 0) {
+            return ActivationResult.fail("저승사자가 나설 자리가 없습니다");
+        }
+        targets = new ArrayList<>(targets.subList(0, sent));
         double speed = params().num(targets.size() == 1 ? "reaper_solo_speed" : "reaper_speed");
         Location head = owner.getEyeLocation();
         Vfx.dot(head, Particle.FLASH, CRIMSON_RED, true);
@@ -642,9 +671,22 @@ public final class YeomraAbility extends Ability {
         owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>☠ 저승사자 출두</b></" + COLOR_TAG + "> <gray>"
                 + targets.size() + "명</gray>"));
         for (int i = 0; i < targets.size(); i++) {
-            new Reaper(owner, targets.get(i), speed, i * RISE_STAGGER).start();
+            new Reaper(owner, targets.get(i), speed, i * RISE_STAGGER, size).start();
         }
         return ActivationResult.success();
+    }
+
+    /**
+     * The displays each of {@code count} reapers gets out of {@code room}: all its parts and the name it calls, all
+     * its parts, all but the sash, or at least its robe and face.
+     */
+    private static int reaperSize(int room, int count) {
+        for (int size : new int[] {REAPER_PARTS + 1, REAPER_PARTS, REAPER_PARTS - 1}) {
+            if (size * count <= room) {
+                return size;
+            }
+        }
+        return MIN_REAPER_PARTS;
     }
 
     private enum ReaperStage { RISING, WALKING, SINKING, DONE }
@@ -661,6 +703,8 @@ public final class YeomraAbility extends Ability {
         private final double perTick;
         private final long delay;
         private final long walkTicks;
+        /** Displays this reaper has: its parts, plus the name it calls when there is room for all of them. */
+        private final int size;
         private final World world;
         private final List<BlockDisplay> body = new ArrayList<>();
         private @Nullable TextDisplay call;
@@ -668,13 +712,15 @@ public final class YeomraAbility extends Ability {
         private float yaw;
         private ReaperStage stage = ReaperStage.RISING;
         private long stageStart;
-        private boolean veiled;
+        /** Unseen: waiting underground to rise, or waiting while its target is hidden from the king. */
+        private boolean veiled = true;
 
-        Reaper(Player owner, LivingEntity target, double speed, long delay) {
+        Reaper(Player owner, LivingEntity target, double speed, long delay, int size) {
             this.owner = owner;
             this.target = target;
             this.perTick = Math.max(0.01, speed) / 20.0;
             this.delay = delay;
+            this.size = size;
             this.walkTicks = Math.max(1, params().ticks("reaper_duration"));
             this.world = target.getWorld();
             this.at = riseSpot();
@@ -698,8 +744,34 @@ public final class YeomraAbility extends Ability {
         }
 
         void start() {
+            summon();
             long total = delay + RISE_TICKS + walkTicks + SINK_TICKS + 4;
             Loop.repeat(ctx(), owner, 1, 1, total, this, this::end);
+        }
+
+        /** Its body, deep in the ground under where it will rise and seen by nobody yet (the budget is its own). */
+        private void summon() {
+            Location deep = at.clone().subtract(0, RISE_DEPTH, 0);
+            int count = Math.min(REAPER_PARTS, size);
+            long life = delay + RISE_TICKS + walkTicks + SINK_TICKS + 20;
+            for (int i = 0; i < count; i++) {
+                ReaperPart part = ReaperPart.ALL[i];
+                BlockDisplay display = Displays.block(ctx(), owner, deep, part.material.createBlockData(),
+                        part.pose(yaw), life);
+                display.setViewRange(0f);
+                display.setTeleportDuration((int) RISE_TICKS);
+                if (part.outlined) {
+                    Displays.outline(display, CRIMSON_RED);
+                }
+                body.add(display);
+                displays.add(display);
+            }
+            if (size > REAPER_PARTS) {
+                call = Displays.text(ctx(), owner, deep.clone().add(0, 2.6, 0), callText(), 0.55f, life);
+                call.setTeleportDuration((int) RISE_TICKS);
+                call.setViewRange(0f);
+                displays.add(call);
+            }
         }
 
         @Override
@@ -724,27 +796,7 @@ public final class YeomraAbility extends Ability {
         /** It comes up out of the ground in a puff of souls. */
         private void rise() {
             stageStart = ctx().currentTick();
-            Location deep = at.clone().subtract(0, RISE_DEPTH, 0);
-            int count = reserve(REAPER_PARTS + 1) ? REAPER_PARTS : reserve(REAPER_PARTS - 1) ? REAPER_PARTS - 1 : 0;
-            long life = RISE_TICKS + walkTicks + SINK_TICKS + 20;
-            for (int i = 0; i < count; i++) {
-                ReaperPart part = ReaperPart.ALL[i];
-                BlockDisplay display = Displays.block(ctx(), owner, deep, part.material.createBlockData(),
-                        part.pose(yaw), life);
-                display.setViewRange(2.0f);
-                display.setTeleportDuration((int) RISE_TICKS);
-                if (part.outlined) {
-                    Displays.outline(display, CRIMSON_RED);
-                }
-                body.add(display);
-                displays.add(display);
-            }
-            if (count == REAPER_PARTS && reserve(1)) {
-                call = Displays.text(ctx(), owner, deep.clone().add(0, 2.6, 0), callText(), 0.55f, life);
-                call.setTeleportDuration((int) RISE_TICKS);
-                call.setViewRange(2.0f);
-                displays.add(call);
-            }
+            veil(isHidden(owner, target));
             ctx().runLater(owner, 1, () -> place(at));
             world.spawnParticle(Particle.SOUL, at.clone().add(0, 0.2, 0), Vfx.n(ctx(), 14), 0.4, 0.1, 0.4, 0.04, null,
                     true);
@@ -757,6 +809,7 @@ public final class YeomraAbility extends Ability {
         }
 
         private boolean rising(long elapsed) {
+            veil(isHidden(owner, target));
             if (elapsed % 2 == 0) {
                 Vfx.cloud(ctx(), at.clone().add(0, 0.2, 0), Particle.SOUL_FIRE_FLAME, 2, 0.3, 0.01, null, false);
             }
@@ -779,7 +832,8 @@ public final class YeomraAbility extends Ability {
         /** It walks straight at its target, through anything, and calls its name. */
         private boolean walking(long tick) {
             long now = ctx().currentTick();
-            if (now - stageStart >= walkTicks) {
+            if (now - stageStart >= walkTicks || body.stream().noneMatch(Display::isValid)) {
+                // Its time is up, or its body is gone: a reaper nobody can see never seizes anyone.
                 sink(false);
                 return true;
             }
@@ -1030,6 +1084,36 @@ public final class YeomraAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * {@code at} lowered straight down onto the first floor or water surface under it, however far below (unchanged
+     * over the void). The ray starts a little above the feet, never inside the ground (see {@link Spots#snapToGround}).
+     */
+    private static Location settled(World world, Location at) {
+        Location ground = at.clone();
+        Location from = at.clone().add(0, 0.05, 0);
+        double depth = from.getY() - world.getMinHeight();
+        if (depth <= 0) {
+            return ground;
+        }
+        RayTraceResult hit = world.rayTraceBlocks(from, new Vector(0, -1, 0), depth, FluidCollisionMode.ALWAYS, true);
+        if (hit != null && hit.getHitPosition().getY() <= from.getY() - 1.0E-4) {
+            ground.setY(hit.getHitPosition().getY());
+        }
+        return ground;
+    }
+
+    /**
+     * {@code at} put down on the ground at most a step below it, with room for the mirror; {@code fallback} (a spot on
+     * the ground) when there is no such ground there (a ledge's edge, a wall).
+     */
+    private static Location standOn(World world, Location at, Location fallback) {
+        Location ground = at.clone();
+        Spots.snapToGround(world, ground, MIRROR_SNAP);
+        boolean onGround = world.rayTraceBlocks(ground.clone().add(0, 0.05, 0), new Vector(0, -1, 0), 0.1,
+                FluidCollisionMode.NEVER, true) != null;
+        return onGround && Spots.isFree(world, ground, 0.6, 2.0) ? ground : fallback.clone();
+    }
 
     /** A chain lying across the legs, turned {@code spin} degrees around the vertical. */
     private static Transformation chainPose(float spin) {

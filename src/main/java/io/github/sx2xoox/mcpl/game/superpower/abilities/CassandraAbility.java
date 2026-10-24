@@ -3,9 +3,11 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
@@ -73,7 +75,7 @@ public final class CassandraAbility extends Ability {
             .difficulty(3)
             .passive("바뀌지 않는 운명",
                     "예언(액티브)을 피한 대상에게는 {fate_duration}초간 '운명'이 붙어 머리 위에 눈이 맴돕니다. 그 적에게 "
-                            + "내리는 다음 예언은 {fate_haste}% 더 빨리 떨어지고 범위가 {fate_radius}블록 넓어집니다. 예언이 "
+                            + "내리는 다음 예언(액티브)은 {fate_haste}% 더 빨리 떨어지고 범위가 {fate_radius}블록 넓어집니다. 예언이 "
                             + "적을 맞히면 예언 쿨타임이 {hit_refund}초 줄어듭니다.")
             .active("예언",
                     "조준한 적({prophecy_range}블록 이내)이 {prophecy_delay}초 뒤에 서 있을 곳을 예언합니다. 최근 움직임대로 "
@@ -87,15 +89,15 @@ public final class CassandraAbility extends Ability {
                     "{ult_windup}초간 머리 위에 거대한 눈을 뜬 뒤 반경 {ult_radius}블록 안의 적 모두(최대 "
                             + "{ult_targets}명)에게 멸망을 예언합니다. {ult_interval}초 간격으로 {ult_waves}번, 매번 적마다 "
                             + "{ult_delay}초 뒤에 서 있을 곳에 인장이 새겨지고 창이 떨어져 반경 {ult_seal_radius}블록 안의 "
-                            + "적에게 {ult_damage} 피해를 줍니다. 곧장 달려도 가만히 있어도 맞으니 예측할 수 없게 움직여야 "
-                            + "합니다.")
+                            + "적에게 {ult_damage} 피해를 줍니다(창이 겹쳐도 매번 적마다 한 번만). 곧장 달려도 가만히 "
+                            + "있어도 맞으니 예측할 수 없게 움직여야 합니다.")
             .param("fate_duration", 6)
             .param("fate_haste", 30)
             .param("fate_radius", 0.6)
             .param("hit_refund", 2)
             .param("prophecy_range", 26)
             .param("prophecy_delay", 1.2)
-            .param("prophecy_lead", 6)
+            .param("prophecy_lead", 10)
             .param("prophecy_radius", 1.8)
             .param("prophecy_damage", 6)
             .param("prophecy_slow", 1)
@@ -159,6 +161,14 @@ public final class CassandraAbility extends Ability {
     /** The spear hits whatever stands in its column up to this height over the seal. */
     private static final double SPEAR_REACH_UP = 2.6;
     private static final long SPEAR_STAY = 14;
+    /**
+     * The ultimate's spears stay a shorter while: they must be gone before the next wave's spears fall (a wave's
+     * spears fall 14 ticks after its seals appear, on the tick the previous wave struck), or the display budget runs
+     * out with three enemies or more.
+     */
+    private static final long ULT_SPEAR_STAY = 6;
+    /** Above this many doomed enemies the ultimate's seals have one star and its spears no crossguard (the budget). */
+    private static final int FULL_LOOK_TARGETS = 3;
     private static final float STAR_SCALE = 1.35f;
     private static final float STAR_SPIN = 2.5f;
 
@@ -445,7 +455,7 @@ public final class CassandraAbility extends Ability {
         double radius = Math.max(0.3, params().num("prophecy_radius") + wider);
         Location center = predict(target, delay, Math.max(0, params().num("prophecy_lead")));
         Prophecy prophecy = new Prophecy(owner, target, center, radius, delay, params().num("prophecy_damage"), true,
-                fated);
+                fated, null, false);
         if (fated) {
             // The fate is spent on this prophecy.
             Fate fate = fates.remove(target.getUniqueId());
@@ -480,7 +490,7 @@ public final class CassandraAbility extends Ability {
     /**
      * One prophecy: a seal on the ground where it will come true, then the spear of fate falling onto it. The active's
      * prophecy also slows, refunds its cooldown on a hit and fates the aimed enemy when it misses; the ultimate's
-     * waves only hurt.
+     * waves only hurt, and the prophecies of one wave share who they struck, so overlapping spears hit an enemy once.
      */
     private final class Prophecy implements LongPredicate {
 
@@ -492,6 +502,10 @@ public final class CassandraAbility extends Ability {
         private final double damage;
         private final boolean active;
         private final boolean fated;
+        /** Who the prophecies of this one's wave struck already (the ultimate), or null (the active). */
+        private final @Nullable Set<UUID> wave;
+        /** One star and a spear without its crossguard: the ultimate on many enemies (the display budget). */
+        private final boolean lite;
         private final World world;
         private final List<Display> seal = new ArrayList<>();
         private final List<BlockDisplay> spear = new ArrayList<>();
@@ -499,7 +513,7 @@ public final class CassandraAbility extends Ability {
         private boolean done;
 
         Prophecy(Player owner, LivingEntity target, Location center, double radius, long delay, double damage,
-                 boolean active, boolean fated) {
+                 boolean active, boolean fated, @Nullable Set<UUID> wave, boolean lite) {
             this.owner = owner;
             this.target = target;
             this.center = center;
@@ -508,6 +522,8 @@ public final class CassandraAbility extends Ability {
             this.damage = damage;
             this.active = active;
             this.fated = fated;
+            this.wave = wave;
+            this.lite = lite;
             this.world = center.getWorld();
             this.spin = ThreadLocalRandom.current().nextFloat() * 90f;
         }
@@ -524,16 +540,16 @@ public final class CassandraAbility extends Ability {
             Location at = center.clone().add(0, 0.02, 0);
             float side = (float) (radius * STAR_SCALE);
             long life = delay + 12;
-            if (reserve(2)) {
-                for (int i = 0; i < 2; i++) {
-                    BlockDisplay star = Displays.block(ctx(), owner, at, STAR_BLOCK.createBlockData(),
-                            starPose(0.05f, spin + i * 45f), life);
-                    star.setViewRange(2.0f);
-                    Displays.outline(star, VIOLET);
-                    seal.add(star);
-                    displays.add(star);
-                    Displays.animateNextTick(ctx(), owner, star, starPose(side, spin + i * 45f + 20f), 5);
-                }
+            int wanted = lite ? 1 : 2;
+            int stars = reserve(wanted) ? wanted : reserve(1) ? 1 : 0;
+            for (int i = 0; i < stars; i++) {
+                BlockDisplay star = Displays.block(ctx(), owner, at, STAR_BLOCK.createBlockData(),
+                        starPose(0.05f, spin + i * 45f), life);
+                star.setViewRange(2.0f);
+                Displays.outline(star, VIOLET);
+                seal.add(star);
+                displays.add(star);
+                Displays.animateNextTick(ctx(), owner, star, starPose(side, spin + i * 45f + 20f), 5);
             }
             if (active && reserve(1)) {
                 ItemDisplay eye = Displays.item(ctx(), owner, at.clone().add(0, 0.04, 0), new ItemStack(EYE_ITEM),
@@ -598,6 +614,11 @@ public final class CassandraAbility extends Ability {
             return true;
         }
 
+        /** Ticks the landed spear stays stuck in the ground before it fades. */
+        private long stay() {
+            return active ? SPEAR_STAY : ULT_SPEAR_STAY;
+        }
+
         /** Ticks the spear takes to fall: it appears at least one tick after the seal. */
         private long fallTicks() {
             return Math.max(1, Math.min(SPEAR_FALL, delay - 1));
@@ -605,16 +626,22 @@ public final class CassandraAbility extends Ability {
 
         /** The spear appears high above the seal and falls onto it (smoothly, through the client's interpolation). */
         private void dropSpear() {
-            if (!spear.isEmpty() || !reserve(3)) {
+            int wanted = lite ? 2 : 3;
+            int count = reserve(wanted) ? wanted : reserve(2) ? 2 : 0;
+            if (!spear.isEmpty() || count == 0) {
                 return;
             }
             long fall = fallTicks();
             Location high = center.clone().add(0, SPEAR_HEIGHT, 0);
-            long life = fall + SPEAR_STAY + 10;
-            BlockDisplay shaft = Displays.block(ctx(), owner, high, SHAFT_BLOCK.createBlockData(), shaftPose(), life);
+            long life = fall + stay() + 10;
+            List<BlockDisplay> parts = new ArrayList<>();
+            parts.add(Displays.block(ctx(), owner, high, SHAFT_BLOCK.createBlockData(), shaftPose(), life));
             BlockDisplay blade = Displays.block(ctx(), owner, high, HEAD_BLOCK.createBlockData(), headPose(0), life);
-            BlockDisplay cross = Displays.block(ctx(), owner, high, HEAD_BLOCK.createBlockData(), headPose(90), life);
-            for (BlockDisplay part : List.of(shaft, blade, cross)) {
+            parts.add(blade);
+            if (count >= 3) {
+                parts.add(Displays.block(ctx(), owner, high, HEAD_BLOCK.createBlockData(), headPose(90), life));
+            }
+            for (BlockDisplay part : parts) {
                 part.setViewRange(2.0f);
                 part.setTeleportDuration((int) Math.min(59, fall));
                 spear.add(part);
@@ -637,7 +664,8 @@ public final class CassandraAbility extends Ability {
             Location at = center.clone().add(0, 0.1, 0);
             List<LivingEntity> struck = new ArrayList<>();
             for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius + SPEAR_REACH_UP)) {
-                if (inColumn(enemy, center, radius)) {
+                // Two seals of one wave that overlap (enemies side by side) strike each of them once.
+                if (inColumn(enemy, center, radius) && (wave == null || wave.add(enemy.getUniqueId()))) {
                     struck.add(enemy);
                 }
             }
@@ -669,7 +697,7 @@ public final class CassandraAbility extends Ability {
                 }
             }
             List<BlockDisplay> stuck = new ArrayList<>(spear);
-            ctx().runLater(owner, SPEAR_STAY, () -> {
+            ctx().runLater(owner, stay(), () -> {
                 for (BlockDisplay part : stuck) {
                     if (part.isValid()) {
                         Displays.shrinkAway(ctx(), owner, part, 6);
@@ -873,9 +901,11 @@ public final class CassandraAbility extends Ability {
             Location from = eyeSpot();
             double radius = Math.max(0.3, params().num("ult_seal_radius"));
             double damage = params().num("ult_damage");
+            Set<UUID> struck = new HashSet<>();
+            boolean lite = doomed.size() > FULL_LOOK_TARGETS;
             for (LivingEntity enemy : doomed) {
                 Location center = predict(enemy, seal, Math.max(0, params().num("prophecy_lead")));
-                new Prophecy(owner, enemy, center, radius, seal, damage, false, false).start();
+                new Prophecy(owner, enemy, center, radius, seal, damage, false, false, struck, lite).start();
                 for (int i = 0; i < Vfx.n(ctx(), 3); i++) {
                     Vfx.trail(from, center.clone().add(0, 0.3, 0), i % 2 == 0 ? VIOLET : BONE, 10 + i * 2, true);
                 }

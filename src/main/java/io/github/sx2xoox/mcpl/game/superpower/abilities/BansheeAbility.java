@@ -259,7 +259,9 @@ public final class BansheeAbility extends Ability {
         Player owner = player();
         if (!(event.getEntity() instanceof LivingEntity victim) || !(event.getFinalDamage() > 0)
                 || !ctx().isAlive(owner) || !ctx().isEnemy(owner, victim)
-                || !victim.getWorld().equals(owner.getWorld())) {
+                || !victim.getWorld().equals(owner.getWorld()) || isHidden(owner, victim)) {
+            // A victim hidden from the banshee is not heard: a wail, a sound at its head or a gauge tick would give
+            // away that it is there.
             return;
         }
         double radius = params().num("keen_radius");
@@ -295,6 +297,11 @@ public final class BansheeAbility extends Ability {
         if (!Combat.isTargetable(ctx(), owner, victim)) {
             return;
         }
+        if (isHidden(owner, victim)) {
+            // It slipped out of sight as the blow landed: no keening, and it may be keened over once it shows again.
+            keened.remove(victim.getUniqueId());
+            return;
+        }
         double gauge = Math.max(0, params().num("keen_gauge"));
         boolean charged = gauge > 0 && !ctx().isGaugeLocked(owner);
         ctx().addEarnedGauge(owner, gauge);
@@ -303,9 +310,6 @@ public final class BansheeAbility extends Ability {
         Fx.sound(head, Sound.ENTITY_ALLAY_HURT, 0.9f, 0.5f + Fx.jitter(0.05f));
         Fx.sound(head, Sound.ENTITY_VEX_CHARGE, 0.7f, 0.6f + Fx.jitter(0.05f));
         owner.playSound(head, Sound.PARTICLE_SOUL_ESCAPE, SoundCategory.PLAYERS, 1.2f, 0.7f);
-        if (isHidden(owner, victim)) {
-            return;
-        }
         Vfx.ring(ctx(), victim.getLocation().add(0, 0.1, 0), 0.8, 14, 0, Particle.DUST_COLOR_TRANSITION, MIST_GLOW,
                 false);
         Vfx.cloud(ctx(), head, Particle.SOUL, 6, 0.25, 0.03, null, false);

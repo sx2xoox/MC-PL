@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -23,6 +24,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Registry;
@@ -35,6 +37,7 @@ import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.potion.PotionEffectType;
@@ -213,6 +216,42 @@ class OmenNewAbilitiesTest {
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
         s.place(player, at.getX() + dx, at.getZ() + dz, yaw);
         s.ticks(1);
+    }
+
+    /** Every action bar {@code player} was sent since the last call, as plain text. */
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    /**
+     * The first enemy calls its wolf pack (it has the summoner's ability): more enemies than the two players, standing
+     * where they are put (mobs have no AI in the test world).
+     */
+    private static List<Wolf> callWolves(Scenario s, double[][] spots) {
+        s.assertSucceeded(s.match.useActive(s.enemy), "늑대 무리");
+        s.ticks(2);
+        List<Wolf> wolves = entities(s, Wolf.class);
+        assertEquals(spots.length, wolves.size(), "the pack");
+        for (int i = 0; i < spots.length; i++) {
+            wolves.get(i).teleport(new Location(s.world, spots[i][0], FlatWorld.SURFACE, spots[i][1]));
+        }
+        return wolves;
+    }
+
+    /** Digs (or with STONE fills back) a pit through the floor, 6 blocks deep, over x/z ranges (inclusive). */
+    private static void pit(Scenario s, int minX, int maxX, int minZ, int maxZ, Material material) {
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = FlatWorld.FLOOR_Y - 5; y <= FlatWorld.FLOOR_Y; y++) {
+                    s.world.setBlock(x, y, z, material);
+                }
+            }
+        }
     }
 
     private static void assertOwnerDeathCleansUp(Scenario s) {
@@ -456,6 +495,96 @@ class OmenNewAbilitiesTest {
         }
     }
 
+    /** Where the middle of a block display's (scaled, rotated) block sits, relative to the display's location. */
+    private static Vector3f blockCenter(BlockDisplay display) {
+        Transformation t = display.getTransformation();
+        return new Quaternionf(t.getLeftRotation()).transform(new Vector3f(t.getScale()).mul(0.5f))
+                .add(t.getTranslation());
+    }
+
+    @Test
+    void directionalDisplaysPointTheWayTheyMean() {
+        // Everyone faces east (+X, yaw -90): a model that ignored the facing would still point south (+Z).
+        try (Scenario s = noGaugeGain(Scenario.builder("charon")).start()) {
+            s.place(s.enemy, 0.5, 8.5, 180);
+            s.place(s.enemy2, 0.5, -8.5, 0);
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.assertSucceeded(s.active(), "스틱스 물길");
+            s.ticks(12);
+            List<BlockDisplay> water = blockDisplays(s, Material.CYAN_STAINED_GLASS);
+            assertFalse(water.isEmpty());
+            for (BlockDisplay sheet : water) {
+                assertTrue(Math.abs(modelDirection(sheet, 0, 0, 1).x()) > 0.99,
+                        "a sheet's length runs down the river: " + modelDirection(sheet, 0, 0, 1));
+                assertEquals(s.param("channel_width"), sheet.getTransformation().getScale().x(), 0.01,
+                        "and its width across it");
+            }
+            s.owner.setSneaking(true);
+            s.assertSucceeded(s.ultimate(), "뱃삯을 내라");
+            s.ticks(10);
+            List<BlockDisplay> planks = blockDisplays(s, Material.DARK_OAK_PLANKS);
+            BlockDisplay hull = planks.stream()
+                    .max((a, b) -> Float.compare(a.getTransformation().getScale().z(),
+                            b.getTransformation().getScale().z()))
+                    .orElseThrow();
+            assertTrue(modelDirection(hull, 0, 0, 1).x() > 0.99, "the hull lies along Charon's facing");
+            BlockDisplay bow = planks.stream()
+                    .filter(p -> Math.abs(p.getTransformation().getScale().x() - 0.76f) < 0.01)
+                    .findFirst().orElseThrow();
+            assertTrue(blockCenter(bow).x() > 0.8, "the bow is ahead of him: " + blockCenter(bow));
+            s.owner.setSneaking(false);
+            s.ticks(s.paramTicks("styx_duration") + 12);
+            s.finishClean();
+        }
+        try (Scenario s = Scenario.ffa("banshee")) {
+            s.place(s.enemy, 12.5, 0.5, 90);
+            s.place(s.enemy2, -8.5, 8.5, 0);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "수의");
+            s.ticks(2);
+            BlockDisplay cloth = entities(s, BlockDisplay.class).getFirst();
+            assertTrue(modelDirection(cloth, 0, 0, 1).x() > 0.7, "the cloth lies along the throw: "
+                    + modelDirection(cloth, 0, 0, 1));
+            s.ticks(40);
+            s.finishClean();
+        }
+        try (Scenario s = noGaugeGain(Scenario.builder("cursenote")).start()) {
+            s.place(s.enemy, 6.5, 0.5, 90);
+            s.place(s.enemy2, -8.5, 8.5, 0);
+            s.melee(s.owner, s.enemy, 1);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "이름 적기");
+            s.ticks(6);
+            Vector3f page = modelDirection(itemDisplays(s, Material.WRITABLE_BOOK).getFirst(), 0, 0, 1);
+            assertTrue(page.x() > 0.3 && Math.abs(page.z()) < 0.1, "the book is turned the way the writer faces: "
+                    + page);
+            s.ticks(s.paramTicks("write_countdown") + 10);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "저승의 시력");
+            s.ticks(10);
+            for (BlockDisplay part : blockDisplays(s, Material.GRAY_STAINED_GLASS)) {
+                assertTrue(modelDirection(part, 0, 0, 1).x() > 0.99, "the ink ghost faces the writer's way");
+            }
+            s.ticks(s.paramTicks("sight_duration") + 10);
+            s.finishClean();
+        }
+        try (Scenario s = noGaugeGain(Scenario.builder("yeomra")).param("reaper_count", 1).start()) {
+            s.place(s.enemy, 12.5, 0.5, 90);
+            s.place(s.enemy2, -40.5, 40.5, 0);
+            s.place(s.owner, 0.5, 0.5, -90);
+            s.assertSucceeded(s.ultimate(), "저승사자 출두");
+            s.ticks(14);
+            for (BlockDisplay robe : blockDisplays(s, Material.BLACK_WOOL)) {
+                Vector3f ahead = modelDirection(robe, 0, 0, 1);
+                Location to = s.enemy.getLocation().subtract(robe.getLocation());
+                double dot = (ahead.x() * to.getX() + ahead.z() * to.getZ()) / Math.hypot(to.getX(), to.getZ());
+                assertTrue(dot > 0.95, "the reaper faces its target: " + ahead);
+            }
+            s.ticks(s.paramTicks("reaper_duration") + 20);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 카산드라 cassandra
 
     @Test
@@ -678,6 +807,91 @@ class OmenNewAbilitiesTest {
         }
     }
 
+    @Test
+    void cassandraProphecyRunsDownASprintJumper() {
+        try (Scenario s = Scenario.ffa("cassandra")) {
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.place(s.enemy, -14.5, 8.5, 270);
+            // A sprint-jump: about 7.1 blocks a second, the fastest a player runs on foot.
+            double pace = 7.2 / 20;
+            for (int i = 0; i < 8; i++) {
+                step(s, s.enemy, pace, 0);
+            }
+            s.aimAt(s.owner, s.enemy);
+            double x = s.enemy.getLocation().getX();
+            s.assertSucceeded(s.active(), "예언");
+            s.ticks(1);
+            int delay = s.paramTicks("prophecy_delay");
+            Location seal = blockDisplays(s, Material.PURPLE_STAINED_GLASS).getFirst().getLocation();
+            assertEquals(x + pace * (delay + 1), seal.getX(), 1.0, "the seal is where the runner will be: " + seal);
+            for (int i = 0; i < delay + 2; i++) {
+                step(s, s.enemy, pace, 0);
+            }
+            assertEquals(s.param("prophecy_damage"), magicDamage(s, s.enemy), EPSILON,
+                    "running straight is doom, even sprint-jumping");
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cassandraFallOfTroyStrikesEnemiesSideBySideOncePerWave() {
+        try (Scenario s = noGaugeGain(Scenario.builder("cassandra")).start()) {
+            // A duel: two enemies a step apart, each inside the other's seal.
+            s.place(s.enemy, 0.5, 6.5, 90);
+            s.place(s.enemy2, 1.7, 6.5, 270);
+            s.assertSucceeded(s.ultimate(), "트로이의 멸망");
+            s.ticks(s.paramTicks("ult_windup") + s.paramTicks("ult_interval") * 2 + s.paramTicks("ult_delay") + 10);
+            int waves = (int) s.param("ult_waves");
+            double each = s.param("ult_damage") * waves;
+            for (TestPlayer enemy : List.of(s.enemy, s.enemy2)) {
+                assertEquals(each, magicDamage(s, enemy), EPSILON, enemy.getName() + ": one spear a wave, not two");
+                assertEquals(waves, s.hitsBy(s.owner, enemy).stream().filter(hit -> hit.cause() == DamageCause.MAGIC)
+                        .count(), enemy.getName() + ": a hit a wave");
+            }
+            s.ticks(40);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cassandraFallOfTroyShowsEverySealAndSpearOverManyEnemies() {
+        try (Scenario s = noGaugeGain(Scenario.builder("cassandra").enemyAbility("summoner")).start()) {
+            callWolves(s, new double[][] {{-6.5, 6.5}, {7.5, 6.5}});
+            s.place(s.enemy, 0.5, 9.5, 180);
+            s.place(s.enemy2, 0.5, -7.5, 0);
+            List<LivingEntity> doomed = new ArrayList<>(entities(s, Wolf.class));
+            doomed.add(s.enemy);
+            doomed.add(s.enemy2);
+            s.assertSucceeded(s.ultimate(), "트로이의 멸망");
+            int windup = s.paramTicks("ult_windup");
+            int interval = s.paramTicks("ult_interval");
+            int seal = s.paramTicks("ult_delay");
+            int elapsed = 0;
+            for (int wave = 0; wave < (int) s.param("ult_waves"); wave++) {
+                // Once the last wave's stars have shrunk away; once this wave's spears have landed.
+                int start = windup + wave * interval + 1;
+                for (int[] check : new int[][] {{start + 9, 0}, {start + seal + 2, 1}}) {
+                    while (elapsed < check[0]) {
+                        s.ticks(1);
+                        elapsed++;
+                        assertTrue(entities(s, Display.class).size() <= 24, "in budget");
+                    }
+                    Material part = check[1] == 0 ? Material.PURPLE_STAINED_GLASS : Material.CUT_COPPER;
+                    for (LivingEntity enemy : doomed) {
+                        Location feet = enemy.getLocation();
+                        assertTrue(blockDisplays(s, part).stream().anyMatch(d -> Math.hypot(d.getLocation().getX()
+                                        - feet.getX(), d.getLocation().getZ() - feet.getZ()) < 0.3),
+                                "wave " + (wave + 1) + ": " + (check[1] == 0 ? "a star in the seal" : "the spear")
+                                        + " of " + enemy.getName());
+                    }
+                }
+            }
+            s.ticks(60);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 염라대왕 yeomra
 
     @Test
@@ -710,6 +924,71 @@ class OmenNewAbilitiesTest {
                     }
                 }
             }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void yeomraAfterimagesFollowTheEffectScaleAndOnlyTheAimedEnemyShowsItsTrail() {
+        try (Scenario s = Scenario.builder("yeomra").configure(h -> h.settings().set("effects.particle-scale", 0.25))
+                .start()) {
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            s.place(s.enemy, 0.5, 4.5, 270);
+            int back = s.paramTicks("rewind_seconds");
+            for (int i = 0; i < back + 8; i++) {
+                step(s, s.enemy, 0.15, 0);
+            }
+            Location now = s.enemy.getLocation();
+            double pastX = now.getX() - 0.15 * back;
+            s.place(s.owner, 0.5, -0.5, 180);
+            s.owner.particles().clear();
+            s.ticks(4);
+            List<TestPlayer.SentParticle> head = s.owner.particles().stream()
+                    .filter(p -> p.particle() == org.bukkit.Particle.DUST)
+                    .filter(p -> Math.hypot(p.at().getX() - pastX, p.at().getZ() - now.getZ()) < 0.75)
+                    .filter(p -> p.at().getY() > FlatWorld.SURFACE + 1.45)
+                    .toList();
+            assertFalse(head.isEmpty(), "a faint head where it stood");
+            assertTrue(head.size() <= 3, "a quarter of the particles at a quarter scale: " + head.size());
+            assertTrue(s.owner.particles().stream().noneMatch(p -> p.at().getY() < FlatWorld.SURFACE + 0.15),
+                    "no trail of steps for an enemy not aimed at");
+            s.aimAt(s.owner, s.enemy);
+            s.owner.particles().clear();
+            s.ticks(4);
+            assertTrue(s.owner.particles().stream().anyMatch(p -> p.particle() == org.bukkit.Particle.DUST
+                    && p.at().getY() < FlatWorld.SURFACE + 0.15), "the aimed enemy's way back is dotted out");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void yeomraRewindPutsAnEnemyThatWasInTheAirDownOnTheGround() {
+        try (Scenario s = Scenario.ffa("yeomra")) {
+            s.place(s.enemy2, -12.5, -12.5, 0);
+            int back = s.paramTicks("rewind_seconds");
+            // Knocked high up two seconds ago, drifting east, then back on its feet and walking on.
+            double x = -1.5;
+            for (int i = 0; i < 8; i++) {
+                s.place(s.enemy, x, FlatWorld.SURFACE + 5, 6.5, 270, 0);
+                s.ticks(1);
+                x += 0.2;
+            }
+            s.place(s.enemy, x, 6.5, 270);
+            for (int i = 0; i < back - 4; i++) {
+                step(s, s.enemy, 0.2, 0);
+            }
+            double from = s.enemy.getLocation().getX();
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "업경대");
+            s.ticks(2);
+            for (BlockDisplay part : entities(s, BlockDisplay.class)) {
+                assertEquals(FlatWorld.SURFACE, part.getLocation().getY(), 1.0E-6, "the mirror stands on the ground");
+            }
+            s.ticks(s.paramTicks("mirror_windup") + s.paramTicks("rewind_time"));
+            assertOnSurface(s.enemy, "put down under where it was, not left hanging in the air");
+            assertTrue(s.enemy.getLocation().getX() < from - 6, "back where it was: " + s.enemy.getLocation());
+            s.ticks(30);
+            assertEquals(s.param("mirror_damage"), s.damageTaken(s.enemy), EPSILON, "judged, and no fall after it");
             s.finishClean();
         }
     }
@@ -841,6 +1120,32 @@ class OmenNewAbilitiesTest {
     }
 
     @Test
+    void yeomraEveryReaperRisesWithItsBodyEvenRightAfterTheMirror() {
+        try (Scenario s = noGaugeGain(Scenario.builder("yeomra").enemyAbility("summoner")).start()) {
+            callWolves(s, new double[][] {{-5.5, 12.5}, {6.5, 12.5}});
+            s.place(s.enemy, 0.5, 12.5, 180);
+            s.place(s.enemy2, 40.5, 40.5, 180);
+            s.ticks(s.paramTicks("rewind_seconds") + 5);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "업경대");
+            s.ticks(2);
+            assertFalse(blockDisplays(s, Material.LIGHT_BLUE_STAINED_GLASS).isEmpty(), "the mirror stands");
+            s.assertSucceeded(s.ultimate(), "저승사자 출두");
+            for (int i = 0; i < 25; i++) {
+                s.ticks(1);
+                assertTrue(entities(s, Display.class).size() <= 24, "in budget");
+            }
+            assertEquals(3, blockDisplays(s, Material.WHITE_CONCRETE).size(), "three reapers, every one with a face");
+            assertEquals(6, blockDisplays(s, Material.BLACK_WOOL).size(), "and its robe");
+            for (BlockDisplay robe : blockDisplays(s, Material.BLACK_WOOL)) {
+                assertTrue(robe.getViewRange() > 0 && robe.isGlowing(), "seen through walls");
+            }
+            s.ticks(s.paramTicks("reaper_duration") + 30);
+            s.finishClean();
+        }
+    }
+
+    @Test
     void yeomraReaperCanBeOutwalkedButNeverShakenOff() {
         try (Scenario s = noGaugeGain(Scenario.builder("yeomra")).param("reaper_count", 1).start()) {
             s.place(s.enemy2, -20.5, -20.5, 0);
@@ -957,6 +1262,32 @@ class OmenNewAbilitiesTest {
             s.ticks(s.paramTicks("keen_mark"));
             assertTrue(itemDisplays(s, Material.SOUL_LANTERN).isEmpty(), "the lantern goes out");
             assertEquals(0, s.damageTaken(s.ally()), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bansheeNeverKeensOverAnEnemyHiddenFromHer() {
+        try (Scenario s = noGaugeGain(Scenario.builder("banshee")).start()) {
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            int heard = s.owner.getHeardSounds().size();
+            s.melee(s.enemy2, s.enemy, 4);
+            s.ticks(2);
+            s.melee(s.enemy2, s.enemy, 4);
+            s.ticks(3);
+            assertEquals(0, gauge(s, s.owner), EPSILON, "the gauge does not tell her someone is there");
+            assertTrue(itemDisplays(s, Material.SOUL_LANTERN).isEmpty());
+            List<String> wails = s.owner.getHeardSounds().subList(heard, s.owner.getHeardSounds().size()).stream()
+                    .map(sound -> sound.getSound())
+                    .filter(name -> name.contains("allay") || name.contains("vex") || name.contains("soul_escape"))
+                    .toList();
+            assertEquals(List.of(), wails, "no wail at its head");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.melee(s.enemy2, s.enemy, 4);
+            s.ticks(2);
+            s.melee(s.enemy2, s.enemy, 4);
+            s.ticks(3);
+            assertEquals(s.param("keen_gauge"), gauge(s, s.owner), EPSILON, "seen again, heard again");
             s.finishClean();
         }
     }
@@ -1179,11 +1510,53 @@ class OmenNewAbilitiesTest {
             assertTrue(Scenario.plain(nameLabels(s).getFirst().text()).contains("Blue"), "the newest name stays");
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.active(), "이름 적기");
-            s.ticks(2);
-            assertTrue(Scenario.plain(curseLabels(s).getFirst().text()).contains("B"),
+            s.ticks(12);
+            assertTrue(Scenario.plain(curseLabels(s).getFirst().text()).contains("Blue"),
                     "the aimed name is forgotten, so the known one is written");
-            s.ticks(s.paramTicks("write_countdown"));
+            s.ticks(s.paramTicks("write_countdown") - 10);
+            assertEquals(s.param("write_damage"), magicDamage(s, s.enemy2), EPSILON, "the known one is cursed");
             assertEquals(0, s.damageTaken(s.enemy) - 1, EPSILON, "the forgotten enemy is safe");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cursenoteKeepsTheNameOfTheDuelGoingOnAndForgetsTheOneLeastLatelyFought() {
+        try (Scenario s = Scenario.builder("cursenote").enemyAbility("summoner").param("name_max", 2).start()) {
+            Wolf wolf = callWolves(s, new double[][] {{-3.5, 5.5}, {4.5, 5.5}}).getFirst();
+            s.melee(s.owner, s.enemy, 1);
+            s.ticks(12);
+            s.melee(s.owner, s.enemy2, 1);
+            s.ticks(12);
+            // The duel with Red goes on: Blue is the name least lately fought now.
+            s.melee(s.enemy, s.owner, 1);
+            s.ticks(12);
+            s.melee(s.owner, wolf, 1);
+            s.ticks(2);
+            List<String> names = nameLabels(s).stream().map(label -> Scenario.plain(label.text())).toList();
+            assertEquals(2, names.size(), "two names at most: " + names);
+            assertTrue(names.stream().anyMatch(name -> name.contains("Red")),
+                    "the duel partner is remembered: " + names);
+            assertTrue(names.stream().noneMatch(name -> name.contains("Blue")), "Blue is forgotten: " + names);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void cursenoteUnderworldSightNeedsSomeoneToSee() {
+        try (Scenario s = noGaugeGain(Scenario.builder("cursenote")).start()) {
+            s.place(s.enemy, 0.5, 45.5, 180);
+            s.place(s.enemy2, 45.5, 0.5, 90);
+            s.match.setGauge(s.owner, 100);
+            assertFalse(s.match.useUltimate(s.owner).succeeded(), "nobody within sight");
+            assertEquals(100, gauge(s, s.owner), EPSILON, "the gauge is kept");
+            assertTrue(blockDisplays(s, Material.GRAY_STAINED_GLASS).isEmpty(), "no ink ghost");
+            s.ticks(s.paramTicks("sight_duration") + 2);
+            s.place(s.enemy, 0.5, 4.5, 180);
+            s.melee(s.owner, s.enemy, 1);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "the ink never ran dry");
+            s.ticks(s.paramTicks("write_countdown") + 5);
             s.finishClean();
         }
     }
@@ -1516,7 +1889,9 @@ class OmenNewAbilitiesTest {
             // The poor one pays in health.
             run(s, s.enemy2, 5.5, 14.5, -4.5, 14.5, 0.4);
             s.ticks(2);
-            assertTrue(magicDamage(s, s.enemy2) >= s.param("fare_damage"), "no gauge, so health");
+            assertEquals(1, s.hitsBy(s.owner, s.enemy2).stream()
+                    .filter(hit -> Math.abs(hit.damage() - s.param("fare_damage")) < EPSILON).count(),
+                    "no gauge, so the fare is health: " + s.hitsBy(s.owner, s.enemy2));
             assertEquals(10, gauge(s, s.enemy2), EPSILON);
             // In and out on the same bank costs nothing.
             double before = gauge(s, s.enemy);
@@ -1529,6 +1904,108 @@ class OmenNewAbilitiesTest {
             s.ticks(s.paramTicks("styx_duration"));
             s.ticks(12);
             assertNoDisplays(s, "the Styx flowed away");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void charonFareFromAPayerHiddenFromHimGivesNothingAway() {
+        try (Scenario s = noGaugeGain(Scenario.builder("charon")).start()) {
+            s.place(s.enemy, 5.5, 10.5, 90);
+            s.place(s.enemy2, 5.5, 20.5, 90);
+            s.owner.setSneaking(true);
+            s.assertSucceeded(s.ultimate(), "뱃삯을 내라");
+            s.ticks(3);
+            s.match.setGauge(s.enemy, 50);
+            s.owner.hidePlayer(s.ctx().plugin(), s.enemy);
+            actionBars(s.owner);
+            int texts = entities(s, TextDisplay.class).size();
+            run(s, s.enemy, 5.5, 10.5, -4.5, 10.5, 0.4);
+            s.ticks(2);
+            assertEquals(50 - s.param("fare_gauge"), gauge(s, s.enemy), EPSILON, "the fare is still due");
+            assertTrue(actionBars(s.owner).stream().noneMatch(bar -> bar.contains(s.enemy.getName())),
+                    "Charon is not told who crossed unseen");
+            assertEquals(texts, entities(s, TextDisplay.class).size(), "no fare word over the unseen payer");
+            assertTrue(itemDisplays(s, Material.GOLD_NUGGET).isEmpty(), "no coin flying from it");
+            s.owner.showPlayer(s.ctx().plugin(), s.enemy);
+            s.owner.setSneaking(false);
+            s.ticks(s.paramTicks("styx_duration") + 12);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void charonBoatStopsBeforeTheDropAtTheEndOfTheStyx() {
+        for (int ping : new int[] {0, 100}) {
+            try (Scenario s = noGaugeGain(Scenario.builder("charon")).start()) {
+                s.place(s.enemy, 8.5, 4.5, 180);
+                s.place(s.enemy2, -8.5, 4.5, 180);
+                s.owner.setPing(ping);
+                // A deep pit across the way: the Styx ends on its brink (z 9.5), the drop starts at z 10.
+                pit(s, -6, 6, 10, 13, Material.AIR);
+                s.assertSucceeded(s.ultimate(), "뱃삯을 내라");
+                s.ticks(50);
+                Location at = s.owner.getLocation();
+                assertOnSurface(s.owner, "ping " + ping + ": the boat stopped on the brink");
+                assertTrue(at.getZ() - 0.3 < 10, "ping " + ping + ": never out over the drop: " + at);
+                assertTrue(at.getZ() > 6, "ping " + ping + ": it rowed down the Styx: " + at);
+                double speed = s.param("boat_speed") / 20;
+                long lag = (long) Math.ceil(ping / 50.0);
+                assertTrue(at.getZ() <= 9.5 - 2 * speed * lag + 1.0E-6,
+                        "ping " + ping + ": short of the end by what his client may be ahead: " + at);
+                assertEquals(0, s.damageTaken(s.owner), EPSILON, "ping " + ping + ": no fall");
+                s.ticks(s.paramTicks("styx_duration"));
+                pit(s, -6, 6, 10, 13, Material.STONE);
+                s.finishClean();
+            }
+        }
+    }
+
+    @Test
+    void charonBoatNeverRowsOffABankIntoAPit() {
+        try (Scenario s = noGaugeGain(Scenario.builder("charon")).start()) {
+            s.place(s.enemy, -8.5, 4.5, 180);
+            s.place(s.enemy2, -8.5, 8.5, 180);
+            // A pit right beside the Styx (its east bank lies at x 3.0, the pit starts at x 3).
+            pit(s, 3, 7, 0, 12, Material.AIR);
+            s.owner.setSneaking(true);
+            s.assertSucceeded(s.ultimate(), "뱃삯을 내라");
+            s.ticks(2);
+            // Charon turns to the east bank and rows across.
+            s.place(s.owner, 0.5, 5.5, -90);
+            s.owner.setSneaking(false);
+            s.ticks(30);
+            Location at = s.owner.getLocation();
+            assertOnSurface(s.owner, "the boat stopped at the bank");
+            assertTrue(at.getX() - 0.3 < 3, "never out over the pit: " + at);
+            assertTrue(at.getX() > 1.5, "it rowed across: " + at);
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.ticks(s.paramTicks("styx_duration"));
+            pit(s, 3, 7, 0, 12, Material.STONE);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void charonStyxLaunchesItsBoatEvenNextToAFlowingChannel() {
+        try (Scenario s = noGaugeGain(Scenario.builder("charon")).start()) {
+            s.place(s.enemy, 8.5, 4.5, 180);
+            s.place(s.enemy2, -8.5, 4.5, 180);
+            s.assertSucceeded(s.active(), "스틱스 물길");
+            s.ticks(3);
+            assertFalse(blockDisplays(s, Material.CYAN_STAINED_GLASS).isEmpty(), "the channel flows");
+            s.owner.setSneaking(true);
+            s.assertSucceeded(s.ultimate(), "뱃삯을 내라");
+            s.ticks(3);
+            assertEquals(3, blockDisplays(s, Material.DARK_OAK_PLANKS).size(), "the boat is there");
+            assertEquals(1, itemDisplays(s, Material.SOUL_LANTERN).size(), "with its lantern");
+            assertTrue(entities(s, Display.class).size() <= 24, "in budget");
+            int styxSheets = (int) blockDisplays(s, Material.CYAN_STAINED_GLASS).stream()
+                    .filter(sheet -> sheet.getTransformation().getScale().x() > s.param("channel_width") + 0.5)
+                    .count();
+            assertTrue(styxSheets > 0, "and the Styx's water");
+            s.owner.setSneaking(false);
+            s.ticks(s.paramTicks("styx_duration") + 12);
             s.finishClean();
         }
     }

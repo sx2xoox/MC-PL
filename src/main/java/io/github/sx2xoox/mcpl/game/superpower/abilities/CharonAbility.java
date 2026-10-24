@@ -83,7 +83,7 @@ public final class CharonAbility extends Ability {
             .ultimate("뱃삯을 내라",
                     "바라보는 방향으로 폭 {styx_width}·길이 {styx_length}블록의 큰 스틱스강이 {styx_duration}초간 전장을 "
                             + "가르고 내 배가 나타납니다. 강 위에서는 웅크리지 않는 한 바라보는 방향으로 초속 "
-                            + "{boat_speed}블록으로 노를 저어 나아갑니다. 강을 건너는 적(한쪽 둑으로 들어가 반대쪽 둑으로 "
+                            + "{boat_speed}블록으로 노를 저어 나아가고, 강 끝이나 둑, 낭떠러지 앞에서는 멈춥니다. 강을 건너는 적(한쪽 둑으로 들어가 반대쪽 둑으로 "
                             + "나감)은 뱃삯으로 궁극기 게이지 {fare_gauge}%를 빼앗기고(모자라면 {fare_damage} 피해), 강 안의 "
                             + "적은 초속 {styx_current}블록으로 하류로 끌려가며 {styx_period}초마다 {styx_damage} 피해를 "
                             + "입습니다(적마다 최대 {styx_max_hits}번).")
@@ -161,6 +161,18 @@ public final class CharonAbility extends Ability {
 
     // the boat
     private static final long COIN_FLIGHT = 9;
+    /** Sheets of the Styx are this long (blocks): square tiles of its width, few displays. */
+    private static final int STYX_STRETCH = 5;
+    private static final int CHANNEL_STRETCH = 2;
+    /** The boat rows up a step at most this high (a slab) and down at most this drop (one block). */
+    private static final double ROW_STEP_UP = 0.6;
+    private static final double ROW_STEP_DOWN = 1.25;
+    /** How far past the next push the boat looks for the river's end, its banks and edges (the bow, half a body). */
+    private static final double BOW_MARGIN = 0.35;
+    private static final double PROBE_STEP = 0.25;
+    /** Charon is kept from fall damage this long after the boat last pushed him (plus his ping). */
+    private static final long ROW_FALL_GUARD = 20;
+    private static final long MAX_LAG_TICKS = 8;
 
     /** Rivers flowing right now (the active's and the ultimate's), for the passive guard. */
     private final List<River> rivers = new ArrayList<>();
@@ -356,6 +368,13 @@ public final class CharonAbility extends Ability {
             return new double[] {offset.dot(direction), offset.dot(side)};
         }
 
+        /** True if the point {@code at} lies on the water (between the river's two ends and its two banks). */
+        boolean covers(Location at) {
+            Vector offset = at.toVector().subtract(start.toVector());
+            double along = offset.dot(direction);
+            return along >= 0 && along <= length && Math.abs(offset.dot(side)) <= width / 2;
+        }
+
         boolean contains(LivingEntity entity) {
             if (isOver() || !entity.getWorld().equals(world)) {
                 return false;
@@ -370,7 +389,7 @@ public final class CharonAbility extends Ability {
 
         /** The translucent teal sheets of water, one per stretch of level ground, unrolling from Charon's feet. */
         private void layWater() {
-            int stretch = styx ? 3 : 2;
+            int stretch = styx ? STYX_STRETCH : CHANNEL_STRETCH;
             float yaw = yawOf(direction);
             // Every sample owns the block of river around it; samples on level ground share one sheet, and no sheet
             // ever spans a step (it would float over the lower side).
@@ -678,15 +697,16 @@ public final class CharonAbility extends Ability {
         }
         Location body = Fx.body(payer);
         if (!isHidden(owner, payer)) {
+            // A payer hidden from Charon gives nothing away: no coin, no word, no clink where it stands, no name.
             flipCoin(owner, body);
             popWord(owner, payer.getLocation().add(0, payer.getHeight() + 0.6, 0),
                     "<" + COIN_TAG + "><b>뱃삯</b> " + paid + "</" + COIN_TAG + ">");
             Vfx.cloud(ctx(), body, Particle.WAX_OFF, 8, 0.3, 0.05, null, false);
+            Fx.sound(body, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 0.6f);
+            Fx.sound(body, Sound.ITEM_ARMOR_EQUIP_GOLD, 1.0f, 1.4f);
+            owner.sendActionBar(Text.mm("<" + COIN_TAG + ">⛀ 뱃삯</" + COIN_TAG + "> <white><payer></white> <gray>"
+                    + paid + "</gray>", Placeholder.component("payer", payer.name())));
         }
-        Fx.sound(body, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 0.6f);
-        Fx.sound(body, Sound.ITEM_ARMOR_EQUIP_GOLD, 1.0f, 1.4f);
-        owner.sendActionBar(Text.mm("<" + COIN_TAG + ">⛀ 뱃삯</" + COIN_TAG + "> <white><payer></white> <gray>" + paid
-                + "</gray>", Placeholder.component("payer", payer.name())));
         if (payer instanceof Player player) {
             player.sendActionBar(Text.mm("<" + COIN_TAG + ">⛀ 스틱스를 건넌 뱃삯</" + COIN_TAG + "> <gray>" + paid
                     + "</gray>"));
@@ -739,8 +759,10 @@ public final class CharonAbility extends Ability {
         Boat boat = new Boat(owner, styx);
         styx.attach(boat);
         rivers.add(styx);
-        styx.start();
+        // The boat is the Styx's signature: its displays are taken before the water's sheets (which may run short of
+        // the budget on broken ground or next to a channel still flowing; the river's particles still show it).
         boat.launch();
+        styx.start();
         Location feet = owner.getLocation();
         Vfx.dot(feet.clone().add(0, 1, 0), Particle.FLASH, SOUL_BLUE, true);
         Vfx.shockwave(ctx(), owner, feet.clone().add(0, 0.1, 0), 0.5, 5, 8, Particle.DUST_COLOR_TRANSITION, SOUL_FADE,
@@ -761,7 +783,9 @@ public final class CharonAbility extends Ability {
     /**
      * Charon's boat on the Styx: a dark hull under his feet that turns where he looks. On the river (and not sneaking)
      * he rows forward at the boat's speed; off it, the boat waits by the bank. Rowing sets a fresh velocity each tick (a
-     * player's server-side velocity is stale and never read) and he never takes fall damage from it.
+     * player's server-side velocity is stale and never read). Before every push the bow looks ahead (as far as his
+     * client may already be, by his ping, plus the push): at the river's end, its banks, a wall, a drop or a hazard the
+     * boat stops dead, so it never carries him off an edge, and he takes no fall damage while it carries him.
      */
     private final class Boat {
 
@@ -769,6 +793,10 @@ public final class CharonAbility extends Ability {
         private final River river;
         private final List<Display> parts = new ArrayList<>();
         private boolean rowing;
+        /** The boat pushed Charon on the last tick it could: a halt must take that speed away. */
+        private boolean pushing;
+        /** Fall damage is kept off Charon until this tick (the boat carried him until shortly before). */
+        private long guardUntil = Long.MIN_VALUE / 2;
         private Location at;
 
         Boat(Player owner, River river) {
@@ -807,17 +835,40 @@ public final class CharonAbility extends Ability {
 
         /** One tick on the water: rows Charon along where he looks and keeps the boat under him. */
         void row(long tick) {
+            long now = ctx().currentTick();
             boolean aboard = river.contains(owner);
-            rowing = aboard && !owner.isSneaking();
-            if (aboard) {
+            boolean oars = aboard && !owner.isSneaking();
+            double speed = Math.max(0, params().num("boat_speed")) / 20.0;
+            Vector heading = Motion.horizontalFacing(owner.getLocation());
+            boolean clear = oars && speed > 0 && clearAhead(heading, speed);
+            rowing = clear;
+            if (aboard || now <= guardUntil) {
                 owner.setFallDistance(0);
+            }
+            if (!aboard) {
+                pushing = false;
+            } else if (oars && !clear && pushing) {
+                // The bow reached the river's end, a bank, a wall or an edge: the boat stops dead (his own steps still
+                // take him on, the ability's speed does not).
+                pushing = false;
+                owner.setVelocity(new Vector(0, REST_FALL, 0));
+                Vfx.cloud(ctx(), owner.getLocation().add(heading.clone().multiply(0.8)).add(0, 0.2, 0),
+                        Particle.SPLASH, 8, 0.4, 0.05, null, false);
+                Fx.sound(owner.getLocation(), Sound.ENTITY_BOAT_PADDLE_LAND, 0.8f, 0.7f + Fx.jitter(0.05f));
+            } else if (!oars && pushing) {
+                // Sneaking: he puts up the oars and the boat stops.
+                pushing = false;
+                owner.setVelocity(new Vector(0, REST_FALL, 0));
+            }
+            if (aboard) {
                 at = Displays.unrotated(owner.getLocation());
                 if (rowing) {
-                    Vector look = Motion.horizontalFacing(owner.getLocation());
-                    double speed = Math.max(0, params().num("boat_speed")) / 20.0;
+                    Vector look = heading.clone();
                     boolean grounded = Motion.isGrounded(owner) || owner.isInWater();
-                    if (grounded && speed > 0) {
-                        owner.setVelocity(Motion.clamp(look.multiply(speed).setY(REST_FALL), MAX_SPEED));
+                    if (grounded) {
+                        owner.setVelocity(Motion.clamp(look.clone().multiply(speed).setY(REST_FALL), MAX_SPEED));
+                        pushing = true;
+                        guardUntil = now + ROW_FALL_GUARD + lagTicks(owner);
                     }
                     if (tick % 8 == 0) {
                         Fx.sound(at, Sound.ENTITY_BOAT_PADDLE_WATER, 1.0f, 0.8f + Fx.jitter(0.1f));
@@ -849,6 +900,34 @@ public final class CharonAbility extends Ability {
                 Vector front = Motion.horizontalFacing(owner.getLocation()).multiply(1.3);
                 Location lamp = at.clone().add(front).add(0, 1.4, 0);
                 Vfx.dot(lamp, Particle.SOUL_FIRE_FLAME, null, false);
+            }
+        }
+
+        /**
+         * True if the boat may push Charon on along {@code heading}: every point from his feet as far as his client can
+         * be ahead (one push per tick of ping, twice over for the stop to reach it, and this tick's push) plus the bow
+         * lies on the river's water, over walkable ground at most a slab up or a block down, clear of hazards and
+         * inside the arena.
+         */
+        private boolean clearAhead(Vector heading, double speed) {
+            Location feet = owner.getLocation();
+            World world = feet.getWorld();
+            double reach = speed * (1 + 2 * lagTicks(owner)) + BOW_MARGIN;
+            for (double d = PROBE_STEP; ; d += PROBE_STEP) {
+                double distance = Math.min(d, reach);
+                Location probe = feet.clone().add(heading.clone().multiply(distance));
+                if (!river.covers(probe) || !ctx().isInsideArena(probe)) {
+                    return false;
+                }
+                Location ground = groundUnder(world, probe, feet.getY());
+                if (ground == null || ground.getY() > feet.getY() + ROW_STEP_UP
+                        || ground.getY() < feet.getY() - ROW_STEP_DOWN
+                        || !Spots.hasGroundBelow(world, ground.clone().add(0, 0.5, 0))) {
+                    return false;
+                }
+                if (distance >= reach) {
+                    return true;
+                }
             }
         }
 
@@ -909,6 +988,11 @@ public final class CharonAbility extends Ability {
         Location ground = top.clone();
         ground.setY(hit.getHitPosition().getY());
         return ground;
+    }
+
+    /** Ticks {@code player}'s client is ahead of what the server sees of it (its ping), at most 8. */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / 50.0));
     }
 
     /** The horizontal unit vector a Minecraft yaw faces (0 is +Z, 90 is -X). */

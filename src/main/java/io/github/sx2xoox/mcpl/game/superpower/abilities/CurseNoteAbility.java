@@ -77,8 +77,8 @@ public final class CurseNoteAbility extends Ability {
             .color(TextColor.color(0x9E0F1F))
             .difficulty(2)
             .passive("통성명",
-                    "나와 피해를 주고받은 적의 이름을 {name_duration}초간 압니다(최대 {name_max}명, 가장 오래된 이름부터 "
-                            + "잊습니다). 이름을 아는 적의 머리 위에는 나에게만 보이는 붉은 이름이 뜹니다. 이름을 적어 둔 "
+                    "나와 피해를 주고받은 적의 이름을 {name_duration}초간 압니다(최대 {name_max}명, 가장 오래 주고받지 "
+                            + "않은 이름부터 잊습니다). 이름을 아는 적의 머리 위에는 나에게만 보이는 붉은 이름이 뜹니다. 이름을 적어 둔 "
                             + "적이 {name_duration}초 안에 쓰러지면 잉크가 돌아와 이름 적기 쿨타임이 바로 돌아옵니다.")
             .active("이름 적기",
                     "이름을 아는 적 가운데 조준한 적(없으면 가장 가까운 적, {write_range}블록 이내)의 이름을 빨간 "
@@ -146,7 +146,7 @@ public final class CurseNoteAbility extends Ability {
     private static final int MAX_NAME_LENGTH = 16;
     private static final float GHOST_HEAD_Y = 2.05f;
 
-    /** Names the owner knows, oldest first. */
+    /** Names the owner knows, the one least lately exchanged blows with first. */
     private final Map<UUID, Known> known = new LinkedHashMap<>();
     /** Countdowns running, by entity id. */
     private final Map<UUID, Curse> curses = new HashMap<>();
@@ -212,7 +212,7 @@ public final class CurseNoteAbility extends Ability {
     @Override
     public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
         if (ctx().isEnemy(player(), victim)) {
-            learn(player(), victim);
+            learn(player(), victim, true);
         }
     }
 
@@ -228,23 +228,27 @@ public final class CurseNoteAbility extends Ability {
         if (source == null || !ctx().isEnemy(owner, source)) {
             return;
         }
-        learn(owner, source);
+        learn(owner, source, true);
         Curse curse = curses.get(source.getUniqueId());
         if (curse != null && event.getFinalDamage() > 0) {
             curse.tear();
         }
     }
 
-    /** {@code enemy}'s name is known for a while (the oldest name is forgotten beyond the limit). */
-    private void learn(Player owner, LivingEntity enemy) {
+    /**
+     * {@code enemy}'s name is known for a while. Every {@code exchange} of blows moves it to the back of the line, so
+     * beyond the limit the name least lately exchanged blows with is forgotten (never the one of the duel going on);
+     * the underworld sight only adds the names it did not know yet.
+     */
+    private void learn(Player owner, LivingEntity enemy, boolean exchange) {
         long now = ctx().currentTick();
         long duration = Math.max(1, params().ticks("name_duration"));
-        Known name = known.get(enemy.getUniqueId());
+        Known name = exchange ? known.remove(enemy.getUniqueId()) : known.get(enemy.getUniqueId());
         boolean fresh = name == null;
         if (fresh) {
             name = new Known(enemy);
-            known.put(enemy.getUniqueId(), name);
         }
+        known.put(enemy.getUniqueId(), name);
         name.until = Math.max(name.until, now + duration);
         if (!inSight()) {
             trimNames();
@@ -260,7 +264,7 @@ public final class CurseNoteAbility extends Ability {
         }
     }
 
-    /** Forgets the oldest names beyond the limit (a name being written is kept). */
+    /** Forgets the names least lately exchanged blows with beyond the limit (a name being written is kept). */
     private void trimNames() {
         int max = Math.max(1, params().integer("name_max"));
         Iterator<Known> names = known.values().iterator();
@@ -282,7 +286,7 @@ public final class CurseNoteAbility extends Ability {
         if (sight && tick % 10 == 0) {
             for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), params().num("sight_radius"))) {
                 if (!isHidden(owner, enemy)) {
-                    learn(owner, enemy);
+                    learn(owner, enemy, false);
                 }
             }
         }
@@ -757,6 +761,11 @@ public final class CurseNoteAbility extends Ability {
         Player owner = player();
         long now = ctx().currentTick();
         long duration = Math.max(1, params().ticks("sight_duration"));
+        if (ctx().enemiesNear(owner, owner.getLocation(), params().num("sight_radius")).stream()
+                .allMatch(enemy -> isHidden(owner, enemy))) {
+            // Nobody to see: the gauge is kept and the ink does not run dry for nothing.
+            return ActivationResult.fail("저승의 시력으로 볼 적이 없습니다");
+        }
         sightUntil = now + duration;
         dryUntil = Long.MIN_VALUE / 2;
         // The ink wells up: the notebook is ready at once.
@@ -764,7 +773,7 @@ public final class CurseNoteAbility extends Ability {
         int seen = 0;
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), params().num("sight_radius"))) {
             if (!isHidden(owner, enemy)) {
-                learn(owner, enemy);
+                learn(owner, enemy, false);
                 seen++;
             }
         }
