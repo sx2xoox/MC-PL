@@ -62,24 +62,20 @@ public final class BoredHeroAbility extends Ability {
             .color(TextColor.color(0xA8D8F0))
             .difficulty(1)
             .passive("관심 없음",
-                    "적마다 흥미를 따로 셉니다. 나에게 합쳐 {interest_threshold} 피해를 주기 전까지 그 적에게는 관심이 "
-                            + "없어, 그 적에게 받는 피해가 {bored_guard}% 줄고 주는 피해도 {bored_weak}% 줄어듭니다. 그보다 "
-                            + "많이 때린 적에게는 흥미가 생겨 주는 피해가 {interested_bonus}% 늘어납니다. {interest_reset}초간 "
-                            + "서로 피해를 주고받지 않으면 다시 관심이 없어집니다.")
+                    "적마다 따로, 나에게 {interest_threshold} 피해를 주기 전까지는 관심이 없어 그 적에게 받는 피해가 "
+                            + "{bored_guard}%, 주는 피해가 {bored_weak}% 줄어듭니다. 그 뒤로는 흥미가 생겨 주는 피해가 "
+                            + "{interested_bonus}% 늘고, {interest_reset}초간 서로 피해가 없으면 다시 식습니다.")
             .active("가볍게 딱밤",
-                    "앞의 적({flick_range}블록 이내) 이마에 딱밤을 놓아 {flick_damage} 피해를 줍니다. {flick_delay}초 뒤 "
-                            + "늦게 도착한 힘이 그 적을 옆으로 밀지 않고 곧게 약 {flick_height}블록 쏘아 올리며, 떨어지며 받는 "
-                            + "낙하 피해(최대 {flick_fall_max}, 흥미 배율 없음)도 나의 공격으로 기록됩니다. 흥미가 생긴 적은 쏘아 올리는 "
-                            + "대신 땅에 처박혀 {slam_damage} 피해를 입고 {slam_stun}초간 기절합니다(이동·점프 불가). 앞에 "
-                            + "적이 없으면 쿨타임은 돌지 않습니다.",
+                    "앞의 적({flick_range}블록 이내)에게 딱밤을 놓아 {flick_damage} 피해를 주고, {flick_delay}초 뒤 약 "
+                            + "{flick_height}블록 곧게 쏘아 올립니다(떨어지며 받는 낙하 피해 최대 {flick_fall_max}도 "
+                            + "내 공격). 흥미가 생긴 적은 대신 땅에 처박혀 {slam_damage} 피해를 입고 {slam_stun}초간 "
+                            + "기절합니다. 앞에 적이 없으면 쿨타임이 돌지 않습니다.",
                     8)
             .ultimate("이번엔 좀 세게",
-                    "{hard_windup}초간 소매를 걷어붙이고 처음으로 눈빛이 달라집니다(그동안 밀려나지 않음). 이어 앞의 첫 "
-                            + "적({hard_range}블록 이내) 하나에게만 한 방을 날려, 그 적의 지금 체력의 {hard_share}% + "
-                            + "{hard_bonus} 피해(최소 {hard_min}, 최대 {hard_max})를 주고 멀리 날려 버립니다. 떨어지며 받는 "
-                            + "낙하 피해(최대 {flick_fall_max})도 나의 공격으로 기록됩니다(한 방과 낙하 피해에는 흥미 배율이 "
-                            + "적용되지 않음). 앞에 아무도 없으면 \"…귀찮네\" 하며 궁극기 게이지 {hard_refund}%를 "
-                            + "돌려받습니다.")
+                    "{hard_windup}초간 소매를 걷어붙인 뒤(그동안 밀려나지 않음) 앞의 첫 적({hard_range}블록 이내)에게 "
+                            + "한 방을 날려 지금 체력의 {hard_share}% + {hard_bonus} 피해(최소 {hard_min}, 최대 "
+                            + "{hard_max})를 주고 멀리 날려 버립니다(낙하 피해 최대 {flick_fall_max}도 내 공격). 앞에 "
+                            + "아무도 없으면 궁극기 게이지 {hard_refund}%를 돌려받습니다.")
             .param("interest_threshold", 6)
             .param("bored_guard", 20)
             .param("bored_weak", 15)

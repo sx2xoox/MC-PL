@@ -104,21 +104,20 @@ public final class OdysseusAbility extends Ability {
             .color(TextColor.color(0xB07A3B))
             .difficulty(2)
             .passive("나는 '아무도'다",
-                    "내 이름표와 킬 피드·공지(처치·탈락·궁극기 알림)에 이름 대신 '아무도'가 나옵니다(\"처치자 아무도\"). 위치를 "
-                            + "드러내는 발광 효과에 걸리지 않습니다. 외눈박이 거인을 쓰러뜨린 꾀로, 나보다 {giant_ratio}배 이상 큰 "
-                            + "적에게 주는 피해가 {giant_bonus}% 늘어납니다.")
+                    "이름표와 킬 피드·공지에 내 이름 대신 '아무도'가 나오고, 위치를 드러내는 발광 효과에 걸리지 "
+                            + "않습니다. 나보다 {giant_ratio}배 이상 큰 적에게 주는 피해가 {giant_bonus}% 늘어납니다.")
             .active("외눈박이의 말뚝",
                     "달군 말뚝을 앞으로 찔러({stake_range}블록, 좁게) 처음 닿은 적에게 {stake_damage} 피해를 주고 "
                             + "{stake_blind}초간 눈을 멀게 하며, {vanish_duration}초간 그 적에게만 내가 보이지 않습니다(다른 적에게는 "
                             + "보입니다). 그 적을 공격하면 일찍 드러납니다. 빗나가면 쿨타임이 {miss_refund}% 돌아옵니다.",
                     9)
             .ultimate("트로이 목마",
-                    "조준한 곳({horse_range}블록 이내)에 바퀴 달린 거대한 선물 목마를 세웁니다. 나와 반경 {board_radius}블록 "
-                            + "안에서 웅크리고 있던 아군이 곧바로 올라타 숨고, 처음 {board_window}초 동안은 목마에 붙어 웅크린 아군도 "
-                            + "탈 수 있습니다(탄 아군은 다시 웅크리면 혼자 내립니다). 숨은 사람은 보이지 않고 피해를 받지 "
-                            + "않습니다. 적이 목마에 닿거나 무엇으로든 맞히면, 내가 웅크리면, {horse_duration}초가 지나면 문이 열려 모두 튀어나오며 반경 {burst_radius}블록의 적에게 "
-                            + "{burst_damage} 피해를 주고 띄웁니다. 튀어나온 사람은 {charge_duration}초간 주는 피해가 "
-                            + "{charge_damage}%, 이동 속도가 {charge_speed}% 늘어납니다.")
+                    "조준한 곳({horse_range}블록 이내)에 거대한 목마를 세우고, 나와 {board_radius}블록 안에서 웅크린 "
+                            + "아군이 올라타 숨습니다(처음 {board_window}초는 목마 곁에서 웅크려도 탐). 숨은 사람은 "
+                            + "보이지 않고 피해를 받지 않습니다. 적이 목마를 건드리거나, 내가 웅크리거나, "
+                            + "{horse_duration}초가 지나면 모두 튀어나와 반경 {burst_radius}블록의 적에게 "
+                            + "{burst_damage} 피해를 주고 띄우며, {charge_duration}초간 주는 피해 +{charge_damage}%, "
+                            + "이동 속도 +{charge_speed}%를 얻습니다.")
             .param("giant_ratio", 1.15)
             .param("giant_bonus", 25)
             .param("stake_range", 4.5)

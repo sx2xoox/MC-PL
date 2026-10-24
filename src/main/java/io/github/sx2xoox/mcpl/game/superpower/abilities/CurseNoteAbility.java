@@ -77,16 +77,13 @@ public final class CurseNoteAbility extends Ability {
             .color(TextColor.color(0x9E0F1F))
             .difficulty(2)
             .passive("통성명",
-                    "나와 피해를 주고받은 적의 이름을 {name_duration}초간 압니다(최대 {name_max}명, 가장 오래 주고받지 "
-                            + "않은 이름부터 잊습니다). 이름을 아는 적의 머리 위에는 나에게만 보이는 붉은 이름이 뜹니다. 이름을 적어 둔 "
-                            + "적이 {name_duration}초 안에 쓰러지면 잉크가 돌아와 이름 적기 쿨타임이 바로 돌아옵니다.")
+                    "나와 피해를 주고받은 적의 이름을 {name_duration}초간 압니다(최대 {name_max}명). 이름을 적어 둔 "
+                            + "적이 {name_duration}초 안에 쓰러지면 이름 적기 쿨타임이 바로 돌아옵니다.")
             .active("이름 적기",
-                    "이름을 아는 적 가운데 조준한 적(없으면 가장 가까운 적, {write_range}블록 이내)의 이름을 빨간 "
-                            + "글씨로 적습니다. 그 적의 머리 위에 모두에게 보이는 붉은 이름과 {write_countdown}초 "
-                            + "카운트다운이 뜨고, 끝나면 붉은 잉크가 온몸에 번져 {write_damage} 피해를 입고 "
-                            + "{write_down}초간 쓰러져 움직이거나 뛸 수 없습니다. 카운트다운 동안 그 적이 나에게 피해를 "
-                            + "주면 '작가를 찾았다!' — 페이지가 찢어져 무효가 되고 나는 {torn_slow}초간 이동 속도가 "
-                            + "{torn_slow_amount}% 느려집니다.",
+                    "이름을 아는 적 가운데 조준한 적(없으면 가장 가까운 적, {write_range}블록 이내)의 이름을 적습니다. "
+                            + "그 적의 머리 위에 {write_countdown}초 카운트다운이 뜨고, 끝나면 {write_damage} 피해를 "
+                            + "입고 {write_down}초간 쓰러져 움직일 수 없습니다. 그 사이 그 적이 나에게 피해를 주면 "
+                            + "무효가 되고 나는 {torn_slow}초간 이동 속도가 {torn_slow_amount}% 느려집니다.",
                     11)
             .ultimate("저승의 시력",
                     "{sight_duration}초간 잉크 귀신의 눈을 빌려 {sight_radius}블록 안 모든 적의 이름을 알고(수 제한 "

@@ -59,21 +59,19 @@ public final class IsekaiTruckAbility extends Ability {
             .color(TextColor.color(0xFFE15A))
             .difficulty(1)
             .passive("전생 처리",
-                    "트럭에 치인 적은 'Lv.1 전생자'가 됩니다 — 궁극기 게이지를 {mark_gauge}% 잃고, {mark_duration}초간 "
-                            + "머리 위에 'Lv.1'이 뜨며 내가 주는 피해를 {mark_bonus}% 더 받습니다.")
+                    "트럭에 치인 적은 전생해 궁극기 게이지를 {mark_gauge}% 잃고, {mark_duration}초간 내가 주는 피해를 "
+                            + "{mark_bonus}% 더 받습니다.")
             .active("트럭 도로",
-                    "'빵빵—!' 바라보는 방향으로 폭 {road_width}블록·길이 {road_length}블록의 도로를 {road_duration}초간 "
-                            + "깝니다(벽이 있으면 그 앞까지). {truck_interval}초마다 경적과 전조등({truck_warning}초 경고) 뒤 "
-                            + "트럭이 내 쪽 끝에서 반대쪽 끝까지 질주합니다(나와 아군은 무사합니다). 치인 적은 {truck_damage} "
-                            + "피해를 입고 옆으로 튕겨 나가며 전생합니다(이 도로에서 적마다 최대 {road_hits}번). 벽에 부딪힌 "
-                            + "트럭은 멈추며 반경 {crash_radius}블록의 적에게 {crash_damage} 피해를 줍니다.",
+                    "바라보는 방향으로 폭 {road_width}블록·길이 {road_length}블록의 도로를 {road_duration}초간 깝니다. "
+                            + "{truck_interval}초마다 {truck_warning}초 경고 뒤 트럭이 도로를 질주해, 치인 적은 "
+                            + "{truck_damage} 피해를 입고 옆으로 튕겨 나가며 전생합니다(적마다 최대 {road_hits}번). "
+                            + "벽에 부딪힌 트럭은 반경 {crash_radius}블록의 적에게 {crash_damage} 피해를 줍니다.",
                     10)
             .ultimate("러시아워",
-                    "조준한 곳({rush_range}블록) 중심의 {rush_size}×{rush_size}블록 교차로를 엽니다. {rush_interval}초마다 "
-                            + "차선 하나에 전조등 경고 {rush_warning}초 → 트럭이 가로·세로를 번갈아 질주해 모두 "
-                            + "{rush_trucks}대가 지나갑니다. 치인 적은 {rush_damage} 피해를 입고 튕겨 나가며, 치일 때마다 "
-                            + "전생해 궁극기 게이지를 {rush_gauge}% 잃습니다(적마다 최대 {rush_hits}번). 차선 사이의 "
-                            + "안전지대를 읽으면 모두 피할 수 있습니다.")
+                    "조준한 곳({rush_range}블록 이내) 중심에 {rush_size}×{rush_size}블록 교차로를 엽니다. "
+                            + "{rush_interval}초마다 차선 하나에 {rush_warning}초 경고 뒤 트럭이 가로·세로를 번갈아 "
+                            + "질주합니다(모두 {rush_trucks}대). 치인 적은 {rush_damage} 피해를 입고 튕겨 나가며 "
+                            + "전생해 궁극기 게이지를 {rush_gauge}% 잃습니다(적마다 최대 {rush_hits}번).")
             .param("mark_gauge", 15)
             .param("mark_duration", 10)
             .param("mark_bonus", 15)

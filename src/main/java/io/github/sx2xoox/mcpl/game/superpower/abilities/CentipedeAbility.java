@@ -85,12 +85,11 @@ public final class CentipedeAbility extends Ability {
                     10)
             .ultimate("천 년 묵은 왕지네",
                     "{ult_duration}초간 몸이 {ult_scale}% 커지고 이동 속도가 {ult_speed}% 빨라지며, 지나간 자리에 높이 "
-                            + "{ult_wall_height}블록의 벽이 {ult_wall_duration}초간 남습니다(최대 {ult_wall_max}칸). 벽에 "
-                            + "닿은 적은 {ult_bump_damage} 피해를 입고 약 {ult_bounce}블록 튕겨 나갑니다(같은 적은 "
-                            + "{ult_bump_cooldown}초마다, 최대 {ult_bump_max}번). 내 벽에 완전히 둘러싸인 적은 "
-                            + "{ring_interval}초마다 {ring_damage} 피해를 입고 {ring_poison}초간 독에 걸리며, 고리가 닫히고 "
-                            + "{ring_gap}초 뒤 가장 가까운 마디 하나가 무너져 틈이 열립니다(갇힌 아군이나 나에게도). 벽과 "
-                            + "고리를 합쳐 적마다 최대 {ult_damage_max} 피해를 줍니다.")
+                            + "{ult_wall_height}블록의 벽이 {ult_wall_duration}초간 남습니다. 벽에 닿은 적은 "
+                            + "{ult_bump_damage} 피해를 입고 약 {ult_bounce}블록 튕겨 나갑니다. 벽에 완전히 둘러싸인 "
+                            + "적은 {ring_interval}초마다 {ring_damage} 피해와 {ring_poison}초 독을 받고, {ring_gap}초 "
+                            + "뒤 마디 하나가 무너져 틈이 열립니다. 벽과 고리를 합쳐 적마다 최대 {ult_damage_max} "
+                            + "피해를 줍니다.")
             .param("segments", 5)
             .param("touch_damage", 1)
             .param("touch_poison", 2)

@@ -67,27 +67,24 @@ public final class KiWarriorAbility extends Ability {
             .color(TextColor.color(0xFFD23F))
             .difficulty(1)
             .passive("전투력 측정",
-                    "바라보는 적({scan_range}블록 이내)의 머리 위에 그 적의 전투력(궁극기 게이지 ×100)이 "
-                            + "{scan_duration}초간 모두에게 보입니다(한 번에 한 명). 게이지가 {scan_alert}% 이상인 적은 "
-                            + "'측정 불가!!' — 숫자가 깨져 흩어지고, 벽 너머로도 보이는 표식이 {scan_glow}초간 나와 아군에게만 "
-                            + "그 적의 머리 위에 떠오릅니다(같은 적은 {scan_alert_cooldown}초마다). 기를 모으는 동안에는 "
-                            + "오르는 내 전투력도 모두에게 보입니다.")
+                    "바라보는 적({scan_range}블록 이내)의 전투력(궁극기 게이지 ×100)이 {scan_duration}초간 머리 위에 "
+                            + "모두에게 보입니다. 게이지가 {scan_alert}% 이상인 적은 {scan_glow}초간 나와 아군에게 벽 "
+                            + "너머로도 표시됩니다(같은 적은 {scan_alert_cooldown}초마다).")
             .active("기탄",
-                    "두 손 사이에 기를 모읍니다(최대 {charge_max}초, 그동안 이동 속도 -{charge_slow}%, 받는 피해 "
-                            + "+{charge_vulnerable}%, 무엇에도 끊기지 않음). 웅크리거나 가득 차면 발사합니다. {quick_time}초 "
-                            + "안에 쏘면 빠른 작은 기탄 {small_count}발({small_range}블록, 각 {small_damage} 피해), 가득 모으면 느리고 큰 기탄"
-                            + "({big_range}블록)이 터져 반경 {big_radius}블록의 적에게 {big_damage} 피해를 주고 밀쳐냅니다. 그 "
-                            + "사이는 모은 시간에 비례해 커집니다. 전투 맵에서는 큰 기탄이 반경 {big_break_radius}블록의 지형도 "
-                            + "부숩니다.",
+                    "기를 최대 {charge_max}초 모읍니다(이동 속도 -{charge_slow}%, 받는 피해 +{charge_vulnerable}%). "
+                            + "웅크리거나 가득 차면 발사해, {quick_time}초 안이면 작은 기탄 "
+                            + "{small_count}발({small_range}블록, 각 {small_damage} 피해), 가득 모으면 큰 "
+                            + "기탄({big_range}블록)이 반경 {big_radius}블록의 적에게 {big_damage} 피해를 주고 "
+                            + "밀쳐냅니다. 그 사이는 모은 만큼 커지며, 전투 맵에서는 큰 기탄이 반경 "
+                            + "{big_break_radius}블록의 지형도 부숩니다.",
                     8)
             .ultimate("모두의 기",
-                    "두 손을 하늘로 들고 {gather_time}초간 머리 위에 거대한 기 구슬을 모읍니다(그동안 움직일 수 없고, "
-                            + "쓰러져야만 흩어집니다). 반경 {ally_range}블록 안에서 나를 볼 수 있는 아군이 웅크려 손을 들면 "
-                            + "1명마다(최대 +{ally_bonus_max}), 그동안 내가 받은 피해 {hurt_per_bonus}마다(최대 "
-                            + "+{hurt_bonus_max}) 구슬이 커집니다(합쳐 최대 +{bonus_max}). 다 모이면 바라보는 쪽으로 초당 "
-                            + "{throw_speed}블록씩 천천히 던지고, 땅·벽·적에 닿거나 {throw_range}블록을 날아가면 터져 반경 "
-                            + "{ult_radius}블록의 적에게 {ult_damage} 피해를 주고 약 {ult_launch}블록 띄웁니다(커질 때마다 반경 "
-                            + "+{bonus_radius}, 피해 +{bonus_damage}). 떨어질 자리에는 그림자가 집니다. 전투 맵에서는 반경 "
+                    "{gather_time}초간 움직이지 못한 채 기 구슬을 모읍니다. {ally_range}블록 안의 아군이 웅크리면 "
+                            + "1명마다(최대 {ally_bonus_max}), 내가 피해를 {hurt_per_bonus} 받을 때마다(최대 "
+                            + "{hurt_bonus_max}) 구슬이 1단계 커집니다(최대 {bonus_max}단계). 구슬은 바라보는 쪽으로 "
+                            + "초당 {throw_speed}블록씩 날아가 닿거나 {throw_range}블록 뒤 터지며 반경 "
+                            + "{ult_radius}블록의 적에게 {ult_damage} 피해를 주고 {ult_launch}블록 띄웁니다(1단계마다 "
+                            + "반경 +{bonus_radius}, 피해 +{bonus_damage}). 전투 맵에서는 반경 "
                             + "{ult_break_radius}블록의 지형도 부숩니다.")
             .param("scan_range", 32)
             .param("scan_duration", 3)
