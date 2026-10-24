@@ -33,7 +33,7 @@ class AbilityRegistryTest {
     void everyBuiltinAbilityIsWellFormed() {
         AbilityRegistry registry = new AbilityRegistry();
         BuiltinAbilities.registerAll(registry);
-        assertEquals(150, registry.all().size());
+        assertEquals(151, registry.all().size());
 
         Set<String> names = new HashSet<>();
         for (AbilityRegistry.Entry entry : registry.all()) {

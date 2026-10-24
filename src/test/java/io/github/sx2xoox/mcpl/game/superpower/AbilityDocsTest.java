@@ -68,7 +68,7 @@ class AbilityDocsTest {
         CATEGORIES.put("하늘 · 땅", List.of("blockfall", "qilin", "atlas", "poltergeist", "jormungandr"));
         CATEGORIES.put("규칙 · 시험", List.of("prohibitor", "sphinx", "anubis", "redmask", "jiangshi"));
         CATEGORIES.put("신의 무기", List.of("fourgods", "odin", "wukong", "baldur", "ra"));
-        CATEGORIES.put("몸 · 변신", List.of("rokurokubi", "tengu", "circe", "magicalgirl", "koschei"));
+        CATEGORIES.put("몸 · 변신", List.of("rokurokubi", "tengu", "circe", "magicalgirl", "koschei", "matryoshka"));
         CATEGORIES.put("게임 속 세상", List.of("arcade", "stomper", "tamer", "leveler", "isekaitruck"));
         CATEGORIES.put("장난 · 놀이", List.of("cardgamer", "tennis", "kappa", "yagwanggwi", "frog"));
     }

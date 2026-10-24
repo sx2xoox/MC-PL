@@ -159,5 +159,6 @@ public final class BuiltinAbilities {
         registry.register(KappaAbility.INFO, KappaAbility::new);
         registry.register(YagwanggwiAbility.INFO, YagwanggwiAbility::new);
         registry.register(FrogAbility.INFO, FrogAbility::new);
+        registry.register(MatryoshkaAbility.INFO, MatryoshkaAbility::new);
     }
 }
