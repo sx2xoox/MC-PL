@@ -30,6 +30,7 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.Block;
 import org.bukkit.entity.BlockDisplay;
@@ -46,6 +47,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
@@ -86,7 +89,8 @@ public final class AtlasAbility extends Ability {
                     "거대한 천구를 {sky_range}블록 안의 조준한 적(없으면 가장 가까운 적)에게 {throw_time}초 동안 포물선으로 "
                             + "던져 하늘을 짊어지게 합니다. 짊어진 사람은 최대 {sky_duration}초간 이동 속도가 {sky_slow}% "
                             + "줄고 1초마다 {sky_tick}부터 {sky_tick_growth}씩 커지는 피해를 입습니다. 짊어진 사람은 다른 "
-                            + "플레이어를 무엇으로든 맞히거나 몸으로 부딪혀 하늘을 떠넘길 수 있고(시간은 계속 흐르며, 방금 "
+                            + "플레이어를 무엇으로든 맞히거나 몸으로 부딪혀(아틀라스에게는 맞혀서만) 하늘을 떠넘길 수 "
+                            + "있고(시간은 계속 흐르며, 방금 "
                             + "넘겨준 사람에게는 {pass_immunity}초 동안 되넘길 수 없음), 시간이 다 되면 들고 있던 사람 위로 "
                             + "하늘이 무너져 {collapse_damage} 피해, 주변 {collapse_radius}블록의 다른 적은 "
                             + "{collapse_splash} 피해를 입습니다. 하늘이 아틀라스에게 넘어오면 가뿐히 짊어지고, "
@@ -146,8 +150,13 @@ public final class AtlasAbility extends Ability {
     private static final double MAX_SPEED = 2.5;
 
     // passive: shoulders of the sky
-    /** An upward speed above a jump's (0.42): something launched him. Player velocity is what the server last set. */
-    private static final double LAUNCH_SPEED = 0.48;
+    /**
+     * An upward speed this much above his own jump's (0.42 plus jump boosts, which the server sets as his velocity when
+     * he jumps): something launched him. Player velocity is what the server last set.
+     */
+    private static final double LAUNCH_MARGIN = 0.06;
+    private static final double JUMP_SPEED = 0.42;
+    private static final double JUMP_BOOST_STEP = 0.1;
     private static final double ANCHOR_DROP = -1.0;
     private static final long ANCHOR_TIMEOUT = 60;
     private static final long LANDING_GUARD_TICKS = 80;
@@ -237,12 +246,15 @@ public final class AtlasAbility extends Ability {
 
     /**
      * Nothing throws the titan into the air: an upward speed only another ability (or a golem's swing) can give him is
-     * replaced by a fall at once, and when he is down again the ground shakes around his feet.
+     * replaced by a fall at once, and when he is down again the ground shakes around his feet. Only the rise goes: a
+     * push sideways that came with it still moves him (he cannot be launched, but he can be knocked back).
      */
     private void anchor(Player owner, long now) {
         Vector velocity = owner.getVelocity();
-        if (velocity.getY() > LAUNCH_SPEED && Double.isFinite(velocity.getX()) && Double.isFinite(velocity.getZ())) {
-            Vector down = new Vector(0, ANCHOR_DROP, 0);
+        if (velocity.getY() > jumpSpeed(owner) + LAUNCH_MARGIN && Double.isFinite(velocity.getX())
+                && Double.isFinite(velocity.getZ())) {
+            Vector flat = Motion.clamp(Motion.horizontal(velocity), MAX_SPEED);
+            Vector down = new Vector(flat.getX(), ANCHOR_DROP, flat.getZ());
             owner.setVelocity(down);
             owner.setFallDistance(0);
             landing.arm(now, LANDING_GUARD_TICKS);
@@ -263,6 +275,17 @@ public final class AtlasAbility extends Ability {
             anchoring = false;
             shockwave(owner, now);
         }
+    }
+
+    /** The upward speed of the owner's own jump (vanilla jump power: the jump strength plus jump boost). */
+    private static double jumpSpeed(Player owner) {
+        AttributeInstance strength = owner.getAttribute(Attribute.JUMP_STRENGTH);
+        double jump = strength != null ? strength.getValue() : JUMP_SPEED;
+        PotionEffect boost = owner.getPotionEffect(PotionEffectType.JUMP_BOOST);
+        if (boost != null) {
+            jump += JUMP_BOOST_STEP * (boost.getAmplifier() + 1);
+        }
+        return Math.max(JUMP_SPEED, jump);
     }
 
     /** The landing shockwave (on its own cooldown): a small push and a little damage around the feet. */
@@ -743,9 +766,12 @@ public final class AtlasAbility extends Ability {
                 start = ctx().currentTick();
                 Bukkit.getPluginManager().registerEvents(this, ctx().plugin());
                 registered = true;
-                countdown = Displays.text(ctx(), owner, overHead(target).add(0, 1.0, 0), countdownText(duration), 0.9f,
-                        duration + GLOBE_MARGIN);
-                countdown.setTeleportDuration(2);
+                if (reserve(1)) {
+                    TextDisplay timer = keep(Displays.text(ctx(), owner, overHead(target).add(0, 1.0, 0),
+                            countdownText(duration, duration), 0.9f, duration + GLOBE_MARGIN));
+                    timer.setTeleportDuration(2);
+                    countdown = timer;
+                }
                 takeOn(target, owner);
                 ctx().announce(Text.mm("<" + SKY_TAG + ">🌌</" + SKY_TAG + "> <white><target></white><gray>의 어깨에 "
                         + "하늘이 내려앉았습니다!</gray> <" + STAR_TAG + ">맞히거나 부딪히면 하늘이 넘어갑니다</" + STAR_TAG
@@ -800,7 +826,7 @@ public final class AtlasAbility extends Ability {
                 Displays.moveTo(timer, globe.at().clone().add(0, 0.95, 0));
                 timer.setViewRange(shown ? 1.5f : 0f);
                 if (tick % 2 == 0) {
-                    timer.text(countdownText(duration - elapsed));
+                    timer.text(countdownText(duration - elapsed, duration));
                 }
             }
             if (shown && tick % 2 == 0) {
@@ -830,14 +856,15 @@ public final class AtlasAbility extends Ability {
             }
         }
 
-        /** A player whose body touches the bearer's and who may take the sky, null if none. */
+        /**
+         * A player whose body touches the bearer's and who may take the sky, null if none. Never Atlas himself: he
+         * could simply walk into the slowed bearer and turn his next active into the globe throw; the bearer has to
+         * hit him to give it back.
+         */
         private @Nullable Player touching(LivingEntity current) {
             BoundingBox box = current.getBoundingBox().expand(CONTACT_SLACK);
-            if (receives(owner) && box.overlaps(owner.getBoundingBox())) {
-                return owner;
-            }
             for (Player player : ctx().alivePlayers()) {
-                if (receives(player) && box.overlaps(player.getBoundingBox())) {
+                if (!player.equals(owner) && receives(player) && box.overlaps(player.getBoundingBox())) {
                     return player;
                 }
             }
@@ -1017,8 +1044,9 @@ public final class AtlasAbility extends Ability {
         }
     }
 
-    private static net.kyori.adventure.text.Component countdownText(long ticksLeft) {
-        double fraction = Math.clamp(ticksLeft / 100.0, 0.0, 1.0);
+    /** The seconds left, white turning amber then red as the sky's {@code total} time runs out. */
+    private static net.kyori.adventure.text.Component countdownText(long ticksLeft, long total) {
+        double fraction = Math.clamp((double) ticksLeft / Math.max(1, total), 0.0, 1.0);
         String color = fraction > 0.6 ? STAR_TAG : fraction > 0.3 ? "#FFD27F" : "#FF5A4E";
         return Text.mm("<b><" + color + ">" + Fx.seconds(ticksLeft) + "</" + color + "></b>");
     }
@@ -1026,7 +1054,8 @@ public final class AtlasAbility extends Ability {
     /**
      * The celestial globe: a lapis core in a blue glass shell, a tilted ring of bronze bars and a few star sprites. Every
      * part is spawned unrotated at the globe's center (orientation lives in the transformations) and moved with
-     * {@link Displays#moveTo}.
+     * {@link Displays#moveTo}. The core and shell always come (they are the sky); the ring and the stars only as far as
+     * the display budget allows.
      */
     private final class Globe {
 
@@ -1048,11 +1077,12 @@ public final class AtlasAbility extends Ability {
                     cube(0.05f, new Quaternionf()), lifetime));
             parts.add(core);
             parts.add(shell);
-            for (int i = 0; i < RING_BARS; i++) {
+            boolean ring = reserve(RING_BARS);
+            for (int i = 0; ring && i < RING_BARS; i++) {
                 parts.add(keep(Displays.block(ctx(), owner, this.at, GLOBE_RING.createBlockData(), ringBar(i, 0.05f),
                         lifetime)));
             }
-            for (int i = 0; i < GLOBE_STARS; i++) {
+            for (int i = 0; i < GLOBE_STARS && reserve(1); i++) {
                 TextDisplay star = keep(Displays.text(ctx(), owner, this.at, Text.mm("<" + STAR_TAG + ">✦</" + STAR_TAG
                         + ">"), 0.6f, lifetime));
                 stars.add(star);
@@ -1067,7 +1097,7 @@ public final class AtlasAbility extends Ability {
             ctx().runLater(owner, 1, () -> {
                 Displays.animate(core, cube(CORE_SIZE, new Quaternionf()), 4);
                 Displays.animate(shell, cube(SHELL_SIZE, new Quaternionf().rotateY(0.6f).rotateX(0.5f)), 4);
-                for (int i = 0; i < RING_BARS; i++) {
+                for (int i = 0; i < RING_BARS && 2 + i < parts.size(); i++) {
                     Displays.animate(parts.get(2 + i), ringBar(i, 1f), 4);
                 }
             });

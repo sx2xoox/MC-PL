@@ -3,7 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -79,10 +79,11 @@ public final class BlockFallAbility extends Ability {
                     "조준한 곳({board_range}블록 이내)에 모두에게 보이는 {board_size}×{board_size} 판의 테두리를 그리고, "
                             + "{board_size}칸짜리 막대를 먼 쪽 줄부터 {bar_interval}초 간격으로 한 줄씩 떨어뜨려 판을 "
                             + "채웁니다. 막대에 깔린 적은 {bar_damage} 피해를 입고 막대 위로 올려집니다(적마다 한 번). 판이 다 "
-                            + "차면 '올 클리어!' 판 전체가 터져 판 위의 적에게 {clear_damage} 피해를 주고 높이 띄웁니다. "
+                            + "차면 '올 클리어!' 판 전체가 터져 판 위의 적에게 {clear_damage} 피해를 주고 바닥에서 "
+                            + "{clear_launch}블록 높이로 띄웁니다. "
                             + "채워지는 줄을 보고 가장자리 밖으로 걸어 나가면 피할 수 있습니다.")
             .param("line_length", 6)
-            .param("stack_height", 3)
+            .param("stack_height", 2)
             .param("line_radius", 2)
             .param("line_damage", 4)
             .param("line_hit_cooldown", 1)
@@ -99,7 +100,7 @@ public final class BlockFallAbility extends Ability {
             .param("bar_interval", 0.3)
             .param("bar_damage", 2)
             .param("clear_damage", 5)
-            .param("clear_launch", 3.5)
+            .param("clear_launch", 2.8)
             .build();
 
     private static final String COPPER_TAG = "#C0703F";
@@ -150,14 +151,19 @@ public final class BlockFallAbility extends Ability {
     private static final int RETRY_RUNS = 6;
     private static final long RETRY_PERIOD = 2;
     private static final long FLASH_TICKS = 6;
+    /** How high over the ground left under it a line clear throws an enemy (a raised piece adds no fall damage). */
     private static final double LINE_LIFT = 2.2;
+    /** The smallest pop of a line clear or an all clear, even over a deep drop. */
+    private static final double MIN_POP = 0.5;
+    private static final double GROUND_PROBE = 24;
 
     // ultimate: the board
     private static final long TRACE_TICKS = 10;
     private static final long BAR_FALL_TICKS = 4;
     private static final double BAR_HEIGHT = 4.5;
     private static final long CLEAR_DELAY = 8;
-    private static final double BAR_LIFT = 1.3;
+    /** High enough that the bar's block goes in under an enemy even when the server sees it late (its ping). */
+    private static final double BAR_LIFT = 1.8;
 
     // ------------------------------------------------------------------ state
 
@@ -221,7 +227,7 @@ public final class BlockFallAbility extends Ability {
         prune();
         int lineLength = Math.max(2, params().integer("line_length"));
         int stackHeight = Math.max(2, params().integer("stack_height"));
-        Set<Block> clear = new LinkedHashSet<>();
+        Map<Long, Cell> clear = new LinkedHashMap<>();
         int longest = 0;
         int tallest = 0;
         for (Block block : fresh) {
@@ -233,25 +239,33 @@ public final class BlockFallAbility extends Ability {
             List<Block> up = run(block, 0, 1, 0);
             longest = Math.max(longest, Math.max(alongX.size(), alongZ.size()));
             tallest = Math.max(tallest, up.size());
-            if (alongX.size() >= lineLength) {
-                clear.addAll(alongX);
-            }
-            if (alongZ.size() >= lineLength) {
-                clear.addAll(alongZ);
-            }
-            if (up.size() >= stackHeight) {
-                clear.addAll(up);
-            }
+            clearIfLong(clear, alongX, lineLength);
+            clearIfLong(clear, alongZ, lineLength);
+            clearIfLong(clear, up, stackHeight);
         }
         if (!clear.isEmpty()) {
-            for (Block block : clear) {
-                cells.remove(key(block.getX(), block.getY(), block.getZ()));
+            for (long at : clear.keySet()) {
+                cells.remove(at);
             }
-            lineClear(owner, new ArrayList<>(clear));
+            lineClear(owner, new ArrayList<>(clear.values()));
         } else if (!fresh.isEmpty()) {
             owner.sendActionBar(Text.mm("<" + COPPER_TAG + ">▦ 줄 " + Math.min(longest, lineLength) + "/" + lineLength
                     + "</" + COPPER_TAG + "> <" + STONE_TAG + ">· 쌓기 " + Math.min(tallest, stackHeight) + "/"
                     + stackHeight + "</" + STONE_TAG + ">"));
+        }
+    }
+
+    /** Adds the cells of {@code run} to {@code clear} if it is at least {@code needed} long. */
+    private void clearIfLong(Map<Long, Cell> clear, List<Block> run, int needed) {
+        if (run.size() < needed) {
+            return;
+        }
+        for (Block member : run) {
+            long at = key(member.getX(), member.getY(), member.getZ());
+            Cell cell = cells.get(at);
+            if (cell != null) {
+                clear.put(at, cell);
+            }
         }
     }
 
@@ -272,7 +286,11 @@ public final class BlockFallAbility extends Ability {
     }
 
     /** A completed line flashes white and gold for a moment, then bursts and throws the enemies around it up. */
-    private void lineClear(Player owner, List<Block> line) {
+    private void lineClear(Player owner, List<Cell> cleared) {
+        List<Block> line = new ArrayList<>(cleared.size());
+        for (Cell cell : cleared) {
+            line.add(cell.block());
+        }
         List<BlockDisplay> flashes = new ArrayList<>();
         for (Block block : line) {
             if (!reserve(1)) {
@@ -294,23 +312,29 @@ public final class BlockFallAbility extends Ability {
                 Fx.sound(middle, Sound.BLOCK_NOTE_BLOCK_PLING, 0.8f, 1.4f + 0.15f * run);
             }
             return true;
-        }, () -> burst(owner, line, flashes));
+        }, () -> burst(owner, cleared, line, flashes));
     }
 
-    private void burst(Player owner, List<Block> line, List<BlockDisplay> flashes) {
+    /**
+     * The line bursts: its blocks go (only those still this piece's own: one may have run out during the flash and
+     * the spot been taken since), then the enemies around it are hit and thrown up.
+     */
+    private void burst(Player owner, List<Cell> cleared, List<Block> line, List<BlockDisplay> flashes) {
         for (BlockDisplay glow : flashes) {
             if (glow.isValid()) {
                 glow.remove();
             }
         }
         World world = line.getFirst().getWorld();
-        for (Block block : line) {
-            BlockData data = block.getBlockData();
+        long tick = ctx().currentTick();
+        for (Cell cell : cleared) {
+            Block block = cell.block();
             Location center = block.getLocation().add(0.5, 0.5, 0.5);
-            if (!block.isEmpty()) {
-                world.spawnParticle(Particle.BLOCK, center, Vfx.n(ctx(), 8), 0.3, 0.3, 0.3, 0, data, true);
+            if (cell.expires() > tick && block.getType() == cell.material()) {
+                world.spawnParticle(Particle.BLOCK, center, Vfx.n(ctx(), 8), 0.3, 0.3, 0.3, 0, block.getBlockData(),
+                        true);
+                ctx().restoreTempBlock(block);
             }
-            ctx().restoreTempBlock(block);
             Vfx.dot(center, Particle.FLASH, FLASH_WHITE, true);
         }
         Location middle = centerOf(line);
@@ -334,7 +358,7 @@ public final class BlockFallAbility extends Ability {
                 Combat.hit(ctx(), owner, enemy, damage);
                 hits++;
                 if (Combat.isTargetable(ctx(), owner, enemy)) {
-                    Motion.push(enemy, new Vector(0, Motion.launchSpeed(LINE_LIFT), 0), MAX_SPEED);
+                    pop(enemy, LINE_LIFT);
                 }
             }
         }
@@ -344,6 +368,23 @@ public final class BlockFallAbility extends Ability {
             owner.sendActionBar(Text.mm("<" + COPPER_TAG + "><b>▦ 줄 폭파!</b></" + COPPER_TAG + "> <white>" + hits
                     + "명 적중</white>"));
         }
+    }
+
+    /**
+     * Throws {@code enemy} up to {@code apex} blocks over the ground under it (with the burst blocks already gone): a
+     * pop from a raised piece adds no extra fall.
+     */
+    private void pop(LivingEntity enemy, double apex) {
+        double rise = Math.max(MIN_POP, apex - heightAboveGround(enemy));
+        Motion.push(enemy, new Vector(0, Motion.launchSpeed(rise), 0), MAX_SPEED);
+    }
+
+    /** How far the entity's feet are above the first block or fluid below them (very far over the void). */
+    private static double heightAboveGround(Entity entity) {
+        Location feet = entity.getLocation();
+        RayTraceResult ground = entity.getWorld().rayTraceBlocks(feet.clone().add(0, 0.05, 0), new Vector(0, -1, 0),
+                GROUND_PROBE, FluidCollisionMode.ALWAYS, true);
+        return ground == null ? GROUND_PROBE : Math.max(0, feet.getY() - ground.getHitPosition().getY());
     }
 
     private static Location centerOf(List<Block> blocks) {
@@ -677,9 +718,7 @@ public final class BlockFallAbility extends Ability {
                 Displays.moveTo(blocks.get(i), new Location(world, column[0] + 0.5, y + 0.5, column[1] + 0.5));
             }
             if (tick % 2 == 0) {
-                for (int[] column : columns) {
-                    shadow(column[0], land, column[1], y - land);
-                }
+                shadow(columns, land, y - land);
             }
             if (y <= land + 1.0E-6) {
                 touchDown(columns);
@@ -711,16 +750,32 @@ public final class BlockFallAbility extends Ability {
             Fx.sound(at, Sound.BLOCK_NOTE_BLOCK_HAT, 0.8f, 1.6f + Fx.jitter(0.1f));
         }
 
-        /** The shadow of a falling block: a dark square that tightens as the block comes down. */
-        private void shadow(int x, int layer, int z, double height) {
-            double inset = 0.1 + Math.min(0.25, height * 0.05);
-            Location floor = new Location(world, x, layer + 0.05, z);
-            Vfx.dot(floor.clone().add(0.5, 0, 0.5), Particle.DUST, SHADOW, false);
-            Vfx.dot(floor.clone().add(inset, 0, inset), Particle.DUST, SHADOW, false);
-            Vfx.dot(floor.clone().add(1 - inset, 0, 1 - inset), Particle.DUST, SHADOW, false);
+        /**
+         * The impact marker of the falling piece: a soft round shadow on the ground under its middle (never the cells it
+         * will fill) that tightens and darkens as the piece comes down.
+         */
+        private void shadow(List<int[]> columns, int layer, double height) {
+            double cx = 0;
+            double cz = 0;
+            for (int[] column : columns) {
+                cx += column[0] + 0.5;
+                cz += column[1] + 0.5;
+            }
+            cx /= columns.size();
+            cz /= columns.size();
+            double spread = 0;
+            for (int[] column : columns) {
+                spread = Math.max(spread, Math.hypot(column[0] + 0.5 - cx, column[1] + 0.5 - cz));
+            }
+            double radius = spread + 0.4 + Math.min(1.0, height * 0.25);
+            Location middle = new Location(world, cx, layer + 0.05, cz);
+            Vfx.ring(ctx(), middle, radius, Math.clamp(Math.round(radius * 5), 8, 18), height * 0.4,
+                    Particle.DUST, SHADOW, false);
             if (slammed || height < 1.5) {
-                Vfx.dot(floor.clone().add(inset, 0, 1 - inset), Particle.DUST, SHADOW, false);
-                Vfx.dot(floor.clone().add(1 - inset, 0, inset), Particle.DUST, SHADOW, false);
+                Vfx.dot(middle, Particle.DUST, SHADOW, false);
+                for (int i = 0; i < 3; i++) {
+                    Vfx.dot(Vfx.scatter(middle, radius * 0.7), Particle.DUST, SHADOW, false);
+                }
             }
         }
 
@@ -926,7 +981,8 @@ public final class BlockFallAbility extends Ability {
         private final int farSign;
         private final long interval = Math.max(2, params().ticks("bar_interval"));
         private final long clearAt;
-        private final List<Block> placed = new ArrayList<>();
+        /** The board's blocks and what each one is (a bar's material). */
+        private final Map<Block, Material> placed = new LinkedHashMap<>();
         private final Map<Block, BlockData> waiting = new HashMap<>();
         private final Set<UUID> crushed = new HashSet<>();
         private final List<BlockDisplay> frame = new ArrayList<>();
@@ -1012,7 +1068,7 @@ public final class BlockFallAbility extends Ability {
                         return false;
                     }
                     if (ctx().placeTempBlock(entry.getKey(), entry.getValue(), left)) {
-                        placed.add(entry.getKey());
+                        placed.put(entry.getKey(), entry.getValue().getMaterial());
                     }
                     return true;
                 });
@@ -1120,7 +1176,7 @@ public final class BlockFallAbility extends Ability {
                 if (occupied(block)) {
                     waiting.put(block, data); // goes in once whoever stands there is lifted out
                 } else if (ctx().placeTempBlock(block, data, left)) {
-                    placed.add(block);
+                    placed.put(block, data.getMaterial());
                 }
                 world.spawnParticle(Particle.BLOCK, block.getX() + 0.5, floor + 0.1, block.getZ() + 0.5,
                         Vfx.n(ctx(), 3), 0.4, 0.05, 0.4, 0, data);
@@ -1147,20 +1203,13 @@ public final class BlockFallAbility extends Ability {
             }
             BoundingBox area = new BoundingBox(minX - 0.3, floor - 0.5, minZ - 0.3, minX + size + 0.3, floor + 4,
                     minZ + size + 0.3);
-            double damage = params().num("clear_damage");
-            double launch = Motion.launchSpeed(Math.max(0, params().num("clear_launch")));
-            int hits = 0;
-            for (LivingEntity enemy : ctx().enemiesNear(owner, center, size)) {
-                if (!enemy.getBoundingBox().overlaps(area)) {
+            // The board goes first, then everyone on it is thrown up to clear_launch over the floor left under them
+            // (thrown from the top of a bar, they would fall a block further).
+            for (Map.Entry<Block, Material> entry : placed.entrySet()) {
+                Block block = entry.getKey();
+                if (block.getType() != entry.getValue()) {
                     continue;
                 }
-                Combat.hit(ctx(), owner, enemy, damage);
-                hits++;
-                if (Combat.isTargetable(ctx(), owner, enemy)) {
-                    Motion.push(enemy, new Vector(0, launch, 0), MAX_SPEED);
-                }
-            }
-            for (Block block : placed) {
                 BlockData data = block.getBlockData();
                 if (ctx().restoreTempBlock(block) && ThreadLocalRandom.current().nextInt(2) == 0) {
                     world.spawnParticle(Particle.BLOCK, block.getX() + 0.5, block.getY() + 0.5, block.getZ() + 0.5,
@@ -1168,6 +1217,20 @@ public final class BlockFallAbility extends Ability {
                 }
             }
             placed.clear();
+            waiting.clear();
+            double damage = params().num("clear_damage");
+            double apex = Math.max(0, params().num("clear_launch"));
+            int hits = 0;
+            for (LivingEntity enemy : ctx().enemiesNear(owner, center, size)) {
+                if (!enemy.getBoundingBox().overlaps(area)) {
+                    continue;
+                }
+                Combat.hit(ctx(), owner, enemy, damage);
+                hits++;
+                if (Combat.isTargetable(ctx(), owner, enemy) && apex > 0) {
+                    pop(enemy, apex);
+                }
+            }
             Vfx.dot(center.clone().add(0, 1, 0), Particle.FLASH, FLASH_WHITE, true);
             Vfx.shockwave(ctx(), owner, center.clone().subtract(0, 0.4, 0), 0.5, size * 0.75, 6,
                     Particle.DUST_COLOR_TRANSITION, PALETTE.glow(1.6f), true);

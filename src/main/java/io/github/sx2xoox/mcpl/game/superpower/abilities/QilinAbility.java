@@ -85,15 +85,18 @@ public final class QilinAbility extends Ability {
                             + "놓습니다. 수평으로 쓰면 발 높이의 평평한 다리가 구덩이와 틈을 메우고, 위나 아래를 보고 쓰면 반 "
                             + "칸씩 오르내리는 계단이 되어 최대 {bridge_rise}블록 높이까지 걸어서 오를 수 있습니다. 누구나 "
                             + "건널 수 있으며 다리 위의 나와 아군은 이동 속도가 {bridge_speed}% 빨라집니다. 다리가 솟아오르는 "
-                            + "길목의 적은 {bridge_damage} 피해를 입고 {bridge_lift}블록 떠오릅니다.",
+                            + "길목의 적은 {bridge_damage} 피해를 입고 {bridge_lift}블록 떠오릅니다. 다리가 사라질 때(내가 "
+                            + "쓰러지면 바로) 다리 위의 아군은 천천히 내려옵니다.",
                     10)
             .ultimate("상서로운 구름",
                     "반경 {cloud_radius}블록의 구름 대지를 {cloud_height}블록 위(머리 위가 막혀 있으면 더 낮게)에 펼치고 "
-                            + "나와 반경 {cloud_radius}블록 안의 아군을 그 위로 띄워 올립니다. {cloud_duration}초 동안 구름 위의 "
-                            + "나와 아군은 1초마다 체력을 {cloud_heal} 회복하고 구름 아래의 적에게 주는 피해가 {cloud_bonus}% "
+                            + "나와 반경 {cloud_radius}블록 안의 아군(머리 위가 막힌 아군은 빼고)을 그 위로 띄워 올립니다. "
+                            + "{cloud_duration}초 동안 구름 위의 나와 아군은 1초마다 체력을 {cloud_heal} 회복하고 구름 "
+                            + "아래의 적에게 주는 피해가 {cloud_bonus}% "
                             + "늘며, 구름에 오르려는 적은 미끄러져 떨어집니다. 구름 그림자 아래의 적은 이동 속도가 "
-                            + "{shadow_slow}% 느려지고 1초마다 울리는 발굽 소리에 {hoof_damage} 피해를 입습니다. 구름이 "
-                            + "걷히면 구름 위의 모두가 천천히 내려옵니다.")
+                            + "{shadow_slow}% 느려지고 1초마다 울리는 발굽 소리에 {hoof_damage} 피해를 입습니다. 구름에 "
+                            + "오르지 못했거나 구름에서 떨어진 아군, 그리고 구름이 걷힐 때(내가 쓰러지면 바로) 구름 위의 모두는 "
+                            + "천천히 내려옵니다.")
             .ultimateNotStandalone()
             .param("melee_penalty", 20)
             .param("heal_radius", 10)
@@ -138,6 +141,9 @@ public final class QilinAbility extends Ability {
 
     private static final int MAX_DISPLAYS = 24;
     private static final double MAX_SPEED = 2.0;
+    /** A player's client runs this many ticks ahead of the server at most (its ping, for steering). */
+    private static final long MAX_LAG_TICKS = 10;
+    private static final double MILLIS_PER_TICK = 50.0;
 
     // passive
     private static final double STEP_PUSH = 0.3;
@@ -155,6 +161,10 @@ public final class QilinAbility extends Ability {
     private static final double BOOST_REACH = 64;
     private static final double LANE_REACH_UP = 1.3;
     private static final double LANE_REACH_DOWN = 0.7;
+    /** Allies on the bridge's blocks get a slow fall this many ticks before the blocks expire. */
+    private static final long SINK_LEAD = 6;
+    /** Someone this high over the bridge's walking surface (jumping) still stands on it. */
+    private static final double DECK_REACH_UP = 3;
 
     // ultimate: auspicious cloud
     private static final int MIN_CLOUD_HEIGHT = 3;
@@ -163,6 +173,8 @@ public final class QilinAbility extends Ability {
     private static final double LIFT_MARGIN = 1.3;
     private static final double SLIP_PUSH = 0.55;
     private static final long SINK_SLOW_FALL = 100;
+    /** A rider this far below the highest point it reached is falling (it missed the cloud). */
+    private static final double FALL_SLACK = 0.25;
     private static final long DISSOLVE_TICKS = 6;
     private static final double SHADOW_DEPTH = 8;
 
@@ -197,6 +209,10 @@ public final class QilinAbility extends Ability {
         Cloud current = cloud;
         if (current != null) {
             current.release(true);
+        }
+        Bridge laid = bridge;
+        if (laid != null) {
+            laid.abort();
         }
         cloud = null;
         bridge = null;
@@ -411,6 +427,8 @@ public final class QilinAbility extends Ability {
         boolean placed;
         /** Waiting for someone standing where its block goes. */
         boolean blocked;
+        /** The block type put in, if {@link #placed}. */
+        @Nullable Material material;
 
         Span(int x, int z, double along, double surface) {
             this.x = x;
@@ -429,6 +447,8 @@ public final class QilinAbility extends Ability {
      * {@link #REVEAL_TICKS}; where the surface lies above air a cloud block (or a quartz half step) is put there for the
      * bridge's time, never into anyone's body (it waits for them to move). Over solid ground the lane is a cloud mist
      * that is still the bridge: the owner and allies on it are faster, and enemies in the surge are hit and lifted.
+     * Just before the blocks go (and at once when the qilin falls: then the bridge melts with it) the allies standing on
+     * them get a slow fall, so a five-block stair never drops them.
      */
     private final class Bridge implements LongPredicate {
 
@@ -440,6 +460,7 @@ public final class QilinAbility extends Ability {
         private final Map<Long, Span> lane = new HashMap<>();
         private final Set<UUID> lifted = new HashSet<>();
         private final Map<UUID, NamespacedKey> boosted = new HashMap<>();
+        private final Set<UUID> sunk = new HashSet<>();
         private final Vector direction;
         private final double length;
 
@@ -515,6 +536,9 @@ public final class QilinAbility extends Ability {
             if (left == 10) {
                 Fx.sound(owner.getLocation(), Sound.BLOCK_WOOL_BREAK, 0.8f, 1.2f);
             }
+            if (left <= SINK_LEAD) {
+                sink();
+            }
             return true;
         }
 
@@ -559,10 +583,10 @@ public final class QilinAbility extends Ability {
             if (left <= 2 || !block.isEmpty() && !block.isReplaceable()) {
                 return;
             }
-            BlockData data = span.slab ? CLOUD_STEP.createBlockData()
-                    : ((span.x + span.z) % 3 == 0 ? CLOUD_PUFF : CLOUD_BLOCK).createBlockData();
-            if (ctx().placeTempBlock(block, data, left)) {
+            Material material = span.slab ? CLOUD_STEP : (span.x + span.z) % 3 == 0 ? CLOUD_PUFF : CLOUD_BLOCK;
+            if (ctx().placeTempBlock(block, material.createBlockData(), left)) {
                 span.placed = true;
+                span.material = material;
             }
         }
 
@@ -644,8 +668,38 @@ public final class QilinAbility extends Ability {
             }
         }
 
-        /** The bridge is gone (its blocks expire with it): the boosts end. */
-        void finish() {
+        /** True if {@code entity}'s body stands over one of the bridge's blocks (or jumps just above it). */
+        private boolean onDeck(LivingEntity entity) {
+            BoundingBox box = entity.getBoundingBox();
+            double feet = box.getMinY();
+            for (int x = (int) Math.floor(box.getMinX()); x <= (int) Math.floor(box.getMaxX() - 1.0E-6); x++) {
+                for (int z = (int) Math.floor(box.getMinZ()); z <= (int) Math.floor(box.getMaxZ() - 1.0E-6); z++) {
+                    Span span = lane.get(column(x, z));
+                    if (span != null && span.placed && feet >= span.surface - LANE_REACH_DOWN
+                            && feet <= span.surface + DECK_REACH_UP) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /** The blocks are about to go: the allies on them float down instead of falling (the qilin never falls). */
+        private void sink() {
+            for (Player ally : ctx().alliesNear(owner, owner.getLocation(), BOOST_REACH)) {
+                if (ally.equals(owner) || sunk.contains(ally.getUniqueId()) || !ctx().isAlive(ally) || !onDeck(ally)) {
+                    continue;
+                }
+                sunk.add(ally.getUniqueId());
+                ally.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, (int) SINK_SLOW_FALL, 0, false,
+                        false, true));
+                ally.setFallDistance(0);
+                Vfx.cloud(ctx(), ally.getLocation().add(0, 0.1, 0), Particle.CLOUD, 4, 0.3, 0.02, null, false);
+            }
+        }
+
+        /** The speed boosts end (they are timed, so they would outlast a fallen qilin). */
+        private void unboost() {
             for (Map.Entry<UUID, NamespacedKey> entry : boosted.entrySet()) {
                 Player rider = Bukkit.getPlayer(entry.getKey());
                 if (rider != null) {
@@ -653,6 +707,37 @@ public final class QilinAbility extends Ability {
                 }
             }
             boosted.clear();
+        }
+
+        /**
+         * The qilin is gone mid-bridge (the loop stops without {@link #finish}): the bridge melts at once under a slow
+         * fall for the allies on it, and the boosts end.
+         */
+        void abort() {
+            sink();
+            unboost();
+            if (ctx().currentTick() < endTick) {
+                for (Span span : cells) {
+                    Block block = world.getBlockAt(span.x, span.blockY, span.z);
+                    if (span.placed && block.getType() == span.material) {
+                        ctx().restoreTempBlock(block);
+                        if (ThreadLocalRandom.current().nextInt(3) == 0) {
+                            Vfx.cloud(ctx(), block.getLocation().add(0.5, 0.5, 0.5), Particle.CLOUD, 1, 0.3, 0.01,
+                                    null, false);
+                        }
+                    }
+                    span.placed = false;
+                }
+            }
+            if (bridge == this) {
+                bridge = null;
+            }
+        }
+
+        /** The bridge is gone (its blocks expire with it): the boosts end. */
+        void finish() {
+            sink();
+            unboost();
             for (Span span : cells) {
                 if (span.placed && ThreadLocalRandom.current().nextInt(4) == 0) {
                     Vfx.cloud(ctx(), new Location(world, span.x + 0.5, span.surface, span.z + 0.5), Particle.CLOUD, 1,
@@ -737,6 +822,7 @@ public final class QilinAbility extends Ability {
         final double distance;
         boolean placed;
         boolean done;
+        @Nullable Material material;
 
         Puff(int x, int z, double distance) {
             this.x = x;
@@ -751,6 +837,10 @@ public final class QilinAbility extends Ability {
      * cloud's time the riders heal and hit harder downwards (a scoped damage listener: the allies' hits do not reach
      * the owner's hooks), enemies who climb on slip off, and enemies in its shadow are slowed and drummed on by the
      * hooves. Then the riders get a slow fall and the cloud melts from the rim inwards.
+     *
+     * <p>Only allies with open sky up to the cloud are lifted (one under an overhang would hit it and drop). A rider
+     * who misses the cloud anyway (pushed aside, off the rim) gets a slow fall as soon as it starts to fall, and one who
+     * steps off later as it leaves; when the qilin falls mid-cloud every rider still in the air floats down too.
      */
     private final class Cloud implements LongPredicate, Listener {
 
@@ -766,6 +856,10 @@ public final class QilinAbility extends Ability {
         private final Set<UUID> landed = new HashSet<>();
         private final Set<UUID> softened = new HashSet<>();
         private final Map<UUID, NamespacedKey> shaded = new HashMap<>();
+        /** The highest a rider has been since the lift: below it by {@link #FALL_SLACK}, it is falling. */
+        private final Map<UUID, Double> peaks = new HashMap<>();
+        /** When an enemy on the cloud may be pushed again (once its client had time to follow the last push). */
+        private final Map<UUID, Long> slipAt = new HashMap<>();
         private @Nullable TextDisplay sigil;
         private boolean registered;
         private boolean done;
@@ -794,7 +888,7 @@ public final class QilinAbility extends Ability {
         void begin() {
             riders.put(owner.getUniqueId(), owner);
             for (Player ally : ctx().alliesNear(owner, ground, radius)) {
-                if (Math.abs(ally.getLocation().getY() - ground.getY()) <= 3) {
+                if (Math.abs(ally.getLocation().getY() - ground.getY()) <= 3 && canRise(ally)) {
                     riders.put(ally.getUniqueId(), ally);
                 }
             }
@@ -828,6 +922,38 @@ public final class QilinAbility extends Ability {
             Loop.repeat(ctx(), owner, 0, 1, duration, this, this::end);
         }
 
+        /**
+         * True if the ally can be carried onto the cloud: it stands under a cloud cell, with open sky from its head up
+         * to where it will stand on the cloud.
+         */
+        private boolean canRise(Player ally) {
+            Location at = ally.getLocation();
+            int x = at.getBlockX();
+            int z = at.getBlockZ();
+            boolean under = false;
+            for (Puff puff : puffs) {
+                if (puff.x == x && puff.z == z) {
+                    under = true;
+                    break;
+                }
+            }
+            if (!under) {
+                return false;
+            }
+            BoundingBox box = ally.getBoundingBox();
+            int from = (int) Math.floor(at.getY() + 1.0E-3) + 2;
+            for (int bx = (int) Math.floor(box.getMinX()); bx <= (int) Math.floor(box.getMaxX() - 1.0E-6); bx++) {
+                for (int bz = (int) Math.floor(box.getMinZ()); bz <= (int) Math.floor(box.getMaxZ() - 1.0E-6); bz++) {
+                    for (int y = from; y <= layer + 2; y++) {
+                        if (!world.getBlockAt(bx, y, bz).isPassable()) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
         @Override
         public boolean test(long tick) {
             if (done) {
@@ -847,7 +973,7 @@ public final class QilinAbility extends Ability {
             }
             slip();
             shade();
-            soften(tick);
+            soften();
             ambient(tick);
             return true;
         }
@@ -877,6 +1003,7 @@ public final class QilinAbility extends Ability {
             Material material = ThreadLocalRandom.current().nextInt(10) < 3 ? CLOUD_PUFF : CLOUD_BLOCK;
             if (ctx().placeTempBlock(block, material.createBlockData(), left)) {
                 puff.placed = true;
+                puff.material = material;
                 if (ThreadLocalRandom.current().nextInt(3) == 0) {
                     Vfx.cloud(ctx(), new Location(world, puff.x + 0.5, top + 0.2, puff.z + 0.5), Particle.CLOUD, 1, 0.3,
                             0.01, null, true);
@@ -957,13 +1084,19 @@ public final class QilinAbility extends Ability {
             }
         }
 
-        /** Enemies who climb onto the cloud slip off its rim. */
+        /**
+         * Enemies who climb onto the cloud slip off its rim. A player is pushed again only once its client has had a
+         * round trip to follow the last push: the server's position trails the client by the ping, and pushing every
+         * tick it still looked on the cloud sent it flying far past the rim.
+         */
         private void slip() {
+            long now = ctx().currentTick();
             for (LivingEntity enemy : ctx().enemiesNear(owner, ground.clone().add(0, top - ground.getY(), 0),
                     radius + 3)) {
-                if (!onCloud(enemy)) {
+                if (!onCloud(enemy) || now < slipAt.getOrDefault(enemy.getUniqueId(), Long.MIN_VALUE / 2)) {
                     continue;
                 }
+                slipAt.put(enemy.getUniqueId(), now + 1 + lagTicks(enemy));
                 Vector out = Motion.horizontal(enemy.getLocation().toVector().subtract(ground.toVector()));
                 if (out.lengthSquared() < 1.0E-6) {
                     out = new Vector(1, 0, 0);
@@ -1005,32 +1138,40 @@ public final class QilinAbility extends Ability {
         }
 
         /**
-         * A rider (or an ally) who stepped off the cloud floats down slowly instead of falling (the qilin itself never
-         * takes fall damage anyway).
+         * A rider who stepped off the cloud, or who never made it onto it (pushed aside on the way up, off the rim),
+         * floats down slowly instead of falling (the qilin itself never takes fall damage anyway).
          */
-        private void soften(long tick) {
-            if (tick < LIFT_WINDOW) {
-                for (Player rider : riders.values()) {
-                    if (onCloud(rider)) {
-                        landed.add(rider.getUniqueId());
-                    }
-                }
-                return;
-            }
+        private void soften() {
             for (Player rider : riders.values()) {
+                UUID id = rider.getUniqueId();
+                if (!rider.isValid()) {
+                    continue;
+                }
+                double y = rider.getLocation().getY();
+                double peak = Math.max(y, peaks.getOrDefault(id, y));
+                peaks.put(id, peak);
                 if (onCloud(rider)) {
-                    landed.add(rider.getUniqueId());
+                    landed.add(id);
                     continue;
                 }
-                if (rider.equals(owner) || !landed.contains(rider.getUniqueId())
-                        || softened.contains(rider.getUniqueId()) || Motion.isGrounded(rider)) {
+                if (rider.equals(owner) || softened.contains(id) || Motion.isGrounded(rider)
+                        || !ctx().isAlive(rider)) {
                     continue;
                 }
-                softened.add(rider.getUniqueId());
-                rider.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, (int) SINK_SLOW_FALL, 0, false,
-                        false, true));
-                Vfx.cloud(ctx(), rider.getLocation(), Particle.CLOUD, 6, 0.3, 0.02, null, false);
+                if (!landed.contains(id) && y > peak - FALL_SLACK) {
+                    continue; // still rising towards the cloud
+                }
+                floatDown(rider);
             }
+        }
+
+        /** {@code rider} floats down slowly (once per cloud). */
+        private void floatDown(Player rider) {
+            softened.add(rider.getUniqueId());
+            rider.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, (int) SINK_SLOW_FALL, 0, false,
+                    false, true));
+            rider.setFallDistance(0);
+            Vfx.cloud(ctx(), rider.getLocation(), Particle.CLOUD, 6, 0.3, 0.02, null, false);
         }
 
         /** The glowing rim, drifting jade wisps, the shadow traced on the ground, the sigil turning gold. */
@@ -1061,20 +1202,19 @@ public final class QilinAbility extends Ability {
         private void end() {
             for (Player rider : onTop()) {
                 if (!softened.contains(rider.getUniqueId())) {
-                    softened.add(rider.getUniqueId());
-                    rider.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, (int) SINK_SLOW_FALL, 0,
-                            false, false, true));
+                    floatDown(rider);
                 }
             }
             List<Puff> order = new ArrayList<>(puffs);
             order.sort(Comparator.comparingDouble((Puff puff) -> puff.distance).reversed());
             Loop.repeat(ctx(), owner, 0, 1, DISSOLVE_TICKS, run -> {
-                double from = radius * (1 - (double) run / DISSOLVE_TICKS);
+                // From the rim in, the middle last (the last run reaches it).
+                double from = radius * (1 - (double) (run + 1) / DISSOLVE_TICKS);
                 for (Puff puff : order) {
                     if (puff.placed && puff.distance >= from - 1.0E-6) {
                         puff.placed = false;
                         Block block = world.getBlockAt(puff.x, layer, puff.z);
-                        ctx().restoreTempBlock(block);
+                        restore(puff, block);
                         if (ThreadLocalRandom.current().nextInt(3) == 0) {
                             Vfx.cloud(ctx(), block.getLocation().add(0.5, 0.5, 0.5), Particle.CLOUD, 2, 0.3, 0.02,
                                     null, false);
@@ -1117,20 +1257,40 @@ public final class QilinAbility extends Ability {
             }
         }
 
+        /** Restores a cloud block early, only if it is still the one this cloud put there. */
+        private void restore(Puff puff, Block block) {
+            if (block.getType() == puff.material) {
+                ctx().restoreTempBlock(block);
+            }
+        }
+
         /**
          * Unregisters the bonus and lifts the shadow's slows. Released {@code early} (the qilin is gone mid-cloud), the
-         * cloud melts at once under a slow fall for everyone of its side still on it, rather than dropping them later.
+         * cloud melts at once under a slow fall for everyone of its side on it or still in the air on the way up,
+         * rather than dropping them later.
          */
         void release(boolean early) {
             if (early && !done) {
+                Map<UUID, Player> sinking = new HashMap<>();
                 for (Player rider : onTop()) {
-                    rider.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, (int) SINK_SLOW_FALL, 0,
-                            false, false, true));
+                    sinking.put(rider.getUniqueId(), rider);
+                }
+                for (Player rider : riders.values()) {
+                    if (rider.isValid() && !Motion.isGrounded(rider)) {
+                        sinking.put(rider.getUniqueId(), rider);
+                    }
+                }
+                for (Player rider : sinking.values()) {
+                    if (ctx().isAlive(rider)) {
+                        rider.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, (int) SINK_SLOW_FALL, 0,
+                                false, false, true));
+                        rider.setFallDistance(0);
+                    }
                 }
                 for (Puff puff : puffs) {
                     if (puff.placed) {
                         puff.placed = false;
-                        ctx().restoreTempBlock(world.getBlockAt(puff.x, layer, puff.z));
+                        restore(puff, world.getBlockAt(puff.x, layer, puff.z));
                     }
                 }
             }
@@ -1153,6 +1313,13 @@ public final class QilinAbility extends Ability {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** How many ticks a player's client runs ahead of the server's view of it (its ping), 0 for any other entity. */
+    private static long lagTicks(LivingEntity entity) {
+        return entity instanceof Player player
+                ? Math.clamp(Math.round(player.getPing() / MILLIS_PER_TICK), 0, MAX_LAG_TICKS)
+                : 0;
+    }
 
     private static long column(int x, int z) {
         return ((long) x << 32) ^ (z & 0xFFFFFFFFL);

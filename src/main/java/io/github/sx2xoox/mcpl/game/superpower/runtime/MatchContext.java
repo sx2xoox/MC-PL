@@ -31,6 +31,7 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
+import org.bukkit.block.TileState;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
@@ -613,7 +614,8 @@ public final class MatchContext implements AbilityContext {
 
     @Override
     public boolean restoreTempBlock(Block block) {
-        if (closed || !hub.tempBlocks().isTemporary(block)) {
+        // Never a block with a block entity: abilities cannot place those, so it is a loot chest (or the like).
+        if (closed || !hub.tempBlocks().isTemporary(block) || block.getState(false) instanceof TileState) {
             return false;
         }
         return hub.tempBlocks().restore(block);

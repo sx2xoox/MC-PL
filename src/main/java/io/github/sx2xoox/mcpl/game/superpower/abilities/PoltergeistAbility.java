@@ -73,19 +73,20 @@ public final class PoltergeistAbility extends Ability {
             .passive("덜컹덜컹",
                     "{passive_range}블록 안에 적이 있으면 {rattle_interval}초마다 주변 {grab_radius}블록의 벽이나 소품에서"
                             + "(없으면 바닥에서) 블록 하나가 덜컹 뜯겨 내 주위를 떠다닙니다(최대 {orbit_max}개, 누군가 서 "
-                            + "있는 바닥은 뜯지 않고 한 목숨에 최대 {grab_life_max}칸). 뜯을 수 없는 곳에서는 허공에서 "
-                            + "유령 소품이 나타납니다. 떠다니는 물건은 나를 노린 원거리 공격(투사체, {ranged_distance}블록 "
-                            + "밖의 능력 공격) 하나를 대신 맞고 부서집니다.")
+                            + "있는 블록은 뜯지 않으며 집어던지기로 뜯는 블록과 합쳐 한 목숨에 최대 {grab_life_max}칸). "
+                            + "뜯을 수 없는 곳에서는 허공에서 유령 소품이 나타납니다. 떠다니는 물건은 나를 노린 원거리 "
+                            + "공격(투사체, {ranged_distance}블록 밖의 능력 공격) 하나를 대신 맞고 부서집니다.")
             .active("집어던지기",
                     "떠다니는 물건과 바라보는 곳({tear_range}블록 이내)에서 새로 뜯은 블록을 합쳐 {throw_count}개를 "
-                            + "{throw_interval}초 간격으로 조준한 곳({throw_range}블록 이내)에 던집니다. 물건마다 반경 "
-                            + "{throw_radius}블록의 적에게 {throw_damage} 피해를 줍니다(한 적은 최대 {throw_max_hits}번). "
+                            + "{throw_interval}초 간격으로 조준한 곳({throw_range}블록 이내)에 던집니다(뜯는 블록은 덜컹덜컹과 "
+                            + "합쳐 한 목숨에 최대 {grab_life_max}칸). 물건마다 반경 {throw_radius}블록의 적에게 "
+                            + "{throw_damage} 피해를 줍니다(한 적은 최대 {throw_max_hits}번). "
                             + "전투 맵에서는 벽에서 뜯은 자리가 구멍으로 남아 시야와 길이 열리고, 다른 곳에서는 유령 소품을 "
                             + "던집니다.",
                     7)
             .ultimate("대소동",
-                    "{chaos_duration}초간 반경 {chaos_radius}블록의 가구와 벽이 살아납니다. 1초마다 적(최대 "
-                            + "{chaos_targets}명)마다 그 적에게서 {cover_range}블록 안의 벽이나 엄폐물이 {chaos_warning}초 "
+                    "{chaos_duration}초간 지금 선 자리 반경 {chaos_radius}블록의 가구와 벽이 살아납니다. 1초마다 그 안의 "
+                            + "적(최대 {chaos_targets}명)마다 그 적에게서 {cover_range}블록 안의 벽이나 엄폐물이 {chaos_warning}초 "
                             + "덜컹인 뒤 덩어리째 뜯겨 날아와, 맞은 적은 {chaos_damage} 피해를 입고 벽 반대쪽으로 밀려나며 "
                             + "{stagger_duration}초간 휘청입니다(이동·공격 속도 {stagger_slow}% 감소, 적마다 최대 "
                             + "{chaos_max_hits}번). 전투 맵에서는 뜯긴 자리가 구멍으로 남아 엄폐물이 사라지고, 보호된 "
@@ -269,7 +270,7 @@ public final class PoltergeistAbility extends Ability {
 
     /**
      * Tears loose a block within {@code grab_radius}: a piece of wall or a prop at body height first, else the floor
-     * (never under someone standing on it), through {@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#breakBlocks}
+     * (never one someone stands on), through {@link io.github.sx2xoox.mcpl.game.superpower.ability.AbilityContext#breakBlocks}
      * — only where blocks may break, at most {@code grab_life_max} per life. Elsewhere a ghostly item appears.
      */
     private @Nullable Orbiter tearNear(Player owner) {
@@ -326,10 +327,15 @@ public final class PoltergeistAbility extends Ability {
         return orbiter;
     }
 
-    /** The nearest solid block at body height within {@code radius} that faces open air (a wall or a prop). */
+    /**
+     * The nearest solid block at body height within {@code radius} with a side facing open air (a wall or a prop),
+     * never one someone stands on. Body height starts at the block the feet are in, rounded to the nearest layer: on a
+     * dirt path, a slab or farmland the feet are just under the next block's bottom, and the floor block they stand in
+     * is not a wall.
+     */
     private @Nullable Block wallNear(Location feet, double radius) {
         World world = feet.getWorld();
-        int floor = (int) Math.floor(feet.getY() + 1.0E-3);
+        int floor = bodyLayer(feet);
         int span = (int) Math.ceil(radius);
         List<Block> found = new ArrayList<>();
         for (int dx = -span; dx <= span; dx++) {
@@ -337,7 +343,8 @@ public final class PoltergeistAbility extends Ability {
                 for (int dy = 0; dy <= 2; dy++) {
                     Block block = world.getBlockAt(feet.getBlockX() + dx, floor + dy, feet.getBlockZ() + dz);
                     if (block.isPassable() || block.getState(false) instanceof TileState
-                            || block.getLocation().add(0.5, 0.5, 0.5).distance(feet) > radius + 0.5 || !exposed(block)) {
+                            || block.getLocation().add(0.5, 0.5, 0.5).distance(feet) > radius + 0.5
+                            || !exposedSideways(block) || stoodOn(block)) {
                         continue;
                     }
                     found.add(block);
@@ -350,7 +357,7 @@ public final class PoltergeistAbility extends Ability {
     /** A floor block within {@code radius} with room above it and nobody standing over it. */
     private @Nullable Block floorNear(Player owner, Location feet, double radius) {
         World world = feet.getWorld();
-        int floor = (int) Math.floor(feet.getY() + 1.0E-3) - 1;
+        int floor = bodyLayer(feet) - 1;
         int span = (int) Math.ceil(radius);
         List<Block> found = new ArrayList<>();
         for (int dx = -span; dx <= span; dx++) {
@@ -373,8 +380,28 @@ public final class PoltergeistAbility extends Ability {
     private boolean stoodOn(Block block) {
         BoundingBox above = new BoundingBox(block.getX() - 0.3, block.getY() + 1, block.getZ() - 0.3, block.getX() + 1.3,
                 block.getY() + 3.5, block.getZ() + 1.3);
-        for (Entity entity : block.getWorld().getNearbyEntities(above)) {
-            if (entity instanceof LivingEntity living && living.isValid() && !living.isDead()) {
+        // Searched wider and checked box against box: a body overlapping the space is enough, wherever its feet are.
+        for (Entity entity : block.getWorld().getNearbyEntities(above.clone().expand(1.0))) {
+            if (entity instanceof LivingEntity living && living.isValid() && !living.isDead()
+                    && living.getBoundingBox().overlaps(above)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The block layer the body starts in: the feet's layer, or the next one up when the feet stand on a partial block
+     * (a dirt path, farmland, a slab or stairs) whose top is in the upper half of its layer.
+     */
+    private static int bodyLayer(Location feet) {
+        return (int) Math.floor(feet.getY() + 0.5);
+    }
+
+    /** True if a side of the block (not only its top) faces open air: a wall or a prop, not a floor. */
+    private static boolean exposedSideways(Block block) {
+        for (BlockFace face : new BlockFace[] {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+            if (block.getRelative(face).isPassable()) {
                 return true;
             }
         }
@@ -634,10 +661,11 @@ public final class PoltergeistAbility extends Ability {
     }
 
     /**
-     * The uproar: for {@code chaos_duration}, once a second every enemy around (seen by the ghost, at most
-     * {@code chaos_targets}, nearest first) who stands within {@code cover_range} of a wall or a piece of cover gets
-     * that cover thrown at it: it shakes for {@code chaos_warning} (step away!), tears out (or a ghostly piece of
-     * furniture appears where nothing may break) and flies at where the enemy was.
+     * The uproar: for {@code chaos_duration}, once a second every enemy within {@code chaos_radius} of where the ghost
+     * cast it (the drawn ring; seen by the ghost, at most {@code chaos_targets}, nearest first) who stands within
+     * {@code cover_range} of a wall or a piece of cover gets that cover thrown at it: it shakes for
+     * {@code chaos_warning} (step away!), tears out (or a ghostly piece of furniture appears where nothing may break)
+     * and flies at where the enemy was.
      */
     private final class Uproar implements LongPredicate {
 
@@ -679,7 +707,8 @@ public final class PoltergeistAbility extends Ability {
             int max = Math.max(1, params().integer("chaos_max_hits"));
             int targets = Math.max(1, params().integer("chaos_targets"));
             int chosen = 0;
-            for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), radius)) {
+            // Around the cast point, where the ring is drawn (not wherever the ghost has drifted since).
+            for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius)) {
                 if (chosen >= targets) {
                     break;
                 }

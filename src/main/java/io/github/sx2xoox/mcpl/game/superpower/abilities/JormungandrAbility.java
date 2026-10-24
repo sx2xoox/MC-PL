@@ -130,6 +130,9 @@ public final class JormungandrAbility extends Ability {
 
     private static final int MAX_DISPLAYS = 24;
     private static final double MAX_SPEED = 2.0;
+    /** A player's client runs this many ticks ahead of the server at most (its ping, for steering). */
+    private static final long MAX_LAG_TICKS = 10;
+    private static final double MILLIS_PER_TICK = 50.0;
 
     // passive: shedding
     private static final int HUSK_PIECES = 3;
@@ -150,6 +153,10 @@ public final class JormungandrAbility extends Ability {
 
     // ultimate: Midgard ring
     private static final int RING_SEGMENTS = 16;
+    /** The head: a skull and two eyes. */
+    private static final int HEAD_PARTS = 3;
+    /** With less room than this the ring's body is left out (the dust ring still shows it). */
+    private static final int MIN_RING_SEGMENTS = 8;
     private static final long FORM_TICKS = 8;
     private static final long POSE_PERIOD = 2;
     private static final double BODY_HEIGHT = 0.55;
@@ -171,6 +178,8 @@ public final class JormungandrAbility extends Ability {
     // ------------------------------------------------------------------ state
 
     private final List<Display> live = new ArrayList<>();
+    /** The shed husk's pieces: the first displays to go when the ring needs the room. */
+    private final List<BlockDisplay> husks = new ArrayList<>();
     private long nextShed = Long.MIN_VALUE / 2;
     private @Nullable Ring ring;
 
@@ -183,6 +192,7 @@ public final class JormungandrAbility extends Ability {
     public void onRevoke() {
         ring = null;
         live.clear();
+        husks.clear();
     }
 
     // ------------------------------------------------------------------ passive: shedding
@@ -305,6 +315,8 @@ public final class JormungandrAbility extends Ability {
             float thick = 0.42f - 0.08f * i;
             BlockDisplay piece = keep(Displays.block(ctx(), owner, spot, HUSK[i % HUSK.length].createBlockData(),
                     Displays.transform(x, thick / 2, z, thick, thick, 0.05f, yaw, 0, 0), HUSK_TICKS));
+            husks.removeIf(old -> !old.isValid());
+            husks.add(piece);
             Displays.animateNextTick(ctx(), owner, piece, Displays.transform(x, thick / 2, z, thick, thick * 0.9f, 1.1f,
                     yaw, 0, 6f * (i - 1)), 5);
             ctx().runLater(owner, HUSK_TICKS - 12, () -> {
@@ -597,6 +609,8 @@ public final class JormungandrAbility extends Ability {
         int touches;
         long nextTouch = Long.MIN_VALUE / 2;
         long nextWarp = Long.MIN_VALUE / 2;
+        /** When the body may push the enemy in again (once its client had time to follow the last push). */
+        long nextNudge = Long.MIN_VALUE / 2;
 
         Inside(LivingEntity enemy, double distance) {
             this.enemy = enemy;
@@ -621,6 +635,8 @@ public final class JormungandrAbility extends Ability {
         private final List<BlockDisplay> body = new ArrayList<>();
         private final List<BlockDisplay> head = new ArrayList<>();
         private final Map<UUID, Inside> inside = new HashMap<>();
+        /** How many body segments go round the circle (fewer, longer ones when the display budget is short). */
+        private int count = RING_SEGMENTS;
         private double radius;
         private int warps;
 
@@ -633,7 +649,8 @@ public final class JormungandrAbility extends Ability {
 
         void begin() {
             long lifetime = duration + CRUSH_TICKS + 10;
-            int segments = reserve(RING_SEGMENTS + 3) ? RING_SEGMENTS : 0;
+            int segments = bodyRoom();
+            count = Math.max(1, segments);
             for (int i = 0; i < segments; i++) {
                 Material material = i % 2 == 0 ? DARK_SCALE : TEAL_SCALE;
                 if (i >= segments - 2) {
@@ -701,6 +718,25 @@ public final class JormungandrAbility extends Ability {
             hold(now);
             ambient(tick);
             return true;
+        }
+
+        /**
+         * How many body segments fit in the display budget with the head: all of them when there is room, else the
+         * shed husk (only for show) makes way, and the body sheds detail (fewer, longer segments) rather than vanish
+         * when the tail sweep is still up; 0 (the dust ring alone) only below {@link #MIN_RING_SEGMENTS}.
+         */
+        private int bodyRoom() {
+            if (!reserve(RING_SEGMENTS + HEAD_PARTS)) {
+                for (BlockDisplay piece : husks) {
+                    if (piece.isValid()) {
+                        piece.remove();
+                    }
+                }
+                husks.clear();
+            }
+            live.removeIf(display -> !display.isValid());
+            int room = MAX_DISPLAYS - live.size() - HEAD_PARTS;
+            return room >= MIN_RING_SEGMENTS ? Math.min(RING_SEGMENTS, room) : 0;
         }
 
         /** Enemies within {@code within} blocks of the center (horizontally) and within the ring's height. */
@@ -807,12 +843,17 @@ public final class JormungandrAbility extends Ability {
                     true);
         }
 
-        /** The body meets an enemy standing in its way: hurt (a few times at most) and shoved inward. */
+        /**
+         * The body meets an enemy standing in its way: hurt (a few times at most) and shoved inward. A player is pushed
+         * again only once its client has had a round trip to follow the last push: the server's position trails it by
+         * the ping, and pushed every tick it still looked at the body it was flung far inward.
+         */
         private void shoveIn(LivingEntity enemy, Inside state, long now) {
             Vector inward = Motion.horizontal(center.toVector().subtract(enemy.getLocation().toVector()));
-            if (inward.lengthSquared() < 1.0E-6) {
+            if (inward.lengthSquared() < 1.0E-6 || now < state.nextNudge) {
                 return;
             }
+            state.nextNudge = now + 1 + lagTicks(enemy);
             if (now < state.nextTouch) {
                 Motion.push(enemy, inward.multiply(TOUCH_PUSH * 0.5).setY(0.1), MAX_SPEED);
                 return;
@@ -884,9 +925,9 @@ public final class JormungandrAbility extends Ability {
          * towards the tail tip in the mouth.
          */
         private Transformation segmentPose(int index, double r, long tick, float grow) {
-            double step = Math.PI * 2 / RING_SEGMENTS;
+            double step = Math.PI * 2 / count;
             double a = phase + (index + 0.5) * step;
-            double t = (double) index / (RING_SEGMENTS - 1);
+            double t = (double) index / Math.max(1, count - 1);
             float thick = (float) (1.15 - 0.6 * Math.pow(t, 1.5)) * grow;
             float length = (float) (2 * r * Math.sin(step / 2) * 1.08) * Math.max(0.05f, grow);
             float bob = (float) (0.12 * Math.sin(tick * 0.25 + index * 0.9));
@@ -1008,6 +1049,13 @@ public final class JormungandrAbility extends Ability {
             return null;
         }
         return Displays.unrotated(ground);
+    }
+
+    /** How many ticks a player's client runs ahead of the server's view of it (its ping), 0 for any other entity. */
+    private static long lagTicks(LivingEntity entity) {
+        return entity instanceof Player player
+                ? Math.clamp(Math.round(player.getPing() / MILLIS_PER_TICK), 0, MAX_LAG_TICKS)
+                : 0;
     }
 
     /** Minecraft's yaw (degrees: 0 = +Z, 90 = -X) of the math angle {@code angle} (0 = +X, towards +Z). */

@@ -34,6 +34,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -44,6 +45,8 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockbukkit.mockbukkit.block.BlockMock;
+import org.mockbukkit.mockbukkit.block.state.ChestStateMock;
 
 /**
  * 하늘 · 땅 계열 (new): 블록 퍼즐러, 기린, 아틀라스, 폴터가이스트, 요르문간드. Each ability through a whole match, the owner
@@ -356,6 +359,11 @@ class SkyEarthNewAbilitiesTest {
                     "the spot takes a new temporary block right away");
             assertFalse(s.ctx().restoreTempBlock(s.world.getBlockAt(5, Y - 1, 5)), "real blocks are not restored");
             assertEquals(Material.STONE, s.world.getBlockAt(5, Y - 1, 5).getType());
+            Block chest = s.world.getBlockAt(7, Y, 7);
+            assertTrue(s.session.placeTempBlock(chest, Material.CHEST.createBlockData(), 0), "a loot chest");
+            ((BlockMock) chest).setState(new ChestStateMock(Material.CHEST)); // with its block entity, as on a server
+            assertFalse(s.ctx().restoreTempBlock(chest), "is never an ability's to restore");
+            assertEquals(Material.CHEST, chest.getType());
             s.finishClean();
         }
     }
@@ -589,6 +597,64 @@ class SkyEarthNewAbilitiesTest {
         }
     }
 
+    @Test
+    void atlasIsKnockedBackButNeverLaunched() {
+        try (Scenario s = Scenario.ffa("atlas")) {
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.ticks(2);
+            double startX = s.owner.getLocation().getX();
+            s.owner.setVelocity(new Vector(1.2, 0.6, 0)); // a blast that throws up and away
+            double highest = s.owner.getLocation().getY();
+            for (int i = 0; i < 30; i++) {
+                s.ticks(1);
+                highest = Math.max(highest, s.owner.getLocation().getY());
+            }
+            assertTrue(highest < FlatWorld.SURFACE + 0.5, "the titan never rises: " + highest);
+            assertTrue(s.owner.getLocation().getX() - startX > 1.0, "but the push sideways still moves him: "
+                    + (s.owner.getLocation().getX() - startX));
+            assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void atlasJumpsHigherWithJumpBoostWithoutShakingTheGround() {
+        try (Scenario s = Scenario.ffa("atlas")) {
+            s.place(s.enemy, 2.0, 0.5, 90);
+            s.place(s.enemy2, 10.5, 10.5, 180);
+            s.ticks(2);
+            s.owner.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, 400, 1));
+            s.clearHits();
+            s.owner.setVelocity(new Vector(0, 0.62, 0)); // the server's jump with jump boost II
+            s.ticks(5);
+            assertTrue(s.owner.getLocation().getY() > FlatWorld.SURFACE + 0.8, "a boosted jump is a jump: "
+                    + s.owner.getLocation().getY());
+            s.ticks(30);
+            assertEquals(0, s.damageBy(s.owner, s.enemy), EPSILON, "and shakes nothing");
+            s.owner.removePotionEffect(PotionEffectType.JUMP_BOOST);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void atlasCannotWalkIntoTheBearerToTakeTheSkyBack() {
+        try (Scenario s = Scenario.ffa("atlas")) {
+            s.place(s.enemy2, 10.5, 10.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "하늘 떠넘기기");
+            s.ticks(s.paramTicks("throw_time") + s.paramTicks("pass_immunity") + 6);
+            assertTrue(slowed(s.enemy), "the enemy carries the sky");
+            s.place(s.owner, 0.5, 4.0, 0); // Atlas bumps into the bearer
+            s.ticks(3);
+            assertTrue(slowed(s.enemy), "a bump does not hand the sky back to Atlas");
+            s.melee(s.enemy, s.owner, 1);
+            assertFalse(slowed(s.enemy), "the bearer has to hit him");
+            s.ticks(200);
+            s.finishClean();
+        }
+    }
+
     private static boolean slowed(Player player) {
         return player.getAttribute(Attribute.MOVEMENT_SPEED).getValue() < 0.1 - EPSILON;
     }
@@ -757,6 +823,56 @@ class SkyEarthNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.ally()), EPSILON, "never hurt");
             assertEquals(s.param("ring_crush_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "the enemy inside is crushed");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void jormungandrRingKeepsItsBodyWhileTheTailIsUp() {
+        try (Scenario s = Scenario.ffa("jormungandr")) {
+            s.place(s.enemy, 0.5, 6.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "꼬리 휩쓸기");
+            s.ticks(2);
+            assertEquals(6, entities(s, BlockDisplay.class).size(), "the tail is up");
+            s.assertSucceeded(s.ultimate(), "미드가르드의 고리");
+            s.ticks(10);
+            int parts = entities(s, BlockDisplay.class).size();
+            assertTrue(parts >= 6 + 8 + 3, "the ring has a body and a head beside the tail: " + parts);
+            assertTrue(parts <= 24, "within the display budget: " + parts);
+            for (Display display : entities(s, Display.class)) {
+                assertUnrotated(display, "ring part");
+            }
+            s.ticks(40);
+            assertTrue(entities(s, BlockDisplay.class).size() >= 8 + 3, "still there once the tail is gone");
+            s.ticks(200);
+            assertNoDisplays(s, "ring");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void jormungandrRingShovesALaggingEnemyOnlyOncePerRoundTrip() {
+        try (Scenario s = Scenario.ffa("jormungandr")) {
+            s.world.physics().setEnabled(false);
+            s.place(s.enemy, 0.5, 10.5, 180);
+            s.place(s.enemy2, 20.5, 20.5, 180);
+            s.enemy.setPing(200); // four ticks behind its client
+            s.assertSucceeded(s.ultimate(), "미드가르드의 고리");
+            s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 120, "the tightening body reaches the enemy");
+            int pushes = 0;
+            for (int i = 0; i < 40; i++) {
+                s.enemy.setVelocity(new Vector());
+                s.ticks(1);
+                if (s.enemy.getVelocity().lengthSquared() > 1.0E-6) {
+                    pushes++;
+                }
+            }
+            assertTrue(pushes >= 4 && pushes <= 9, "pushed once per round trip, not every tick: " + pushes);
+            s.enemy.setPing(0);
+            s.world.physics().setEnabled(true);
+            s.ticks(200);
             s.finishClean();
         }
     }
@@ -980,6 +1096,161 @@ class SkyEarthNewAbilitiesTest {
         }
     }
 
+    /** Ticks until {@code player} has stood on the ground for a moment again. */
+    private static void land(Scenario s, Entity player) {
+        s.h.tickUntil(() -> player.isOnGround() && Math.abs(player.getVelocity().getY()) < 0.1, 400,
+                player.getName() + " landing");
+        s.ticks(3);
+    }
+
+    @Test
+    void qilinAllyStillRisingWhenTheQilinFallsFloatsDown() {
+        try (Scenario s = Scenario.teams("qilin")) {
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "상서로운 구름");
+            s.ticks(3);
+            double rising = s.ally().getLocation().getY();
+            assertTrue(rising > FlatWorld.SURFACE + 0.5 && rising < Y + s.param("cloud_height") - 1,
+                    "the ally is on its way up: " + rising);
+            s.killOwner(s.enemy);
+            assertEquals(0, s.h.hub.tempBlocks().size(), "the cloud melts with the qilin");
+            assertTrue(s.ally().hasPotionEffect(PotionEffectType.SLOW_FALLING), "the rising ally floats down");
+            land(s, s.ally());
+            assertTrue(s.hitsOf(s.ally(), DamageCause.FALL).isEmpty(), "and is not hurt landing: " + s.hits());
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void qilinLeavesAnAllyUnderAnOverhangOnTheGround() {
+        try (Scenario s = Scenario.teams("qilin")) {
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.place(s.ally(), -3.5, 0.5, 0);
+            for (int x = -5; x <= -3; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, Y + 6, z, Material.STONE); // a ledge just over the cloud
+                }
+            }
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "상서로운 구름");
+            double highest = s.ally().getLocation().getY();
+            for (int i = 0; i < 40; i++) {
+                s.ticks(1);
+                highest = Math.max(highest, s.ally().getLocation().getY());
+            }
+            assertTrue(highest < FlatWorld.SURFACE + 0.5, "not thrown into the ledge: " + highest);
+            assertTrue(s.owner.getLocation().getY() > Y + 3, "the qilin is up on the cloud");
+            s.ticks(s.paramTicks("cloud_duration") + 120);
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "the ally never got hurt: " + s.hits());
+            for (int x = -5; x <= -3; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    s.world.setBlock(x, Y + 6, z, Material.AIR);
+                }
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void qilinAllyThatMissesTheCloudFloatsDown() {
+        try (Scenario s = Scenario.teams("qilin")) {
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.place(s.enemy2, 12.5, 12.5, 180);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "상서로운 구름");
+            s.h.tickUntil(() -> s.ally().getLocation().getY() > Y + 2, 20, "the ally rises");
+            Location aside = s.ally().getLocation();
+            Vector rise = s.ally().getVelocity();
+            aside.setX(-9.5); // knocked aside on the way up, well off the cloud
+            s.ally().teleport(aside);
+            s.ally().setVelocity(rise);
+            land(s, s.ally());
+            assertTrue(s.ally().getLocation().getY() < Y + 0.5, "it came down beside the cloud");
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "floating, not falling: " + s.hits());
+            s.ticks(s.paramTicks("cloud_duration") + 120);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void qilinCloudPushesALaggingClimberOnlyOncePerRoundTrip() {
+        try (Scenario s = Scenario.ffa("qilin")) {
+            s.world.physics().setEnabled(false);
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.assertSucceeded(s.ultimate(), "상서로운 구름");
+            int top = Y + (int) s.param("cloud_height");
+            s.enemy2.setPing(200); // four ticks behind its client
+            s.place(s.enemy2, 3.5, top, 0.5, 0, 0);
+            int pushes = 0;
+            for (int i = 0; i < 10; i++) {
+                s.enemy2.setVelocity(new Vector());
+                s.ticks(1);
+                if (s.enemy2.getVelocity().getX() > 0.2) {
+                    pushes++;
+                }
+            }
+            assertTrue(pushes >= 1 && pushes <= 2, "pushed once per round trip, not every tick: " + pushes);
+            s.enemy2.setPing(0);
+            s.place(s.enemy2, 14.5, 14.5, 180);
+            s.world.physics().setEnabled(true);
+            s.ticks(s.paramTicks("cloud_duration") + 120);
+            s.finishClean();
+        }
+    }
+
+    /** Casts the cloud bridge as a stair up along +z and stands the ally on its top. */
+    private static void allyOnTheStairTop(Scenario s) {
+        s.place(s.enemy, 12.5, -8.5, 0);
+        s.place(s.enemy2, -12.5, -8.5, 0);
+        s.place(s.ally(), -3.5, 0.5, 0);
+        Location look = s.owner.getLocation();
+        look.setPitch(-35);
+        s.owner.teleport(look);
+        s.assertSucceeded(s.active(), "구름다리 (up)");
+        s.ticks(12);
+        int top = Y + (int) s.param("bridge_rise");
+        assertTrue(cloud(s.world.getBlockAt(0, top - 1, 12).getType()), "the stair reaches the top");
+        s.place(s.ally(), 0.5, top, 12.5, 0, 0);
+        s.ticks(4);
+        assertEquals(top, s.ally().getLocation().getY(), EPSILON, "the ally stands on the top");
+    }
+
+    @Test
+    void qilinBridgeStairNeverDropsTheAlliesOnIt() {
+        try (Scenario s = Scenario.teams("qilin")) {
+            allyOnTheStairTop(s);
+            s.clearHits();
+            s.ticks(s.paramTicks("bridge_duration") + 4);
+            assertEquals(0, s.h.hub.tempBlocks().size(), "the bridge is gone");
+            assertTrue(s.ally().hasPotionEffect(PotionEffectType.SLOW_FALLING), "the ally on it floats down");
+            land(s, s.ally());
+            assertEquals(FlatWorld.SURFACE, s.ally().getLocation().getY(), EPSILON, "down on the ground");
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "unhurt: " + s.hits());
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void qilinBridgeMeltsWithTheQilinAndTakesTheSpeedAlong() {
+        try (Scenario s = Scenario.teams("qilin")) {
+            allyOnTheStairTop(s);
+            assertTrue(s.ally().getAttribute(Attribute.MOVEMENT_SPEED).getValue() > 0.1 + EPSILON,
+                    "the ally on the bridge is faster");
+            s.clearHits();
+            s.killOwner(s.enemy);
+            assertEquals(0, s.h.hub.tempBlocks().size(), "the bridge melts with the qilin");
+            assertModifierFree(s.ally(), "and the speed goes with it");
+            assertTrue(s.ally().hasPotionEffect(PotionEffectType.SLOW_FALLING), "the ally on it floats down");
+            land(s, s.ally());
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "unhurt: " + s.hits());
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 폴터가이스트 poltergeist
 
     /** An arrow from {@code shooter} hitting {@code victim} for {@code amount}. */
@@ -1119,6 +1390,62 @@ class SkyEarthNewAbilitiesTest {
         }
     }
 
+    @Test
+    void poltergeistNeverTearsAFloorItOrAnyoneStandsOn() {
+        try (Scenario s = terrain(Scenario.builder("poltergeist").param("rattle_interval", 1)).start()) {
+            s.world.physics().setEnabled(false);
+            for (int x = -6; x <= 6; x++) {
+                for (int z = -6; z <= 6; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y, z, Material.DIRT_PATH); // a path, a little below a block
+                }
+            }
+            double path = FlatWorld.FLOOR_Y + 0.9375;
+            s.place(s.owner, 0.5, path, 0.5, 0, 0);
+            s.place(s.enemy, 2.5, path, 0.5, 270, 0);
+            s.place(s.enemy2, 20.5, FlatWorld.SURFACE, 20.5, 180, 0);
+            s.ticks(80);
+            assertTrue(s.h.hub.tempBlocks().removedCount() > 0, "it tears up the path around it");
+            for (Player standing : List.of(s.owner, s.enemy)) {
+                Location at = standing.getLocation();
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        Block block = s.world.getBlockAt(at.getBlockX() + dx, FlatWorld.FLOOR_Y, at.getBlockZ() + dz);
+                        if (block.getBoundingBox().expand(0.3, 1, 0.3).overlaps(standing.getBoundingBox())) {
+                            assertEquals(Material.DIRT_PATH, block.getType(), "never the floor under "
+                                    + standing.getName() + " at " + block.getX() + "," + block.getZ());
+                        }
+                    }
+                }
+            }
+            s.finishMatch();
+            for (int x = -6; x <= 6; x++) {
+                for (int z = -6; z <= 6; z++) {
+                    s.world.setBlock(x, FlatWorld.FLOOR_Y, z, Material.STONE);
+                }
+            }
+            s.world.physics().setEnabled(true);
+            s.assertNoProblems();
+            s.assertCleanWorld();
+        }
+    }
+
+    @Test
+    void poltergeistUproarStaysWhereItWasCast() {
+        try (Scenario s = Scenario.ffa("poltergeist")) {
+            wall(s, -3, 4, 6, 2);
+            s.place(s.enemy2, 20.5, -20.5, 0);
+            s.clearHits();
+            s.assertSucceeded(s.ultimate(), "대소동");
+            s.place(s.owner, 0.5, -16.5, 0); // the ghost drifts away; the room it woke stays awake
+            s.ticks(14);
+            assertEquals(s.param("chaos_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
+                    "the enemy by the wall in the drawn ring is still hit");
+            s.ticks(140);
+            clearWall(s, -3, 4, 6, 2);
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 블록 퍼즐러 blockfall
 
     private static final List<Material> PIECES = List.of(Material.STONE_BRICKS, Material.BRICKS, Material.OAK_PLANKS,
@@ -1221,14 +1548,15 @@ class SkyEarthNewAbilitiesTest {
 
     @Test
     void blockfallStackClearsAndBlowsUp() {
-        try (Scenario s = Scenario.builder("blockfall").param("stack_height", 2).param("line_radius", 6).start()) {
+        // The default stack height and the real cooldown: the second piece lands while the first is still there.
+        try (Scenario s = Scenario.builder("blockfall").param("line_radius", 6).start()) {
             s.place(s.enemy, 4.5, 8.5, 0);
             s.place(s.enemy2, -12.5, -8.5, 0);
             s.aimAtFloor(s.owner, 0.5, 8.5);
             s.assertSucceeded(s.active(), "first piece");
             s.ticks(s.paramTicks("drop_time") + 6);
             assertTrue(PIECES.contains(s.world.getBlockAt(0, Y, 8).getType()), "landed");
-            s.readyActive();
+            s.ticks((int) Math.ceil(s.ctx().cooldownRemaining(s.owner) * 20) + 1);
             s.aimAt(s.owner, new Location(s.world, 0.5, Y + 1, 8.5));
             s.clearHits();
             s.assertSucceeded(s.active(), "second piece, onto the first");
@@ -1296,6 +1624,10 @@ class SkyEarthNewAbilitiesTest {
             assertTrue(bars, "bars filled the board");
             assertEquals(s.param("bar_damage") + s.param("clear_damage"), s.damageBy(s.owner, s.enemy), EPSILON,
                     "crushed once by a bar, then all clear: " + s.hitsBy(s.owner, s.enemy));
+            s.tickUntilGrounded(s.enemy, 80);
+            s.ticks(5);
+            assertEquals(s.param("bar_damage") + s.param("clear_damage"), s.damageTaken(s.enemy), EPSILON,
+                    "thrown from the top of a bar, it lands without a fall on top: " + s.hits());
             assertEquals(0, s.damageTaken(s.enemy2), EPSILON, "off the board, safe");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
             assertEquals(0, s.h.hub.tempBlocks().size(), "the board burst");
