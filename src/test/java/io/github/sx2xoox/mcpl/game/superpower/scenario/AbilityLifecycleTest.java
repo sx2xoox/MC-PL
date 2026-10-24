@@ -110,6 +110,10 @@ class AbilityLifecycleTest {
         }
     }
 
+    /** Abilities that carry their allies along on purpose (a buff): the ally may move, nothing else is allowed. */
+    private static final Set<String> MOVES_ALLIES = Set.of(
+            "qilin"); // the auspicious cloud lifts the allies around the qilin up onto it
+
     /** Abilities whose ultimate waits for their running active (a grab, a spin) to end first. */
     private static final Set<String> ULTIMATE_WAITS_FOR_ACTIVE = Set.of("fighter", "turtle");
 
@@ -288,7 +292,8 @@ class AbilityLifecycleTest {
             assertFalse(s.ctx().isSilenced(ally), id + " never silences the ally");
             assertEquals(0, ally.getFireTicks() > 0 ? 1 : 0, id + " never sets the ally on fire");
             Location at = ally.getLocation();
-            assertTrue(at.distance(start) < 0.5, id + " never moves the ally (moved to " + at.toVector() + ")");
+            assertTrue(MOVES_ALLIES.contains(id) || at.distance(start) < 0.5,
+                    id + " never moves the ally (moved to " + at.toVector() + ")");
             for (Attribute attribute : List.of(Attribute.MOVEMENT_SPEED, Attribute.JUMP_STRENGTH,
                     Attribute.GRAVITY)) {
                 for (AttributeModifier modifier : ally.getAttribute(attribute).getModifiers()) {
