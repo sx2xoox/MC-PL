@@ -222,6 +222,15 @@ public interface AbilityContext {
      */
     boolean placeTempBlock(Block block, BlockData data, long durationTicks);
 
+    /**
+     * Restores a block placed with {@link #placeTempBlock} before its time is up (a wall that opens early): the
+     * original comes back now (with the other half of a double plant) and the spot is no longer temporary. Only for
+     * blocks the calling ability placed itself. Returns false if the block was not temporary.
+     */
+    default boolean restoreTempBlock(Block block) {
+        return false;
+    }
+
     // ------------------------------------------------------------------ terrain
 
     /**

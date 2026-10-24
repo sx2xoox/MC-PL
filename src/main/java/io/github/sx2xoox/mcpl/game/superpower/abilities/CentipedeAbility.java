@@ -19,6 +19,7 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
@@ -29,13 +30,13 @@ import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.block.Block;
-import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
@@ -79,15 +80,17 @@ public final class CentipedeAbility extends Ability {
                     "{path_duration}초간 몸이 길게 자라 이동 속도가 {path_speed}% 빨라지고, 지나간 자리마다 높이 "
                             + "{wall_height}블록의 몸통 벽이 {wall_duration}초간 남습니다(최대 {wall_max}칸, 누가 서 있는 "
                             + "칸은 건너뜀). 벽은 이동과 투사체를 막고, 벽에 부딪힌 적은 {bump_damage} 피해를 입고 "
-                            + "{bump_poison}초간 독에 걸립니다(같은 적은 {bump_cooldown}초마다).",
+                            + "{bump_poison}초간 독에 걸립니다(같은 적은 {bump_cooldown}초마다). 벽에 완전히 둘러싸인 "
+                            + "사람에게는 {ring_gap}초 뒤 가장 가까운 마디가 무너져 틈이 열립니다.",
                     10)
             .ultimate("천 년 묵은 왕지네",
                     "{ult_duration}초간 몸이 {ult_scale}% 커지고 이동 속도가 {ult_speed}% 빨라지며, 지나간 자리에 높이 "
                             + "{ult_wall_height}블록의 벽이 {ult_wall_duration}초간 남습니다(최대 {ult_wall_max}칸). 벽에 "
-                            + "닿은 적은 {ult_bump_damage} 피해를 입고 튕겨 나갑니다(적마다 {ult_bump_max}번). 내 벽에 "
-                            + "완전히 둘러싸인 적은 1초마다 {ring_damage} 피해를 입고 {ring_poison}초간 독에 걸리며, "
-                            + "고리가 닫히고 {ring_gap}초 뒤 가장 가까운 마디 하나가 무너져 틈이 열립니다. 벽과 고리를 "
-                            + "합쳐 적마다 최대 {ult_damage_max} 피해를 줍니다.")
+                            + "닿은 적은 {ult_bump_damage} 피해를 입고 약 {ult_bounce}블록 튕겨 나갑니다(같은 적은 "
+                            + "{ult_bump_cooldown}초마다, 최대 {ult_bump_max}번). 내 벽에 완전히 둘러싸인 적은 "
+                            + "{ring_interval}초마다 {ring_damage} 피해를 입고 {ring_poison}초간 독에 걸리며, 고리가 닫히고 "
+                            + "{ring_gap}초 뒤 가장 가까운 마디 하나가 무너져 틈이 열립니다(갇힌 아군이나 나에게도). 벽과 "
+                            + "고리를 합쳐 적마다 최대 {ult_damage_max} 피해를 줍니다.")
             .param("segments", 5)
             .param("touch_damage", 1)
             .param("touch_poison", 2)
@@ -107,7 +110,10 @@ public final class CentipedeAbility extends Ability {
             .param("ult_wall_duration", 6)
             .param("ult_wall_max", 60)
             .param("ult_bump_damage", 2)
+            .param("ult_bump_cooldown", 0.5)
             .param("ult_bump_max", 2)
+            .param("ult_bounce", 5)
+            .param("ring_interval", 1)
             .param("ring_damage", 2)
             .param("ring_poison", 2)
             .param("ring_gap", 2)
@@ -149,6 +155,8 @@ public final class CentipedeAbility extends Ability {
     private static final double SEGMENT_TOP = 0.48;
     private static final double SWAY = 0.09;
     private static final double LEG_SWING = 24;
+    /** The body crawls on the ground: a footstep up to this far above it (a jump) is lowered onto it. */
+    private static final double SEGMENT_SNAP = 2.5;
 
     // walls
     private static final long PENDING_TICKS = 30;
@@ -158,15 +166,15 @@ public final class CentipedeAbility extends Ability {
     private static final double MAX_LAG_MARGIN = 1.2;
     private static final long MAX_LAG_TICKS = 8;
     private static final double WALL_TOUCH = 0.12;
-    private static final long ULT_BUMP_SPACING = 10;
-    private static final double BOUNCE = 0.85;
     private static final double BOUNCE_LIFT = 0.4;
+    /** Horizontal air drag per tick and about how long a bounced body flies (to turn ult_bounce into a speed). */
+    private static final double AIR_DRAG = 0.91;
+    private static final int BOUNCE_AIR_TICKS = 10;
     private static final long RIPPLE_PERIOD = 12;
     private static final long PINCER_SNAP = 6;
 
     // ring
     private static final long RING_CHECK = 10;
-    private static final long RING_SQUEEZE = 20;
     private static final int RING_ESCAPE = 12;
     private static final int RING_MAX_NODES = 900;
     private static final int RING_MAX_DROP = 3;
@@ -318,20 +326,24 @@ public final class CentipedeAbility extends Ability {
         while (segments.size() < count) {
             segments.add(new Segment());
         }
+        double spacing = SEGMENT_SPACING * scale;
+        double ahead = head.getY();
         for (int i = 0; i < count; i++) {
             Segment segment = segments.get(i);
-            Vector[] spot = along(head, (i + 1) * SEGMENT_SPACING * scale);
+            Vector[] spot = along(head, (i + 1) * spacing);
             if (spot == null) {
                 continue;
             }
-            Vector forward = spot[1];
-            float yaw = yawOf(forward);
-            float pitch = (float) Math.toDegrees(-Math.atan2(forward.getY(),
-                    Math.max(1.0E-6, Math.hypot(forward.getX(), forward.getZ()))));
-            pitch = Math.clamp(pitch, -40f, 40f);
+            float yaw = yawOf(spot[1]);
+            // The footsteps of a jump are in the air: the segment crawls along the ground under them instead, and
+            // tilts towards the segment (or head) ahead of it.
+            Location at = spot[0].toLocation(world);
+            Spots.snapToGround(world, at, SEGMENT_SNAP);
+            float pitch = Math.clamp((float) Math.toDegrees(-Math.atan2(ahead - at.getY(), spacing)), -40f, 40f);
+            ahead = at.getY();
             double phase = sway - i * 0.9;
             Vector side = new Vector(-Math.cos(Math.toRadians(yaw)), 0, -Math.sin(Math.toRadians(yaw)));
-            Location at = spot[0].toLocation(world).add(side.multiply(Math.sin(phase) * SWAY * scale));
+            at.add(side.multiply(Math.sin(phase) * SWAY * scale));
             float size = scale * (i == count - 1 ? 0.78f : 1f - i * 0.03f) * Math.max(0.001f, bodyGrow);
             float legYaw = (float) (Math.sin(phase * 1.7) * LEG_SWING);
             ensure(owner, segment, at, yaw, pitch, size, legYaw);
@@ -488,8 +500,8 @@ public final class CentipedeAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** One wall block the trail placed: what it replaced (to open a gap early) and its column. */
-    private record Placed(Block block, BlockData original, long column, int base) {
+    /** One wall block the trail placed and its column. */
+    private record Placed(Block block, long column) {
     }
 
     /**
@@ -515,6 +527,7 @@ public final class CentipedeAbility extends Ability {
         private final Map<UUID, Double> dealt = new HashMap<>();
         private final Map<UUID, Ring> rings = new HashMap<>();
         private final List<BlockDisplay> pincers = new ArrayList<>();
+        private @Nullable NamespacedKey speedKey;
         private long lastCell = Long.MIN_VALUE;
         private int lastBase;
         private int cells;
@@ -534,8 +547,8 @@ public final class CentipedeAbility extends Ability {
         void start() {
             double speed = Math.max(0, params().num(king ? "ult_speed" : "path_speed")) / 100.0;
             if (speed > 0) {
-                ctx().addModifier(owner, owner, Attribute.MOVEMENT_SPEED, speed, Operation.MULTIPLY_SCALAR_1,
-                        layTicks);
+                speedKey = ctx().addModifier(owner, owner, Attribute.MOVEMENT_SPEED, speed,
+                        Operation.MULTIPLY_SCALAR_1, layTicks);
             }
             if (king) {
                 double scale = Math.max(0, params().num("ult_scale")) / 100.0;
@@ -590,12 +603,10 @@ public final class CentipedeAbility extends Ability {
             freeTrapped();
             expire(now);
             bump(now);
-            if (king && tick % RING_CHECK == 0) {
+            if (tick % RING_CHECK == 0) {
                 checkRings(now);
             }
-            if (king) {
-                squeeze(now);
-            }
+            squeeze(now);
             ripple(tick, now);
             // Done once nothing is laid any more and the last wall is gone.
             return laying || !walls.isEmpty() || !pending.isEmpty();
@@ -606,6 +617,12 @@ public final class CentipedeAbility extends Ability {
                 return;
             }
             laying = false;
+            // The speed belongs to the growing body (the king's road replaces it, it never stacks on top).
+            NamespacedKey speed = speedKey;
+            speedKey = null;
+            if (speed != null) {
+                ctx().removeModifier(owner, speed);
+            }
             if (lastCell != Long.MIN_VALUE) {
                 pending.addLast(new long[] {lastCell, lastBase, ctx().currentTick()});
             }
@@ -649,6 +666,11 @@ public final class CentipedeAbility extends Ability {
             int x = feet.getBlockX();
             int z = feet.getBlockZ();
             int y = (int) Math.floor(feet.getY() + 0.01);
+            if (!world.getBlockAt(x, y, z).isPassable()) {
+                // The feet are on top of a block lower than a full one (a path, a slab, stairs, a carpet): the wall
+                // rises from the block above it.
+                return y + 1;
+            }
             for (int down = 0; down <= GROUND_PROBE; down++) {
                 Block below = world.getBlockAt(x, y - down - 1, z);
                 if (!below.isPassable()) {
@@ -703,12 +725,11 @@ public final class CentipedeAbility extends Ability {
                 if (!ctx().isInsideArena(block.getLocation().add(0.5, 0.5, 0.5))) {
                     break;
                 }
-                BlockData original = block.getBlockData();
                 Material material = black ^ (dy == height - 1 && height > 2) ? WALL_BLACK : WALL_RED;
                 if (!ctx().placeTempBlock(block, material.createBlockData(), wallTicks)) {
                     break;
                 }
-                Placed wall = new Placed(block, original, column, base);
+                Placed wall = new Placed(block, column);
                 walls.put(key(x, base + dy, z), wall);
                 placed.add(wall);
             }
@@ -798,7 +819,7 @@ public final class CentipedeAbility extends Ability {
             }
         }
 
-        /** Opens one wall column now (a gap in a ring, or someone stuck in it): the blocks show what they replaced. */
+        /** Opens one wall column now (a gap in a ring, or someone stuck in it): the blocks it replaced come back. */
         private void openColumn(long column, boolean caveIn) {
             List<Placed> blocks = columns.remove(column);
             columnExpiry.remove(column);
@@ -809,10 +830,7 @@ public final class CentipedeAbility extends Ability {
             for (Placed wall : blocks) {
                 Block block = wall.block();
                 walls.remove(key(block.getX(), block.getY(), block.getZ()));
-                Material shown = block.getType();
-                if (shown == WALL_RED || shown == WALL_BLACK) {
-                    block.setBlockData(wall.original(), false);
-                }
+                ctx().restoreTempBlock(block);
                 middle = block.getLocation().add(0.5, 0.5, 0.5);
                 block.getWorld().spawnParticle(Particle.BLOCK, middle, Vfx.n(ctx(), caveIn ? 10 : 4), 0.3, 0.3, 0.3,
                         0, WALL_RED.createBlockData());
@@ -846,7 +864,7 @@ public final class CentipedeAbility extends Ability {
                         continue;
                     }
                     bumps.put(id, count + 1);
-                    nextBump.put(id, now + ULT_BUMP_SPACING);
+                    nextBump.put(id, now + Math.max(1, params().ticks("ult_bump_cooldown")));
                     hurt(enemy, params().num("ult_bump_damage"));
                     bounce(enemy, wall);
                 } else {
@@ -879,7 +897,8 @@ public final class CentipedeAbility extends Ability {
 
         /** The king's body throws back whoever runs into it. */
         private void bounce(LivingEntity enemy, Placed wall) {
-            if (!Combat.isTargetable(ctx(), owner, enemy)) {
+            double distance = Math.max(0, params().num("ult_bounce"));
+            if (!(distance > 0) || !Combat.isTargetable(ctx(), owner, enemy)) {
                 return;
             }
             Vector away = Motion.horizontal(enemy.getLocation().toVector()
@@ -887,7 +906,9 @@ public final class CentipedeAbility extends Ability {
             if (away.lengthSquared() < 1.0E-6) {
                 away = Motion.horizontal(enemy.getLocation().getDirection()).multiply(-1);
             }
-            Motion.push(enemy, away.multiply(BOUNCE).setY(BOUNCE_LIFT), MAX_SPEED);
+            // The speed that carries it ult_bounce blocks through the air before it lands.
+            double speed = distance * (1 - AIR_DRAG) / (1 - Math.pow(AIR_DRAG, BOUNCE_AIR_TICKS));
+            Motion.push(enemy, away.multiply(speed).setY(BOUNCE_LIFT), MAX_SPEED);
         }
 
         /** The king's damage on one enemy, capped over the whole ultimate. */
@@ -904,20 +925,29 @@ public final class CentipedeAbility extends Ability {
 
         // ---------------------------------------------------------------- the ring
 
-        /** One enemy ringed in by the king's body. */
+        /**
+         * Someone ringed in by the body. An enemy is squeezed by the king; anyone (an enemy, an ally caught inside, the
+         * centipede itself after circling too tightly) gets a gap when the time is up, so nobody is caged for good.
+         */
         private final class Ring {
-            final LivingEntity enemy;
+            final LivingEntity prisoner;
+            final boolean foe;
             final long closedAt;
             long nextSqueeze;
             long gapColumn;
             boolean opened;
 
-            Ring(LivingEntity enemy, long closedAt) {
-                this.enemy = enemy;
+            Ring(LivingEntity prisoner, boolean foe, long closedAt) {
+                this.prisoner = prisoner;
+                this.foe = foe;
                 this.closedAt = closedAt;
-                this.nextSqueeze = closedAt + RING_SQUEEZE;
-                this.gapColumn = nearestColumn(enemy);
+                this.nextSqueeze = closedAt + ringInterval();
+                this.gapColumn = nearestColumn(prisoner);
             }
+        }
+
+        private long ringInterval() {
+            return Math.max(1, params().ticks("ring_interval"));
         }
 
         private void checkRings(long now) {
@@ -926,15 +956,15 @@ public final class CentipedeAbility extends Ability {
                 return;
             }
             Set<UUID> still = new HashSet<>();
-            for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), RING_ESCAPE + 16)) {
-                if (!enclosed(enemy)) {
+            for (LivingEntity body : ringCandidates()) {
+                if (!enclosed(body)) {
                     continue;
                 }
-                UUID id = enemy.getUniqueId();
+                UUID id = body.getUniqueId();
                 still.add(id);
                 Ring ring = rings.get(id);
                 if (ring == null || ring.opened) {
-                    ring = new Ring(enemy, now);
+                    ring = new Ring(body, ctx().isEnemy(owner, body), now);
                     rings.put(id, ring);
                     closed(ring);
                 }
@@ -942,57 +972,82 @@ public final class CentipedeAbility extends Ability {
             rings.keySet().retainAll(still);
         }
 
+        /** Whoever the walls could hold: the enemies around, and the centipede and its allies (never caged either). */
+        private List<LivingEntity> ringCandidates() {
+            double reach = RING_ESCAPE + 16;
+            List<LivingEntity> candidates = new ArrayList<>(ctx().enemiesNear(owner, owner.getLocation(), reach));
+            for (Player player : owner.getWorld().getPlayers()) {
+                if (!candidates.contains(player) && ctx().isAlive(player) && !ctx().isEnemy(owner, player)
+                        && player.getLocation().distanceSquared(owner.getLocation()) <= reach * reach) {
+                    candidates.add(player);
+                }
+            }
+            return candidates;
+        }
+
         /** The ring just closed: the prisoner is told it will open in a moment, everyone hears the coils tighten. */
         private void closed(Ring ring) {
-            LivingEntity enemy = ring.enemy;
+            LivingEntity prisoner = ring.prisoner;
             long gap = params().ticks("ring_gap");
-            if (!isHidden(enemy)) {
-                Location at = Fx.body(enemy);
-                Vfx.ring(ctx(), enemy.getLocation().add(0, 0.1, 0), 1.2, 16, 0, Particle.DUST_COLOR_TRANSITION,
+            if (!isHidden(prisoner)) {
+                Location at = Fx.body(prisoner);
+                Vfx.ring(ctx(), prisoner.getLocation().add(0, 0.1, 0), 1.2, 16, 0, Particle.DUST_COLOR_TRANSITION,
                         POISON_GLOW, true);
                 Fx.sound(at, Sound.ENTITY_SILVERFISH_AMBIENT, 1.2f, 0.5f);
                 Fx.sound(at, Sound.BLOCK_WART_BLOCK_PLACE, 1.0f, 0.5f);
             }
-            if (enemy instanceof Player victim) {
+            if (!ring.foe) {
+                if (prisoner instanceof Player caught) {
+                    caught.sendActionBar(Text.mm("<" + YELLOW_TAG + ">" + (caught.equals(owner) ? "내 몸에" : "왕지네의 "
+                            + "고리에") + " 갇혔습니다</" + YELLOW_TAG + "> <gray>" + Fx.seconds(gap) + "초 뒤 가장 가까운 "
+                            + "마디가 무너집니다</gray>"));
+                }
+                return;
+            }
+            if (prisoner instanceof Player victim) {
                 victim.sendActionBar(Text.mm("<" + RED_TAG + "><b>왕지네에게 둘러싸였습니다!</b></" + RED_TAG + "> <gray>"
                         + Fx.seconds(gap) + "초 뒤 가장 가까운 마디가 무너집니다</gray>"));
             }
-            if (!isHidden(enemy)) {
+            if (!isHidden(prisoner)) {
                 owner.sendActionBar(Text.mm("<" + YELLOW_TAG + ">고리가 닫혔습니다</" + YELLOW_TAG
-                        + "> <white><name></white>", Placeholder.component("name", enemy.name())));
+                        + "> <white><name></white>", Placeholder.component("name", prisoner.name())));
             }
         }
 
-        /** Ringed enemies are squeezed every second; the nearest segment gives way when their time is up. */
+        /**
+         * The king squeezes ringed enemies every interval; for anyone ringed in, the nearest segment gives way when the
+         * time is up.
+         */
         private void squeeze(long now) {
             long gap = params().ticks("ring_gap");
             for (Ring ring : List.copyOf(rings.values())) {
-                LivingEntity enemy = ring.enemy;
-                if (ring.opened || !Combat.isTargetable(ctx(), owner, enemy)) {
+                LivingEntity prisoner = ring.prisoner;
+                if (ring.opened || !prisoner.isValid() || prisoner.isDead()
+                        || ring.foe && !Combat.isTargetable(ctx(), owner, prisoner)) {
                     continue;
                 }
-                if (now >= ring.nextSqueeze) {
-                    ring.nextSqueeze = now + RING_SQUEEZE;
-                    hurt(enemy, params().num("ring_damage"));
-                    poison(enemy, params().ticks("ring_poison"));
-                    if (!isHidden(enemy)) {
-                        Location body = Fx.body(enemy);
+                if (king && ring.foe && now >= ring.nextSqueeze) {
+                    ring.nextSqueeze = now + ringInterval();
+                    hurt(prisoner, params().num("ring_damage"));
+                    poison(prisoner, params().ticks("ring_poison"));
+                    if (!isHidden(prisoner)) {
+                        Location body = Fx.body(prisoner);
                         body.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, body, Vfx.n(ctx(), 8), 0.3, 0.5,
                                 0.3, 0, POISON_GLOW);
                         Fx.sound(body, Sound.ENTITY_SPIDER_HURT, 0.8f, 0.6f + Fx.jitter(0.08f));
                     }
                 }
                 if (!columns.containsKey(ring.gapColumn)) {
-                    ring.gapColumn = nearestColumn(enemy);
+                    ring.gapColumn = nearestColumn(prisoner);
                 }
                 if (now - ring.closedAt >= gap) {
                     ring.opened = true;
                     openColumn(ring.gapColumn, true);
-                    if (enemy instanceof Player victim) {
-                        victim.sendActionBar(Text.mm("<" + YELLOW_TAG + ">마디가 무너져 틈이 열렸습니다!</" + YELLOW_TAG
+                    if (prisoner instanceof Player caught) {
+                        caught.sendActionBar(Text.mm("<" + YELLOW_TAG + ">마디가 무너져 틈이 열렸습니다!</" + YELLOW_TAG
                                 + ">"));
                     }
-                } else if ((now - ring.closedAt) % 4 == 0 && !isHidden(enemy)) {
+                } else if ((now - ring.closedAt) % 4 == 0 && !isHidden(prisoner)) {
                     // The segment that will give way flickers (not around a hidden prisoner: it would give it away).
                     List<Placed> column = columns.get(ring.gapColumn);
                     if (column != null && !column.isEmpty()) {
@@ -1034,6 +1089,10 @@ public final class CentipedeAbility extends Ability {
             int sx = feet.getBlockX();
             int sy = (int) Math.floor(feet.getY() + 0.01);
             int sz = feet.getBlockZ();
+            if (!world.getBlockAt(sx, sy, sz).isPassable()) {
+                // Standing on a path, a slab or stairs: the body is in the block above it.
+                sy++;
+            }
             Deque<int[]> queue = new ArrayDeque<>();
             Set<Long> visited = new HashSet<>();
             queue.add(new int[] {sx, sy, sz});

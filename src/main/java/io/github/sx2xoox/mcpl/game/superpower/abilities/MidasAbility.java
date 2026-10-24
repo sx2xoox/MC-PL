@@ -16,6 +16,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongPredicate;
 import java.util.logging.Level;
 
+import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
@@ -27,6 +28,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
+import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -89,19 +91,20 @@ public final class MidasAbility extends Ability {
             .color(TextColor.color(0xF2C230))
             .difficulty(1)
             .passive("황금 손",
-                    "근접 공격한 적의 갑옷 한 부위를 {gild_duration}초간 황금으로 바꿉니다(가슴→다리→신발→투구 순, 최대 "
-                            + "{gild_max}부위). 모두에게 금 갑옷으로 보이고 방어력도 금 갑옷만큼 떨어집니다(철 갑옷이면 "
-                            + "가슴 −1·다리 −2·신발 −1). 황금은 무릅니다: 금 부위가 있는 적을 누구든(나·아군, 개인전에서는 "
-                            + "다른 적도) 무엇으로든 맞히면 한 부위가 쨍그랑 깨지며 그 공격의 피해가 {shatter_bonus} "
-                            + "늘어납니다(같은 적은 {shatter_cooldown}초마다).")
+                    "근접 공격할 때마다 적의 갑옷 한 부위를 {gild_duration}초간 황금으로 바꿉니다(가슴→다리→신발→투구 "
+                            + "순으로 쌓여 최대 {gild_max}부위). 모두에게 금 갑옷으로 보이고 방어력도 금 갑옷만큼 "
+                            + "떨어집니다(철 갑옷이면 가슴 −1·다리 −2·신발 −1). 황금은 무릅니다: 내가 아닌 누구든(아군, "
+                            + "개인전에서는 다른 적도) 금 부위가 있는 적을 무엇으로든 맞히면 한 부위가 쨍그랑 깨지며 그 "
+                            + "공격의 피해가 {shatter_bonus} 늘어납니다(같은 적은 {shatter_cooldown}초마다). 내 손은 금을 "
+                            + "깨지 않습니다.")
             .active("금화 세례",
                     "앞쪽 {coin_spread}° 부채꼴로 금화 {coin_count}닢을 튕겨 날립니다({coin_range}블록). 금화는 처음 맞은 "
                             + "적에게 {coin_damage} 피해를 주고(적마다 최대 {coin_max_hits}닢) 갑옷 한 부위를 도금합니다"
-                            + "(한 번에 적마다 최대 {coin_gild_max}부위). 금화는 금을 깨뜨리지 않습니다.",
+                            + "(한 번에 적마다 최대 {coin_gild_max}부위).",
                     9)
             .ultimate("황금 손길",
-                    "{touch_duration}초간 내가 딛는 땅이 반경 {touch_radius}블록까지 황금으로 번지며 나를 따라옵니다. "
-                            + "황금 위의 적은 {touch_gild_interval}초마다 한 부위씩 더 도금됩니다. 저주: 그동안 나는 회복할 "
+                    "{touch_duration}초간 내가 딛는 땅에 반경 {touch_radius}블록의 황금 별이 번지며 나를 따라옵니다. "
+                            + "황금 위에 선 적은 {touch_gild_interval}초마다 한 부위씩 더 도금됩니다. 저주: 그동안 나는 회복할 "
                             + "수 없지만 황금 피부로 받는 피해가 {touch_reduction}% 줄어듭니다. 끝날 때 세금 징수: "
                             + "{tax_radius}블록 안 모든 적의 도금 부위가 한꺼번에 깨지며 부위당 {tax_damage} 피해(적마다 최대 "
                             + "{tax_max})를 주고, 나는 부위당 {tax_heal} 회복합니다.")
@@ -168,6 +171,9 @@ public final class MidasAbility extends Ability {
     // ultimate
     private static final int FLOOR_GROW_TICKS = 8;
     private static final float FLOOR_THICK = 0.04f;
+    private static final float TILE_SEAM = 0.05f;
+    /** The star's inner corners lie this far out, in radii (half-side / cos 22.5 degrees). */
+    private static final double STAR_INNER = Math.sqrt(0.5) / Math.cos(Math.toRadians(22.5));
     private static final double FLOOR_SNAP = 3;
     private static final double ON_GOLD_BELOW = 1.0;
     private static final double ON_GOLD_ABOVE = 2.5;
@@ -177,8 +183,6 @@ public final class MidasAbility extends Ability {
     /** The real king's gold (null for a borrowed ultimate, which keeps its own for the length of the spell). */
     private @Nullable Ledger ledger;
     private final List<Display> displays = new ArrayList<>();
-    /** Above 0 while the king's own coins or tax land: they plate or collect, they never crack. */
-    private int plating;
     private @Nullable Touch touch;
 
     @Override
@@ -214,6 +218,12 @@ public final class MidasAbility extends Ability {
         if (book != null && (touch == null || touch.book != book)) {
             book.tick(tick);
         }
+    }
+
+    /** Package-private for tests: how often the gold went out again at the end of a tick, after a hit or a gear change. */
+    int lateShows() {
+        Ledger book = ledger;
+        return book == null ? 0 : book.lateShows;
     }
 
     /** Package-private for tests: the gilded slots of an enemy in the king's own ledger. */
@@ -274,6 +284,9 @@ public final class MidasAbility extends Ability {
         private final Map<EntityDamageEvent, LivingEntity> pending = new WeakHashMap<>();
         /** Displays whose removal means the spell this ledger belongs to is over (borrowed ledgers only). */
         private final Set<UUID> anchors = new HashSet<>();
+        /** Gilded enemies whose true equipment the server sends again this tick (they were hit, or their gear changed). */
+        private final Set<UUID> stale = new HashSet<>();
+        private int lateShows;
         private boolean registered;
         private boolean released;
 
@@ -304,6 +317,7 @@ public final class MidasAbility extends Ability {
             }
             gilded.clear();
             pending.clear();
+            stale.clear();
         }
 
         int pieces(LivingEntity entity) {
@@ -348,7 +362,14 @@ public final class MidasAbility extends Ability {
                     duration) : null;
             gilding.pieces.put(slot, new Piece(slot, armorKey, toughnessKey, ctx().currentTick() + duration));
             show(gilding);
+            stale.add(enemy.getUniqueId());
             gildFx(enemy, slot);
+            if (enemy instanceof Player victim && victim.isOnline()) {
+                // The victim never sees its own gold (only everyone else does): it is told instead.
+                victim.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>황금 손</b></" + GOLD_TAG + "> <gray>" + slotName(slot)
+                        + " 갑옷이 황금이 되었습니다 · 무른 금은 맞으면 깨집니다</gray> <white>" + gilding.pieces.size()
+                        + "/" + max + "</white>"));
+            }
             return true;
         }
 
@@ -468,7 +489,7 @@ public final class MidasAbility extends Ability {
         }
 
         private void raise(EntityDamageByEntityEvent event) {
-            if (!(event.getEntity() instanceof LivingEntity victim) || plating > 0 || !(event.getDamage() > 0)) {
+            if (!(event.getEntity() instanceof LivingEntity victim) || !(event.getDamage() > 0)) {
                 return;
             }
             Gilding gilding = gilded.get(victim.getUniqueId());
@@ -477,7 +498,8 @@ public final class MidasAbility extends Ability {
             }
             Entity causing = event.getDamageSource().getCausingEntity();
             Player hitter = ctx().resolveAttacker(causing != null ? causing : event.getDamager());
-            if (hitter == null || hitter.equals(victim) || !ctx().isAlive(hitter)) {
+            // The king's own touch (his blows, coins and tax) only ever adds gold: the cracks are for everyone else.
+            if (hitter == null || hitter.equals(victim) || hitter.equals(owner) || !ctx().isAlive(hitter)) {
                 return;
             }
             long now = ctx().currentTick();
@@ -521,6 +543,46 @@ public final class MidasAbility extends Ability {
                     || event.getCause() == DamageCause.ENTITY_SWEEP_ATTACK)
                     && ctx().isAlive(owner) && ctx().isEnemy(owner, victim)) {
                 gild(victim);
+            }
+        }
+
+        /** A hit wears the armour down: the server will send the true equipment of the gilded enemy again. */
+        @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+        public void onStruck(EntityDamageEvent event) {
+            if (!released && gilded.containsKey(event.getEntity().getUniqueId())) {
+                stale.add(event.getEntity().getUniqueId());
+            }
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onGearChanged(EntityEquipmentChangedEvent event) {
+            if (!released && gilded.containsKey(event.getEntity().getUniqueId())) {
+                stale.add(event.getEntity().getUniqueId());
+            }
+        }
+
+        /**
+         * The server sends a changed equipment after the abilities ticked, so the gold sent with the tick would be
+         * overwritten until the next one (a flicker of the true armour on every hit): the gold goes out again at the
+         * very end of the tick.
+         */
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onTickEnd(ServerTickEndEvent event) {
+            if (released || stale.isEmpty()) {
+                return;
+            }
+            try {
+                for (UUID id : stale) {
+                    Gilding gilding = gilded.get(id);
+                    if (gilding != null && gilding.entity.isValid() && !gilding.pieces.isEmpty()) {
+                        show(gilding);
+                        lateShows++;
+                    }
+                }
+            } catch (RuntimeException e) {
+                ctx().plugin().getLogger().log(Level.WARNING, "Midas gold resend failed", e);
+            } finally {
+                stale.clear();
             }
         }
 
@@ -699,10 +761,6 @@ public final class MidasAbility extends Ability {
         if (hitter != null && hitter.isOnline() && !hitter.equals(owner)) {
             hitter.sendActionBar(Text.mm("<" + GOLD_TAG + ">쨍그랑!</" + GOLD_TAG + "> <gray>미다스의 금이 깨지며 피해 +"
                     + AbilityInfo.formatNumber(params().num("shatter_bonus")) + "</gray>"));
-        } else if (hitter != null && hitter.equals(owner)) {
-            owner.sendActionBar(Text.mm("<" + GOLD_TAG + ">쨍그랑!</" + GOLD_TAG + "> <gray>" + slotName(slot)
-                    + " 황금이 깨졌습니다 · 피해 +" + AbilityInfo.formatNumber(params().num("shatter_bonus"))
-                    + "</gray>"));
         }
     }
 
@@ -784,12 +842,7 @@ public final class MidasAbility extends Ability {
             UUID id = enemy.getUniqueId();
             int hitCount = hits.merge(id, 1, Integer::sum);
             if (hitCount <= Math.max(0, params().integer("coin_max_hits"))) {
-                plating++;
-                try {
-                    Combat.hit(ctx(), owner, enemy, params().num("coin_damage"));
-                } finally {
-                    plating--;
-                }
+                Combat.hit(ctx(), owner, enemy, params().num("coin_damage"));
             }
             if (Combat.isTargetable(ctx(), owner, enemy)
                     && gilds.getOrDefault(id, 0) < Math.max(0, params().integer("coin_gild_max"))
@@ -961,6 +1014,7 @@ public final class MidasAbility extends Ability {
         private final List<BlockDisplay> floor = new ArrayList<>();
         private @Nullable TextDisplay crown;
         private double lastHealth;
+        private boolean skinStale;
         private boolean registered;
         private boolean over;
 
@@ -976,28 +1030,32 @@ public final class MidasAbility extends Ability {
         void begin() {
             Location ground = floorSpot();
             long life = duration + 12;
-            // Two gold squares turned 45 degrees make an eight-pointed sunburst whose points reach the edge of the gold;
-            // a purple inlay and a marble core lie on top.
+            // Two gold squares (each paved with four tiles) turned 45 degrees make an eight-pointed star whose points
+            // reach the edge of the gold; a purple inlay and a marble core lie on top. Whoever stands on the star is
+            // gilded (see onStar).
             float side = (float) (radius * Math.sqrt(2));
-            float[][] layers = {
-                    {side, 0f, 0f},
-                    {side, 45f, 0.004f},
-                    {(float) (radius * 0.75), 22.5f, 0.008f},
-                    {(float) (radius * 0.36), 0f, 0.012f},
-            };
-            Material[] materials = {FLOOR, FLOOR, FLOOR_INLAY, FLOOR_CORE};
-            for (int i = 0; i < layers.length && reserve(1); i++) {
-                float[] layer = layers[i];
-                BlockDisplay plate = keep(Displays.block(ctx(), owner, ground, materials[i].createBlockData(),
-                        floorPose(layer[0], layer[1], layer[2], 0.02f), life));
+            List<float[]> layers = new ArrayList<>();
+            List<Material> materials = new ArrayList<>();
+            for (int square = 0; square < 2; square++) {
+                for (int tile = 0; tile < 4; tile++) {
+                    layers.add(new float[] {side, square * 45f, square * 0.004f, tile % 2, tile / 2});
+                    materials.add(FLOOR);
+                }
+            }
+            layers.add(new float[] {(float) (radius * 0.75), 22.5f, 0.008f, -1, -1});
+            materials.add(FLOOR_INLAY);
+            layers.add(new float[] {(float) (radius * 0.36), 0f, 0.012f, -1, -1});
+            materials.add(FLOOR_CORE);
+            for (int i = 0; i < layers.size() && reserve(1); i++) {
+                BlockDisplay plate = keep(Displays.block(ctx(), owner, ground, materials.get(i).createBlockData(),
+                        floorPose(layers.get(i), 0.02f), life));
                 plate.setTeleportDuration(2);
                 floor.add(plate);
                 book.anchors.add(plate.getUniqueId());
             }
             ctx().runLater(owner, 1, () -> {
                 for (int i = 0; i < floor.size(); i++) {
-                    float[] layer = layers[i];
-                    Displays.animate(floor.get(i), floorPose(layer[0], layer[1], layer[2], 1f), FLOOR_GROW_TICKS);
+                    Displays.animate(floor.get(i), floorPose(layers.get(i), 1f), FLOOR_GROW_TICKS);
                 }
             });
             if (reserve(1)) {
@@ -1098,7 +1156,7 @@ public final class MidasAbility extends Ability {
             for (LivingEntity enemy : ctx().enemiesNear(owner, ground, radius + 1)) {
                 Location feet = enemy.getLocation();
                 double dy = feet.getY() - ground.getY();
-                if (Math.hypot(feet.getX() - ground.getX(), feet.getZ() - ground.getZ()) > radius
+                if (!onStar(feet.getX() - ground.getX(), feet.getZ() - ground.getZ(), radius, enemy.getWidth() / 2)
                         || dy < -ON_GOLD_BELOW || dy > ON_GOLD_ABOVE) {
                     continue;
                 }
@@ -1114,12 +1172,13 @@ public final class MidasAbility extends Ability {
                 return;
             }
             Location rim = ground.clone().add(0, 0.12, 0);
-            int points = (int) Math.max(16, Math.min(40, radius * 5));
-            Vfx.ring(ctx(), rim, radius, points, tick * 0.03, Particle.DUST_COLOR_TRANSITION, ROYAL, true);
+            int points = (int) Math.max(16, Math.min(40, radius * 6));
+            starOutline(rim, radius, Vfx.n(ctx(), points), tick * 0.02);
             ThreadLocalRandom random = ThreadLocalRandom.current();
             World world = ground.getWorld();
             for (int i = 0; i < Vfx.n(ctx(), 3); i++) {
-                Location at = Vfx.scatter(ground, radius).add(0, 0.15 + random.nextDouble() * 0.4, 0);
+                // Inside the star's inner corners, so the glitter stays on the gold.
+                Location at = Vfx.scatter(ground, radius * STAR_INNER).add(0, 0.15 + random.nextDouble() * 0.4, 0);
                 world.spawnParticle(Particle.WAX_ON, at, 1, 0, 0, 0, 0);
             }
             if (tick % 12 == 0) {
@@ -1141,8 +1200,12 @@ public final class MidasAbility extends Ability {
                     Fx.sound(head, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.7f, 1.4f);
                 }
                 if (enemy instanceof Player victim) {
-                    victim.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>세금 징수 1초 전!</b></" + GOLD_TAG + "> <gray>"
-                            + "미다스에게서 멀어지세요</gray>"));
+                    int pieces = book.pieces(enemy);
+                    double owed = Math.min(Math.max(0, params().num("tax_max")),
+                            Math.max(0, params().num("tax_damage")) * pieces);
+                    victim.sendActionBar(Text.mm("<" + GOLD_TAG + "><b>세금 징수 " + Fx.seconds(TAX_WARNING) + "초 전!</b></"
+                            + GOLD_TAG + "> <gray>황금 " + pieces + "부위가 한꺼번에 깨집니다 · −"
+                            + AbilityInfo.formatNumber(owed) + "</gray>"));
                 }
             }
         }
@@ -1160,6 +1223,7 @@ public final class MidasAbility extends Ability {
                 HandlerList.unregisterAll(this);
                 registered = false;
             }
+            skinStale = false;
             if (owner.isOnline()) {
                 restoreSkin();
             }
@@ -1195,12 +1259,7 @@ public final class MidasAbility extends Ability {
                 }
                 total += pieces;
                 victims++;
-                plating++;
-                try {
-                    Combat.hit(ctx(), owner, enemy, Math.min(cap, perPiece * pieces));
-                } finally {
-                    plating--;
-                }
+                Combat.hit(ctx(), owner, enemy, Math.min(cap, perPiece * pieces));
                 if (!isHidden(enemy) && enemy.getWorld().equals(purse.getWorld())) {
                     Location from = Fx.body(enemy);
                     int motes = Vfx.n(ctx(), TAX_TRAIL_MOTES * pieces);
@@ -1248,6 +1307,34 @@ public final class MidasAbility extends Ability {
             }
         }
 
+        /** A hit wears the king's armour down: the server sends it again, so the gold skin goes out again at tick end. */
+        @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+        public void onSkinStruck(EntityDamageEvent event) {
+            if (!over && event.getEntity().equals(owner)) {
+                skinStale = true;
+            }
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onSkinChanged(EntityEquipmentChangedEvent event) {
+            if (!over && event.getEntity().equals(owner)) {
+                skinStale = true;
+            }
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR)
+        public void onSkinTickEnd(ServerTickEndEvent event) {
+            if (over || !skinStale) {
+                return;
+            }
+            skinStale = false;
+            try {
+                goldSkin();
+            } catch (RuntimeException e) {
+                ctx().plugin().getLogger().log(Level.WARNING, "Midas gold skin resend failed", e);
+            }
+        }
+
         /** The curse: nothing heals the king (natural regeneration, food, potions). */
         @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
         public void onHeal(EntityRegainHealthEvent event) {
@@ -1278,10 +1365,60 @@ public final class MidasAbility extends Ability {
         }
     }
 
-    /** A flat floor plate of the given width, turned by {@code yawDeg}, lifted by {@code lift}, grown to {@code grow}. */
-    private static Transformation floorPose(float width, float yawDeg, float lift, float grow) {
-        float w = Math.max(0.01f, width * grow);
-        return Displays.transform(0, lift + FLOOR_THICK / 2, 0, w, FLOOR_THICK, w, yawDeg, 0, 0);
+    /**
+     * A flat floor plate {width, yaw, lift, tile x, tile z} grown to {@code grow}: a whole square (tile -1), or one of
+     * the four tiles (0/1, 0/1) of a square of that width, with a thin seam between the tiles.
+     */
+    private static Transformation floorPose(float[] layer, float grow) {
+        float w = Math.max(0.01f, layer[0] * grow);
+        float yawDeg = layer[1];
+        float lift = layer[2];
+        if (layer[3] < 0) {
+            return Displays.transform(0, lift + FLOOR_THICK / 2, 0, w, FLOOR_THICK, w, yawDeg, 0, 0);
+        }
+        float half = w / 2;
+        float seam = Math.min(TILE_SEAM, half * 0.1f);
+        Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-yawDeg));
+        // The tile's corner in the square's own frame (the square spans -w/2..w/2): rotated with the square.
+        Vector3f corner = new Vector3f((layer[3] < 0.5f ? -half : 0) + seam / 2, lift,
+                (layer[4] < 0.5f ? -half : 0) + seam / 2);
+        return new Transformation(rotation.transform(corner), rotation,
+                new Vector3f(half - seam, FLOOR_THICK, half - seam), new Quaternionf());
+    }
+
+    /**
+     * True if the point ({@code dx}, {@code dz}) off the middle of the golden floor lies on its star: two squares with
+     * their corners at {@code radius}, one turned 45 degrees, grown by {@code margin} (half a body's width).
+     */
+    static boolean onStar(double dx, double dz, double radius, double margin) {
+        double half = radius / Math.sqrt(2) + margin;
+        if (Math.abs(dx) <= half && Math.abs(dz) <= half) {
+            return true;
+        }
+        double u = (dx + dz) / Math.sqrt(2);
+        double v = (dx - dz) / Math.sqrt(2);
+        return Math.abs(u) <= half && Math.abs(v) <= half;
+    }
+
+    /** Royal motes along the outline of the gold star (its 16 edges), creeping round with {@code phase}. */
+    private void starOutline(Location center, double radius, int points, double phase) {
+        World world = center.getWorld();
+        for (int i = 0; i < points; i++) {
+            double t = ((i + phase) / points % 1.0 + 1.0) % 1.0 * 16;
+            int edge = (int) Math.floor(t);
+            double f = t - edge;
+            double[] from = starCorner(edge, radius);
+            double[] to = starCorner(edge + 1, radius);
+            world.spawnParticle(Particle.DUST_COLOR_TRANSITION, center.getX() + from[0] + (to[0] - from[0]) * f,
+                    center.getY(), center.getZ() + from[1] + (to[1] - from[1]) * f, 1, 0, 0, 0, 0, ROYAL, true);
+        }
+    }
+
+    /** The star's corners going round: the points (even, at the radius) and the inner corners between them. */
+    private static double[] starCorner(int index, double radius) {
+        double angle = Math.toRadians(index * 22.5);
+        double distance = index % 2 == 0 ? radius : radius * STAR_INNER;
+        return new double[] {Math.sin(angle) * distance, Math.cos(angle) * distance};
     }
 
     // ------------------------------------------------------------------ helpers

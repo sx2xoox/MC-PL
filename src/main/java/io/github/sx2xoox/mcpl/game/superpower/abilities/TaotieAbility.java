@@ -92,10 +92,10 @@ public final class TaotieAbility extends Ability {
             .color(TextColor.color(0xB07A3B))
             .difficulty(2)
             .passive("탐식의 가면",
-                    "맛본 적의 얼굴이 청동 가면이 되어 {mask_duration}초간 내 얼굴에 씌워집니다(모두에게 보임, 한 번에 "
-                            + "하나). 가면을 쓴 동안 그 적에게 주는 피해가 {mask_bonus}% 늘고, 내 궁극기는 한 번 그 적의 "
-                            + "궁극기가 됩니다. 따라 할 수 없는 궁극기라면 '맛이 없다!' — 가면을 뱉고 사흉의 아가리를 쓰며 "
-                            + "궁극기 게이지 {tasteless_refund}%를 돌려받습니다.")
+                    "맛본 적(플레이어와 허수아비)의 얼굴이 청동 가면이 되어 {mask_duration}초간 내 얼굴에 씌워집니다"
+                            + "(모두에게 보임, 한 번에 하나). 가면을 쓴 동안 그 적에게 주는 피해가 {mask_bonus}% 늘고, 내 "
+                            + "궁극기는 한 번 그 적의 궁극기가 됩니다. 따라 할 수 없는 궁극기(허수아비 포함)라면 '맛이 없다!' "
+                            + "— 가면을 뱉고 사흉의 아가리를 쓰며 궁극기 게이지 {tasteless_refund}%를 돌려받습니다.")
             .active("한입 맛보기",
                     "{gulp_duration}초간 청동 아가리를 크게 벌려 앞 {gulp_range}블록·{gulp_angle}° 부채꼴을 "
                             + "빨아들입니다(점점 강해지고, 그동안 내 이동 속도 −{gulp_slow}%). 입을 벌린 동안 앞쪽 "
@@ -109,10 +109,10 @@ public final class TaotieAbility extends Ability {
                             + "최대 {maw_tick_max}), 앞쪽 {swallow_distance}블록 밖에서 온 투사체·능력 피해는 삼켜집니다. "
                             + "아가리에 들어온 적(최대 {maw_swallow_max}명)은 {digest_duration}초간 삼켜져 소화됩니다: "
                             + "보이지 않고 아무것도 못 하며 {digest_damage} 피해를 입고, 이로운 포션 효과와 흡수 체력이 모두 "
-                            + "녹고(녹인 흡수 체력만큼 내가 {digest_absorb_duration}초간 흡수 체력을 얻음, 최대 "
+                            + "녹고(녹인 흡수 체력만큼 내가 {digest_absorb_duration}초간 흡수 체력을 얻음, 모두 합쳐 최대 "
                             + "{digest_absorb_max}) 궁극기 게이지 {digest_gauge}%를 먹힙니다. 그 뒤 앞으로 뱉어져 "
                             + "{spit_damage} 피해를 입고 {slobber_duration}초간 침 범벅(발광, 이동 속도 −{slobber_slow}%)이 "
-                            + "됩니다. 처음 삼킨 적을 맛봅니다.")
+                            + "됩니다. 처음 삼킨 적을 맛봅니다. 앞에 삼킬 적이 없으면 쓸 수 없습니다.")
             .param("mask_duration", 20)
             .param("mask_bonus", 15)
             .param("tasteless_refund", 25)
@@ -278,9 +278,12 @@ public final class TaotieAbility extends Ability {
         }
     }
 
-    /** The taotie tastes {@code enemy}: its face is peeled off and becomes the mask (players only). */
+    /**
+     * The taotie tastes {@code enemy}: its face is peeled off and becomes the mask (players and mannequins such as the
+     * training dummies, which have faces; summoned beasts do not).
+     */
     private void taste(LivingEntity enemy) {
-        if (!(enemy instanceof Player) || ctx().abilityOf(player()) != this) {
+        if (!(enemy instanceof Player || enemy instanceof Mannequin) || ctx().abilityOf(player()) != this) {
             return;
         }
         Player owner = player();
@@ -462,18 +465,21 @@ public final class TaotieAbility extends Ability {
         Player owner = player();
         Mask worn = mask;
         boolean tasteless = false;
-        if (worn != null && ctx().currentTick() < worn.until && worn.enemy instanceof Player face
-                && ctx().isAlive(face)) {
-            Ability theirs = ctx().abilityOf(face);
-            AbilityInfo info = theirs == null ? null : theirs.info();
-            if (info != null && info.ultimateStandalone() && ctx().isEnabled(info.id())) {
-                ActivationResult result = copy(owner, info);
-                if (result.succeeded()) {
-                    dropMask(worn, true);
-                    copied(owner, face, info);
+        if (worn != null && ctx().currentTick() < worn.until && worn.enemy.isValid() && !worn.enemy.isDead()
+                && !(worn.enemy instanceof Player gone && !ctx().isAlive(gone))) {
+            if (worn.enemy instanceof Player face) {
+                Ability theirs = ctx().abilityOf(face);
+                AbilityInfo info = theirs == null ? null : theirs.info();
+                if (info != null && info.ultimateStandalone() && ctx().isEnabled(info.id())) {
+                    ActivationResult result = copy(owner, info);
+                    if (result.succeeded()) {
+                        dropMask(worn, true);
+                        copied(owner, face, info);
+                    }
+                    return result;
                 }
-                return result;
             }
+            // An ultimate that cannot be copied, or a dummy's face (it has none).
             tasteless = true;
         } else if (worn != null) {
             dropMask(worn, true);
@@ -596,6 +602,8 @@ public final class TaotieAbility extends Ability {
         private final Map<UUID, Double> gnawed = new HashMap<>();
         private final Map<UUID, Swallowed> belly = new LinkedHashMap<>();
         private int swallowedShots;
+        /** Absorption the great maw has fed the taotie so far (capped over the whole ultimate). */
+        private double absorbed;
         private boolean bitten;
         private boolean tasted;
         private boolean closed;
@@ -911,7 +919,8 @@ public final class TaotieAbility extends Ability {
                 }
             }
             double absorption = enemy.getAbsorptionAmount();
-            double fed = Math.min(absorption, Math.max(0, params().num("digest_absorb_max")));
+            double fed = Math.max(0, Math.min(absorption, Math.max(0, params().num("digest_absorb_max")) - absorbed));
+            absorbed += fed;
             if (absorption > 0) {
                 enemy.setAbsorptionAmount(0);
             }

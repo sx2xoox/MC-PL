@@ -41,6 +41,7 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.EventHandler;
@@ -97,7 +98,8 @@ public final class AgwiAbility extends Ability {
                     "{realm_duration}초간 그 자리 반경 {realm_radius}블록을 아귀도로 만듭니다. 안의 적은 회복할 수 없고, "
                             + "회복하려던 만큼 입에서 불꽃이 일어 그만큼 피해를 입습니다(적마다 최대 {realm_burn_max}). "
                             + "또 {realm_interval}초마다 {realm_damage} 피해를 입고 이동 속도가 {realm_slow}% 느려집니다. "
-                            + "안에 있는 나는 {realm_interval}초마다 체력을 {realm_heal} 회복합니다.")
+                            + "안에 있는 나는 {realm_interval}초마다 체력을 {realm_heal} 회복합니다. 범위 안에 적이 "
+                            + "없으면 쓸 수 없습니다.")
             .param("tax_radius", 8)
             .param("tax_share", 40)
             .param("bowl_range", 16)
@@ -159,6 +161,10 @@ public final class AgwiAbility extends Ability {
     // ultimate
     private static final int REALM_RISE_TICKS = 8;
     private static final int CRACK_COUNT = 6;
+    private static final double CRACK_MIN = 1.2;
+    private static final double CRACK_STEP = 0.5;
+    private static final double CRACK_PROBE = 1.0;
+    private static final double CRACK_STEP_UP = 0.2;
     private static final double REALM_SNAP = 4;
     private static final double BIG_BOWL_HEIGHT = 3.6;
     private static final float BIG_BOWL_SIZE = 2.6f;
@@ -263,6 +269,9 @@ public final class AgwiAbility extends Ability {
             watched.add(current.target);
         }
         for (LivingEntity enemy : watched) {
+            if (!watchesHealth(enemy)) {
+                continue;
+            }
             UUID id = enemy.getUniqueId();
             near.add(id);
             double health = enemy.getHealth();
@@ -302,6 +311,19 @@ public final class AgwiAbility extends Ability {
             owner.getWorld().spawnParticle(Particle.WHITE_ASH, mouth, Vfx.n(ctx(), 2), 0.1, 0.05, 0.1, 0);
             owner.getWorld().spawnParticle(Particle.DUST, mouth, 1, 0.05, 0.05, 0.05, 0, SICKLY);
         }
+    }
+
+    /**
+     * Whose health the watches follow. Not a mannequin's: the training dummies are refilled to full health by the
+     * practice mode, which is no heal (taking it back would keep them from ever filling up again).
+     */
+    private static boolean watchesHealth(LivingEntity enemy) {
+        return !(enemy instanceof Mannequin);
+    }
+
+    /** What a heal of {@code amount} can really give {@code enemy}: no more than the health it is missing. */
+    private static double landing(LivingEntity enemy, double amount) {
+        return Math.clamp(Combat.maxHealth(enemy) - enemy.getHealth(), 0.0, Math.max(0, amount));
     }
 
     /** A snatched heal reaches the ghost: it heals by the same amount, and the stream shows where it came from. */
@@ -361,7 +383,11 @@ public final class AgwiAbility extends Ability {
                     || !ctx().isAlive(player()) || !ctx().isEnemy(player(), enemy)) {
                 return;
             }
-            double amount = event.getAmount();
+            // Only what would really land counts: a heal on a nearly full enemy is mostly wasted anyway.
+            double amount = landing(enemy, event.getAmount());
+            if (!(amount > 0)) {
+                return;
+            }
             switch (claim(enemy)) {
                 case REALM -> {
                     event.setCancelled(true);
@@ -379,7 +405,7 @@ public final class AgwiAbility extends Ability {
                 }
                 case TAX -> {
                     double stolen = amount * share();
-                    event.setAmount(amount - stolen);
+                    event.setAmount(Math.max(0, amount - stolen));
                     pending.put(event, stolen);
                 }
                 default -> {
@@ -796,7 +822,8 @@ public final class AgwiAbility extends Ability {
         double radius = Math.max(1, params().num("realm_radius"));
         Location center = owner.getLocation();
         Spots.snapToGround(owner.getWorld(), center, REALM_SNAP);
-        if (ctx().enemiesNear(owner, center, radius).isEmpty()) {
+        // An enemy hidden from the ghost does not count: casting must not tell it that one is near.
+        if (ctx().enemiesNear(owner, center, radius).stream().allMatch(this::isHidden)) {
             return ActivationResult.fail("아귀도 범위(" + AbilityInfo.formatNumber(radius) + "블록) 안에 적이 없습니다");
         }
         Realm fresh = new Realm(owner, Displays.unrotated(center), radius);
@@ -833,6 +860,25 @@ public final class AgwiAbility extends Ability {
             this.interval = Math.max(1, params().ticks("realm_interval"));
         }
 
+        /**
+         * How far a flat crack can run out from the middle along {@code yawDeg} (at most {@code max}) while the ground
+         * stays at the middle's height: a crack lying on the ground, never floating over a dip or sunk into a rise.
+         */
+        private double flatReach(float yawDeg, double max) {
+            Vector out = Motion.horizontalFacing(new Location(center.getWorld(), 0, 0, 0, yawDeg, 0));
+            World world = center.getWorld();
+            double reach = 0;
+            for (double d = CRACK_STEP; d <= max + 1.0E-6; d += CRACK_STEP) {
+                Location probe = center.clone().add(out.clone().multiply(d)).add(0, CRACK_PROBE, 0);
+                Spots.snapToGround(world, probe, CRACK_PROBE * 2);
+                if (Math.abs(probe.getY() - center.getY()) > CRACK_STEP_UP) {
+                    break;
+                }
+                reach = d;
+            }
+            return reach;
+        }
+
         boolean contains(LivingEntity entity) {
             Location at = entity.getLocation();
             return at.getWorld().equals(center.getWorld())
@@ -846,7 +892,10 @@ public final class AgwiAbility extends Ability {
             double offset = random.nextDouble(360);
             for (int i = 0; i < CRACK_COUNT && reserve(2); i++) {
                 float yaw = (float) (offset + i * 360.0 / CRACK_COUNT + random.nextDouble(-12, 12));
-                float length = (float) (radius * (0.55 + random.nextDouble() * 0.35));
+                float length = (float) flatReach(yaw, radius * (0.55 + random.nextDouble() * 0.35));
+                if (length < CRACK_MIN) {
+                    continue;
+                }
                 BlockDisplay crack = keep(Displays.block(ctx(), owner, center, CRACK.createBlockData(),
                         crackPose(yaw, length, 0.02f, 0.1f), life));
                 BlockDisplay glow = keep(Displays.block(ctx(), owner, center, CRACK_GLOW.createBlockData(),
@@ -889,7 +938,9 @@ public final class AgwiAbility extends Ability {
                 return false;
             }
             for (LivingEntity enemy : ctx().enemiesNear(owner, center, radius + WATCH_MARGIN)) {
-                watch(enemy);
+                if (watchesHealth(enemy)) {
+                    watch(enemy);
+                }
             }
             for (Map.Entry<UUID, Double> burn : List.copyOf(pendingBurn.entrySet())) {
                 pendingBurn.remove(burn.getKey());

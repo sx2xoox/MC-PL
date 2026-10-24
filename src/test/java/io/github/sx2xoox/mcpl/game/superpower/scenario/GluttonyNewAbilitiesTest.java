@@ -8,12 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.AgwiAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.BulgasariAbility;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.CentipedeAbility;
@@ -23,9 +26,14 @@ import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchPhase;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
+import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -41,6 +49,7 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
@@ -990,22 +999,22 @@ class GluttonyNewAbilitiesTest {
             assertTrue(gilded(s, s.enemy).isEmpty(), "the piece cracked off");
             assertEquals(0, modifierSum(s.enemy, Attribute.ARMOR), EPSILON, "and the armour is iron again");
             s.ticks(s.paramTicks("shatter_cooldown") + 1);
-            s.melee(s.owner, s.enemy, 2);
             s.clearHits();
+            s.melee(s.owner, s.enemy, 2);
             s.ticks(s.paramTicks("shatter_cooldown") + 1);
             s.melee(s.owner, s.enemy, 2);
-            assertEquals(2 + s.param("shatter_bonus"), s.damageBy(s.owner, s.enemy), EPSILON,
-                    "the king cracks his own gold too");
-            assertEquals(Set.of(EquipmentSlot.CHEST), gilded(s, s.enemy), "and gilds the next piece at once");
-            s.clearHits();
-            s.ctx().damage(s.ally(), s.enemy, 1);
-            assertEquals(1, s.damageBy(s.ally(), s.enemy), EPSILON, "only once per " + s.param("shatter_cooldown")
-                    + " s");
-            s.ticks(s.paramTicks("shatter_cooldown") + 1);
+            assertEquals(4, s.damageBy(s.owner, s.enemy), EPSILON, "the king's own blows never crack his gold");
+            assertEquals(Set.of(EquipmentSlot.CHEST, EquipmentSlot.LEGS), gilded(s, s.enemy),
+                    "they gild piece after piece");
             s.clearHits();
             s.ctx().damage(s.ally(), s.enemy, 1);
             assertEquals(1 + s.param("shatter_bonus"), s.damageBy(s.ally(), s.enemy), EPSILON,
                     "with anything: an ability cracks it as well");
+            assertEquals(Set.of(EquipmentSlot.LEGS), gilded(s, s.enemy), "the oldest piece cracked");
+            s.clearHits();
+            s.ctx().damage(s.ally(), s.enemy, 1);
+            assertEquals(1, s.damageBy(s.ally(), s.enemy), EPSILON, "only once per " + s.param("shatter_cooldown")
+                    + " s");
             s.finishClean();
         }
     }
@@ -1287,9 +1296,12 @@ class GluttonyNewAbilitiesTest {
             s.h.tickUntil(() -> s.damageBy(s.owner, s.enemy) > 0, 40, "the ring to squeeze");
             assertEquals(s.param("ring_damage"), s.damageBy(s.owner, s.enemy), EPSILON, "squeezed");
             assertTrue(s.enemy.hasPotionEffect(PotionEffectType.POISON), "and poisoned");
+            int temporary = s.h.hub.tempBlocks().size();
             s.ticks(s.paramTicks("ring_gap") + 2);
             int open = peek(s.ability(), "wallBlocks");
             assertEquals(closed - (int) s.param("ult_wall_height"), open, "a segment caved in");
+            assertEquals(temporary - (int) s.param("ult_wall_height"), s.h.hub.tempBlocks().size(),
+                    "its blocks are back for good (restored through the context, not just painted over)");
             double squeezed = s.damageBy(s.owner, s.enemy);
             s.ticks(60);
             assertEquals(squeezed, s.damageBy(s.owner, s.enemy), EPSILON, "out of the ring, nothing squeezes");
@@ -1578,9 +1590,17 @@ class GluttonyNewAbilitiesTest {
             s.ticks(6);
             List<BlockDisplay> plates = blocks(s, Material.IRON_BLOCK);
             assertFalse(plates.isEmpty());
-            BlockDisplay front = plates.stream().filter(p -> !s.owner.canSee(p)).findFirst().orElseThrow();
-            Vector offset = center(front).subtract(s.owner.getLocation().toVector()).setY(0);
-            assertTrue(offset.normalize().dot(facing(90)) > 0.95, "the front plate is in front (west): " + offset);
+            // The breastplate and the backplate are thin along the body's facing (local z).
+            List<BlockDisplay> torso = plates.stream()
+                    .filter(p -> p.getTransformation().getScale().z() < p.getTransformation().getScale().x())
+                    .toList();
+            assertEquals(2, torso.size(), "a breastplate and a backplate");
+            List<Double> sides = torso.stream()
+                    .map(p -> center(p).subtract(s.owner.getLocation().toVector()).setY(0).normalize()
+                            .dot(facing(90)))
+                    .sorted().toList();
+            assertTrue(sides.get(1) > 0.95, "the breastplate is in front (west): " + sides);
+            assertTrue(sides.get(0) < -0.95, "the backplate behind (east): " + sides);
             for (BlockDisplay plate : plates) {
                 assertEquals(0, plate.getLocation().getYaw(), 1.0E-3);
                 assertEquals(0, plate.getLocation().getPitch(), 1.0E-3);
@@ -1672,6 +1692,445 @@ class GluttonyNewAbilitiesTest {
             s.ticks(20);
             assertTrue(gilded(s, s.ally()).isEmpty(), "the coins pass the ally by");
             assertModifierFree(s.ally(), "the ally's armour");
+            s.finishClean();
+        }
+    }
+
+    // ================================================================== review fixes
+
+    /** Every action bar {@code player} was sent since the last call, as plain text. */
+    private static List<String> actionBars(TestPlayer player) {
+        List<String> bars = new ArrayList<>();
+        Component bar;
+        while ((bar = player.nextActionBar()) != null) {
+            bars.add(Scenario.plain(bar));
+        }
+        return bars;
+    }
+
+    /** A practice of {@code id} against the training dummies (mannequins, refilled when left alone). */
+    private record Practice(MatchHarness h, TestPlayer admin, SuperpowerMatch match, Mannequin dummy)
+            implements AutoCloseable {
+
+        Ability ability() {
+            Ability ability = match.participant(admin.getUniqueId()).ability();
+            assertNotNull(ability);
+            return ability;
+        }
+
+        /** Stands {@code distance} blocks in front of the dummy, looking at its chest. */
+        void faceDummy(double distance) {
+            Location at = dummy.getLocation().clone().add(0, 0, -distance);
+            Location chest = dummy.getLocation().add(0, dummy.getHeight() * 0.6, 0);
+            at.setDirection(chest.toVector().subtract(at.clone().add(0, admin.getEyeHeight(), 0).toVector()));
+            admin.teleport(at);
+            admin.setVelocity(new Vector());
+        }
+
+        @Override
+        public void close() {
+            h.close();
+        }
+    }
+
+    private static Practice practice(String id) {
+        MatchHarness h = MatchHarness.flat();
+        TestPlayer admin = h.join("Admin");
+        admin.setOp(true);
+        admin.teleport(new Location(h.flatWorld(), 0.5, FlatWorld.SURFACE, 0.5, 0f, 0f));
+        assertTrue(h.server.dispatchCommand(admin, "게임 능력 연습 " + id));
+        h.tickUntil(() -> h.match() != null && h.match().hasStarted() && h.match().phase() == MatchPhase.FIGHT,
+                400, "the practice to start");
+        SuperpowerMatch match = h.match();
+        assertNotNull(match);
+        List<Mannequin> dummies = match.dummiesOf(admin);
+        assertFalse(dummies.isEmpty(), "the practice has training dummies");
+        return new Practice(h, admin, match, dummies.getFirst());
+    }
+
+    @Test
+    void centipedeRoadRisesOnPathsAndSlabs() {
+        try (Scenario s = Scenario.ffa("centipede")) {
+            s.ticks(5);
+            sendEnemiesAway(s);
+            // A street of dirt path (the feet 1/16 below the block top) and then a row of bottom slabs (half a block).
+            for (int x = -2; x <= 11; x++) {
+                s.world.setBlock(x, FlatWorld.FLOOR_Y, 0, x <= 4 ? Material.DIRT_PATH : Material.STONE_BRICK_SLAB);
+            }
+            s.place(s.owner, 0.5, FlatWorld.FLOOR_Y + 15 / 16.0, 0.5, -90, 0);
+            s.ticks(1);
+            s.assertSucceeded(s.active(), "지네 길");
+            for (double x = 0.5; x <= 9.5 + 1.0E-9; x += 0.3) {
+                double y = x < 5 ? FlatWorld.FLOOR_Y + 15 / 16.0 : FlatWorld.FLOOR_Y + 0.5;
+                s.place(s.owner, x, y, 0.5, -90, 0);
+                s.ticks(1);
+            }
+            s.ticks(3);
+            for (int x = 0; x <= 8; x++) {
+                assertEquals(x <= 4 ? Material.DIRT_PATH : Material.STONE_BRICK_SLAB,
+                        s.world.getBlockAt(x, FlatWorld.FLOOR_Y, 0).getType(), "the street itself is untouched");
+                Material bottom = s.world.getBlockAt(x, FlatWorld.FLOOR_Y + 1, 0).getType();
+                assertTrue(bottom == Material.NETHER_WART_BLOCK || bottom == Material.BLACKSTONE,
+                        "a body wall on top of the street at x=" + x + ": " + bottom);
+                assertFalse(s.world.getBlockAt(x, FlatWorld.FLOOR_Y + 2, 0).getType().isAir(), "two high");
+            }
+            s.ticks(s.paramTicks("wall_duration") + 10);
+            assertEquals(0, wallCount(s), "the walls sink back");
+            for (int x = -2; x <= 11; x++) {
+                s.world.setBlock(x, FlatWorld.FLOOR_Y, 0, Material.STONE);
+            }
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void centipedeBodyCrawlsOnTheGroundUnderAJump() {
+        try (Scenario s = Scenario.ffa("centipede")) {
+            s.ticks(5);
+            sendEnemiesAway(s);
+            s.world.physics().setEnabled(false);
+            // Hopping along: every footstep is recorded a block over the ground.
+            for (int i = 1; i <= 24; i++) {
+                s.place(s.owner, 0.5 + i * 0.25, FlatWorld.SURFACE + 1.0, 0.5, -90, 0);
+                s.ticks(1);
+            }
+            assertEquals((int) s.param("segments"), segments(s).size());
+            for (BlockDisplay segment : segments(s)) {
+                assertEquals(FlatWorld.SURFACE, segment.getLocation().getY(), EPSILON,
+                        "the body crawls on the ground under the jump, it does not fly the arc");
+            }
+            s.world.physics().setEnabled(true);
+            s.place(s.owner, 6.5, 0.5, -90);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void centipedeRingOpensForAnAllyCaughtInside() {
+        try (Scenario s = noGaugeGain(Scenario.builder("centipede").teams()).start()) {
+            s.ticks(5);
+            s.assertSucceeded(s.ultimate(), "천 년 묵은 왕지네");
+            s.clearHits();
+            ringAround(s, s.ally());
+            int closed = peek(s.ability(), "wallBlocks");
+            int temporary = s.h.hub.tempBlocks().size();
+            s.h.tickUntil(() -> (int) peek(s.ability(), "wallBlocks") < closed, s.paramTicks("ring_gap") + 20,
+                    "a segment to cave in for the ally");
+            assertEquals(closed - (int) s.param("ult_wall_height"), (int) peek(s.ability(), "wallBlocks"),
+                    "one segment caved in");
+            assertEquals(temporary - (int) s.param("ult_wall_height"), s.h.hub.tempBlocks().size(),
+                    "its blocks are restored");
+            assertEquals(0, s.damageTaken(s.ally()), EPSILON, "the ally is never squeezed");
+            s.ticks(200);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void centipedeNeverCagesItself() {
+        try (Scenario s = Scenario.builder("centipede").param("wall_duration", 8).start()) {
+            s.ticks(5);
+            sendEnemiesAway(s);
+            s.place(s.owner, -1.5, -1.5, 0);
+            s.ticks(1);
+            s.assertSucceeded(s.active(), "지네 길");
+            // A tight square, then a step inside it: the last cell closes the ring around the centipede itself.
+            walk(s, s.owner, -1.5, 2.5, 0.4);
+            walk(s, s.owner, 2.5, 2.5, 0.4);
+            walk(s, s.owner, 2.5, -1.5, 0.4);
+            walk(s, s.owner, -0.5, -1.5, 0.4);
+            walk(s, s.owner, -0.5, -0.5, 0.4);
+            s.ticks(3);
+            int closed = peek(s.ability(), "wallBlocks");
+            assertEquals(16 * (int) s.param("wall_height"), closed, "a closed square of sixteen cells");
+            s.h.tickUntil(() -> (int) peek(s.ability(), "wallBlocks") < closed, s.paramTicks("ring_gap") + 20,
+                    "a segment of the centipede's own ring to cave in");
+            assertEquals(closed - (int) s.param("wall_height"), (int) peek(s.ability(), "wallBlocks"),
+                    "one segment gave way");
+            s.ticks(200);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void centipedeKingReplacesTheRoadsSpeed() {
+        try (Scenario s = noGaugeGain(Scenario.builder("centipede")).start()) {
+            s.ticks(5);
+            sendEnemiesAway(s);
+            s.assertSucceeded(s.active(), "지네 길");
+            s.ticks(5);
+            s.assertSucceeded(s.ultimate(), "천 년 묵은 왕지네");
+            assertEquals(s.param("ult_speed") / 100, modifierSum(s.owner, Attribute.MOVEMENT_SPEED), EPSILON,
+                    "the king's speed alone, not the road's on top of it");
+            s.ticks(300);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void contextRestoresATemporaryBlockEarly() {
+        try (Scenario s = Scenario.ffa("centipede")) {
+            s.ticks(5);
+            org.bukkit.block.Block block = s.world.getBlockAt(8, FlatWorld.FLOOR_Y + 1, 8);
+            assertTrue(s.ctx().placeTempBlock(block, Material.BLACKSTONE.createBlockData(), 200));
+            assertEquals(1, s.h.hub.tempBlocks().size());
+            assertTrue(s.ctx().restoreTempBlock(block), "restored early");
+            assertEquals(Material.AIR, block.getType(), "the original is back");
+            assertEquals(0, s.h.hub.tempBlocks().size(), "and no longer temporary");
+            assertFalse(s.ctx().restoreTempBlock(block), "nothing left to restore");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void taotieGreatMawCapsTheEatenAbsorptionOverTheWholeUltimate() {
+        NamespacedKey absorb = new NamespacedKey("test", "absorb");
+        try (Scenario s = noGaugeGain(Scenario.builder("taotie")).start()) {
+            s.ticks(5);
+            s.place(s.enemy2, 1.5, 3.5, 180);
+            for (TestPlayer enemy : s.enemies()) {
+                enemy.getAttribute(Attribute.MAX_ABSORPTION).addModifier(new AttributeModifier(absorb, 10,
+                        AttributeModifier.Operation.ADD_NUMBER, EquipmentSlotGroup.ANY));
+                // Plenty: the gnawing and the digestion eat into it before it melts.
+                enemy.setAbsorptionAmount(8);
+            }
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.ultimate(), "사흉의 아가리");
+            s.ticks(100);
+            for (TestPlayer enemy : s.enemies()) {
+                assertEquals(0, enemy.getAbsorptionAmount(), EPSILON, enemy.getName() + " was digested");
+            }
+            assertEquals(s.param("digest_absorb_max"), s.owner.getAbsorptionAmount(), EPSILON,
+                    "two meals, but the eaten absorption is capped over the whole ultimate");
+            for (TestPlayer enemy : s.enemies()) {
+                enemy.getAttribute(Attribute.MAX_ABSORPTION).removeModifier(absorb);
+            }
+            s.ticks(s.paramTicks("digest_absorb_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void taotieTastesATrainingDummy() {
+        try (Practice p = practice("taotie")) {
+            p.faceDummy(2.2);
+            p.h().ticks(2);
+            p.faceDummy(2.2);
+            p.match().useActive(p.admin());
+            p.h().tickUntil(() -> peek(p.ability(), "maskOf") != null, 40, "the dummy to be tasted");
+            assertEquals(p.dummy(), peek(p.ability(), "maskOf"), "a dummy's face is a mask too");
+            p.h().ticks(20);
+            p.match().setGauge(p.admin(), 100);
+            p.faceDummy(3);
+            p.match().useUltimate(p.admin());
+            p.h().ticks(2);
+            assertEquals(p.match().context().paramsFor("taotie").num("tasteless_refund"),
+                    p.match().participant(p.admin().getUniqueId()).gauge(), EPSILON,
+                    "a dummy has no ultimate to copy: tasteless, a quarter of the gauge back");
+            assertEquals(0, p.match().errors().totalFailures());
+        }
+    }
+
+    @Test
+    void agwiRealmIsNotCastOnAHiddenEnemy() {
+        try (Scenario s = Scenario.ffa("agwi")) {
+            s.ticks(5);
+            s.place(s.enemy2, 0.5, 30.5, 180);
+            s.owner.hidePlayer(s.h.hub.plugin(), s.enemy);
+            assertFalse(s.ultimate().succeeded(), "only a hidden enemy is near: casting must not give it away");
+            assertEquals(100, s.participant(s.owner).gauge(), EPSILON, "the gauge is kept");
+            s.owner.showPlayer(s.h.hub.plugin(), s.enemy);
+            s.assertSucceeded(s.ultimate(), "with the enemy in sight the realm opens");
+            s.ticks(200);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void agwiOnlyTakesWhatAHealCouldGive() {
+        try (Scenario s = Scenario.ffa("agwi")) {
+            s.ticks(5);
+            double max = s.maxHealth(s.enemy);
+            s.enemy.setHealth(max - 2);
+            s.owner.setHealth(10);
+            settle(s);
+            EntityRegainHealthEvent event = new EntityRegainHealthEvent(s.enemy, 10,
+                    EntityRegainHealthEvent.RegainReason.SATIATED);
+            s.h.server.getPluginManager().callEvent(event);
+            double share = s.param("tax_share") / 100;
+            assertEquals(2 * (1 - share), event.getAmount(), EPSILON, "only the two missing points are shared");
+            s.enemy.setHealth(Math.min(max, s.enemy.getHealth() + event.getAmount()));
+            assertEquals(10 + 2 * share, s.health(s.owner), EPSILON, "the ghost eats no more than the heal gave");
+            s.ticks(3);
+            assertEquals(10 + 2 * share, s.health(s.owner), EPSILON, "and never twice");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void agwiLetsTheTrainingDummiesFillUp() {
+        try (Practice p = practice("agwi")) {
+            p.faceDummy(3);
+            p.h().ticks(5);
+            p.admin().setHealth(10);
+            p.dummy().damage(6, DamageSource.builder(DamageType.PLAYER_ATTACK).withCausingEntity(p.admin())
+                    .withDirectEntity(p.admin()).build());
+            double max = p.dummy().getAttribute(Attribute.MAX_HEALTH).getValue();
+            assertTrue(p.dummy().getHealth() < max - 1, "hurt");
+            p.h().ticks(140);
+            assertEquals(max, p.dummy().getHealth(), EPSILON, "the dummy fills up again");
+            assertEquals(10, p.admin().getHealth(), EPSILON, "a refill is no heal for the ghost to snatch");
+            assertEquals(0, p.match().errors().totalFailures());
+        }
+    }
+
+    @Test
+    void midasMeleeStacksTheGoldAndTellsTheVictim() {
+        try (Scenario s = Scenario.ffa("midas")) {
+            s.ticks(5);
+            actionBars(s.enemy);
+            for (int i = 0; i < 5; i++) {
+                s.melee(s.owner, s.enemy, 2);
+                s.ticks(2);
+            }
+            assertEquals(Set.of(EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.HEAD),
+                    gilded(s, s.enemy), "five blows: every piece is gold");
+            assertEquals(10, s.damageBy(s.owner, s.enemy), EPSILON, "and the king never cracked any of it");
+            assertEquals(-4, modifierSum(s.enemy, Attribute.ARMOR), EPSILON,
+                    "iron to gold: chest -1, legs -2, feet -1, helmet 0");
+            assertTrue(actionBars(s.enemy).stream().anyMatch(bar -> bar.contains("황금")),
+                    "the victim is told its armour turned to gold");
+            s.clearHits();
+            s.melee(s.enemy2, s.enemy, 3);
+            assertEquals(3 + s.param("shatter_bonus"), s.damageBy(s.enemy2, s.enemy), EPSILON,
+                    "someone else cracks it");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void midasGoldGoesOutAgainAtTheEndOfATickAfterAHit() {
+        try (Scenario s = Scenario.ffa("midas")) {
+            s.ticks(5);
+            s.melee(s.owner, s.enemy, 2);
+            s.ticks(1);
+            s.h.server.getPluginManager().callEvent(new ServerTickEndEvent(1, 0, 0));
+            int shown = peek(s.ability(), "lateShows");
+            s.h.server.getPluginManager().callEvent(new ServerTickEndEvent(2, 0, 0));
+            assertEquals(shown, (int) peek(s.ability(), "lateShows"), "nothing changed, nothing to resend");
+            // A hit (that cracks nothing) wears the armour down: the server sends the true armour again.
+            s.enemy.setNoDamageTicks(0);
+            s.enemy.damage(1, DamageSource.builder(DamageType.ON_FIRE).build());
+            s.h.server.getPluginManager().callEvent(new ServerTickEndEvent(3, 0, 0));
+            assertEquals(shown + 1, (int) peek(s.ability(), "lateShows"), "the gold goes out again after the hit");
+            s.h.server.getPluginManager().callEvent(new EntityEquipmentChangedEvent(s.enemy, Map.of()));
+            s.h.server.getPluginManager().callEvent(new ServerTickEndEvent(4, 0, 0));
+            assertEquals(shown + 2, (int) peek(s.ability(), "lateShows"), "and after a change of gear");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void midasGoldenFloorGildsOnlyWhoStandsOnTheStar() {
+        try (Scenario s = noGaugeGain(Scenario.builder("midas")).start()) {
+            s.ticks(5);
+            double radius = s.param("touch_radius");
+            double out = radius * 0.9;
+            // On a point of the star (straight ahead), and as far out between two points (off the gold).
+            s.place(s.enemy, 0.5, 0.5 + out, 180);
+            double between = Math.toRadians(22.5);
+            s.place(s.enemy2, 0.5 - Math.sin(between) * out, 0.5 + Math.cos(between) * out, 180);
+            s.assertSucceeded(s.ultimate(), "황금 손길");
+            s.ticks(s.paramTicks("touch_gild_interval") * 2 + 2);
+            assertFalse(gilded(s, s.enemy).isEmpty(), "on the gold: gilded");
+            assertTrue(gilded(s, s.enemy2).isEmpty(), "between the points of the star, off the gold: not gilded");
+            s.ticks(s.paramTicks("touch_duration") + 20);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bulgasariPlatesStayClearOfTheArmsAndTheOwnersView() {
+        try (Scenario s = Scenario.ffa("bulgasari")) {
+            s.ticks(5);
+            s.place(s.owner, 0.5, 0.5, 90);
+            s.owner.setBodyYaw(90);
+            s.assertSucceeded(s.ultimate(), "불가살이");
+            s.ticks(6);
+            List<BlockDisplay> parts = entities(s, BlockDisplay.class);
+            assertTrue(parts.size() >= 6, "plates and a seam");
+            Vector feet = s.owner.getLocation().toVector();
+            Vector forward = facing(90);
+            Vector side = new Vector(-forward.getZ(), 0, forward.getX());
+            for (BlockDisplay part : parts) {
+                assertFalse(s.owner.canSee(part), "the bulgasari does not see its own plates around its camera");
+                assertTrue(s.enemy.canSee(part), "everyone else does");
+                // The part's box in the body's frame (its rotation is the body's turn).
+                Vector offset = center(part).subtract(feet);
+                double x = Math.abs(offset.dot(side));
+                double y = offset.getY();
+                double z = Math.abs(offset.dot(forward));
+                Vector3f half = new Vector3f(part.getTransformation().getScale()).mul(0.5f);
+                boolean inArm = x + half.x() > 0.25 + 1.0E-3 && x - half.x() < 0.5 - 1.0E-3
+                        && y + half.y() > 0.75 + 1.0E-3 && y - half.y() < 1.5 - 1.0E-3
+                        && z - half.z() < 0.125 - 1.0E-3;
+                assertFalse(inArm, "a plate clips into an arm: " + part.getBlock().getMaterial() + " at x=" + x
+                        + " y=" + y + " z=" + z + " half=" + half);
+            }
+            s.ticks(140);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bulgasariChewedWeaponGrowsIn() {
+        try (Scenario s = Scenario.ffa("bulgasari")) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 2.8, 180);
+            s.aimAt(s.owner, s.enemy);
+            s.assertSucceeded(s.active(), "칼 씹어먹기");
+            s.ticks(1);
+            float first = items(s, Material.IRON_SWORD).getFirst().getTransformation().getScale().x();
+            s.ticks(4);
+            float grown = items(s, Material.IRON_SWORD).getFirst().getTransformation().getScale().x();
+            assertTrue(first < 0.3f, "the weapon starts small: " + first);
+            assertTrue(grown > 0.5f, "and grows in over a few ticks: " + grown);
+            s.ticks(100);
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void bulgasariWarnsBeforeTheShrapnel() {
+        try (Scenario s = noGaugeGain(Scenario.builder("bulgasari")).start()) {
+            s.ticks(5);
+            s.place(s.enemy, 0.5, 3.5, 180);
+            s.place(s.enemy2, 0.5, 16.5, 180);
+            s.assertSucceeded(s.ultimate(), "불가살이");
+            s.melee(s.enemy, s.owner, 3);
+            actionBars(s.enemy);
+            actionBars(s.enemy2);
+            int warning = s.paramTicks("spit_warning");
+            s.ticks(s.paramTicks("iron_duration") - warning - 3);
+            assertTrue(actionBars(s.enemy).stream().noneMatch(bar -> bar.contains("토하려")), "no warning yet");
+            s.clearHits();
+            int warnedAt = -1;
+            int hitAt = -1;
+            for (int i = 0; i < warning + 10 && hitAt < 0; i++) {
+                s.ticks(1);
+                if (warnedAt < 0 && actionBars(s.enemy).stream().anyMatch(bar -> bar.contains("토하려"))) {
+                    warnedAt = i;
+                }
+                if (s.damageBy(s.owner, s.enemy) > 0) {
+                    hitAt = i;
+                }
+            }
+            assertTrue(hitAt >= 0, "the shrapnel hits");
+            assertTrue(warnedAt >= 0 && hitAt - warnedAt >= warning - 1,
+                    "the enemy in reach was warned " + s.param("spit_warning") + " s before: " + warnedAt + " / "
+                            + hitAt);
+            assertTrue(actionBars(s.enemy2).stream().noneMatch(bar -> bar.contains("토하려")), "nobody out of reach");
+            s.ticks(30);
             s.finishClean();
         }
     }

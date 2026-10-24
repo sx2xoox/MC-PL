@@ -82,7 +82,7 @@ public final class BulgasariAbility extends Ability {
                             + "때까지 유지). 대신 불 피해(화상·불·용암과 화염술사·용암술사·드래곤·악마·불사조의 능력)를 "
                             + "{fire_weakness}% 더 받습니다.")
             .active("칼 씹어먹기",
-                    "앞 {bite_range}블록 안의 적 하나를 덥석 물어 {bite_damage} 피해를 주고 갑옷을 한 번 갉으며, 손에 든 "
+                    "앞 {bite_range}블록·{bite_angle}° 안의 적 하나를 덥석 물어 {bite_damage} 피해를 주고 갑옷을 한 번 갉으며, 손에 든 "
                             + "무기를 우걱우걱 씹습니다. {chew_duration}초간 그 적의 근접 공격은 나에게 피해를 주지 못하고 "
                             + "먹이가 되어 오히려 내가 {chew_heal} 회복합니다({chew_heal_interval}초마다 한 번, 다른 "
                             + "사람에게는 그대로 아픕니다). 물 적이 없으면 쿨타임이 {miss_cooldown}%만 돕니다.",
@@ -90,9 +90,9 @@ public final class BulgasariAbility extends Ability {
             .ultimate("불가살이",
                     "{iron_duration}초간 쇳덩이 몸이 됩니다. 적의 근접 공격과 화살·삼지창 같은 일반 투사체는 피해 없이 "
                             + "꿀꺽 삼켜져 체력을 {iron_heal} 회복합니다({iron_heal_interval}초마다 한 번). 능력 피해는 "
-                            + "그대로 받고 불 피해는 {iron_fire}% 더 받습니다. 끝날 때 삼킨 쇳조각을 토해 반경 "
-                            + "{spit_radius}블록의 적에게 삼킨 횟수마다 {spit_damage} 피해(최대 {spit_max})를 주고 "
-                            + "밀쳐냅니다.")
+                            + "그대로 받고 불 피해는 {iron_fire}% 더 받습니다. 끝나기 {spit_warning}초 전부터 몸이 "
+                            + "달아오르며 반경을 알리고, 끝날 때 삼킨 쇳조각을 토해 반경 {spit_radius}블록의 적에게 삼킨 "
+                            + "횟수마다 {spit_damage} 피해(최대 {spit_max})를 주고 밀쳐냅니다.")
             .param("gnaw_armor", 1)
             .param("gnaw_duration", 8)
             .param("gnaw_max", 4)
@@ -102,6 +102,7 @@ public final class BulgasariAbility extends Ability {
             .param("grow_max", 8)
             .param("fire_weakness", 30)
             .param("bite_range", 3.5)
+            .param("bite_angle", 70)
             .param("bite_damage", 4)
             .param("chew_duration", 4)
             .param("chew_heal", 1)
@@ -111,6 +112,7 @@ public final class BulgasariAbility extends Ability {
             .param("iron_heal", 1)
             .param("iron_heal_interval", 0.5)
             .param("iron_fire", 100)
+            .param("spit_warning", 1)
             .param("spit_radius", 5)
             .param("spit_damage", 1)
             .param("spit_max", 8)
@@ -161,7 +163,6 @@ public final class BulgasariAbility extends Ability {
     private static final int BIG_MEALS = 4;
 
     // active
-    private static final double BITE_CONE_DEGREES = 70;
     private static final int JAW_CLOSE_TICKS = 2;
     private static final int JAW_HOLD_TICKS = 5;
     private static final float JAW_WIDTH = 0.85f;
@@ -171,6 +172,8 @@ public final class BulgasariAbility extends Ability {
     private static final float CHEW_ITEM_SIZE = 0.55f;
     private static final double CHEW_LIFT = 0.55;
     private static final long CHOMP_PERIOD = 10;
+    private static final float CHEW_GROW_FROM = 0.2f;
+    private static final float CHEW_GROW_TICKS = 4f;
 
     // ultimate
     private static final float PLATE_THICK = 0.06f;
@@ -400,8 +403,8 @@ public final class BulgasariAbility extends Ability {
             World world = chest.getWorld();
             world.spawnParticle(Particle.ITEM, chest, Vfx.n(ctx(), 6), 0.18, 0.18, 0.18, 0.06, IRON_CRUMB);
             world.spawnParticle(Particle.DUST, chest, Vfx.n(ctx(), 5), 0.2, 0.2, 0.2, 0, RUST);
-            // Two rows of teeth snapping shut across the armour.
-            double yaw = owner.getLocation().getYaw();
+            // Two rows of teeth snapping shut across the armour, on the side the bulgasari bites from.
+            double yaw = owner.getLocation().getYaw() + 180;
             Vfx.arc(ctx(), chest.clone().add(0, 0.16, 0), 0.42, yaw, 120, 7, Particle.DUST, TOOTH, false);
             Vfx.arc(ctx(), chest.clone().add(0, -0.16, 0), 0.42, yaw, 120, 7, Particle.DUST, TOOTH, false);
             int motes = Vfx.n(ctx(), 3);
@@ -544,7 +547,7 @@ public final class BulgasariAbility extends Ability {
     private @Nullable LivingEntity nearestInFront(Player owner, double range) {
         Location eye = owner.getEyeLocation();
         Vector facing = Motion.horizontal(eye.getDirection());
-        double cos = Math.cos(Math.toRadians(BITE_CONE_DEGREES / 2));
+        double cos = Math.cos(Math.toRadians(Math.clamp(params().num("bite_angle"), 0, 360) / 2));
         for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), range)) {
             if (isHidden(enemy)) {
                 continue;
@@ -652,9 +655,9 @@ public final class BulgasariAbility extends Ability {
         void start() {
             ItemStack held = heldWeapon(victim);
             if (reserve(1)) {
-                weapon = keep(Displays.item(ctx(), owner, above(victim), held, weaponPose(0, 0.2f), duration + 8));
+                weapon = keep(Displays.item(ctx(), owner, above(victim), held, weaponPose(0, CHEW_GROW_FROM),
+                        duration + 8));
                 weapon.setTeleportDuration(1);
-                Displays.animateNextTick(ctx(), owner, weapon, weaponPose(0, 1f), 4);
             }
             Loop.repeat(ctx(), owner, 1, 1, duration, this, this::finish);
         }
@@ -669,8 +672,10 @@ public final class BulgasariAbility extends Ability {
             boolean hidden = isHidden(victim);
             if (item != null && item.isValid()) {
                 Displays.moveTo(item, above(victim));
-                // A chewed weapon over a hidden enemy would give it away: it shrinks out of sight meanwhile.
-                float size = hidden ? 0.001f : chompScale(tick);
+                // A chewed weapon over a hidden enemy would give it away: it shrinks out of sight meanwhile. It grows in
+                // over the first ticks (the per-tick turn would cut a separate grow-in animation short).
+                float grow = Math.min(1f, CHEW_GROW_FROM + (1f - CHEW_GROW_FROM) * (tick + 1) / CHEW_GROW_TICKS);
+                float size = hidden ? 0.001f : chompScale(tick) * grow;
                 Displays.animate(item, weaponPose(tick * 6f, size), 1);
             }
             if (!hidden && tick % CHOMP_PERIOD == 0) {
@@ -777,27 +782,34 @@ public final class BulgasariAbility extends Ability {
      */
     private final class IronBody implements LongPredicate {
 
-        /** Local plate layout around the torso (x = left, y = up from the feet, z = forward; sizes). */
+        /**
+         * Local plate layout around the body (x = left, y = up from the feet, z = forward; sizes), clear of the arms
+         * (x 0.25..0.5, y 0.75..1.5) and the head: a breastplate and a backplate over the torso, two tassets on the
+         * hips below the arms, two pauldrons on top of the shoulders.
+         */
         private static final float[][] PLATES = {
-                // front, back, left, right, two shoulder pauldrons
-                {0f, 1.02f, 0.17f, 0.52f, 0.62f, PLATE_THICK},
-                {0f, 1.02f, -0.17f, 0.52f, 0.62f, PLATE_THICK},
-                {0.29f, 1.02f, 0f, PLATE_THICK, 0.58f, 0.32f},
-                {-0.29f, 1.02f, 0f, PLATE_THICK, 0.58f, 0.32f},
-                {0.3f, 1.4f, 0f, 0.26f, 0.08f, 0.4f},
-                {-0.3f, 1.4f, 0f, 0.26f, 0.08f, 0.4f},
+                {0f, 1.02f, 0.17f, 0.48f, 0.62f, PLATE_THICK},
+                {0f, 1.02f, -0.17f, 0.48f, 0.62f, PLATE_THICK},
+                {0.285f, 0.6f, 0f, PLATE_THICK, 0.26f, 0.3f},
+                {-0.285f, 0.6f, 0f, PLATE_THICK, 0.26f, 0.3f},
+                {0.39f, 1.54f, 0f, 0.28f, 0.07f, 0.34f},
+                {-0.39f, 1.54f, 0f, 0.28f, 0.07f, 0.34f},
         };
 
         private final Player owner;
         private final long duration;
         private final double heal;
         private final long healInterval;
+        private final long warnTicks;
         private final List<BlockDisplay> plates = new ArrayList<>();
         private final List<float[]> layout = new ArrayList<>();
         private @Nullable BlockDisplay seam;
         private @Nullable TextDisplay counter;
         private long nextHeal = Long.MIN_VALUE / 2;
         private int swallows;
+        /** 0..1 while the swallowed iron heats up before the finale (the seam swells with it). */
+        private float heat;
+        private boolean warned;
         private boolean over;
 
         IronBody(Player owner) {
@@ -805,6 +817,7 @@ public final class BulgasariAbility extends Ability {
             this.duration = Math.max(1, params().ticks("iron_duration"));
             this.heal = Math.max(0, params().num("iron_heal"));
             this.healInterval = Math.max(1, params().ticks("iron_heal_interval"));
+            this.warnTicks = Math.clamp(params().ticks("spit_warning"), 0, duration);
         }
 
         void start() {
@@ -819,15 +832,15 @@ public final class BulgasariAbility extends Ability {
                 plate.setTeleportDuration(1);
                 plates.add(plate);
                 layout.add(p);
-                if (i == 0) {
-                    // The front plate sits right under the owner's eyes: only everyone else sees it.
-                    owner.hideEntity(ctx().plugin(), plate);
-                }
+                // The plates sit right around the owner's camera (it would see them when looking down): only everyone
+                // else sees them.
+                owner.hideEntity(ctx().plugin(), plate);
             }
             if (reserve(1)) {
                 seam = keep(Displays.block(ctx(), owner, feet, GLOW_SEAM.createBlockData(),
                         seamPose(yaw, scale, 0.05f), duration + PLATE_FADE + 6));
                 seam.setTeleportDuration(1);
+                owner.hideEntity(ctx().plugin(), seam);
             }
             if (reserve(1)) {
                 counter = keep(Displays.text(ctx(), owner, counterSpot(), Text.mm("<" + IRON_TAG + "><b>不可殺伊</b></"
@@ -893,7 +906,46 @@ public final class BulgasariAbility extends Ability {
             if (tick % 20 == 10) {
                 Fx.sound(owner.getLocation(), Sound.BLOCK_CHAIN_STEP, 0.6f, 0.6f + Fx.jitter(0.05f));
             }
+            long left = duration - tick - 1;
+            if (swallows > 0 && warnTicks > 0 && left >= 0 && left < warnTicks) {
+                windUp(tick, left);
+            }
             return true;
+        }
+
+        /**
+         * The last moments before the finale: the swallowed iron heats up (the seam swells and glows, the chains rattle
+         * faster and faster) and the reach of the shrapnel glows on the ground; whoever stands in it is warned.
+         */
+        private void windUp(long tick, long left) {
+            double radius = Math.max(0, params().num("spit_radius"));
+            heat = 1f - (float) left / warnTicks;
+            if (!warned) {
+                warned = true;
+                int count = Math.min(swallows, Math.max(0, params().integer("spit_max")));
+                String damage = AbilityInfo.formatNumber(Math.max(0, params().num("spit_damage")) * count);
+                for (LivingEntity enemy : ctx().enemiesNear(owner, owner.getLocation(), radius + 2)) {
+                    if (enemy instanceof Player victim) {
+                        victim.sendActionBar(Text.mm("<" + EMBER_TAG + "><b>불가사리가 쇳조각을 토하려 합니다!</b></"
+                                + EMBER_TAG + "> <gray>반경 " + AbilityInfo.formatNumber(radius) + "블록 · −" + damage
+                                + "</gray>"));
+                    }
+                }
+                owner.sendActionBar(Text.mm("<" + IRON_TAG + ">쇳조각이 목까지 찼습니다</" + IRON_TAG + "> <gray>곧 "
+                        + "토해 냅니다 · ×" + count + "</gray>"));
+                Fx.sound(Fx.body(owner), Sound.BLOCK_ANVIL_USE, 0.8f, 0.6f);
+            }
+            Location feet = owner.getLocation();
+            if (tick % 3 == 0 && radius > 0) {
+                int points = (int) Math.max(16, Math.min(32, radius * 5));
+                Vfx.ring(ctx(), feet.clone().add(0, 0.12, 0), radius, points, tick * 0.05,
+                        Particle.DUST_COLOR_TRANSITION, SEAM, true);
+            }
+            if (left % 4 == 0) {
+                Location chest = Fx.body(owner);
+                chest.getWorld().spawnParticle(Particle.SMALL_FLAME, chest, Vfx.n(ctx(), 3), 0.25, 0.35, 0.25, 0.01);
+                Fx.sound(chest, Sound.BLOCK_CHAIN_STEP, 0.9f, 0.7f + 0.9f * heat);
+            }
         }
 
         private void pose(float yaw, float scale, float grow, int ticks) {
@@ -901,7 +953,7 @@ public final class BulgasariAbility extends Ability {
                 Displays.animate(plates.get(i), platePose(layout.get(i), yaw, scale, grow), ticks);
             }
             if (seam != null) {
-                Displays.animate(seam, seamPose(yaw, scale, grow), ticks);
+                Displays.animate(seam, seamPose(yaw, scale, grow * (1f + 0.4f * heat)), ticks);
             }
         }
 
@@ -1082,7 +1134,7 @@ public final class BulgasariAbility extends Ability {
     /** The glowing seam: a thin molten band around the waist, just inside the plates. */
     private static Transformation seamPose(float yaw, float scale, float grow) {
         float g = Math.max(0.001f, grow) * scale;
-        return part(yaw, 0, 0, 0.72f * scale, 0, 0.5f * g, 0.05f * g, 0.36f * g);
+        return part(yaw, 0, 0, 0.72f * scale, 0, 0.54f * g, 0.05f * g, 0.32f * g);
     }
 
     // ------------------------------------------------------------------ helpers
