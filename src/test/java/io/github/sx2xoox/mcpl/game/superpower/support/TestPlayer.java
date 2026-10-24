@@ -1,7 +1,6 @@
 package io.github.sx2xoox.mcpl.game.superpower.support;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -102,14 +101,6 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
     public TestPlayer(ServerMock server, String name) {
         super(server, name);
         VanillaAttributes.completePlayer(attributes);
-    }
-
-    /** Like Paper 26: displays riding the player stay mounted through a teleport within the world. */
-    @Override
-    public boolean teleport(Location location, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause,
-                            io.papermc.paper.entity.TeleportFlag... flags) {
-        return super.teleport(location, cause,
-                io.github.sx2xoox.mcpl.game.superpower.support.world.PaperRules.keepPassengers(this, location, flags));
     }
 
     /** Like the server: absorption is clamped to the {@link Attribute#MAX_ABSORPTION} attribute. */
@@ -223,29 +214,6 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
             value = true; // chat colours, server listings
         }
         return option.getType().cast(value);
-    }
-
-    // ------------------------------------------------------------------ riding
-
-    /**
-     * Like Paper 26, where the {@code EntityState} teleport flags became the default: a player carrying passengers (a
-     * display worn on its body) keeps them through a teleport within its world, and cannot be teleported to another
-     * world while it carries them. MockBukkit still refuses any teleport of a vehicle not told to retain its
-     * passengers. (MockBukkit does not move passengers with their vehicle: on the server they ride at the top of its
-     * hitbox, {@code getHeight()} over its feet.)
-     */
-    @Override
-    @SuppressWarnings("removal")
-    public boolean teleport(Location location, PlayerTeleportEvent.TeleportCause cause, TeleportFlag... flags) {
-        if (!hasPassengers()) {
-            return super.teleport(location, cause, flags);
-        }
-        if (location.getWorld() != null && !location.getWorld().equals(getWorld())) {
-            return false;
-        }
-        TeleportFlag[] retained = Arrays.copyOf(flags, flags.length + 1);
-        retained[flags.length] = TeleportFlag.EntityState.RETAIN_PASSENGERS;
-        return super.teleport(location, cause, retained);
     }
 
     // ------------------------------------------------------------------ body
