@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Consumer;
 
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Body;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
@@ -153,18 +154,26 @@ public final class TenguAbility extends Ability {
     private static final int MAX_DISPLAYS = 24;
     private static final double TAU = Math.PI * 2;
     /**
-     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
-     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
+     * Ticks the worn pieces take to turn with the head: as long as a client lerps another player's head (3 steps), so
+     * the nose turns with the face instead of leading it.
      */
-    private static final int FOLLOW_LERP = 3;
+    private static final int HEAD_LERP = 3;
 
     // passive: the nose
     private static final float NOSE_BASE = 0.12f;
     private static final float NOSE_STEP = 0.11f;
     private static final float NOSE_WIDTH = 0.085f;
-    /** The nose leaves the face this far in front of the eyes (blocks at scale 1). */
+    /**
+     * A player's head turns about its neck, this far under the eyes (blocks at scale 1: the model's neck is 24 pixels
+     * up a 0.9375-scaled body, 1.41 against the 1.62 eye height).
+     */
+    private static final float NECK_BELOW_EYES = 0.22f;
+    /** The nose's root, from the neck: up to just under the eyes, forward to just inside the face (0.234 deep). */
+    private static final float NOSE_UP = 0.16f;
     private static final float FACE_FRONT = 0.2f;
-    private static final float NOSE_DROP = 0.06f;
+    /** The cap's middle, from the neck: on top of the head (0.47 up), over the forehead. */
+    private static final float CAP_UP = 0.47f;
+    private static final float CAP_FRONT = 0.12f;
     private static final long VISIBILITY_PERIOD = 10;
     private static final long GLINT_PERIOD = 12;
     private static final int BREAK_TICKS = 6;
@@ -229,15 +238,53 @@ public final class TenguAbility extends Ability {
         Bukkit.getPluginManager().registerEvents(created, ctx().plugin());
         listener = created;
         Player owner = player();
-        Location feet = Displays.unrotated(owner.getLocation());
         if (reserve(2)) {
-            nose = keep(Displays.block(ctx(), owner, feet, NOSE.createBlockData(), nosePose(owner, 0, 0), 0));
-            cap = keep(Displays.block(ctx(), owner, feet, CAP.createBlockData(), capPose(owner), 0));
-            for (BlockDisplay part : List.of(nose, cap)) {
-                part.setTeleportDuration(FOLLOW_LERP);
-                // The owner's own nose would sit right in front of its camera.
-                owner.hideEntity(ctx().plugin(), part);
+            List<Player> unseen = new ArrayList<>();
+            for (Player viewer : Bukkit.getOnlinePlayers()) {
+                if (!viewer.equals(owner) && !viewer.canSee(owner)) {
+                    unseen.add(viewer);
+                }
             }
+            // The owner's own nose would sit right in front of its camera, and whoever cannot see the tengu does not
+            // see its nose: neither ever receives it.
+            Consumer<BlockDisplay> hide = part -> {
+                owner.hideEntity(ctx().plugin(), part);
+                for (Player viewer : unseen) {
+                    viewer.hideEntity(ctx().plugin(), part);
+                }
+            };
+            nose = keep(wear(owner, NOSE, nosePose(owner, 0, 0), 0, hide));
+            cap = keep(wear(owner, CAP, capPose(owner), 0, hide));
+            for (Player viewer : unseen) {
+                noseHiddenFrom.add(viewer.getUniqueId());
+            }
+        }
+    }
+
+    /**
+     * A block display worn by the owner: it rides the owner, so every client draws it exactly on the body it shows (a
+     * display teleported after a player every tick trails and jitters around it: the player's own position reaches
+     * clients later, and lerped). It is posed relative to where it rides, the top of the owner's hitbox
+     * ({@code getHeight()} over the feet); {@code setup} runs inside the spawn, before any client receives it.
+     * (A player carrying passengers cannot be teleported to another world: the match takes them off before it sends
+     * its players home, and these go with the ability.)
+     */
+    private BlockDisplay wear(Player owner, Material type, Transformation pose, long lifetime,
+                              Consumer<BlockDisplay> setup) {
+        Location top = Displays.unrotated(owner.getLocation().add(0, owner.getHeight(), 0));
+        BlockDisplay part = Displays.spawn(ctx(), owner, top, BlockDisplay.class, lifetime, display -> {
+            display.setBlock(type.createBlockData());
+            display.setTransformation(pose);
+            setup.accept(display);
+        });
+        owner.addPassenger(part);
+        return part;
+    }
+
+    /** Puts a worn piece back on the owner if something took it off (a respawn gives the player a new body). */
+    private static void ride(Player owner, Entity part) {
+        if (part.isValid() && !owner.equals(part.getVehicle()) && part.getWorld().equals(owner.getWorld())) {
+            owner.addPassenger(part);
         }
     }
 
@@ -441,7 +488,10 @@ public final class TenguAbility extends Ability {
         }
     }
 
-    /** The nose and cap follow the head every tick; the nose bends down and snaps back after a break. */
+    /**
+     * The nose and cap ride the owner and turn with its head every tick (over a client's head lerp); the nose bends
+     * down and snaps back after a break.
+     */
     private void poseNose(Player owner, long now) {
         BlockDisplay shown = nose;
         BlockDisplay hat = cap;
@@ -451,9 +501,8 @@ public final class TenguAbility extends Ability {
         if (!shown.isValid() || !shown.getWorld().equals(owner.getWorld())) {
             return;
         }
-        Location feet = owner.getLocation();
-        Displays.moveTo(shown, feet);
-        Displays.moveTo(hat, feet);
+        ride(owner, shown);
+        ride(owner, hat);
         if (hiddenOwner(owner)) {
             Displays.animate(shown, Displays.scaled(0.001f), 1);
             Displays.animate(hat, Displays.scaled(0.001f), 1);
@@ -466,8 +515,8 @@ public final class TenguAbility extends Ability {
             droop = 70f * (float) sinceBreak / BREAK_TICKS;
             length = brokenFrom;
         }
-        Displays.animate(shown, nosePose(owner, length, droop), 1);
-        Displays.animate(hat, capPose(owner), 1);
+        Displays.animate(shown, nosePose(owner, length, droop), HEAD_LERP);
+        Displays.animate(hat, capPose(owner), HEAD_LERP);
     }
 
     /** The head's rotation: yaw then pitch (yaw 0 faces +Z, positive pitch looks down). */
@@ -477,9 +526,14 @@ public final class TenguAbility extends Ability {
                 .rotateX((float) Math.toRadians(at.getPitch()));
     }
 
-    /** The middle of the head (the eyes), relative to the feet. */
-    private static Vector3f headCenter(Player owner) {
-        return new Vector3f(0, (float) owner.getEyeHeight(), 0);
+    /**
+     * The head's pivot, the neck, relative to where the worn pieces ride (the top of the hitbox). Standing or
+     * crouching, a player's head turns about it: a nose turned about the eyes would sink into the face looking down
+     * and float in front of it looking up.
+     */
+    private static Vector3f neck(Player owner) {
+        float scale = (float) Body.scaleOf(owner);
+        return new Vector3f(0, (float) (owner.getEyeHeight() - owner.getHeight()) - NECK_BELOW_EYES * scale, 0);
     }
 
     /** The nose for {@code length} stages, bent down by {@code droop} degrees: a red box sticking out of the face. */
@@ -488,8 +542,7 @@ public final class TenguAbility extends Ability {
         float size = (NOSE_BASE + NOSE_STEP * Math.max(0, length)) * scale;
         Quaternionf turn = headTurn(owner);
         Quaternionf rotation = new Quaternionf(turn).rotateX((float) Math.toRadians(droop));
-        Vector3f root = new Vector3f(headCenter(owner)).add(turn.transform(new Vector3f(0, -NOSE_DROP * scale,
-                FACE_FRONT * scale)));
+        Vector3f root = neck(owner).add(turn.transform(new Vector3f(0, NOSE_UP * scale, FACE_FRONT * scale)));
         Vector3f center = new Vector3f(root).add(new Quaternionf(rotation).transform(new Vector3f(0, 0, size / 2)));
         float width = NOSE_WIDTH * scale * (1 + 0.08f * Math.max(0, length));
         return box(center, new Vector3f(width, width, Math.max(0.01f, size)), rotation);
@@ -499,8 +552,7 @@ public final class TenguAbility extends Ability {
     private static Transformation capPose(Player owner) {
         float scale = (float) Body.scaleOf(owner);
         Quaternionf turn = headTurn(owner);
-        Vector3f center = new Vector3f(headCenter(owner)).add(turn.transform(new Vector3f(0, 0.25f * scale,
-                0.12f * scale)));
+        Vector3f center = neck(owner).add(turn.transform(new Vector3f(0, CAP_UP * scale, CAP_FRONT * scale)));
         return box(center, new Vector3f(0.16f * scale, 0.13f * scale, 0.16f * scale),
                 new Quaternionf(turn).rotateY((float) Math.toRadians(45)));
     }
@@ -509,8 +561,8 @@ public final class TenguAbility extends Ability {
     private Location noseTip(Player owner) {
         float scale = (float) Body.scaleOf(owner);
         float size = (NOSE_BASE + NOSE_STEP * stage) * scale;
-        Vector3f local = new Vector3f(headCenter(owner)).add(headTurn(owner).transform(new Vector3f(0,
-                -NOSE_DROP * scale, FACE_FRONT * scale + size)));
+        Vector3f local = neck(owner).add(0, (float) owner.getHeight(), 0).add(headTurn(owner).transform(
+                new Vector3f(0, NOSE_UP * scale, FACE_FRONT * scale + size)));
         return owner.getLocation().add(local.x, local.y, local.z);
     }
 
@@ -666,14 +718,12 @@ public final class TenguAbility extends Ability {
         float size = big ? BIG_FAN : 1f;
         List<BlockDisplay> parts = new ArrayList<>();
         if (reserve(blades + 1)) {
-            Location anchor = Displays.unrotated(feet);
             for (int i = 0; i <= blades; i++) {
                 Material type = i == blades ? HANDLE : white ? (i % 2 == 0 ? WHITE_FEATHER : WHITE_FEATHER_SOFT)
                         : (i % 2 == 0 ? RED_FEATHER : RED_FEATHER_DARK);
-                BlockDisplay part = keep(Displays.block(ctx(), owner, anchor, type.createBlockData(),
-                        fanPose(owner, i, blades, yaw + SWING_ARC, size, 0.2f), SWING_TICKS + 12));
-                part.setTeleportDuration(FOLLOW_LERP);
-                hideFromThoseWhoCannotSee(owner, part);
+                // Held in the hand, the fan rides the tengu: it never falls behind the body on the run.
+                BlockDisplay part = keep(wear(owner, type, fanPose(owner, i, blades, yaw + SWING_ARC, size, 0.2f),
+                        SWING_TICKS + 12, display -> hideFromThoseWhoCannotSee(owner, display)));
                 parts.add(part);
             }
         }
@@ -683,7 +733,7 @@ public final class TenguAbility extends Ability {
             float open = Math.min(1f, 0.2f + 0.8f * t * 2);
             for (int i = 0; i < parts.size(); i++) {
                 BlockDisplay part = parts.get(i);
-                Displays.moveTo(part, owner.getLocation());
+                ride(owner, part);
                 Displays.animate(part, fanPose(owner, i, blades, sweep, size, open), 2);
             }
             if (run < SWING_TICKS) {
@@ -703,9 +753,9 @@ public final class TenguAbility extends Ability {
     }
 
     /**
-     * Feather {@code index} of the fan (the last index is the bamboo handle): the fan is held at the right hand, its
-     * face turned to {@code fanYaw}, feathers fanned out over {@link #BLADE_SPREAD} degrees each side (folded together
-     * at {@code open} 0).
+     * Feather {@code index} of the fan (the last index is the bamboo handle), relative to where the fan rides (the top
+     * of the tengu's hitbox): the fan is held at the right hand, its face turned to {@code fanYaw}, feathers fanned out
+     * over {@link #BLADE_SPREAD} degrees each side (folded together at {@code open} 0).
      */
     private static Transformation fanPose(Player owner, int index, int blades, float fanYaw, float size, float open) {
         float scale = (float) Body.scaleOf(owner) * size;
@@ -714,7 +764,7 @@ public final class TenguAbility extends Ability {
         Vector3f forward = face.transform(new Vector3f(0, 0, 0.55f * (float) Body.scaleOf(owner)));
         Vector3f side = new Quaternionf().rotateY((float) Math.toRadians(-owner.getLocation().getYaw()))
                 .transform(new Vector3f(-0.3f * (float) Body.scaleOf(owner), 0, 0));
-        Vector3f pivot = new Vector3f(0, (float) (owner.getHeight() * 0.62), 0).add(forward).add(side);
+        Vector3f pivot = new Vector3f(0, (float) (owner.getHeight() * (0.62 - 1)), 0).add(forward).add(side);
         if (index == blades) {
             Vector3f center = new Vector3f(pivot).add(face.transform(new Vector3f(0, -0.2f * scale, 0)));
             return box(center, new Vector3f(0.06f * scale, 0.42f * scale, 0.06f * scale), face);
@@ -1159,7 +1209,10 @@ public final class TenguAbility extends Ability {
         return false;
     }
 
-    /** Hides a display of the tengu's from every viewer that cannot see the tengu (stealth or invisibility). */
+    /**
+     * Hides a display of the tengu's from every viewer that cannot see the tengu (stealth or invisibility). Called
+     * inside the display's spawn, so those viewers never receive it.
+     */
     private void hideFromThoseWhoCannotSee(Player owner, Display display) {
         boolean invisible = hiddenOwner(owner);
         for (Player viewer : Bukkit.getOnlinePlayers()) {

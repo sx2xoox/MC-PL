@@ -8,7 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -37,7 +43,9 @@ import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Pig;
 import org.bukkit.entity.Player;
@@ -171,6 +179,22 @@ class ShapeNewAbilitiesTest {
     private static Vector3f lookOf(Player player) {
         Vector look = player.getLocation().getDirection();
         return new Vector3f((float) look.getX(), (float) look.getY(), (float) look.getZ());
+    }
+
+    /**
+     * Where the middle of a block display's box is relative to the feet of the player it rides: on the server a
+     * passenger rides at the top of its vehicle's hitbox (MockBukkit leaves it where it was spawned).
+     */
+    private static Vector3f wornMiddle(BlockDisplay worn, Player wearer) {
+        Transformation t = worn.getTransformation();
+        return new Vector3f(t.getTranslation()).add(rotationOf(worn).transform(new Vector3f(t.getScale()).mul(0.5f)))
+                .add(0, (float) wearer.getHeight(), 0);
+    }
+
+    /** The horizontal heading (yaw, degrees) of a display's +Z axis. */
+    private static double headingOf(Display display) {
+        Vector3f along = forward(rotationOf(display));
+        return Math.toDegrees(Math.atan2(-along.x, along.z));
     }
 
     // ================================================================== every ability
@@ -344,10 +368,11 @@ class ShapeNewAbilitiesTest {
         return (TenguAbility) s.ability();
     }
 
+    /** The red boxes worn by the tengu, longer than wide: its nose (not the fan's feathers). */
     private static List<BlockDisplay> noses(Scenario s) {
         return blocks(s, Material.RED_CONCRETE).stream()
                 .filter(d -> d.getTransformation().getScale().z > d.getTransformation().getScale().x * 0.99f)
-                .filter(d -> d.getLocation().distance(s.owner.getLocation()) < 0.5)
+                .filter(d -> s.owner.equals(d.getVehicle()))
                 .toList();
     }
 
@@ -398,20 +423,33 @@ class ShapeNewAbilitiesTest {
     void tenguNoseSticksOutOfTheFaceWhereverItLooksAndHidesFromTheOwner() {
         try (Scenario s = Scenario.ffa("tengu")) {
             s.ticks(5);
-            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 90, 30);
-            s.ticks(3);
-            List<BlockDisplay> found = noses(s);
-            assertEquals(1, found.size(), "one nose: " + entities(s, BlockDisplay.class).size());
-            BlockDisplay nose = found.getFirst();
-            assertUnrotated(nose, "nose");
-            Vector3f along = forward(rotationOf(nose));
-            Vector3f look = lookOf(s.owner);
-            assertTrue(along.dot(look) > 0.99, "the nose points where the tengu looks: " + along + " vs " + look);
-            Transformation t = nose.getTransformation();
-            Vector3f middle = new Vector3f(t.getTranslation()).add(rotationOf(nose).transform(new Vector3f(
-                    t.getScale()).mul(0.5f)));
-            Vector3f fromEyes = new Vector3f(middle).sub(0, (float) s.owner.getEyeHeight(), 0);
-            assertTrue(fromEyes.dot(look) > 0.15, "in front of the face: " + middle);
+            // A player's head turns about its neck: 24 model pixels up a 0.9375-scaled body; its face is 4 pixels in
+            // front of the neck, the head 8 pixels high above it.
+            Vector3f neck = new Vector3f(0, 24 / 16f * 0.9375f, 0);
+            float face = 4 / 16f * 0.9375f;
+            float headHeight = 8 / 16f * 0.9375f;
+            BlockDisplay nose = null;
+            for (float pitch : new float[] {-30, 45, 0, 30}) {
+                s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 90, pitch);
+                s.ticks(3);
+                List<BlockDisplay> found = noses(s);
+                assertEquals(1, found.size(), "one nose: " + entities(s, BlockDisplay.class).size());
+                nose = found.getFirst();
+                assertSame(s.owner, nose.getVehicle(), "the nose rides the tengu: every client draws it on the face");
+                assertTrue(nose.getInterpolationDuration() >= 2, "it turns with the head's lerp, not ahead of it");
+                assertUnrotated(nose, "nose");
+                Vector3f along = forward(rotationOf(nose));
+                Vector3f look = lookOf(s.owner);
+                assertTrue(along.dot(look) > 0.99, "the nose points where the tengu looks: " + along + " vs " + look);
+                Quaternionf head = new Quaternionf().rotateY((float) Math.toRadians(-90))
+                        .rotateX((float) Math.toRadians(pitch));
+                Vector3f up = head.transform(new Vector3f(0, 1, 0));
+                float length = nose.getTransformation().getScale().z;
+                Vector3f root = wornMiddle(nose, s.owner).sub(new Vector3f(look).mul(length / 2)).sub(neck);
+                assertEquals(face, root.dot(look), 0.05, "the root sits in the face at pitch " + pitch + ": " + root);
+                assertTrue(root.dot(up) > 0 && root.dot(up) < headHeight, "on the face, not under or over the head");
+                assertTrue(root.dot(look) + length > face + 0.05, "and the nose sticks out of it at pitch " + pitch);
+            }
             assertFalse(s.owner.canSee(nose), "the owner's own nose would block its view");
             assertTrue(s.enemy.canSee(nose), "everyone else sees it");
             // It really grows.
@@ -622,6 +660,7 @@ class ShapeNewAbilitiesTest {
             for (BlockDisplay part : fan) {
                 assertFalse(s.enemy2.canSee(part), "whoever cannot see the tengu cannot see its fan");
                 assertTrue(s.enemy.canSee(part), "the others can");
+                assertSame(s.owner, part.getVehicle(), "held in the hand: the fan rides the tengu");
             }
             s.enemy2.showPlayer(s.ctx().plugin(), s.owner);
             s.ticks(20);
@@ -822,6 +861,35 @@ class ShapeNewAbilitiesTest {
         }
     }
 
+    @Test
+    void circeBanquetTableStandsInFrontOfTheWitchAcrossHerWay() {
+        try (Scenario s = Scenario.ffa("circe")) {
+            s.ticks(10);
+            s.place(s.owner, 0.5, 0.5, 0);
+            Location feet = s.owner.getLocation();
+            Vector facing = feet.getDirection().setY(0).normalize();
+            s.assertSucceeded(s.ultimate(), "키르케의 연회");
+            s.ticks(8);
+            List<BlockDisplay> tops = blocks(s, Material.DARK_OAK_PLANKS);
+            assertEquals(1, tops.size(), "the table top");
+            BlockDisplay top = tops.getFirst();
+            Vector toTable = top.getLocation().toVector().subtract(feet.toVector()).setY(0);
+            assertTrue(toTable.dot(facing) > 1.0, "the table stands in front of her, not through her: " + toTable);
+            Vector3f across = rotationOf(top).transform(new Vector3f(1, 0, 0));
+            assertEquals(0, across.x * facing.getX() + across.z * facing.getZ(), 0.05, "set across her way");
+            List<ItemDisplay> goblets = entities(s, ItemDisplay.class).stream()
+                    .filter(cup -> cup.getItemStack().getType() == Material.POTION).toList();
+            assertEquals(3, goblets.size(), "three goblets");
+            for (ItemDisplay cup : goblets) {
+                assertEquals(Display.Billboard.VERTICAL, cup.getBillboard(), "a goblet is never paper-thin");
+                assertTrue(cup.getLocation().distance(top.getLocation()) < 1.6, "on the table");
+            }
+            s.ticks(s.paramTicks("feast_warning") + s.paramTicks("feast_duration") + 60);
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
     // ================================================================== 마법소녀 magicalgirl
 
     private static MagicalGirlAbility girl(Scenario s) {
@@ -876,6 +944,10 @@ class ShapeNewAbilitiesTest {
             assertEquals(0, s.damageTaken(s.ally()), EPSILON);
             assertTrue(girl(s).isTied(s.ally()), "the healed ally is tied with a ribbon");
             assertFalse(blocks(s, Material.PINK_CONCRETE).isEmpty(), "with a bow on its back");
+            for (BlockDisplay part : blocks(s, Material.PINK_CONCRETE)) {
+                assertSame(s.ally(), part.getVehicle(), "the bow rides the ally");
+                assertTrue(wornMiddle(part, s.ally()).y > 1.0, "on its back, not at its feet");
+            }
             for (Display display : entities(s, Display.class)) {
                 assertUnrotated(display, "bow");
             }
@@ -888,7 +960,11 @@ class ShapeNewAbilitiesTest {
     private static void assertHeartFlying(Scenario s, String what) {
         List<TextDisplay> hearts = texts(s, "❤").stream().filter(Entity::isValid).toList();
         assertEquals(1, hearts.size(), what + ": one heart sprite");
-        assertTrue(hearts.getFirst().getTransformation().getScale().x > 1, what + ": at full size, not popping");
+        TextDisplay heart = hearts.getFirst();
+        assertTrue(heart.getTransformation().getScale().x > 1, what + ": at full size, not popping");
+        assertTrue(heart.getTransformation().getTranslation().y < -0.1, what + ": the glyph is centred on its path "
+                + "(a text display stands its line on its origin)");
+        assertFalse(heart.isShadowed(), what + ": no dark copy beside it");
     }
 
     @Test
@@ -1010,6 +1086,12 @@ class ShapeNewAbilitiesTest {
             Location start = s.owner.getLocation();
             s.aimAt(s.owner, s.enemy);
             s.assertSucceeded(s.ultimate(), "변신!");
+            List<TextDisplay> stars = texts(s, "★");
+            assertFalse(stars.isEmpty(), "stars orbit her");
+            for (TextDisplay star : stars) {
+                double out = Math.hypot(star.getX() - start.getX(), star.getZ() - start.getZ());
+                assertTrue(out > 0.8, "every star appears on its orbit, not in a clump at her feet: " + out);
+            }
             s.ticks(2);
             s.clearHits();
             s.melee(s.enemy, s.owner, 6);
@@ -1028,6 +1110,11 @@ class ShapeNewAbilitiesTest {
             s.ticks(s.paramTicks("transform_time"));
             assertTrue(girl(s).isMagicalGirl(), "a magical girl now");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
+            List<BlockDisplay> bow = blocks(s, Material.PINK_CONCRETE);
+            assertFalse(bow.isEmpty(), "a big bow on her back");
+            for (BlockDisplay part : bow) {
+                assertSame(s.owner, part.getVehicle(), "her bow rides her (never trailing her own camera)");
+            }
 
             // A faster heart stick.
             s.readyActive();
@@ -1052,7 +1139,19 @@ class ShapeNewAbilitiesTest {
             s.aimAtFloor(s.owner, 0.5, 4.5);
             s.clearHits();
             pressF(s);
-            s.ticks(s.paramTicks("finale_delay") + 4);
+            s.ticks(2);
+            List<TextDisplay> giants = texts(s, "❤").stream()
+                    .filter(text -> text.getTransformation().getScale().x > 5).toList();
+            assertEquals(1, giants.size(), "the giant heart grows over the spot");
+            TextDisplay giant = giants.getFirst();
+            assertFalse(giant.isShadowed(), "without a giant dark copy beside it");
+            float last = giant.getTransformation().getScale().x;
+            for (int i = 0; i < s.paramTicks("finale_delay") + 20 && giant.isValid(); i++) {
+                last = giant.getTransformation().getScale().x;
+                s.ticks(1);
+            }
+            assertFalse(giant.isValid(), "it goes after landing");
+            assertTrue(last < 1, "it bursts into the ground (shrinking away) instead of vanishing: " + last);
             assertFalse(girl(s).isMagicalGirl(), "the show is over");
             assertEquals(s.param("finale_damage"), s.damageBy(s.owner, s.enemy), 1.0E-6, "사랑의 피날레");
             assertEquals(0, s.damageTaken(s.owner), EPSILON);
@@ -1309,6 +1408,113 @@ class ShapeNewAbilitiesTest {
     }
 
     @Test
+    void koscheiUltimateWhileTheChestRisesLeavesOneEgg() {
+        try (Scenario s = Scenario.ffa("koschei")) {
+            s.ticks(5);
+            eggAtFeet(s);
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.place(s.enemy2, -10.5, 10.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 5.5);
+            s.assertSucceeded(s.active(), "죽음 숨기기");
+            s.ticks(2);
+            s.assertSucceeded(s.ultimate(), "겹겹이 숨긴 죽음");
+            s.ticks(10);
+            assertEquals(1, blocks(s, Material.TURTLE_EGG).size(), "the egg layer only: the chest got no egg");
+            assertEquals(4, entities(s, Mannequin.class).size(), "four layers, no other hitbox");
+            s.ticks(s.paramTicks("layers_duration") + 30);
+            assertTrue(koschei(s).layerBodies().isEmpty());
+            assertNotNull(koschei(s).eggBody(), "the layers joined into an egg again");
+            assertEquals(1, blocks(s, Material.TURTLE_EGG).size(), "exactly one egg figure");
+            assertEquals(1, entities(s, Mannequin.class).size(), "and one hitbox: no orphaned egg");
+            assertTrue(blocks(s, Material.IRON_BLOCK).isEmpty(), "no stray iron chest");
+            assertEquals(1, texts(s, "●").size(), "one health label");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void koscheiEggNeverSlidesThroughWallsIntoItsChest() {
+        try (Scenario s = Scenario.ffa("koschei")) {
+            s.ticks(5);
+            eggAtFeet(s);
+            s.place(s.enemy, 10.5, 10.5, 180);
+            s.place(s.enemy2, -10.5, 10.5, 180);
+            s.aimAtFloor(s.owner, 0.5, 5.5);
+            Map<UUID, Location> last = new HashMap<>();
+            s.assertSucceeded(s.active(), "죽음 숨기기");
+            for (int i = 0; i < 20; i++) {
+                s.ticks(1);
+                for (BlockDisplay shell : blocks(s, Material.TURTLE_EGG)) {
+                    Location before = last.put(shell.getUniqueId(), shell.getLocation());
+                    if (before != null) {
+                        assertTrue(before.distance(shell.getLocation()) < 1.0, "an egg figure never jumps away "
+                                + "(a client would slide it there through the walls)");
+                    }
+                }
+            }
+            List<BlockDisplay> eggs = blocks(s, Material.TURTLE_EGG);
+            assertEquals(1, eggs.size(), "the old figure shrank away, a new one grew in the chest");
+            assertTrue(eggs.getFirst().getLocation().distance(egg(s).getLocation()) < 0.6);
+            assertEquals(1, texts(s, "●").size(), "one health label");
+            s.finishClean();
+        }
+    }
+
+    @Test
+    void koscheiShellsAreThrownOutFromTheEggAndTurnRoundGradually() {
+        try (Scenario s = Scenario.ffa("koschei")) {
+            s.ticks(5);
+            Location home = eggAtFeet(s).getLocation();
+            s.place(s.enemy, 30.5, 30.5, 180);
+            s.place(s.enemy2, -30.5, 30.5, 180);
+            s.assertSucceeded(s.ultimate(), "겹겹이 숨긴 죽음");
+            List<BlockDisplay> hare = blocks(s, Material.BROWN_TERRACOTTA);
+            assertFalse(hare.isEmpty(), "a hare");
+            for (BlockDisplay part : hare) {
+                assertTrue(part.getLocation().distance(home) < 0.6, "it starts out from the egg");
+                assertTrue(part.getTeleportDuration() >= 8, "and flies out on a long glide");
+            }
+            s.ticks(3);
+            for (BlockDisplay part : hare) {
+                assertTrue(part.getLocation().distance(home) > 2, "thrown out to its spot");
+            }
+            s.ticks(12);
+            for (BlockDisplay part : hare) {
+                assertTrue(part.getTeleportDuration() <= 3, "then it follows its hitbox closely again");
+            }
+            // The hare runs from an enemy that keeps jumping to its other side: it turns round, a bit every tick.
+            LivingEntity body = null;
+            for (LivingEntity layer : koschei(s).layerBodies()) {
+                if (body == null || layer.getLocation().distance(hare.getFirst().getLocation())
+                        < body.getLocation().distance(hare.getFirst().getLocation())) {
+                    body = layer;
+                }
+            }
+            assertNotNull(body);
+            double heading = headingOf(hare.getFirst());
+            double turned = 0;
+            int side = 1;
+            for (int i = 0; i < 80; i++) {
+                if (i % 12 == 0) {
+                    Location at = body.getLocation();
+                    s.place(s.enemy, at.getX() + 3 * side, at.getZ(), 180);
+                    side = -side;
+                }
+                s.ticks(1);
+                double now = headingOf(hare.getFirst());
+                double step = Math.abs(Math.IEEEremainder(now - heading, 360));
+                assertTrue(step <= 30.5, "the figure turns at most 30 degrees a tick: " + step);
+                turned = Math.max(turned, step);
+                heading = now;
+            }
+            assertTrue(turned > 20, "and it did turn round: " + turned);
+            s.ticks(s.paramTicks("layers_duration"));
+            s.finishClean();
+        }
+    }
+
+    @Test
     void koscheiLayersAllBrokenBreakTheEgg() {
         try (Scenario s = Scenario.ffa("koschei")) {
             s.ticks(5);
@@ -1480,6 +1686,50 @@ class ShapeNewAbilitiesTest {
     }
 
     @Test
+    void rokurokubiNeckGrowsWithTheHeadAndReelsInAlongItsPath() {
+        try (Scenario s = Scenario.ffa("rokurokubi")) {
+            s.ticks(10);
+            s.place(s.enemy, 20.5, -10.5, 180);
+            s.place(s.enemy2, -20.5, -10.5, 180);
+            s.place(s.owner, 0.5, FlatWorld.SURFACE, 0.5, 0, 0);
+            double step = s.param("neck_length") / s.paramTicks("neck_time");
+            s.assertSucceeded(s.active(), "늘어나는 목");
+            Set<UUID> seen = new HashSet<>();
+            List<Location> headPath = new ArrayList<>();
+            int grown = 0;
+            for (int i = 0; i < 50; i++) {
+                for (BlockDisplay segment : blocks(s, Material.WHITE_TERRACOTTA)) {
+                    if (seen.add(segment.getUniqueId())) {
+                        assertTrue(segment.getTransformation().getScale().z < 0.1, "a segment is born without length "
+                                + "and grows with the head's glide (never poking out ahead of the head)");
+                    }
+                }
+                List<ItemDisplay> heads = entities(s, ItemDisplay.class);
+                if (!heads.isEmpty()) {
+                    headPath.add(heads.getFirst().getLocation());
+                }
+                s.ticks(1);
+                for (BlockDisplay segment : blocks(s, Material.WHITE_TERRACOTTA)) {
+                    if (segment.getTransformation().getScale().z > 0.1) {
+                        assertEquals(1, segment.getInterpolationDuration(), "over the head's one tick glide");
+                        grown++;
+                    }
+                }
+            }
+            assertTrue(grown > 0 && seen.size() > 8, "a long neck went out: " + seen.size());
+            for (int i = 1; i < headPath.size(); i++) {
+                assertTrue(headPath.get(i).distance(headPath.get(i - 1)) <= step + 0.01, "the head moves a path point "
+                        + "a tick, out and back (never cutting a bend): " + headPath.get(i).distance(headPath.get(i - 1)));
+            }
+            assertTrue(blocks(s, Material.WHITE_TERRACOTTA).isEmpty(), "reeled in");
+            assertNull(roku(s).neckTip());
+            assertEquals(baseSpeed(s.owner), speed(s.owner), 1.0E-9, "free again");
+            s.assertNoProblems();
+            s.finishClean();
+        }
+    }
+
+    @Test
     void rokurokubiNeckStopsAtAWall() {
         try (Scenario s = Scenario.ffa("rokurokubi")) {
             s.ticks(10);
@@ -1521,7 +1771,9 @@ class ShapeNewAbilitiesTest {
             s.ticks(2);
             assertTrue(forward(rotationOf(heads.getFirst())).dot(lookOf(s.owner)) > 0.95,
                     "the head faces where the owner looks");
-            assertEquals(s.owner.getX(), heads.getFirst().getX(), 1.0E-6, "the head is where the owner is");
+            assertSame(s.owner, heads.getFirst().getVehicle(), "the head rides the owner: drawn where its hitbox is");
+            assertEquals(s.owner.getEyeHeight() - s.owner.getHeight(),
+                    heads.getFirst().getTransformation().getTranslation().y, 1.0E-3, "at the shrunk owner's eyes");
 
             // It bites what it touches, and every bite feeds it.
             s.owner.setHealth(s.owner.getHealth() - 6);

@@ -181,6 +181,8 @@ public final class CirceAbility extends Ability {
     // ultimate: the banquet
     private static final long FEAST_LINGER = 30;
     private static final double FEAST_HEIGHT = 4;
+    /** The table stands this far in front of the witch (its middle), across her way. */
+    private static final double TABLE_FRONT = 1.3;
 
     /** The animals of the spell, with what each body is like. */
     private enum Kind {
@@ -883,7 +885,14 @@ public final class CirceAbility extends Ability {
                 if (event instanceof EntityDamageByEntityEvent byEntity && !onModel.ended
                         && !onModel.victim.equals(byEntity.getDamager()) && onModel.victim.isValid()
                         && !onModel.victim.isDead()) {
-                    onModel.victim.damage(event.getDamage(), event.getDamageSource());
+                    LivingEntity victim = onModel.victim;
+                    double before = victim.getHealth() + victim.getAbsorptionAmount();
+                    victim.damage(event.getDamage(), event.getDamageSource());
+                    Mob shown = onModel.model;
+                    if (shown != null && shown.isValid() && (victim.isDead()
+                            || victim.getHealth() + victim.getAbsorptionAmount() < before - 1.0E-9)) {
+                        flinch(shown, byEntity.getDamager());
+                    }
                 }
                 return;
             }
@@ -952,6 +961,22 @@ public final class CirceAbility extends Ability {
         }
     }
 
+    /**
+     * The animal flashes red as if the blow had hit it: the blow went to the invisible body inside, so neither would
+     * show it otherwise.
+     */
+    private static void flinch(LivingEntity animal, Entity attacker) {
+        Location at = animal.getLocation();
+        Vector to = attacker.getLocation().toVector().subtract(at.toVector());
+        double from = Math.toDegrees(Math.atan2(-to.getX(), to.getZ()));
+        float relative = (float) (((from - at.getYaw()) % 360 + 360) % 360);
+        try {
+            animal.playHurtAnimation(relative);
+        } catch (RuntimeException ignored) {
+            // Cosmetic only (a server or test double without it).
+        }
+    }
+
     // ================================================================== ultimate: the banquet
 
     @Override
@@ -964,12 +989,14 @@ public final class CirceAbility extends Ability {
     }
 
     /**
-     * The banquet: a table pops up at the witch's feet while a ring of light closes around it for the warning time; at
-     * the toast every enemy still inside (and seen by the witch) turns into a random animal.
+     * The banquet: a table pops up in front of the witch while a ring of light closes around her for the warning time;
+     * at the toast every enemy still inside (and seen by the witch) turns into a random animal.
      */
     private final class Feast {
         private final Player owner;
         private final Location center;
+        /** Where the table stands: in front of the witch, not through her ({@link #center} is the spell's middle). */
+        private final Location tableAt;
         private final float yaw;
         private final double radius = Math.max(1, params().num("feast_radius"));
         private final long warning = Math.max(1, params().ticks("feast_warning"));
@@ -980,6 +1007,21 @@ public final class CirceAbility extends Ability {
             this.owner = owner;
             this.center = center;
             this.yaw = owner.getLocation().getYaw();
+            this.tableAt = tableSpot(center, yaw);
+        }
+
+        /** In front of the witch if there is room, else behind her, else (walled in) at her feet. */
+        private static Location tableSpot(Location center, float yaw) {
+            Vector facing = new Vector(-Math.sin(Math.toRadians(yaw)), 0, Math.cos(Math.toRadians(yaw)));
+            for (double distance : new double[] {TABLE_FRONT, -TABLE_FRONT}) {
+                Location spot = center.clone().add(facing.clone().multiply(distance)).add(0, 0.5, 0);
+                Spots.snapToGround(spot.getWorld(), spot, 1.5);
+                if (Math.abs(spot.getY() - center.getY()) <= 0.6 && Spots.isFree(spot.getWorld(), spot, 1.0, 1.2)
+                        && Spots.hasGroundBelow(spot.getWorld(), spot)) {
+                    return Displays.unrotated(spot);
+                }
+            }
+            return center;
         }
 
         void set() {
@@ -992,13 +1034,16 @@ public final class CirceAbility extends Ability {
             Loop.repeat(ctx(), owner, 0, 1, warning, this::warn, this::toast);
         }
 
-        /** The table: a dark wooden top on two legs under a white cloth and a purple runner, with the feast on it. */
+        /**
+         * The table, set across the witch's way: a dark wooden top on two legs under a white cloth and a purple
+         * runner, with the feast on it.
+         */
         private void buildTable() {
             if (!reserve(10)) {
                 return;
             }
             long life = warning + duration + FEAST_LINGER;
-            Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw + 90));
+            Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
             addPart(TABLE_LEG, new Vector3f(-0.85f, 0.38f, 0), new Vector3f(0.18f, 0.76f, 0.18f), turn, life);
             addPart(TABLE_LEG, new Vector3f(0.85f, 0.38f, 0), new Vector3f(0.18f, 0.76f, 0.18f), turn, life);
             addPart(TABLE_TOP, new Vector3f(0, 0.8f, 0), new Vector3f(2.3f, 0.1f, 1.0f), turn, life);
@@ -1007,15 +1052,18 @@ public final class CirceAbility extends Ability {
             addPart(CAKE, new Vector3f(0, 1.05f, 0), new Vector3f(0.42f, 0.3f, 0.42f), turn, life);
             float[][] goblets = {{-0.7f, 0.2f}, {0.65f, -0.22f}, {-0.3f, -0.3f}};
             for (float[] goblet : goblets) {
+                // Each goblet (a flat potion sprite) turns to whoever looks at it, so none is paper-thin from the side;
+                // a turning sprite needs its own display, standing where it is.
                 Vector3f spot = turn.transform(new Vector3f(goblet[0], 1.08f, goblet[1]));
-                ItemDisplay cup = keep(Displays.item(ctx(), owner, center, wineCup(), Displays.centered(spot.x,
-                        spot.y, spot.z, 0.01f, 0.01f, 0.01f, 0, 0, 0), life));
-                Displays.animateNextTick(ctx(), owner, cup, Displays.centered(spot.x, spot.y, spot.z, 0.42f, 0.42f,
-                        0.42f, yaw, 0, 0), 6);
+                ItemDisplay cup = keep(Displays.item(ctx(), owner, tableAt.clone().add(spot.x, spot.y, spot.z),
+                        wineCup(), Displays.centered(0, 0, 0, 0.01f, 0.01f, 0.01f, 0, 0, 0), life));
+                cup.setBillboard(Display.Billboard.VERTICAL);
+                Displays.animateNextTick(ctx(), owner, cup, Displays.centered(0, 0, 0, 0.42f, 0.42f, 0.42f, 0, 0, 0),
+                        6);
                 table.add(cup);
             }
             Vector3f fruit = turn.transform(new Vector3f(0.4f, 1.0f, 0.25f));
-            ItemDisplay apple = keep(Displays.item(ctx(), owner, center, ItemStack.of(Material.GOLDEN_APPLE),
+            ItemDisplay apple = keep(Displays.item(ctx(), owner, tableAt, ItemStack.of(Material.GOLDEN_APPLE),
                     Displays.centered(fruit.x, fruit.y, fruit.z, 0.01f, 0.01f, 0.01f, 0, 0, 0), life));
             Displays.animateNextTick(ctx(), owner, apple, Displays.centered(fruit.x, fruit.y, fruit.z, 0.35f, 0.35f,
                     0.35f, yaw, -90, 0), 6);
@@ -1027,7 +1075,7 @@ public final class CirceAbility extends Ability {
 
         private void addPart(Material type, Vector3f center3, Vector3f size, Quaternionf turn, long life) {
             Vector3f middle = turn.transform(new Vector3f(center3));
-            BlockDisplay part = keep(Displays.block(ctx(), owner, center, type.createBlockData(),
+            BlockDisplay part = keep(Displays.block(ctx(), owner, tableAt, type.createBlockData(),
                     box(new Vector3f(middle.x, 0.01f, middle.z), new Vector3f(size).mul(0.05f), turn), life));
             Displays.animateNextTick(ctx(), owner, part, box(middle, size, turn), 6);
             table.add(part);
@@ -1045,8 +1093,8 @@ public final class CirceAbility extends Ability {
             }
             if (run % 5 == 0) {
                 Fx.sound(center, Sound.BLOCK_NOTE_BLOCK_BELL, 0.9f, 0.9f + (float) progress * 0.8f);
-                Vfx.cloud(ctx(), center.clone().add(0, 1.3, 0), Particle.WITCH, 6, 0.6, 0.02, null, true);
-                Vfx.cloud(ctx(), center.clone().add(0, 1.2, 0), Particle.DUST, 4, 0.5, 0, GOLD_DUST, true);
+                Vfx.cloud(ctx(), tableAt.clone().add(0, 1.3, 0), Particle.WITCH, 6, 0.6, 0.02, null, true);
+                Vfx.cloud(ctx(), tableAt.clone().add(0, 1.2, 0), Particle.DUST, 4, 0.5, 0, GOLD_DUST, true);
             }
             return true;
         }
@@ -1072,7 +1120,7 @@ public final class CirceAbility extends Ability {
                 Kind kind = kinds[ThreadLocalRandom.current().nextInt(kinds.length)];
                 morph(owner, enemy, kind, duration, params().num("feast_release_damage"), true);
                 turned++;
-                Vfx.trail(center.clone().add(0, 1.1, 0), Fx.body(enemy), PURPLE, 8, true);
+                Vfx.trail(tableAt.clone().add(0, 1.1, 0), Fx.body(enemy), PURPLE, 8, true);
             }
             owner.sendActionBar(Text.mm("<" + PURPLE_TAG + "><b>건배!</b></" + PURPLE_TAG + "> <white>" + turned
                     + "</white><gray>명이 짐승이 되었습니다</gray>"));
@@ -1085,7 +1133,7 @@ public final class CirceAbility extends Ability {
                     Displays.shrinkAway(ctx(), owner, part, 8);
                 }
             }
-            Vfx.cloud(ctx(), center.clone().add(0, 1, 0), Particle.POOF, 8, 0.8, 0.02, null, false);
+            Vfx.cloud(ctx(), tableAt.clone().add(0, 1, 0), Particle.POOF, 8, 0.8, 0.02, null, false);
         }
     }
 
