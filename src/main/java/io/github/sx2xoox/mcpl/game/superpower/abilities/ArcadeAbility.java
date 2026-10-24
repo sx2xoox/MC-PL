@@ -38,6 +38,7 @@ import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
@@ -173,6 +174,10 @@ public final class ArcadeAbility extends Ability {
     private static final double PULL_AIR = 0.06;
     private static final double PULL_MAX = 0.6;
     private static final long ROUND_TITLE = 20;
+    /** The combo counter's height over the master's head (it rides the master). */
+    private static final float COUNTER_ABOVE = 0.7f;
+    /** How far down the stage looks for the floor under a master who calls the round in the air. */
+    private static final double STAGE_DROP = 8;
 
     // ------------------------------------------------------------------ state
 
@@ -297,20 +302,26 @@ public final class ArcadeAbility extends Ability {
                 + (bonus > 0 ? " <" + BLUE_TAG + ">+" + Math.round(bonus * 100) + "%</" + BLUE_TAG + ">" : ""));
         if (combo >= 2) {
             TextDisplay shown = counter;
-            Location at = counterSpot(owner);
             if (shown == null || !shown.isValid()) {
                 if (reserve(1)) {
-                    shown = keep(Displays.text(ctx(), owner, at, line, 0.8f, 0,
-                            viewer -> !ctx().isConcealedFrom(owner, viewer)));
-                    shown.setTeleportDuration(2);
+                    // It rides the master: every client moves it with the body, dashes and all.
+                    Location seat = Displays.unrotated(owner.getLocation().add(0, owner.getHeight(), 0));
+                    shown = keep(Displays.spawn(ctx(), owner, seat, TextDisplay.class, 0,
+                            viewer -> !ctx().isConcealedFrom(owner, viewer), display -> {
+                                display.text(line);
+                                display.setBillboard(Display.Billboard.CENTER);
+                                display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+                                display.setShadowed(true);
+                                display.setTransformation(counterPose(0.8f));
+                            }));
+                    ride(owner, shown);
                     counter = shown;
                 }
             } else {
                 shown.text(line);
-                Displays.animate(shown, Displays.centered(0, 0, 0, 1.15f, 1.15f, 1.15f, 0, 0, 0), 1);
+                Displays.animate(shown, counterPose(1.15f), 1);
                 TextDisplay bumped = shown;
-                ctx().runLater(owner, 2, () -> Displays.animate(bumped, Displays.centered(0, 0, 0, 0.8f, 0.8f, 0.8f,
-                        0, 0, 0), 3));
+                ctx().runLater(owner, 2, () -> Displays.animate(bumped, counterPose(0.8f), 3));
             }
         }
         if (!ctx().isConcealedFrom(victim, owner)) {
@@ -325,8 +336,27 @@ public final class ArcadeAbility extends Ability {
         nextBar = 0;
     }
 
-    private static Location counterSpot(Player owner) {
-        return Displays.unrotated(owner.getLocation().add(0, owner.getHeight() + 0.7, 0));
+    /** The counter at {@code scale}, {@link #COUNTER_ABOVE} over the head of the master it rides. */
+    private static Transformation counterPose(float scale) {
+        return Displays.centered(0, COUNTER_ABOVE, 0, scale, scale, scale, 0, 0, 0);
+    }
+
+    /**
+     * Keeps {@code display} riding {@code carrier}: a passenger moves with its carrier's body on every client, frame by
+     * frame, where a display teleported after it every tick trails and wobbles. Mounted again if it was thrown off.
+     */
+    private static void ride(Entity carrier, Display display) {
+        if (!display.isValid() || !carrier.isValid() || !display.getWorld().equals(carrier.getWorld())) {
+            return;
+        }
+        Entity vehicle = display.getVehicle();
+        if (vehicle != null && vehicle.getUniqueId().equals(carrier.getUniqueId())) {
+            return;
+        }
+        if (vehicle != null) {
+            vehicle.removePassenger(display);
+        }
+        carrier.addPassenger(display);
     }
 
     /** "EXCELLENT!" — the combo reached its mark. */
@@ -360,7 +390,7 @@ public final class ArcadeAbility extends Ability {
         }
         TextDisplay shown = counter;
         if (shown != null && shown.isValid()) {
-            Displays.moveTo(shown, counterSpot(owner));
+            ride(owner, shown);
         }
         if (now >= nextBar) {
             showBar(owner, now);
@@ -501,7 +531,10 @@ public final class ArcadeAbility extends Ability {
         return ActivationResult.success();
     }
 
-    /** The move's name pops up over the master. */
+    /**
+     * The move's name pops up over the master, for the others (the master's camera would rise through it in an
+     * uppercut; its own action bar already shows the input history).
+     */
     private void callout(Player owner, Move move) {
         if (owner.isInvisible() || !reserve(1)) {
             return;
@@ -509,7 +542,8 @@ public final class ArcadeAbility extends Ability {
         Location over = Displays.unrotated(owner.getLocation().add(0, owner.getHeight() + 1.2, 0));
         TextDisplay sign = keep(Displays.text(ctx(), owner, over, Text.mm("<b><" + BLUE_TAG + ">" + move.korean()
                 + "!</" + BLUE_TAG + "></b>" + (move.notation.isEmpty() ? "" : " <" + YELLOW_TAG + ">" + move.notation
-                + "</" + YELLOW_TAG + ">")), 0.3f, 22, viewer -> !ctx().isConcealedFrom(owner, viewer)));
+                + "</" + YELLOW_TAG + ">")), 0.3f, 22,
+                viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer)));
         Displays.animateNextTick(ctx(), owner, sign, Displays.centered(0, 0.2f, 0, 0.9f, 0.9f, 0.9f, 0, 0, 0), 4);
     }
 
@@ -863,6 +897,8 @@ public final class ArcadeAbility extends Ability {
         private final Map<UUID, Fighter> fighters = new LinkedHashMap<>();
         private final List<Display> stage = new ArrayList<>();
         private final float yaw;
+        /** The origin on the floor under it (a round called in mid-air still draws its stage on the ground). */
+        private final Location floor;
         private @Nullable TextDisplay banner;
         private @Nullable TextDisplay clock;
         private boolean ended;
@@ -871,6 +907,8 @@ public final class ArcadeAbility extends Ability {
             this.owner = owner;
             Location feet = owner.getLocation();
             this.origin = Displays.unrotated(feet);
+            this.floor = origin.clone();
+            Spots.snapToGround(floor.getWorld(), floor, STAGE_DROP);
             this.along = Motion.horizontalFacing(feet);
             this.normal = new Vector(-along.getZ(), 0, along.getX());
             this.yaw = (float) Math.toDegrees(Math.atan2(-along.getX(), along.getZ()));
@@ -921,24 +959,24 @@ public final class ArcadeAbility extends Ability {
             }
             float length = (float) (radius * 2);
             Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
-            BlockDisplay line = keep(Displays.block(ctx(), owner, origin, STAGE_LINE.createBlockData(),
+            BlockDisplay line = keep(Displays.block(ctx(), owner, floor, STAGE_LINE.createBlockData(),
                     box(rotation, 0, 0.02f, 0, 0.1f, 0.03f, 0.5f), 0));
             Displays.outline(line, BLUE);
             Displays.animateNextTick(ctx(), owner, line, box(rotation, 0, 0.02f, 0, 0.1f, 0.03f, length), 6);
             stage.add(line);
             for (int side : new int[] {-1, 1}) {
-                BlockDisplay post = keep(Displays.block(ctx(), owner, origin, STAGE_POST.createBlockData(),
+                BlockDisplay post = keep(Displays.block(ctx(), owner, floor, STAGE_POST.createBlockData(),
                         box(rotation, 0, 0.05f, side * length / 2, 0.12f, 0.1f, 0.12f), 0));
                 Displays.outline(post, YELLOW);
                 Displays.animateNextTick(ctx(), owner, post, box(rotation, 0, 1.25f, side * length / 2, 0.12f, 2.5f,
                         0.12f), 6);
                 stage.add(post);
             }
-            Location over = origin.clone().add(0, 3.4, 0);
+            Location over = floor.clone().add(0, 3.4, 0);
             banner = keep(Displays.text(ctx(), owner, over, Text.mm("<b><" + YELLOW_TAG + ">ROUND 1</" + YELLOW_TAG
                     + "></b>"), 2.0f, 0));
             stage.add(banner);
-            clock = keep(Displays.text(ctx(), owner, origin.clone().add(0, 4.6, 0), clockText(duration), 1.2f, 0));
+            clock = keep(Displays.text(ctx(), owner, floor.clone().add(0, 4.6, 0), clockText(duration), 1.2f, 0));
             stage.add(clock);
         }
 
@@ -1032,7 +1070,7 @@ public final class ArcadeAbility extends Ability {
                 if (((int) Math.round(d) + run / 4) % 3 != 0) {
                     continue;
                 }
-                Vfx.dot(origin.clone().add(along.clone().multiply(d)).add(0, 0.08, 0), Particle.DUST, BLUE_DUST,
+                Vfx.dot(floor.clone().add(along.clone().multiply(d)).add(0, 0.08, 0), Particle.DUST, BLUE_DUST,
                         true);
             }
             if (run % 8 == 0) {
