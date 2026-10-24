@@ -134,5 +134,30 @@ public final class BuiltinAbilities {
         registry.register(AtlasAbility.INFO, AtlasAbility::new);
         registry.register(PoltergeistAbility.INFO, PoltergeistAbility::new);
         registry.register(JormungandrAbility.INFO, JormungandrAbility::new);
+        registry.register(ProhibitorAbility.INFO, ProhibitorAbility::new);
+        registry.register(SphinxAbility.INFO, SphinxAbility::new);
+        registry.register(AnubisAbility.INFO, AnubisAbility::new);
+        registry.register(RedMaskAbility.INFO, RedMaskAbility::new);
+        registry.register(JiangshiAbility.INFO, JiangshiAbility::new);
+        registry.register(FourGodsAbility.INFO, FourGodsAbility::new);
+        registry.register(OdinAbility.INFO, OdinAbility::new);
+        registry.register(WukongAbility.INFO, WukongAbility::new);
+        registry.register(BaldurAbility.INFO, BaldurAbility::new);
+        registry.register(RaAbility.INFO, RaAbility::new);
+        registry.register(RokurokubiAbility.INFO, RokurokubiAbility::new);
+        registry.register(TenguAbility.INFO, TenguAbility::new);
+        registry.register(CirceAbility.INFO, CirceAbility::new);
+        registry.register(MagicalGirlAbility.INFO, MagicalGirlAbility::new);
+        registry.register(KoscheiAbility.INFO, KoscheiAbility::new);
+        registry.register(ArcadeAbility.INFO, ArcadeAbility::new);
+        registry.register(StomperAbility.INFO, StomperAbility::new);
+        registry.register(TamerAbility.INFO, TamerAbility::new);
+        registry.register(LevelerAbility.INFO, LevelerAbility::new);
+        registry.register(IsekaiTruckAbility.INFO, IsekaiTruckAbility::new);
+        registry.register(CardGamerAbility.INFO, CardGamerAbility::new);
+        registry.register(TennisAbility.INFO, TennisAbility::new);
+        registry.register(KappaAbility.INFO, KappaAbility::new);
+        registry.register(YagwanggwiAbility.INFO, YagwanggwiAbility::new);
+        registry.register(FrogAbility.INFO, FrogAbility::new);
     }
 }
