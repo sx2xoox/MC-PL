@@ -1091,6 +1091,11 @@ public final class SuperpowerMatch implements GameInstance {
                     Messages.tag("seconds", Math.max(1, (settings.prepTicks() - phaseTicks + 19) / 20))));
             return;
         }
+        Ability ability = participant.ability;
+        if (ability != null && Boolean.TRUE.equals(guard.call(participant.abilityId, "onUltimateKey",
+                ability::onUltimateKey))) {
+            return; // the ability took the key (e.g. to end its running ultimate)
+        }
         useUltimate(player);
     }
 

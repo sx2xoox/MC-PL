@@ -111,6 +111,16 @@ public abstract class Ability {
     public abstract ActivationResult onUltimate();
 
     /**
+     * F key (swap hands) during the fight, before the match uses it for the ultimate, whatever the gauge (also while
+     * silenced). Return true to take the key for the ability's own use, typically to end its running ultimate early:
+     * the match then neither calls {@link #onUltimate} nor reports the key as denied (no "gauge not full" message or
+     * sound). The default returns false: the key casts the ultimate as usual.
+     */
+    public boolean onUltimateKey() {
+        return false;
+    }
+
+    /**
      * Multiplier applied to this ability's active cooldown, e.g. {@code 0.85} for 15% cooldown reduction.
      * Read every time a cooldown starts.
      */

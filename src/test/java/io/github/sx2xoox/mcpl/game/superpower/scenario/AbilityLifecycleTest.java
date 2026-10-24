@@ -101,6 +101,8 @@ class AbilityLifecycleTest {
             case "chef" -> s.place(s.enemy, 0.5, 3.0, 180f);
             // The red-ink note only writes names it learned in a fight: exchange a blow first.
             case "cursenote" -> s.melee(s.owner, s.enemy, 1);
+            // The bored hero's flick only reaches 3 blocks.
+            case "boredhero" -> s.place(s.enemy, 0.5, 2.5, 180f);
             default -> {
             }
         }
@@ -169,7 +171,11 @@ class AbilityLifecycleTest {
                         + enemyBefore + " -> " + s.health(s.enemy) + ")");
             }
             // The gambler's dice can backfire, and the creeper's blast scorches itself too (by design).
-            if (!id.equals("gambler") && !id.equals("creeper")) {
+            // The oath's unkept vow (nobody struck three times) burns its owner (by design), by its price only.
+            if (id.equals("oath")) {
+                assertTrue(ownerDamage(s) <= s.param("break_damage") + 1.0E-9, "a broken vow costs its price only: "
+                        + s.hits());
+            } else if (!id.equals("gambler") && !id.equals("creeper")) {
                 assertEquals(0, ownerDamage(s), 1.0E-9, id + " active never hurts its owner: " + s.hits());
             }
 
@@ -181,7 +187,11 @@ class AbilityLifecycleTest {
             if (EXPECT.getOrDefault(id, NOT_CHECKED).ultimateHurts()) {
                 assertTrue(s.damageTaken(s.enemy) > 0, id + " ultimate hurts the aimed enemy");
             }
-            if (!id.equals("gambler")) {
+            // The oath's vow on its life costs health when no enemy falls in time (by design), by its price only.
+            if (id.equals("oath")) {
+                assertTrue(ownerDamage(s) <= s.param("life_cost") + 1.0E-9, "an unkept vow on its life costs its "
+                        + "price only: " + s.hits());
+            } else if (!id.equals("gambler")) {
                 assertEquals(0, ownerDamage(s), 1.0E-9, id + " ultimate never hurts its owner: " + s.hits());
             }
             s.assertNoProblems();
