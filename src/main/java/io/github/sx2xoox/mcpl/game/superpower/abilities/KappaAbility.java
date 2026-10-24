@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.abilities;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
@@ -51,6 +53,8 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -138,7 +142,22 @@ public final class KappaAbility extends Ability {
     private static final float DISH_THICK = 0.05f;
     private static final float WATER_SIZE = 0.34f;
     private static final float WATER_THICK = 0.03f;
+    /**
+     * The turned plate is this much thinner on each side and the water floats this far above the plates, so no two
+     * faces share a plane (coplanar faces shimmer).
+     */
+    private static final float PLATE_INSET = 0.003f;
+    private static final float WATER_LIFT = 0.003f;
+    /** The bow tips the dish forward this far (degrees) and moves it this far ahead with the head. */
+    private static final float BOW_TILT = 35;
+    private static final float BOW_SHIFT = 0.12f;
+    /**
+     * The dish follows the head by a teleport every tick. Only other players see it, and their clients smooth a
+     * player's own moves over three ticks, so the dish uses the same three ticks to stay on the head.
+     */
     private static final int FOLLOW_LERP = 3;
+    /** A head that moved farther than this in one tick was teleported: the dish jumps along instead of sliding. */
+    private static final double DISH_JUMP = 2;
     private static final double HEAD_MARGIN = 0.3;
     /** A bow counts when the enemy looks within about 30 degrees of the kappa. */
     private static final double BOW_DOT = 0.86;
@@ -156,6 +175,13 @@ public final class KappaAbility extends Ability {
     private static final double PUSH_REACH = 6.0;
     private static final double MAX_SPEED = 1.8;
     private static final double RING_GROUND = 3;
+    /** Each bale sits on the ground under it, at most this far above or below the ring's centre. */
+    private static final double BALE_STEP = 1;
+    /**
+     * A contestant who never saw the ring's rule (another prompt was on its screen) loses only when it was pushed out,
+     * moved by something else within this many ticks.
+     */
+    private static final long PUSHED_OUT_TICKS = 20;
     private static final int MAX_DISPLAYS = 24;
 
     // ------------------------------------------------------------------ state
@@ -188,7 +214,7 @@ public final class KappaAbility extends Ability {
         final Set<UUID> out = new HashSet<>();
         final Map<UUID, Long> charged = new HashMap<>();
         final List<BlockDisplay> bales = new ArrayList<>();
-        final List<PromptHandle> rules = new ArrayList<>();
+        final Map<UUID, PromptHandle> rules = new HashMap<>();
 
         Grand(Location center, double radius, long rulesFrom, long until) {
             this.center = center;
@@ -207,6 +233,12 @@ public final class KappaAbility extends Ability {
     private final Map<UUID, Long> seenBow = new HashMap<>();
     private final List<BlockDisplay> dish = new ArrayList<>();
     private @Nullable BlockDisplay water;
+    /** Where the dish was last moved to, and the steps of a jump (1: teleport duration 0 sent, 2: moved there). */
+    private @Nullable Location dishAt;
+    private int dishJump;
+    /** The way the kappa faced when it bowed, while the dish is tipped forward; null when upright. */
+    private @Nullable Vector bowFacing;
+    private int bowCount;
     private @Nullable KappaListener listener;
     private @Nullable NamespacedKey emptySlow;
     private boolean full = true;
@@ -239,6 +271,8 @@ public final class KappaAbility extends Ability {
         grand = null;
         dish.clear();
         water = null;
+        dishAt = null;
+        bowFacing = null;
         live.clear();
     }
 
@@ -300,32 +334,91 @@ public final class KappaAbility extends Ability {
     private void spawnDish(Player owner) {
         Location head = headSpot(owner);
         for (int i = 0; i < 2; i++) {
-            BlockDisplay plate = Displays.block(ctx(), owner, head, DISH.createBlockData(),
-                    Displays.transform(0, 0, 0, DISH_SIZE, DISH_THICK, DISH_SIZE, i * 45f, 0, 0), 0,
-                    viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer));
-            plate.setTeleportDuration(FOLLOW_LERP);
+            int index = i;
+            BlockDisplay plate = Displays.spawn(ctx(), owner, head, BlockDisplay.class, 0,
+                    viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer), display -> {
+                        display.setBlock(DISH.createBlockData());
+                        display.setTransformation(plateShape(index));
+                        display.setTeleportDuration(FOLLOW_LERP);
+                    });
             dish.add(plate);
         }
-        BlockDisplay layer = Displays.block(ctx(), owner, head, WATER_LAYER.createBlockData(), waterShape(true), 0,
-                viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer));
-        layer.setTeleportDuration(FOLLOW_LERP);
-        water = layer;
+        water = Displays.spawn(ctx(), owner, head, BlockDisplay.class, 0,
+                viewer -> !viewer.equals(owner) && !ctx().isConcealedFrom(owner, viewer), display -> {
+                    display.setBlock(WATER_LAYER.createBlockData());
+                    display.setTransformation(waterShape(true));
+                    display.setTeleportDuration(FOLLOW_LERP);
+                });
+        dishAt = head;
     }
 
-    private static Transformation waterShape(boolean filled) {
+    /** A dish plate (0: square, 1: turned 45°), tipped forward while the kappa bows. */
+    private Transformation plateShape(int plate) {
+        float thick = plate == 0 ? DISH_THICK : DISH_THICK - 2 * PLATE_INSET;
+        return dishPart(plate * 45f, DISH_SIZE, thick, DISH_SIZE, 0);
+    }
+
+    private Transformation waterShape(boolean filled) {
         float size = filled ? WATER_SIZE : 0.001f;
-        return Displays.transform(0, DISH_THICK * 0.5f + WATER_THICK * 0.5f, 0, size, WATER_THICK, size, 22.5f, 0, 0);
+        return dishPart(22.5f, size, WATER_THICK, size, DISH_THICK * 0.5f + WATER_THICK * 0.5f + WATER_LIFT);
+    }
+
+    /**
+     * One block of the dish, turned by {@code yawDeg} and centred {@code lift} above the head spot. While the kappa
+     * bows ({@link #bowFacing}) the whole dish tips forward about the kappa's left-right axis, around the dish centre:
+     * the tilt is composed on the left of each piece's own turn, so every piece tips the same way and the water stays
+     * on the plates.
+     */
+    private Transformation dishPart(float yawDeg, float sx, float sy, float sz, float lift) {
+        Quaternionf rotation = new Quaternionf().rotateY((float) Math.toRadians(-yawDeg));
+        Vector3f center = new Vector3f(0, lift, 0);
+        Vector facing = bowFacing;
+        if (facing != null) {
+            // up × forward: a positive turn about it tips the dish's top towards the front.
+            Vector3f axis = new Vector3f((float) facing.getZ(), 0, (float) -facing.getX());
+            if (axis.lengthSquared() > 1.0E-6f) {
+                Quaternionf tilt = new Quaternionf().rotateAxis((float) Math.toRadians(BOW_TILT), axis.normalize());
+                rotation = tilt.mul(rotation, new Quaternionf());
+                tilt.transform(center).add((float) facing.getX() * BOW_SHIFT, 0, (float) facing.getZ() * BOW_SHIFT);
+            }
+        }
+        Vector3f translation = rotation.transform(new Vector3f(sx * 0.5f, sy * 0.5f, sz * 0.5f)).negate().add(center);
+        return new Transformation(translation, rotation, new Vector3f(sx, sy, sz), new Quaternionf());
     }
 
     private static Location headSpot(Player owner) {
         return owner.getLocation().add(0, owner.getHeight() + 0.06, 0);
     }
 
-    @Override
-    public void onTick(long tick) {
-        Player owner = player();
-        long now = ctx().currentTick();
+    /**
+     * Keeps the dish on the head. A teleported kappa (a head farther than {@link #DISH_JUMP} away in one tick) would
+     * make the dish slide across the map, so the dish first gets teleport duration 0 and moves a tick later, once the
+     * clients have it, then smooths again.
+     */
+    private void followDish(Player owner) {
         Location head = headSpot(owner);
+        if (dishJump == 1) {
+            moveDish(head);
+            dishJump = 2;
+            return;
+        }
+        if (dishJump == 2) {
+            dishDuration(FOLLOW_LERP);
+            dishJump = 0;
+        }
+        Location last = dishAt;
+        if (last != null && !last.getWorld().equals(head.getWorld())) {
+            return;
+        }
+        if (last != null && last.distanceSquared(head) > DISH_JUMP * DISH_JUMP) {
+            dishDuration(0);
+            dishJump = 1;
+            return;
+        }
+        moveDish(head);
+    }
+
+    private void moveDish(Location head) {
         for (BlockDisplay plate : dish) {
             Displays.moveTo(plate, head);
         }
@@ -333,6 +426,27 @@ public final class KappaAbility extends Ability {
         if (layer != null) {
             Displays.moveTo(layer, head);
         }
+        dishAt = head;
+    }
+
+    private void dishDuration(int ticks) {
+        for (BlockDisplay plate : dish) {
+            if (plate.isValid()) {
+                plate.setTeleportDuration(ticks);
+            }
+        }
+        BlockDisplay layer = water;
+        if (layer != null && layer.isValid()) {
+            layer.setTeleportDuration(ticks);
+        }
+    }
+
+    @Override
+    public void onTick(long tick) {
+        Player owner = player();
+        long now = ctx().currentTick();
+        followDish(owner);
+        Location head = headSpot(owner);
         if (tick % RAIN_CHECK == 0) {
             raining = isRainedOn(owner);
         }
@@ -496,12 +610,16 @@ public final class KappaAbility extends Ability {
             Vfx.dot(drop, Particle.FALLING_WATER, null, false);
             Vfx.dot(drop, Particle.DUST, WATER_DUST, false);
         }
-        for (BlockDisplay plate : dish) {
-            float turn = dish.indexOf(plate) * 45f;
-            Displays.animate(plate, Displays.transform(0, 0, 0.12f, DISH_SIZE, DISH_THICK, DISH_SIZE, turn, 35, 0), 3);
-            ctx().runLater(owner, Math.max(4, freeze), () -> Displays.animate(plate,
-                    Displays.transform(0, 0, 0, DISH_SIZE, DISH_THICK, DISH_SIZE, turn, 0, 0), 4));
-        }
+        // The dish tips forward with the head, all of it about the kappa's own left-right axis.
+        bowFacing = forward.clone();
+        int bow = ++bowCount;
+        poseDish(3);
+        ctx().runLater(owner, Math.max(4, freeze), () -> {
+            if (bowCount == bow) {
+                bowFacing = null;
+                poseDish(4);
+            }
+        });
         if (room(2)) {
             keep(Displays.text(ctx(), owner, head.clone().add(0, 0.5, 0), Text.mm("<" + CUCUMBER_TAG + ">꾸벅</"
                     + CUCUMBER_TAG + ">"), 0.8f, 24, viewer -> !ctx().isConcealedFrom(owner, viewer)));
@@ -510,6 +628,17 @@ public final class KappaAbility extends Ability {
         }
         Fx.sound(head, Sound.BLOCK_NOTE_BLOCK_COW_BELL, 0.8f, 1.2f);
         spill(owner, "따라 절하느라");
+    }
+
+    /** Animates every piece of the dish to its current pose (upright or bowing, water full or spilled). */
+    private void poseDish(int ticks) {
+        for (int i = 0; i < dish.size(); i++) {
+            Displays.animate(dish.get(i), plateShape(i), ticks);
+        }
+        BlockDisplay layer = water;
+        if (layer != null) {
+            Displays.animate(layer, waterShape(full), ticks);
+        }
     }
 
     // ================================================================== active: one bout
@@ -579,6 +708,9 @@ public final class KappaAbility extends Ability {
         boolean ownerOut = flatDistance(owner.getLocation(), b.center) > b.radius;
         boolean rivalOut = flatDistance(rival.getLocation(), b.center) > b.radius;
         if (rivalOut && !ownerOut) {
+            if (!ringOutCounts(b.rule, rival)) {
+                return true;
+            }
             win(owner, b);
             return false;
         }
@@ -591,6 +723,22 @@ public final class KappaAbility extends Ability {
             return false;
         }
         return true;
+    }
+
+    /**
+     * True if a contestant standing outside the ring lost by it. A player is judged by the ring's rule only once it
+     * could read it (shown, plus its reaction slack); one who never saw the rule (another prompt was on its screen)
+     * or has not had the time to read it loses only when it was pushed out, never for walking out. Mobs read nothing.
+     */
+    private boolean ringOutCounts(@Nullable PromptHandle rule, LivingEntity contestant) {
+        if (!(contestant instanceof Player player) || rule == null) {
+            return true;
+        }
+        if (ctx().wasDisplaced(player, PUSHED_OUT_TICKS)) {
+            return true;
+        }
+        long shown = rule.shownAtTick();
+        return shown >= 0 && ctx().currentTick() >= shown + ctx().reactionSlackTicks(player);
     }
 
     private void win(Player owner, Bout b) {
@@ -646,15 +794,21 @@ public final class KappaAbility extends Ability {
 
     // ------------------------------------------------------------------ shared ring pieces
 
+    /**
+     * Raises a whole ring of bales, each lying along the circle on the ground under it. Short of display room, the
+     * oldest texts make way first, and a ring that still does not fit is laid with fewer, evenly spaced bales rather
+     * than as an arc.
+     */
     private void raiseBales(Player owner, Location center, double radius, int count, List<BlockDisplay> into,
                             long lifetime) {
-        for (int k = 0; k < count; k++) {
-            if (!room(1)) {
-                break;
-            }
-            double angle = k * Math.PI * 2 / count;
+        int n = Math.min(count, makeRoom(count));
+        for (int k = 0; k < n; k++) {
+            double angle = k * Math.PI * 2 / n;
             Location at = center.clone().add(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-            float yaw = (float) Math.toDegrees(-angle);
+            settle(at);
+            // The bale's long side (its local x) along the circle: Displays.transform turns x to (cos y, 0, -sin y)
+            // for a yaw y, and the tangent at the angle a is (-sin a, 0, cos a), so y = a + 90°.
+            float yaw = (float) Math.toDegrees(angle) + 90f;
             BlockDisplay bale = keep(Displays.block(ctx(), owner, at, BALE.createBlockData(),
                     Displays.transform(0, -BALE_SIZE * 0.5f, 0, BALE_SIZE * 1.6f, 0.01f, BALE_SIZE, yaw, 0, 0),
                     lifetime));
@@ -664,7 +818,20 @@ public final class KappaAbility extends Ability {
         }
     }
 
+    /** Puts a bale spot on the ground under it (a step up or down from the ring's centre), if there is any. */
+    private static void settle(Location spot) {
+        World world = spot.getWorld();
+        Location probe = spot.clone().add(0, BALE_STEP, 0);
+        Spots.snapToGround(world, probe, BALE_STEP * 2);
+        if (probe.getY() < spot.getY() + BALE_STEP - 1.0E-6
+                && world.getBlockAt(probe.clone().add(0, 0.05, 0)).isPassable()) {
+            spot.setY(probe.getY());
+        }
+    }
+
+    /** A sinking ring is out of the budget at once (its bales go within a few ticks), so a new ring always fits. */
     private void sinkBales(Player owner, List<BlockDisplay> bales) {
+        live.removeAll(bales);
         for (BlockDisplay bale : bales) {
             if (bale.isValid()) {
                 Displays.shrinkAway(ctx(), owner, bale, 8);
@@ -768,7 +935,9 @@ public final class KappaAbility extends Ability {
                 continue;
             }
             if (flatDistance(contestant.getLocation(), ring.center) > ring.radius) {
-                ringOut(owner, ring, contestant);
+                if (ringOutCounts(ring.rules.get(id), contestant)) {
+                    ringOut(owner, ring, contestant);
+                }
                 continue;
             }
             if (owner.isSprinting() && chargeSpeed > 0
@@ -808,13 +977,14 @@ public final class KappaAbility extends Ability {
         for (LivingEntity enemy : inside.values()) {
             Vfx.line(ctx(), waist(owner), waist(enemy), 2, Particle.DUST, BELT_DUST, false);
             if (enemy instanceof Player rival) {
-                ring.rules.add(ctx().prompt(owner, rival, Prompt.builder(Text.mm("<b><" + MOSS_TAG + ">대씨름판!</"
+                PromptHandle rule = ctx().prompt(owner, rival, Prompt.builder(Text.mm("<b><" + MOSS_TAG + ">대씨름판!</"
                                 + MOSS_TAG + "></b> <gray>판 밖으로 밀려나면 " + AbilityInfo.formatNumber(
                                 params().num("grand_damage")) + " 피해 · 넘어짐</gray>"), left)
                         .priority(Prompt.HIGH)
                         .overhead(Text.mm("<b><" + MOSS_TAG + ">씨름!</" + MOSS_TAG + "></b>"))
                         .maxWait(0)
-                        .build()));
+                        .build());
+                ring.rules.put(rival.getUniqueId(), rule);
             }
         }
         owner.sendActionBar(Text.mm("<b><" + MOSS_TAG + ">대씨름판!</" + MOSS_TAG + "></b> <gray>" + inside.size()
@@ -843,7 +1013,7 @@ public final class KappaAbility extends Ability {
         if (grand == ring) {
             grand = null;
         }
-        for (PromptHandle rule : ring.rules) {
+        for (PromptHandle rule : ring.rules.values()) {
             if (rule.isActive()) {
                 rule.cancel();
             }
@@ -855,8 +1025,27 @@ public final class KappaAbility extends Ability {
     // ================================================================== display budget
 
     private boolean room(int count) {
+        return free() >= count;
+    }
+
+    private int free() {
         live.removeIf(display -> !display.isValid());
-        return live.size() + dish.size() + 1 + count <= MAX_DISPLAYS;
+        return MAX_DISPLAYS - (live.size() + dish.size() + 1);
+    }
+
+    /** Frees room for {@code count} displays by removing the oldest texts if needed; the room there is now. */
+    private int makeRoom(int count) {
+        int free = free();
+        Iterator<Display> it = live.iterator();
+        while (free < count && it.hasNext()) {
+            Display display = it.next();
+            if (display instanceof TextDisplay) {
+                it.remove();
+                display.remove();
+                free++;
+            }
+        }
+        return Math.max(0, free);
     }
 
     private <T extends Display> T keep(T display) {

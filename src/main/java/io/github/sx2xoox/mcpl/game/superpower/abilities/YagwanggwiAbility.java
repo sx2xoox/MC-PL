@@ -128,6 +128,11 @@ public final class YagwanggwiAbility extends Ability {
     private static final int SPRINT_FOOD = 6;
     private static final int MAX_DISPLAYS = 24;
     private static final int FOLLOW_LERP = 3;
+    /** A stolen sandal flies from the feet to the ghost's waist over this many ticks. */
+    private static final int SANDAL_FLIGHT = 6;
+    /** A hanging sandal is turned again once the body turned it more than this (degrees). */
+    private static final float SANDAL_TURN = 10;
+    private static final double GLOW_RANGE = 32;
     private static final int REACH_TICKS = 3;
     private static final float ARM_WIDTH = 0.12f;
     private static final float PALM_SIZE = 0.3f;
@@ -162,11 +167,16 @@ public final class YagwanggwiAbility extends Ability {
         final UUID from;
         final long until;
         final @Nullable BlockDisplay sandal;
+        /** The tick the sandal was spawned: it hangs from the next tick, once the clients have it. */
+        final long bornTick;
+        /** The turn its shape was last sent with (NaN: not yet). */
+        float shownDeg = Float.NaN;
 
-        Pair(UUID from, long until, @Nullable BlockDisplay sandal) {
+        Pair(UUID from, long until, @Nullable BlockDisplay sandal, long bornTick) {
             this.from = from;
             this.until = until;
             this.sandal = sandal;
+            this.bornTick = bornTick;
         }
 
         void remove() {
@@ -244,34 +254,67 @@ public final class YagwanggwiAbility extends Ability {
         tickBarefoot(owner, now);
     }
 
-    /** The sandals dangle from the belt behind the ghost, swinging a little as it moves. */
+    /**
+     * The sandals dangle from the belt behind the ghost, swinging a little as it moves. Each one moves every tick and
+     * is turned again whenever the body turned it more than {@link #SANDAL_TURN} since its shape was last sent (and
+     * once right after it arrives), so it always faces out from the waist.
+     */
     private void hangSandals(Player owner, long tick) {
         int n = pairs.size();
         if (n == 0) {
             return;
         }
-        float yaw = owner.getBodyYaw();
+        long now = ctx().currentTick();
         for (int i = 0; i < n; i++) {
-            BlockDisplay sandal = pairs.get(i).sandal;
-            if (sandal == null || !sandal.isValid()) {
+            Pair pair = pairs.get(i);
+            BlockDisplay sandal = pair.sandal;
+            if (sandal == null || !sandal.isValid() || pair.bornTick >= now) {
                 continue;
             }
-            double deg = yaw + 180 + (i - (n - 1) / 2.0) * 40;
-            double rad = Math.toRadians(deg);
-            Location spot = owner.getLocation().add(-Math.sin(rad) * 0.36, owner.getHeight() * 0.42
-                    + Math.sin((tick + i * 7) * 0.25) * 0.03, Math.cos(rad) * 0.36);
-            Displays.moveTo(sandal, spot);
-            if (tick % 10 == i) {
-                Displays.animate(sandal, sandalShape((float) deg, 75), 4);
+            double deg = hangDegrees(owner, i, n);
+            Displays.moveTo(sandal, hangSpot(owner, i, n, tick));
+            if (Float.isNaN(pair.shownDeg) || Math.abs(wrap((float) deg - pair.shownDeg)) > SANDAL_TURN) {
+                Displays.animate(sandal, sandalShape((float) deg, 75), 3);
+                pair.shownDeg = (float) deg;
             }
         }
         if (tick % 8 == 0) {
             BlockDisplay first = pairs.getFirst().sandal;
             if (first != null && first.isValid()) {
-                Vfx.dot(first.getLocation().add(Fx.jitter(0.15f), Fx.jitter(0.1f), Fx.jitter(0.15f)),
-                        Particle.DUST, SMALL_GLOW, false);
+                glowDot(owner, first.getLocation().add(Fx.jitter(0.15f), Fx.jitter(0.1f), Fx.jitter(0.15f)));
             }
         }
+    }
+
+    /** A lime glow mote at the ghost's sandals, only for those who may see the ghost. */
+    private void glowDot(Player owner, Location at) {
+        for (Player viewer : owner.getWorld().getPlayers()) {
+            if (!ctx().isConcealedFrom(owner, viewer)
+                    && viewer.getLocation().distanceSquared(at) <= GLOW_RANGE * GLOW_RANGE) {
+                viewer.spawnParticle(Particle.DUST, at, 1, 0, 0, 0, 0, SMALL_GLOW);
+            }
+        }
+    }
+
+    /** The way sandal {@code i} of {@code n} hangs from the waist (degrees around the body). */
+    private static double hangDegrees(Player owner, int i, int n) {
+        return owner.getBodyYaw() + 180 + (i - (n - 1) / 2.0) * 40;
+    }
+
+    private static Location hangSpot(Player owner, int i, int n, long tick) {
+        double rad = Math.toRadians(hangDegrees(owner, i, n));
+        return owner.getLocation().add(-Math.sin(rad) * 0.36, owner.getHeight() * 0.42
+                + Math.sin((tick + i * 7) * 0.25) * 0.03, Math.cos(rad) * 0.36);
+    }
+
+    private static float wrap(float degrees) {
+        float d = degrees % 360;
+        if (d > 180) {
+            d -= 360;
+        } else if (d < -180) {
+            d += 360;
+        }
+        return d;
     }
 
     private static Transformation sandalShape(float yaw, float pitch) {
@@ -308,17 +351,24 @@ public final class YagwanggwiAbility extends Ability {
         long now = ctx().currentTick();
         BlockDisplay sandal = null;
         if (room(1)) {
-            sandal = Displays.block(ctx(), owner, from, SANDAL.createBlockData(), sandalShape(0, 0), 0);
-            sandal.setTeleportDuration(6);
-            Displays.outline(sandal, GLOW);
+            // Seen by whoever may see the ghost (a hidden ghost's sandals hide with it). It glows only while it flies
+            // from the feet to the waist: a worn sandal glowing through walls would give the ghost away.
+            sandal = Displays.spawn(ctx(), owner, from, BlockDisplay.class, 0,
+                    viewer -> !ctx().isConcealedFrom(owner, viewer), display -> {
+                        display.setBlock(SANDAL.createBlockData());
+                        display.setTransformation(sandalShape(0, 0));
+                        display.setTeleportDuration(SANDAL_FLIGHT);
+                        Displays.outline(display, GLOW);
+                    });
             BlockDisplay created = sandal;
-            ctx().runLater(owner, 6, () -> {
+            ctx().runLater(owner, SANDAL_FLIGHT, () -> {
                 if (created.isValid()) {
                     created.setTeleportDuration(FOLLOW_LERP);
+                    created.setGlowing(false);
                 }
             });
         }
-        pairs.add(new Pair(victim.getUniqueId(), now + Math.max(1, params().ticks("shoe_keep")), sandal));
+        pairs.add(new Pair(victim.getUniqueId(), now + Math.max(1, params().ticks("shoe_keep")), sandal, now));
         updateSpeed(owner, true);
     }
 
@@ -630,76 +680,107 @@ public final class YagwanggwiAbility extends Ability {
                     Text.mm("<b><#FFC46A>꼬끼오—!</#FFC46A></b>"), 1.0f, 30,
                     viewer -> !ctx().isConcealedFrom(owner, viewer)));
         }
-        Map<UUID, Integer> counts = new LinkedHashMap<>();
-        for (Pair pair : pairs) {
-            counts.merge(pair.from, 1, Integer::sum);
-        }
-        List<Location> starts = new ArrayList<>();
-        for (Pair pair : pairs) {
-            starts.add(pair.sandal != null && pair.sandal.isValid() ? pair.sandal.getLocation() : Fx.body(owner));
-            pair.remove();
-        }
+        // Every worn sandal is thrown itself: it keeps hanging at the waist until its turn, then flies from there.
+        List<Pair> worn = List.copyOf(pairs);
         pairs.clear();
         updateSpeed(owner, false);
         int max = Math.max(0, params().integer("return_max"));
+        Map<UUID, Integer> thrown = new HashMap<>();
+        Set<UUID> restored = new HashSet<>();
         int launched = 0;
-        for (Map.Entry<UUID, Integer> entry : counts.entrySet()) {
-            Entity entity = Bukkit.getEntity(entry.getKey());
-            if (!(entity instanceof LivingEntity victim) || !Combat.isTargetable(ctx(), owner, victim)) {
+        for (int slot = 0; slot < worn.size(); slot++) {
+            Pair pair = worn.get(slot);
+            Entity entity = Bukkit.getEntity(pair.from);
+            int n = thrown.getOrDefault(pair.from, 0);
+            if (!(entity instanceof LivingEntity victim) || !Combat.isTargetable(ctx(), owner, victim) || n >= max) {
+                if (pair.sandal != null && pair.sandal.isValid()) {
+                    Vfx.cloud(ctx(), pair.sandal.getLocation(), Particle.DUST, 5, 0.1, 0, STRAW_DUST, false);
+                }
+                pair.remove();
                 continue;
             }
-            Barefoot b = barefoot.remove(victim.getUniqueId());
-            if (b != null) {
-                restore(b, false);
+            thrown.put(pair.from, n + 1);
+            if (restored.add(pair.from)) {
+                Barefoot b = barefoot.remove(victim.getUniqueId());
+                if (b != null) {
+                    restore(b, false);
+                }
             }
-            int n = Math.min(entry.getValue(), max);
-            for (int k = 0; k < n; k++) {
-                Location from = starts.isEmpty() ? Fx.body(owner) : starts.get(Math.min(launched, starts.size() - 1));
-                throwBack(owner, victim, from, THROW_GAP * launched);
-                launched++;
-            }
+            BlockDisplay sandal = pair.sandal != null && pair.sandal.isValid() ? keep(pair.sandal) : null;
+            throwBack(owner, victim, sandal, slot, worn.size(), THROW_GAP * launched);
+            launched++;
         }
     }
 
-    /** One sandal arcs back onto its owner and hits. */
-    private void throwBack(Player owner, LivingEntity victim, Location from, long delay) {
-        ctx().runLater(owner, Math.max(1, delay), () -> {
+    /**
+     * One sandal arcs back onto its owner and hits: {@code worn} (the sandal the ghost wore, null if it had none) keeps
+     * hanging at the waist until {@code delay} is up and then flies from where it hangs; without one a new sandal is
+     * thrown from the ghost's body.
+     */
+    private void throwBack(Player owner, LivingEntity victim, @Nullable BlockDisplay worn, int slot, int slots,
+                           long delay) {
+        if (worn != null) {
+            ctx().runLater(owner, Math.max(1, delay) + THROW_FLIGHT + 4, () -> {
+                if (worn.isValid()) {
+                    worn.remove();
+                }
+            });
+        }
+        Loop.repeat(ctx(), owner, 0, 1, Math.max(1, delay), i -> {
+            if (worn != null && worn.isValid()) {
+                Displays.moveTo(worn, hangSpot(owner, slot, slots, ctx().currentTick()));
+            }
+            return true;
+        }, () -> launch(owner, victim, worn));
+    }
+
+    private void launch(Player owner, LivingEntity victim, @Nullable BlockDisplay worn) {
+        if (!Combat.isTargetable(ctx(), owner, victim)) {
+            if (worn != null && worn.isValid()) {
+                Vfx.cloud(ctx(), worn.getLocation(), Particle.DUST, 5, 0.1, 0, STRAW_DUST, false);
+                worn.remove();
+            }
+            return;
+        }
+        BlockDisplay sandal;
+        if (worn != null && worn.isValid()) {
+            sandal = worn;
+            // In flight it is a projectile everyone sees.
+            ctx().showOnlyTo(owner, sandal, viewer -> true);
+        } else {
+            sandal = room(1) ? keep(Displays.block(ctx(), owner, Fx.body(owner), SANDAL.createBlockData(),
+                    sandalShape(0, 0), THROW_FLIGHT + 4)) : null;
+        }
+        Location start = sandal != null ? sandal.getLocation() : Fx.body(owner);
+        if (sandal != null) {
+            sandal.setTeleportDuration(1);
+            Displays.outline(sandal, GLOW);
+        }
+        Fx.sound(start, Sound.ENTITY_SNOWBALL_THROW, 0.8f, 0.9f + Fx.jitter(0.1f));
+        Loop.repeat(ctx(), owner, 1, 1, THROW_FLIGHT, i -> {
+            double t = (double) (i + 1) / THROW_FLIGHT;
+            Location end = victim.getEyeLocation();
+            Location at = start.clone().add(end.toVector().subtract(start.toVector()).multiply(t))
+                    .add(0, Math.sin(t * Math.PI) * 1.5, 0);
+            Vfx.dot(at, Particle.DUST, STRAW_DUST, false);
+            if (sandal != null) {
+                Displays.moveTo(sandal, at);
+                Displays.animate(sandal, sandalShape((i + 1) * 60f, (i + 1) * 40f), 1);
+            }
+            return victim.isValid() && !victim.isDead();
+        }, () -> {
+            if (sandal != null && sandal.isValid()) {
+                sandal.remove();
+            }
             if (!Combat.isTargetable(ctx(), owner, victim)) {
                 return;
             }
-            Location start = from.clone();
-            BlockDisplay sandal = room(1) ? keep(Displays.block(ctx(), owner, start, SANDAL.createBlockData(),
-                    sandalShape(0, 0), THROW_FLIGHT + 4)) : null;
-            if (sandal != null) {
-                sandal.setTeleportDuration(1);
-                Displays.outline(sandal, GLOW);
-            }
-            Fx.sound(start, Sound.ENTITY_SNOWBALL_THROW, 0.8f, 0.9f + Fx.jitter(0.1f));
-            Loop.repeat(ctx(), owner, 1, 1, THROW_FLIGHT, i -> {
-                double t = (double) (i + 1) / THROW_FLIGHT;
-                Location end = victim.getEyeLocation();
-                Location at = start.clone().add(end.toVector().subtract(start.toVector()).multiply(t))
-                        .add(0, Math.sin(t * Math.PI) * 1.5, 0);
-                Vfx.dot(at, Particle.DUST, STRAW_DUST, false);
-                if (sandal != null) {
-                    Displays.moveTo(sandal, at);
-                    Displays.animate(sandal, sandalShape((i + 1) * 60f, (i + 1) * 40f), 1);
-                }
-                return victim.isValid() && !victim.isDead();
-            }, () -> {
-                if (sandal != null && sandal.isValid()) {
-                    sandal.remove();
-                }
-                if (!Combat.isTargetable(ctx(), owner, victim)) {
-                    return;
-                }
-                Location head = victim.getEyeLocation();
-                Combat.hit(ctx(), owner, victim, params().num("return_damage"));
-                Vfx.cloud(ctx(), head, Particle.DUST, 8, 0.25, 0, STRAW_DUST, false);
-                Vfx.dot(head, Particle.CRIT, null, false);
-                Fx.sound(head, Sound.BLOCK_WOOL_HIT, 1.0f, 0.8f);
-                Fx.sound(head, Sound.ENTITY_PLAYER_ATTACK_WEAK, 1.0f, 1.2f);
-            });
+            Location head = victim.getEyeLocation();
+            Combat.hit(ctx(), owner, victim, params().num("return_damage"));
+            Vfx.cloud(ctx(), head, Particle.DUST, 8, 0.25, 0, STRAW_DUST, false);
+            Vfx.dot(head, Particle.CRIT, null, false);
+            Fx.sound(head, Sound.BLOCK_WOOL_HIT, 1.0f, 0.8f);
+            Fx.sound(head, Sound.ENTITY_PLAYER_ATTACK_WEAK, 1.0f, 1.2f);
         });
     }
 
