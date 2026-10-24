@@ -139,6 +139,13 @@ public final class KoscheiAbility extends Ability {
      */
     private static final int FOLLOW_LERP = 3;
     private static final double MAX_SPEED = 1.5;
+    /** Ticks a new figure takes to grow in. */
+    private static final int GROW_TICKS = 5;
+    /**
+     * Degrees a figure turns at most per tick toward where it runs: a figure turned round in one step would have its
+     * ears, head and tail cut straight through its middle (its parts' offsets move in straight lines meanwhile).
+     */
+    private static final float MAX_TURN = 30f;
 
     // the vessels
     private static final double EGG_HITBOX = 0.55;
@@ -290,14 +297,26 @@ public final class KoscheiAbility extends Ability {
         @Nullable TextDisplay label;
         @Nullable Player lastHitter;
         boolean broken;
+        /** Where it runs. */
         float yaw;
+        /** Where its figure faces: turns toward {@link #yaw} by at most {@link #MAX_TURN} a tick. */
+        float shownYaw;
         long nextMove;
         int hop;
+        /** Until then the figure is flying in or growing on its own: {@link #follow} leaves it alone. */
+        long quietUntil = Long.MIN_VALUE / 2;
+        /** The figure flew in with a long teleport glide, set back to {@link #FOLLOW_LERP} once it is there. */
+        boolean gliding;
 
         Vessel(Shell shell, Mannequin body) {
             this.shell = shell;
             this.body = body;
             this.yaw = ThreadLocalRandom.current().nextFloat() * 360f;
+            this.shownYaw = yaw;
+        }
+
+        boolean quiet() {
+            return ctx().currentTick() < quietUntil;
         }
 
         double health() {
@@ -312,16 +331,29 @@ public final class KoscheiAbility extends Ability {
             return !broken && body.isValid() && !body.isDead() && health() > 0;
         }
 
-        /** The figure follows its hitbox (turned the way it runs), and the label floats over it. */
+        /** The figure follows its hitbox (turning the way it runs), and the label floats over it. */
         void follow(long tick) {
+            if (quiet()) {
+                return;
+            }
+            TextDisplay shown = label;
+            if (gliding) {
+                gliding = false;
+                for (BlockDisplay part : parts) {
+                    part.setTeleportDuration(FOLLOW_LERP);
+                }
+                if (shown != null) {
+                    shown.setTeleportDuration(FOLLOW_LERP);
+                }
+            }
+            shownYaw = turnToward(shownYaw, yaw, MAX_TURN);
             Location at = body.getLocation();
             float bob = shell == Shell.HARE && !Motion.isGrounded(body) ? 0.05f : 0f;
             for (int i = 0; i < parts.size(); i++) {
                 BlockDisplay part = parts.get(i);
                 Displays.moveTo(part, at);
-                Displays.animate(part, figurePose(shell, i, yaw, 1f, bob, tick), 2);
+                Displays.animate(part, figurePose(shell, i, shownYaw, 1f, bob, tick), 2);
             }
-            TextDisplay shown = label;
             if (shown != null) {
                 Displays.moveTo(shown, at.clone().add(0, labelHeight(shell), 0));
             }
@@ -343,10 +375,69 @@ public final class KoscheiAbility extends Ability {
                 Vfx.dot(at, Particle.EGG_CRACK, null, false);
             }
             Fx.sound(at, crackSound(shell), 0.9f, 1.0f + Fx.jitter(0.15f));
+            if (quiet()) {
+                return; // still flying in or growing: it shakes once it is there
+            }
             long tick = ctx().currentTick();
             for (int i = 0; i < parts.size(); i++) {
-                Displays.animate(parts.get(i), figurePose(shell, i, yaw + Fx.jitter(14f), 1.08f, 0f, tick), 1);
+                Displays.animate(parts.get(i), figurePose(shell, i, shownYaw + Fx.jitter(14f), 1.08f, 0f, tick), 1);
             }
+        }
+
+        /**
+         * The figure goes back into the egg (the ultimate's time is up): it flies to {@code home} on a long glide while
+         * it shrinks, the hitbox goes at once.
+         */
+        void flyHome(Location home) {
+            broken = true;
+            List<BlockDisplay> flying = new ArrayList<>();
+            for (BlockDisplay part : parts) {
+                if (part.isValid()) {
+                    part.setTeleportDuration((int) FLY_TICKS);
+                    flying.add(part);
+                }
+            }
+            parts.clear();
+            for (BlockDisplay part : casing) {
+                if (part.isValid()) {
+                    Displays.shrinkAway(ctx(), player(), part, 8);
+                }
+            }
+            casing.clear();
+            if (label != null && label.isValid()) {
+                label.remove();
+            }
+            label = null;
+            if (body.isValid()) {
+                body.remove();
+            }
+            // Next tick, once the clients know the long glide.
+            ctx().runLater(player(), 1, () -> {
+                for (BlockDisplay part : flying) {
+                    if (part.isValid()) {
+                        Displays.moveTo(part, home);
+                        Displays.shrinkAway(ctx(), player(), part, (int) FLY_TICKS);
+                    }
+                }
+            });
+        }
+
+        /**
+         * A new figure and label for the shell where its hitbox now is (it was moved far, into a chest): the old figure
+         * shrinks where it was and the new one grows in place, instead of sliding there through walls.
+         */
+        void redress(Player owner) {
+            for (BlockDisplay part : parts) {
+                if (part.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, part, 4);
+                }
+            }
+            parts.clear();
+            if (label != null && label.isValid()) {
+                label.remove();
+            }
+            label = null;
+            dress(owner, this, Displays.unrotated(body.getLocation()), null, 0, health(), maxHealth());
         }
 
         /** Removes the shell (broken or merging): the figure shrinks away or shatters, the hitbox goes. */
@@ -387,6 +478,15 @@ public final class KoscheiAbility extends Ability {
 
     /** Spawns a shell at {@code feet} with {@code health}, or null if it cannot be spawned. */
     private @Nullable Vessel spawnVessel(Player owner, Shell shell, Location feet, double health) {
+        return spawnVessel(owner, shell, feet, health, null, 0);
+    }
+
+    /**
+     * Spawns a shell at {@code feet} with {@code health} (null if it cannot be spawned). Its figure flies in from
+     * {@code from} if given, growing on the way; else it grows in place, {@code delay} ticks from now.
+     */
+    private @Nullable Vessel spawnVessel(Player owner, Shell shell, Location feet, double health,
+                                         @Nullable Location from, long delay) {
         Location at = Displays.unrotated(feet);
         double maxHealth = Math.max(1, health);
         Mannequin body;
@@ -411,28 +511,67 @@ public final class KoscheiAbility extends Ability {
         }
         ctx().summon(owner, body);
         Vessel vessel = new Vessel(shell, body);
-        int count = figureSize(shell);
-        long tick = ctx().currentTick();
-        if (reserve(count + 1)) {
-            for (int i = 0; i < count; i++) {
-                BlockDisplay part = keep(Displays.block(ctx(), owner, at, figureMaterial(shell, i).createBlockData(),
-                        figurePose(shell, i, vessel.yaw, 0.05f, 0f, tick), 0));
-                part.setTeleportDuration(FOLLOW_LERP);
-                if (shell == Shell.EGG) {
-                    Displays.outline(part, GLOW_GREEN);
-                } else if (i == 0) {
-                    Displays.outline(part, GOLD);
-                }
-                Displays.animateNextTick(ctx(), owner, part, figurePose(shell, i, vessel.yaw, 1f, 0f, tick), 5);
-                vessel.parts.add(part);
-            }
-            TextDisplay label = keep(Displays.text(ctx(), owner, at.clone().add(0, labelHeight(shell), 0),
-                    Text.mm(pips(maxHealth, maxHealth)), LABEL_SCALE, 0));
-            label.setTeleportDuration(FOLLOW_LERP);
-            label.setSeeThrough(false);
-            vessel.label = label;
-        }
+        dress(owner, vessel, at, from, delay, maxHealth, maxHealth);
         return vessel;
+    }
+
+    /**
+     * The figure and health label of {@code vessel} standing at {@code at}: they fly in from {@code from} (over
+     * {@link #FLY_TICKS}, growing on the way) if given, else they grow in place {@code delay} ticks from now.
+     */
+    private void dress(Player owner, Vessel vessel, Location at, @Nullable Location from, long delay, double health,
+                       double max) {
+        Shell shell = vessel.shell;
+        int count = figureSize(shell);
+        if (!reserve(count + 1)) {
+            return;
+        }
+        long tick = ctx().currentTick();
+        Location start = from == null ? at : Displays.unrotated(from);
+        int glide = from == null ? FOLLOW_LERP : (int) FLY_TICKS;
+        List<BlockDisplay> made = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            BlockDisplay part = keep(Displays.block(ctx(), owner, start, figureMaterial(shell, i).createBlockData(),
+                    figurePose(shell, i, vessel.shownYaw, 0.05f, 0f, tick), 0));
+            part.setTeleportDuration(glide);
+            if (shell == Shell.EGG) {
+                Displays.outline(part, GLOW_GREEN);
+            } else if (i == 0) {
+                Displays.outline(part, GOLD);
+            }
+            made.add(part);
+        }
+        vessel.parts.addAll(made);
+        TextDisplay label = keep(Displays.text(ctx(), owner, start.clone().add(0, labelHeight(shell), 0),
+                Text.mm(pips(health, max)), 0.01f, 0));
+        label.setTeleportDuration(glide);
+        label.setSeeThrough(false);
+        vessel.label = label;
+        long grow = from == null ? GROW_TICKS : FLY_TICKS;
+        vessel.gliding = from != null;
+        vessel.quietUntil = tick + delay + 1 + grow;
+        // A tick later at the soonest: the clients must have the figure (and its glide) before it moves or grows.
+        ctx().runLater(owner, delay + 1, () -> {
+            long now = ctx().currentTick();
+            for (int i = 0; i < made.size(); i++) {
+                BlockDisplay part = made.get(i);
+                if (from != null) {
+                    Displays.moveTo(part, at);
+                }
+                Displays.animate(part, figurePose(shell, i, vessel.shownYaw, 1f, 0f, now), (int) grow);
+            }
+            if (from != null) {
+                Displays.moveTo(label, at.clone().add(0, labelHeight(shell), 0));
+            }
+            Displays.animate(label, Displays.centered(0, 0, 0, LABEL_SCALE, LABEL_SCALE, LABEL_SCALE, 0, 0, 0),
+                    (int) grow);
+        });
+    }
+
+    /** {@code from} turned toward {@code to} the short way, by at most {@code max} degrees. */
+    private static float turnToward(float from, float to, float max) {
+        float delta = (float) Math.IEEEremainder(to - from, 360.0);
+        return from + Math.clamp(delta, -max, max);
     }
 
     private static void setBase(LivingEntity entity, Attribute attribute, double value) {
@@ -620,8 +759,8 @@ public final class KoscheiAbility extends Ability {
                     + pips(main.health(), main.maxHealth())));
             Fx.sound(at, Sound.ENTITY_WARDEN_HEARTBEAT, 0.8f, 1.2f);
             Vfx.ring(ctx(), at.clone().add(0, 0.1, 0), 0.7, 10, 0, Particle.DUST, GREEN_DUST, false);
-            for (int i = 0; i < main.parts.size(); i++) {
-                Displays.animate(main.parts.get(i), figurePose(main.shell, i, main.yaw, 1.12f, 0f, tick), 2);
+            for (int i = 0; i < main.parts.size() && !main.quiet(); i++) {
+                Displays.animate(main.parts.get(i), figurePose(main.shell, i, main.shownYaw, 1.12f, 0f, tick), 2);
             }
         }
     }
@@ -888,6 +1027,16 @@ public final class KoscheiAbility extends Ability {
 
     /** The egg goes into the chest: moved there if it exists, a new one if it broke. */
     private void settle(Player owner, Location spot, List<BlockDisplay> chest) {
+        if (!layers.isEmpty()) {
+            // The death split into its layers while the chest rose: there is no egg to hide (the layers join into one
+            // again at the end), the chest sinks back.
+            for (BlockDisplay part : chest) {
+                if (part.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, part, 8);
+                }
+            }
+            return;
+        }
         Vessel main = egg;
         if (main != null && main.alive()) {
             Location from = main.body.getLocation().add(0, 0.5, 0);
@@ -901,6 +1050,7 @@ public final class KoscheiAbility extends Ability {
             main.casing.clear();
             main.body.teleport(spot.clone().add(0, 0.25, 0));
             main.body.setVelocity(new Vector());
+            main.redress(owner);
         } else {
             if (main != null) {
                 main.remove(false);
@@ -962,13 +1112,16 @@ public final class KoscheiAbility extends Ability {
         Fx.sound(center, Sound.BLOCK_BELL_RESONATE, 0.9f, 0.7f);
         Fx.sound(center, Sound.ENTITY_EVOKER_CAST_SPELL, 0.8f, 0.6f);
         double angle = ThreadLocalRandom.current().nextDouble(TAU);
+        long now = ctx().currentTick();
         for (Shell shell : List.of(Shell.CHEST, Shell.HARE, Shell.DUCK, Shell.EGG)) {
             angle += TAU / 4 + ThreadLocalRandom.current().nextDouble(-0.4, 0.4);
             Location spot = scatterSpot(owner, home, angle);
-            Vessel layer = spawnVessel(owner, shell, spot, health);
+            // Thrown out: the figure flies from the egg's place to its spot along the gold trail.
+            Vessel layer = spawnVessel(owner, shell, spot, health, home, 0);
             if (layer == null) {
                 continue;
             }
+            layer.nextMove = now + FLY_TICKS + 1;
             layers.add(layer);
             Vfx.trail(center, spot.clone().add(0, 0.5, 0), GOLD, (int) FLY_TICKS, true);
             Vfx.trail(center, spot.clone().add(0, 0.7, 0), GLOW_GREEN, (int) FLY_TICKS + 3, true);
@@ -1109,11 +1262,13 @@ public final class KoscheiAbility extends Ability {
         layersUntil = Long.MIN_VALUE / 2;
         int survivors = 0;
         Location center = home == null ? owner.getLocation() : home;
+        Location nest = Displays.unrotated(center);
         for (Vessel layer : layers) {
             if (layer.alive()) {
                 survivors++;
-                Vfx.trail(layer.body.getLocation().add(0, 0.5, 0), center.clone().add(0, 0.6, 0), GOLD, 12, true);
-                layer.remove(false);
+                Vfx.trail(layer.body.getLocation().add(0, 0.5, 0), center.clone().add(0, 0.6, 0), GOLD,
+                        (int) FLY_TICKS + 1, true);
+                layer.flyHome(nest);
             } else if (!layer.broken) {
                 layer.remove(true);
             }
@@ -1125,7 +1280,8 @@ public final class KoscheiAbility extends Ability {
             Vfx.cloud(ctx(), Fx.body(owner), Particle.DUST_COLOR_TRANSITION, 10, 0.4, 0, DEATH_FLOW, false);
             Fx.sound(owner.getLocation(), Sound.BLOCK_BEACON_POWER_SELECT, 0.7f, 1.5f);
             Location eggSpot = center.clone();
-            Vessel joined = spawnVessel(owner, Shell.EGG, eggSpot, params().num("egg_health"));
+            // The egg is whole (and protects) at once; it shows when the shells flying home reach it.
+            Vessel joined = spawnVessel(owner, Shell.EGG, eggSpot, params().num("egg_health"), null, FLY_TICKS);
             egg = joined;
             wasInRange = true;
             Fx.sound(eggSpot, Sound.ENTITY_TURTLE_EGG_HATCH, 0.8f, 1.4f);

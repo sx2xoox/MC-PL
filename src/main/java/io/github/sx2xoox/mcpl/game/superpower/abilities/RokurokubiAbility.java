@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 import com.destroystokyo.paper.ClientOption;
@@ -161,7 +162,8 @@ public final class RokurokubiAbility extends Ability {
 
     // active: the stretching neck
     private static final double BITE_HITBOX = 0.35;
-    private static final int RETRACT_TICKS = 6;
+    /** A neck segment reaches this far past both its ends, so the joints between segments never gape. */
+    private static final float NECK_OVERLAP = 0.03f;
 
     // ultimate: the flying head
     private static final double HEAD_REACH = 0.45;
@@ -331,19 +333,15 @@ public final class RokurokubiAbility extends Ability {
             ItemDisplay head = null;
             Location feet = Displays.unrotated(owner.getLocation());
             if (ability.reserve(2)) {
-                column = ability.keep(Displays.block(ability.ctx(), owner, feet, NECK.createBlockData(),
-                        columnPose(owner, 0.01), 0));
+                column = ability.keep(ability.block(owner, feet, NECK, columnPose(owner, 0.01)));
                 column.setTeleportDuration(FOLLOW_LERP);
                 Displays.animateNextTick(ability.ctx(), owner, column, columnPose(owner, height), PEEK_GROW_TICKS);
-                head = ability.keep(Displays.item(ability.ctx(), owner, feet, headOf(owner),
-                        headPose(owner, owner.getEyeHeight() + 0.3, owner.getLocation().getYaw(),
-                                owner.getLocation().getPitch()), 0));
-                head.setTeleportDuration(FOLLOW_LERP);
+                head = ability.keep(ability.item(owner, feet, headOf(owner), headPose(owner,
+                        owner.getEyeHeight() + 0.3, owner.getLocation().getYaw(), owner.getLocation().getPitch()),
+                        display -> display.setTeleportDuration(FOLLOW_LERP)));
                 ItemDisplay grown = head;
                 Displays.animateNextTick(ability.ctx(), owner, grown, headPose(owner, peekEyeHeight(owner, height),
                         owner.getLocation().getYaw(), owner.getLocation().getPitch()), PEEK_GROW_TICKS);
-                ability.hideFromThoseWhoCannotSee(owner, column);
-                ability.hideFromThoseWhoCannotSee(owner, head);
             }
             Location top = owner.getLocation().add(0, peekEyeHeight(owner, height), 0);
             Fx.sound(top, Sound.ENTITY_SLIME_SQUISH, 0.5f, 0.6f);
@@ -497,6 +495,11 @@ public final class RokurokubiAbility extends Ability {
         private final double step;
         private @Nullable ItemDisplay head;
         private @Nullable BlockDisplay collar;
+        /**
+         * The next segment, spawned a tick ahead at the head with no length yet: it grows with the head's next glide
+         * (a segment spawned at full length would show at once, poking out ahead of the gliding head).
+         */
+        private @Nullable BlockDisplay tip;
         private Vector at;
         private Vector heading;
         private boolean done;
@@ -513,7 +516,8 @@ public final class RokurokubiAbility extends Ability {
         }
 
         void launch() {
-            long hold = steps + RETRACT_TICKS + 2;
+            // Out and back in at a path point a tick; finish() frees the body as soon as the neck is home.
+            long hold = 2L * steps + 4;
             holds.add(ctx().addModifier(owner, owner, Attribute.MOVEMENT_SPEED, -1, Operation.MULTIPLY_SCALAR_1, hold));
             holds.add(ctx().addModifier(owner, owner, Attribute.JUMP_STRENGTH, -1, Operation.MULTIPLY_SCALAR_1, hold));
             owner.setVelocity(new Vector());
@@ -524,16 +528,28 @@ public final class RokurokubiAbility extends Ability {
             Vfx.cloud(ctx(), eye, Particle.DUST, 6, 0.2, 0, LANTERN_DUST, false);
             if (reserve(2)) {
                 Location base = Displays.unrotated(owner.getLocation());
-                collar = keep(Displays.block(ctx(), owner, base, COLLAR.createBlockData(), Displays.transform(0,
-                        (float) (owner.getHeight() * 0.8), 0, 0.42f, 0.12f, 0.42f, owner.getLocation().getYaw(), 0, 0),
-                        0));
-                head = keep(Displays.item(ctx(), owner, Displays.unrotated(eye), headOf(owner), headTurn(heading, 1f),
-                        0));
-                head.setTeleportDuration(1);
-                hideFromThoseWhoCannotSee(owner, collar);
-                hideFromThoseWhoCannotSee(owner, head);
+                collar = keep(block(owner, base, COLLAR, Displays.transform(0, (float) (owner.getHeight() * 0.8), 0,
+                        0.42f, 0.12f, 0.42f, owner.getLocation().getYaw(), 0, 0)));
+                head = keep(item(owner, Displays.unrotated(eye), headOf(owner), headTurn(heading, 1f),
+                        display -> display.setTeleportDuration(1)));
             }
+            readyTip();
             Loop.repeat(ctx(), owner, 1, 1, steps, this::stretch, this::reelIn);
+        }
+
+        /** Spawns the next segment at the head, pointing the way it flies, with no length yet. */
+        private void readyTip() {
+            if (tip == null && reserve(1)) {
+                tip = keep(block(owner, at.toLocation(world), NECK, segmentPose(heading, 0)));
+            }
+        }
+
+        private void discardTip() {
+            BlockDisplay unused = tip;
+            tip = null;
+            if (unused != null && unused.isValid()) {
+                unused.remove();
+            }
         }
 
         private boolean stretch(long run) {
@@ -564,6 +580,7 @@ public final class RokurokubiAbility extends Ability {
                 return false;
             }
             grow(next);
+            readyTip();
             if (run % 2 == 0) {
                 Fx.sound(next.toLocation(world), Sound.ENTITY_SLIME_SQUISH, 0.3f, 0.6f + 0.05f * run);
             }
@@ -597,7 +614,10 @@ public final class RokurokubiAbility extends Ability {
             return hit == null ? Double.MAX_VALUE : hit.getHitPosition().distance(at);
         }
 
-        /** The head moves on to {@code next}; a neck segment fills the way it came. */
+        /**
+         * The head moves on to {@code next} (gliding there over the next client tick); the waiting tip segment grows
+         * along the way it came over that same tick, so the neck's end stays in the head.
+         */
         private void grow(Vector next) {
             Vector from = at.clone();
             at = next.clone();
@@ -609,12 +629,21 @@ public final class RokurokubiAbility extends Ability {
             }
             Vector delta = at.clone().subtract(from);
             double length = delta.length();
-            if (length > 0.05 && reserve(1)) {
-                Vector middle = from.clone().add(delta.clone().multiply(0.5));
-                BlockDisplay segment = keep(Displays.block(ctx(), owner, middle.toLocation(world),
-                        NECK.createBlockData(), segmentPose(delta, length), 0));
-                hideFromThoseWhoCannotSee(owner, segment);
-                segments.add(segment);
+            BlockDisplay segment = tip;
+            tip = null;
+            if (length > 0.05) {
+                if (segment != null && segment.isValid()) {
+                    Displays.animate(segment, segmentPose(delta, length), 1);
+                } else {
+                    // No tip was ready (the display budget): a whole segment, the next one is a tip again.
+                    segment = reserve(1) ? keep(block(owner, from.toLocation(world), NECK, segmentPose(delta,
+                            length))) : null;
+                }
+                if (segment != null) {
+                    segments.add(segment);
+                }
+            } else if (segment != null && segment.isValid()) {
+                segment.remove();
             }
             Location spot = at.toLocation(world);
             Vfx.dot(spot, Particle.DUST, SKIN_DUST, false);
@@ -677,34 +706,47 @@ public final class RokurokubiAbility extends Ability {
             finish();
         }
 
-        /** The neck reels back in from the head's end, then the body is free. */
+        /**
+         * The neck reels back in from the head's end, a path point a tick, as fast as it went out: the last segment
+         * shrinks into its root while the head glides back to it, so the head follows every bend instead of cutting
+         * through a corner. Then the body is free.
+         */
         private void reelIn() {
             if (snapped) {
                 return;
             }
             done = true;
-            int total = segments.size();
-            int perTick = Math.max(1, (int) Math.ceil(total / (double) RETRACT_TICKS));
+            discardTip();
             Fx.sound(owner.getLocation(), Sound.ENTITY_SLIME_JUMP_SMALL, 0.7f, 0.6f);
-            Loop.repeat(ctx(), owner, 1, 1, RETRACT_TICKS + 1, run -> {
-                for (int i = 0; i < perTick && !segments.isEmpty(); i++) {
-                    BlockDisplay last = segments.removeLast();
-                    if (last.isValid()) {
-                        last.remove();
-                    }
-                    if (path.size() > 1) {
-                        path.removeLast();
-                    }
+            Loop.repeat(ctx(), owner, 1, 1, segments.size() + 2, run -> {
+                if (segments.isEmpty()) {
+                    return false; // the last one shrank home last tick
+                }
+                BlockDisplay last = segments.removeLast();
+                if (path.size() > 1) {
+                    path.removeLast();
+                }
+                if (last.isValid()) {
+                    Transformation pose = last.getTransformation();
+                    Displays.animate(last, new Transformation(pose.getTranslation(), pose.getLeftRotation(),
+                            new Vector3f(pose.getScale().x, pose.getScale().y, 2 * NECK_OVERLAP),
+                            pose.getRightRotation()), 1);
+                    ctx().runLater(owner, 1, () -> {
+                        if (last.isValid()) {
+                            last.remove();
+                        }
+                    });
                 }
                 ItemDisplay shown = head;
                 if (shown != null && !path.isEmpty()) {
                     Displays.moveTo(shown, path.getLast().toLocation(world));
                 }
-                return !segments.isEmpty();
+                return true;
             }, this::finish);
         }
 
         private void finish() {
+            discardTip();
             for (BlockDisplay segment : segments) {
                 if (segment.isValid()) {
                     segment.remove();
@@ -731,10 +773,16 @@ public final class RokurokubiAbility extends Ability {
         }
     }
 
-    /** A neck segment along {@code delta}, centered on its display. */
+    /**
+     * A neck segment {@code length} long along {@code delta}, from its display (its root) on: growing or shrinking its
+     * length moves only its far end.
+     */
     private static Transformation segmentPose(Vector delta, double length) {
         Quaternionf rotation = pointing(new Vector3f((float) delta.getX(), (float) delta.getY(), (float) delta.getZ()));
-        return box(new Vector3f(), new Vector3f(NECK_WIDTH, NECK_WIDTH, (float) length + 0.06f), rotation);
+        Vector3f translation = new Quaternionf(rotation).transform(new Vector3f(-NECK_WIDTH / 2, -NECK_WIDTH / 2,
+                -NECK_OVERLAP));
+        return new Transformation(translation, rotation, new Vector3f(NECK_WIDTH, NECK_WIDTH,
+                (float) Math.max(0, length) + 2 * NECK_OVERLAP), new Quaternionf());
     }
 
     /** The head turned to look along {@code direction}. */
@@ -752,10 +800,21 @@ public final class RokurokubiAbility extends Ability {
         return Displays.centered(0, (float) height, 0, size, size, size, yaw, pitch, 0);
     }
 
-    /** The flying head at the (shrunk) owner's eyes: a head of its own size, not shrunk with the body. */
-    private static Transformation flyingHeadPose(Player owner, float yaw, float pitch) {
-        return Displays.centered(0, (float) owner.getEyeHeight(), 0, FLYING_HEAD, FLYING_HEAD, FLYING_HEAD, yaw,
-                pitch, 0);
+    /**
+     * The flying head at the (shrunk) owner's eyes, {@code eyes} relative to where it rides (the top of the hitbox): a
+     * head of its own size, not shrunk with the body.
+     */
+    private static Transformation flyingHeadPose(double eyes, float yaw, float pitch) {
+        return Displays.centered(0, (float) eyes, 0, FLYING_HEAD, FLYING_HEAD, FLYING_HEAD, yaw, pitch, 0);
+    }
+
+    /**
+     * The flying owner's eyes relative to the top of its hitbox (where a display riding it is). A flying player stands;
+     * measured from its scale attribute, which (unlike the server's measure of the body) changes at once.
+     */
+    private static double flyingEyes(Player owner) {
+        Body flying = Body.standing(owner);
+        return flying.eyeHeight() - flying.height();
     }
 
     // ================================================================== ultimate: nukekubi
@@ -845,6 +904,9 @@ public final class RokurokubiAbility extends Ability {
             flySpeed = owner.getFlySpeed();
             double scale = Math.clamp(params().num("head_scale"), 0.1, 1.0);
             shrink = ctx().addModifier(owner, owner, Attribute.SCALE, scale - 1, Operation.MULTIPLY_SCALAR_1, 0);
+            // The server measures the shrunk body only on its next tick: pose the head for the flying size now, or it
+            // would drop into place a moment later.
+            double eyes = flyingEyes(owner);
             owner.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, (int) ticks + 40, 0, false, false,
                     true));
             owner.setAllowFlight(true);
@@ -853,11 +915,12 @@ public final class RokurokubiAbility extends Ability {
             owner.setVelocity(new Vector(0, 0.3, 0));
             hideEquipment();
             if (reserve(1)) {
-                head = keep(Displays.item(ctx(), owner, Displays.unrotated(owner.getLocation()), headOf(owner),
-                        flyingHeadPose(owner, owner.getLocation().getYaw(), owner.getLocation().getPitch()), 0));
-                head.setTeleportDuration(FOLLOW_LERP);
-                owner.hideEntity(ctx().plugin(), head);
-                hideFromThoseWhoCannotSee(owner, head);
+                // The head rides the invisible owner: every client draws it exactly where the hitbox it must hit is
+                // (never in the owner's own face).
+                head = keep(item(owner, Displays.unrotated(owner.getLocation().add(0, owner.getHeight(), 0)),
+                        headOf(owner), flyingHeadPose(eyes, owner.getLocation().getYaw(),
+                                owner.getLocation().getPitch()), display -> owner.hideEntity(ctx().plugin(), display)));
+                owner.addPassenger(head);
             }
             Location neckStump = at.clone().add(0, 1.4, 0);
             Vfx.dot(neckStump, Particle.FLASH, LANTERN, true);
@@ -932,9 +995,13 @@ public final class RokurokubiAbility extends Ability {
             hideEquipment();
             Location feet = owner.getLocation();
             ItemDisplay shown = head;
-            if (shown != null) {
-                Displays.moveTo(shown, feet);
-                Displays.animate(shown, flyingHeadPose(owner, feet.getYaw(), feet.getPitch()), 1);
+            if (shown != null && shown.isValid()) {
+                if (!owner.equals(shown.getVehicle()) && shown.getWorld().equals(owner.getWorld())) {
+                    owner.addPassenger(shown);
+                }
+                // Turns with the owner's look over a client's head lerp.
+                Displays.animate(shown, flyingHeadPose(flyingEyes(owner), feet.getYaw(), feet.getPitch()),
+                        FOLLOW_LERP);
             }
             biteAround(feet);
             if (run % 2 == 0 && !hiddenOwner(owner)) {
@@ -1175,6 +1242,30 @@ public final class RokurokubiAbility extends Ability {
         return current != null && entity.equals(current.body);
     }
 
+    /**
+     * A block display of the owner's, hidden from whoever cannot see the owner inside its spawn (before any of them
+     * receives it); removed with the neck or the ability.
+     */
+    private BlockDisplay block(Player owner, Location at, Material type, Transformation pose) {
+        return Displays.spawn(ctx(), owner, at, BlockDisplay.class, 0, display -> {
+            display.setBlock(type.createBlockData());
+            display.setTransformation(pose);
+            hideFromThoseWhoCannotSee(owner, display);
+        });
+    }
+
+    /** {@link #block} for an item (the owner's head); {@code setup} runs inside the spawn too. */
+    private ItemDisplay item(Player owner, Location at, ItemStack stack, Transformation pose,
+                             Consumer<ItemDisplay> setup) {
+        return Displays.spawn(ctx(), owner, at, ItemDisplay.class, 0, display -> {
+            display.setItemStack(stack);
+            display.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
+            display.setTransformation(pose);
+            setup.accept(display);
+            hideFromThoseWhoCannotSee(owner, display);
+        });
+    }
+
     /** Hides {@code display} from every viewer that cannot see the owner (stealth must not be given away). */
     private void hideFromThoseWhoCannotSee(Player owner, Display display) {
         for (Player viewer : Bukkit.getOnlinePlayers()) {
@@ -1226,13 +1317,6 @@ public final class RokurokubiAbility extends Ability {
             return new Quaternionf();
         }
         return new Quaternionf().rotationTo(new Vector3f(0, 0, 1), new Vector3f(direction).normalize());
-    }
-
-    /** A box of {@code size} centered on {@code center} (relative to the display), turned by {@code rotation}. */
-    private static Transformation box(Vector3f center, Vector3f size, Quaternionf rotation) {
-        Vector3f translation = new Vector3f(center).sub(new Quaternionf(rotation).transform(new Vector3f(size)
-                .mul(0.5f)));
-        return new Transformation(translation, new Quaternionf(rotation), new Vector3f(size), new Quaternionf());
     }
 
     private boolean reserve(int count) {

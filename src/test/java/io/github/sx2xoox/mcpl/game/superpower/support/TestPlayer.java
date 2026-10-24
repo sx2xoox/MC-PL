@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.superpower.support;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -20,6 +21,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.RayTracing;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.TestSkinParts;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.VanillaAttributes;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.WorldPhysics;
+import io.papermc.paper.entity.TeleportFlag;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import net.kyori.adventure.key.Key;
@@ -36,6 +38,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.event.player.PlayerInputEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.Plugin;
@@ -65,7 +68,9 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
  *     goes through {@link #setClientVelocity});</li>
  *     <li>Paper's per-viewer entity visibility with {@code setVisibleByDefault} ({@link #canSee(Entity)},
  *     {@link EntityViewer});</li>
- *     <li>the Adventure titles and action bars it was sent ({@link #titles()}, {@link #actionBars()}).</li>
+ *     <li>the Adventure titles and action bars it was sent ({@link #titles()}, {@link #actionBars()});</li>
+ *     <li>Paper 26's teleports of a player carrying passengers ({@link #teleport(Location,
+ *     PlayerTeleportEvent.TeleportCause, TeleportFlag...)}).</li>
  * </ul>
  */
 public final class TestPlayer extends PlayerMock implements Hurtable, EntityViewer, ClientMovement {
@@ -209,6 +214,29 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
             value = true; // chat colours, server listings
         }
         return option.getType().cast(value);
+    }
+
+    // ------------------------------------------------------------------ riding
+
+    /**
+     * Like Paper 26, where the {@code EntityState} teleport flags became the default: a player carrying passengers (a
+     * display worn on its body) keeps them through a teleport within its world, and cannot be teleported to another
+     * world while it carries them. MockBukkit still refuses any teleport of a vehicle not told to retain its
+     * passengers. (MockBukkit does not move passengers with their vehicle: on the server they ride at the top of its
+     * hitbox, {@code getHeight()} over its feet.)
+     */
+    @Override
+    @SuppressWarnings("removal")
+    public boolean teleport(Location location, PlayerTeleportEvent.TeleportCause cause, TeleportFlag... flags) {
+        if (!hasPassengers()) {
+            return super.teleport(location, cause, flags);
+        }
+        if (location.getWorld() != null && !location.getWorld().equals(getWorld())) {
+            return false;
+        }
+        TeleportFlag[] retained = Arrays.copyOf(flags, flags.length + 1);
+        retained[flags.length] = TeleportFlag.EntityState.RETAIN_PASSENGERS;
+        return super.teleport(location, cause, retained);
     }
 
     // ------------------------------------------------------------------ body

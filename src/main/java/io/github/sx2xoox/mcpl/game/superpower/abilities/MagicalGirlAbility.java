@@ -25,6 +25,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
 import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -150,12 +151,12 @@ public final class MagicalGirlAbility extends Ability {
     private static final Material BOW_KNOT = Material.MAGENTA_CONCRETE;
 
     private static final int MAX_DISPLAYS = 24;
-    /**
-     * Ticks a display following a player glides to each new spot: as long as a client lerps a moving player's body
-     * (3 steps), so a follower moved every tick keeps pace with the body instead of trailing or jittering.
-     */
-    private static final int FOLLOW_LERP = 3;
     private static final double TAU = Math.PI * 2;
+    /**
+     * A text display stands its line on its origin: a glyph's middle is about this high over it per unit of scale (a
+     * 10 pixel line at 0.025 blocks a pixel, the glyph in its upper part).
+     */
+    private static final float GLYPH_MIDDLE = 0.14f;
     private static final double MAX_SPEED = 2.0;
     private static final String HEART = "❤";
 
@@ -323,13 +324,21 @@ public final class MagicalGirlAbility extends Ability {
             }
         }
         if (bows < MAX_BOWS && reserve(3)) {
-            Location feet = Displays.unrotated(ally.getLocation());
+            // Whoever cannot see the ally never even receives its bow.
+            List<Player> unseen = new ArrayList<>();
+            for (Player viewer : Bukkit.getOnlinePlayers()) {
+                if (!viewer.equals(ally) && (invisible(ally) || !viewer.canSee(ally))) {
+                    unseen.add(viewer);
+                }
+            }
             for (int i = 0; i < 3; i++) {
-                BlockDisplay part = keep(Displays.block(ctx(), owner, feet, (i == 2 ? BOW_KNOT : BOW).createBlockData(),
-                        bowPose(ally, i, 0.05f), 0));
-                part.setTeleportDuration(FOLLOW_LERP);
+                BlockDisplay part = keep(wear(owner, ally, i == 2 ? BOW_KNOT : BOW, bowPose(ally, i, 0.05f), 0,
+                        unseen));
                 Displays.animateNextTick(ctx(), owner, part, bowPose(ally, i, 1f), 4);
                 ribbon.bow.add(part);
+            }
+            for (Player viewer : unseen) {
+                ribbon.bowHiddenFrom.add(viewer.getUniqueId());
             }
             syncBow(ribbon);
         }
@@ -414,7 +423,7 @@ public final class MagicalGirlAbility extends Ability {
             }
             for (int i = 0; i < ribbon.bow.size(); i++) {
                 BlockDisplay part = ribbon.bow.get(i);
-                Displays.moveTo(part, ally.getLocation());
+                ride(ally, part);
                 Displays.animate(part, bowPose(ally, i, 1f), 2);
             }
             syncBow(ribbon);
@@ -478,7 +487,38 @@ public final class MagicalGirlAbility extends Ability {
         }
     }
 
-    /** Part {@code index} of a ribbon bow on {@code wearer}'s back: two loops and the knot. */
+    /**
+     * A bow worn on {@code wearer}'s back: it rides the wearer, so every client (the wearer's own too) draws it exactly
+     * on the body it shows, instead of trailing a display teleported after it every tick. It is posed relative to where
+     * it rides, the top of the wearer's hitbox; the viewers in {@code unseen} are left out inside the spawn. (A player
+     * carrying passengers cannot be teleported to another world: the match takes them off before it sends its players
+     * home, and the bows go with their ribbon or the ability.)
+     */
+    private BlockDisplay wear(Player owner, Player wearer, Material type, Transformation pose, long lifetime,
+                              List<Player> unseen) {
+        Location top = Displays.unrotated(wearer.getLocation().add(0, wearer.getHeight(), 0));
+        BlockDisplay part = Displays.spawn(ctx(), owner, top, BlockDisplay.class, lifetime, display -> {
+            display.setBlock(type.createBlockData());
+            display.setTransformation(pose);
+            for (Player viewer : unseen) {
+                viewer.hideEntity(ctx().plugin(), display);
+            }
+        });
+        wearer.addPassenger(part);
+        return part;
+    }
+
+    /** Puts a worn bow back on its wearer if something took it off (a respawn gives the player a new body). */
+    private static void ride(Player wearer, Entity part) {
+        if (part.isValid() && !wearer.equals(part.getVehicle()) && part.getWorld().equals(wearer.getWorld())) {
+            wearer.addPassenger(part);
+        }
+    }
+
+    /**
+     * Part {@code index} of a ribbon bow on {@code wearer}'s back (two loops and the knot), relative to where the bow
+     * rides: the top of the wearer's hitbox.
+     */
     private static Transformation bowPose(LivingEntity wearer, int index, float grow) {
         float body = (float) Body.scaleOf(wearer);
         float scale = body * grow;
@@ -487,7 +527,7 @@ public final class MagicalGirlAbility extends Ability {
             yaw = player.getBodyYaw();
         }
         Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(-yaw));
-        Vector3f back = new Vector3f(0, (float) (wearer.getHeight() * 0.78), -0.2f * body);
+        Vector3f back = new Vector3f(0, (float) (wearer.getHeight() * (0.78 - 1)), -0.2f * body);
         if (index == 2) {
             Vector3f center = turn.transform(new Vector3f(back));
             return box(center, new Vector3f(0.09f, 0.09f, 0.07f).mul(scale), new Quaternionf(turn));
@@ -561,8 +601,9 @@ public final class MagicalGirlAbility extends Ability {
             Vfx.cloud(ctx(), at, Particle.DUST_COLOR_TRANSITION, 8, 0.2, 0, GLITTER, false);
             Vfx.cloud(ctx(), at, Particle.END_ROD, 4, 0.1, 0.03, null, false);
             if (reserve(1)) {
-                sprite = keep(Displays.text(ctx(), owner, Displays.unrotated(at), Text.mm("<" + PINK_TAG + ">" + HEART
-                        + "</" + PINK_TAG + ">"), HEART_SCALE, 0));
+                // Centred on the heart's path (its glitter and its hits follow that line).
+                sprite = keep(glyph(owner, Displays.unrotated(at), Text.mm("<" + PINK_TAG + ">" + HEART + "</"
+                        + PINK_TAG + ">"), glyphPose(HEART_SCALE), 0));
                 sprite.setTeleportDuration(1);
                 sprite.setGlowing(false);
             }
@@ -762,7 +803,13 @@ public final class MagicalGirlAbility extends Ability {
             TextDisplay shown = sprite;
             sprite = null;
             if (shown != null && shown.isValid()) {
-                Displays.shrinkAway(ctx(), owner, shown, 4);
+                // It shrinks into its middle, where it flew.
+                Displays.animate(shown, glyphPose(0.001f), 4);
+                ctx().runLater(owner, 4, () -> {
+                    if (shown.isValid()) {
+                        shown.remove();
+                    }
+                });
             }
             Vfx.cloud(ctx(), at, Particle.DUST_COLOR_TRANSITION, sweet ? 10 : 5, 0.3, 0, GLITTER, false);
             Fx.sound(at, Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 0.6f, 1.6f + Fx.jitter(0.1f));
@@ -856,25 +903,22 @@ public final class MagicalGirlAbility extends Ability {
     /** Stars orbit and rise around the girl while the ribbons wrap her. */
     private void orbitStars(Player owner, long ticks) {
         List<TextDisplay> stars = new ArrayList<>();
+        Location base = owner.getLocation();
         if (reserve(TRANSFORM_STARS)) {
-            Location feet = Displays.unrotated(owner.getLocation());
             for (int i = 0; i < TRANSFORM_STARS; i++) {
                 String glyph = i % 2 == 0 ? "<" + GOLD_TAG + ">★</" + GOLD_TAG + ">" : "<" + PINK_TAG + ">" + HEART
                         + "</" + PINK_TAG + ">";
-                TextDisplay star = keep(Displays.text(ctx(), owner, feet, Text.mm(glyph), 1.1f, ticks + 6));
+                // Each star appears on its own place in the orbit (not all in a clump at the feet).
+                TextDisplay star = keep(Displays.text(ctx(), owner, Displays.unrotated(starSpot(base, i,
+                        TRANSFORM_STARS, 0, ticks)), Text.mm(glyph), 1.1f, ticks + 6));
                 star.setTeleportDuration(1);
                 stars.add(star);
             }
         }
-        Location base = owner.getLocation();
         Loop.repeat(ctx(), owner, 0, 1, ticks, run -> {
             double t = (double) run / Math.max(1, ticks);
             for (int i = 0; i < stars.size(); i++) {
-                double angle = run * 0.32 + i * TAU / Math.max(1, stars.size());
-                double radius = 1.1 - 0.35 * t;
-                Location spot = base.clone().add(Math.cos(angle) * radius, 0.2 + t * 2.0 + (i % 2) * 0.25,
-                        Math.sin(angle) * radius);
-                Displays.moveTo(stars.get(i), spot);
+                Displays.moveTo(stars.get(i), starSpot(base, i, stars.size(), run, ticks));
             }
             Vfx.helix(ctx(), base, 0.75, 2.4, 1.5, 3, 7, run * 0.4, Particle.DUST, run % 2 == 0 ? PINK_DUST
                     : SKY_DUST, true);
@@ -889,10 +933,19 @@ public final class MagicalGirlAbility extends Ability {
         }, () -> {
             for (TextDisplay star : stars) {
                 if (star.isValid()) {
-                    star.remove();
+                    Displays.shrinkAway(ctx(), owner, star, 4);
                 }
             }
         });
+    }
+
+    /** Where star {@code index} of {@code count} is on run {@code run} of the {@code ticks} long orbit. */
+    private static Location starSpot(Location base, int index, int count, long run, long ticks) {
+        double t = (double) run / Math.max(1, ticks);
+        double angle = run * 0.32 + index * TAU / Math.max(1, count);
+        double radius = 1.1 - 0.35 * t;
+        return base.clone().add(Math.cos(angle) * radius, 0.2 + t * 2.0 + (index % 2) * 0.25,
+                Math.sin(angle) * radius);
     }
 
     private void tickTransformation(Player owner, long now) {
@@ -939,12 +992,10 @@ public final class MagicalGirlAbility extends Ability {
         if (!reserve(3)) {
             return;
         }
-        Location feet = Displays.unrotated(owner.getLocation());
         long life = Math.max(1, girlUntil - ctx().currentTick()) + 5;
         for (int i = 0; i < 3; i++) {
-            BlockDisplay part = keep(Displays.block(ctx(), owner, feet, (i == 2 ? BOW_KNOT : BOW).createBlockData(),
-                    bigBowPose(owner, i, 0.05f), life));
-            part.setTeleportDuration(FOLLOW_LERP);
+            BlockDisplay part = keep(wear(owner, owner, i == 2 ? BOW_KNOT : BOW, bigBowPose(owner, i, 0.05f), life,
+                    List.of()));
             Displays.animateNextTick(ctx(), owner, part, bigBowPose(owner, i, 1f), 5);
             outfit.add(part);
         }
@@ -958,7 +1009,7 @@ public final class MagicalGirlAbility extends Ability {
     private void girlStep(Player owner, long tick) {
         for (int i = 0; i < outfit.size(); i++) {
             BlockDisplay part = outfit.get(i);
-            Displays.moveTo(part, owner.getLocation());
+            ride(owner, part);
             Displays.animate(part, bigBowPose(owner, i, 1f), 2);
         }
         boolean grounded = Motion.isGrounded(owner) || owner.isInWater();
@@ -1052,16 +1103,20 @@ public final class MagicalGirlAbility extends Ability {
         long delay = Math.max(1, params().ticks("finale_delay"));
         double radius = Math.max(0.5, params().num("finale_radius"));
         TextDisplay giant = null;
+        // It lands (stands on the spot) when its fall started next tick has run its course.
+        long fall = Math.min(59, delay);
+        long lands = ctx().currentTick() + 1 + fall;
         if (reserve(1)) {
-            giant = keep(Displays.text(ctx(), owner, spot.clone().add(0, FINALE_LIFT, 0), Text.mm("<" + PINK_TAG + ">"
-                    + HEART + "</" + PINK_TAG + ">"), 0.5f, delay + 4));
-            giant.setTeleportDuration((int) Math.min(59, delay));
+            giant = keep(glyph(owner, spot.clone().add(0, FINALE_LIFT, 0), Text.mm("<" + PINK_TAG + ">" + HEART + "</"
+                    + PINK_TAG + ">"), Displays.centered(0, 0, 0, 0.5f, 0.5f, 0.5f, 0, 0, 0), fall + 20));
+            giant.setTeleportDuration((int) fall);
             TextDisplay grown = giant;
             ctx().runLater(owner, 1, () -> {
                 Displays.animate(grown, Displays.centered(0, 0, 0, 14f, 14f, 14f, 0, 0, 0), (int) Math.min(40, delay));
                 Displays.moveTo(grown, spot.clone().add(0, 0.6, 0));
             });
         }
+        TextDisplay heart = giant;
         Fx.sound(owner.getLocation(), Sound.BLOCK_BELL_RESONATE, 1.0f, 1.8f);
         Fx.sound(spot, Sound.BLOCK_BEACON_POWER_SELECT, 1.0f, 1.4f);
         owner.sendActionBar(Text.mm("<" + PINK_TAG + "><b>사랑의 피날레!</b></" + PINK_TAG + ">"));
@@ -1076,10 +1131,18 @@ public final class MagicalGirlAbility extends Ability {
                 Fx.sound(spot, Sound.BLOCK_NOTE_BLOCK_BELL, 0.8f, 1.0f + 0.15f * (run / 5));
             }
             return true;
-        }, () -> land(owner, spot, radius));
+        }, () -> land(owner, spot, radius, heart, lands));
     }
 
-    private void land(Player owner, Location spot, double radius) {
+    private void land(Player owner, Location spot, double radius, @Nullable TextDisplay heart, long lands) {
+        if (heart != null && heart.isValid()) {
+            // The giant heart bursts into the ground once it is down, instead of vanishing on its lifetime.
+            ctx().runLater(owner, Math.max(1, lands - ctx().currentTick()), () -> {
+                if (heart.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, heart, 5);
+                }
+            });
+        }
         int friends = 0;
         double allyRange = Math.max(0, params().num("finale_ally_range"));
         for (Player ally : ctx().alliesNear(owner, owner.getLocation(), allyRange)) {
@@ -1203,6 +1266,25 @@ public final class MagicalGirlAbility extends Ability {
     }
 
     // ================================================================== helpers
+
+    /**
+     * A camera-facing glyph without background or shadow (a text shadow grows with the scale: on a big heart it is a
+     * dark copy beside it).
+     */
+    private TextDisplay glyph(Player owner, Location at, Component text, Transformation pose, long lifetime) {
+        return Displays.spawn(ctx(), owner, at, TextDisplay.class, lifetime, display -> {
+            display.text(text);
+            display.setBillboard(Display.Billboard.CENTER);
+            display.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+            display.setShadowed(false);
+            display.setTransformation(pose);
+        });
+    }
+
+    /** A glyph at {@code scale} with its middle on the display (not standing on it). */
+    private static Transformation glyphPose(float scale) {
+        return Displays.centered(0, -GLYPH_MIDDLE * scale, 0, scale, scale, scale, 0, 0, 0);
+    }
 
     private static void removeOwnSlowFalling(Player owner) {
         PotionEffect effect = owner.getPotionEffect(PotionEffectType.SLOW_FALLING);
