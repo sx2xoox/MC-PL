@@ -71,12 +71,9 @@ public final class KoscheiAbility extends Ability {
             .color(TextColor.color(0xB8963E))
             .difficulty(2)
             .passive("숨겨 둔 죽음",
-                    "내 죽음이 든 알(체력 {egg_health})이 전장(경계 안)에 있고 {egg_range}블록 안에 있는 동안 나는 체력 "
-                            + "1 아래로 떨어지지 않고, 넘친 피해는 알이 대신 받습니다. 알은 모두에게 보이고(벽 너머로도 "
-                            + "희미하게 빛남) 적이 근접 공격·화살·능력으로 부술 수 있으며, {egg_safe_radius}블록 안에 적이 "
-                            + "없으면 "
-                            + "{egg_regen_interval}초마다 {egg_regen} 회복합니다. 알이 깨지면 나는 {break_damage} 피해를 "
-                            + "입고 다시 숨길 때까지 평범한 몸이 됩니다. 경기가 시작되면 알은 내 발밑에 놓입니다.")
+                    "내 죽음이 든 알(체력 {egg_health})이 {egg_range}블록 안에 있으면 체력이 1 아래로 떨어지지 않고 넘친 "
+                            + "피해는 알이 받습니다. 적은 알을 공격해 부술 수 있고, 알이 깨지면 나는 {break_damage} 피해를 "
+                            + "입습니다. 알은 경기 시작 때 내 발밑에 놓입니다.")
             .active("죽음 숨기기",
                     "조준한 바닥이나 적의 발밑({hide_range}블록 이내)에 쇠 상자를 묻어 알을 숨깁니다(알이 있으면 옮기고, 깨졌으면 "
                             + "새로 만듭니다). 상자가 솟아오르는 자리 반경 {box_radius}블록의 적은 {box_damage} 피해를 "

@@ -63,25 +63,20 @@ public final class BlockFallAbility extends Ability {
             .color(TextColor.color(0xC0703F))
             .difficulty(3)
             .passive("줄 폭파",
-                    "내가 떨어뜨린 조각이 같은 높이에서 가로로 {line_length}칸 이상 이어지거나 위로 {stack_height}칸 이상 "
-                            + "쌓이면 그 줄이 번쩍이며 터져, 줄에서 {line_radius}블록 안의 적에게 {line_damage} 피해를 주고 "
-                            + "위로 튕겨 냅니다(같은 적은 {line_hit_cooldown}초마다). 새 조각은 {snap_range}블록 안에 있는 내 "
-                            + "조각 옆에 같은 높이로 착 달라붙어, 두 조각만으로도 줄을 맞출 수 있습니다.")
+                    "내 조각이 같은 높이로 가로 {line_length}칸 이상 이어지거나 위로 {stack_height}칸 이상 쌓이면 그 줄이 "
+                            + "터져, {line_radius}블록 안의 적에게 {line_damage} 피해를 주고 띄웁니다. 새 조각은 "
+                            + "{snap_range}블록 안의 내 조각 옆에 달라붙습니다.")
             .active("조각 떨구기",
-                    "조준한 바닥({drop_range}블록 이내) {drop_height}블록 위에 3칸이나 5칸짜리 조각(돌·벽돌·참나무·구리·"
-                            + "이끼 돌 중 하나, 모양은 무작위)이 나타나 {drop_time}초에 걸쳐 천천히 내려옵니다. 내려오는 동안 "
-                            + "시선을 좌우로 돌리면 한 칸씩 옮겨지고, 웅크리면 '쾅' 하고 바로 떨어집니다. 깔린 적은 "
-                            + "{crush_damage} 피해를 입고 옆으로 밀려나며, 바로 떨어뜨렸다면 대신 {slam_damage} 피해와 "
-                            + "{slam_stun}초 기절(이동·점프 불가)을 입습니다. 떨어진 조각은 {piece_duration}초간 블록으로 남아 "
-                            + "엄폐물과 발판이 됩니다.",
+                    "조준한 바닥({drop_range}블록 이내) 위에 무작위 조각이 나타나 {drop_time}초에 걸쳐 내려옵니다. 시선을 "
+                            + "좌우로 돌리면 옮겨지고 웅크리면 바로 떨어집니다. 깔린 적은 {crush_damage} 피해를 입고 "
+                            + "밀려나며, 바로 떨어뜨리면 대신 {slam_damage} 피해와 {slam_stun}초 기절을 줍니다. 조각은 "
+                            + "{piece_duration}초간 블록으로 남습니다.",
                     7)
             .ultimate("올 클리어",
-                    "조준한 곳({board_range}블록 이내)에 모두에게 보이는 {board_size}×{board_size} 판의 테두리를 그리고, "
-                            + "{board_size}칸짜리 막대를 먼 쪽 줄부터 {bar_interval}초 간격으로 한 줄씩 떨어뜨려 판을 "
-                            + "채웁니다. 막대에 깔린 적은 {bar_damage} 피해를 입고 막대 위로 올려집니다(적마다 한 번). 판이 다 "
-                            + "차면 '올 클리어!' 판 전체가 터져 판 위의 적에게 {clear_damage} 피해를 주고 바닥에서 "
-                            + "{clear_launch}블록 높이로 띄웁니다. "
-                            + "채워지는 줄을 보고 가장자리 밖으로 걸어 나가면 피할 수 있습니다.")
+                    "조준한 곳({board_range}블록 이내)에 {board_size}×{board_size} 판을 그리고 먼 쪽 줄부터 "
+                            + "{bar_interval}초 간격으로 막대를 떨어뜨려 채웁니다. 깔린 적은 {bar_damage} 피해를 입고 막대 "
+                            + "위로 올려집니다. 판이 다 차면 판 위의 적에게 {clear_damage} 피해를 주고 {clear_launch}블록 "
+                            + "띄웁니다. 판 밖으로 걸어 나가면 피할 수 있습니다.")
             .param("line_length", 6)
             .param("stack_height", 2)
             .param("line_radius", 2)

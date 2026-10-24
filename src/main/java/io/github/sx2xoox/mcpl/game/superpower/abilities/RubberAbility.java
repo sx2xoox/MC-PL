@@ -81,29 +81,22 @@ public final class RubberAbility extends Ability {
             .color(TextColor.color(0x5FD3B5))
             .difficulty(2)
             .passive("늘어나는 팔",
-                    "힘을 모은 근접 공격(공격 게이지 {stretch_charge}% 이상)만 팔이 쭉 늘어나 사거리가 {stretch_reach}블록 "
-                            + "늘어납니다. 고무 몸이라 낙하 피해를 받지 않는 대신 바닐라 넉백을 {knockback_taken}% 더 "
-                            + "받습니다. 얼어붙음·눈덩이·빙판 같은 냉기 피해를 받으면 {harden_duration}초간 고무가 굳어 "
-                            + "늘어나는 팔이 사라지고 이동 속도가 {harden_slow}% 느려집니다.")
+                    "힘을 모은 근접 공격(공격 게이지 {stretch_charge}% 이상)은 사거리가 {stretch_reach}블록 늘어납니다. "
+                            + "낙하 피해를 받지 않지만 넉백을 {knockback_taken}% 더 받고, 냉기 피해를 받으면 "
+                            + "{harden_duration}초간 굳어 팔이 늘어나지 않고 이동 속도가 {harden_slow}% 느려집니다.")
             .active("고무줄 튕기기",
-                    "두 팔을 쭉 늘여 바라보는 곳({band_min}~{band_max}블록 앞) 양쪽 바닥이나 벽에 손을 박고, 폭 최대 "
-                            + "{band_width}·높이 {band_height}블록의 고무줄을 {band_duration}초간 걸어 둡니다(내가 "
-                            + "{band_leash}블록 넘게 멀어지면 풀림). 나와 아군은 그냥 지나가지만, 줄을 넘으려는 적은 줄이 쭉 "
-                            + "늘어났다 '팅' — {snap_damage} 피해를 입고 온 쪽으로 약 {snap_bounce}블록 되튕겨 "
-                            + "{snap_stagger}초간 휘청입니다(이동 속도 -{stagger_slow}%, 적마다 최대 {snap_max}번, 남에게 "
-                            + "밀려 넘어와도 튕김). 줄 너머로 휘두른 적의 근접 공격은 줄에 막히고, 힘을 모은 타격(공격 "
-                            + "게이지 {cut_charge}% 이상) {cut_hits}번에 줄이 '툭' 끊기며 남은 쿨타임이 절반으로 줄어듭니다. "
-                            + "웅크리면 줄을 놓아 앞으로 '탁' 튕기며 줄 너머 {release_reach}블록 안의 "
-                            + "적에게 {release_damage} 피해를 주고 약 {release_push}블록 밀쳐냅니다.",
+                    "앞쪽 {band_min}~{band_max}블록에 폭 {band_width}·높이 {band_height}블록 고무줄을 {band_duration}초간 "
+                            + "겁니다({band_leash}블록 넘게 멀어지면 풀림). 넘으려는 적은 {snap_damage} 피해를 입고 약 "
+                            + "{snap_bounce}블록 되튕겨 {snap_stagger}초간 {stagger_slow}% 느려집니다(적마다 {snap_max}번). "
+                            + "적이 힘을 모아({cut_charge}%) {cut_hits}번 치면 끊기고 남은 쿨타임이 절반이 됩니다. 웅크리면 줄을 "
+                            + "놓아 너머 {release_reach}블록의 적에게 {release_damage} 피해를 주고 {release_push}블록 밀칩니다.",
                     9)
             .ultimate("빵빵 부풀기",
-                    "숨을 크게 들이마셔 {ball_duration}초간 {ball_scale}배 크기의 동그란 고무공이 됩니다. 공격과 액티브를 "
-                            + "쓸 수 없지만 받는 피해가 {ball_guard}% 줄고 이동 속도가 {ball_speed}%, 점프력이 "
-                            + "{ball_jump}% 늘어납니다. 몸에 닿은 적은 '뽀용' {bump_damage} 피해를 입고 약 {bump_bounce}블록 "
-                            + "튕겨 나갑니다(같은 적은 {bump_cooldown}초마다). 튕겨 나간 적이 벽이나 다른 적에 부딪히면 "
-                            + "부딪힌 적 모두 {crash_damage} 피해를 입고 {crash_stagger}초간 휘청이며(적마다 최대 "
-                            + "{crash_max}번), 맞은 적은 당구공처럼 이어서 튕겨 나갑니다. 끝나거나 F를 다시 누르면 "
-                            + "'피쉬식' 바람이 빠집니다.")
+                    "{ball_duration}초간 {ball_scale}배 크기의 고무공이 되어 공격과 액티브를 쓸 수 없는 대신 받는 피해 "
+                            + "-{ball_guard}%, 이동 속도 +{ball_speed}%, 점프력 +{ball_jump}%를 얻습니다. 닿은 적은 "
+                            + "{bump_damage} 피해를 입고 약 {bump_bounce}블록 튕겨 나가며(같은 적은 {bump_cooldown}초마다), "
+                            + "벽이나 다른 적에 부딪히면 부딪힌 적 모두 {crash_damage} 피해를 입고 {crash_stagger}초간 "
+                            + "휘청입니다(적마다 {crash_max}번). F를 다시 누르면 일찍 끝납니다.")
             .ultimateNotStandalone()
             .param("stretch_charge", 90)
             .param("stretch_reach", 0.75)

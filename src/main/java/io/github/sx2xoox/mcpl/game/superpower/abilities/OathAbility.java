@@ -61,24 +61,20 @@ public final class OathAbility extends Ability {
             .color(TextColor.color(0xE6B422))
             .difficulty(3)
             .passive("맹세의 무게",
-                    "맹세를 지키는 동안 주는 피해가 {vow_bonus}% 늘고 몸 주위에 금빛 글자 띠가 돕니다. 맹세를 어기면 \"맹세 "
-                            + "위반!\" 띠가 붉게 타며 {break_damage} 피해(죽지는 않음)를 입고 {break_bind}초간 이동 속도가 "
-                            + "{break_slow}% 느려지며 {break_silence}초간 침묵합니다. 맹세를 끝까지 지키고 그동안 적에게 "
-                            + "{fulfil_damage} 이상 피해를 줬다면 '성취' — 체력 {fulfil_heal} 회복과 궁극기 게이지 "
+                    "맹세를 지키는 동안 주는 피해가 {vow_bonus}% 늘어납니다. 어기면 {break_damage} 피해(죽지는 않음)를 "
+                            + "입고 {break_bind}초간 {break_slow}% 느려지며 {break_silence}초간 침묵합니다. 끝까지 지키며 "
+                            + "{fulfil_damage} 이상 피해를 줬다면 체력을 {fulfil_heal} 회복하고 궁극기 게이지 "
                             + "{fulfil_gauge}%를 얻습니다.")
             .active("맹세",
-                    "{vow_duration}초짜리 맹세를 선언합니다(머리 위 글자와 액션바로 모두에게 알려집니다). 그냥 쓰면 '세 번 "
-                            + "벤다' — 그 안에 적을 {strike_count}번 맞히지(근접·능력) 못하면 위반입니다. 웅크리고 쓰면 "
-                            + "'물러서지 않는다' — 뒤로 걷기 키를 누르거나 가장 가까운 적({retreat_range}블록 이내)에게서 "
-                            + "멀어지는 쪽으로 걸으면 위반이고(남에게 밀려나는 건 상관없음), 대신 넉백을 받지 않습니다. 점프 "
-                            + "중에 쓰면 '움직이지 않는다' — 착지 후 {still_duration}초간 이동·점프 키를 누르면 위반이고, 대신 "
-                            + "근접 피해 보너스가 {still_bonus}%로 오르고 받는 피해가 {still_guard}% 줄어듭니다.",
+                    "모두가 볼 수 있는 {vow_duration}초짜리 맹세를 겁니다. 그냥 쓰면 그 안에 적을 {strike_count}번 "
+                            + "맞혀야 합니다. 웅크리고 쓰면 뒤로 걷거나 가장 가까운 적({retreat_range}블록 이내)에게서 "
+                            + "멀어지면 위반이고 넉백을 받지 않습니다. 점프 중에 쓰면 착지 후 {still_duration}초간 움직이면 "
+                            + "위반이고 근접 피해 보너스가 {still_bonus}%로 오르며 받는 피해가 {still_guard}% 줄어듭니다.",
                     10)
             .ultimate("목숨을 건 맹세",
-                    "{life_duration}초간 '이 싸움에서 물러서지 않는다' — 이동 속도 +{life_speed}%, 근접 피해 "
-                            + "+{life_bonus}%, 넉백 면역. 대신 능력을 쓸 수 없고 받는 피해가 {life_vulnerable}% 늘며, 뒤로 "
-                            + "걷기 키를 누르는 동안에는 한 걸음도 움직일 수 없습니다. 그 안에 적을 처치하면 맹세 성취 — 체력 "
-                            + "{life_heal} 회복. 못 하면 대가로 {life_cost} 피해를 입습니다(체력 1은 남김).")
+                    "{life_duration}초간 이동 속도 +{life_speed}%, 근접 피해 +{life_bonus}%, 넉백 면역을 얻는 대신 능력을 "
+                            + "쓸 수 없고 받는 피해가 {life_vulnerable}% 늘며 뒤로 물러설 수 없습니다. 그 안에 적을 처치하면 "
+                            + "체력을 {life_heal} 회복하고, 못 하면 {life_cost} 피해를 입습니다(체력 1은 남김).")
             .ultimateNotStandalone()
             .param("vow_bonus", 30)
             .param("break_damage", 4)
