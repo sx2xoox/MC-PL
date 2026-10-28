@@ -56,4 +56,13 @@ public interface AugmentContext {
      * hooks of any augment (no loops between reflecting augments).
      */
     void damage(LivingEntity target, double amount);
+
+    /**
+     * {@link #track Tracks} {@code entity} and credits everything it does to the owner (kill credit, the PvP gate of
+     * the farming phase, teams): for summoned helpers such as tamed animals.
+     */
+    <T extends Entity> T summon(T entity);
+
+    /** Hides {@code entity} from everyone but the owner (best called in its spawn consumer). */
+    void showOnlyToOwner(Entity entity);
 }

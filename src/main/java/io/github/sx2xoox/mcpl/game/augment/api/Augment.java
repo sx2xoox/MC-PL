@@ -3,9 +3,12 @@ package io.github.sx2xoox.mcpl.game.augment.api;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.player.PlayerExpChangeEvent;
+import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 
 /**
@@ -76,5 +79,21 @@ public interface Augment {
 
     /** The owner was credited with killing {@code victim}, an enemy participant. */
     default void onKill(Player victim) {
+    }
+
+    /**
+     * A block the owner broke drops its items ({@code HIGH} priority, not cancelled): change the dropped
+     * {@link org.bukkit.entity.Item}s here. The block is already gone; its type is in
+     * {@link BlockDropItemEvent#getBlockState()}.
+     */
+    default void onBlockDrop(BlockDropItemEvent event) {
+    }
+
+    /** The owner eats or drinks {@link PlayerItemConsumeEvent#getItem()} ({@code HIGH} priority, not cancelled). */
+    default void onConsume(PlayerItemConsumeEvent event) {
+    }
+
+    /** The owner is about to gain experience points ({@code HIGH} priority): change the amount here. */
+    default void onExpChange(PlayerExpChangeEvent event) {
     }
 }

@@ -199,4 +199,22 @@ final class AugmentSlot implements AugmentContext {
             match.damage(owner, target, amount);
         }
     }
+
+    @Override
+    public <T extends Entity> T summon(T entity) {
+        track(entity);
+        if (!removed) {
+            match.session().combat().registerOwner(entity, player());
+        }
+        return entity;
+    }
+
+    @Override
+    public void showOnlyToOwner(Entity entity) {
+        entity.setVisibleByDefault(false);
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null) {
+            player.showEntity(match.game().hub().plugin(), entity);
+        }
+    }
 }
