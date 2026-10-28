@@ -16,7 +16,8 @@ import org.bukkit.configuration.MemoryConfiguration;
  * @param max         the most bots one match may have
  * @param names       bot names ("철수" → "철수 봇"), used in order
  * @param skins       Minecraft account names whose skins the bots wear (empty: default skins)
- * @param moveSpeed   walking speed of a bot's legs (movement speed attribute of its pathing mob)
+ * @param moveSpeed   movement speed attribute of a bot's legs (its pathing mob); {@link BotMotion#REFERENCE_ATTRIBUTE}
+ *                    moves exactly like a player (walking, sprinting), the speed grows with its square
  * @param profiles    how well each difficulty plays
  * @param spectate    봇 관전전 ({@code bots.spectate.*})
  */
@@ -124,7 +125,8 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         d.set(SKINS, List.of());
         d.setComments(SKINS, List.of("봇이 입을 스킨의 마인크래프트 계정 이름 (비우면 기본 스킨)"));
         d.set(SPEED, 0.32);
-        d.setComments(SPEED, List.of("봇의 걷는 속도 (길찾기 몹의 이동 속도 속성; 사람 달리기와 비슷하게 맞춘 값)"));
+        d.setComments(SPEED, List.of("봇의 이동 속도 (길찾기 몹의 이동 속도 속성). 0.32 = 사람과 같은 속도: 가까이는 걷고(4.3블록/초)",
+                "멀리 갈 때·쫓을 때·도망칠 때·보더를 피할 때는 달립니다(5.6블록/초). 속도는 이 값의 제곱에 비례합니다."));
         for (BotDifficulty difficulty : BotDifficulty.values()) {
             String path = "bots." + difficulty.key();
             BotProfile.preset(difficulty).toConfig().forEach((key, value) -> d.set(path + "." + key, value));

@@ -16,6 +16,7 @@ import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotController;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotDifficulty;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotMotion;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotSettings;
 import io.github.sx2xoox.mcpl.game.augment.command.BotCommand;
 import io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch;
@@ -246,6 +247,91 @@ class AugmentSpectateTest {
         assertTrue(session.isBot(result.winners().getFirst()));
     }
 
+    /**
+     * Moves every bot's legs along its last path like the server would (the mock pathfinder does not walk): straight
+     * to the destination at the pace the path's speed gives on flat ground.
+     */
+    private static void walk(AugmentMatch match) {
+        for (BotController bot : match.bots().all()) {
+            if (bot.body() == null || bot.body().body().isDead()) {
+                continue;
+            }
+            var legs = bot.body().legs();
+            var pathfinder = (io.github.sx2xoox.mcpl.game.superpower.support.world.MockEntities.RecordingPathfinder)
+                    legs.getPathfinder();
+            if (!pathfinder.hasPath() || pathfinder.destinations().isEmpty()) {
+                continue;
+            }
+            Location to = pathfinder.destinations().getLast();
+            Location at = legs.getLocation();
+            double step = BotMotion.groundSpeed(0.32, pathfinder.speeds().getLast()) / 20;
+            double dx = to.getX() - at.getX();
+            double dz = to.getZ() - at.getZ();
+            double distance = Math.hypot(dx, dz);
+            if (distance < 0.2) {
+                pathfinder.stopPathfinding();
+                continue;
+            }
+            double f = Math.min(1, step / distance);
+            Location next = at.clone().add(dx * f, 0, dz * f);
+            next.setY(at.getWorld().getHighestBlockYAt(next) + 1);
+            legs.teleport(next);
+        }
+    }
+
+    @Test
+    void aTypicalBotOnlyMatchIsWonByABotThatFought() {
+        h.settings().set(BotSettings.Spectate.BORDER_DELAY, 20);
+        h.settings().set(BotSettings.Spectate.BORDER_SHRINK, 90);
+        AugmentMatch match = spectate("4 보통");
+        GameSession session = match.session();
+        h.tickUntilPhase(MatchPhase.FIGHT);
+        // scattered over the world as spawned: they have to find each other
+        for (int t = 0; t < 20 * 240 && session.state() == GameState.RUNNING; t++) {
+            for (BotController bot : match.bots().all()) {
+                if (bot.body() != null) {
+                    Mannequin body = bot.body().body();
+                    body.setNoDamageTicks(Math.max(0, body.getNoDamageTicks() - 1));
+                }
+            }
+            walk(match);
+            h.ticks(1);
+            if (t % 100 == 0) {
+                chat(admin);
+                chat(viewer);
+            }
+        }
+        assertEquals(GameState.ENDING, session.state(), "settled among themselves");
+        GameResult result = session.result();
+        assertNotNull(result);
+        assertEquals(1, result.winners().size());
+        UUID winner = result.winners().getFirst();
+        assertTrue(session.stats().of(winner).kills() >= 1, "the winner fought for it: "
+                + session.stats().of(winner).kills() + " kills");
+    }
+
+    @Test
+    void aFastClockNeverMakesTheBorderOutrunTheBots() {
+        h.settings().set(AugmentSettings.RADIUS, 400);
+        h.settings().set(AugmentSettings.PREGENERATE, false);
+        h.settings().set(BotSettings.Spectate.BORDER_SHRINK, 360);
+        AugmentMatch match = spectate("2 보통");
+        assertTrue(match.setTimeScale(4));
+        assertEquals(4.0, match.clockRate(), 1.0E-9, "the farming runs four times as fast");
+        assertEquals(AugmentMatch.PhaseStep.FIGHT, match.advancePhase());
+        assertEquals(4.0, match.clockRate(), 1.0E-9, "the border delay too");
+        assertEquals(AugmentMatch.PhaseStep.SHRINK, match.advancePhase(), "the border starts closing");
+        assertTrue(match.borderShrinking());
+        double rate = match.clockRate();
+        assertTrue(rate < 4 && rate >= 1, "but not the shrink: " + rate);
+        double edge = BotMotion.borderEdgeSpeed(rate, 800, 24, 360 * 20);
+        assertTrue(edge <= 0.7 * BotMotion.SPRINT_BPS + 1.0E-6, "the edge moves at most 70 % of a sprint: " + edge);
+        double before = match.borderHalfIn(0);
+        h.ticks(20);
+        double moved = before - match.borderHalfIn(0);
+        assertTrue(moved > 0 && moved <= 0.7 * BotMotion.SPRINT_BPS + 0.2, "blocks in a real second: " + moved);
+    }
+
     @Test
     void theWorldBorderHurtsBotsOutsideItToABorderDeath() {
         h.settings().set(BotSettings.Spectate.BORDER_DELAY, 600);
@@ -331,8 +417,9 @@ class AugmentSpectateTest {
         hit(b, a, 3);
         assertEquals(health, b.getHealth(), 1.0E-9, "farming: bots cannot hurt each other");
         h.tickUntilPhase(MatchPhase.FIGHT);
+        double before = b.getHealth(); // (a 강철 체력 augment of the farming may have raised it)
         hit(b, a, 3);
-        assertTrue(b.getHealth() < health, "fight: they can");
+        assertTrue(b.getHealth() < before, "fight: they can");
     }
 
     // =================================================================== spectator tools

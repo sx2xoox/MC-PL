@@ -11,6 +11,7 @@ import java.util.UUID;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotBrain.Behaviour;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotBrain.Contact;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotBrain.Decision;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotMotion.Gait;
 import org.bukkit.HeightMap;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -34,6 +35,7 @@ import org.bukkit.entity.WanderingTrader;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -56,12 +58,23 @@ public final class BotController {
     static final int APPLE_TICKS = 32;
     /** After walling itself in once, how long before it may do it again. */
     static final int FORTIFY_COOLDOWN = 30 * 20;
+    /** The longest it stays walled in: a short pause to heal, never a place to sit out the match. */
+    static final int FORTIFY_TICKS = 8 * 20;
     /** A player with food heals about 1 health every 4 s out of combat; so does a bot (it does not eat). */
     static final int REGEN_TICKS = 80;
     static final int REGEN_AFTER_HURT = 100;
 
-    private record Seen(LivingEntity entity, Location at, long tick, double distance, double previous) {
+    /** Someone perceived; {@code inSight} if in line of sight (else heard, or glowing through a wall). */
+    private record Seen(LivingEntity entity, Location at, long tick, double distance, double previous,
+                        boolean inSight) {
     }
+
+    /** After this long without a fight (dealt or taken) a bot is fully "idle" and goes looking for one. */
+    static final int IDLE_TICKS = 60 * 20;
+    /** Where a rival was last seen or heard is a lead worth following this long (beyond the short memory). */
+    static final int LEAD_TICKS = 60 * 20;
+    /** Fights (hits) are heard this far away, like a player hears swords and bows. */
+    static final double FIGHT_HEARING = 48;
 
     private final UUID id;
     private final String name;
@@ -123,6 +136,17 @@ public final class BotController {
     private @Nullable Location lastPos;
     private long lastMoveCheck;
     private float lastFall;
+    private Gait gait = Gait.WALK;
+    private double pathSpeed;
+    /** When it last dealt or took PvP damage (-1: never). */
+    private long lastFightAt = -1;
+    /** When it first noticed PvP was on (-1: not yet). */
+    private long fightStartSeen = -1;
+    /** The last place a rival was seen or heard (kept longer than the memory, for scouting). */
+    private @Nullable Location lead;
+    private long leadAt;
+    /** Every block it placed (base and shelter) with its material: it may break them again to get out. */
+    private final Map<Block, Material> placed = new HashMap<>();
 
     BotController(UUID id, String name, BotDifficulty difficulty, BotManager manager, BotHost host, BotProfile profile,
                   Random random, int offset) {
@@ -233,6 +257,8 @@ public final class BotController {
         } catch (RuntimeException e) {
             manager.log("bot " + name, e);
         }
+        swim(b);
+        unstuck(now, b);
         fall(b);
         look(now, b);
         b.sync(yaw, pitch, bodyYaw);
@@ -255,7 +281,7 @@ public final class BotController {
             shoreUntil = now + 60;
         }
         if (shore != null) {
-            goTo(now, shore, 1.3);
+            goTo(now, shore, Gait.RUSH);
         }
     }
 
@@ -409,6 +435,8 @@ public final class BotController {
             double distance = rival.getLocation().distance(at);
             boolean heard = distance <= (rival instanceof Player p && p.isSneaking() ? SNEAK_HEARING : HEARING);
             boolean seen = distance <= SIGHT && self.hasLineOfSight(rival);
+            // a glowing rival (everyone glows in the final zone) shows through walls, to players and bots alike
+            boolean glowing = !seen && distance <= SIGHT && glows(rival);
             if (heard && !seen) {
                 Seen known = memory.get(who);
                 if (known == null || now - known.tick() > 40) {
@@ -416,10 +444,12 @@ public final class BotController {
                     glanceUntil = now + 25;
                 }
             }
-            if (seen || heard) {
+            if (seen || heard || glowing) {
                 Seen old = memory.get(who);
                 memory.put(who, new Seen(rival, rival.getLocation(), now, distance,
-                        old == null ? distance : old.distance()));
+                        old == null ? distance : old.distance(), seen));
+                lead = rival.getLocation();
+                leadAt = now;
             }
         }
         memory.values().removeIf(seen -> now - seen.tick() > MEMORY_TICKS || seen.entity().isDead()
@@ -433,8 +463,8 @@ public final class BotController {
         for (Map.Entry<UUID, Seen> entry : memory.entrySet()) {
             Seen seen = entry.getValue();
             LivingEntity rival = seen.entity();
-            boolean visible = seen.tick() == now;
-            double distance = visible ? seen.distance() : seen.at().distance(at);
+            boolean visible = seen.tick() == now && seen.inSight();
+            double distance = seen.tick() == now ? seen.distance() : seen.at().distance(at);
             contacts.add(new Contact(entry.getKey(), distance, rival.getHealth() + rival.getAbsorptionAmount(),
                     maxHealth(rival), manager.gearOf(rival), visible, manager.fightingOther(entry.getKey(), id, now),
                     seen.distance() < seen.previous() - 0.5, holdsBow(rival)));
@@ -457,7 +487,39 @@ public final class BotController {
                 zone, host.finalHalf(),
                 baseBuilt, baseDone, baseDistance, baseSafe, highGround(at),
                 current == null ? null : current.behaviour(), current == null ? null : current.target(), contacts,
-                host.pressure());
+                host.pressure(), finale(), host.rivals(id, self.getWorld()).size(), idle(now));
+    }
+
+    /** The border is at or close to its final size: the zone is all there is left. */
+    private boolean finale() {
+        return host.fight() && host.borderShrinking()
+                && host.borderHalfIn(0) <= Math.max(host.finalHalf() * 2, host.finalHalf() + 8);
+    }
+
+    /** 0..1: how long it has gone without a fight since PvP came on (1 after {@link #IDLE_TICKS}). */
+    double idle(long now) {
+        if (!host.fight()) {
+            return 0;
+        }
+        long since = lastFightAt < 0 ? fightTicksSeen(now) : now - lastFightAt;
+        return Math.max(0, Math.min(1, (double) since / IDLE_TICKS));
+    }
+
+    /** Real ticks since this bot first noticed PvP was on. */
+    private long fightTicksSeen(long now) {
+        if (fightStartSeen < 0) {
+            fightStartSeen = now;
+        }
+        return now - fightStartSeen;
+    }
+
+    /** It dealt or took PvP damage now. */
+    void fought(long now) {
+        lastFightAt = now;
+    }
+
+    static boolean glows(LivingEntity entity) {
+        return entity.isGlowing() || entity.hasPotionEffect(PotionEffectType.GLOWING);
     }
 
     private boolean highGround(Location at) {
@@ -508,9 +570,9 @@ public final class BotController {
             }
             case BUILD_BASE -> buildBase(now, self);
             case SCOUT -> {
-                Location lead = lastKnown();
-                if (lead != null) {
-                    goTo(now, lead, 1.1);
+                Location trail = trail(now, self.getLocation());
+                if (trail != null) {
+                    goTo(now, trail, Gait.SPRINT);
                 } else {
                     scout(now, self);
                 }
@@ -531,9 +593,9 @@ public final class BotController {
                 Location at = where(d.target(), target, now);
                 double distance = self.getLocation().distance(at);
                 if (distance < 9) {
-                    goTo(now, away(self.getLocation(), at, 12), 1.3);
+                    goTo(now, away(self.getLocation(), at, 12), Gait.SPRINT);
                 } else if (distance > profile.bowRange() * 0.85) {
-                    goTo(now, at, 1.1);
+                    goTo(now, at, Gait.SPRINT);
                 } else {
                     stop();
                 }
@@ -546,7 +608,7 @@ public final class BotController {
             case RETREAT_HEAL -> {
                 Location threat = nearestThreat();
                 if (threat != null) {
-                    goTo(now, away(self.getLocation(), threat, 14), 1.3);
+                    goTo(now, away(self.getLocation(), threat, 14), Gait.SPRINT);
                 } else {
                     stop();
                 }
@@ -564,7 +626,8 @@ public final class BotController {
                 if (plan == null) {
                     roam(now, self, 20);
                 } else if (!plan.inside(self.getLocation().getX(), self.getLocation().getZ())) {
-                    goTo(now, new Location(self.getWorld(), plan.x() + 0.5, plan.floorY() + 1, plan.z() + 0.5), 1.3);
+                    goTo(now, new Location(self.getWorld(), plan.x() + 0.5, plan.floorY() + 1, plan.z() + 0.5),
+                            Gait.SPRINT);
                 } else {
                     stop();
                     face(self, new Location(self.getWorld(), plan.doorX() + 0.5, plan.floorY() + 1.6,
@@ -580,7 +643,7 @@ public final class BotController {
                             host.borderCenterZ() + (random.nextDouble() * 2 - 1) * r);
                 }
                 if (holdSpot.distance(self.getLocation()) > 2) {
-                    goTo(now, holdSpot, 1.1);
+                    goTo(now, holdSpot, Gait.SPRINT);
                 } else {
                     stop();
                 }
@@ -604,9 +667,9 @@ public final class BotController {
                 Location at = where(d.target(), target, now);
                 double distance = self.getLocation().distance(at);
                 if (distance < 14) {
-                    goTo(now, away(self.getLocation(), at, 8), 1.1);
+                    goTo(now, away(self.getLocation(), at, 8), Gait.WALK);
                 } else if (distance > 24) {
-                    goTo(now, at, 1.1);
+                    goTo(now, at, Gait.SPRINT);
                 } else {
                     stop();
                     face(self, target.getEyeLocation());
@@ -615,7 +678,7 @@ public final class BotController {
             }
             case AVOID -> {
                 if (target != null) {
-                    goTo(now, away(self.getLocation(), where(d.target(), target, now), 16), 1.3);
+                    goTo(now, away(self.getLocation(), where(d.target(), target, now), 16), Gait.SPRINT);
                     if (profile.bowSkill() >= 0.9) {
                         shoot(now, b, self, target); // a strong bot shoots while backing off
                     }
@@ -624,7 +687,7 @@ public final class BotController {
                 swingAtAnyone(now, self);
             }
             case FLEE_BORDER -> {
-                goTo(now, ground(self.getWorld(), host.borderCenterX(), host.borderCenterZ()), 1.35);
+                goTo(now, ground(self.getWorld(), host.borderCenterX(), host.borderCenterZ()), Gait.RUSH);
                 eatIfLow(now, self);
             }
         }
@@ -635,7 +698,7 @@ public final class BotController {
         double distance = self.getLocation().distance(at);
         face(self, at.clone().add(0, target.getEyeHeight(), 0));
         if (distance > REACH + 0.6) {
-            goTo(now, at, 1.3);
+            goTo(now, at, Gait.SPRINT);
             if (distance > 10 && distance <= profile.bowRange() && shoot(now, b, self, target)) {
                 return;
             }
@@ -653,9 +716,9 @@ public final class BotController {
             Vector toTarget = target.getLocation().toVector().subtract(self.getLocation().toVector()).setY(0);
             if (toTarget.lengthSquared() > 1.0E-6 && random.nextDouble() < profile.strafeChance()) {
                 Vector side = new Vector(-toTarget.getZ(), 0, toTarget.getX()).normalize().multiply(1.5 * strafe);
-                goTo(now, target.getLocation().add(side), 1.2);
+                goTo(now, target.getLocation().add(side), Gait.WALK);
             } else {
-                goTo(now, target.getLocation(), 1.2);
+                goTo(now, target.getLocation(), Gait.WALK);
             }
             tryMelee(now, self, target);
         }
@@ -852,7 +915,7 @@ public final class BotController {
         }
         Location center = new Location(self.getWorld(), plan.x() + 0.5, plan.floorY() + 1, plan.z() + 0.5);
         if (center.distance(self.getLocation()) > 3) {
-            goTo(now, center, 1.1);
+            goTo(now, center, Gait.SPRINT);
             return;
         }
         stop();
@@ -916,7 +979,7 @@ public final class BotController {
 
     /**
      * Places a block of the bot's stock: only in the match world, only into air or replaceable plants (never water,
-     * lava or the void), never where a living entity stands.
+     * lava or the void), never where a living entity stands or is about to step ({@link #blocksSomeone}).
      */
     boolean place(Mannequin self, int x, int y, int z, Material material) {
         World world = self.getWorld();
@@ -931,22 +994,49 @@ public final class BotController {
         if (!host.arena().contains(block.getLocation().add(0.5, 0, 0.5))) {
             return false;
         }
-        for (Entity entity : world.getNearbyEntities(block.getBoundingBox().expand(0.05))) {
-            if (entity instanceof LivingEntity && !manager.isLegs(entity) || entity == self) {
-                return false; // never trap anyone (or itself) inside a block
-            }
+        if (blocksSomeone(world, x, y, z)) {
+            return false; // never trap anyone (or itself) inside a block
         }
         block.setType(material);
+        placed.put(block, material);
         blocksUsed++;
         self.swingMainHand();
         world.playSound(block.getLocation(), Sound.BLOCK_STONE_PLACE, 0.8f, 1f);
         return true;
     }
 
+    /**
+     * True if a block at {@code (x, y, z)} would overlap a living entity: every one, the bots' legs included (they are
+     * where the body is put next tick), each as a standing body (the legs are a little taller than the body they
+     * carry) widened a little and stretched along where it moves in the next ticks (the bodies are a tick behind the
+     * legs, and a walker steps into the cell before the next check).
+     */
+    boolean blocksSomeone(World world, int x, int y, int z) {
+        BoundingBox cell = new BoundingBox(x, y, z, x + 1, y + 1, z + 1);
+        for (Entity entity : world.getNearbyEntities(cell.clone().expand(2.5))) {
+            if (!(entity instanceof LivingEntity living) || living.isDead()) {
+                continue;
+            }
+            Location at = entity.getLocation();
+            BoundingBox box = manager.isLegs(entity) || manager.isBody(entity)
+                    ? new BoundingBox(at.getX() - 0.3, at.getY(), at.getZ() - 0.3, at.getX() + 0.3, at.getY() + 1.8,
+                    at.getZ() + 0.3)
+                    : entity.getBoundingBox().clone();
+            box.expand(0.1, 0, 0.1);
+            Vector motion = entity.getVelocity();
+            box.expandDirectional(motion.getX() * 3, Math.max(0, motion.getY()) * 3, motion.getZ() * 3);
+            if (box.overlaps(cell)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Walls itself in where it stands: four sides two high and a roof, a few blocks per second. */
     private void fortify(long now, Mannequin self) {
         if (fortifyUntil < 0) {
-            fortifyUntil = now + 20 * 15;
+            fortifyUntil = now + FORTIFY_TICKS;
+            center(); // in the middle of its block, so the walls fit around it
         }
         Location feet = self.getLocation();
         int x = feet.getBlockX();
@@ -976,6 +1066,22 @@ public final class BotController {
         }
     }
 
+    /** Puts the legs in the middle of the block they stand in (if nothing is in the way there). */
+    private void center() {
+        BotBody b = body;
+        if (b == null) {
+            return;
+        }
+        WanderingTrader legs = b.legs();
+        Location at = legs.getLocation();
+        Location middle = new Location(at.getWorld(), at.getBlockX() + 0.5, at.getY(), at.getBlockZ() + 0.5,
+                at.getYaw(), at.getPitch());
+        if (!at.getWorld().hasCollisionsIn(standing(middle.getX(), middle.getY(), middle.getZ()))) {
+            legs.teleport(middle);
+            legs.setVelocity(new Vector());
+        }
+    }
+
     /**
      * Takes the shelter down again (a player mines their way out): every block of it that is still its own goes, so
      * no box is left around it that would hide it from everyone for the rest of the match.
@@ -988,6 +1094,7 @@ public final class BotController {
             if (block.getType() == wall) {
                 block.setType(Material.AIR);
             }
+            placed.remove(block);
             it.remove();
         }
         if (fortifyUntil >= 0) {
@@ -998,19 +1105,43 @@ public final class BotController {
 
     // =================================================================== moving
 
-    private void goTo(long now, Location where, double speed) {
+    /**
+     * Walks or sprints to {@code where} (kept inside the border): the pathfinder speed is set so the legs move like a
+     * player's walk or sprint ({@link BotMotion}), with the body's speed bonuses. A finished (partial) path is
+     * continued at once; otherwise the path is renewed at most every 8 ticks unless the destination moves.
+     */
+    private void goTo(long now, Location where, Gait how) {
         BotBody b = body;
         if (b == null) {
             return;
         }
         Location dest = insideBorder(where);
+        Location at = b.legs().getLocation();
+        double distance = dest.getWorld() == at.getWorld() ? dest.distance(at) : 0;
+        double speed = BotMotion.pathSpeed(BotMotion.blocksPerSecond(how, distance, speedFactor()),
+                BotMotion.REFERENCE_ATTRIBUTE);
         Location old = goal;
-        if (now < nextPath && old != null && old.getWorld() == dest.getWorld() && old.distanceSquared(dest) < 2.25) {
+        boolean same = old != null && old.getWorld() == dest.getWorld() && old.distanceSquared(dest) < 2.25;
+        // a path in progress is renewed every 8 ticks; a finished (or failed) one after 3
+        boolean fresh = b.legs().getPathfinder().hasPath() ? now < nextPath : now < nextPath - 5;
+        if (same && fresh && Math.abs(speed - pathSpeed) < 0.01) {
             return;
         }
         goal = dest;
+        gait = how;
+        pathSpeed = speed;
         nextPath = now + 8;
-        b.legs().getPathfinder().moveTo(dest, speed * speedFactor());
+        b.legs().getPathfinder().moveTo(dest, speed);
+    }
+
+    /** The gait it moves with now (for tests). */
+    public Gait gait() {
+        return gait;
+    }
+
+    /** The pathfinder speed of its last path (for tests). */
+    public double pathSpeed() {
+        return pathSpeed;
     }
 
     private void stop() {
@@ -1031,7 +1162,10 @@ public final class BotController {
     }
 
     private Location insideBorder(Location where) {
-        double half = Math.max(1.5, host.borderHalfIn(host.borderShrinking() ? 200 : 0) - 3);
+        // where the border is heading (like the brain's margin), less the brain's safety margin and a block: a
+        // destination never makes it want to flee the border
+        double ahead = Math.min(host.borderHalfIn(0), host.borderHalfIn(host.borderShrinking() ? 400 : 0));
+        double half = Math.max(1.5, ahead - BotBrain.edgeMargin(host.borderShrinking(), host.finalHalf()) - 1);
         double x = clamp(where.getX(), host.borderCenterX() - half, host.borderCenterX() + half);
         double z = clamp(where.getZ(), host.borderCenterZ() - half, host.borderCenterZ() + half);
         Location out = where.clone();
@@ -1050,7 +1184,7 @@ public final class BotController {
                     at.getZ() + (random.nextDouble() * 2 - 1) * range);
             wanderUntil = now + 300;
         }
-        goTo(now, wander, 1.0);
+        goTo(now, wander, Gait.WALK);
     }
 
     /**
@@ -1060,13 +1194,16 @@ public final class BotController {
     private void scout(long now, Mannequin self) {
         if (wander == null || now >= wanderUntil || wander.distance(self.getLocation()) < 2) {
             Location at = self.getLocation();
-            double pull = scoutPull(host.pressure());
-            double x = at.getX() + (host.borderCenterX() - at.getX()) * pull + (random.nextDouble() * 2 - 1) * 24;
-            double z = at.getZ() + (host.borderCenterZ() - at.getZ()) * pull + (random.nextDouble() * 2 - 1) * 24;
+            // an idle bot (no fight for a minute) and the last few in the final zone head straight for the middle
+            boolean hunt = finale() || idle(now) >= 1;
+            double pull = hunt ? 0.9 : scoutPull(host.pressure());
+            double spread = hunt ? Math.max(4, Math.min(24, host.borderHalfIn(0) * 0.5)) : 24;
+            double x = at.getX() + (host.borderCenterX() - at.getX()) * pull + (random.nextDouble() * 2 - 1) * spread;
+            double z = at.getZ() + (host.borderCenterZ() - at.getZ()) * pull + (random.nextDouble() * 2 - 1) * spread;
             wander = ground(self.getWorld(), x, z);
-            wanderUntil = now + 300;
+            wanderUntil = now + (hunt ? 160 : 300);
         }
-        goTo(now, wander, 1.1);
+        goTo(now, wander, Gait.SPRINT);
     }
 
     /** The share of the way to the zone center a scouting leg covers (0.3 at the fight start, 0.8 at the end). */
@@ -1123,6 +1260,111 @@ public final class BotController {
         return Math.abs(BotAim.delta(yaw, wanted)) <= 60f;
     }
 
+    /**
+     * In water the legs swim like a player: they keep their head up (the vanilla float goal is gone with the others)
+     * and swim towards the next point of the path at a player's swimming pace (a mob's own water movement is a slow
+     * crawl along the bottom).
+     */
+    private void swim(BotBody b) {
+        WanderingTrader legs = b.legs();
+        if (!legs.isInWater()) {
+            return;
+        }
+        Vector velocity = legs.getVelocity();
+        velocity.setY(Math.max(velocity.getY(), 0.06));
+        Location at = legs.getLocation();
+        Location towards = null;
+        if (goal != null && goal.getWorld() == at.getWorld()) {
+            towards = goal;
+            try {
+                var path = legs.getPathfinder().getCurrentPath();
+                Location next = path == null ? null : path.getNextPoint();
+                if (next != null && next.getWorld() == at.getWorld()) {
+                    towards = next.clone().add(0.5, 0, 0.5); // path points are block corners
+                }
+            } catch (RuntimeException ignored) {
+                // no path information: swim for the goal
+            }
+        }
+        if (towards != null) {
+            Vector flat = new Vector(towards.getX() - at.getX(), 0, towards.getZ() - at.getZ());
+            if (flat.lengthSquared() > 0.04) {
+                double pace = (gait == Gait.WALK ? BotMotion.SWIM_WALK : BotMotion.SWIM_SPRINT)
+                        * Math.max(0.5, Math.min(2, speedFactor()));
+                flat.normalize().multiply(pace);
+                velocity.setX(flat.getX());
+                velocity.setZ(flat.getZ());
+            }
+        }
+        legs.setVelocity(velocity);
+    }
+
+    /**
+     * Never stays inside a block: if anything solid overlaps where the body stands (a block placed on it, a wall it
+     * was pushed into, sand that fell on it), it first breaks its own blocks there (a player mines out of their own
+     * shelter), then steps out to the nearest free standing spot. Runs every tick before the body is moved onto the
+     * legs, so the body never takes suffocation damage from it.
+     *
+     * @return true if it had to get out
+     */
+    boolean unstuck(long now, BotBody b) {
+        WanderingTrader legs = b.legs();
+        World world = legs.getWorld();
+        Location at = legs.getLocation();
+        BoundingBox box = standing(at.getX(), at.getY(), at.getZ());
+        if (!world.hasCollisionsIn(box)) {
+            return false;
+        }
+        boolean broke = false;
+        Iterator<Map.Entry<Block, Material>> it = placed.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Block, Material> own = it.next();
+            Block block = own.getKey();
+            if (block.getWorld().equals(world) && box.overlaps(cell(block))) {
+                if (block.getType() == own.getValue()) {
+                    block.setType(Material.AIR);
+                    broke = true;
+                }
+                it.remove();
+                fortress.remove(block);
+            }
+        }
+        if (broke && !world.hasCollisionsIn(box)) {
+            return true;
+        }
+        int[] spot = BotMotion.freeSpot(new BotMotion.Space() {
+            @Override
+            public boolean free(int x, int y, int z) {
+                return !world.hasCollisionsIn(standing(x + 0.5, y, z + 0.5))
+                        && world.getBlockAt(x, y, z).getType() != Material.LAVA
+                        && world.getBlockAt(x, y + 1, z).getType() != Material.LAVA;
+            }
+
+            @Override
+            public boolean floor(int x, int y, int z) {
+                Block block = world.getBlockAt(x, y, z);
+                return block.getType().isSolid() || block.isLiquid();
+            }
+        }, at.getBlockX(), at.getBlockY(), at.getBlockZ(), 3);
+        if (spot != null) {
+            Location out = new Location(world, spot[0] + 0.5, spot[1], spot[2] + 0.5, at.getYaw(), at.getPitch());
+            legs.teleport(out);
+            legs.setVelocity(new Vector());
+            nextPath = now; // walk on from there
+        }
+        return true;
+    }
+
+    /** The box a standing body fills with its feet at {@code (x, y, z)}, a hair smaller than the body. */
+    static BoundingBox standing(double x, double y, double z) {
+        return new BoundingBox(x - 0.29, y + 0.01, z - 0.29, x + 0.29, y + 1.79, z + 0.29);
+    }
+
+    private static BoundingBox cell(Block block) {
+        return new BoundingBox(block.getX(), block.getY(), block.getZ(), block.getX() + 1, block.getY() + 1,
+                block.getZ() + 1);
+    }
+
     /** Stuck in place while it should walk: hop, then pick another way. */
     private void unstick(long now, BotBody b) {
         if (now - lastMoveCheck < 40) {
@@ -1172,6 +1414,28 @@ public final class BotController {
 
     private @Nullable Location nearestThreat() {
         return lastKnown();
+    }
+
+    /**
+     * Where to look for someone: the nearest rival it remembers, else where it last saw or heard one (for a minute),
+     * else the nearest fight it hears; null if it has no clue (then it drifts to the zone). A lead it has reached and
+     * found empty is dropped.
+     */
+    private @Nullable Location trail(long now, Location at) {
+        Location known = lastKnown();
+        if (known != null) {
+            return known;
+        }
+        Location last = lead;
+        if (last != null && (now - leadAt > LEAD_TICKS || last.getWorld() != at.getWorld()
+                || last.distanceSquared(at) < 9)) {
+            lead = null;
+            last = null;
+        }
+        if (last != null) {
+            return last;
+        }
+        return manager.heardFight(id, at, now, FIGHT_HEARING);
     }
 
     /** What it drops when it dies: its gear, apples and arrows left. */

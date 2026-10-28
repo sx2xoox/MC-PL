@@ -49,6 +49,13 @@ public final class BotManager implements Listener {
     private record Hit(UUID other, long tick) {
     }
 
+    /** A hit somewhere: the clash of a fight others can hear. */
+    private record Noise(Location at, long tick, UUID attacker, UUID victim) {
+    }
+
+    /** How long a fight's noise can be followed. */
+    static final int NOISE_TICKS = 200;
+
     /** How long a hit counts as "fighting" for third-party decisions. */
     static final int FIGHT_TICKS = 100;
 
@@ -65,6 +72,7 @@ public final class BotManager implements Listener {
     private final Map<UUID, UUID> byEntity = new HashMap<>();
     private final Map<UUID, Hit> lastHurtBy = new HashMap<>();
     private final Map<UUID, Hit> lastHit = new HashMap<>();
+    private final List<Noise> noises = new ArrayList<>();
     /** Chunks held loaded (and ticking) around the bots, as {@code x, z} keys. */
     private final Set<Long> held = new HashSet<>();
     private @Nullable ChunkTickets tickets;
@@ -460,6 +468,51 @@ public final class BotManager implements Listener {
                 || hit != null && !hit.other().equals(me) && now - hit.tick() <= FIGHT_TICKS;
     }
 
+    /**
+     * The nearest fight {@code listener} hears from {@code at} (hits within {@code range} blocks in the last
+     * {@link #NOISE_TICKS} ticks it was not part of), or null.
+     */
+    @Nullable Location heardFight(UUID listener, Location at, long now, double range) {
+        Location best = null;
+        double bestDistance = range * range;
+        for (Noise noise : noises) {
+            if (now - noise.tick() > NOISE_TICKS || noise.attacker().equals(listener)
+                    || noise.victim().equals(listener) || noise.at().getWorld() != at.getWorld()) {
+                continue;
+            }
+            double d = noise.at().distanceSquared(at);
+            if (d <= bestDistance) {
+                bestDistance = d;
+                best = noise.at().clone();
+            }
+        }
+        return best;
+    }
+
+    /**
+     * A bot's body takes suffocation damage (a block it did not see coming, falling sand): it gets out of the block
+     * at once ({@link BotController#unstuck}) and the hit is cancelled if it could.
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSuffocate(EntityDamageEvent event) {
+        if (event.getDamageSource().getDamageType() != DamageType.IN_WALL || !isBody(event.getEntity())) {
+            return;
+        }
+        UUID id = botOf(event.getEntity());
+        BotController bot = id == null ? null : bots.get(id);
+        BotBody body = bot == null ? null : bot.body();
+        if (body == null) {
+            return;
+        }
+        bot.unstuck(host.clock(), body);
+        Location look = body.body().getLocation();
+        body.sync(look.getYaw(), look.getPitch(), body.body().getBodyYaw());
+        Location feet = body.legs().getLocation();
+        if (!feet.getWorld().hasCollisionsIn(BotController.standing(feet.getX(), feet.getY(), feet.getZ()))) {
+            event.setCancelled(true);
+        }
+    }
+
     /** Centers of the other bots' bases. */
     List<int[]> baseCenters(UUID except) {
         List<int[]> out = new ArrayList<>();
@@ -552,6 +605,17 @@ public final class BotManager implements Listener {
         long now = host.clock();
         lastHurtBy.put(victimId, new Hit(attacker, now));
         lastHit.put(attacker, new Hit(victimId, now));
+        for (UUID side : new UUID[] {attacker, victimId}) {
+            BotController bot = bots.get(side);
+            if (bot != null) {
+                bot.fought(now);
+            }
+        }
+        noises.removeIf(noise -> now - noise.tick() > NOISE_TICKS);
+        if (noises.size() >= 32) {
+            noises.removeFirst();
+        }
+        noises.add(new Noise(victim.getLocation(), now, attacker, victimId));
         if (isBot(attacker) || isBot(victimId)) {
             double dealt = Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
             session.recordDamage(attacker, victimId, dealt);

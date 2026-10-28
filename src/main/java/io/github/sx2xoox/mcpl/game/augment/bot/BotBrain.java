@@ -109,17 +109,40 @@ public final class BotBrain {
      * @param contacts         known enemies
      * @param pressure         0..1, how late the fight is (fight time and the closing border): the later, the less
      *                         anyone waits, avoids or hides, so a match always comes to an end
+     * @param finale           the border is (nearly) at its final size: nowhere left to go
+     * @param rivalsLeft       enemies still in play (known or not; the sidebar shows it to everyone)
+     * @param idle             0..1, how long it has gone without a fight (1: a minute or more): an idle bot goes
+     *                         looking for one
      */
     public record Situation(boolean fight, double farmingLeft, double health, double absorption, double maxHealth,
                             int apples, boolean appleReady, double gear, boolean hasBow, int blocks,
                             double borderMargin, boolean borderShrinking, double zoneDistance, double zoneRadius,
                             boolean baseBuilt, boolean baseDone, double baseDistance, boolean baseSafe,
                             boolean highGround, @Nullable Behaviour current, @Nullable UUID currentTarget,
-                            List<Contact> contacts, double pressure) {
+                            List<Contact> contacts, double pressure, boolean finale, int rivalsLeft, double idle) {
 
         public Situation {
             contacts = List.copyOf(contacts);
             pressure = Double.isFinite(pressure) ? Math.max(0, Math.min(1, pressure)) : 0;
+            idle = Double.isFinite(idle) ? Math.max(0, Math.min(1, idle)) : 0;
+            rivalsLeft = Math.max(rivalsLeft, 0);
+        }
+
+        /** A situation outside the final zone, many rivals left and just out of a fight. */
+        public Situation(boolean fight, double farmingLeft, double health, double absorption, double maxHealth,
+                         int apples, boolean appleReady, double gear, boolean hasBow, int blocks,
+                         double borderMargin, boolean borderShrinking, double zoneDistance, double zoneRadius,
+                         boolean baseBuilt, boolean baseDone, double baseDistance, boolean baseSafe,
+                         boolean highGround, @Nullable Behaviour current, @Nullable UUID currentTarget,
+                         List<Contact> contacts, double pressure) {
+            this(fight, farmingLeft, health, absorption, maxHealth, apples, appleReady, gear, hasBow, blocks,
+                    borderMargin, borderShrinking, zoneDistance, zoneRadius, baseBuilt, baseDone, baseDistance,
+                    baseSafe, highGround, current, currentTarget, contacts, pressure, false, Integer.MAX_VALUE, 0);
+        }
+
+        /** The last few in the final zone: they have to fight it out. */
+        public boolean showdown() {
+            return fight && finale && rivalsLeft <= SHOWDOWN_RIVALS;
         }
 
         /** A situation at the start of the fight (no pressure yet). */
@@ -148,6 +171,8 @@ public final class BotBrain {
     /** A visible enemy this close with this little health is a sure kill (worth staying outside the border for). */
     static final double SURE_KILL_REACH = 4;
     static final double SURE_KILL_HEALTH = 4;
+    /** In the final zone with at most this many enemies left, nobody hides, waits or runs any more. */
+    static final int SHOWDOWN_RIVALS = 3;
 
     private final BotProfile profile;
 
@@ -160,12 +185,12 @@ public final class BotBrain {
         List<Decision> out = new ArrayList<>();
         double hp = s.health() + s.absorption();
         boolean low = s.health() <= profile.healAt();
-        // the safety margin shrinks with the final zone: in a 24-block final zone 10 blocks would be everywhere
-        double danger = s.borderShrinking() ? Math.max(2, Math.min(10, s.zoneRadius() * 0.35)) : 3;
+        double danger = edgeMargin(s.borderShrinking(), s.zoneRadius());
         if (s.borderMargin() < danger) {
             // outside (or about to be): the border hurts every second, more the further out; only a sure kill
             // (below) beats getting back in
-            double urgency = s.borderMargin() < 0 ? 130 + Math.min(40, -s.borderMargin() * 3) : 100;
+            // (outside beats any fight, even the last few's showdown; at the edge a fight still goes on, inside)
+            double urgency = s.borderMargin() < 0 ? 175 + Math.min(40, -s.borderMargin() * 3) : 115;
             out.add(new Decision(Behaviour.FLEE_BORDER, null, urgency + (danger - Math.max(0, s.borderMargin())) * 3));
         }
         if (s.fight()) {
@@ -196,15 +221,19 @@ public final class BotBrain {
             }
         }
         boolean threatened = nearestThreat != null && nearestThreat.distance() <= 24;
-        double p = s.pressure();
-        // late in the fight everyone grows bolder: nobody can wait for the others forever
-        double aggression = profile.aggression() + (1 - profile.aggression()) * 0.6 * p;
+        // the last few in the final zone fight it out: no hiding, waiting or running any more
+        boolean showdown = s.showdown();
+        double p = showdown ? 1 : s.pressure();
+        // late in the fight everyone grows bolder (nobody can wait for the others forever), and so does a bot that has
+        // not fought for a long while
+        double aggression = showdown ? 1 : profile.aggression() + (1 - profile.aggression())
+                * Math.min(1, 0.6 * p + 0.4 * s.idle() * Math.max(p, 0.5));
         for (Contact c : s.contacts()) {
             double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
             int others = near - (c.distance() <= NEAR ? 1 : 0);
             if (c.fightingOther()) {
-                if (hurtRatio > 0.5 && !low) {
+                if (hurtRatio > 0.5 && !low && !showdown) {
                     // let them wear each other down first (less patient late in the fight)
                     out.add(new Decision(Behaviour.THIRD_PARTY, c.id(), 62 + 10 * aggression - 20 * p));
                     out.add(new Decision(Behaviour.ENGAGE, c.id(), 38 + 30 * aggression + 40 * p));
@@ -214,11 +243,16 @@ public final class BotBrain {
                 }
                 continue;
             }
-            double engage = 30 + 40 * aggression + 30 * clamp(advantage - 1, -1.5, 1)
+            // a healthy bot that knows of someone it can fight fights them (a weakened one most of all: it chases
+            // them down); it backs off only when it is really bad (see AVOID and the low-health options below)
+            double engage = 36 + 40 * aggression + 30 * clamp(advantage - 1, -1.5, 1) + 25 * (1 - hurtRatio)
                     - 22 * Math.max(0, others) * (1 - 0.6 * p) - (c.visible() ? 0 : 6)
                     - Math.max(0, c.distance() - 30) * 0.4 * (1 - 0.5 * p) + 15 * p;
             if (low) {
                 engage -= 30;
+            }
+            if (showdown) {
+                engage += 25;
             }
             out.add(new Decision(Behaviour.ENGAGE, c.id(), engage));
             if (s.hasBow() && profile.bowRange() > 0 && c.distance() > 7 && c.distance() <= profile.bowRange()
@@ -227,16 +261,21 @@ public final class BotBrain {
                 out.add(new Decision(Behaviour.KITE, c.id(), kite));
             }
             // an even match (advantage around 1) alone is fought, not avoided by both sides
-            if (advantage < 0.75 - 0.25 * p || others >= 1 && advantage < 1.6 - 0.5 * p) {
-                out.add(new Decision(Behaviour.AVOID, c.id(), (50 + 40 * clamp(0.9 - advantage, 0, 1)
+            if (!showdown && (advantage < 0.75 - 0.25 * p || others >= 1 && advantage < 1.6 - 0.5 * p)) {
+                out.add(new Decision(Behaviour.AVOID, c.id(), (58 + 40 * clamp(0.9 - advantage, 0, 1)
                         + 12 * Math.max(0, others)) * (1 - 0.4 * p)));
             }
-            if (c.approaching() && c.distance() >= 8 && c.distance() <= 26 && advantage >= 0.85
+            if (!showdown && c.approaching() && c.distance() >= 8 && c.distance() <= 26 && advantage >= 0.85
                     && (s.highGround() || s.baseBuilt() && s.baseDistance() < 4)) {
-                out.add(new Decision(Behaviour.AMBUSH, c.id(), 60 + 10 * aggression - 15 * p));
+                out.add(new Decision(Behaviour.AMBUSH, c.id(), 52 + 10 * aggression - 15 * p));
             }
         }
-        if (low) {
+        if (low && showdown) {
+            // only to eat an apple, and only inside the zone (the controller keeps every step in it)
+            if (s.apples() > 0 && s.appleReady()) {
+                out.add(new Decision(Behaviour.RETREAT_HEAL, null, 60 + (threatened ? 4 : 0)));
+            }
+        } else if (low) {
             if (threatened && s.blocks() >= 8 && (s.apples() == 0 || !s.appleReady()
                     || nearestThreat.distance() < 8)) {
                 out.add(new Decision(Behaviour.FORTIFY, null, (s.apples() == 0 ? 86 : 78) - 20 * p));
@@ -245,17 +284,31 @@ public final class BotBrain {
                     + (threatened ? 4 : 0)));
         }
         // the base is a place to fall back to when hunted or hurt, not a place to sit out the match in
-        if (s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48 && (low || !s.contacts().isEmpty())) {
+        if (!showdown && s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48
+                && (low || !s.contacts().isEmpty())) {
             double wantBase = (low ? 30 : 0) + (near >= 2 ? 20 : 0);
             out.add(new Decision(Behaviour.DEFEND_BASE, null, 30 + wantBase - s.baseDistance() * 0.3 - 20 * p));
         }
-        if (s.borderShrinking()) {
+        if (s.borderShrinking() && !showdown) {
+            // early in the shrink: get to the zone in time; later, sitting in it waiting is no plan
             double outside = Math.max(0, s.zoneDistance() - s.zoneRadius() * 0.6);
-            out.add(new Decision(Behaviour.HOLD_ZONE, null, 38 + Math.min(20, outside * 0.5)));
+            out.add(new Decision(Behaviour.HOLD_ZONE, null, 38 + Math.min(20, outside * 0.5) - 15 * p
+                    - (s.contacts().isEmpty() ? 0 : 12)));
         }
-        // nobody known: go looking (the controller heads for the last known rival, else drifts to the zone)
-        out.add(new Decision(Behaviour.SCOUT, null, 25 + 15 * p));
+        // nobody known: go looking (the controller heads for the last known or heard rival, else the zone); a bot that
+        // has not fought for a long while and the last few in the final zone go looking hardest
+        out.add(new Decision(Behaviour.SCOUT, null, showdown ? (s.contacts().isEmpty() ? 70 : 40)
+                : 25 + 15 * p + 25 * s.idle() * p));
         return sorted(out, s);
+    }
+
+    /**
+     * How close to the border's edge a bot may be before getting back in is its first concern: the margin shrinks with
+     * the final zone (in a 24-block final zone 10 blocks would be everywhere); the controller keeps every destination
+     * a block further inside.
+     */
+    static double edgeMargin(boolean shrinking, double zoneRadius) {
+        return shrinking ? Math.max(2, Math.min(10, zoneRadius * 0.35)) : 3;
     }
 
     /** The best option. */

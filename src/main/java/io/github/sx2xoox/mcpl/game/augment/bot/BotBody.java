@@ -27,6 +27,9 @@ import org.jspecify.annotations.Nullable;
  */
 public final class BotBody {
 
+    /** How far one path of the legs reaches, blocks. */
+    static final double FOLLOW_RANGE = 32;
+
     private final Mannequin body;
     private final WanderingTrader legs;
 
@@ -56,6 +59,11 @@ public final class BotBody {
                 AttributeInstance speed = trader.getAttribute(Attribute.MOVEMENT_SPEED);
                 if (speed != null) {
                     speed.setBaseValue(moveSpeed);
+                }
+                AttributeInstance follow = trader.getAttribute(Attribute.FOLLOW_RANGE);
+                if (follow != null) {
+                    // paths reach this far: fewer stops on a long way (a path ends at its range and is renewed)
+                    follow.setBaseValue(Math.max(follow.getBaseValue(), FOLLOW_RANGE));
                 }
                 AttributeInstance step = trader.getAttribute(Attribute.STEP_HEIGHT);
                 if (step != null) {

@@ -37,6 +37,7 @@ import io.github.sx2xoox.mcpl.game.augment.bot.BotController;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotDifficulty;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotHost;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotManager;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotMotion;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotSettings;
 import io.github.sx2xoox.mcpl.game.augment.config.AugmentConfig;
 import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
@@ -102,6 +103,8 @@ public final class AugmentMatch implements GameInstance, BotHost {
     /** Match-clock ticks since the farming started: phases, rounds and the border run on it. */
     private long time;
     private int timeScale = 1;
+    /** The fraction of a match-clock tick carried over (the clock runs at a fractional rate while the border closes). */
+    private double timeCarry;
 
     /**
      * The bots of a 봇전 or 봇 관전전 match.
@@ -227,9 +230,22 @@ public final class AugmentMatch implements GameInstance, BotHost {
         return true;
     }
 
-    /** Real ticks for {@code scaled} ticks of the match clocks at the current speed. */
+    /** Real ticks for {@code scaled} ticks of the match clocks at the current speed ({@link #clockRate()}). */
     long realTicks(long scaled) {
-        return (Math.max(0, scaled) + timeScale - 1) / timeScale;
+        return (long) Math.ceil(Math.max(0, scaled) / clockRate() - 1.0E-9);
+    }
+
+    /**
+     * Match-clock ticks per real tick right now: the {@link #timeScale()}, except while the border closes, where it is
+     * capped so the border's edge never moves faster than {@link BotMotion#maxBorderEdgeSpeed()} (70 % of a bot's
+     * sprint): a faster clock must not make the border impossible to outrun ({@link BotMotion#shrinkClockRate}).
+     */
+    public double clockRate() {
+        if (timeScale <= 1 || phase != MatchPhase.FIGHT || !borderShrinking || borderFinal) {
+            return timeScale;
+        }
+        return BotMotion.shrinkClockRate(timeScale, settings.radius() * 2.0, settings.borderFinalSize(),
+                settings.borderShrinkTicks());
     }
 
     /** Ticks of the match clocks since the farming started (runs {@link #timeScale()} times as fast as the clock). */
@@ -414,7 +430,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
             return;
         }
         clock++;
-        time += timeScale;
+        timeCarry += clockRate();
+        long step = (long) timeCarry;
+        timeCarry -= step;
+        time += step;
         if (isSpectate() && clock % 20 == 0 && session.viewers().isEmpty()) {
             session.abort(messages().get("spectate.everyone-left")); // nobody left to watch
             return;
@@ -1536,7 +1555,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (phase != MatchPhase.FIGHT) {
             return start;
         }
-        long into = fightTicks() + ticksAhead * timeScale - settings.borderDelayTicks();
+        long into = fightTicks() + Math.round(ticksAhead * clockRate()) - settings.borderDelayTicks();
         if (into <= 0) {
             return start;
         }

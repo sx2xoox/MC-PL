@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.augment.bot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -304,6 +305,114 @@ class BotBrainTest {
         Decision d = decide(difficulty, s);
         assertNotEquals(Behaviour.DEFEND_BASE, d.behaviour(), d.toString());
         assertEquals(Behaviour.FLEE_BORDER, d.behaviour(), "the border is near: inside first");
+    }
+
+    private static Situation late(Situation s, double pressure, boolean finale, int rivalsLeft, double idle) {
+        return new Situation(s.fight(), s.farmingLeft(), s.health(), s.absorption(), s.maxHealth(), s.apples(),
+                s.appleReady(), s.gear(), s.hasBow(), s.blocks(), s.borderMargin(), s.borderShrinking(),
+                s.zoneDistance(), s.zoneRadius(), s.baseBuilt(), s.baseDone(), s.baseDistance(), s.baseSafe(),
+                s.highGround(), s.current(), s.currentTarget(), s.contacts(), pressure, finale, rivalsLeft, idle);
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void aHealthyBotThatKnowsOfAnEnemyEngagesOrPressures(BotDifficulty difficulty) {
+        // a normal fight phase, a healthy bot: whatever the enemy (even, weaker, a little better geared, hurt, far,
+        // only remembered), it goes for them, in melee or with the bow; a base or a shelter is never the default
+        double slightlyBetter = Gear.at(0.75).score();
+        double[][] cases = {
+            // distance, health, gear, visible (1/0), approaching (1/0)
+            {12, 20, IRON, 1, 0}, {25, 20, IRON, 1, 0}, {6, 14, IRON, 1, 1}, {40, 20, LEATHER, 1, 0},
+            {10, 20, slightlyBetter, 1, 0}, {18, 8, IRON, 0, 0}, {30, 20, IRON, 0, 0}, {5, 20, IRON, 1, 1},
+        };
+        for (boolean base : new boolean[] {false, true}) {
+            for (double[] c : cases) {
+                S s = new S();
+                s.baseBuilt = base;
+                s.baseSafe = base;
+                s.baseDistance = base ? 6 : Double.POSITIVE_INFINITY;
+                s.contacts.add(new Contact(A, c[0], c[1], 20, c[2], c[3] > 0, false, c[4] > 0, false));
+                for (double pressure : new double[] {0, 0.3, 0.7}) {
+                    Decision d = new BotBrain(BotProfile.preset(difficulty)).decide(withPressure(s.build(), pressure,
+                            null, null));
+                    assertTrue(Set.of(Behaviour.ENGAGE, Behaviour.KITE).contains(d.behaviour()),
+                            "case " + java.util.Arrays.toString(c) + " base " + base + " p " + pressure + ": " + d);
+                    assertEquals(A, d.target());
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void aWeakenedEnemyRunningAwayIsChasedDown(BotDifficulty difficulty) {
+        S s = new S();
+        s.health = 14;
+        s.contacts.add(new Contact(A, 20, 5, 20, IRON, true, false, false, false));
+        Decision d = decide(difficulty, s);
+        assertTrue(Set.of(Behaviour.ENGAGE, Behaviour.KITE).contains(d.behaviour()), d.toString());
+        assertEquals(A, d.target());
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void theLastFewInTheFinalZoneFightItOut(BotDifficulty difficulty) {
+        BotBrain brain = new BotBrain(BotProfile.preset(difficulty));
+        Set<Behaviour> passive = Set.of(Behaviour.AVOID, Behaviour.AMBUSH, Behaviour.FORTIFY, Behaviour.DEFEND_BASE,
+                Behaviour.HOLD_ZONE, Behaviour.THIRD_PARTY);
+        // outgeared, on high ground next to its base, with blocks: everything that used to make it hide
+        S s = new S();
+        s.shrinking = true;
+        s.zoneDistance = 4;
+        s.borderMargin = 7;
+        s.gear = LEATHER;
+        s.high = true;
+        s.baseBuilt = true;
+        s.baseSafe = true;
+        s.baseDistance = 1;
+        s.contacts.add(new Contact(A, 14, 20, 20, DIAMOND, true, false, true, true));
+        Decision d = brain.decide(late(s.build(), 1, true, 1, 0));
+        assertEquals(Behaviour.ENGAGE, d.behaviour(), "a 1v1 in the final zone is fought: " + d);
+        // hurt, no apples left: still no shelter, no base
+        s.health = 5;
+        s.apples = 0;
+        assertFalse(passive.contains(brain.decide(late(s.build(), 1, true, 1, 0)).behaviour()));
+        // nobody in sight: it goes looking instead of holding a spot
+        S alone = new S();
+        alone.shrinking = true;
+        alone.zoneDistance = 3;
+        alone.borderMargin = 7;
+        assertEquals(Behaviour.SCOUT, brain.decide(late(alone.build(), 1, true, 2, 0)).behaviour());
+        // many still alive: the usual judgement (hurt, no apples, against a healthy one: back off)
+        S crowd = new S();
+        crowd.health = 5;
+        crowd.apples = 0;
+        crowd.contact(A, 6, 20, IRON, false);
+        assertNotEquals(Behaviour.ENGAGE, brain.decide(late(crowd.build(), 0.2, true, 8, 0)).behaviour());
+        assertEquals(Behaviour.ENGAGE, brain.decide(late(crowd.build(), 1, true, 1, 0)).behaviour(),
+                "the same in a 1v1 showdown is fought");
+        // and the border still comes first: outside, it gets back in
+        S out = new S();
+        out.shrinking = true;
+        out.borderMargin = -2;
+        out.contact(A, 6, 20, IRON, false);
+        assertEquals(Behaviour.FLEE_BORDER, brain.decide(late(out.build(), 1, true, 1, 0)).behaviour());
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void aBotThatHasNotFoughtGoesLookingForAFight(BotDifficulty difficulty) {
+        BotBrain brain = new BotBrain(BotProfile.preset(difficulty));
+        S s = new S();
+        s.shrinking = true;
+        s.zoneDistance = 10;
+        s.baseBuilt = true;
+        s.baseSafe = true;
+        s.baseDistance = 2;
+        assertEquals(Behaviour.SCOUT, brain.decide(late(s.build(), 0.5, false, 3, 1)).behaviour(),
+                "mid-fight and idle: hunting, not holding a spot");
+        assertEquals(Behaviour.HOLD_ZONE, brain.decide(late(s.build(), 0.0, false, 3, 0)).behaviour(),
+                "right at the start of the shrink it may still head for the zone");
     }
 
     @org.junit.jupiter.api.Test

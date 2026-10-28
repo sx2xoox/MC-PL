@@ -996,6 +996,7 @@ public final class MockEntities {
     public static final class RecordingPathfinder implements Pathfinder {
         private final Mob mob;
         private final List<Location> destinations = new ArrayList<>();
+        private final List<Double> speeds = new ArrayList<>();
         private @Nullable PathResult current;
 
         RecordingPathfinder(Mob mob) {
@@ -1005,6 +1006,11 @@ public final class MockEntities {
         /** Every destination a {@code moveTo} was issued for, oldest first. */
         public List<Location> destinations() {
             return destinations;
+        }
+
+        /** The speed of every {@code moveTo}, oldest first (same order as {@link #destinations()}). */
+        public List<Double> speeds() {
+            return speeds;
         }
 
         @Override
@@ -1058,6 +1064,7 @@ public final class MockEntities {
             Location end = path.getFinalPoint();
             if (end != null) {
                 destinations.add(end);
+                speeds.add(speed);
             }
             return true;
         }

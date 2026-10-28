@@ -358,7 +358,14 @@ class AugmentBotMatchTest {
         }
         assertEquals(tickets.held.size(), bots.heldChunks());
         BotController first = bots.all().getFirst();
-        org.bukkit.Location far = first.body().legs().getLocation().add(36, 0, 0);
+        // 36 blocks towards the middle (never out of the border, which would kill it before the check)
+        org.bukkit.Location start = first.body().legs().getLocation();
+        org.bukkit.util.Vector inward = new org.bukkit.util.Vector(match.wild().arena().centerX() - start.getX(), 0,
+                match.wild().arena().centerZ() - start.getZ());
+        if (inward.lengthSquared() < 1.0E-6) {
+            inward = new org.bukkit.util.Vector(1, 0, 0);
+        }
+        org.bukkit.Location far = start.clone().add(inward.normalize().multiply(36));
         int oldX = first.body().legs().getLocation().getBlockX() >> 4;
         int oldZ = first.body().legs().getLocation().getBlockZ() >> 4;
         first.body().legs().teleport(far);
@@ -367,7 +374,9 @@ class AugmentBotMatchTest {
                 "moves with the bot");
         BotController second = bots.all().get(1);
         org.bukkit.Location other = second.body().legs().getLocation();
-        if (Math.abs((other.getBlockX() >> 4) - oldX) > 2 || Math.abs((other.getBlockZ() >> 4) - oldZ) > 2) {
+        if ((Math.abs((other.getBlockX() >> 4) - oldX) > 2 || Math.abs((other.getBlockZ() >> 4) - oldZ) > 2)
+                && (Math.abs((far.getBlockX() >> 4) - oldX) > 1 || Math.abs((far.getBlockZ() >> 4) - oldZ) > 1)
+                && !buildsIn(second, oldX, oldZ) && !buildsIn(first, oldX, oldZ)) {
             assertFalse(tickets.held.contains(RecordingTickets.key(oldX, oldZ)), "and lets go of the old area");
         }
         h.tickUntilPhase(MatchPhase.FIGHT);
@@ -379,7 +388,7 @@ class AugmentBotMatchTest {
                 int x = (dying.getBlockX() >> 4) + dx;
                 int z = (dying.getBlockZ() >> 4) + dz;
                 boolean shared = Math.abs(x - (living.getBlockX() >> 4)) <= 1
-                        && Math.abs(z - (living.getBlockZ() >> 4)) <= 1;
+                        && Math.abs(z - (living.getBlockZ() >> 4)) <= 1 || buildsIn(second, x, z);
                 assertEquals(shared, tickets.held.contains(RecordingTickets.key(x, z)),
                         "a dead bot's chunks go at once (unless the other bot needs them)");
             }
@@ -387,6 +396,13 @@ class AugmentBotMatchTest {
         h.hub.games().stop(Component.text("test"));
         assertTrue(tickets.held.isEmpty() && tickets.removedAll > 0, "every ticket goes at the end");
         assertEquals(0, bots.heldChunks());
+    }
+
+    /** True while {@code bot} builds its base in chunk {@code (x, z)} (held for it too). */
+    private static boolean buildsIn(BotController bot, int x, int z) {
+        return bot.base() != null && bot.decision() != null
+                && bot.decision().behaviour() == BotBrain.Behaviour.BUILD_BASE
+                && bot.base().x() >> 4 == x && bot.base().z() >> 4 == z;
     }
 
     @Test
