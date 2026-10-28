@@ -125,6 +125,11 @@ final class AugmentSlot implements AugmentContext {
     }
 
     @Override
+    public boolean practice() {
+        return match.mode() == MatchMode.PRACTICE;
+    }
+
+    @Override
     public java.util.List<LivingEntity> rivals() {
         LivingEntity body = owner();
         return match.rivals(owner, body.getWorld());

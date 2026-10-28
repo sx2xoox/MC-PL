@@ -120,7 +120,7 @@ augment-fx:
   rewind: "<aqua>시간 역행</aqua><gray>: <white><seconds>초</white> 전으로 돌아갔습니다."
   hidden: "<dark_gray>잠복 중 <gray>· 움직이거나 싸우면 모습이 드러납니다"
   compass-idle: "<gray>추적 나침반은 <red>PvP</red>가 켜진 뒤에 작동합니다."
-  compass-target: "<gray>가장 가까운 적까지 <white><distance></white>블록"
+  compass-target: "<red><arrow></red> <white><target></white> <gray>· <white><distance></white>블록"
   vengeful: "<dark_purple>복수의 영혼</dark_purple><gray>이 나를 쓰러뜨린 적에게 깃들었습니다. 그 적은 시들어 가며 모두에게 보입니다."
 
 # ── 증강 연습 (/게임 증강 연습) ──────────────────────────────

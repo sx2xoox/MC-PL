@@ -187,6 +187,17 @@ class AugmentPracticeTest {
     }
 
     @Test
+    void theCompassTracksDummiesWhileFarmingInPractice() {
+        AugmentMatch match = practice();
+        h.server.dispatchCommand(admin, "게임 증강 허수아비 1");
+        h.server.dispatchCommand(admin, "게임 증강 받기 hunter_compass");
+        LivingEntity dummy = match.dummiesOf(admin.getUniqueId()).getFirst();
+        h.ticks(40);
+        assertEquals(dummy.getLocation().getBlockX(), admin.getCompassTarget().getBlockX(),
+                "practice dummies are tracked before the fight phase too");
+    }
+
+    @Test
     void practisingPlayersCannotHurtEachOtherUntilPvpIsOn() {
         AugmentMatch match = practice();
         TestPlayer friend = h.join("Friend");

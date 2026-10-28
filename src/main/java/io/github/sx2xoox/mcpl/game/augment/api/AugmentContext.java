@@ -25,6 +25,9 @@ public interface AugmentContext {
     /** True if the owner is a bot (no inventory, chat or menus; {@link #player()} throws). */
     boolean isBot();
 
+    /** True in 증강 연습, where dummies may be fought in every phase. */
+    boolean practice();
+
     AugmentInfo info();
 
     /** The configured numbers ({@code augments.yml}). */
