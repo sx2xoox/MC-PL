@@ -163,6 +163,7 @@ class AugmentMatchTest {
     @Test
     void aRoundOffersThreeCardsOfOneTierAndAClickPicks() {
         List<TestPlayer> players = h.join(2);
+        h.chestMenu();
         AugmentMatch match = h.startFarming();
         h.ticks(2 * 20 + 1);
         assertEquals(1, match.roundsPlayed());
@@ -189,6 +190,7 @@ class AugmentMatchTest {
     @Test
     void rerollsRedrawTheCardsUntilTheyRunOut() {
         List<TestPlayer> players = h.join(2);
+        h.chestMenu();
         h.settings().set(AugmentSettings.REROLLS, 1);
         AugmentMatch match = h.startFarming();
         h.ticks(2 * 20 + 1);
@@ -209,6 +211,7 @@ class AugmentMatchTest {
     @Test
     void anUnpickedOfferGrantsARandomCardAndClosingTheMenuCanBeUndone() {
         List<TestPlayer> players = h.join(2);
+        h.chestMenu();
         AugmentMatch match = h.startFarming();
         h.ticks(2 * 20 + 1);
         TestPlayer closer = players.getFirst();

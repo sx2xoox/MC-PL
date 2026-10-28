@@ -233,6 +233,7 @@ class TrickAugmentsTest {
 
     @Test
     void luckyCoinAndCollectorShowMoreCards() {
+        h.chestMenu();
         match = h.startFarming();
         int rerolls = match.rerollsLeft(a.getUniqueId());
         grant(a, "lucky_coin");

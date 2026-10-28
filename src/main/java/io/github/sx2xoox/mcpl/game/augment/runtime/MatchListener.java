@@ -17,6 +17,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -57,11 +58,19 @@ final class MatchListener implements Listener {
     // =================================================================== damage
 
     /**
-     * While the world is prepared nobody gets hurt; during the farming players cannot hurt each other (anything
-     * credited to a participant: melee, arrows, TNT, ...). Mobs, falls and lava still hurt.
+     * While the world is prepared nobody gets hurt; during the farming of a real match participants (players and
+     * bots) take no damage at all ({@code farming.invulnerable}), and in any case players cannot hurt each other
+     * (anything credited to a participant: melee, arrows, TNT, ...).
      */
     @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
     public void onDamageGate(EntityDamageEvent event) {
+        if (match.farmingInvulnerable() && FarmingRules.prevents(event.getCause())) {
+            java.util.UUID owner = match.participantOf(event.getEntity());
+            if (owner != null && match.inPlay(owner)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
         if (!(event.getEntity() instanceof Player victim) || !session.isAlive(victim)) {
             return;
         }
@@ -128,6 +137,15 @@ final class MatchListener implements Listener {
         if (victim instanceof Player player && session.isInPlay(player)
                 && event.getCause() == EntityDamageEvent.DamageCause.FALL) {
             match.bonus().onFallDamage(player, event.getFinalDamage());
+        }
+    }
+
+    /** No hunger while farming ({@code farming.no-hunger}): the food level never drops (eating still works). */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onHunger(FoodLevelChangeEvent event) {
+        if (match.farmingNoHunger() && event.getEntity() instanceof Player player && session.isInPlay(player)
+                && event.getFoodLevel() < player.getFoodLevel()) {
+            event.setCancelled(true);
         }
     }
 

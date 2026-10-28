@@ -115,14 +115,23 @@ class AugmentBonusTest {
 
     @Test
     void miracleLandingInWaterOrBarelyAlive() {
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.AugmentSettings.FARMING_INVULNERABLE, true);
         AugmentMatch match = h.startFarming();
         a.setFallDistance(25);
         h.ticks(1);
         a.getLocation().getBlock().setType(Material.WATER);
         a.setFallDistance(0);
         h.ticks(1);
-        assertBonus(match, a, BonusCondition.MIRACLE_LANDING);
+        assertBonus(match, a, BonusCondition.MIRACLE_LANDING); // the water landing counts while invulnerable
 
+        b.setFallDistance(30);
+        b.setHealth(7);
+        b.damage(4, DamageSource.builder(DamageType.FALL).build());
+        assertEquals(7, b.getHealth(), 1.0E-6, "nobody is hurt while farming");
+        assertFalse(match.bonuses(b.getUniqueId()).contains(BonusCondition.MIRACLE_LANDING));
+
+        match.advancePhase();
+        assertEquals(MatchPhase.FIGHT, match.phase());
         b.setFallDistance(30);
         b.setHealth(7);
         b.damage(4, DamageSource.builder(DamageType.FALL).build());

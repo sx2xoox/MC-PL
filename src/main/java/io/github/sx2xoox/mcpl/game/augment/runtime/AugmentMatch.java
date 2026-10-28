@@ -65,7 +65,8 @@ import org.jspecify.annotations.Nullable;
  * One match of 증강 야생전 (see {@code docs/augment.md}): {@link MatchPhase#PREPARING} while the fresh world
  * generates, {@link MatchPhase#FARMING} (survival, no PvP), then {@link MatchPhase#FIGHT} (PvP, the world border
  * shrinks) until one player or team is left. Augments are offered in timed rounds and for special achievements
- * ({@link BonusTracker}); each player picks one of three cards in a chest menu ({@link OfferMenu}).
+ * ({@link BonusTracker}); each player picks one of three cards in a dialog ({@link OfferDialog}) or, with
+ * {@code augments.ui: CHEST}, a chest menu ({@link OfferMenu}).
  */
 public final class AugmentMatch implements GameInstance, BotHost {
 
@@ -297,6 +298,19 @@ public final class AugmentMatch implements GameInstance, BotHost {
         return mode == MatchMode.PRACTICE;
     }
 
+    /**
+     * The farming of a real match (also 봇전 and 봇 관전전, not practice) with {@code farming.invulnerable}:
+     * participants, players and bots, take no damage. Ends when the fight starts.
+     */
+    public boolean farmingInvulnerable() {
+        return !isPractice() && phase == MatchPhase.FARMING && settings.farmingInvulnerable();
+    }
+
+    /** The farming of a real match with {@code farming.no-hunger}: players' food and saturation stay full. */
+    public boolean farmingNoHunger() {
+        return !isPractice() && phase == MatchPhase.FARMING && settings.farmingNoHunger();
+    }
+
     /** Practice: whether practising players can hurt each other (always false in a real match: see the phases). */
     public boolean practicePvp() {
         return practicePvp;
@@ -448,6 +462,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
         if (phase == MatchPhase.FIGHT) {
             tickBorder();
+        } else if (farmingNoHunger() && clock % 20 == 0) {
+            for (Player player : session.alivePlayers()) {
+                FarmingRules.feed(player);
+            }
         }
         tickOffers();
         tickAugments();
@@ -662,6 +680,11 @@ public final class AugmentMatch implements GameInstance, BotHost {
                             Messages.tag("time", Format.duration(farming))), 5, 60, 15);
             announce(messages().prefixed(isSpectate() ? "spectate.farming" : "phase.farming",
                     Messages.tag("time", Format.duration(farming)), Messages.tag("rounds", settings.rounds().size())));
+            if (farmingInvulnerable() || farmingNoHunger()) {
+                announce(messages().prefixed(farmingInvulnerable()
+                        ? (farmingNoHunger() ? "phase.farming-grace" : "phase.farming-invulnerable")
+                        : "phase.farming-no-hunger"));
+            }
         }
         session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 1f, 1.2f);
         hud.update();
@@ -885,6 +908,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             activate(player, state);
         } else {
             messages().send(player, "offer.queued", Messages.tag("count", state.offers.size()));
+            if (state.dialog != null && state.dialog == state.current()) {
+                showDialog(player, state, state.dialog); // the dialog says how many more wait
+            }
         }
     }
 
@@ -938,12 +964,66 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (!offer.started()) {
             offer.deadline(clock + settings.choiceTicks());
         }
+        if (settings.offerUi() == AugmentSettings.OfferUi.DIALOG) {
+            showDialog(player, state, offer);
+            Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 0.8f, 1.3f);
+            return true;
+        }
         OfferMenu menu = new OfferMenu(player.getUniqueId(), offer, messages(), config::params, state.rerolls,
                 secondsLeft(offer));
         state.menu = menu;
         player.openInventory(menu.getInventory());
         Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 0.8f, 1.3f);
         return true;
+    }
+
+    /** Shows (again) the pick dialog of the player's current offer, with the cards and countdown as they are now. */
+    private void showDialog(Player player, PlayerState state, Offer offer) {
+        state.dialog = offer;
+        OfferDialog dialog = OfferDialog.of(messages(), offer, config::params, state.rerolls, secondsLeft(offer),
+                state.offers.size() - 1);
+        UUID id = player.getUniqueId();
+        long offerId = offer.id();
+        int revision = offer.revision();
+        game.offerDialogs().show(player, dialog, action -> dialogClicked(id, offerId, revision, action));
+    }
+
+    /**
+     * A button of a pick dialog was clicked (the client closed that dialog). Only a dialog of the current offer with
+     * its current cards counts; a stale one (after a reroll, a pick, a timeout) changes nothing, and the current
+     * offer's dialog is shown again if the player was looking at one.
+     */
+    void dialogClicked(UUID id, long offerId, int revision, OfferDialog.Action action) {
+        Player player = org.bukkit.Bukkit.getPlayer(id);
+        PlayerState state = players.get(id);
+        if (player == null || state == null || stopped || !session.isInPlay(player)) {
+            return;
+        }
+        Offer offer = state.current();
+        if (offer == null || offer.id() != offerId || offer.revision() != revision) {
+            if (offer != null && state.dialog == offer && action.kind() != OfferDialog.Kind.LATER) {
+                showDialog(player, state, offer);
+            }
+            return;
+        }
+        switch (action.kind()) {
+            case PICK -> {
+                if (action.card() >= 0 && action.card() < offer.cards().size()) {
+                    pick(player, offer.cards().get(action.card()));
+                }
+            }
+            case REROLL -> {
+                if (!reroll(player) && state.current() == offer) {
+                    showDialog(player, state, offer);
+                }
+            }
+            case LATER -> {
+                if (state.dialog == offer) {
+                    state.dialog = null;
+                    messages().send(player, "offer.closed", Messages.tag("seconds", secondsLeft(offer)));
+                }
+            }
+        }
     }
 
     long secondsLeft(Offer offer) {
@@ -963,7 +1043,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         state.offers.pollFirst();
         closeMenu(state);
         grant(player, state, card, false);
-        if (state.current() != null && state.menu == null) { // an augment may have queued and opened one
+        if (state.current() != null && !state.choosing()) { // an augment may have queued and opened one
             activate(player, state);
         }
         return true;
@@ -993,6 +1073,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (state.menu != null && state.menu.offer() == offer) {
             state.menu.render(config::params, state.rerolls);
         }
+        if (state.dialog == offer) {
+            showDialog(player, state, offer);
+        }
         messages().send(player, "offer.rerolled", Messages.tag("count", state.rerolls));
         Feedback.play(player, Sound.ITEM_BOOK_PAGE_TURN, 1f, 1.1f);
         return true;
@@ -1014,6 +1097,13 @@ public final class AugmentMatch implements GameInstance, BotHost {
     private void closeMenu(PlayerState state) {
         OfferMenu menu = state.menu;
         state.menu = null;
+        if (state.dialog != null) {
+            state.dialog = null;
+            Player player = org.bukkit.Bukkit.getPlayer(state.id);
+            if (player != null) {
+                game.offerDialogs().close(player);
+            }
+        }
         if (menu == null) {
             return;
         }
@@ -1041,7 +1131,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 state.offers.pollFirst();
                 closeMenu(state);
                 grant(player, state, card, true);
-                if (state.current() != null && state.menu == null) {
+                if (state.current() != null && !state.choosing()) {
                     activate(player, state);
                 }
                 continue;
@@ -1050,6 +1140,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 long seconds = secondsLeft(offer);
                 if (state.menu != null) {
                     state.menu.updateClock(seconds);
+                } else if (state.dialog == offer) {
+                    if (OfferDialog.REFRESH_AT.contains(seconds)) {
+                        showDialog(player, state, offer); // the countdown in the dialog is a fixed text
+                    }
                 } else {
                     messages().actionBar(player, "offer.reminder", Messages.tag("seconds", seconds));
                 }
@@ -1158,6 +1252,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
         state.rerolls += count;
         if (state.menu != null) {
             state.menu.render(config::params, state.rerolls);
+        }
+        Player owner = org.bukkit.Bukkit.getPlayer(player);
+        if (state.dialog != null && state.dialog == state.current() && owner != null) {
+            showDialog(owner, state, state.dialog);
         }
         hud.update();
     }

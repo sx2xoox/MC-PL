@@ -20,8 +20,8 @@ public enum BonusCondition {
     ABYSS_MINER("abyss_miner", "심연의 광부", AugmentTier.GOLD, false, Material.DEEPSLATE_DIAMOND_ORE,
             "Y {max_y} 아래에서 다이아몬드 광석을 캡니다.", params("max_y", -40)),
     MIRACLE_LANDING("miracle_landing", "기적의 착지", AugmentTier.SILVER, false, Material.WATER_BUCKET,
-            "{min_fall}블록 이상 떨어지고도 살아남습니다: 물에 착지하거나(물 양동이 MLG), 체력이 {max_health} "
-                    + "이하로 남은 채로 (체력 2 = 하트 1칸).",
+            "{min_fall}블록 이상 떨어지고도 살아남습니다: 물에 착지하거나(물 양동이 MLG, 언제든), 전투 시간에 "
+                    + "체력이 {max_health} 이하로 남은 채로 (체력 2 = 하트 1칸).",
             params("min_fall", 20, "max_health", 4)),
     IRON_ARTISAN("iron_artisan", "철의 장인", AugmentTier.SILVER, true, Material.IRON_CHESTPLATE,
             "가장 먼저 철 이상(철·다이아몬드·네더라이트) 갑옷 네 부위를 모두 입습니다.", Map.of()),

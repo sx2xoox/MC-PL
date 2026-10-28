@@ -27,7 +27,8 @@ import org.mockbukkit.mockbukkit.MockBukkit;
 
 /**
  * MockBukkit with the plugin and a {@link TestWorldProvider}, driving quick 증강 야생전 matches: the "vanilla" match
- * world is a flat mock world, farming lasts 10 s, one augment round at 2 s, cards time out after 5 s.
+ * world is a flat mock world, farming lasts 10 s (no invulnerability, hunger as usual), one augment round at 2 s,
+ * cards (dialogs, recorded by {@link #dialogs}) time out after 5 s.
  */
 public final class AugmentHarness implements AutoCloseable {
 
@@ -36,6 +37,8 @@ public final class AugmentHarness implements AutoCloseable {
     public final AugmentGame game;
     public final TestWorldProvider worlds;
     public final FlatWorld lobby;
+    /** Records the augment pick dialogs (MockBukkit cannot build Paper dialogs). */
+    public final TestDialogs dialogs = new TestDialogs();
 
     public AugmentHarness() {
         server = MockBukkit.mock(new TestServer());
@@ -45,6 +48,7 @@ public final class AugmentHarness implements AutoCloseable {
         game = (AugmentGame) hub.games().game(AugmentGame.ID);
         worlds = new TestWorldProvider(server);
         hub.tempWorlds().provider(worlds);
+        game.offerDialogs(dialogs);
         ConfigurationSection s = settings();
         s.set(AugmentSettings.RADIUS, 64);
         s.set(AugmentSettings.FARMING, 10);
@@ -52,6 +56,14 @@ public final class AugmentHarness implements AutoCloseable {
         s.set(AugmentSettings.BORDER_DELAY, 2);
         s.set(AugmentSettings.BORDER_SHRINK, 4);
         s.set(AugmentSettings.ROUNDS, List.of(Map.of("at", 2, "silver", 1, "gold", 0, "prism", 0)));
+        // most tests hurt players with augments while farming; FarmingGraceTest turns the grace on
+        s.set(AugmentSettings.FARMING_INVULNERABLE, false);
+        s.set(AugmentSettings.FARMING_NO_HUNGER, false);
+    }
+
+    /** Cards in the chest menu instead of the dialog ({@code augments.ui: CHEST}). */
+    public void chestMenu() {
+        settings().set(AugmentSettings.OFFER_UI, AugmentSettings.OfferUi.CHEST.name());
     }
 
     /** The live {@code games.augment} section (read when the next match is started). */
