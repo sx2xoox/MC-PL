@@ -19,6 +19,7 @@ public final class ExecutionerAugment implements Augment {
             .description("체력이 최대 체력의 {threshold}% 이하인 적에게 주는 모든 피해가 {damage}% 늘어납니다.")
             .param("threshold", 30)
             .param("damage", 30)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

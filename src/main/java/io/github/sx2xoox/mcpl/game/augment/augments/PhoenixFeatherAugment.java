@@ -12,7 +12,7 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -27,6 +27,7 @@ public final class PhoenixFeatherAugment implements Augment {
             .param("health", 10)
             .param("shield", 3)
             .param("regen", 6)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -48,7 +49,7 @@ public final class PhoenixFeatherAugment implements Augment {
         }
         used = true;
         event.setCancelled(true);
-        Player player = ctx.player();
+        LivingEntity player = ctx.owner();
         AttributeInstance max = player.getAttribute(Attribute.MAX_HEALTH);
         double cap = max == null ? 20.0 : max.getValue();
         player.setHealth(Math.max(1.0, Math.min(cap, ctx.params().num("health"))));

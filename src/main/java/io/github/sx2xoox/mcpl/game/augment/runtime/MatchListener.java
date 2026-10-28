@@ -84,22 +84,27 @@ final class MatchListener implements Listener {
         if (!(event.getEntity() instanceof LivingEntity victim) || match.isAugmentDamage()) {
             return;
         }
-        Player attacker = session.combat().resolveAttacker(event);
-        if (attacker != null && match.isEnemy(attacker.getUniqueId(), victim)) {
+        java.util.UUID attacker = match.attackerOf(event);
+        if (attacker != null && match.isEnemy(attacker, victim)) {
             match.forEachAugment(attacker, "onOutgoingDamage", augment -> augment.onOutgoingDamage(event, victim));
         }
-        if (victim instanceof Player player && !event.isCancelled()) {
-            match.forEachAugment(player, "onIncomingDamage", augment -> augment.onIncomingDamage(event));
+        java.util.UUID owner = match.participantOf(victim);
+        if (owner != null && !event.isCancelled()) {
+            match.forEachAugment(owner, "onIncomingDamage", augment -> augment.onIncomingDamage(event));
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onLethal(EntityDamageEvent event) {
-        if (!(event.getEntity() instanceof Player player) || !session.isInPlay(player)) {
+        if (!(event.getEntity() instanceof LivingEntity body)) {
             return;
         }
-        if (event.getFinalDamage() >= player.getHealth() + player.getAbsorptionAmount()) {
-            match.saveFromDeath(player, event);
+        java.util.UUID owner = match.participantOf(body);
+        if (owner == null || !match.inPlay(owner)) {
+            return;
+        }
+        if (event.getFinalDamage() >= body.getHealth() + body.getAbsorptionAmount()) {
+            match.saveFromDeath(owner, event);
         }
     }
 
@@ -109,13 +114,14 @@ final class MatchListener implements Listener {
             return;
         }
         double dealt = Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
-        Player attacker = session.combat().resolveAttacker(event);
-        if (attacker != null && match.isEnemy(attacker.getUniqueId(), victim)) {
+        java.util.UUID attackerId = match.attackerOf(event);
+        if (attackerId != null && match.isEnemy(attackerId, victim)) {
             if (!match.isAugmentDamage()) {
-                match.forEachAugment(attacker, "afterOutgoingDamage",
+                match.forEachAugment(attackerId, "afterOutgoingDamage",
                         augment -> augment.afterOutgoingDamage(victim, dealt));
             }
-            if (victim instanceof Player || match.isRival(victim)) {
+            Player attacker = session.combat().resolveAttacker(event);
+            if (attacker != null && (victim instanceof Player || match.isRival(victim))) {
                 match.bonus().onPlayerHit(victim, attacker);
             }
         }
@@ -129,15 +135,18 @@ final class MatchListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onShootBow(EntityShootBowEvent event) {
-        if (event.getEntity() instanceof Player player) {
-            match.forEachAugment(player, "onShootBow", augment -> augment.onShootBow(event));
+        java.util.UUID owner = match.participantOf(event.getEntity());
+        if (owner != null) {
+            match.forEachAugment(owner, "onShootBow", augment -> augment.onShootBow(event));
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onProjectileHit(ProjectileHitEvent event) {
-        if (event.getEntity().getShooter() instanceof Player player) {
-            match.forEachAugment(player, "onProjectileHit", augment -> augment.onProjectileHit(event));
+        java.util.UUID owner = event.getEntity().getShooter() instanceof org.bukkit.entity.Entity shooter
+                ? match.participantOf(shooter) : null;
+        if (owner != null) {
+            match.forEachAugment(owner, "onProjectileHit", augment -> augment.onProjectileHit(event));
         }
     }
 

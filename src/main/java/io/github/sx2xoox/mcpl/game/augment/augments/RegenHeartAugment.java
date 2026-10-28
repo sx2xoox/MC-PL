@@ -8,7 +8,7 @@ import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 
@@ -20,6 +20,7 @@ public final class RegenHeartAugment implements Augment {
             .description("{delay}초 동안 피해를 받지 않으면 1초마다 체력을 {heal}씩 회복합니다.")
             .param("delay", 5)
             .param("heal", 1)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -45,7 +46,7 @@ public final class RegenHeartAugment implements Augment {
         if (calm < 0 || calm % 20 != 0) {
             return;
         }
-        Player player = ctx.player();
+        LivingEntity player = ctx.owner();
         AttributeInstance max = player.getAttribute(Attribute.MAX_HEALTH);
         double heal = ctx.params().num("heal");
         if (heal > 0 && !player.isDead() && max != null && player.getHealth() < max.getValue()) {

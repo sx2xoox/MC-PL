@@ -15,6 +15,7 @@ public final class ThickSkinAugment implements Augment {
                     AugmentKind.STAT, Material.LEATHER)
             .description("근접 공격으로 받는 피해가 {reduction}% 줄어듭니다.")
             .param("reduction", 10)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

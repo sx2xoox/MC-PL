@@ -19,6 +19,7 @@ public final class BerserkerPactAugment implements Augment {
             .description("최대 체력이 {health}만큼 줄어드는 대신, 적에게 주는 모든 피해가 {damage}% 늘어납니다.")
             .param("health", 4)
             .param("damage", 25)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

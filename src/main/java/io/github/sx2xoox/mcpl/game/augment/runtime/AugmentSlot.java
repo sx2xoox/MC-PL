@@ -65,7 +65,10 @@ final class AugmentSlot implements AugmentContext {
             return;
         }
         removed = true;
-        Player player = Bukkit.getPlayer(owner);
+        LivingEntity player = match.body(owner);
+        if (player == null && match.isBotId(owner)) {
+            player = deadBotBody();
+        }
         if (player != null) {
             // an offline owner is restored from their snapshot when they come back (plugin modifiers stripped)
             try {
@@ -94,6 +97,9 @@ final class AugmentSlot implements AugmentContext {
 
     @Override
     public Player player() {
+        if (match.isBotId(owner)) {
+            throw new IllegalStateException(info.id() + " asked for the player of a bot (not forBots)");
+        }
         Player player = Bukkit.getPlayer(owner);
         if (player == null) {
             throw new IllegalStateException("the owner of " + info.id() + " is offline");
@@ -103,12 +109,19 @@ final class AugmentSlot implements AugmentContext {
 
     @Override
     public LivingEntity owner() {
-        return player();
+        LivingEntity body = match.body(owner);
+        if (body == null && match.isBotId(owner)) {
+            body = deadBotBody();
+        }
+        if (body == null) {
+            throw new IllegalStateException("the owner of " + info.id() + " is not in play");
+        }
+        return body;
     }
 
     @Override
     public boolean isBot() {
-        return false;
+        return match.isBotId(owner);
     }
 
     @Override
@@ -147,7 +160,7 @@ final class AugmentSlot implements AugmentContext {
         if (removed || !Double.isFinite(amount)) {
             return;
         }
-        Player player = player();
+        LivingEntity player = owner();
         AttributeInstance instance = player.getAttribute(attribute);
         if (instance == null) {
             return;
@@ -164,7 +177,14 @@ final class AugmentSlot implements AugmentContext {
         }
     }
 
-    private static void clampHealth(Player player) {
+    /** A bot's body that just died (its augments are removed right after). */
+    private @Nullable LivingEntity deadBotBody() {
+        io.github.sx2xoox.mcpl.game.augment.bot.BotManager bots = match.bots();
+        io.github.sx2xoox.mcpl.game.augment.bot.BotController bot = bots == null ? null : bots.bot(owner);
+        return bot == null || bot.body() == null ? null : bot.body().body();
+    }
+
+    private static void clampHealth(LivingEntity player) {
         AttributeInstance max = player.getAttribute(Attribute.MAX_HEALTH);
         if (max != null && !player.isDead() && player.getHealth() > max.getValue()) {
             player.setHealth(max.getValue());
@@ -173,8 +193,8 @@ final class AugmentSlot implements AugmentContext {
 
     @Override
     public void give(ItemStack... items) {
-        if (removed || items.length == 0) {
-            return;
+        if (removed || items.length == 0 || isBot()) {
+            return; // a bot has no inventory
         }
         Player player = player();
         Map<Integer, ItemStack> leftover = player.getInventory().addItem(items);
@@ -222,7 +242,7 @@ final class AugmentSlot implements AugmentContext {
     public <T extends Entity> T summon(T entity) {
         track(entity);
         if (!removed) {
-            match.session().combat().registerOwner(entity, player());
+            match.session().combat().registerOwner(entity, owner);
         }
         return entity;
     }

@@ -33,7 +33,13 @@ import io.github.sx2xoox.mcpl.game.augment.api.AugmentRegistry;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
 import io.github.sx2xoox.mcpl.game.augment.api.Params;
 import io.github.sx2xoox.mcpl.game.augment.bonus.BonusCondition;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotController;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotDifficulty;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotHost;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotManager;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotSettings;
 import io.github.sx2xoox.mcpl.game.augment.config.AugmentConfig;
+import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
@@ -60,7 +66,7 @@ import org.jspecify.annotations.Nullable;
  * shrinks) until one player or team is left. Augments are offered in timed rounds and for special achievements
  * ({@link BonusTracker}); each player picks one of three cards in a chest menu ({@link OfferMenu}).
  */
-public final class AugmentMatch implements GameInstance {
+public final class AugmentMatch implements GameInstance, BotHost {
 
     private final AugmentGame game;
     private final GameSession session;
@@ -90,6 +96,18 @@ public final class AugmentMatch implements GameInstance {
     private final @Nullable PracticeDummies dummies;
     /** Practice: practising players can hurt each other. */
     private boolean practicePvp;
+    private final @Nullable BotManager bots;
+    private final @Nullable BotSetup botSetup;
+
+    /**
+     * The bots of a 봇전 match.
+     *
+     * @param settings   {@code games.augment.bots}
+     * @param difficulty how well they play
+     * @param count      how many
+     */
+    public record BotSetup(BotSettings settings, BotDifficulty difficulty, int count) {
+    }
 
     public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings) {
         this(game, session, wild, settings, MatchMode.NORMAL, null);
@@ -97,6 +115,12 @@ public final class AugmentMatch implements GameInstance {
 
     public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings,
                         MatchMode mode, @Nullable AugmentPracticeSettings practiceSettings) {
+        this(game, session, wild, settings, mode, practiceSettings, null);
+    }
+
+    public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings,
+                        MatchMode mode, @Nullable AugmentPracticeSettings practiceSettings,
+                        @Nullable BotSetup botSetup) {
         this.game = game;
         this.session = session;
         this.wild = wild;
@@ -112,6 +136,13 @@ public final class AugmentMatch implements GameInstance {
         this.practiceSettings = mode == MatchMode.PRACTICE ? practice : null;
         this.dummies = this.practiceSettings != null ? new PracticeDummies(this, this.practiceSettings) : null;
         this.practicePvp = this.practiceSettings != null && this.practiceSettings.pvp();
+        this.botSetup = botSetup;
+        this.bots = botSetup != null ? new BotManager(this, botSetup.settings(), botSetup.difficulty()) : null;
+    }
+
+    /** The bots of a 봇전 match (null otherwise). */
+    public @Nullable BotManager bots() {
+        return bots;
     }
 
     // =================================================================== accessors
@@ -243,6 +274,14 @@ public final class AugmentMatch implements GameInstance {
         if (dummies != null) {
             session.registerListener(dummies);
         }
+        if (bots != null && botSetup != null) {
+            for (UUID id : bots.register(botSetup.count())) {
+                players.put(id, new PlayerState(id, 0));
+            }
+            session.registerListener(bots);
+            announce(messages().prefixed("bots.joined", Messages.tag("count", bots.all().size()),
+                    Messages.tag("difficulty", botSetup.difficulty().koreanName())));
+        }
         bar = session.sharedBossBar(messages().get("bar.preparing", Messages.tag("percent", 0),
                         Messages.tag("done", 0), Messages.tag("total", 0)), 0f, BossBar.Color.WHITE,
                 BossBar.Overlay.PROGRESS);
@@ -283,6 +322,9 @@ public final class AugmentMatch implements GameInstance {
         }
         tickOffers();
         tickAugments();
+        if (bots != null) {
+            bots.tick(clock);
+        }
         bonus.tick();
         if (clock % 10 == 0) {
             hud.update();
@@ -302,6 +344,12 @@ public final class AugmentMatch implements GameInstance {
         if (killer != null && !session.sameTeam(killer.getUniqueId(), victim.getUniqueId())) {
             creditKill(killer, victim);
         }
+        LivingEntity killerBody = killer;
+        UUID bot = killer == null ? botKiller(victim.getUniqueId()) : null;
+        if (bot != null) {
+            killerBody = body(bot);
+            forEachAugment(bot, "onKill", augment -> augment.onKill(victim));
+        }
         if (isPractice()) {
             // practice: back on your feet near where you fell, augments kept
             return DeathOutcome.respawn(session.safeSpot(victim.getLocation()));
@@ -311,7 +359,7 @@ public final class AugmentMatch implements GameInstance {
             for (AugmentSlot slot : List.copyOf(dead.slots)) {
                 if (!slot.isRemoved()) {
                     try {
-                        slot.augment().onDeath(killer);
+                        slot.augment().onDeath(killerBody);
                     } catch (RuntimeException e) {
                         log("onDeath of " + slot.info().id(), e);
                     }
@@ -321,9 +369,21 @@ public final class AugmentMatch implements GameInstance {
         return DeathOutcome.eliminate();
     }
 
-    /** The participant {@code killer} was credited with killing the enemy combatant {@code victim}. */
+    /** The bot credited with the last hit on {@code victim} (kill credit window), or null. */
+    private @Nullable UUID botKiller(UUID victim) {
+        if (bots == null) {
+            return null;
+        }
+        UUID id = session.combat().lastAttackerId(victim, CombatTracker.DEFAULT_WINDOW_TICKS);
+        return id != null && bots.isBot(id) ? id : null;
+    }
+
+    /**
+     * The participant {@code killer} was credited with killing the enemy combatant {@code victim} (a player, a bot's
+     * body or a practice dummy; the caller checked it was an enemy: it is dead by now).
+     */
     void creditKill(Player killer, LivingEntity victim) {
-        if (stopped || !isEnemy(killer.getUniqueId(), victim) && !(victim instanceof Player)) {
+        if (stopped) {
             return;
         }
         bonus.onPlayerKill(killer, victim);
@@ -372,6 +432,9 @@ public final class AugmentMatch implements GameInstance {
     @Override
     public void onEliminated(Player player, @Nullable Player killer) {
         strip(player.getUniqueId());
+        if (bots != null) {
+            bots.forget(player.getUniqueId());
+        }
         if (player.isOnline()) {
             player.removePotionEffect(PotionEffectType.GLOWING);
         }
@@ -402,6 +465,9 @@ public final class AugmentMatch implements GameInstance {
         }
         if (dummies != null) {
             dummies.dispose();
+        }
+        if (bots != null) {
+            bots.dispose();
         }
         for (PlayerState state : players.values()) {
             closeMenu(state);
@@ -439,6 +505,9 @@ public final class AugmentMatch implements GameInstance {
         phase = MatchPhase.FARMING;
         clock = 0;
         spread();
+        if (bots != null && !bots.all().isEmpty()) {
+            bots.spawnAll(Spread.findSurfaceSpawns(wild.arena(), bots.all().size(), session.random()));
+        }
         WorldBorder border = wild.world().getWorldBorder();
         border.setCenter(wild.arena().centerX(), wild.arena().centerZ());
         border.setSize(settings.radius() * 2.0);
@@ -543,7 +612,11 @@ public final class AugmentMatch implements GameInstance {
             session.playSound(Sound.ENTITY_WITHER_SPAWN, 0.5f, 1.4f);
         }
         if (borderFinal && settings.glowAtFinal() && clock % 20 == 0) {
-            for (Player player : session.alivePlayers()) {
+            List<LivingEntity> glowing = new ArrayList<>(session.alivePlayers());
+            if (bots != null) {
+                glowing.addAll(bots.liveBodies());
+            }
+            for (LivingEntity player : glowing) {
                 if (!player.hasPotionEffect(PotionEffectType.GLOWING)) {
                     player.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, PotionEffect.INFINITE_DURATION,
                             0, false, false, false));
@@ -600,6 +673,57 @@ public final class AugmentMatch implements GameInstance {
         for (Player player : session.alivePlayers()) {
             offer(player, tier, source);
         }
+        if (bots != null) {
+            for (BotController bot : bots.all()) {
+                if (bots.body(bot.id()) != null) {
+                    grantBot(bot.id(), tier);
+                }
+            }
+        }
+    }
+
+    /** A bot "picks" a card: a random augment of {@code tier} bots can own ({@link AugmentInfo#forBots()}). */
+    @Nullable AugmentInfo grantBot(UUID bot, AugmentTier tier) {
+        PlayerState state = players.get(bot);
+        if (state == null || stopped || bots == null || bots.body(bot) == null) {
+            return null;
+        }
+        List<AugmentInfo> cards = draw(state, tier, Set.of(), true);
+        if (cards.isEmpty()) {
+            return null;
+        }
+        AugmentInfo info = cards.getFirst();
+        AugmentRegistry.Entry entry = game.registry().get(info.id());
+        if (entry == null) {
+            return null;
+        }
+        AugmentSlot slot = new AugmentSlot(this, bot, info, config.params(info), entry.factory());
+        state.slots.add(slot);
+        try {
+            slot.augment().onGrant();
+        } catch (RuntimeException e) {
+            log("onGrant of " + info.id() + " (bot)", e);
+        }
+        hud.update();
+        return info;
+    }
+
+    /** Gives a bot a specific augment (tests, admin tools); false if it cannot own it. */
+    public boolean grantBot(UUID bot, AugmentInfo info) {
+        PlayerState state = players.get(bot);
+        AugmentRegistry.Entry entry = game.registry().get(info.id());
+        if (state == null || entry == null || !info.forBots() || state.owns(info) || bots == null
+                || bots.body(bot) == null || stopped) {
+            return false;
+        }
+        AugmentSlot slot = new AugmentSlot(this, bot, info, config.params(info), entry.factory());
+        state.slots.add(slot);
+        try {
+            slot.augment().onGrant();
+        } catch (RuntimeException e) {
+            log("onGrant of " + info.id() + " (bot)", e);
+        }
+        return true;
     }
 
     /** Queues an offer of {@code tier} for the player (opened at once if nothing else is waiting). */
@@ -795,6 +919,11 @@ public final class AugmentMatch implements GameInstance {
      * own, not in {@code exclude}; topped up from the neighbouring tiers, then (if still short) with excluded ones.
      */
     List<AugmentInfo> draw(PlayerState state, AugmentTier tier, Collection<AugmentInfo> exclude) {
+        return draw(state, tier, exclude, false);
+    }
+
+    /** {@link #draw}, only from the augments bots can own when {@code botsOnly}. */
+    List<AugmentInfo> draw(PlayerState state, AugmentTier tier, Collection<AugmentInfo> exclude, boolean botsOnly) {
         int count = state.cardCount();
         List<AugmentInfo> picked = new ArrayList<>(count);
         for (boolean allowExcluded : new boolean[] {false, true}) {
@@ -805,6 +934,7 @@ public final class AugmentMatch implements GameInstance {
                 List<AugmentInfo> pool = new ArrayList<>();
                 for (AugmentInfo info : game.registry().ofTier(from)) {
                     if (config.isEnabled(info.id()) && !state.owns(info) && !picked.contains(info)
+                            && (!botsOnly || info.forBots())
                             && (allowExcluded || !exclude.contains(info))) {
                         pool.add(info);
                     }
@@ -890,7 +1020,7 @@ public final class AugmentMatch implements GameInstance {
     }
 
     /** Removes the augments and offers of a player who is out (they stay listed for the results). */
-    private void strip(UUID id) {
+    void strip(UUID id) {
         PlayerState state = players.get(id);
         if (state == null) {
             return;
@@ -907,11 +1037,10 @@ public final class AugmentMatch implements GameInstance {
             if (state.slots.isEmpty()) {
                 continue;
             }
-            Player player = org.bukkit.Bukkit.getPlayer(state.id);
-            if (player == null || !session.isInPlay(player)) {
+            if (!inPlay(state.id)) {
                 continue;
             }
-            for (AugmentSlot slot : state.slots) {
+            for (AugmentSlot slot : List.copyOf(state.slots)) {
                 if (!slot.isRemoved()) {
                     try {
                         slot.augment().onTick();
@@ -923,10 +1052,38 @@ public final class AugmentMatch implements GameInstance {
         }
     }
 
+    /** True for a participant in play: a player ({@link GameSession#isInPlay}) or a bot with a live body. */
+    boolean inPlay(UUID id) {
+        Player player = org.bukkit.Bukkit.getPlayer(id);
+        if (player != null) {
+            return session.isInPlay(player);
+        }
+        return bots != null && bots.body(id) != null;
+    }
+
+    /** The body of a participant in play: the player or a bot's body; null if none. */
+    @Nullable LivingEntity body(UUID id) {
+        Player player = org.bukkit.Bukkit.getPlayer(id);
+        if (player != null) {
+            return player;
+        }
+        return bots == null ? null : bots.body(id);
+    }
+
+    /** True for a bot of this match. */
+    boolean isBotId(UUID id) {
+        return bots != null && bots.isBot(id);
+    }
+
     /** Runs {@code hook} on every augment of a player in play (errors are logged). */
     void forEachAugment(Player player, String hook, Consumer<Augment> action) {
-        PlayerState state = players.get(player.getUniqueId());
-        if (state == null || state.slots.isEmpty() || stopped || !session.isInPlay(player)) {
+        forEachAugment(player.getUniqueId(), hook, action);
+    }
+
+    /** Runs {@code hook} on every augment of a participant (player or bot) in play (errors are logged). */
+    void forEachAugment(UUID owner, String hook, Consumer<Augment> action) {
+        PlayerState state = players.get(owner);
+        if (state == null || state.slots.isEmpty() || stopped || !inPlay(owner)) {
             return;
         }
         for (AugmentSlot slot : List.copyOf(state.slots)) {
@@ -943,8 +1100,13 @@ public final class AugmentMatch implements GameInstance {
 
     /** Asks the augments of a player in play to save them from a deadly hit; true if one did. */
     boolean saveFromDeath(Player player, org.bukkit.event.entity.EntityDamageEvent event) {
-        PlayerState state = players.get(player.getUniqueId());
-        if (state == null || stopped || !session.isInPlay(player)) {
+        return saveFromDeath(player.getUniqueId(), event);
+    }
+
+    /** {@link #saveFromDeath(Player, org.bukkit.event.entity.EntityDamageEvent)} for any participant. */
+    boolean saveFromDeath(UUID owner, org.bukkit.event.entity.EntityDamageEvent event) {
+        PlayerState state = players.get(owner);
+        if (state == null || stopped || !inPlay(owner)) {
             return false;
         }
         for (AugmentSlot slot : List.copyOf(state.slots)) {
@@ -968,8 +1130,8 @@ public final class AugmentMatch implements GameInstance {
      * ignoring (and keeping) the target's invulnerability frames.
      */
     void damage(UUID owner, LivingEntity target, double amount) {
-        Player source = org.bukkit.Bukkit.getPlayer(owner);
-        if (stopped || !(amount > 0) || !Double.isFinite(amount) || source == null || !session.isInPlay(source)
+        LivingEntity source = body(owner);
+        if (stopped || !(amount > 0) || !Double.isFinite(amount) || source == null || !inPlay(owner)
                 || !isEnemy(owner, target)) {
             return;
         }
@@ -1133,7 +1295,8 @@ public final class AugmentMatch implements GameInstance {
     // =================================================================== rules
 
     /** See {@link io.github.sx2xoox.mcpl.game.augment.api.AugmentContext#isEnemy}. */
-    boolean isEnemy(UUID owner, @Nullable Entity entity) {
+    @Override
+    public boolean isEnemy(UUID owner, @Nullable Entity entity) {
         if (!(entity instanceof LivingEntity living) || living.isDead()) {
             return false;
         }
@@ -1144,16 +1307,25 @@ public final class AugmentMatch implements GameInstance {
         if (dummies != null && dummies.isDummy(entity)) {
             return true;
         }
+        if (bots != null) {
+            UUID bot = bots.botOf(entity);
+            if (bot != null) {
+                // the body of an enemy bot in play; never its legs
+                return bots.isBody(entity) && !bot.equals(owner) && bots.body(bot) != null
+                        && !session.sameTeam(owner, bot);
+            }
+        }
         return entity instanceof Enemy;
     }
 
-    /** True for a non-player combatant of this match (a practice dummy). */
+    /** True for a non-player combatant of this match (a practice dummy or a bot's body). */
     boolean isRival(@Nullable Entity entity) {
-        return dummies != null && dummies.isDummy(entity);
+        return dummies != null && dummies.isDummy(entity) || bots != null && bots.isBody(entity);
     }
 
     /** See {@link io.github.sx2xoox.mcpl.game.augment.api.AugmentContext#rivals()}. */
-    List<LivingEntity> rivals(UUID owner, org.bukkit.World world) {
+    @Override
+    public List<LivingEntity> rivals(UUID owner, org.bukkit.World world) {
         List<LivingEntity> out = new ArrayList<>();
         for (Player player : session.alivePlayers()) {
             if (player.getWorld().equals(world) && isEnemy(owner, player)) {
@@ -1167,7 +1339,158 @@ public final class AugmentMatch implements GameInstance {
                 }
             }
         }
+        if (bots != null) {
+            for (LivingEntity body : bots.liveBodies()) {
+                if (body.getWorld().equals(world) && isEnemy(owner, body)) {
+                    out.add(body);
+                }
+            }
+        }
         return out;
+    }
+
+    // =================================================================== BotHost
+
+    @Override
+    public org.bukkit.World world() {
+        return wild.world();
+    }
+
+    @Override
+    public io.github.sx2xoox.mcpl.core.arena.Arena arena() {
+        return wild.arena();
+    }
+
+    @Override
+    public boolean fight() {
+        return phase == MatchPhase.FIGHT;
+    }
+
+    @Override
+    public double farmingProgress() {
+        if (phase == MatchPhase.FIGHT) {
+            return 1.0 + (double) fightTicks() / Math.max(1, settings.farmingTicks());
+        }
+        if (phase != MatchPhase.FARMING || settings.farmingTicks() <= 0) {
+            return phase == MatchPhase.FARMING ? 1.0 : 0.0;
+        }
+        return Math.min(1.0, (double) clock / settings.farmingTicks());
+    }
+
+    @Override
+    public double borderCenterX() {
+        return wild.arena().centerX();
+    }
+
+    @Override
+    public double borderCenterZ() {
+        return wild.arena().centerZ();
+    }
+
+    @Override
+    public double borderHalfIn(long ticksAhead) {
+        double start = settings.radius();
+        if (phase != MatchPhase.FIGHT) {
+            return start;
+        }
+        long into = fightTicks() + ticksAhead - settings.borderDelayTicks();
+        if (into <= 0) {
+            return start;
+        }
+        if (settings.borderShrinkTicks() <= 0 || into >= settings.borderShrinkTicks()) {
+            return settings.borderFinalSize() / 2;
+        }
+        double progress = (double) into / settings.borderShrinkTicks();
+        return start + (settings.borderFinalSize() / 2 - start) * progress;
+    }
+
+    @Override
+    public double finalHalf() {
+        return settings.borderFinalSize() / 2;
+    }
+
+    @Override
+    public @Nullable UUID participantOf(@Nullable Entity entity) {
+        if (entity instanceof Player player) {
+            return session.isParticipant(player) ? player.getUniqueId() : null;
+        }
+        if (bots != null && bots.isBody(entity)) {
+            return bots.botOf(entity);
+        }
+        return null;
+    }
+
+    @Override
+    public @Nullable UUID attackerOf(org.bukkit.event.entity.EntityDamageEvent event) {
+        Player player = session.combat().resolveAttacker(event);
+        if (player != null) {
+            return player.getUniqueId();
+        }
+        if (bots == null) {
+            return null;
+        }
+        org.bukkit.damage.DamageSource source = event.getDamageSource();
+        for (Entity entity : new Entity[] {source.getCausingEntity(), source.getDirectEntity(),
+                event instanceof org.bukkit.event.entity.EntityDamageByEntityEvent byEntity ? byEntity.getDamager()
+                        : null}) {
+            UUID id = botBehind(entity);
+            if (id != null) {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    private @Nullable UUID botBehind(@Nullable Entity entity) {
+        if (entity == null || bots == null) {
+            return null;
+        }
+        UUID id = bots.botOf(entity);
+        if (id != null) {
+            return id;
+        }
+        UUID owner = session.combat().ownerOf(entity);
+        if (owner != null && bots.isBot(owner)) {
+            return owner;
+        }
+        if (entity instanceof org.bukkit.entity.Projectile projectile
+                && projectile.getShooter() instanceof Entity shooter) {
+            return bots.botOf(shooter);
+        }
+        return null;
+    }
+
+    @Override
+    public void botDied(UUID bot, LivingEntity body, @Nullable UUID killer,
+                        org.bukkit.event.entity.@Nullable EntityDamageEvent lastDamage) {
+        if (stopped) {
+            return;
+        }
+        UUID credited = killer != null && session.isParticipant(killer) && !session.sameTeam(killer, bot)
+                ? killer : null;
+        LivingEntity killerBody = credited == null ? null : body(credited);
+        if (killerBody instanceof Player player && session.isInPlay(player)) {
+            creditKill(player, body);
+        } else if (credited != null && isBotId(credited)) {
+            forEachAugment(credited, "onKill", augment -> augment.onKill(body));
+        }
+        PlayerState dead = players.get(bot);
+        if (dead != null) {
+            for (AugmentSlot slot : List.copyOf(dead.slots)) {
+                if (!slot.isRemoved()) {
+                    try {
+                        slot.augment().onDeath(killerBody);
+                    } catch (RuntimeException e) {
+                        log("onDeath of " + slot.info().id() + " (bot)", e);
+                    }
+                }
+            }
+        }
+        strip(bot);
+        session.eliminateBot(bot, credited, io.github.sx2xoox.mcpl.core.game.DeathCauses.describe(session.messages(),
+                lastDamage));
+        hud.update();
+        checkWin();
     }
 
     private void checkWin() {
@@ -1178,6 +1501,12 @@ public final class AugmentMatch implements GameInstance {
             if (session.aliveCount() == 0) {
                 session.abort(messages().get("practice.everyone-left"));
             }
+            return;
+        }
+        if (bots != null && !bots.all().isEmpty() && !session.aliveIds().isEmpty()
+                && session.aliveIds().stream().allMatch(bots::isBot)) {
+            // every human is out: the bots still standing win together (nobody is left to watch them finish it)
+            finish(GameResult.builder().winners(session.aliveIds()).reason(messages().get("bots.won-reason")).build());
             return;
         }
         if (session.isTeamMode()) {

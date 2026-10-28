@@ -19,6 +19,7 @@ public final class GiantAugment implements Augment {
             .param("scale", 30)
             .param("health", 8)
             .param("slow", 10)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -33,7 +34,7 @@ public final class GiantAugment implements Augment {
         double health = ctx.params().num("health");
         ctx.addModifier(Attribute.MAX_HEALTH, health, AttributeModifier.Operation.ADD_NUMBER);
         if (health > 0) {
-            ctx.player().heal(health);
+            ctx.owner().heal(health);
         }
         ctx.addModifier(Attribute.MOVEMENT_SPEED, -Math.max(0.0, Math.min(1.0, ctx.params().fraction("slow"))),
                 AttributeModifier.Operation.ADD_SCALAR);

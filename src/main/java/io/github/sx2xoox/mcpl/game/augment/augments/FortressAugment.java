@@ -18,6 +18,7 @@ public final class FortressAugment implements Augment {
             .param("armor", 4)
             .param("toughness", 4)
             .param("knockback", 50)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

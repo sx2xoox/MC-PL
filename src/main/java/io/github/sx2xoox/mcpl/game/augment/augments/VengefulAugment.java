@@ -22,6 +22,7 @@ public final class VengefulAugment implements Augment {
                     + " 발광합니다.")
             .param("seconds", 10)
             .param("level", 2)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

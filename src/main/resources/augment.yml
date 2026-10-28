@@ -164,6 +164,18 @@ practice:
   pvp-on: "<red>연습 대전이 켜졌습니다</red> <gray>(<player>): 연습하는 플레이어끼리 공격할 수 있습니다."
   pvp-off: "<gray>연습 대전이 꺼졌습니다 (<player>): 플레이어끼리 공격할 수 없습니다."
 
+# ── 봇전 (/게임 증강 봇전) ───────────────────────────────────
+bots:
+  name: "<gradient:#7bd88f:#ff8c8c><bold>증강 봇전</bold></gradient>"
+  game-description:
+    - "봇이 빈자리를 채우는 진짜 증강 야생전. 혼자서도 할 수 있습니다."
+    - "<white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white>"
+  description: "<gray><difficulty> 봇"
+  joined: "<white><count></white><gray>명의 봇이 참가합니다 (난이도 <white><difficulty></white>). 봇이 마지막까지 남으면 사람은 집니다."
+  starting: "<green>봇전을 시작합니다:</green> <gray>봇 <white><count></white>명, 난이도 <white><difficulty></white>"
+  won-reason: "모든 사람이 탈락해 살아남은 봇이 이겼습니다"
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white>"
+
 # ── 오류 ─────────────────────────────────────────────────────
 error:
   world-failed: "<red>경기 월드를 만들지 못했습니다. 콘솔 로그를 확인해 주세요."
@@ -181,6 +193,7 @@ command:
     - " <click:suggest_command:'/게임 증강 보너스'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 보너스</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>보너스 증강을 주는 업적"
     - " <click:suggest_command:'/게임 증강 리롤'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 리롤</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>보이는 카드 다시 뽑기"
     - " <click:suggest_command:'/게임 증강 연습'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 연습</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>증강 연습 (받기 · 빼기 · 카드 · 다음단계 · 허수아비 · 대전)"
+    - " <click:suggest_command:'/게임 증강 봇전 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 봇전 [봇 수] [난이도]</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>관리자: 봇과 함께하는 증강 야생전 (쉬움 · 보통 · 어려움 · 지옥)"
   usage-info: "<gray>사용법: <white>/게임 증강 정보 \\<증강 이름 또는 id></white> <dark_gray>(예: 이단 점프, double_jump)"
   mine-none: "<gray>아직 받은 증강이 없습니다."
   mine-header: "<gold>내 증강 <white><count></white>개"

@@ -15,6 +15,7 @@ public final class FeatherFallAugment implements Augment {
                     AugmentKind.MOBILITY, Material.FEATHER)
             .description("떨어질 때 받는 피해가 {reduction}% 줄어듭니다.")
             .param("reduction", 100)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

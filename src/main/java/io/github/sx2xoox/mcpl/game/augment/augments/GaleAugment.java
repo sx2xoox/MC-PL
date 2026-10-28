@@ -16,6 +16,7 @@ public final class GaleAugment implements Augment {
                     AugmentKind.STAT, Material.SUGAR)
             .description("이동 속도가 {speed}% 빨라집니다.")
             .param("speed", 15)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

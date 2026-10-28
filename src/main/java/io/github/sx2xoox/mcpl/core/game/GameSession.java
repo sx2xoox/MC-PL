@@ -122,6 +122,8 @@ public final class GameSession {
     private final List<BukkitTask> hubTasks = new ArrayList<>();
     private List<MatchTeam> teams = List.of();
     private final Map<UUID, MatchTeam> teamByPlayer = new HashMap<>();
+    /** Participants that are not players (a mode's bots). */
+    private final Set<UUID> bots = new LinkedHashSet<>();
 
     private GameInstance instance;
     private GameState state = GameState.COUNTDOWN;
@@ -424,6 +426,87 @@ public final class GameSession {
             }
         }
         return out;
+    }
+
+    // =================================================================== bots
+
+    /**
+     * Adds a non-player participant (a mode's bot) while RUNNING: it counts as alive, has stats, a name, a place in
+     * the kill feed and the results, can win, and joins the smallest team in team mode. The mode moves it, keeps it
+     * alive and calls {@link #eliminateBot} when it is out. Hub code that needs a {@link Player} skips it
+     * ({@link #alivePlayers()}, {@link #participants()}).
+     *
+     * @return false unless RUNNING or if the id is taken
+     */
+    public boolean addBot(UUID id, String name) {
+        if (state != GameState.RUNNING || participants.contains(id) || Bukkit.getPlayer(id) != null) {
+            return false;
+        }
+        bots.add(id);
+        participants.add(id);
+        alive.add(id);
+        names.put(id, name);
+        stats.of(id);
+        if (isTeamMode()) {
+            MatchTeam team = TeamAssigner.addToSmallest(teams, id);
+            teamByPlayer.put(id, team);
+            boards.addTeamMember(team, id);
+        }
+        return true;
+    }
+
+    /** True for a participant added with {@link #addBot}. */
+    public boolean isBot(UUID id) {
+        return bots.contains(id);
+    }
+
+    /** Every bot of the match (eliminated ones included). */
+    public Set<UUID> botIds() {
+        return Collections.unmodifiableSet(bots);
+    }
+
+    /**
+     * Records a hit between two participants of which at least one is not a player (bots): kill credit and damage
+     * stats, like the hub does on its own between players. Ignored unless RUNNING, for self-hits and for anyone who
+     * is not an alive participant.
+     */
+    public void recordDamage(UUID attacker, UUID victim, double dealt) {
+        if (state != GameState.RUNNING || attacker.equals(victim) || !participants.contains(attacker)
+                || !alive.contains(victim)) {
+            return;
+        }
+        hub.combat().recordHit(victim, attacker);
+        if (dealt > 0) {
+            stats.addDamage(attacker, victim, dealt);
+        }
+    }
+
+    /**
+     * A bot is out (its body died): records the death (and the kill of {@code killer}, a player or a bot), shows the
+     * kill feed with {@code cause} and takes it out of the alive set. The mode checks for a winner afterwards.
+     */
+    public void eliminateBot(UUID bot, @Nullable UUID killer, @Nullable Component cause) {
+        if (state != GameState.RUNNING || !bots.contains(bot) || !alive.contains(bot)) {
+            return;
+        }
+        UUID credited = killer != null && !killer.equals(bot) && participants.contains(killer) ? killer : null;
+        stats.addDeath(bot);
+        if (credited != null) {
+            stats.addKill(credited);
+            Player online = Bukkit.getPlayer(credited);
+            if (online != null) {
+                Feedback.play(online, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 0.8f);
+            }
+        }
+        hub.combat().forget(bot);
+        markEliminated(bot);
+        killFeed(bot, credited, cause, true);
+    }
+
+    /** The bot credited with the last hit on {@code victim} within the kill-credit window, or null. */
+    private @Nullable UUID botKiller(UUID victim) {
+        UUID id = hub.combat().lastAttackerId(victim, CombatTracker.DEFAULT_WINDOW_TICKS);
+        return id != null && bots.contains(id) && !id.equals(victim) ? id : null;
     }
 
     // =================================================================== teams
@@ -1201,6 +1284,10 @@ public final class GameSession {
     }
 
     private void killFeed(UUID victim, @Nullable Player killer, @Nullable Component cause, boolean eliminated) {
+        killFeed(victim, killer == null ? null : killer.getUniqueId(), cause, eliminated);
+    }
+
+    private void killFeed(UUID victim, @Nullable UUID killer, @Nullable Component cause, boolean eliminated) {
         Component line;
         if (killer != null) {
             line = messages().get("kill-feed.kill", Messages.tag("killer", displayName(killer)),
@@ -1380,6 +1467,7 @@ public final class GameSession {
         }
 
         Player killer = validKiller(victim, hub.combat().lastAttacker(victim));
+        UUID bot = killer == null ? botKiller(id) : null;
         Component cause = DeathCauses.describe(messages(), victim.getLastDamageCause());
         DeathOutcome outcome;
         try {
@@ -1392,13 +1480,14 @@ public final class GameSession {
             outcome = DeathOutcome.eliminate();
         }
         stats.addDeath(id);
-        if (killer != null) {
-            stats.addKill(killer.getUniqueId());
+        UUID credited = killer != null ? killer.getUniqueId() : bot;
+        if (credited != null) {
+            stats.addKill(credited);
         }
         hub.combat().forget(id);
         if (outcome instanceof DeathOutcome.Respawn respawn && state == GameState.RUNNING) {
             awaitingRespawn.put(id, respawn);
-            killFeed(id, killer, cause, false);
+            killFeed(id, credited, cause, false);
             if (killer != null) {
                 Feedback.play(killer, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 0.8f);
             }
@@ -1406,8 +1495,29 @@ public final class GameSession {
         }
         markEliminated(id);
         awaitingSpectator.add(id);
-        killFeed(id, killer, cause, true);
+        killFeed(id, credited, cause, true);
+        if (killer == null && bot != null) {
+            notifyEliminatedByBot(victim, bot);
+            return;
+        }
         notifyEliminated(victim, killer);
+    }
+
+    /** {@link #notifyEliminated} for a player a bot killed (the mode's {@code onEliminated} gets no killer). */
+    private void notifyEliminatedByBot(Player player, UUID bot) {
+        if (player.isOnline()) {
+            Feedback.title(player, messages().get("match.eliminated-title"),
+                    messages().get("match.eliminated-subtitle-killer", Messages.tag("killer", displayName(bot))),
+                    5, 50, 15);
+            Feedback.play(player, Sound.ENTITY_WITHER_SPAWN, 0.4f, 1.6f);
+        }
+        if (state == GameState.RUNNING) {
+            try {
+                instance.onEliminated(player, null);
+            } catch (RuntimeException e) {
+                log("onEliminated", e);
+            }
+        }
     }
 
     private boolean safeDropsOnDeath() {

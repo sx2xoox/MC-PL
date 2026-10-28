@@ -23,6 +23,7 @@ public final class ComboAugment implements Augment {
             .param("hits", 3)
             .param("window", 3)
             .param("damage", 4)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -36,7 +37,7 @@ public final class ComboAugment implements Augment {
 
     @Override
     public void onOutgoingDamage(EntityDamageEvent event, LivingEntity victim) {
-        if (!Hits.meleeBy(event, ctx.player())) {
+        if (!Hits.meleeBy(event, ctx.owner())) {
             return;
         }
         long now = ctx.tick();

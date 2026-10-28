@@ -20,6 +20,7 @@ public final class VenomAugment implements Augment {
             .param("seconds", 2)
             .param("level", 2)
             .param("cooldown", 4)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -31,7 +32,7 @@ public final class VenomAugment implements Augment {
 
     @Override
     public void onOutgoingDamage(EntityDamageEvent event, LivingEntity victim) {
-        if (ctx.tick() < readyAt || !Hits.meleeBy(event, ctx.player())) {
+        if (ctx.tick() < readyAt || !Hits.meleeBy(event, ctx.owner())) {
             return;
         }
         int ticks = (int) ctx.params().ticks("seconds");

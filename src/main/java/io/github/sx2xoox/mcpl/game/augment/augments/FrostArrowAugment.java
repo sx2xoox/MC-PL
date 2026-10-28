@@ -20,6 +20,7 @@ public final class FrostArrowAugment implements Augment {
             .description("화살에 맞은 적이 {seconds}초 동안 구속 {level}에 걸립니다.")
             .param("seconds", 2)
             .param("level", 2)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

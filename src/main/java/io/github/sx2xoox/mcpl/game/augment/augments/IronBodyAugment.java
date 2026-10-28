@@ -8,7 +8,7 @@ import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 
 /** 강철 체력: more max health. */
 public final class IronBodyAugment implements Augment {
@@ -17,6 +17,7 @@ public final class IronBodyAugment implements Augment {
                     AugmentKind.STAT, Material.IRON_BLOCK)
             .description("최대 체력이 {health} 늘어나고(체력 2 = 하트 1칸) 늘어난 만큼 바로 회복합니다.")
             .param("health", 4)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -29,7 +30,7 @@ public final class IronBodyAugment implements Augment {
     public void onGrant() {
         double health = ctx.params().num("health");
         ctx.addModifier(Attribute.MAX_HEALTH, health, AttributeModifier.Operation.ADD_NUMBER);
-        Player player = ctx.player();
+        LivingEntity player = ctx.owner();
         if (health > 0) {
             player.heal(health);
         }

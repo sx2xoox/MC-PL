@@ -49,6 +49,14 @@ public final class CombatTracker {
         owners.put(entity.getUniqueId(), owner.getUniqueId());
     }
 
+    /**
+     * Credits everything {@code entity} does to the participant {@code owner} by id (also a mode's bot, which no
+     * {@link #resolveAttacker} returns: read it with {@link #ownerOf}).
+     */
+    public void registerOwner(Entity entity, UUID owner) {
+        owners.put(entity.getUniqueId(), owner);
+    }
+
     public void unregisterOwner(Entity entity) {
         owners.remove(entity.getUniqueId());
     }

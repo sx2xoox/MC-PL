@@ -42,6 +42,8 @@ public class MCPLPlugin extends JavaPlugin {
         games.register(augment);
         // 증강 연습 (solo practice of the augments in a fresh world); not in the default rotation.
         games.register(augment.practice());
+        // 증강 봇전 (a real match where bots fill the lobby); not in the default rotation.
+        games.register(augment.botGame());
     }
 
     @Override

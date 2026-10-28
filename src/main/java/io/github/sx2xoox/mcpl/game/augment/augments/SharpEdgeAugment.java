@@ -16,6 +16,7 @@ public final class SharpEdgeAugment implements Augment {
                     AugmentKind.COMBAT, Material.IRON_SWORD)
             .description("적에게 주는 근접 공격 피해가 {damage} 늘어납니다.")
             .param("damage", 1.5)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -26,7 +27,7 @@ public final class SharpEdgeAugment implements Augment {
 
     @Override
     public void onOutgoingDamage(EntityDamageEvent event, LivingEntity victim) {
-        if (Hits.meleeBy(event, ctx.player())) {
+        if (Hits.meleeBy(event, ctx.owner())) {
             event.setDamage(Math.max(0.0, event.getDamage() + ctx.params().num("damage")));
         }
     }

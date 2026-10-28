@@ -24,6 +24,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.WanderingTrader;
 import org.bukkit.entity.Wolf;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.EquipmentSlot;
@@ -36,6 +37,7 @@ import org.mockbukkit.mockbukkit.entity.IronGolemMock;
 import org.mockbukkit.mockbukkit.entity.ItemDisplayMock;
 import org.mockbukkit.mockbukkit.entity.MannequinMock;
 import org.mockbukkit.mockbukkit.entity.TextDisplayMock;
+import org.mockbukkit.mockbukkit.entity.WanderingTraderMock;
 import org.mockbukkit.mockbukkit.entity.WolfMock;
 import org.mockbukkit.mockbukkit.inventory.EntityEquipmentMock;
 
@@ -66,7 +68,8 @@ public final class MockEntities {
             ItemDisplay.class, TestItemDisplay.class,
             BlockDisplay.class, TestBlockDisplay.class,
             TextDisplay.class, TestTextDisplay.class,
-            Arrow.class, TestArrow.class);
+            Arrow.class, TestArrow.class,
+            WanderingTrader.class, TestWanderingTrader.class);
 
     private MockEntities() {
     }
@@ -224,6 +227,95 @@ public final class MockEntities {
         @Override
         public boolean isInLava() {
             return FlatWorld.isIn(this, Material.LAVA);
+        }
+    }
+
+    /**
+     * A wandering trader (the legs of a 봇전 bot) with a recording pathfinder, the mob flags the bot sets and
+     * {@link DamageSource} damage.
+     */
+    public static class TestWanderingTrader extends WanderingTraderMock implements Hurtable {
+
+        private final RecordingPathfinder pathfinder = new RecordingPathfinder(this);
+        private double lastHurt;
+        private boolean removeWhenFarAway = true;
+        private boolean canPickupItems;
+        private boolean collidable = true;
+        private int despawnDelay = 48000;
+
+        public TestWanderingTrader(ServerMock server, UUID uuid) {
+            super(server, uuid);
+            VanillaAttributes.completeMob(attributes, 1.0);
+        }
+
+        @Override
+        public boolean isValid() {
+            return inWorld(this) && super.isValid();
+        }
+
+        @Override
+        public double lastHurt() {
+            return lastHurt;
+        }
+
+        @Override
+        public void lastHurt(double amount) {
+            this.lastHurt = amount;
+        }
+
+        @Override
+        public void damage(double amount, DamageSource source) {
+            DamageSimulation.damage(this, amount, source);
+        }
+
+        @Override
+        public Pathfinder getPathfinder() {
+            return pathfinder;
+        }
+
+        @Override
+        public boolean getRemoveWhenFarAway() {
+            return removeWhenFarAway;
+        }
+
+        @Override
+        public void setRemoveWhenFarAway(boolean remove) {
+            this.removeWhenFarAway = remove;
+        }
+
+        @Override
+        public boolean getCanPickupItems() {
+            return canPickupItems;
+        }
+
+        @Override
+        public void setCanPickupItems(boolean pickup) {
+            this.canPickupItems = pickup;
+        }
+
+        @Override
+        public boolean isCollidable() {
+            return collidable;
+        }
+
+        @Override
+        public void setCollidable(boolean collidable) {
+            this.collidable = collidable;
+        }
+
+        @Override
+        public int getDespawnDelay() {
+            return despawnDelay;
+        }
+
+        @Override
+        public void setDespawnDelay(int despawnDelay) {
+            this.despawnDelay = despawnDelay;
+        }
+
+        @Override
+        public boolean hasLineOfSight(Entity other) {
+            return RayTracing.hasLineOfSight(this, other);
         }
     }
 
@@ -571,6 +663,14 @@ public final class MockEntities {
         @Override
         public boolean isInLava() {
             return FlatWorld.isIn(this, Material.LAVA);
+        }
+
+        /** Like the server: heals up to the max health (a bot's augments heal its body). */
+        @Override
+        public void heal(double amount, org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason reason) {
+            if (amount > 0 && !isDead()) {
+                setHealth(Math.min(getMaxHealth(), getHealth() + amount));
+            }
         }
     }
 

@@ -21,6 +21,7 @@ import io.github.sx2xoox.mcpl.core.world.ChunkPregen;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentInfo;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentRegistry;
 import io.github.sx2xoox.mcpl.game.augment.augments.BuiltinAugments;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotSettings;
 import io.github.sx2xoox.mcpl.game.augment.command.AugmentCommand;
 import io.github.sx2xoox.mcpl.game.augment.config.AugmentConfig;
 import io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch;
@@ -67,6 +68,9 @@ public final class AugmentGame implements MiniGame {
     private @Nullable AugmentSettings preparingSettings;
     private @Nullable AugmentMatch current;
     private final AugmentPracticeGame practice;
+    private final AugmentBotGame botGame;
+    /** Bots and difficulty asked for with {@code /게임 증강 봇전}, used by the next 봇전 match. */
+    private AugmentMatch.@Nullable BotSetup botRequest;
     /** Players who asked to join the running practice ({@code /게임 증강 연습}). */
     private final java.util.Set<java.util.UUID> practiceJoins = new java.util.HashSet<>();
 
@@ -74,6 +78,7 @@ public final class AugmentGame implements MiniGame {
         this.hub = hub;
         BuiltinAugments.registerAll(registry);
         this.practice = new AugmentPracticeGame(this);
+        this.botGame = new AugmentBotGame(this);
         this.messages = new Messages(hub.plugin(), MESSAGES_FILE, hub.messages());
         this.messages.load();
         this.augments = new AugmentConfig(new File(hub.plugin().getDataFolder(), AugmentConfig.FILE_NAME),
@@ -124,6 +129,7 @@ public final class AugmentGame implements MiniGame {
     public void configDefaults(ConfigurationSection defaults) {
         AugmentSettings.declareDefaults(defaults);
         AugmentPracticeSettings.declareDefaults(defaults);
+        BotSettings.declareDefaults(defaults);
     }
 
     @Override
@@ -229,8 +235,17 @@ public final class AugmentGame implements MiniGame {
             wild = new WildArena(session.arena().world(), session.arena(), null);
             read = readSettings();
         }
+        AugmentMatch.BotSetup bots = null;
+        if (mode == MatchMode.BOTS) {
+            bots = botRequest;
+            botRequest = null;
+            if (bots == null) {
+                BotSettings botSettings = readBotSettings();
+                bots = new AugmentMatch.BotSetup(botSettings, botSettings.difficulty(), botSettings.count());
+            }
+        }
         AugmentMatch match = new AugmentMatch(this, session, wild, read, mode,
-                mode == MatchMode.PRACTICE ? readPracticeSettings() : null);
+                mode == MatchMode.PRACTICE ? readPracticeSettings() : null, bots);
         current = match;
         return match;
     }
@@ -265,6 +280,7 @@ public final class AugmentGame implements MiniGame {
     public void onShutdown() {
         current = null;
         practiceJoins.clear();
+        botRequest = null;
     }
 
     // =================================================================== shared state
@@ -276,6 +292,21 @@ public final class AugmentGame implements MiniGame {
     /** Reads {@code games.augment.practice} now. */
     public AugmentPracticeSettings readPracticeSettings() {
         return AugmentPracticeSettings.read(hub.config().gameSection(ID));
+    }
+
+    /** Reads {@code games.augment.bots} now. */
+    public BotSettings readBotSettings() {
+        return BotSettings.read(hub.config().gameSection(ID));
+    }
+
+    /** 봇전 ({@code /게임 증강 봇전}), a third mini-game sharing this mode's augments. */
+    public AugmentBotGame botGame() {
+        return botGame;
+    }
+
+    /** The bots of the next 봇전 (null: the configured defaults). */
+    public void requestBots(AugmentMatch.@Nullable BotSetup setup) {
+        this.botRequest = setup;
     }
 
     /** 증강 연습 ({@code /게임 증강 연습}), a second mini-game sharing this mode's augments. */

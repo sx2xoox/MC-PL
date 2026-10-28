@@ -3,7 +3,6 @@ package io.github.sx2xoox.mcpl.game.augment.augments;
 import org.bukkit.entity.AbstractArrow;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.jspecify.annotations.Nullable;
 
@@ -14,7 +13,7 @@ final class Hits {
     }
 
     /** A melee hit dealt by {@code attacker} itself (not a sweep, projectile or effect). */
-    static boolean meleeBy(EntityDamageEvent event, Player attacker) {
+    static boolean meleeBy(EntityDamageEvent event, LivingEntity attacker) {
         return event.getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK
                 && event.getDamageSource().getDirectEntity() == attacker;
     }

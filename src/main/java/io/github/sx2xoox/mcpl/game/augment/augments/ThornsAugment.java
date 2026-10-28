@@ -16,6 +16,7 @@ public final class ThornsAugment implements Augment {
                     AugmentKind.COMBAT, Material.CACTUS)
             .description("적의 근접 공격으로 받은 피해의 {percent}%를 공격한 적에게 돌려줍니다.")
             .param("percent", 20)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

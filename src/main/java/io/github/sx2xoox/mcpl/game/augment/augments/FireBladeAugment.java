@@ -17,6 +17,7 @@ public final class FireBladeAugment implements Augment {
             .description("근접 공격이 적을 {seconds}초 동안 불태웁니다 (재사용 {cooldown}초).")
             .param("seconds", 2)
             .param("cooldown", 4)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;
@@ -28,7 +29,7 @@ public final class FireBladeAugment implements Augment {
 
     @Override
     public void onOutgoingDamage(EntityDamageEvent event, LivingEntity victim) {
-        if (ctx.tick() < readyAt || !Hits.meleeBy(event, ctx.player())) {
+        if (ctx.tick() < readyAt || !Hits.meleeBy(event, ctx.owner())) {
             return;
         }
         int ticks = (int) ctx.params().ticks("seconds");

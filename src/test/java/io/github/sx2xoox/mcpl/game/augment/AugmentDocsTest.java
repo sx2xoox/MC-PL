@@ -79,7 +79,7 @@ class AugmentDocsTest {
         out.append("<!-- 자동 생성 문서입니다. 직접 고치지 말고 증강 코드(AugmentInfo, BonusCondition)를 고친 뒤 ")
                 .append("`./gradlew updateAugmentDocs` 로 다시 만드세요. -->\n\n");
         out.append("수치는 기본값이며 `augments.yml`에서 조정할 수 있습니다. 체력 단위는 체력 포인트(2 = 하트 1칸)입니다. ")
-                .append("게임 규칙은 [augment.md](augment.md)를 보세요.\n\n");
+                .append("게임 규칙은 [augment.md](augment.md)를 보세요. 봇 열이 \"가능\"인 증강은 봇전의 봇도 받습니다.\n\n");
 
         out.append("| 등급 | 증강 |\n|---|---|\n");
         for (AugmentTier tier : AugmentTier.values()) {
@@ -89,10 +89,11 @@ class AugmentDocsTest {
 
         for (AugmentTier tier : AugmentTier.values()) {
             out.append("\n## ").append(tier.koreanName()).append("\n\n");
-            out.append("| 증강 | 종류 | 효과 |\n|---|---|---|\n");
+            out.append("| 증강 | 종류 | 봇 | 효과 |\n|---|---|---|---|\n");
             for (AugmentInfo info : registry.ofTier(tier)) {
                 out.append("| **").append(cell(info.name())).append("** `").append(info.id()).append("` | ")
                         .append(info.kind().koreanName()).append(" | ")
+                        .append(info.forBots() ? "가능" : "").append(" | ")
                         .append(cell(plain(info.defaults().render(info.description())))).append(" |\n");
             }
         }

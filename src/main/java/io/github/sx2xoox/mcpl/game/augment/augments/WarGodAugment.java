@@ -23,6 +23,7 @@ public final class WarGodAugment implements Augment {
             .param("damage", 1)
             .param("max_stacks", 5)
             .param("heal", 4)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

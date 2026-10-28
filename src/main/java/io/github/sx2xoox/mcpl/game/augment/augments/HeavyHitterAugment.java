@@ -16,6 +16,7 @@ public final class HeavyHitterAugment implements Augment {
                     AugmentKind.COMBAT, Material.MACE)
             .description("근접 공격의 밀치기가 크게 늘어납니다 (밀치기 마법부여 {knockback}레벨만큼).")
             .param("knockback", 2)
+            .forBots()
             .build();
 
     private final AugmentContext ctx;

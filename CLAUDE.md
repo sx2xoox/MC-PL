@@ -40,6 +40,7 @@ src/main/java/io/github/sx2xoox/mcpl/
   game/augment/                증강 야생전 (AugmentGame = the MiniGame + its fresh world per match, AugmentSettings = games.augment.*)
     api/ augments/ bonus/      augment contract (Augment, AugmentContext, AugmentInfo, Params), one class per augment, bonus conditions
     config/ runtime/ command/  augments.yml, the match (phases, offers/card menu, bonus tracker, HUD), /게임 증강
+    bot/                       봇전 bots: pure brain (utility AI), gear schedule, base planner, ballistics + Bukkit body/controller/manager
   util/                        small shared helpers (Text = MiniMessage)
 docs/                          game design docs (Korean), the source of truth for game rules; abilities.md and augments.md
                                are generated
