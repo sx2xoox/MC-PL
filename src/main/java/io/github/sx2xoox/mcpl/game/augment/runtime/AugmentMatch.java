@@ -263,6 +263,18 @@ public final class AugmentMatch implements GameInstance {
                 forEachAugment(killer, "onKill", augment -> augment.onKill(victim));
             }
         }
+        PlayerState dead = players.get(victim.getUniqueId());
+        if (dead != null && !stopped) {
+            for (AugmentSlot slot : List.copyOf(dead.slots)) {
+                if (!slot.isRemoved()) {
+                    try {
+                        slot.augment().onDeath(killer);
+                    } catch (RuntimeException e) {
+                        log("onDeath of " + slot.info().id(), e);
+                    }
+                }
+            }
+        }
         return DeathOutcome.eliminate();
     }
 
@@ -515,10 +527,11 @@ public final class AugmentMatch implements GameInstance {
                 valid.add(card);
             }
         }
-        if (valid.size() < offer.cards().size()) {
+        int count = state.cardCount();
+        if (valid.size() < offer.cards().size() || valid.size() < count) {
             List<AugmentInfo> topped = new ArrayList<>(valid);
             for (AugmentInfo extra : draw(state, offer.tier(), valid)) {
-                if (topped.size() >= 3) {
+                if (topped.size() >= count) {
                     break;
                 }
                 if (!topped.contains(extra)) {
@@ -576,7 +589,7 @@ public final class AugmentMatch implements GameInstance {
         state.offers.pollFirst();
         closeMenu(state);
         grant(player, state, card, false);
-        if (state.current() != null) {
+        if (state.current() != null && state.menu == null) { // an augment may have queued and opened one
             activate(player, state);
         }
         return true;
@@ -654,7 +667,7 @@ public final class AugmentMatch implements GameInstance {
                 state.offers.pollFirst();
                 closeMenu(state);
                 grant(player, state, card, true);
-                if (state.current() != null) {
+                if (state.current() != null && state.menu == null) {
                     activate(player, state);
                 }
                 continue;
@@ -671,14 +684,15 @@ public final class AugmentMatch implements GameInstance {
     }
 
     /**
-     * Up to three cards for the player: enabled augments of {@code tier} they do not own, not in {@code exclude};
-     * topped up from the neighbouring tiers, then (if still short) with excluded ones.
+     * Up to {@link PlayerState#cardCount} (three) cards for the player: enabled augments of {@code tier} they do not
+     * own, not in {@code exclude}; topped up from the neighbouring tiers, then (if still short) with excluded ones.
      */
     List<AugmentInfo> draw(PlayerState state, AugmentTier tier, Collection<AugmentInfo> exclude) {
-        List<AugmentInfo> picked = new ArrayList<>(3);
+        int count = state.cardCount();
+        List<AugmentInfo> picked = new ArrayList<>(count);
         for (boolean allowExcluded : new boolean[] {false, true}) {
             for (AugmentTier from : drawOrder(tier)) {
-                if (picked.size() >= 3) {
+                if (picked.size() >= count) {
                     return picked;
                 }
                 List<AugmentInfo> pool = new ArrayList<>();
@@ -690,7 +704,7 @@ public final class AugmentMatch implements GameInstance {
                 }
                 Collections.shuffle(pool, session.random());
                 for (AugmentInfo info : pool) {
-                    if (picked.size() >= 3) {
+                    if (picked.size() >= count) {
                         break;
                     }
                     picked.add(info);
@@ -735,6 +749,34 @@ public final class AugmentMatch implements GameInstance {
                 Messages.tag("augment", OfferMenu.name(info)),
                 Messages.tag("description", Component.text(config.params(info).render(info.description()))));
         Feedback.play(player, Sound.ENTITY_PLAYER_LEVELUP, 0.8f, info.tier() == AugmentTier.PRISM ? 1.6f : 1.2f);
+        hud.update();
+    }
+
+    /** Grants the player a random augment of {@code tier} (or a neighbouring one); null if none is left. */
+    @Nullable AugmentInfo grantRandom(Player player, AugmentTier tier) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || stopped || !session.isAlive(player)) {
+            return null;
+        }
+        List<AugmentInfo> cards = draw(state, tier, Set.of());
+        if (cards.isEmpty()) {
+            return null;
+        }
+        AugmentInfo info = cards.getFirst(); // shuffled, from the wanted tier first
+        grant(player, state, info, false);
+        return state.owns(info) ? info : null;
+    }
+
+    /** Gives the player more rerolls (an augment's effect). */
+    void addRerolls(UUID player, int count) {
+        PlayerState state = players.get(player);
+        if (state == null || count <= 0) {
+            return;
+        }
+        state.rerolls += count;
+        if (state.menu != null) {
+            state.menu.render(config::params, state.rerolls);
+        }
         hud.update();
     }
 

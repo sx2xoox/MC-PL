@@ -26,6 +26,7 @@ import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerExpChangeEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.event.world.LootGenerateEvent;
 import org.bukkit.event.world.PortalCreateEvent;
@@ -142,6 +143,11 @@ final class MatchListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH)
     public void onToggleFlight(PlayerToggleFlightEvent event) {
         match.forEachAugment(event.getPlayer(), "onToggleFlight", augment -> augment.onToggleFlight(event));
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSwapHands(PlayerSwapHandItemsEvent event) {
+        match.forEachAugment(event.getPlayer(), "onSwapHands", augment -> augment.onSwapHands(event));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

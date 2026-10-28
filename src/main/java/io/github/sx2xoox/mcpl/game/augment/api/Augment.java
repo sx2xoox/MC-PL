@@ -9,7 +9,9 @@ import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerExpChangeEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * One augment owned by one player, created by the factory registered in {@link AugmentRegistry} with its
@@ -95,5 +97,21 @@ public interface Augment {
 
     /** The owner is about to gain experience points ({@code HIGH} priority): change the amount here. */
     default void onExpChange(PlayerExpChangeEvent event) {
+    }
+
+    /** The owner pressed the swap-hands key (F); cancel the event when it triggers an active effect. */
+    default void onSwapHands(PlayerSwapHandItemsEvent event) {
+    }
+
+    /**
+     * The owner died (and is about to be eliminated); {@code killer} is the player credited with the kill, if any.
+     * Called even though the owner is no longer in play.
+     */
+    default void onDeath(@Nullable Player killer) {
+    }
+
+    /** Extra cards shown in the owner's later card offers (3 by default, at most 5 in all). */
+    default int extraCards() {
+        return 0;
     }
 }

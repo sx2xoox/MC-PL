@@ -181,9 +181,14 @@ class AugmentEffectsTest {
 
     @Test
     void cardsComeFromNeighbouringTiersWhenATierRunsOut() {
+        h.setParam("augments", "collector", "cards", 0); // augments that add cards
+        h.setParam("augments", "lucky_coin", "cards", 0);
         match = h.startFarming();
         for (AugmentInfo info : h.game.registry().ofTier(AugmentTier.PRISM)) {
             grant(a, info.id());
+        }
+        while (match.currentOffer(a.getUniqueId()) != null) { // offers queued by augments (collector)
+            match.pick(a, match.currentOffer(a.getUniqueId()).cards().getFirst());
         }
         match.offer(a, AugmentTier.PRISM, Component.text("test"));
         List<AugmentInfo> cards = match.currentOffer(a.getUniqueId()).cards();

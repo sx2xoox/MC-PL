@@ -7,9 +7,11 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 
+import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.augment.api.Augment;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentContext;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentInfo;
+import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
 import io.github.sx2xoox.mcpl.game.augment.api.Params;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.bukkit.Bukkit;
@@ -216,5 +218,44 @@ final class AugmentSlot implements AugmentContext {
         if (player != null) {
             player.showEntity(match.game().hub().plugin(), entity);
         }
+    }
+
+    @Override
+    public <T extends Entity> T trackForOwner(T entity) {
+        if (entity.isVisibleByDefault()) {
+            entity.setVisibleByDefault(false);
+        }
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null && !removed) {
+            player.showEntity(match.game().hub().plugin(), entity);
+        }
+        return track(entity);
+    }
+
+    @Override
+    public NamespacedKey key(String name) {
+        return match.game().hub().key("augment_" + info.id() + "_" + name);
+    }
+
+    @Override
+    public void addRerolls(int count) {
+        if (!removed) {
+            match.addRerolls(owner, count);
+        }
+    }
+
+    @Override
+    public void offer(AugmentTier tier) {
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null && !removed) {
+            match.offer(player, tier, match.messages().get("source.augment",
+                    Messages.tag("augment", OfferMenu.name(info))));
+        }
+    }
+
+    @Override
+    public @Nullable AugmentInfo grantRandom(AugmentTier tier) {
+        Player player = Bukkit.getPlayer(owner);
+        return player == null || removed ? null : match.grantRandom(player, tier);
     }
 }
