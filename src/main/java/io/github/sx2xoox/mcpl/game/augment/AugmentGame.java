@@ -26,6 +26,8 @@ import io.github.sx2xoox.mcpl.game.augment.command.AugmentCommand;
 import io.github.sx2xoox.mcpl.game.augment.config.AugmentConfig;
 import io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch;
 import io.github.sx2xoox.mcpl.game.augment.runtime.MatchMode;
+import io.github.sx2xoox.mcpl.game.augment.runtime.OfferDialogs;
+import io.github.sx2xoox.mcpl.game.augment.runtime.PaperOfferDialogs;
 import io.github.sx2xoox.mcpl.game.augment.runtime.WildArena;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
@@ -67,6 +69,8 @@ public final class AugmentGame implements MiniGame {
     private @Nullable WildArena preparing;
     private @Nullable AugmentSettings preparingSettings;
     private @Nullable AugmentMatch current;
+    private OfferDialogs offerDialogs =
+            PaperOfferDialogs.INSTANCE;
     private final AugmentPracticeGame practice;
     private final AugmentBotGame botGame;
     private final AugmentSpectateGame spectateGame;
@@ -340,6 +344,16 @@ public final class AugmentGame implements MiniGame {
     /** Removes and returns whether {@code player} asked to join the running practice. */
     public boolean takePracticeJoin(java.util.UUID player) {
         return practiceJoins.remove(player);
+    }
+
+    /** Shows the augment pick dialogs ({@code augments.ui: DIALOG}). */
+    public OfferDialogs offerDialogs() {
+        return offerDialogs;
+    }
+
+    /** Replaces how dialogs are shown (tests: MockBukkit cannot build Paper dialogs). */
+    public void offerDialogs(OfferDialogs dialogs) {
+        this.offerDialogs = dialogs;
     }
 
     public AugmentRegistry registry() {

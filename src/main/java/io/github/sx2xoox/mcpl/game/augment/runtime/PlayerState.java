@@ -28,6 +28,8 @@ final class PlayerState {
     int mobKills;
     float lastFallDistance;
     @Nullable OfferMenu menu;
+    /** The offer whose pick dialog the player sees (until they pick, close it or it is replaced), or null. */
+    @Nullable Offer dialog;
 
     PlayerState(UUID id, int rerolls) {
         this.id = id;
@@ -61,6 +63,11 @@ final class PlayerState {
             }
         }
         return Math.min(OfferMenu.MAX_CARDS, count);
+    }
+
+    /** A card menu or dialog is open (a new offer waits for it instead of opening its own). */
+    boolean choosing() {
+        return menu != null || dialog != null;
     }
 
     @Nullable Offer current() {

@@ -34,6 +34,9 @@ phase:
   farming-title: "<green><bold>파밍 시작!</bold>"
   farming-subtitle: "<gray>PvP는 <white><time></white> 뒤에 켜집니다"
   farming: "<green>파밍 시작!</green> <gray>새 야생 월드에 흩어졌습니다. <white><time></white> 동안 플레이어끼리는 공격할 수 없습니다. 증강 라운드 <white><rounds></white>번이 기다립니다."
+  farming-grace: "<gray>파밍 시간에는 모두(봇 포함) <white>무적</white>이고 <white>배고프지 않습니다</white>. 전투가 시작되면 끝납니다."
+  farming-invulnerable: "<gray>파밍 시간에는 모두(봇 포함) <white>무적</white>입니다. 전투가 시작되면 끝납니다."
+  farming-no-hunger: "<gray>파밍 시간에는 <white>배고프지 않습니다</white>. 몹·낙하·용암은 위험합니다."
   fight-title: "<red><bold>PvP 시작!</bold>"
   fight-subtitle: "<gray>최후의 1인(팀)이 될 때까지"
   fight: "<red>PvP가 켜졌습니다!</red> <gray>월드보더는 <white><time></white> 뒤부터 한 변 <white><size></white>칸까지 줄어듭니다."
@@ -73,6 +76,20 @@ offer:
   no-rerolls: "<red>리롤이 남아 있지 않습니다."
   rerolled: "<aqua>카드를 다시 뽑았습니다.</aqua> <gray>(리롤 <white><count></white>회 남음)"
   closed: "<yellow>증강을 아직 고르지 않았습니다.</yellow> <click:run_command:'/게임 증강'><hover:show_text:'<gray>클릭하여 다시 열기'><white>[여기를 클릭]</white></hover></click> <gray>또는 <white>/게임 증강</white> 으로 다시 열 수 있습니다 (<white><seconds>초</white> 뒤 무작위)."
+  # 대화창 (games.augment.augments.ui: DIALOG)
+  dialog-title: "<white><bold>증강 선택</bold></white> <dark_gray>·</dark_gray> <tier>"
+  dialog-external-title: "<white>증강 선택"
+  dialog-header: "<gray><source></gray> <dark_gray>·</dark_gray> <white>카드를 하나 고르세요"
+  dialog-queued: "<dark_gray>이 다음에 고를 증강이 <white><count></white>개 더 있습니다"
+  dialog-card: "<name> <dark_gray>·</dark_gray> <gray><kind></gray><newline><white><description>"
+  dialog-card-label: "<name>"
+  dialog-card-tooltip: "<name> <dark_gray>·</dark_gray> <tier> <gray><kind></gray><newline><white><description></white><newline><newline><green>▶ 클릭하여 선택"
+  dialog-countdown: "<yellow><seconds>초</yellow> <gray>안에 고르지 않으면 보이는 카드 중 <white>무작위</white>로 하나를 받습니다"
+  dialog-countdown-urgent: "<red><bold><seconds>초</bold></red> <gray>안에 고르지 않으면 보이는 카드 중 <white>무작위</white>로 하나를 받습니다"
+  dialog-reroll: "<aqua>다시 뽑기</aqua> <gray>(<white><count></white>회 남음)"
+  dialog-reroll-tooltip: "<gray>보이는 카드를 모두 다시 뽑습니다.<newline>리롤은 경기 전체에서 정해진 횟수만 쓸 수 있습니다."
+  dialog-later: "<gray>나중에 고르기"
+  dialog-later-tooltip: "<gray>창을 닫습니다 (ESC도 같음).<newline><white>/게임 증강</white> 으로 다시 열 수 있고, 시간이 지나면 무작위로 받습니다."
   reminder: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>/게임 증강</white> · <white><seconds>초</white> 뒤 무작위"
 
 # ── 보너스 증강 ──────────────────────────────────────────────
@@ -260,7 +277,7 @@ settings:
     match:
       name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>진행"
       lore:
-        - "<gray>파밍 시간, 월드보더"
+        - "<gray>파밍 시간과 규칙, 월드보더"
     world:
       name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>월드"
       lore:
@@ -268,13 +285,22 @@ settings:
     augments:
       name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>증강"
       lore:
-        - "<gray>카드 선택 시간, 리롤, 보너스 증강"
+        - "<gray>카드 선택 시간, 선택 화면, 리롤, 보너스 증강"
   farming:
     name: "파밍 시간"
     lore:
       - "<gray>PvP 없이 파밍하는 시간입니다."
-      - "<gray>몹·낙하·용암은 이때도 위험합니다."
     zero: "<red>바로 전투"
+  farming-invulnerable:
+    name: "파밍 중 무적"
+    lore:
+      - "<gray>파밍 시간 동안 참가자(플레이어와 봇)는"
+      - "<gray>몹·낙하·용암을 포함해 어떤 피해도 받지 않습니다."
+      - "<gray>끄면 플레이어끼리의 공격만 막습니다. (연습 제외)"
+  farming-no-hunger:
+    name: "파밍 중 배고픔 없음"
+    lore:
+      - "<gray>파밍 시간 동안 배고픔과 포화가 가득 찬 채로 유지됩니다."
   border-delay:
     name: "월드보더 축소 대기"
     lore:
@@ -312,6 +338,14 @@ settings:
     lore:
       - "<gray>카드 3장 중 하나를 고르는 시간입니다."
       - "<gray>시간이 지나면 무작위로 하나를 받습니다."
+  ui:
+    name: "증강 선택 화면"
+    lore:
+      - "<gray>대화창: 카드가 나란히 뜨는 선택 화면 (기본)"
+      - "<gray>상자: 예전 상자 메뉴 (대화창이 안 보이는 클라이언트용)"
+    option:
+      dialog: "<aqua>대화창"
+      chest: "<gold>상자"
   rerolls:
     name: "증강 리롤 횟수"
     lore:

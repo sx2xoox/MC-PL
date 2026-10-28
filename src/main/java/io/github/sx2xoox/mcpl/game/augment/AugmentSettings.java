@@ -34,6 +34,9 @@ import org.jspecify.annotations.Nullable;
  * @param rerolls              rerolls per player per match
  * @param rounds               timed augment rounds, in order
  * @param bonusEnabled         special achievements grant extra augments
+ * @param offerUi              how cards are shown: a dialog screen (default) or the chest menu
+ * @param farmingInvulnerable  real matches: participants (players and bots) take no damage while farming
+ * @param farmingNoHunger      real matches: players' food and saturation stay full while farming
  */
 public record AugmentSettings(
         int radius,
@@ -51,7 +54,10 @@ public record AugmentSettings(
         long choiceTicks,
         int rerolls,
         List<Round> rounds,
-        boolean bonusEnabled
+        boolean bonusEnabled,
+        OfferUi offerUi,
+        boolean farmingInvulnerable,
+        boolean farmingNoHunger
 ) {
 
     public static final String RADIUS = "world.radius";
@@ -70,6 +76,9 @@ public record AugmentSettings(
     public static final String REROLLS = "augments.rerolls";
     public static final String ROUNDS = "augments.rounds";
     public static final String BONUS = "bonus.enabled";
+    public static final String OFFER_UI = "augments.ui";
+    public static final String FARMING_INVULNERABLE = "farming.invulnerable";
+    public static final String FARMING_NO_HUNGER = "farming.no-hunger";
 
     public static final int MIN_RADIUS = 32;
     public static final int MAX_RADIUS = 2000;
@@ -80,6 +89,27 @@ public record AugmentSettings(
     public static final int MIN_CHOICE_SECONDS = 5;
     public static final int MAX_REROLLS = 10;
     public static final int MAX_FINAL_SIZE = 2 * MAX_RADIUS;
+
+    /** How a player sees and picks the cards of an offer. */
+    public enum OfferUi {
+        /** A dialog screen (Paper dialog API): cards side by side, like League of Legends' augment pick. */
+        DIALOG,
+        /** The 3-row chest menu (for clients or proxies that cannot show dialogs). */
+        CHEST;
+
+        /** The UI named {@code raw} (case-insensitive), or null. */
+        public static @Nullable OfferUi parse(@Nullable String raw) {
+            if (raw == null) {
+                return null;
+            }
+            for (OfferUi ui : values()) {
+                if (ui.name().equalsIgnoreCase(raw.trim())) {
+                    return ui;
+                }
+            }
+            return null;
+        }
+    }
 
     /**
      * One timed augment round: at {@code atTicks} after the farming started everyone draws cards of one tier, rolled
@@ -127,7 +157,7 @@ public record AugmentSettings(
     public AugmentSettings withRadius(int newRadius) {
         return new AugmentSettings(newRadius, structures, difficulty, pregenerate, pregenChunksPerTick,
                 pregenMaxWaitTicks, farmingTicks, borderDelayTicks, borderShrinkTicks, borderFinalSize, borderDamage,
-                glowAtFinal, choiceTicks, rerolls, rounds, bonusEnabled);
+                glowAtFinal, choiceTicks, rerolls, rounds, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger);
     }
 
     /**
@@ -143,7 +173,7 @@ public record AugmentSettings(
         return new AugmentSettings(radius, structures, difficulty, pregenerate, pregenChunksPerTick,
                 pregenMaxWaitTicks, Math.max(0, newFarmingTicks), Math.max(0, newBorderDelayTicks),
                 Math.max(0, newBorderShrinkTicks), borderFinalSize, borderDamage, glowAtFinal, choiceTicks, rerolls,
-                moved, bonusEnabled);
+                moved, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger);
     }
 
     /** The default rounds: 5, 12, 20 (fight start) and 30 minutes, leaning higher as the match goes on. */
@@ -185,7 +215,14 @@ public record AugmentSettings(
         d.setComments(PREGEN_MAX_WAIT, List.of("미리 만들기를 기다리는 최대 시간(초). 넘으면 나머지는 플레이 중에 만들어집니다."));
 
         d.set(FARMING, 1200);
-        d.setComments(FARMING, List.of("파밍 시간(초). 이 동안은 플레이어끼리 공격할 수 없습니다 (몹·낙하·용암은 위험합니다)."));
+        d.setComments(FARMING, List.of("파밍 시간(초). 이 동안은 플레이어끼리 공격할 수 없습니다."));
+        d.set(FARMING_INVULNERABLE, true);
+        d.setComments("farming", List.of("파밍 시간의 규칙 (증강 야생전·봇전·봇 관전전, 연습은 제외). 전투가 시작되면 끝납니다."));
+        d.setComments(FARMING_INVULNERABLE, List.of(
+                "파밍 시간 동안 참가자(플레이어와 봇)는 어떤 피해도 받지 않습니다 (몹·낙하·용암·익사 포함).",
+                "끄면 플레이어끼리의 공격만 막고 몹·낙하·용암은 위험합니다."));
+        d.set(FARMING_NO_HUNGER, true);
+        d.setComments(FARMING_NO_HUNGER, List.of("파밍 시간 동안 플레이어의 배고픔(허기·포화)이 줄지 않고 가득 찬 채로 유지됩니다."));
 
         d.set(BORDER_DELAY, 60);
         d.setComments("border", List.of("전투 (PvP 켜짐): 월드보더가 최종 크기까지 줄어듭니다."));
@@ -204,6 +241,10 @@ public record AugmentSettings(
         d.setComments(CHOICE, List.of(
                 "카드 3장 중 하나를 고르는 제한 시간(초). 시간이 지나면 무작위로 하나를 받습니다. (5~300)",
                 "메뉴를 닫았다면 /게임 증강 으로 다시 열 수 있습니다."));
+        d.set(OFFER_UI, OfferUi.DIALOG.name());
+        d.setComments(OFFER_UI, List.of(
+                "카드 선택 화면: DIALOG = 대화창(리그 오브 레전드처럼 카드가 나란히, 기본), CHEST = 상자 메뉴.",
+                "대화창이 보이지 않는 클라이언트(오래된 버전, 일부 프록시)가 있다면 CHEST 로 바꾸세요."));
         d.set(REROLLS, 2);
         d.setComments(REROLLS, List.of("경기당 리롤 횟수 (보이는 카드 3장을 다시 뽑기, 0~10)"));
         d.set(ROUNDS, defaultRounds());
@@ -242,7 +283,20 @@ public record AugmentSettings(
                 seconds(s.getDouble(CHOICE, 30), MIN_CHOICE_SECONDS, MAX_CHOICE_SECONDS),
                 clamp(s.getInt(REROLLS, 2), 0, MAX_REROLLS),
                 readRounds(s, logger),
-                s.getBoolean(BONUS, true));
+                s.getBoolean(BONUS, true),
+                readOfferUi(s, logger),
+                s.getBoolean(FARMING_INVULNERABLE, true),
+                s.getBoolean(FARMING_NO_HUNGER, true));
+    }
+
+    private static OfferUi readOfferUi(ConfigurationSection s, Logger logger) {
+        String raw = s.getString(OFFER_UI, OfferUi.DIALOG.name());
+        OfferUi ui = OfferUi.parse(raw);
+        if (ui == null) {
+            logger.warning("games.augment." + OFFER_UI + ": unknown UI '" + raw + "', using DIALOG");
+            return OfferUi.DIALOG;
+        }
+        return ui;
     }
 
     private static List<Round> readRounds(ConfigurationSection s, Logger logger) {

@@ -106,10 +106,13 @@ public final class BonusTracker {
         }
     }
 
-    /** A participant takes {@code finalDamage} fall damage (monitor): 기적의 착지 if they survive it barely. */
+    /**
+     * A participant takes {@code finalDamage} fall damage (monitor): 기적의 착지 if they survive it barely. Only in
+     * the fight (the farming is usually invulnerable; landing in water counts in every phase, see {@link #tick}).
+     */
     void onFallDamage(Player player, double finalDamage) {
         Params params = params(BonusCondition.MIRACLE_LANDING);
-        if (player.getFallDistance() < params.num("min_fall")) {
+        if (match.phase() != MatchPhase.FIGHT || player.getFallDistance() < params.num("min_fall")) {
             return;
         }
         double left = player.getHealth() + player.getAbsorptionAmount() - finalDamage;

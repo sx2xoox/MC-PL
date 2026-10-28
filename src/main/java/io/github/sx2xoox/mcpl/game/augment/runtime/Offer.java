@@ -12,15 +12,30 @@ import net.kyori.adventure.text.Component;
  */
 public final class Offer {
 
+    /** Source of {@link #id} (main thread only). */
+    private static long nextId;
+
+    private final long id = ++nextId;
     private final AugmentTier tier;
     private final Component source;
     private List<AugmentInfo> cards;
     private long deadline = -1;
+    private int revision;
 
     Offer(AugmentTier tier, Component source, List<AugmentInfo> cards) {
         this.tier = tier;
         this.source = source;
         this.cards = List.copyOf(cards);
+    }
+
+    /** Unique per offer: a dialog is tied to the offer it shows, so a stale one cannot pick from another. */
+    public long id() {
+        return id;
+    }
+
+    /** Counts the times the cards changed (rerolls, top-ups): a dialog showing older cards cannot pick. */
+    public int revision() {
+        return revision;
     }
 
     public AugmentTier tier() {
@@ -39,6 +54,7 @@ public final class Offer {
 
     void cards(List<AugmentInfo> cards) {
         this.cards = List.copyOf(cards);
+        revision++;
     }
 
     /** Match tick at which a random card is granted; -1 until the offer is current. */

@@ -49,6 +49,10 @@ final class AugmentSettingEntries {
                 .range(2, AugmentSettings.MAX_FINAL_SIZE).steps(2, 10).integer().unit(Setting.Unit.BLOCKS)
                 .number(decimal(AugmentSettings.BORDER_FINAL), store(AugmentSettings.BORDER_FINAL),
                         defaults.getDouble(AugmentSettings.BORDER_FINAL));
+        Setting invulnerable = toggle("augment.farming-invulnerable", "파밍무적", "farming-invulnerable",
+                Material.SHIELD, "settings.farming-invulnerable", AugmentSettings.FARMING_INVULNERABLE);
+        Setting noHunger = toggle("augment.farming-no-hunger", "파밍배고픔없음", "farming-no-hunger",
+                Material.COOKED_BEEF, "settings.farming-no-hunger", AugmentSettings.FARMING_NO_HUNGER);
         Setting glow = toggle("augment.glow", "발광", "glow", Material.GLOW_INK_SAC, "settings.glow",
                 AugmentSettings.GLOW);
 
@@ -65,6 +69,17 @@ final class AugmentSettingEntries {
 
         Setting choice = seconds("augment.choice", "선택시간", "choice", Material.CLOCK, "settings.choice",
                 AugmentSettings.CHOICE, AugmentSettings.MAX_CHOICE_SECONDS, 5, 30);
+        Setting ui = Setting.builder("augment.ui").command(List.of(WORD, "선택화면"), List.of(ENGLISH, "ui"))
+                .icon(Material.ITEM_FRAME).text(messages, "settings.ui").path(path(AugmentSettings.OFFER_UI))
+                .readWhenMatchOpens()
+                .choice(List.of(
+                                new Setting.Choice.Option(AugmentSettings.OfferUi.DIALOG.name(),
+                                        List.of("대화창", "다이얼로그"), List.of("dialog")),
+                                new Setting.Choice.Option(AugmentSettings.OfferUi.CHEST.name(),
+                                        List.of("상자", "메뉴"), List.of("chest"))),
+                        () -> live().getString(AugmentSettings.OFFER_UI),
+                        value -> config.setGameValue(AugmentGame.ID, AugmentSettings.OFFER_UI, value),
+                        defaults.getString(AugmentSettings.OFFER_UI, AugmentSettings.OfferUi.DIALOG.name()));
         Setting rerolls = number("augment.rerolls", "리롤", "rerolls", Material.ENDER_EYE, "settings.rerolls",
                 AugmentSettings.REROLLS)
                 .range(0, AugmentSettings.MAX_REROLLS).steps(1, 3).integer().unit(Setting.Unit.TIMES)
@@ -75,11 +90,11 @@ final class AugmentSettingEntries {
 
         return List.of(
                 new SettingsSection("augment.match", Material.AMETHYST_CLUSTER, messages, "settings.section.match",
-                        List.of(farming, borderDelay, borderShrink, borderFinal, glow)),
+                        List.of(farming, invulnerable, noHunger, borderDelay, borderShrink, borderFinal, glow)),
                 new SettingsSection("augment.world", Material.GRASS_BLOCK, messages, "settings.section.world",
                         List.of(radius, structures, pregenerate)),
                 new SettingsSection("augment.augments", Material.ENCHANTED_BOOK, messages, "settings.section.augments",
-                        List.of(choice, rerolls, bonus)));
+                        List.of(choice, ui, rerolls, bonus)));
     }
 
     // =================================================================== helpers

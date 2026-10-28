@@ -159,10 +159,12 @@
 
 1. **준비**: 새 야생 월드(`mcpl_wild_<번호>`, 무작위 시드)를 만들고 플레이 구역(기본 반경 400블록, 월드보더)을 미리 생성합니다.
    진행률은 보스바에 나오고, 그동안 참가자는 제자리에서 무적으로 기다립니다.
-2. **파밍 20분**: 빈손으로 월드 곳곳에 흩어져 서바이벌을 합니다. 플레이어끼리는 공격할 수 없고 몹·낙하·용암은 위험합니다.
+2. **파밍 20분**: 빈손으로 월드 곳곳에 흩어져 서바이벌을 합니다. 이 동안은 모두(봇 포함) 무적이고 배고프지 않습니다
+   (몹·낙하·용암도 괜찮음, `farming.invulnerable` · `farming.no-hunger`로 끌 수 있음). 전투가 시작되면 끝납니다.
 3. **전투**: PvP가 켜지고 월드보더가 한 변 24블록까지 줄어듭니다. 다 줄면 모두 발광합니다. 목숨은 하나, 마지막 1명(팀)이 승리합니다.
 4. **증강**: 5분·12분·20분·30분에 증강 라운드가 열려 모두가 같은 등급(뒤로 갈수록 높은 등급이 잘 나옴)의 카드 3장 중 하나를
-   상자 화면에서 고릅니다. 리롤은 경기당 2번, 30초 안에 고르지 않으면 무작위입니다(`/게임 증강`으로 창 다시 열기).
+   롤의 증강 선택처럼 카드가 나란히 뜨는 선택 창(대화창)에서 고릅니다. 리롤은 경기당 2번, 30초 안에 고르지 않으면
+   무작위입니다(ESC로 닫아도 `/게임 증강`으로 다시 열기). 대화창이 안 보이는 클라이언트용으로 상자 메뉴(`augments.ui: CHEST`)도 있습니다.
    첫 번째 피, 심연의 광부, 기적의 착지(물 양동이 MLG!), 철의 장인, 보물 사냥꾼, 역전의 명수, 몬스터 사냥꾼, 마법사의 길을
    달성하면 보너스 증강을 하나 더 받습니다.
 
@@ -273,10 +275,12 @@
 | 보급 상자 수(최대) · 보급 인원 | `보급 <개수>` · `보급인원 <인원>` (`supply` · `supply-players`) | 0(없음) ~ 10 · 1 ~ 100 | `…loot.supply.max` · `supply.players-per-drop` |
 | 연습에도 상자 | `연습상자 켜기·끄기` (`practice-loot`) | | `…loot.practice` |
 | 증강 야생전 파밍 시간 | `증강 파밍 <초>` (`augment farming`) | 0 ~ 7200초 | `games.augment.farming-seconds` |
+| 증강 야생전 파밍 중 무적 · 배고픔 없음 | `증강 파밍무적` · `증강 파밍배고픔없음` `켜기·끄기` (`augment farming-invulnerable` · `farming-no-hunger`) | | `…farming.invulnerable` · `farming.no-hunger` |
 | 증강 야생전 보더 축소 대기 · 시간 · 최종 크기 | `증강 보더시작` · `증강 보더축소` · `증강 보더최종` (`augment border-delay` · `border-shrink` · `border-final`) | 0 ~ 7200초 · 2 ~ 4000블록 | `…border.start-delay-seconds` · `shrink-seconds` · `final-size` |
 | 증강 야생전 최종 발광 | `증강 발광 켜기·끄기` (`augment glow`) | | `…border.glow-at-final` |
 | 증강 야생전 플레이 구역 반경 · 구조물 · 미리 생성 | `증강 반경 <블록>` · `증강 구조물` · `증강 미리생성` (`augment radius` · `structures` · `pregenerate`) | 32 ~ 2000블록 | `…world.radius` · `structures` · `pregenerate` |
 | 증강 선택 시간 · 리롤 · 보너스 증강 | `증강 선택시간 <초>` · `증강 리롤 <횟수>` · `증강 보너스 켜기·끄기` (`augment choice` · `rerolls` · `bonus`) | 5 ~ 300초 · 0 ~ 10 | `…augments.choice-seconds` · `augments.rerolls` · `bonus.enabled` |
+| 증강 선택 화면 | `증강 선택화면 대화창·상자` (`augment ui dialog·chest`) | | `…augments.ui` (`DIALOG` · `CHEST`) |
 | 상자 반짝임 · 반짝임 거리 | `상자반짝임 켜기·끄기` · `반짝임거리 <블록>` (`chest-hint` · `chest-hint-radius`) | 4 ~ 32블록 | `…loot.nearby-hint` · `nearby-hint-radius` |
 
 상자 최대 수나 보급 상자 수가 최솟값(`chests.min`, `supply.min`)보다 낮으면 최댓값이 우선하므로, 0으로 하면 정말로 하나도
