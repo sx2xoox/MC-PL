@@ -18,9 +18,60 @@ import org.bukkit.configuration.MemoryConfiguration;
  * @param skins       Minecraft account names whose skins the bots wear (empty: default skins)
  * @param moveSpeed   walking speed of a bot's legs (movement speed attribute of its pathing mob)
  * @param profiles    how well each difficulty plays
+ * @param spectate    봇 관전전 ({@code bots.spectate.*})
  */
 public record BotSettings(int count, BotDifficulty difficulty, int max, List<String> names, List<String> skins,
-                          double moveSpeed, Map<BotDifficulty, BotProfile> profiles) {
+                          double moveSpeed, Map<BotDifficulty, BotProfile> profiles, Spectate spectate) {
+
+    /**
+     * The {@code games.augment.bots.spectate.*} settings of 봇 관전전 ({@code /게임 증강 봇전 관전}): a quicker match
+     * than the configured one (normal matches and 봇전 keep their timings).
+     *
+     * @param farmingTicks      farming length (the augment rounds move by the same ratio)
+     * @param borderDelayTicks  fight time before the border shrinks
+     * @param borderShrinkTicks how long the border takes to close
+     * @param behaviourChat     a short chat line when a bot starts something notable (fight, retreat, shelter)
+     * @param timeScale         the match clocks' speed at the start (1-4, {@code /게임 증강 배속})
+     */
+    public record Spectate(long farmingTicks, long borderDelayTicks, long borderShrinkTicks, boolean behaviourChat,
+                           int timeScale) {
+
+        public static final String FARMING = "bots.spectate.farming-seconds";
+        public static final String BORDER_DELAY = "bots.spectate.border-start-delay-seconds";
+        public static final String BORDER_SHRINK = "bots.spectate.border-shrink-seconds";
+        public static final String BEHAVIOUR_CHAT = "bots.spectate.behaviour-chat";
+        public static final String TIME_SCALE = "bots.spectate.time-scale";
+        /** The fastest {@code /게임 증강 배속}. */
+        public static final int MAX_TIME_SCALE = 4;
+
+        static void declareDefaults(ConfigurationSection d) {
+            d.setComments("bots.spectate", List.of(
+                    "봇 관전전 (/게임 증강 봇전 관전 [봇 수] [난이도 | 난이도별 수]): 사람은 모두 관전하고 봇끼리 끝까지 싸웁니다.",
+                    "보통 경기보다 빠르게 진행됩니다 (보통 경기·봇전의 시간은 그대로). 증강 라운드는 파밍 시간 비율대로 당겨집니다."));
+            d.set(FARMING, 300);
+            d.setComments(FARMING, List.of("관전전의 파밍 시간(초)"));
+            d.set(BORDER_DELAY, 30);
+            d.setComments(BORDER_DELAY, List.of("관전전: 전투 시작 후 월드보더가 줄어들기 시작할 때까지(초)"));
+            d.set(BORDER_SHRINK, 360);
+            d.setComments(BORDER_SHRINK, List.of("관전전: 월드보더가 최종 크기까지 줄어드는 시간(초)"));
+            d.set(BEHAVIOUR_CHAT, true);
+            d.setComments(BEHAVIOUR_CHAT, List.of("관전전: 봇이 교전·후퇴·진지 구축 같은 행동을 시작하면 채팅에 짧게 알림"));
+            d.set(TIME_SCALE, 1);
+            d.setComments(TIME_SCALE, List.of("관전전 시작 배속 (1~" + MAX_TIME_SCALE
+                    + "): 경기 시계(파밍·라운드·보더·장비·기지 짓기)만 빨라집니다. 경기 중에는 /게임 증강 배속"));
+        }
+
+        static Spectate read(ConfigurationSection s) {
+            return new Spectate(ticks(s.getDouble(FARMING, 300)), ticks(s.getDouble(BORDER_DELAY, 30)),
+                    ticks(s.getDouble(BORDER_SHRINK, 360)), s.getBoolean(BEHAVIOUR_CHAT, true),
+                    Math.max(1, Math.min(MAX_TIME_SCALE, s.getInt(TIME_SCALE, 1))));
+        }
+
+        private static long ticks(double seconds) {
+            double value = Double.isFinite(seconds) ? Math.max(0, Math.min(7200, seconds)) : 0;
+            return Math.round(value * 20.0);
+        }
+    }
 
     public static final String COUNT = "bots.count";
     public static final String DIFFICULTY = "bots.difficulty";
@@ -45,6 +96,11 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         return profiles.getOrDefault(of, BotProfile.preset(of));
     }
 
+    /** {@link #name(int)} with the difficulty: "철수 봇 [어려움]" (mixed lineups and 봇 관전전). */
+    public String name(int index, BotDifficulty difficulty) {
+        return name(index) + " [" + difficulty.koreanName() + "]";
+    }
+
     /** The display name of the {@code index}-th bot (0-based): "철수 봇", ... ("봇 16" past the list). */
     public String name(int index) {
         String base = index < names.size() ? names.get(index) : Integer.toString(index + 1);
@@ -55,7 +111,8 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
     public static void declareDefaults(ConfigurationSection d) {
         d.setComments("bots", List.of(
                 "봇전 (/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]): 봇이 빈자리를 채우는 진짜 증강 야생전.",
-                "혼자서도 할 수 있고, 사람이 여럿이어도 됩니다. 봇이 이기면 사람은 집니다."));
+                "혼자서도 할 수 있고, 사람이 여럿이어도 됩니다. 봇이 이기면 사람은 집니다.",
+                "난이도를 섞을 수도 있습니다: /게임 증강 봇전 쉬움 3 어려움 2"));
         d.set(COUNT, 5);
         d.setComments(COUNT, List.of("봇 수를 쓰지 않았을 때 넣는 봇 수"));
         d.set(DIFFICULTY, BotDifficulty.NORMAL.key());
@@ -73,6 +130,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
             BotProfile.preset(difficulty).toConfig().forEach((key, value) -> d.set(path + "." + key, value));
         }
         d.setComments("bots." + BotDifficulty.EASY.key(), BotProfile.COMMENTS);
+        Spectate.declareDefaults(d);
     }
 
     /** Reads the live {@code games.augment} section; invalid values fall back to the defaults. */
@@ -102,6 +160,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         double speed = s.getDouble(SPEED, 0.32);
         return new BotSettings(Math.max(1, Math.min(max, s.getInt(COUNT, 5))),
                 difficulty != null ? difficulty : BotDifficulty.NORMAL, max, names, skins,
-                Double.isFinite(speed) ? Math.max(0.05, Math.min(1.0, speed)) : 0.32, profiles);
+                Double.isFinite(speed) ? Math.max(0.05, Math.min(1.0, speed)) : 0.32, profiles,
+                Spectate.read(s));
     }
 }

@@ -41,7 +41,8 @@ import org.bukkit.entity.Player;
  * /게임 증강 리롤|reroll         redraw the shown cards
  * </pre>
  *
- * plus the 증강 연습 subcommands of {@link PracticeCommand} and 봇전 ({@link BotCommand}).
+ * plus the 증강 연습 subcommands of {@link PracticeCommand}, 봇전 ({@link BotCommand}) and the 봇 관전전 tools
+ * ({@link SpectateCommand}).
  */
 public final class AugmentCommand {
 
@@ -81,6 +82,7 @@ public final class AugmentCommand {
             }
             new PracticeCommand(game).addTo(node, registrar, english, this::suggest);
             new BotCommand(game).addTo(node, registrar, english);
+            new SpectateCommand(game).addTo(node, registrar, english);
             registrar.register(node);
         }
     }

@@ -185,8 +185,8 @@ public final class GameManager {
             throw new GameStartException(messages.prefixed("error.already-running",
                     Messages.tag("game", session.game().displayComponent())));
         }
-        List<Player> eligible = List.copyOf(players);
-        if (eligible.size() < Math.max(1, game.minPlayers())) {
+        List<Player> eligible = game.spectatorsOnly() ? List.of() : List.copyOf(players);
+        if (!game.spectatorsOnly() && eligible.size() < Math.max(1, game.minPlayers())) {
             throw new GameStartException(messages.prefixed("error.not-enough-players",
                     Messages.tag("count", eligible.size()), Messages.tag("min", game.minPlayers())));
         }

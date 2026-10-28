@@ -20,31 +20,49 @@ public final class BotBrain {
     /** What a bot can do. */
     public enum Behaviour {
         /** Farming phase: roam and gather (gear improves on the schedule). */
-        FARM,
+        FARM("파밍", false),
         /** Farming phase: build its base. */
-        BUILD_BASE,
+        BUILD_BASE("기지 건설", false),
         /** Nobody known: move through the safe zone looking for someone. */
-        SCOUT,
+        SCOUT("정찰", false),
         /** Fight the target in melee. */
-        ENGAGE,
+        ENGAGE("교전", true),
         /** Keep distance and shoot the target with the bow. */
-        KITE,
+        KITE("활 견제", true),
         /** Break line of sight, eat a golden apple, come back. */
-        RETREAT_HEAL,
+        RETREAT_HEAL("후퇴·회복", true),
         /** Wall itself in (or pillar up) where it stands to heal. */
-        FORTIFY,
+        FORTIFY("진지 구축", true),
         /** Fall back to its base and hold it. */
-        DEFEND_BASE,
+        DEFEND_BASE("기지 방어", true),
         /** Late game: hold a spot well inside the final zone. */
-        HOLD_ZONE,
+        HOLD_ZONE("구역 지키기", false),
         /** Wait still on high ground or in cover for the approaching target, then strike. */
-        AMBUSH,
+        AMBUSH("매복", true),
         /** Two others are fighting: wait nearby until one is weak, then take both. */
-        THIRD_PARTY,
+        THIRD_PARTY("어부지리", true),
         /** Outgeared or outnumbered: keep away from the target. */
-        AVOID,
+        AVOID("회피", false),
         /** Outside or at the edge of the closing border: get inside. */
-        FLEE_BORDER
+        FLEE_BORDER("보더 탈출", false);
+
+        private final String koreanName;
+        private final boolean notable;
+
+        Behaviour(String koreanName, boolean notable) {
+            this.koreanName = koreanName;
+            this.notable = notable;
+        }
+
+        /** The Korean name spectators see (sidebar, behaviour feed). */
+        public String koreanName() {
+            return koreanName;
+        }
+
+        /** Worth a line in the spectators' chat when a bot switches to it (fights, retreats, shelters). */
+        public boolean notable() {
+            return notable;
+        }
     }
 
     /**
@@ -89,16 +107,31 @@ public final class BotBrain {
      * @param current          what it is doing now (decisions stick a little)
      * @param currentTarget    whom it is dealing with now
      * @param contacts         known enemies
+     * @param pressure         0..1, how late the fight is (fight time and the closing border): the later, the less
+     *                         anyone waits, avoids or hides, so a match always comes to an end
      */
     public record Situation(boolean fight, double farmingLeft, double health, double absorption, double maxHealth,
                             int apples, boolean appleReady, double gear, boolean hasBow, int blocks,
                             double borderMargin, boolean borderShrinking, double zoneDistance, double zoneRadius,
                             boolean baseBuilt, boolean baseDone, double baseDistance, boolean baseSafe,
                             boolean highGround, @Nullable Behaviour current, @Nullable UUID currentTarget,
-                            List<Contact> contacts) {
+                            List<Contact> contacts, double pressure) {
 
         public Situation {
             contacts = List.copyOf(contacts);
+            pressure = Double.isFinite(pressure) ? Math.max(0, Math.min(1, pressure)) : 0;
+        }
+
+        /** A situation at the start of the fight (no pressure yet). */
+        public Situation(boolean fight, double farmingLeft, double health, double absorption, double maxHealth,
+                         int apples, boolean appleReady, double gear, boolean hasBow, int blocks,
+                         double borderMargin, boolean borderShrinking, double zoneDistance, double zoneRadius,
+                         boolean baseBuilt, boolean baseDone, double baseDistance, boolean baseSafe,
+                         boolean highGround, @Nullable Behaviour current, @Nullable UUID currentTarget,
+                         List<Contact> contacts) {
+            this(fight, farmingLeft, health, absorption, maxHealth, apples, appleReady, gear, hasBow, blocks,
+                    borderMargin, borderShrinking, zoneDistance, zoneRadius, baseBuilt, baseDone, baseDistance,
+                    baseSafe, highGround, current, currentTarget, contacts, 0);
         }
     }
 
@@ -110,6 +143,11 @@ public final class BotBrain {
     static final double NEAR = 18;
     /** Score bonus that keeps the current behaviour and target (no flip-flopping). */
     static final double STICKY = 6;
+    /** The bonus of staying in a fight it committed to (a player does not walk away from a duel on a whim). */
+    static final double COMMITTED = 15;
+    /** A visible enemy this close with this little health is a sure kill (worth staying outside the border for). */
+    static final double SURE_KILL_REACH = 4;
+    static final double SURE_KILL_HEALTH = 4;
 
     private final BotProfile profile;
 
@@ -122,9 +160,21 @@ public final class BotBrain {
         List<Decision> out = new ArrayList<>();
         double hp = s.health() + s.absorption();
         boolean low = s.health() <= profile.healAt();
-        double danger = s.borderShrinking() ? 10 : 3;
+        // the safety margin shrinks with the final zone: in a 24-block final zone 10 blocks would be everywhere
+        double danger = s.borderShrinking() ? Math.max(2, Math.min(10, s.zoneRadius() * 0.35)) : 3;
         if (s.borderMargin() < danger) {
-            out.add(new Decision(Behaviour.FLEE_BORDER, null, 90 + (danger - s.borderMargin()) * 3));
+            // outside (or about to be): the border hurts every second, more the further out; only a sure kill
+            // (below) beats getting back in
+            double urgency = s.borderMargin() < 0 ? 130 + Math.min(40, -s.borderMargin() * 3) : 100;
+            out.add(new Decision(Behaviour.FLEE_BORDER, null, urgency + (danger - Math.max(0, s.borderMargin())) * 3));
+        }
+        if (s.fight()) {
+            for (Contact c : s.contacts()) {
+                if (c.visible() && c.distance() <= SURE_KILL_REACH && c.health() <= SURE_KILL_HEALTH && !low) {
+                    // a finishing blow is worth a moment more outside
+                    out.add(new Decision(Behaviour.ENGAGE, c.id(), 200));
+                }
+            }
         }
         if (!s.fight()) {
             // No PvP yet: a smart player farms and builds, it does not chase anyone.
@@ -146,22 +196,27 @@ public final class BotBrain {
             }
         }
         boolean threatened = nearestThreat != null && nearestThreat.distance() <= 24;
+        double p = s.pressure();
+        // late in the fight everyone grows bolder: nobody can wait for the others forever
+        double aggression = profile.aggression() + (1 - profile.aggression()) * 0.6 * p;
         for (Contact c : s.contacts()) {
             double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
             int others = near - (c.distance() <= NEAR ? 1 : 0);
             if (c.fightingOther()) {
                 if (hurtRatio > 0.5 && !low) {
-                    // let them wear each other down first
-                    out.add(new Decision(Behaviour.THIRD_PARTY, c.id(), 62 + 10 * profile.aggression()));
+                    // let them wear each other down first (less patient late in the fight)
+                    out.add(new Decision(Behaviour.THIRD_PARTY, c.id(), 62 + 10 * aggression - 20 * p));
+                    out.add(new Decision(Behaviour.ENGAGE, c.id(), 38 + 30 * aggression + 40 * p));
                 } else {
                     out.add(new Decision(Behaviour.ENGAGE, c.id(),
-                            55 + 30 * profile.aggression() + 20 * (1 - hurtRatio) + 10 * Math.min(1, advantage - 1)));
+                            55 + 30 * aggression + 20 * (1 - hurtRatio) + 10 * Math.min(1, advantage - 1)));
                 }
                 continue;
             }
-            double engage = 30 + 40 * profile.aggression() + 30 * clamp(advantage - 1, -1.5, 1)
-                    - 22 * Math.max(0, others) - (c.visible() ? 0 : 6) - Math.max(0, c.distance() - 30) * 0.4;
+            double engage = 30 + 40 * aggression + 30 * clamp(advantage - 1, -1.5, 1)
+                    - 22 * Math.max(0, others) * (1 - 0.6 * p) - (c.visible() ? 0 : 6)
+                    - Math.max(0, c.distance() - 30) * 0.4 * (1 - 0.5 * p) + 15 * p;
             if (low) {
                 engage -= 30;
             }
@@ -171,31 +226,35 @@ public final class BotBrain {
                 double kite = 42 + 25 * clamp(1 - advantage, 0, 1) + (c.hasBow() ? -8 : 6);
                 out.add(new Decision(Behaviour.KITE, c.id(), kite));
             }
-            if (advantage < 0.75 || others >= 1 && advantage < 1.6) {
-                out.add(new Decision(Behaviour.AVOID, c.id(), 50 + 40 * clamp(0.9 - advantage, 0, 1)
-                        + 12 * Math.max(0, others)));
+            // an even match (advantage around 1) alone is fought, not avoided by both sides
+            if (advantage < 0.75 - 0.25 * p || others >= 1 && advantage < 1.6 - 0.5 * p) {
+                out.add(new Decision(Behaviour.AVOID, c.id(), (50 + 40 * clamp(0.9 - advantage, 0, 1)
+                        + 12 * Math.max(0, others)) * (1 - 0.4 * p)));
             }
             if (c.approaching() && c.distance() >= 8 && c.distance() <= 26 && advantage >= 0.85
                     && (s.highGround() || s.baseBuilt() && s.baseDistance() < 4)) {
-                out.add(new Decision(Behaviour.AMBUSH, c.id(), 60 + 10 * profile.aggression()));
+                out.add(new Decision(Behaviour.AMBUSH, c.id(), 60 + 10 * aggression - 15 * p));
             }
         }
         if (low) {
             if (threatened && s.blocks() >= 8 && (s.apples() == 0 || !s.appleReady()
                     || nearestThreat.distance() < 8)) {
-                out.add(new Decision(Behaviour.FORTIFY, null, s.apples() == 0 ? 86 : 78));
+                out.add(new Decision(Behaviour.FORTIFY, null, (s.apples() == 0 ? 86 : 78) - 20 * p));
             }
-            out.add(new Decision(Behaviour.RETREAT_HEAL, null, (s.apples() > 0 ? 80 : 64) + (threatened ? 4 : 0)));
+            out.add(new Decision(Behaviour.RETREAT_HEAL, null, (s.apples() > 0 ? 80 : 64 - 25 * p)
+                    + (threatened ? 4 : 0)));
         }
-        if (s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48) {
+        // the base is a place to fall back to when hunted or hurt, not a place to sit out the match in
+        if (s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48 && (low || !s.contacts().isEmpty())) {
             double wantBase = (low ? 30 : 0) + (near >= 2 ? 20 : 0);
-            out.add(new Decision(Behaviour.DEFEND_BASE, null, 30 + wantBase - s.baseDistance() * 0.3));
+            out.add(new Decision(Behaviour.DEFEND_BASE, null, 30 + wantBase - s.baseDistance() * 0.3 - 20 * p));
         }
         if (s.borderShrinking()) {
             double outside = Math.max(0, s.zoneDistance() - s.zoneRadius() * 0.6);
             out.add(new Decision(Behaviour.HOLD_ZONE, null, 38 + Math.min(20, outside * 0.5)));
         }
-        out.add(new Decision(Behaviour.SCOUT, null, 25));
+        // nobody known: go looking (the controller heads for the last known rival, else drifts to the zone)
+        out.add(new Decision(Behaviour.SCOUT, null, 25 + 15 * p));
         return sorted(out, s);
     }
 
@@ -209,7 +268,8 @@ public final class BotBrain {
         for (Decision d : options) {
             boolean same = d.behaviour() == s.current()
                     && (d.target() == null || d.target().equals(s.currentTarget()));
-            out.add(same ? new Decision(d.behaviour(), d.target(), d.score() + STICKY) : d);
+            boolean committed = same && d.behaviour() == Behaviour.ENGAGE && d.target() != null;
+            out.add(same ? new Decision(d.behaviour(), d.target(), d.score() + (committed ? COMMITTED : STICKY)) : d);
         }
         out.sort((a, b) -> Double.compare(b.score(), a.score()));
         return out;

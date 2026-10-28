@@ -62,8 +62,8 @@ final class MatchHud {
             return;
         }
         if (match.phase() == MatchPhase.FARMING) {
-            long left = Math.max(0, settings.farmingTicks() - match.clock());
-            bar.name(messages().get("bar.farming", Messages.tag("time", Format.clock((left + 19) / 20))));
+            long left = Math.max(0, settings.farmingTicks() - match.time());
+            bar.name(messages().get("bar.farming", Messages.tag("time", seconds(left))));
             bar.progress(settings.farmingTicks() <= 0 ? 0f : (float) left / settings.farmingTicks());
             return;
         }
@@ -71,12 +71,12 @@ final class MatchHud {
         String size = Params.format(Math.round(match.borderSize()));
         if (!match.borderShrinking()) {
             long left = Math.max(0, settings.borderDelayTicks() - fight);
-            bar.name(messages().get("bar.fight-wait", Messages.tag("time", Format.clock((left + 19) / 20)),
+            bar.name(messages().get("bar.fight-wait", Messages.tag("time", seconds(left)),
                     Messages.tag("size", size)));
             bar.progress(settings.borderDelayTicks() <= 0 ? 1f : (float) left / settings.borderDelayTicks());
         } else if (!match.borderFinal()) {
             long left = Math.max(0, settings.borderDelayTicks() + settings.borderShrinkTicks() - fight);
-            bar.name(messages().get("bar.fight-shrink", Messages.tag("time", Format.clock((left + 19) / 20)),
+            bar.name(messages().get("bar.fight-shrink", Messages.tag("time", seconds(left)),
                     Messages.tag("size", size)));
             bar.progress(settings.borderShrinkTicks() <= 0 ? 0f : (float) left / settings.borderShrinkTicks());
         } else {
@@ -84,6 +84,11 @@ final class MatchHud {
                     Messages.tag("alive", match.session().aliveCount())));
             bar.progress(1f);
         }
+    }
+
+    /** {@code scaled} match-clock ticks as the real time left ("3:20"). */
+    private String seconds(long scaled) {
+        return Format.clock((match.realTicks(scaled) + 19) / 20);
     }
 
     List<Component> lines(Player viewer) {
@@ -94,10 +99,18 @@ final class MatchHud {
         if (match.phase() == MatchPhase.FARMING && match.isPractice()) {
             lines.add(messages().get("hud.practice-farming"));
         } else if (match.phase() == MatchPhase.FARMING) {
-            long left = Math.max(0, settings.farmingTicks() - match.clock());
-            lines.add(messages().get("hud.farming", Messages.tag("time", Format.clock((left + 19) / 20))));
+            long left = Math.max(0, settings.farmingTicks() - match.time());
+            lines.add(messages().get("hud.farming", Messages.tag("time", seconds(left))));
         } else {
             lines.add(messages().get("hud.fight", Messages.tag("size", Params.format(Math.round(match.borderSize())))));
+        }
+        if (match.timeScale() > 1) {
+            lines.add(messages().get("hud.time-scale", Messages.tag("scale", match.timeScale())));
+        }
+        SpectatorView spectating = match.spectators();
+        if (spectating != null) {
+            lines.addAll(spectating.lines());
+            return lines;
         }
         long toRound = match.ticksToNextRound();
         if (match.isPractice()) {

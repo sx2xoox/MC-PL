@@ -98,15 +98,53 @@ public final class AugmentMatch implements GameInstance, BotHost {
     private boolean practicePvp;
     private final @Nullable BotManager bots;
     private final @Nullable BotSetup botSetup;
+    private final @Nullable SpectatorView spectators;
+    /** Match-clock ticks since the farming started: phases, rounds and the border run on it. */
+    private long time;
+    private int timeScale = 1;
 
     /**
-     * The bots of a 봇전 match.
+     * The bots of a 봇전 or 봇 관전전 match.
      *
-     * @param settings   {@code games.augment.bots}
-     * @param difficulty how well they play
-     * @param count      how many
+     * @param settings {@code games.augment.bots}
+     * @param lineup   the difficulty of each bot (how many and how well they play)
      */
-    public record BotSetup(BotSettings settings, BotDifficulty difficulty, int count) {
+    public record BotSetup(BotSettings settings, List<BotDifficulty> lineup) {
+
+        public BotSetup {
+            lineup = List.copyOf(lineup);
+            if (lineup.isEmpty()) {
+                throw new IllegalArgumentException("no bots");
+            }
+        }
+
+        /** {@code count} bots of one difficulty. */
+        public static BotSetup of(BotSettings settings, BotDifficulty difficulty, int count) {
+            return new BotSetup(settings, Collections.nCopies(Math.max(1, count), difficulty));
+        }
+
+        public int count() {
+            return lineup.size();
+        }
+
+        /** More than one difficulty plays. */
+        public boolean mixed() {
+            return lineup.stream().distinct().count() > 1;
+        }
+
+        /** "쉬움 3 · 어려움 2" or "보통" (the lineup for announcements). */
+        public String describe() {
+            Map<BotDifficulty, Integer> counts = new java.util.EnumMap<>(BotDifficulty.class);
+            for (BotDifficulty each : lineup) {
+                counts.merge(each, 1, Integer::sum);
+            }
+            if (counts.size() == 1) {
+                return lineup.getFirst().koreanName();
+            }
+            List<String> parts = new ArrayList<>();
+            counts.forEach((difficulty, count) -> parts.add(difficulty.koreanName() + " " + count));
+            return String.join(" · ", parts);
+        }
     }
 
     public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings) {
@@ -137,7 +175,66 @@ public final class AugmentMatch implements GameInstance, BotHost {
         this.dummies = this.practiceSettings != null ? new PracticeDummies(this, this.practiceSettings) : null;
         this.practicePvp = this.practiceSettings != null && this.practiceSettings.pvp();
         this.botSetup = botSetup;
-        this.bots = botSetup != null ? new BotManager(this, botSetup.settings(), botSetup.difficulty()) : null;
+        boolean spectate = mode == MatchMode.SPECTATE;
+        this.bots = botSetup != null ? new BotManager(this, botSetup.settings(), botSetup.lineup(),
+                spectate || botSetup.mixed(), true) : null;
+        this.spectators = spectate && bots != null ? new SpectatorView(this, bots, botSetup.settings().spectate())
+                : null;
+        if (spectate && botSetup != null) {
+            this.timeScale = botSetup.settings().spectate().timeScale();
+        }
+    }
+
+    /** True for a 봇 관전전 (only bots play). */
+    public boolean isSpectate() {
+        return mode == MatchMode.SPECTATE;
+    }
+
+    /** The spectator tools of a 봇 관전전 (null otherwise). */
+    public @Nullable SpectatorView spectators() {
+        return spectators;
+    }
+
+    // =================================================================== time scale
+
+    /** How fast the match clocks run (1 normally, up to 4 with {@code /게임 증강 배속}). */
+    @Override
+    public int timeScale() {
+        return timeScale;
+    }
+
+    /**
+     * Sets how fast the match clocks run: the farming timer, the augment rounds, the border and with them the bots'
+     * gear schedule and base building ({@link BotHost#timeScale()}). Entities, offers and augments stay real-time.
+     *
+     * @return false if this match has no bots, is a practice or is over
+     */
+    public boolean setTimeScale(int scale) {
+        if (bots == null || isPractice() || stopped) {
+            return false;
+        }
+        int clamped = Math.max(1, Math.min(BotSettings.Spectate.MAX_TIME_SCALE, scale));
+        if (clamped == timeScale) {
+            return true;
+        }
+        timeScale = clamped;
+        if (phase == MatchPhase.FIGHT && borderShrinking && !borderFinal) {
+            // the vanilla border keeps moving on its own: aim it again at the new pace
+            long left = Math.max(0, settings.borderDelayTicks() + settings.borderShrinkTicks() - fightTicks());
+            wild.world().getWorldBorder().changeSize(settings.borderFinalSize(), realTicks(left));
+        }
+        hud.update();
+        return true;
+    }
+
+    /** Real ticks for {@code scaled} ticks of the match clocks at the current speed. */
+    long realTicks(long scaled) {
+        return (Math.max(0, scaled) + timeScale - 1) / timeScale;
+    }
+
+    /** Ticks of the match clocks since the farming started (runs {@link #timeScale()} times as fast as the clock). */
+    public long time() {
+        return time;
     }
 
     /** The bots of a 봇전 match (null otherwise). */
@@ -239,12 +336,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
         return nextRound < settings.rounds().size() ? nextRound + 1 : -1;
     }
 
-    /** Ticks until the next timed round, or -1. */
+    /** Real ticks until the next timed round (at the current {@link #timeScale()}), or -1. */
     public long ticksToNextRound() {
         if (nextRound >= settings.rounds().size()) {
             return -1;
         }
-        return Math.max(0, settings.rounds().get(nextRound).atTicks() - clock);
+        return realTicks(settings.rounds().get(nextRound).atTicks() - time);
     }
 
     public int roundsPlayed() {
@@ -275,12 +372,22 @@ public final class AugmentMatch implements GameInstance, BotHost {
             session.registerListener(dummies);
         }
         if (bots != null && botSetup != null) {
-            for (UUID id : bots.register(botSetup.count())) {
+            for (UUID id : bots.register()) {
                 players.put(id, new PlayerState(id, 0));
             }
             session.registerListener(bots);
-            announce(messages().prefixed("bots.joined", Messages.tag("count", bots.all().size()),
-                    Messages.tag("difficulty", botSetup.difficulty().koreanName())));
+            if (isSpectate()) {
+                session.formTeams();
+                announce(messages().prefixed("spectate.joined", Messages.tag("count", bots.all().size()),
+                        Messages.tag("difficulty", botSetup.describe())));
+                if (spectators != null) {
+                    spectators.announceTeams();
+                    spectators.welcome();
+                }
+            } else {
+                announce(messages().prefixed("bots.joined", Messages.tag("count", bots.all().size()),
+                        Messages.tag("difficulty", botSetup.describe())));
+            }
         }
         bar = session.sharedBossBar(messages().get("bar.preparing", Messages.tag("percent", 0),
                         Messages.tag("done", 0), Messages.tag("total", 0)), 0f, BossBar.Color.WHITE,
@@ -307,13 +414,16 @@ public final class AugmentMatch implements GameInstance, BotHost {
             return;
         }
         clock++;
+        time += timeScale;
+        if (isSpectate() && clock % 20 == 0 && session.viewers().isEmpty()) {
+            session.abort(messages().get("spectate.everyone-left")); // nobody left to watch
+            return;
+        }
         if (!isPractice()) {
-            if (phase == MatchPhase.FARMING && clock >= settings.farmingTicks()) {
+            if (phase == MatchPhase.FARMING && time >= settings.farmingTicks()) {
                 beginFight();
             }
-            while (nextRound < settings.rounds().size() && clock >= settings.rounds().get(nextRound).atTicks()) {
-                startRound(nextRound++);
-            }
+            startDueRounds();
         } else if (dummies != null && clock % 10 == 0) {
             dummies.tick(clock);
         }
@@ -324,6 +434,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         tickAugments();
         if (bots != null) {
             bots.tick(clock);
+        }
+        if (spectators != null && clock % 20 == 0) {
+            spectators.tick();
         }
         bonus.tick();
         if (clock % 10 == 0) {
@@ -504,9 +617,11 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
         phase = MatchPhase.FARMING;
         clock = 0;
+        time = 0;
         spread();
         if (bots != null && !bots.all().isEmpty()) {
-            bots.spawnAll(Spread.findSurfaceSpawns(wild.arena(), bots.all().size(), session.random()));
+            // more spots than bots: the manager prefers the dry ones
+            bots.spawnAll(Spread.findSurfaceSpawns(wild.arena(), bots.all().size() * 3, session.random()));
         }
         WorldBorder border = wild.world().getWorldBorder();
         border.setCenter(wild.arena().centerX(), wild.arena().centerZ());
@@ -522,11 +637,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
                     messages().get("practice.subtitle"), 5, 60, 15);
             announce(messages().prefixed("practice.started"));
         } else {
+            long farming = realTicks(settings.farmingTicks()) * 50;
             Feedback.title(session.audience(), messages().get("phase.farming-title"),
-                    messages().get("phase.farming-subtitle", Messages.tag("time", Format.duration(
-                            settings.farmingTicks() * 50))), 5, 60, 15);
-            announce(messages().prefixed("phase.farming", Messages.tag("time",
-                    Format.duration(settings.farmingTicks() * 50)), Messages.tag("rounds", settings.rounds().size())));
+                    messages().get(isSpectate() ? "spectate.farming-subtitle" : "phase.farming-subtitle",
+                            Messages.tag("time", Format.duration(farming))), 5, 60, 15);
+            announce(messages().prefixed(isSpectate() ? "spectate.farming" : "phase.farming",
+                    Messages.tag("time", Format.duration(farming)), Messages.tag("rounds", settings.rounds().size())));
         }
         session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 1f, 1.2f);
         hud.update();
@@ -572,23 +688,30 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
     }
 
+    /** Opens every timed round whose time has come on the match clock. */
+    private void startDueRounds() {
+        while (nextRound < settings.rounds().size() && time >= settings.rounds().get(nextRound).atTicks()) {
+            startRound(nextRound++);
+        }
+    }
+
     private void beginFight() {
         phase = MatchPhase.FIGHT;
-        fightStart = clock;
+        fightStart = time;
         if (bar != null) {
             bar.color(BossBar.Color.RED);
         }
         Feedback.title(session.audience(), messages().get("phase.fight-title"), messages().get("phase.fight-subtitle"),
                 5, 60, 15);
         announce(messages().prefixed("phase.fight", Messages.tag("time",
-                Format.duration(settings.borderDelayTicks() * 50)), Messages.tag("size",
+                Format.duration(realTicks(settings.borderDelayTicks()) * 50)), Messages.tag("size",
                 Params.format(settings.borderFinalSize()))));
         session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.7f, 1f);
     }
 
-    /** Fight ticks since PvP started. */
+    /** Match-clock ticks since PvP started. */
     long fightTicks() {
-        return phase == MatchPhase.FIGHT ? clock - fightStart : 0;
+        return phase == MatchPhase.FIGHT ? time - fightStart : 0;
     }
 
     private void tickBorder() {
@@ -596,13 +719,14 @@ public final class AugmentMatch implements GameInstance, BotHost {
         WorldBorder border = wild.world().getWorldBorder();
         if (!borderShrinking && fight >= settings.borderDelayTicks()) {
             borderShrinking = true;
-            if (settings.borderShrinkTicks() <= 0) {
+            long left = settings.borderDelayTicks() + settings.borderShrinkTicks() - fight;
+            if (settings.borderShrinkTicks() <= 0 || left <= 0) {
                 border.setSize(settings.borderFinalSize());
             } else {
-                border.changeSize(settings.borderFinalSize(), settings.borderShrinkTicks());
+                border.changeSize(settings.borderFinalSize(), realTicks(left));
             }
             announce(messages().prefixed("phase.border-shrinking", Messages.tag("time",
-                    Format.duration(settings.borderShrinkTicks() * 50)), Messages.tag("size",
+                    Format.duration(realTicks(Math.max(0, left)) * 50)), Messages.tag("size",
                     Params.format(settings.borderFinalSize()))));
             session.playSound(Sound.BLOCK_BEACON_POWER_SELECT, 1f, 0.8f);
         }
@@ -1173,24 +1297,34 @@ public final class AugmentMatch implements GameInstance, BotHost {
         NONE
     }
 
-    /** Practice ({@code /게임 증강 다음단계}): skips to the next step of the match flow. */
+    /**
+     * {@code /게임 증강 다음단계}: skips to the next step of the match flow (practice, and for admins every real
+     * match). Skipping the farming of a real match moves the match clock to the fight start: the rounds due by then
+     * open now (the fight-start round included), the bots get their fight gear and PvP comes on.
+     */
     public PhaseStep advancePhase() {
-        if (!isPractice() || stopped || phase == MatchPhase.PREPARING) {
+        if (stopped || phase == MatchPhase.PREPARING || !session.isRunning()) {
             return PhaseStep.NONE;
         }
         if (phase == MatchPhase.FARMING) {
+            if (!isPractice()) {
+                time = Math.max(time, settings.farmingTicks());
+            }
             beginFight();
+            if (!isPractice()) {
+                startDueRounds();
+            }
             hud.update();
             return PhaseStep.FIGHT;
         }
         if (!borderShrinking) {
-            fightStart = clock - settings.borderDelayTicks();
+            fightStart = time - settings.borderDelayTicks();
             tickBorder();
             hud.update();
             return PhaseStep.SHRINK;
         }
         if (!borderFinal) {
-            fightStart = clock - settings.borderDelayTicks() - settings.borderShrinkTicks();
+            fightStart = time - settings.borderDelayTicks() - settings.borderShrinkTicks();
             wild.world().getWorldBorder().setSize(settings.borderFinalSize());
             tickBorder();
             hud.update();
@@ -1374,7 +1508,16 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (phase != MatchPhase.FARMING || settings.farmingTicks() <= 0) {
             return phase == MatchPhase.FARMING ? 1.0 : 0.0;
         }
-        return Math.min(1.0, (double) clock / settings.farmingTicks());
+        return Math.min(1.0, (double) time / settings.farmingTicks());
+    }
+
+    @Override
+    public double pressure() {
+        if (phase != MatchPhase.FIGHT) {
+            return 0;
+        }
+        long span = settings.borderDelayTicks() + settings.borderShrinkTicks();
+        return span <= 0 ? 1.0 : Math.min(1.0, (double) fightTicks() / span);
     }
 
     @Override
@@ -1393,7 +1536,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (phase != MatchPhase.FIGHT) {
             return start;
         }
-        long into = fightTicks() + ticksAhead - settings.borderDelayTicks();
+        long into = fightTicks() + ticksAhead * timeScale - settings.borderDelayTicks();
         if (into <= 0) {
             return start;
         }
@@ -1489,6 +1632,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         strip(bot);
         session.eliminateBot(bot, credited, io.github.sx2xoox.mcpl.core.game.DeathCauses.describe(session.messages(),
                 lastDamage));
+        if (spectators != null) {
+            spectators.botDied(bot, credited);
+        }
         hud.update();
         checkWin();
     }
@@ -1503,7 +1649,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
             }
             return;
         }
-        if (bots != null && !bots.all().isEmpty() && !session.aliveIds().isEmpty()
+        if (mode == MatchMode.BOTS && bots != null && !bots.all().isEmpty() && !session.aliveIds().isEmpty()
                 && session.aliveIds().stream().allMatch(bots::isBot)) {
             // every human is out: the bots still standing win together (nobody is left to watch them finish it)
             finish(GameResult.builder().winners(session.aliveIds()).reason(messages().get("bots.won-reason")).build());
@@ -1527,6 +1673,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
     }
 
     private void finish(GameResult result) {
+        if (spectators != null) {
+            spectators.announceWinner(result);
+        }
         broadcastSummary();
         session.finish(result);
     }

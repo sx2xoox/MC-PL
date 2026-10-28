@@ -138,13 +138,19 @@ public final class BotBody {
         return material == null ? null : ItemStack.of(material);
     }
 
-    /** Puts the body where the legs are, facing {@code yaw}/{@code pitch}. */
-    void sync(float yaw, float pitch) {
+    /**
+     * Puts the body where the legs are, the head at {@code yaw}/{@code pitch} and the body at {@code bodyYaw}. A
+     * teleport alone moves the entity's rotation but not its head (a Mannequin has no look control turning it), so the
+     * head is set with {@link Mannequin#setRotation} (the server's {@code forceSetRotation}, which also sets the head
+     * rotation the client is sent).
+     */
+    void sync(float yaw, float pitch, float bodyYaw) {
         Location at = legs.getLocation();
         at.setYaw(yaw);
         at.setPitch(pitch);
         body.teleport(at);
-        body.setBodyYaw(yaw);
+        body.setRotation(yaw, pitch);
+        body.setBodyYaw(bodyYaw);
     }
 
     void remove() {

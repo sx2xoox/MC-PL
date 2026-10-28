@@ -241,7 +241,7 @@ class AugmentMatchTest {
         Offer next = match.currentOffer(player.getUniqueId());
         assertNotNull(next, "the queued offer opens next");
         assertFalse(next.cards().contains(first), "an owned augment is replaced");
-        assertEquals(3, next.cards().size());
+        assertTrue(next.cards().size() >= 3, "three cards (more if the first pick adds a card)");
         assertTrue(next.deadline() > match.clock(), "its timer started");
     }
 

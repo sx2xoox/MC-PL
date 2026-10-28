@@ -12,20 +12,34 @@ import org.jspecify.annotations.Nullable;
  */
 public enum BotDifficulty {
     /** A real opponent for an average player: decent aim and crits, bow, apples, a base. */
-    EASY("쉬움", "easy"),
+    EASY("쉬움", "easy", 18f, false),
     /** A skilled PvP player: fast reactions, strafing, crit timing, shield and apples, smart retreats. */
-    NORMAL("보통", "normal"),
+    NORMAL("보통", "normal", 28f, false),
     /** A top-tier PvP player: near-instant reactions, leading bow shots, perfect combos, strong bases. */
-    HARD("어려움", "hard"),
+    HARD("어려움", "hard", 45f, false),
     /** Beyond human limits (still fair: no seeing through walls). */
-    HELL("지옥", "hell");
+    HELL("지옥", "hell", 70f, true);
 
     private final String koreanName;
     private final String key;
+    private final float turnSpeed;
+    private final boolean flicks;
 
-    BotDifficulty(String koreanName, String key) {
+    BotDifficulty(String koreanName, String key, float turnSpeed, boolean flicks) {
         this.koreanName = koreanName;
         this.key = key;
+        this.turnSpeed = turnSpeed;
+        this.flicks = flicks;
+    }
+
+    /** How fast the bot turns its camera, in degrees per tick (a player's mouse speed). */
+    public float turnSpeed() {
+        return turnSpeed;
+    }
+
+    /** Snaps big turns (≥ {@link BotAim#FLICK}°) in one tick, like a flick shot. */
+    public boolean flicks() {
+        return flicks;
     }
 
     public String koreanName() {

@@ -185,6 +185,134 @@ class BotBrainTest {
         assertEquals(A, d.target());
     }
 
+    private static Situation withPressure(Situation s, double pressure, Behaviour current, UUID target) {
+        return new Situation(s.fight(), s.farmingLeft(), s.health(), s.absorption(), s.maxHealth(), s.apples(),
+                s.appleReady(), s.gear(), s.hasBow(), s.blocks(), s.borderMargin(), s.borderShrinking(),
+                s.zoneDistance(), s.zoneRadius(), s.baseBuilt(), s.baseDone(), s.baseDistance(), s.baseSafe(),
+                s.highGround(), current, target, s.contacts(), pressure);
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void twoEqualBotsBothEngageEachOther(BotDifficulty difficulty) {
+        // symmetric: each sees the other with the same gear and health; neither may back off
+        S s = new S();
+        s.contacts.add(new Contact(A, 12, 20, 20, IRON, true, false, true, true));
+        Decision d = decide(difficulty, s);
+        assertEquals(Behaviour.ENGAGE, d.behaviour(), "an even duel is fought: " + d);
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void lateInTheFightNobodyWaitsOrAvoidsEvenOdds(BotDifficulty difficulty) {
+        BotBrain brain = new BotBrain(BotProfile.preset(difficulty));
+        S crowd = new S();
+        crowd.contact(A, 8, 20, IRON, false).contact(B, 10, 20, IRON, false);
+        Situation late = withPressure(crowd.build(), 1.0, null, null);
+        assertEquals(Behaviour.ENGAGE, brain.decide(late).behaviour(), "three equal bots: someone commits");
+        S fighting = new S();
+        fighting.contact(A, 20, 18, IRON, true).contact(B, 22, 17, IRON, true);
+        assertEquals(Behaviour.ENGAGE, brain.decide(withPressure(fighting.build(), 1.0, null, null)).behaviour(),
+                "no more waiting for a third party at the end");
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void nobodyKnownMeansScoutingNotSittingInTheBase(BotDifficulty difficulty) {
+        S s = new S();
+        s.baseBuilt = true;
+        s.baseSafe = true;
+        s.baseDistance = 2;
+        assertEquals(Behaviour.SCOUT, decide(difficulty, s).behaviour(), "an empty base is no reason to stay");
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void anEngagedBotDoesNotFlipFlop(BotDifficulty difficulty) {
+        BotBrain brain = new BotBrain(BotProfile.preset(difficulty));
+        S s = new S();
+        s.contact(A, 6, 20, IRON, false);
+        s.contacts.add(new Contact(B, 17, 20, 20, IRON, true, false, false, false));
+        Situation engaged = withPressure(s.build(), 0.3, Behaviour.ENGAGE, A);
+        Decision d = brain.decide(engaged);
+        assertEquals(Behaviour.ENGAGE, d.behaviour(), "stays in the duel when a second one shows up: " + d);
+        assertEquals(A, d.target());
+    }
+
+    @org.junit.jupiter.api.Test
+    void severalEqualBotsStartFightingWithinAFewDecisions() {
+        // four equal bots that all see each other at the fight start; every decision feeds the next one's state
+        int count = 4;
+        UUID[] ids = new UUID[count];
+        for (int i = 0; i < count; i++) {
+            ids[i] = new UUID(1, i);
+        }
+        BotBrain brain = new BotBrain(BotProfile.preset(BotDifficulty.NORMAL));
+        Decision[] current = new Decision[count];
+        boolean engaged = false;
+        for (int round = 0; round < 10 && !engaged; round++) {
+            double pressure = round * 0.05;
+            for (int me = 0; me < count; me++) {
+                S s = new S();
+                for (int other = 0; other < count; other++) {
+                    if (other != me) {
+                        s.contacts.add(new Contact(ids[other], 10 + 4 * Math.abs(other - me), 20, 20, IRON, true,
+                                false, false, true));
+                    }
+                }
+                Decision before = current[me];
+                current[me] = brain.decide(withPressure(s.build(), pressure,
+                        before == null ? null : before.behaviour(), before == null ? null : before.target()));
+                engaged |= current[me].behaviour() == Behaviour.ENGAGE;
+            }
+        }
+        assertTrue(engaged, "someone commits within ten decisions");
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void outsideTheBorderGettingBackInBeatsAnyFight(BotDifficulty difficulty) {
+        BotBrain brain = new BotBrain(BotProfile.preset(difficulty));
+        S s = new S();
+        s.shrinking = true;
+        s.borderMargin = -4;
+        s.contact(A, 5, 20, LEATHER, false); // an easy, healthy target right there
+        assertEquals(Behaviour.FLEE_BORDER, brain.decide(withPressure(s.build(), 1.0, Behaviour.ENGAGE, A))
+                .behaviour(), "even mid-duel and late in the match");
+        S sure = new S();
+        sure.shrinking = true;
+        sure.borderMargin = -2;
+        sure.contact(A, 3, 3, IRON, false);
+        Decision finish = brain.decide(sure.build());
+        assertEquals(Behaviour.ENGAGE, finish.behaviour(), "only a sure kill is worth a moment outside");
+        assertEquals(A, finish.target());
+    }
+
+    @ParameterizedTest
+    @EnumSource(BotDifficulty.class)
+    void aBaseTheBorderWillSwallowIsLeft(BotDifficulty difficulty) {
+        S s = new S();
+        s.shrinking = true;
+        s.health = 9;
+        s.apples = 0;
+        s.blocks = 0;
+        s.baseBuilt = true;
+        s.baseSafe = false; // the border closes over it soon
+        s.baseDistance = 1;
+        s.borderMargin = 3;
+        s.contact(A, 16, 20, IRON, false).contact(B, 17, 20, IRON, false);
+        Decision d = decide(difficulty, s);
+        assertNotEquals(Behaviour.DEFEND_BASE, d.behaviour(), d.toString());
+        assertEquals(Behaviour.FLEE_BORDER, d.behaviour(), "the border is near: inside first");
+    }
+
+    @org.junit.jupiter.api.Test
+    void scoutingDriftsToTheZoneAsTheFightGoesOn() {
+        assertTrue(BotController.scoutPull(0) > 0.2);
+        assertTrue(BotController.scoutPull(1) > BotController.scoutPull(0.5));
+        assertTrue(BotController.scoutPull(5) <= 0.8 + 1.0E-9);
+    }
+
     @org.junit.jupiter.api.Test
     void gearReadingBlursTowardsTheAverage() {
         BotBrain sloppy = new BotBrain(BotProfile.preset(BotDifficulty.EASY));
