@@ -48,4 +48,13 @@ public interface AugmentContext {
 
     /** Sends a prefixed line of the augment messages file to the owner's chat. */
     void message(String key, TagResolver... resolvers);
+
+    /**
+     * {@link #track Tracks} {@code entity} and credits everything it does to the owner (kill credit, the PvP gate of
+     * the farming phase, teams): for summoned helpers such as tamed animals.
+     */
+    <T extends Entity> T summon(T entity);
+
+    /** Hides {@code entity} from everyone but the owner (best called in its spawn consumer). */
+    void showOnlyToOwner(Entity entity);
 }

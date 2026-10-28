@@ -11,6 +11,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.enchantment.EnchantItemEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
@@ -21,6 +22,8 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerExpChangeEvent;
+import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.event.world.LootGenerateEvent;
@@ -139,6 +142,24 @@ final class MatchListener implements Listener {
         }
         match.forEachAugment(player, "onBlockBreak", augment -> augment.onBlockBreak(event));
         match.bonus().onBlockBreak(player, event.getBlock());
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBlockDrop(BlockDropItemEvent event) {
+        Player player = event.getPlayer();
+        if (session.isInPlay(player) && inWild(event.getBlock().getWorld())) {
+            match.forEachAugment(player, "onBlockDrop", augment -> augment.onBlockDrop(event));
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onConsume(PlayerItemConsumeEvent event) {
+        match.forEachAugment(event.getPlayer(), "onConsume", augment -> augment.onConsume(event));
+    }
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onExpChange(PlayerExpChangeEvent event) {
+        match.forEachAugment(event.getPlayer(), "onExpChange", augment -> augment.onExpChange(event));
     }
 
     // =================================================================== bonus conditions
