@@ -16,6 +16,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -75,7 +76,7 @@ final class MatchListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDamageModify(EntityDamageEvent event) {
-        if (!(event.getEntity() instanceof LivingEntity victim)) {
+        if (!(event.getEntity() instanceof LivingEntity victim) || match.isAugmentDamage()) {
             return;
         }
         Player attacker = session.combat().resolveAttacker(event);
@@ -105,8 +106,10 @@ final class MatchListener implements Listener {
         double dealt = Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
         Player attacker = session.combat().resolveAttacker(event);
         if (attacker != null && match.isEnemy(attacker.getUniqueId(), victim)) {
-            match.forEachAugment(attacker, "afterOutgoingDamage",
-                    augment -> augment.afterOutgoingDamage(victim, dealt));
+            if (!match.isAugmentDamage()) {
+                match.forEachAugment(attacker, "afterOutgoingDamage",
+                        augment -> augment.afterOutgoingDamage(victim, dealt));
+            }
             if (victim instanceof Player hurt) {
                 match.bonus().onPlayerHit(hurt, attacker);
             }
@@ -123,6 +126,13 @@ final class MatchListener implements Listener {
     public void onShootBow(EntityShootBowEvent event) {
         if (event.getEntity() instanceof Player player) {
             match.forEachAugment(player, "onShootBow", augment -> augment.onShootBow(event));
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onProjectileHit(ProjectileHitEvent event) {
+        if (event.getEntity().getShooter() instanceof Player player) {
+            match.forEachAugment(player, "onProjectileHit", augment -> augment.onProjectileHit(event));
         }
     }
 
