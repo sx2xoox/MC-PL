@@ -53,7 +53,8 @@ public final class Gear {
      * @param bow    it has a bow
      * @param arrows arrows for it
      * @param shield a shield in the off hand
-     * @param blocks building blocks for its base and walls
+     * @param blocks building blocks for its base and walls (a player's farmed cobblestone, logs and dirt: enough for
+     *               a closed base and some to spare)
      */
     public record Loadout(Armor[] armor, Weapon sword, boolean bow, int arrows, boolean shield, int blocks) {
 
@@ -114,26 +115,26 @@ public final class Gear {
     public static Loadout at(double progress) {
         double p = Math.max(0, progress);
         if (p < 0.08) {
-            return new Loadout(new Armor[] {N, N, N, N}, Weapon.WOOD, false, 0, false, 16);
+            return new Loadout(new Armor[] {N, N, N, N}, Weapon.WOOD, false, 0, false, 64);
         }
         if (p < 0.2) {
-            return new Loadout(new Armor[] {L, L, N, L}, Weapon.STONE, false, 0, false, 48);
+            return new Loadout(new Armor[] {L, L, N, L}, Weapon.STONE, false, 0, false, 96);
         }
         if (p < 0.35) {
-            return new Loadout(new Armor[] {L, L, L, L}, Weapon.STONE, true, 16, false, 96);
+            return new Loadout(new Armor[] {L, L, L, L}, Weapon.STONE, true, 16, false, 160);
         }
         if (p < 0.5) {
-            return new Loadout(new Armor[] {L, I, L, I}, Weapon.IRON, true, 24, true, 128);
+            return new Loadout(new Armor[] {L, I, L, I}, Weapon.IRON, true, 24, true, 224);
         }
         if (p < 0.7) {
-            return new Loadout(new Armor[] {I, I, I, I}, Weapon.IRON, true, 32, true, 160);
+            return new Loadout(new Armor[] {I, I, I, I}, Weapon.IRON, true, 32, true, 256);
         }
         if (p < 0.95) {
-            return new Loadout(new Armor[] {I, D, I, I}, Weapon.IRON, true, 48, true, 192);
+            return new Loadout(new Armor[] {I, D, I, I}, Weapon.IRON, true, 48, true, 288);
         }
         if (p < 1.3) {
-            return new Loadout(new Armor[] {I, D, I, D}, Weapon.DIAMOND, true, 64, true, 224);
+            return new Loadout(new Armor[] {I, D, I, D}, Weapon.DIAMOND, true, 64, true, 320);
         }
-        return new Loadout(new Armor[] {D, D, I, D}, Weapon.DIAMOND, true, 64, true, 256);
+        return new Loadout(new Armor[] {D, D, I, D}, Weapon.DIAMOND, true, 64, true, 384);
     }
 }

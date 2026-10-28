@@ -20,9 +20,11 @@ import org.bukkit.configuration.MemoryConfiguration;
  *                    moves exactly like a player (walking, sprinting), the speed grows with its square
  * @param profiles    how well each difficulty plays
  * @param spectate    봇 관전전 ({@code bots.spectate.*})
+ * @param personalities how often each {@link BotPersonality} is drawn (0 = never)
  */
 public record BotSettings(int count, BotDifficulty difficulty, int max, List<String> names, List<String> skins,
-                          double moveSpeed, Map<BotDifficulty, BotProfile> profiles, Spectate spectate) {
+                          double moveSpeed, Map<BotDifficulty, BotProfile> profiles, Spectate spectate,
+                          Map<BotPersonality, Double> personalities) {
 
     /**
      * The {@code games.augment.bots.spectate.*} settings of 봇 관전전 ({@code /게임 증강 봇전 관전}): a quicker match
@@ -80,6 +82,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
     public static final String NAMES = "bots.names";
     public static final String SKINS = "bots.skins";
     public static final String SPEED = "bots.move-speed";
+    public static final String PERSONALITIES = "bots.personalities";
 
     /** Hard cap of bots in one match (performance). */
     public static final int HARD_MAX = 15;
@@ -91,6 +94,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         names = List.copyOf(names);
         skins = List.copyOf(skins);
         profiles = Map.copyOf(profiles);
+        personalities = Map.copyOf(personalities);
     }
 
     public BotProfile profile(BotDifficulty of) {
@@ -100,6 +104,12 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
     /** {@link #name(int)} with the difficulty: "철수 봇 [어려움]" (mixed lineups and 봇 관전전). */
     public String name(int index, BotDifficulty difficulty) {
         return name(index) + " [" + difficulty.koreanName() + "]";
+    }
+
+    /** {@link #name(int)} with the difficulty and personality: "철수 봇 [어려움·사냥꾼]" (봇 관전전, mixed lineups). */
+    public String name(int index, BotDifficulty difficulty, @org.jspecify.annotations.Nullable BotPersonality personality) {
+        return personality == null ? name(index, difficulty)
+                : name(index) + " [" + difficulty.koreanName() + "·" + personality.koreanName() + "]";
     }
 
     /** The display name of the {@code index}-th bot (0-based): "철수 봇", ... ("봇 16" past the list). */
@@ -132,6 +142,13 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
             BotProfile.preset(difficulty).toConfig().forEach((key, value) -> d.set(path + "." + key, value));
         }
         d.setComments("bots." + BotDifficulty.EASY.key(), BotProfile.COMMENTS);
+        for (BotPersonality each : BotPersonality.values()) {
+            d.set(PERSONALITIES + "." + each.key(), 1.0);
+        }
+        d.setComments(PERSONALITIES, List.of(
+                "봇 성격과 뽑힐 비중 (0 = 쓰지 않음). 성격은 행동 점수에 곱해지는 성향입니다 (난이도는 실력):",
+                "hunter 사냥꾼 · fortress 요새꾼 · archer 저격수 · opportunist 어부지리형 · berserker 광전사 · survivor 생존왕",
+                "trapper 트래퍼 · assassin 암살자 · tank 탱커 · avenger 복수귀 · gambler 도박사 · nomad 유목민"));
         Spectate.declareDefaults(d);
     }
 
@@ -160,9 +177,14 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         }
         int max = Math.max(1, Math.min(HARD_MAX, s.getInt(MAX, 15)));
         double speed = s.getDouble(SPEED, 0.32);
+        Map<BotPersonality, Double> personalities = new EnumMap<>(BotPersonality.class);
+        for (BotPersonality each : BotPersonality.values()) {
+            double weight = s.getDouble(PERSONALITIES + "." + each.key(), 1.0);
+            personalities.put(each, Double.isFinite(weight) ? Math.max(0, Math.min(100, weight)) : 1.0);
+        }
         return new BotSettings(Math.max(1, Math.min(max, s.getInt(COUNT, 5))),
                 difficulty != null ? difficulty : BotDifficulty.NORMAL, max, names, skins,
                 Double.isFinite(speed) ? Math.max(0.05, Math.min(1.0, speed)) : 0.32, profiles,
-                Spectate.read(s));
+                Spectate.read(s), personalities);
     }
 }

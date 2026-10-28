@@ -39,7 +39,7 @@ class BasePlannerTest {
     private static final BasePlanner.Terrain FLAT = terrain((x, z) -> 64, (x, z) -> Surface.SOLID);
 
     @Test
-    void aSmallBaseHasWallsADoorwayFacingTheZoneALookoutAndFurniture() {
+    void aSmallBaseIsAClosedBoxWithADoorwayFacingTheZoneSlitsALookoutAndFurniture() {
         Plan plan = BasePlanner.plan(FLAT, 0, 0, 5, 100, 0);
         assertEquals(2, plan.half());
         assertEquals(2, plan.doorX(), "the doorway faces the zone (east)");
@@ -53,9 +53,19 @@ class BasePlannerTest {
             }
         }
         assertFalse(walls.contains("2,65,0") || walls.contains("2,66,0"), "a two-high doorway");
-        assertEquals(16 * 2 - 2, walls.size(), "the ring two high minus the doorway");
-        assertTrue(plan.placements().stream().anyMatch(p -> p.part() == Part.PILLAR), "a lookout pillar");
-        assertTrue(plan.placements().stream().noneMatch(p -> p.part() == Part.ROOF), "no roof on a small base");
+        assertTrue(walls.contains("2,67,0"), "with a lintel");
+        assertEquals(List.of("-2,66,0", "0,66,2", "0,66,-2"), plan.slits().stream()
+                .map(c -> c[0] + "," + c[1] + "," + c[2]).toList(), "a shooting slit at eye height in every other wall");
+        for (int[] slit : plan.slits()) {
+            assertFalse(walls.contains(slit[0] + "," + slit[1] + "," + slit[2]), "the slit stays open");
+        }
+        assertEquals(16 * 3 - 2 - 3, walls.size(), "the ring three high minus the doorway and the slits");
+        long roof = plan.placements().stream().filter(p -> p.part() == Part.ROOF && p.y() == 68).count();
+        assertEquals(25, roof, "a full roof: no holes anywhere");
+        assertTrue(plan.placements().stream().anyMatch(p -> p.part() == Part.PILLAR && p.y() > 68), "a lookout");
+        assertEquals(List.of(2, 65, 0), List.of(plan.door().get(0)[0], plan.door().get(0)[1], plan.door().get(0)[2]));
+        assertEquals(1, plan.inner()[0], "held from just inside");
+        assertEquals(3, plan.outer()[0]);
         Placement chest = plan.placements().stream().filter(p -> p.part() == Part.CHEST).findFirst().orElseThrow();
         Placement table = plan.placements().stream().filter(p -> p.part() == Part.CRAFTING_TABLE).findFirst()
                 .orElseThrow();
@@ -111,6 +121,58 @@ class BasePlannerTest {
         assertTrue(Double.isNaN(BasePlanner.score(lava, 0, 0, 5, 0, 0, List.of())));
         BasePlanner.Terrain cliff = terrain((x, z) -> x > 0 ? 80 : 64, (x, z) -> Surface.SOLID);
         assertTrue(Double.isNaN(BasePlanner.score(cliff, 0, 0, 5, 0, 0, List.of())));
+    }
+
+    @Test
+    void noBaseOnOrNextToPowderSnowCactusOrMagmaNorWhereTheBorderWillBe() {
+        BasePlanner.Terrain snow = terrain((x, z) -> 64, (x, z) -> x == 4 && z == 0 ? Surface.HAZARD : Surface.SOLID);
+        assertTrue(Double.isNaN(BasePlanner.score(snow, 0, 0, 5, 0, 0, List.of())), "powder snow two blocks out");
+        assertFalse(Double.isNaN(BasePlanner.score(snow, -10, 0, 5, 0, 0, List.of())));
+        assertTrue(Double.isNaN(BasePlanner.score(FLAT, 80, 0, 7, 0, 0, List.of(), 0.04, 60)),
+                "beyond where the border will be");
+        assertFalse(Double.isNaN(BasePlanner.score(FLAT, 40, 0, 7, 0, 0, List.of(), 0.04, 60)));
+        List<int[]> spots = List.of(new int[] {0, 0}, new int[] {50, 0});
+        BasePlanner.Terrain hillFar = terrain((x, z) -> Math.hypot(x - 50, z) < 6 ? 70 : 64,
+                (x, z) -> Surface.SOLID);
+        assertEquals(50, BasePlanner.choose(hillFar, spots, 5, 0, 0, List.of(), 0.04, 1000)[0],
+                "a plain bot likes the far hill");
+        assertEquals(0, BasePlanner.choose(hillFar, spots, 5, 0, 0, List.of(), 0.45, 1000)[0],
+                "one that wants the middle stays there");
+    }
+
+    @Test
+    void roughGroundIsLevelledFirst() {
+        // a bump and a dip inside a 7x7 base
+        BasePlanner.Terrain rough = terrain((x, z) -> x == 1 && z == 1 ? 66 : x == -1 && z == 0 ? 62 : 64,
+                (x, z) -> Surface.SOLID);
+        assertFalse(Double.isNaN(BasePlanner.score(rough, 0, 0, 7, 0, 0, List.of())), "two up or down is fine");
+        Plan plan = BasePlanner.plan(rough, 0, 0, 7, 100, 0);
+        List<Placement> clear = plan.placements().stream().filter(p -> p.part() == Part.CLEAR).toList();
+        assertEquals(2, clear.size(), "the bump is dug away");
+        assertTrue(clear.stream().allMatch(p -> p.x() == 1 && p.z() == 1 && p.y() > 64));
+        List<Placement> floor = plan.placements().stream().filter(p -> p.part() == Part.FLOOR).toList();
+        assertEquals(2, floor.size(), "the dip is filled");
+        assertTrue(floor.stream().allMatch(p -> p.x() == -1 && p.z() == 0 && p.y() <= 64));
+        assertTrue(plan.placements().indexOf(clear.getFirst()) < indexOf(plan, Part.WALL), "before the walls");
+        BasePlanner.Terrain steep = terrain((x, z) -> x == 1 && z == 1 ? 68 : 64, (x, z) -> Surface.SOLID);
+        assertTrue(Double.isNaN(BasePlanner.score(steep, 0, 0, 7, 0, 0, List.of())), "but no base on a crag");
+    }
+
+    @Test
+    void aTrapperRingsItsBaseWithCobwebs() {
+        long plain = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0).placements().stream()
+                .filter(p -> p.part() == Part.COBWEB).count();
+        long trapped = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0, true).placements().stream()
+                .filter(p -> p.part() == Part.COBWEB).count();
+        assertEquals(2, plain);
+        assertEquals(6, trapped);
+        Plan plan = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0, true);
+        for (Placement web : plan.placements()) {
+            if (web.part() == Part.COBWEB) {
+                assertFalse(plan.inside(web.x() + 0.5, web.z() + 0.5), "outside the walls");
+                assertFalse(web.x() == plan.outer()[0] && web.z() == plan.outer()[2], "never in its own doorway");
+            }
+        }
     }
 
     @Test

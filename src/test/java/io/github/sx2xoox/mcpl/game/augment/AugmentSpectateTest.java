@@ -111,8 +111,12 @@ class AugmentSpectateTest {
         List<BotController> bots = match.bots().all();
         assertEquals(List.of(BotDifficulty.EASY, BotDifficulty.EASY, BotDifficulty.HARD),
                 bots.stream().map(BotController::difficulty).toList());
-        assertEquals("철수 봇 [쉬움]", session.plainName(bots.get(0).id()), "the difficulty next to the name");
-        assertEquals("민수 봇 [어려움]", session.plainName(bots.get(2).id()));
+        assertEquals("철수 봇 [쉬움·" + bots.get(0).personality().koreanName() + "]",
+                session.plainName(bots.get(0).id()), "the difficulty and the personality next to the name");
+        assertEquals("민수 봇 [어려움·" + bots.get(2).personality().koreanName() + "]",
+                session.plainName(bots.get(2).id()));
+        assertEquals(3, bots.stream().map(BotController::personality).distinct().count(),
+                "a small lineup has no personality twice");
         assertEquals("철수 봇", bots.get(0).name(), "the body keeps its plain name");
         assertEquals(10 * 20, match.settings().farmingTicks(), "관전전 timings");
     }
@@ -208,7 +212,7 @@ class AugmentSpectateTest {
         assertNotNull(result);
         assertEquals(List.of(bots.get(0).id()), result.winners(), "the last bot standing wins alone");
         assertEquals(2, session.stats().of(bots.get(0).id()).kills());
-        assertTrue(chat(admin).stream().anyMatch(line -> line.contains("우승") && line.contains("철수 봇 [보통]")),
+        assertTrue(chat(admin).stream().anyMatch(line -> line.contains("우승") && line.contains("철수 봇 [보통·")),
                 "the winner is announced to the spectators");
     }
 
@@ -438,7 +442,7 @@ class AugmentSpectateTest {
         chat(viewer);
         assertTrue(h.server.dispatchCommand(viewer, "게임 증강 관전"));
         List<String> list = chat(viewer);
-        assertTrue(list.stream().anyMatch(line -> line.contains("철수 봇 [쉬움]") && line.contains("❤")), list.toString());
+        assertTrue(list.stream().anyMatch(line -> line.contains("철수 봇 [쉬움·") && line.contains("❤")), list.toString());
         assertTrue(list.stream().noneMatch(line -> line.contains("영희 봇")), "the dead are not listed");
     }
 
@@ -448,7 +452,7 @@ class AugmentSpectateTest {
         h.ticks(40);
         var sidebar = match.session().sidebar(viewer);
         String lines = String.join("\n", sidebar.lines().stream().map(AugmentSpectateTest::plain).toList());
-        assertTrue(lines.contains("철수 봇 [보통]"), lines);
+        assertTrue(lines.contains("철수 봇 [보통·"), "difficulty and personality: " + lines);
         assertTrue(lines.contains("파밍") || lines.contains("기지 건설"), "the behaviour in Korean: " + lines);
         assertTrue(lines.contains("◆"), "augment count");
     }

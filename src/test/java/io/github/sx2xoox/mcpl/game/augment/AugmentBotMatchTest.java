@@ -14,8 +14,10 @@ import io.github.sx2xoox.mcpl.core.game.GameState;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentInfo;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotBrain;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotController;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotControllerAccess;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotDifficulty;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotManager;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotPersonality;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotSettings;
 import io.github.sx2xoox.mcpl.game.augment.command.BotCommand;
 import io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch;
@@ -45,10 +47,15 @@ class AugmentBotMatchTest {
         h = new AugmentHarness();
         admin = h.join("Admin");
         admin.setOp(true);
+        for (BotPersonality each : BotPersonality.values()) {
+            h.settings().set(BotSettings.PERSONALITIES + "." + each.key(), 0); // the plain utility AI
+        }
+        BotControllerAccess.autoRecovery(false); // the mock pathfinder never moves the legs
     }
 
     @AfterEach
     void tearDown() {
+        BotControllerAccess.autoRecovery(true);
         h.close();
     }
 

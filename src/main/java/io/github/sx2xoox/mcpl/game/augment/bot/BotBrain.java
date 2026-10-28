@@ -77,9 +77,16 @@ public final class BotBrain {
      * @param fightingOther hurt or hit by someone else (not this bot) in the last seconds
      * @param approaching   getting closer
      * @param hasBow        holds or carries a bow (visible in hand)
+     * @param grudge        it hurt this bot or killed someone near it (an avenger hunts it down)
      */
     public record Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
-                          boolean fightingOther, boolean approaching, boolean hasBow) {
+                          boolean fightingOther, boolean approaching, boolean hasBow, boolean grudge) {
+
+        /** A contact the bot holds no grudge against. */
+        public Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
+                       boolean fightingOther, boolean approaching, boolean hasBow) {
+            this(id, distance, health, maxHealth, gear, visible, fightingOther, approaching, hasBow, false);
+        }
     }
 
     /**
@@ -175,16 +182,47 @@ public final class BotBrain {
     static final int SHOWDOWN_RIVALS = 3;
 
     private final BotProfile profile;
+    private final BotPersonality.Traits traits;
+    private final java.util.Random random;
+    /** A gambler's current mood: a random swing per behaviour, re-rolled now and then (not every decision). */
+    private final java.util.EnumMap<Behaviour, Double> mood = new java.util.EnumMap<>(Behaviour.class);
 
+    /** The plain utility AI (no personality). */
     public BotBrain(BotProfile profile) {
+        this(profile, BotPersonality.Traits.NEUTRAL, new java.util.Random(0));
+    }
+
+    /** A mind with a personality: its traits multiply the scores and tune a few thresholds. */
+    public BotBrain(BotProfile profile, BotPersonality.Traits traits, java.util.Random random) {
         this.profile = profile;
+        this.traits = traits;
+        this.random = random;
+    }
+
+    public BotPersonality.Traits traits() {
+        return traits;
+    }
+
+    /** The health at or below which it heals: the difficulty's, times its personality's caution. */
+    double healAt() {
+        return profile.healAt() * traits.healFactor();
+    }
+
+    /** Its bow range: the difficulty's plus its personality's (0 stays 0: that difficulty never shoots). */
+    double bowRange() {
+        double range = profile.bowRange();
+        return range <= 0 ? 0 : Math.max(Math.min(8, range), range + traits.bowRangeBonus());
+    }
+
+    double aggression() {
+        return clamp(profile.aggression() + traits.aggressionShift(), 0, 1);
     }
 
     /** Every option with its score, best first (for tests and debugging). */
     public List<Decision> options(Situation s) {
         List<Decision> out = new ArrayList<>();
         double hp = s.health() + s.absorption();
-        boolean low = s.health() <= profile.healAt();
+        boolean low = s.health() <= healAt();
         double danger = edgeMargin(s.borderShrinking(), s.zoneRadius());
         if (s.borderMargin() < danger) {
             // outside (or about to be): the border hurts every second, more the further out; only a sure kill
@@ -207,7 +245,7 @@ public final class BotBrain {
                 out.add(new Decision(Behaviour.BUILD_BASE, null, 60 + 10 * s.farmingLeft()));
             }
             out.add(new Decision(Behaviour.FARM, null, 40));
-            return sorted(out, s);
+            return sorted(weigh(out, 0), s);
         }
         double myPower = power(hp + (s.appleReady() ? Math.min(s.apples(), 2) * 4.0 : 0), s.gear());
         Contact nearestThreat = null;
@@ -226,8 +264,10 @@ public final class BotBrain {
         double p = showdown ? 1 : s.pressure();
         // late in the fight everyone grows bolder (nobody can wait for the others forever), and so does a bot that has
         // not fought for a long while
-        double aggression = showdown ? 1 : profile.aggression() + (1 - profile.aggression())
+        double baseAggression = aggression();
+        double aggression = showdown ? 1 : baseAggression + (1 - baseAggression)
                 * Math.min(1, 0.6 * p + 0.4 * s.idle() * Math.max(p, 0.5));
+        double maxHp = Math.max(1, s.maxHealth());
         for (Contact c : s.contacts()) {
             double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
@@ -254,8 +294,24 @@ public final class BotBrain {
             if (showdown) {
                 engage += 25;
             }
+            if (c.grudge()) {
+                engage += traits.grudges() ? 30 : 8; // payback
+            }
+            if (traits.sneaks() && hurtRatio < 0.5) {
+                engage += 18; // an assassin strikes the weak
+            }
+            if (traits.personality() == BotPersonality.NOMAD && others == 0 && hurtRatio < 0.8) {
+                engage += 10; // a loner is easy prey
+            }
             out.add(new Decision(Behaviour.ENGAGE, c.id(), engage));
-            if (s.hasBow() && profile.bowRange() > 0 && c.distance() > 7 && c.distance() <= profile.bowRange()
+            if (traits.sneaks() && !showdown && hp < maxHp * 0.55 && c.distance() < 10) {
+                // the strike failed: an assassin gets out fast
+                out.add(new Decision(Behaviour.AVOID, c.id(), 70 - 25 * p));
+            }
+            if (traits.personality() == BotPersonality.NOMAD && !showdown && others >= 1) {
+                out.add(new Decision(Behaviour.AVOID, c.id(), 66 - 25 * p)); // never gets cornered
+            }
+            if (s.hasBow() && bowRange() > 0 && c.distance() > 7 && c.distance() <= bowRange()
                     && c.visible()) {
                 double kite = 42 + 25 * clamp(1 - advantage, 0, 1) + (c.hasBow() ? -8 : 6);
                 out.add(new Decision(Behaviour.KITE, c.id(), kite));
@@ -286,8 +342,17 @@ public final class BotBrain {
         // the base is a place to fall back to when hunted or hurt, not a place to sit out the match in
         if (!showdown && s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48
                 && (low || !s.contacts().isEmpty())) {
-            double wantBase = (low ? 30 : 0) + (near >= 2 ? 20 : 0);
+            // an enemy walking up to its walls is fought from behind them (the slit, the doorway)
+            boolean comingClose = nearestThreat != null && nearestThreat.approaching() && s.baseDistance() < 12
+                    && nearestThreat.distance() < 30;
+            double wantBase = (low ? 30 : 0) + (near >= 2 ? 20 : 0) + (comingClose ? 18 : 0)
+                    + (comingClose && s.hasBow() ? 8 : 0);
             out.add(new Decision(Behaviour.DEFEND_BASE, null, 30 + wantBase - s.baseDistance() * 0.3 - 20 * p));
+        }
+        // a bot that loves its base rebuilds it where the zone will be once the border is about to take the old one
+        if (!showdown && s.contacts().isEmpty() && traits.builds() && traits.weight(Behaviour.DEFEND_BASE) >= 1.3
+                && s.blocks() >= 60 && p < 0.6 && s.baseBuilt() && !s.baseSafe()) {
+            out.add(new Decision(Behaviour.BUILD_BASE, null, 40));
         }
         if (s.borderShrinking() && !showdown) {
             // early in the shrink: get to the zone in time; later, sitting in it waiting is no plan
@@ -299,7 +364,33 @@ public final class BotBrain {
         // has not fought for a long while and the last few in the final zone go looking hardest
         out.add(new Decision(Behaviour.SCOUT, null, showdown ? (s.contacts().isEmpty() ? 70 : 40)
                 : 25 + 15 * p + 25 * s.idle() * p));
-        return sorted(out, s);
+        return sorted(weigh(out, showdown ? 1 : p), s);
+    }
+
+    /**
+     * The personality's multipliers on every option (not on getting back inside the border or a sure kill), fading
+     * towards 1 as the fight gets late (everyone has to fight in the end), plus a gambler's mood.
+     */
+    private List<Decision> weigh(List<Decision> options, double pressure) {
+        if (traits.volatility() > 0 && (mood.isEmpty() || random.nextDouble() < 0.12)) {
+            for (Behaviour behaviour : Behaviour.values()) {
+                mood.put(behaviour, (random.nextDouble() * 2 - 1) * traits.volatility());
+            }
+        }
+        List<Decision> out = new ArrayList<>(options.size());
+        for (Decision d : options) {
+            if (d.behaviour() == Behaviour.FLEE_BORDER || d.score() >= 200) {
+                out.add(d);
+                continue;
+            }
+            double m = 1 + (traits.weight(d.behaviour()) - 1) * (1 - 0.6 * pressure);
+            if (m <= 0.01) {
+                continue; // never (a nomad's base)
+            }
+            double swing = mood.getOrDefault(d.behaviour(), 0.0) * (1 - pressure);
+            out.add(new Decision(d.behaviour(), d.target(), d.score() * m + swing));
+        }
+        return out;
     }
 
     /**

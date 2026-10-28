@@ -20,6 +20,8 @@ public final class BotMotion {
     public static final double WALK_BPS = 4.317;
     /** A sprinting player, blocks a second. */
     public static final double SPRINT_BPS = 5.612;
+    /** A crouch-walking player, blocks a second. */
+    public static final double SNEAK_BPS = 1.31;
     /** The legs' movement speed attribute at which {@code bots.move-speed} means "as fast as a player". */
     public static final double REFERENCE_ATTRIBUTE = 0.32;
     /** Travelling further than this, a bot sprints (closer it walks, like a player lining up a hit). */
@@ -35,6 +37,8 @@ public final class BotMotion {
 
     /** How a bot moves to where it is going. */
     public enum Gait {
+        /** Creeping up on someone: a player's crouch-walk (footsteps heard only from close by). */
+        SNEAK,
         /** Lining up, strafing, roaming: a player's walk. */
         WALK,
         /** Travelling far, chasing, fleeing: a player's sprint once the destination is more than a few blocks off. */
@@ -48,7 +52,8 @@ public final class BotMotion {
      * body's movement speed bonuses, e.g. 질풍), for legs at {@link #REFERENCE_ATTRIBUTE}.
      */
     public static double blocksPerSecond(Gait gait, double distance, double factor) {
-        return (sprints(gait, distance) ? SPRINT_BPS : WALK_BPS) * clamp(factor, 0.3, 3.0);
+        double base = gait == Gait.SNEAK ? SNEAK_BPS : sprints(gait, distance) ? SPRINT_BPS : WALK_BPS;
+        return base * clamp(factor, 0.3, 3.0);
     }
 
     /** True if {@code gait} sprints over {@code distance} blocks. */

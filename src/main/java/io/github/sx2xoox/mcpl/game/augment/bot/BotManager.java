@@ -17,8 +17,10 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
+import org.bukkit.block.Block;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
@@ -125,16 +127,21 @@ public final class BotManager implements Listener {
     /** Adds the bots of the lineup (capped) as participants of the running session; their ids in order. */
     public List<UUID> register() {
         int wanted = Math.max(0, Math.min(Math.min(settings.max(), BotSettings.HARD_MAX), lineup.size()));
+        List<@Nullable BotPersonality> personalities = BotPersonality.lineup(settings.personalities(), wanted, random);
         List<UUID> out = new ArrayList<>();
         for (int i = 0; i < wanted; i++) {
             UUID id = UUID.randomUUID();
             BotDifficulty difficulty = lineup.get(i);
+            BotPersonality personality = personalities.get(i);
             String name = settings.name(i);
-            if (!session.addBot(id, tagged ? settings.name(i, difficulty) : name)) {
+            if (!session.addBot(id, tagged ? settings.name(i, difficulty, personality) : name)) {
                 continue;
             }
+            Random own = new Random(random.nextLong());
+            // decisions of different bots fall on different ticks, a little irregularly
             bots.put(id, new BotController(id, name, difficulty, this, host, settings.profile(difficulty),
-                    new Random(random.nextLong()), i * 7));
+                    personality == null ? BotPersonality.Traits.NEUTRAL : personality.traits(own), own,
+                    i * 7 + own.nextInt(5)));
             out.add(id);
         }
         return out;
@@ -181,7 +188,10 @@ public final class BotManager implements Listener {
         holdChunks(); // before the first tick: a body far from every player must not be unloaded
     }
 
-    /** A standing spot on solid ground with no water or lava within two blocks around or below it. */
+    /**
+     * A standing spot on solid ground under the open sky with no water, lava or hazard (powder snow, cactus, berry
+     * bushes, magma, fire) within two blocks around, below or at head height.
+     */
     public static boolean dry(Location spot) {
         World world = spot.getWorld();
         if (world == null) {
@@ -190,19 +200,31 @@ public final class BotManager implements Listener {
         int x = spot.getBlockX();
         int y = spot.getBlockY();
         int z = spot.getBlockZ();
-        if (!world.getBlockAt(x, y - 1, z).getType().isSolid()) {
+        Material floor = world.getBlockAt(x, y - 1, z).getType();
+        if (!floor.isSolid() || Hazards.hazard(floor) || Hazards.underground(spot)) {
             return false;
         }
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
-                for (int dy = -1; dy <= 0; dy++) {
-                    if (world.getBlockAt(x + dx, y + dy, z + dz).isLiquid()) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    Block block = world.getBlockAt(x + dx, y + dy, z + dz);
+                    if (block.isLiquid() || Hazards.hazard(block)) {
                         return false;
                     }
                 }
             }
         }
         return true;
+    }
+
+    /** True if {@code who} looks towards {@code at} (within about 70°): it would see someone sneaking up. */
+    boolean facing(LivingEntity who, Entity at) {
+        Vector look = who.getLocation().getDirection().setY(0);
+        Vector to = at.getLocation().toVector().subtract(who.getLocation().toVector()).setY(0);
+        if (look.lengthSquared() < 1.0E-6 || to.lengthSquared() < 1.0E-6) {
+            return false;
+        }
+        return look.normalize().dot(to.normalize()) > 0.35;
     }
 
     public void tick(long clock) {
@@ -605,6 +627,10 @@ public final class BotManager implements Listener {
         long now = host.clock();
         lastHurtBy.put(victimId, new Hit(attacker, now));
         lastHit.put(attacker, new Hit(victimId, now));
+        BotController hurt = bots.get(victimId);
+        if (hurt != null && session.isParticipant(attacker)) {
+            hurt.grudge(attacker, now); // it remembers who hit it
+        }
         for (UUID side : new UUID[] {attacker, victimId}) {
             BotController bot = bots.get(side);
             if (bot != null) {
@@ -661,7 +687,14 @@ public final class BotManager implements Listener {
         }
         for (BotController other : bots.values()) {
             other.forget(id);
+            BotBody witness = other.body();
+            if (killer != null && witness != null && witness.valid() && !other.id().equals(killer)
+                    && witness.body().getWorld().equals(dead.getWorld())
+                    && witness.body().getLocation().distanceSquared(dead.getLocation()) < 32 * 32) {
+                other.grudge(killer, host.clock()); // a kill nearby is not forgotten
+            }
         }
+
         host.botDied(id, dead, killer, dead.getLastDamageCause());
         holdChunks(); // its chunks go now
     }
