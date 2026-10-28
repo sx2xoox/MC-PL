@@ -6,6 +6,7 @@ import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.map.citadel.CitadelMap;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.augment.AugmentGame;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -36,6 +37,8 @@ public class MCPLPlugin extends JavaPlugin {
         games.register(superpower);
         // 능력 연습 (solo practice of the superpower abilities); not in the default rotation.
         games.register(superpower.practice());
+        // 증강 야생전: a fresh survival world per match with LoL/TFT-style augments.
+        games.register(new AugmentGame(hub));
     }
 
     @Override

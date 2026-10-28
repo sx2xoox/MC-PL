@@ -14,6 +14,7 @@ import io.github.sx2xoox.mcpl.core.player.SnapshotStore;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
 import io.github.sx2xoox.mcpl.core.ui.SettingsMenuListener;
+import io.github.sx2xoox.mcpl.core.world.TempWorlds;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Player;
@@ -33,6 +34,7 @@ import org.bukkit.plugin.java.JavaPlugin;
  *     <li>{@link #combat()} — kill credit / entity ownership</li>
  *     <li>{@link #gameRules()} — temporary world game rules</li>
  *     <li>{@link #settings()} — the in-game settings menu and {@code /게임 설정} entries</li>
+ *     <li>{@link #tempWorlds()} — throw-away worlds created for one match and deleted after it</li>
  * </ul>
  */
 public final class Hub {
@@ -45,6 +47,7 @@ public final class Hub {
     private final GameRuleGuard gameRules;
     private final CombatTracker combat;
     private final MapService maps;
+    private final TempWorlds tempWorlds;
     private final GameManager games;
     private final GameCommand command;
     private final HubListener listener;
@@ -62,6 +65,7 @@ public final class Hub {
         this.gameRules = new GameRuleGuard(plugin, new File(data, "gamerules.yml"));
         this.combat = new CombatTracker();
         this.maps = new MapService(plugin);
+        this.tempWorlds = new TempWorlds(plugin);
         this.games = new GameManager(this);
         this.command = new GameCommand(this);
         this.listener = new HubListener(this);
@@ -114,6 +118,7 @@ public final class Hub {
         }
         tempBlocks.shutdown();
         gameRules.shutdown();
+        tempWorlds.shutdown();
         maps.disable();
         HandlerList.unregisterAll(listener);
         HandlerList.unregisterAll(settingsListener);
@@ -163,6 +168,11 @@ public final class Hub {
     /** The battle maps and their worlds. */
     public MapService maps() {
         return maps;
+    }
+
+    /** Temporary worlds of single matches (created by a mode, deleted after the match and after a crash). */
+    public TempWorlds tempWorlds() {
+        return tempWorlds;
     }
 
     public CombatTracker combat() {

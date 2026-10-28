@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.core.game;
 
 import java.util.List;
 
+import io.github.sx2xoox.mcpl.core.arena.Arena;
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
 import io.github.sx2xoox.mcpl.core.config.ProtectionSettings;
 import io.github.sx2xoox.mcpl.core.config.Setting;
@@ -10,6 +11,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A game mode the hub can run (초능력전쟁, 랜덤무기전쟁, 살인자를 찾아라, ...). One instance per mode, registered once
@@ -70,6 +72,25 @@ public interface MiniGame {
      * setup in {@link GameInstance#start()}.
      */
     GameInstance createInstance(GameSession session);
+
+    /**
+     * The arena of a new match, for a mode that brings its own (e.g. a fresh world created for every match, see
+     * {@link io.github.sx2xoox.mcpl.core.world.TempWorlds}); null (default) for the hub's arena ({@code config.yml}
+     * or the starter's position). Called by {@link GameManager#start} before the session is created, so the countdown
+     * already runs while the arena gets ready. Every arena returned here is handed back to {@link #releaseArena}.
+     *
+     * @throws GameStartException with a ready-to-send Korean message if no arena can be made
+     */
+    default @Nullable Arena createArena() throws GameStartException {
+        return null;
+    }
+
+    /**
+     * The match played in an arena from {@link #createArena} is over: everyone online was restored and taken out of
+     * it (also called if the match could not start). Delete the arena's world here.
+     */
+    default void releaseArena(Arena arena) {
+    }
 
     /**
      * Declares default settings for {@code games.<id>.*} in {@code config.yml}. Set values (and optionally comments

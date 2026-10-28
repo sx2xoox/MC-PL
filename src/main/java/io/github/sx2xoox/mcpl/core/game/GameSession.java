@@ -107,6 +107,7 @@ public final class GameSession {
     private final SessionResources resources;
     private final ViewerBoards boards;
     private final TerrainDamage terrain;
+    private final boolean ownArena;
 
     private final Set<UUID> participants = new LinkedHashSet<>();
     private final Set<UUID> alive = new LinkedHashSet<>();
@@ -139,8 +140,10 @@ public final class GameSession {
     private @Nullable SessionListener listener;
     private @Nullable ProtectionListener protectionListener;
 
-    GameSession(Hub hub, GameManager manager, MiniGame game, Arena arena, Collection<? extends Player> initial) {
+    GameSession(Hub hub, GameManager manager, MiniGame game, Arena arena, boolean ownArena,
+                Collection<? extends Player> initial) {
         this.hub = hub;
+        this.ownArena = ownArena;
         this.manager = manager;
         this.game = game;
         this.arena = arena;
@@ -1020,6 +1023,13 @@ public final class GameSession {
             log("game rules", e);
         }
         hub.combat().clear();
+        if (ownArena) {
+            try {
+                game.releaseArena(arena);
+            } catch (RuntimeException | LinkageError e) {
+                log("releaseArena", e);
+            }
+        }
         manager.onSessionClosed(this, why);
     }
 
@@ -1352,11 +1362,17 @@ public final class GameSession {
         if (state == GameState.COUNTDOWN || state == GameState.CLOSED || !members.contains(id)) {
             return;
         }
-        event.getDrops().clear();
-        event.setDroppedExp(0);
-        event.setShouldDropExperience(false);
-        event.setKeepInventory(true);
-        event.setKeepLevel(true);
+        boolean drops = state == GameState.RUNNING && alive.contains(id) && instance != null && safeDropsOnDeath();
+        if (!drops) {
+            event.getDrops().clear();
+            event.setDroppedExp(0);
+            event.setShouldDropExperience(false);
+            event.setKeepInventory(true);
+            event.setKeepLevel(true);
+        } else {
+            event.setKeepInventory(false);
+            event.setKeepLevel(false);
+        }
         event.deathMessage(null);
         deathLocations.put(id, victim.getLocation());
         if (state != GameState.RUNNING || !alive.contains(id) || respawning.contains(id)) {
@@ -1392,6 +1408,15 @@ public final class GameSession {
         awaitingSpectator.add(id);
         killFeed(id, killer, cause, true);
         notifyEliminated(victim, killer);
+    }
+
+    private boolean safeDropsOnDeath() {
+        try {
+            return instance.dropsOnDeath();
+        } catch (RuntimeException e) {
+            log("dropsOnDeath", e);
+            return false;
+        }
     }
 
     void handleRespawn(PlayerRespawnEvent event) {

@@ -190,25 +190,49 @@ public final class GameManager {
             throw new GameStartException(messages.prefixed("error.not-enough-players",
                     Messages.tag("count", eligible.size()), Messages.tag("min", game.minPlayers())));
         }
-        Arena arena = resolveArena(starter);
+        Arena own = createArena(game);
+        Arena arena = own != null ? own : resolveArena(starter);
         rotation.cancel();
-        GameSession created = new GameSession(hub, this, game, arena, eligible);
+        GameSession created = new GameSession(hub, this, game, arena, own != null, eligible);
         session = created;
         rotation.onMatchStarted(game);
         lastGameId = game.id();
-        lastArena = arena;
+        if (own == null) {
+            lastArena = arena; // a mode's own arena is deleted after its match
+        }
         try {
             created.open();
         } catch (RuntimeException | LinkageError e) {
             hub.plugin().getLogger().log(Level.SEVERE, "Could not start " + game.id(), e);
             if (session == created) {
-                created.abort(messages.get("match.reason-error"));
+                created.abort(messages.get("match.reason-error")); // also releases an own arena
+            } else if (own != null && created.state() != GameState.CLOSED) {
+                releaseArena(game, own);
             }
             session = null;
             throw new GameStartException(messages.prefixed("error.internal"), e);
         }
         hub.settings().refreshMenus(); // their status shows that changes now wait for the next match
         return created;
+    }
+
+    private @Nullable Arena createArena(MiniGame game) throws GameStartException {
+        try {
+            return game.createArena();
+        } catch (GameStartException e) {
+            throw e;
+        } catch (RuntimeException | LinkageError e) {
+            hub.plugin().getLogger().log(Level.SEVERE, "Could not create the arena of " + game.id(), e);
+            throw new GameStartException(hub.messages().prefixed("error.internal"), e);
+        }
+    }
+
+    private void releaseArena(MiniGame game, Arena arena) {
+        try {
+            game.releaseArena(arena);
+        } catch (RuntimeException | LinkageError e) {
+            hub.plugin().getLogger().log(Level.WARNING, "Could not release the arena of " + game.id(), e);
+        }
     }
 
     private Arena resolveArena(@Nullable CommandSender starter) throws GameStartException {

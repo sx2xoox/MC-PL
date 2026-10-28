@@ -65,6 +65,19 @@ tasks.register<Test>("updateAbilityDocs") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("updateAugmentDocs") {
+    description = "Regenerates docs/augments.md from the augment definitions (AugmentInfo, BonusCondition)."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*AugmentDocsTest")
+    }
+    systemProperty("mcpl.updateDocs", "true")
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("renderMaps") {
     description = "Renders preview images of the battle maps to build/map-previews (-Pzone=<name> for one zone)."
     group = "documentation"
