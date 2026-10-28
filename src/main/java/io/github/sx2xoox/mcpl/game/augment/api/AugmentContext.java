@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.augment.api;
 
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.entity.Entity;
@@ -48,4 +49,24 @@ public interface AugmentContext {
 
     /** Sends a prefixed line of the augment messages file to the owner's chat. */
     void message(String key, TagResolver... resolvers);
+
+    /** {@link #track}, and the entity is shown to the owner alone (hidden from everyone else). */
+    <T extends Entity> T trackForOwner(T entity);
+
+    /** A key in the plugin's namespace unique to this augment (item tags, ...). */
+    NamespacedKey key(String name);
+
+    /** Gives the owner {@code count} more card rerolls. */
+    void addRerolls(int count);
+
+    /** Queues an extra card offer of {@code tier} for the owner (its source is this augment). */
+    void offer(AugmentTier tier);
+
+    /**
+     * Grants the owner a random enabled augment of {@code tier} they do not own (a neighbouring tier when that one is
+     * used up), with its usual message.
+     *
+     * @return the augment granted, or null if none is left
+     */
+    @Nullable AugmentInfo grantRandom(AugmentTier tier);
 }

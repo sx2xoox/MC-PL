@@ -27,8 +27,12 @@ import org.jspecify.annotations.Nullable;
  */
 public final class OfferMenu implements InventoryHolder {
 
-    /** Slots of the cards, left to right. */
+    /** Slots of three cards, left to right. */
     static final int[] CARD_SLOTS = {11, 13, 15};
+    /** Most cards an offer can show (augments add cards, see {@code Augment#extraCards}). */
+    static final int MAX_CARDS = 5;
+    private static final int[] FOUR_CARD_SLOTS = {10, 12, 14, 16};
+    private static final int[] FIVE_CARD_SLOTS = {9, 11, 13, 15, 17};
     static final int REROLL_SLOT = 22;
     static final int CLOCK_SLOT = 4;
     private static final int SIZE = 27;
@@ -59,14 +63,20 @@ public final class OfferMenu implements InventoryHolder {
     /** (Re)draws the cards of the offer and the reroll button (after a reroll). */
     void render(Function<AugmentInfo, Params> params, int rerolls) {
         List<AugmentInfo> cards = offer.cards();
-        for (int i = 0; i < CARD_SLOTS.length; i++) {
+        int[] slots = cardSlots(cards.size());
+        ItemStack filler = ItemStack.of(Material.BLACK_STAINED_GLASS_PANE);
+        filler.setData(DataComponentTypes.TOOLTIP_DISPLAY, TooltipDisplay.tooltipDisplay().hideTooltip(true).build());
+        for (int slot = 9; slot < 18; slot++) { // the card row (a reroll may change the number of cards)
+            inventory.setItem(slot, filler.clone());
+        }
+        for (int i = 0; i < slots.length; i++) {
             if (i < cards.size()) {
-                inventory.setItem(CARD_SLOTS[i], card(messages, cards.get(i), params.apply(cards.get(i)), true));
+                inventory.setItem(slots[i], card(messages, cards.get(i), params.apply(cards.get(i)), true));
             } else {
                 ItemStack empty = ItemStack.of(Material.GRAY_STAINED_GLASS_PANE);
                 empty.setData(DataComponentTypes.TOOLTIP_DISPLAY,
                         TooltipDisplay.tooltipDisplay().hideTooltip(true).build());
-                inventory.setItem(CARD_SLOTS[i], empty);
+                inventory.setItem(slots[i], empty);
             }
         }
         inventory.setItem(REROLL_SLOT, rerollButton(rerolls));
@@ -83,8 +93,9 @@ public final class OfferMenu implements InventoryHolder {
     /** The card in {@code rawSlot}, or null. */
     public @Nullable AugmentInfo cardAt(int rawSlot) {
         List<AugmentInfo> cards = offer.cards();
-        for (int i = 0; i < CARD_SLOTS.length && i < cards.size(); i++) {
-            if (CARD_SLOTS[i] == rawSlot) {
+        int[] slots = cardSlots(cards.size());
+        for (int i = 0; i < slots.length && i < cards.size(); i++) {
+            if (slots[i] == rawSlot) {
                 return cards.get(i);
             }
         }
@@ -94,12 +105,22 @@ public final class OfferMenu implements InventoryHolder {
     /** The menu slot of a card (tests and tooling), or -1. */
     public int slotOf(String augmentId) {
         List<AugmentInfo> cards = offer.cards();
-        for (int i = 0; i < CARD_SLOTS.length && i < cards.size(); i++) {
+        int[] slots = cardSlots(cards.size());
+        for (int i = 0; i < slots.length && i < cards.size(); i++) {
             if (cards.get(i).id().equals(augmentId)) {
-                return CARD_SLOTS[i];
+                return slots[i];
             }
         }
         return -1;
+    }
+
+    /** The slots of {@code count} cards, left to right (three slots for up to three cards). */
+    static int[] cardSlots(int count) {
+        return switch (Math.min(count, MAX_CARDS)) {
+            case 4 -> FOUR_CARD_SLOTS;
+            case 5 -> FIVE_CARD_SLOTS;
+            default -> CARD_SLOTS;
+        };
     }
 
     /** Shows the seconds left on the clock item. */

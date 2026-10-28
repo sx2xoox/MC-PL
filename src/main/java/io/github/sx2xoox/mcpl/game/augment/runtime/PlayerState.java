@@ -52,6 +52,17 @@ final class PlayerState {
         return out;
     }
 
+    /** Cards per offer: 3, plus the {@code extraCards} of the augments owned, at most {@link OfferMenu#MAX_CARDS}. */
+    int cardCount() {
+        int count = 3;
+        for (AugmentSlot slot : slots) {
+            if (!slot.isRemoved()) {
+                count += Math.max(0, slot.augment().extraCards());
+            }
+        }
+        return Math.min(OfferMenu.MAX_CARDS, count);
+    }
+
     @Nullable Offer current() {
         return offers.peekFirst();
     }
