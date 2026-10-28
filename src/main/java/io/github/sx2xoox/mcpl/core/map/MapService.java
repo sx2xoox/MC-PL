@@ -1,12 +1,7 @@
 package io.github.sx2xoox.mcpl.core.map;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -17,6 +12,7 @@ import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.core.world.WorldFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.Difficulty;
 import org.bukkit.GameRules;
@@ -226,69 +222,26 @@ public final class MapService {
                 throw new IllegalStateException("Could not unload the world " + name);
             }
         }
-        for (Path folder : folders) {
-            // Only ever a folder named after the map world, never the main save around it.
-            if (!Files.isDirectory(folder) || !name.equals(String.valueOf(folder.getFileName()))) {
-                continue;
-            }
-            try {
-                deleteRecursively(folder);
-            } catch (IOException e) {
-                throw new IllegalStateException("Could not delete " + folder, e);
-            }
+        try {
+            // Only ever folders named after the map world, never the main save around them.
+            WorldFiles.deleteWorldFolders(name, folders);
+        } catch (IOException e) {
+            throw new IllegalStateException("Could not delete " + folders, e);
         }
     }
 
-    /**
-     * Where the map's world may live on disk. Paper 26 keeps every world as a dimension of the main save
-     * ({@code <save>/dimensions/minecraft/<name>}, next to the overworld's folder); older servers kept it in
-     * {@code <world container>/<name>} (Paper migrates that one when the world is loaded).
-     */
     private static List<Path> worldPaths(ArenaMap map) {
-        String name = worldName(map);
-        List<Path> paths = new ArrayList<>(2);
-        try {
-            World loaded = Bukkit.getWorld(name);
-            if (loaded != null) {
-                paths.add(loaded.getWorldPath());
-            } else if (!Bukkit.getWorlds().isEmpty()) {
-                paths.add(dimensionPath(Bukkit.getWorlds().getFirst().getWorldPath(), name));
-            }
-        } catch (RuntimeException noWorldStorage) {
-            // test servers have no world folders
-        }
-        try {
-            paths.add(new File(Bukkit.getWorldContainer(), name).toPath());
-        } catch (RuntimeException noWorldContainer) {
-            // test servers have no world container
-        }
-        return paths;
+        return WorldFiles.worldPaths(worldName(map));
     }
 
     /** The folder of the world {@code name} next to the main world's folder {@code overworld}. */
     static Path dimensionPath(Path overworld, String name) {
-        return overworld.resolveSibling(name);
+        return WorldFiles.dimensionPath(overworld, name);
     }
 
     /** True if the map's world exists on disk (false where the server has no world folders, as in tests). */
     private static boolean hasWorldFolder(ArenaMap map) {
-        return worldPaths(map).stream().anyMatch(Files::isDirectory);
-    }
-
-    private static void deleteRecursively(Path root) throws IOException {
-        Files.walkFileTree(root, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, @Nullable IOException exc) throws IOException {
-                Files.delete(dir);
-                return FileVisitResult.CONTINUE;
-            }
-        });
+        return WorldFiles.exists(worldName(map));
     }
 
     /** Ids of all registered maps, for command suggestions. */

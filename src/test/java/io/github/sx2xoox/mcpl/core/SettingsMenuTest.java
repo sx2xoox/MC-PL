@@ -142,9 +142,10 @@ class SettingsMenuTest {
     }
 
     @Test
-    void theMenuShowsEverySectionOnOnePage() {
+    void theFirstPageShowsTheHubAndSuperpowerSections() {
         SettingsMenu menu = open();
-        assertEquals(1, menu.pages());
+        assertEquals(2, menu.pages(), "증강 야생전 has the second page");
+        assertEquals(-1, menu.slotOf("augment.farming"), "not on the first page");
         for (String id : new String[] {"hub.team-size", "hub.countdown", "hub.terrain", "superpower.mode",
                 "superpower.prep", "superpower.border-final", "superpower.particles", "superpower.loot",
                 "superpower.supply", "superpower.chest-hint", "superpower.chest-hint-radius"}) {

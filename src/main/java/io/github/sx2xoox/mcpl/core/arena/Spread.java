@@ -54,6 +54,44 @@ public final class Spread {
                 candidates.add(ground);
             }
         }
+        return pick(arena, candidates, count, random);
+    }
+
+    /**
+     * Like {@link #findSpawns}, but for natural terrain of any height (a survival world): every candidate is the top
+     * of its column (ignoring leaves), so mountains and valleys count as well as the center's height; columns whose top
+     * is water, lava, leaves or another unsafe floor are skipped.
+     */
+    public static List<Location> findSurfaceSpawns(Arena arena, int count, Random random) {
+        if (count <= 0) {
+            return List.of();
+        }
+        int wanted = Math.max(24, Math.min(240, count * 12));
+        List<Location> candidates = new ArrayList<>(wanted);
+        for (int attempt = 0; attempt < wanted * 4 && candidates.size() < wanted; attempt++) {
+            Location point = arena.randomPoint(random, 0.85);
+            Location ground = surface(arena.world(), point.getBlockX(), point.getBlockZ());
+            if (ground != null) {
+                candidates.add(ground);
+            }
+        }
+        return pick(arena, candidates, count, random);
+    }
+
+    /**
+     * The standing location on top of the highest non-leaf block of column {@code x, z} if that is a safe floor,
+     * else null. Loads the chunk if needed.
+     */
+    public static @Nullable Location surface(World world, int x, int z) {
+        if (!world.isChunkLoaded(x >> 4, z >> 4)) {
+            world.getChunkAt(x >> 4, z >> 4);
+        }
+        Block top = world.getHighestBlockAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+        return isSafeFloor(top) ? standOn(top) : null;
+    }
+
+    /** {@code count} of the candidates, as far apart as possible, facing the center (see {@link #findSpawns}). */
+    private static List<Location> pick(Arena arena, List<Location> candidates, int count, Random random) {
         List<Location> chosen = new ArrayList<>(count);
         if (candidates.isEmpty()) {
             Location fallback = safeSpot(arena, arena.center());

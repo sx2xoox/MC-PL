@@ -46,8 +46,8 @@ public interface GameInstance {
     }
 
     /**
-     * An alive participant died. Drops, dropped experience and the vanilla death message are already suppressed and
-     * the inventory is kept. Stats (death, kill) are recorded and the kill feed is shown by the hub after this
+     * An alive participant died. The vanilla death message is already suppressed; drops and dropped experience too
+     * and the inventory is kept, unless {@link #dropsOnDeath()}. Stats (death, kill) are recorded and the kill feed is shown by the hub after this
      * returns.
      *
      * @param victim the participant who died
@@ -58,6 +58,15 @@ public interface GameInstance {
      */
     default DeathOutcome onDeath(Player victim, @Nullable Player killer, PlayerDeathEvent event) {
         return DeathOutcome.eliminate();
+    }
+
+    /**
+     * True if players of this match drop their items and experience where they die, like in vanilla survival (only
+     * sensible in a world that is thrown away after the match). Defaults to false: nothing drops, the inventory is
+     * kept.
+     */
+    default boolean dropsOnDeath() {
+        return false;
     }
 
     /**
