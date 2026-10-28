@@ -19,6 +19,7 @@ import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.inventory.ItemStack;
@@ -189,6 +190,13 @@ final class AugmentSlot implements AugmentContext {
         Player player = Bukkit.getPlayer(owner);
         if (player != null) {
             match.messages().send(player, key, resolvers);
+        }
+    }
+
+    @Override
+    public void damage(LivingEntity target, double amount) {
+        if (!removed) {
+            match.damage(owner, target, amount);
         }
     }
 }

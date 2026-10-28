@@ -1,9 +1,11 @@
 package io.github.sx2xoox.mcpl.game.augment.api;
 
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 
 /**
@@ -66,5 +68,13 @@ public interface Augment {
 
     /** The owner broke a block (not cancelled). */
     default void onBlockBreak(BlockBreakEvent event) {
+    }
+
+    /** A projectile the owner shot hit a block or an entity (not cancelled). */
+    default void onProjectileHit(ProjectileHitEvent event) {
+    }
+
+    /** The owner was credited with killing {@code victim}, an enemy participant. */
+    default void onKill(Player victim) {
     }
 }

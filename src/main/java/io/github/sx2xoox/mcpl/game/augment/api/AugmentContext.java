@@ -4,6 +4,7 @@ import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.jspecify.annotations.Nullable;
@@ -48,4 +49,11 @@ public interface AugmentContext {
 
     /** Sends a prefixed line of the augment messages file to the owner's chat. */
     void message(String key, TagResolver... resolvers);
+
+    /**
+     * Deals augment damage ({@code MAGIC}, ignores invulnerability frames) credited to the owner (kill credit, stats).
+     * Does nothing unless {@code target} is an enemy; the PvP gate still applies. Augment damage never runs the damage
+     * hooks of any augment (no loops between reflecting augments).
+     */
+    void damage(LivingEntity target, double amount);
 }

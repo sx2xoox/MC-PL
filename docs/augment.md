@@ -109,5 +109,6 @@
    `param`)를 `INFO`로 선언합니다. 수치는 모두 `param`으로 선언하고 `ctx.params()`로 읽습니다.
 2. `BuiltinAugments.registerAll`에 등록합니다.
 3. 능력치는 `ctx.addModifier`, 아이템은 `ctx.give`, 만든 개체는 `ctx.track`으로 — 증강이 사라질 때 자동으로 정리됩니다.
-   피해를 주거나 늘리는 효과는 `onOutgoingDamage`(적에게만 불림)나 `ctx.isEnemy`로 적에게만.
+   피해를 주거나 늘리는 효과는 `onOutgoingDamage`(적에게만 불림)나 `ctx.isEnemy`로 적에게만, 직접 주는 피해는
+   `ctx.damage`로 (적에게만 들어가고 킬로 인정되며, 다른 증강의 피해 훅을 다시 부르지 않음).
 4. `./gradlew updateAugmentDocs`로 [augments.md](augments.md)를 다시 만듭니다 (`AugmentDocsTest`가 확인).

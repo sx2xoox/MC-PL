@@ -41,6 +41,8 @@ import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.WorldBorder;
+import org.bukkit.damage.DamageSource;
+import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -78,6 +80,8 @@ public final class AugmentMatch implements GameInstance {
     private boolean borderFinal;
     private @Nullable ManagedBossBar bar;
     private boolean stopped;
+    /** Nesting depth of {@link #damage} calls (augment damage runs no augment damage hooks). */
+    private int augmentDamageDepth;
 
     public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings) {
         this.game = game;
@@ -255,6 +259,9 @@ public final class AugmentMatch implements GameInstance {
     public DeathOutcome onDeath(Player victim, @Nullable Player killer, PlayerDeathEvent event) {
         if (killer != null) {
             bonus.onPlayerKill(killer, victim);
+            if (!session.sameTeam(killer.getUniqueId(), victim.getUniqueId())) {
+                forEachAugment(killer, "onKill", augment -> augment.onKill(victim));
+            }
         }
         return DeathOutcome.eliminate();
     }
@@ -802,6 +809,41 @@ public final class AugmentMatch implements GameInstance {
             }
         }
         return false;
+    }
+
+    /**
+     * Augment damage of {@code owner} to an enemy (see
+     * {@link io.github.sx2xoox.mcpl.game.augment.api.AugmentContext#damage}): {@code MAGIC}, credited to the owner,
+     * ignoring (and keeping) the target's invulnerability frames.
+     */
+    void damage(UUID owner, LivingEntity target, double amount) {
+        Player source = org.bukkit.Bukkit.getPlayer(owner);
+        if (stopped || !(amount > 0) || !Double.isFinite(amount) || source == null || !session.isInPlay(source)
+                || !isEnemy(owner, target)) {
+            return;
+        }
+        DamageSource damageSource = DamageSource.builder(DamageType.MAGIC)
+                .withCausingEntity(source)
+                .withDirectEntity(source)
+                .build();
+        int previousNoDamageTicks = target.getNoDamageTicks();
+        double previousLastDamage = target.getLastDamage();
+        target.setNoDamageTicks(0);
+        augmentDamageDepth++;
+        try {
+            target.damage(amount, damageSource);
+        } finally {
+            augmentDamageDepth--;
+            if (!target.isDead()) {
+                target.setNoDamageTicks(previousNoDamageTicks);
+                target.setLastDamage(previousLastDamage);
+            }
+        }
+    }
+
+    /** True while {@link #damage} is dealing augment damage. */
+    boolean isAugmentDamage() {
+        return augmentDamageDepth > 0;
     }
 
     // =================================================================== bonuses

@@ -22,5 +22,30 @@ public final class BuiltinAugments {
         // 프리즘
         registry.register(PhoenixFeatherAugment.INFO, PhoenixFeatherAugment::new);
         registry.register(DiamondVeinAugment.INFO, DiamondVeinAugment::new);
+        registerCombat(registry);
+    }
+
+    // Group B: combat
+    private static void registerCombat(AugmentRegistry registry) {
+        // 실버
+        registry.register(SharpEdgeAugment.INFO, SharpEdgeAugment::new);
+        registry.register(ThickSkinAugment.INFO, ThickSkinAugment::new);
+        registry.register(QuiverAugment.INFO, QuiverAugment::new);
+        registry.register(ShieldMasterAugment.INFO, ShieldMasterAugment::new);
+        registry.register(FireBladeAugment.INFO, FireBladeAugment::new);
+        registry.register(VenomAugment.INFO, VenomAugment::new);
+        // 골드
+        registry.register(ExecutionerAugment.INFO, ExecutionerAugment::new);
+        registry.register(ComboAugment.INFO, ComboAugment::new);
+        registry.register(SniperAugment.INFO, SniperAugment::new);
+        registry.register(ThornsAugment.INFO, ThornsAugment::new);
+        registry.register(HeavyHitterAugment.INFO, HeavyHitterAugment::new);
+        registry.register(FrostArrowAugment.INFO, FrostArrowAugment::new);
+        registry.register(BlastArrowAugment.INFO, BlastArrowAugment::new);
+        // 프리즘
+        registry.register(GiantAugment.INFO, GiantAugment::new);
+        registry.register(ShadowStrikeAugment.INFO, ShadowStrikeAugment::new);
+        registry.register(WarGodAugment.INFO, WarGodAugment::new);
+        registry.register(FortressAugment.INFO, FortressAugment::new);
     }
 }

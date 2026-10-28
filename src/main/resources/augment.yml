@@ -105,6 +105,9 @@ rules:
 # ── 증강 효과 ────────────────────────────────────────────────
 augment-fx:
   phoenix: "<gold>불사조의 깃털</gold><gray>이 타올라 죽음을 피했습니다!"
+  # Group B
+  shadow-ready: "<dark_purple>그림자 일격</dark_purple><gray> 준비: 투명한 동안 다음 근접 공격이 강해집니다"
+  war-god: "<red>전쟁의 신</red><gray>: 공격력 강화 <white><stacks></white>단계"
 
 # ── 오류 ─────────────────────────────────────────────────────
 error:
