@@ -168,7 +168,7 @@ public final class OfferMenu implements InventoryHolder {
     }
 
     /** The augment's name in its tier color. */
-    static Component name(AugmentInfo info) {
+    public static Component name(AugmentInfo info) {
         return Component.text(info.name(), info.tier().color());
     }
 

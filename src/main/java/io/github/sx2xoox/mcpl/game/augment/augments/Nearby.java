@@ -1,38 +1,30 @@
 package io.github.sx2xoox.mcpl.game.augment.augments;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentContext;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 import org.jspecify.annotations.Nullable;
 
-/** Enemy players around the owner and small UI helpers shared by the information and active augments. */
+/** Enemies around the owner and small UI helpers shared by the information and active augments. */
 final class Nearby {
 
     private Nearby() {
     }
 
-    /** Enemy players in the owner's world. */
-    static List<Player> enemyPlayers(AugmentContext ctx) {
-        Player owner = ctx.player();
-        List<Player> out = new ArrayList<>();
-        for (Player other : owner.getWorld().getPlayers()) {
-            if (ctx.isEnemy(other)) {
-                out.add(other);
-            }
-        }
-        return out;
+    /** Enemy combatants in the owner's world: enemy players, bots and practice dummies ({@code ctx.rivals()}). */
+    static List<LivingEntity> enemyPlayers(AugmentContext ctx) {
+        return ctx.rivals();
     }
 
-    /** The nearest enemy player in the owner's world, or null. */
-    static @Nullable Player nearestEnemy(AugmentContext ctx) {
-        Player owner = ctx.player();
-        Player best = null;
+    /** The nearest enemy combatant in the owner's world, or null. */
+    static @Nullable LivingEntity nearestEnemy(AugmentContext ctx) {
+        LivingEntity owner = ctx.owner();
+        LivingEntity best = null;
         double bestDistance = Double.MAX_VALUE;
-        for (Player enemy : enemyPlayers(ctx)) {
+        for (LivingEntity enemy : enemyPlayers(ctx)) {
             double distance = enemy.getLocation().distanceSquared(owner.getLocation());
             if (distance < bestDistance) {
                 bestDistance = distance;

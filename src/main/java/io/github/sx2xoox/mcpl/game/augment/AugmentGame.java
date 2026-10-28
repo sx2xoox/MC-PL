@@ -24,6 +24,7 @@ import io.github.sx2xoox.mcpl.game.augment.augments.BuiltinAugments;
 import io.github.sx2xoox.mcpl.game.augment.command.AugmentCommand;
 import io.github.sx2xoox.mcpl.game.augment.config.AugmentConfig;
 import io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch;
+import io.github.sx2xoox.mcpl.game.augment.runtime.MatchMode;
 import io.github.sx2xoox.mcpl.game.augment.runtime.WildArena;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
@@ -65,10 +66,14 @@ public final class AugmentGame implements MiniGame {
     private @Nullable WildArena preparing;
     private @Nullable AugmentSettings preparingSettings;
     private @Nullable AugmentMatch current;
+    private final AugmentPracticeGame practice;
+    /** Players who asked to join the running practice ({@code /게임 증강 연습}). */
+    private final java.util.Set<java.util.UUID> practiceJoins = new java.util.HashSet<>();
 
     public AugmentGame(Hub hub) {
         this.hub = hub;
         BuiltinAugments.registerAll(registry);
+        this.practice = new AugmentPracticeGame(this);
         this.messages = new Messages(hub.plugin(), MESSAGES_FILE, hub.messages());
         this.messages.load();
         this.augments = new AugmentConfig(new File(hub.plugin().getDataFolder(), AugmentConfig.FILE_NAME),
@@ -118,6 +123,7 @@ public final class AugmentGame implements MiniGame {
     @Override
     public void configDefaults(ConfigurationSection defaults) {
         AugmentSettings.declareDefaults(defaults);
+        AugmentPracticeSettings.declareDefaults(defaults);
     }
 
     @Override
@@ -136,7 +142,15 @@ public final class AugmentGame implements MiniGame {
      */
     @Override
     public Arena createArena() throws GameStartException {
+        return createArena(MatchMode.NORMAL);
+    }
+
+    /** {@link #createArena()} for a session of {@code mode} (a practice plays in a smaller area). */
+    Arena createArena(MatchMode mode) throws GameStartException {
         AugmentSettings read = readSettings();
+        if (mode == MatchMode.PRACTICE) {
+            read = read.withRadius(readPracticeSettings().radius());
+        }
         World world;
         try {
             world = hub.tempWorlds().create(WORLD_PREFIX, random.nextLong(), read.structures());
@@ -203,6 +217,11 @@ public final class AugmentGame implements MiniGame {
 
     @Override
     public GameInstance createInstance(GameSession session) {
+        return createMatch(session, MatchMode.NORMAL);
+    }
+
+    /** A new match of this mode or a practice session (both are the {@link #currentMatch()} while they run). */
+    AugmentMatch createMatch(GameSession session, MatchMode mode) {
         WildArena wild = preparing;
         AugmentSettings read = preparingSettings;
         if (wild == null || read == null || !wild.world().equals(session.arena().world())) {
@@ -210,7 +229,8 @@ public final class AugmentGame implements MiniGame {
             wild = new WildArena(session.arena().world(), session.arena(), null);
             read = readSettings();
         }
-        AugmentMatch match = new AugmentMatch(this, session, wild, read);
+        AugmentMatch match = new AugmentMatch(this, session, wild, read, mode,
+                mode == MatchMode.PRACTICE ? readPracticeSettings() : null);
         current = match;
         return match;
     }
@@ -244,12 +264,37 @@ public final class AugmentGame implements MiniGame {
     @Override
     public void onShutdown() {
         current = null;
+        practiceJoins.clear();
     }
 
     // =================================================================== shared state
 
     public Hub hub() {
         return hub;
+    }
+
+    /** Reads {@code games.augment.practice} now. */
+    public AugmentPracticeSettings readPracticeSettings() {
+        return AugmentPracticeSettings.read(hub.config().gameSection(ID));
+    }
+
+    /** 증강 연습 ({@code /게임 증강 연습}), a second mini-game sharing this mode's augments. */
+    public AugmentPracticeGame practice() {
+        return practice;
+    }
+
+    /** {@code player} asked to join the running practice (only such players, and rejoining ones, are let in). */
+    public void allowPracticeJoin(java.util.UUID player, boolean allowed) {
+        if (allowed) {
+            practiceJoins.add(player);
+        } else {
+            practiceJoins.remove(player);
+        }
+    }
+
+    /** Removes and returns whether {@code player} asked to join the running practice. */
+    public boolean takePracticeJoin(java.util.UUID player) {
+        return practiceJoins.remove(player);
     }
 
     public AugmentRegistry registry() {

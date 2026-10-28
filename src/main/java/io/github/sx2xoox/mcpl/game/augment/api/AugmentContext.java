@@ -13,8 +13,17 @@ import org.jspecify.annotations.Nullable;
 /** What an {@link Augment} may use: its owner, its numbers and match helpers that clean up after themselves. */
 public interface AugmentContext {
 
-    /** The owner. */
+    /**
+     * The owner as a player. Only for augments bots never get: a bot owner has no player and this throws (see
+     * {@link #owner()} and {@link AugmentInfo#forBots()}).
+     */
     Player player();
+
+    /** The owner's body: the player, or a bot's body (for augments bots may own, {@link AugmentInfo#forBots()}). */
+    LivingEntity owner();
+
+    /** True if the owner is a bot (no inventory, chat or menus; {@link #player()} throws). */
+    boolean isBot();
 
     AugmentInfo info();
 
@@ -29,6 +38,12 @@ public interface AugmentContext {
      * hostile mobs. Never the owner, teammates, spectators or peaceful animals.
      */
     boolean isEnemy(@Nullable Entity entity);
+
+    /**
+     * The enemy combatants in the owner's world that information and tracking augments point at: enemy players in
+     * play, enemy bots and practice dummies (no mobs).
+     */
+    java.util.List<LivingEntity> rivals();
 
     /** True while players may hurt each other (the fight phase). */
     boolean pvp();

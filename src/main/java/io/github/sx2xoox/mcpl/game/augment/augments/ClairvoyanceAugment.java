@@ -14,6 +14,7 @@ import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.util.Transformation;
 import org.joml.AxisAngle4f;
@@ -36,7 +37,7 @@ public final class ClairvoyanceAugment implements Augment {
     private static final Transformation BOX = new Transformation(new Vector3f(-0.35f, 0f, -0.35f),
             new AxisAngle4f(), new Vector3f(0.7f, 1.9f, 0.7f), new AxisAngle4f());
 
-    private record Mark(Player target, BlockDisplay box, long until) {
+    private record Mark(LivingEntity target, BlockDisplay box, long until) {
     }
 
     private final AugmentContext ctx;
@@ -71,8 +72,8 @@ public final class ClairvoyanceAugment implements Augment {
 
     private void reveal() {
         long until = ctx.tick() + Math.max(1, ctx.params().ticks("glow"));
-        List<Player> enemies = Nearby.enemyPlayers(ctx);
-        for (Player enemy : enemies) {
+        List<LivingEntity> enemies = Nearby.enemyPlayers(ctx);
+        for (LivingEntity enemy : enemies) {
             BlockDisplay box = enemy.getWorld().spawn(enemy.getLocation(), BlockDisplay.class, display -> {
                 display.setVisibleByDefault(false);
                 display.setBlock(Material.RED_STAINED_GLASS.createBlockData());
@@ -95,7 +96,7 @@ public final class ClairvoyanceAugment implements Augment {
     private void follow() {
         long now = ctx.tick();
         marks.removeIf(mark -> {
-            Player target = mark.target();
+            LivingEntity target = mark.target();
             boolean over = now >= mark.until() || !mark.box().isValid() || !ctx.isEnemy(target)
                     || target.getWorld() != mark.box().getWorld();
             if (over) {

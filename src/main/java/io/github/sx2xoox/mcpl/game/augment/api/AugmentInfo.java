@@ -21,9 +21,11 @@ import org.bukkit.Material;
  * @param icon        item of its card
  * @param description player-facing text (plain or MiniMessage, may contain {@code {param}})
  * @param params      declared tunables with their defaults, in declaration order
+ * @param forBots     bots may get it: it only uses {@link AugmentContext#owner()} (never {@link AugmentContext#player()},
+ *                    the inventory, menus or player-only events), so it works on a bot's body too
  */
 public record AugmentInfo(String id, String name, AugmentTier tier, AugmentKind kind, Material icon,
-                          String description, Map<String, Double> params) {
+                          String description, Map<String, Double> params, boolean forBots) {
 
     public AugmentInfo {
         Objects.requireNonNull(id, "id");
@@ -55,6 +57,7 @@ public record AugmentInfo(String id, String name, AugmentTier tier, AugmentKind 
         private final Material icon;
         private String description = "";
         private final Map<String, Double> params = new LinkedHashMap<>();
+        private boolean forBots;
 
         private Builder(String id, String name, AugmentTier tier, AugmentKind kind, Material icon) {
             this.id = id;
@@ -69,6 +72,12 @@ public record AugmentInfo(String id, String name, AugmentTier tier, AugmentKind 
             return this;
         }
 
+        /** Bots may get it (see {@link AugmentInfo#forBots()}). */
+        public Builder forBots() {
+            this.forBots = true;
+            return this;
+        }
+
         /** Declares a tunable number with its default value. */
         public Builder param(String key, double defaultValue) {
             if (!Params.KEY.matcher(key).matches()) {
@@ -79,7 +88,7 @@ public record AugmentInfo(String id, String name, AugmentTier tier, AugmentKind 
         }
 
         public AugmentInfo build() {
-            return new AugmentInfo(id, name, tier, kind, icon, description, params);
+            return new AugmentInfo(id, name, tier, kind, icon, description, params, forBots);
         }
     }
 }

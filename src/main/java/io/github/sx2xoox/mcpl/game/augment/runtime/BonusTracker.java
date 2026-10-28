@@ -79,8 +79,8 @@ public final class BonusTracker {
         return item != null && allowed.contains(item.getType());
     }
 
-    /** A participant killed another one (credited kill). */
-    void onPlayerKill(Player killer, Player victim) {
+    /** A participant killed an enemy combatant (credited kill: a player, a bot or a practice dummy). */
+    void onPlayerKill(Player killer, LivingEntity victim) {
         match.award(killer, BonusCondition.FIRST_BLOOD);
         PlayerState state = match.state(killer.getUniqueId());
         Params params = params(BonusCondition.COMEBACK);
@@ -93,15 +93,15 @@ public final class BonusTracker {
     }
 
     /** Two participants exchanged a hit (before the damage is applied): remember who was behind on health. */
-    void onPlayerHit(Player victim, Player attacker) {
+    void onPlayerHit(LivingEntity victim, Player attacker) {
         PlayerState attackerState = match.state(attacker.getUniqueId());
-        PlayerState victimState = match.state(victim.getUniqueId());
-        if (attackerState == null || victimState == null) {
+        PlayerState victimState = victim instanceof Player ? match.state(victim.getUniqueId()) : null;
+        if (attackerState == null) {
             return;
         }
         if (victim.getHealth() > attacker.getHealth()) {
             attackerState.underdogAgainst.put(victim.getUniqueId(), match.clock());
-        } else if (attacker.getHealth() > victim.getHealth()) {
+        } else if (victimState != null && attacker.getHealth() > victim.getHealth()) {
             victimState.underdogAgainst.put(attacker.getUniqueId(), match.clock());
         }
     }

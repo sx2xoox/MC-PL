@@ -102,6 +102,22 @@ final class AugmentSlot implements AugmentContext {
     }
 
     @Override
+    public LivingEntity owner() {
+        return player();
+    }
+
+    @Override
+    public boolean isBot() {
+        return false;
+    }
+
+    @Override
+    public java.util.List<LivingEntity> rivals() {
+        LivingEntity body = owner();
+        return match.rivals(owner, body.getWorld());
+    }
+
+    @Override
     public AugmentInfo info() {
         return info;
     }

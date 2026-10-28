@@ -123,6 +123,13 @@ public record AugmentSettings(
         rounds = List.copyOf(rounds);
     }
 
+    /** These settings with another play area radius (the practice world is smaller). */
+    public AugmentSettings withRadius(int newRadius) {
+        return new AugmentSettings(newRadius, structures, difficulty, pregenerate, pregenChunksPerTick,
+                pregenMaxWaitTicks, farmingTicks, borderDelayTicks, borderShrinkTicks, borderFinalSize, borderDamage,
+                glowAtFinal, choiceTicks, rerolls, rounds, bonusEnabled);
+    }
+
     /** The default rounds: 5, 12, 20 (fight start) and 30 minutes, leaning higher as the match goes on. */
     static List<Map<String, Object>> defaultRounds() {
         return List.of(

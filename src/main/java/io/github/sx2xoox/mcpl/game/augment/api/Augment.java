@@ -1,7 +1,6 @@
 package io.github.sx2xoox.mcpl.game.augment.api;
 
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Player;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -79,8 +78,11 @@ public interface Augment {
     default void onProjectileHit(ProjectileHitEvent event) {
     }
 
-    /** The owner was credited with killing {@code victim}, an enemy participant. */
-    default void onKill(Player victim) {
+    /**
+     * The owner was credited with killing {@code victim}, an enemy combatant: a participant (player or bot) or a
+     * practice dummy.
+     */
+    default void onKill(LivingEntity victim) {
     }
 
     /**
@@ -104,10 +106,10 @@ public interface Augment {
     }
 
     /**
-     * The owner died (and is about to be eliminated); {@code killer} is the player credited with the kill, if any.
-     * Called even though the owner is no longer in play.
+     * The owner died (and is about to be eliminated); {@code killer} is the body of the combatant credited with the
+     * kill (a player or a bot), if any. Called even though the owner is no longer in play.
      */
-    default void onDeath(@Nullable Player killer) {
+    default void onDeath(@Nullable LivingEntity killer) {
     }
 
     /** Extra cards shown in the owner's later card offers (3 by default, at most 5 in all). */

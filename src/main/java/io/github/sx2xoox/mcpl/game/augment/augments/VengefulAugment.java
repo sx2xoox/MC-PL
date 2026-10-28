@@ -8,7 +8,7 @@ import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.jspecify.annotations.Nullable;
@@ -31,7 +31,7 @@ public final class VengefulAugment implements Augment {
     }
 
     @Override
-    public void onDeath(@Nullable Player killer) {
+    public void onDeath(@Nullable LivingEntity killer) {
         if (killer == null || !ctx.isEnemy(killer)) {
             return;
         }

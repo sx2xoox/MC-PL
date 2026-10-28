@@ -56,6 +56,11 @@ final class MatchHud {
             return;
         }
         AugmentSettings settings = match.settings();
+        if (match.phase() == MatchPhase.FARMING && match.isPractice()) {
+            bar.name(messages().get("bar.practice"));
+            bar.progress(1f);
+            return;
+        }
         if (match.phase() == MatchPhase.FARMING) {
             long left = Math.max(0, settings.farmingTicks() - match.clock());
             bar.name(messages().get("bar.farming", Messages.tag("time", Format.clock((left + 19) / 20))));
@@ -86,16 +91,22 @@ final class MatchHud {
         AugmentSettings settings = match.settings();
         List<Component> lines = new ArrayList<>();
         lines.add(Component.empty());
-        if (match.phase() == MatchPhase.FARMING) {
+        if (match.phase() == MatchPhase.FARMING && match.isPractice()) {
+            lines.add(messages().get("hud.practice-farming"));
+        } else if (match.phase() == MatchPhase.FARMING) {
             long left = Math.max(0, settings.farmingTicks() - match.clock());
             lines.add(messages().get("hud.farming", Messages.tag("time", Format.clock((left + 19) / 20))));
         } else {
             lines.add(messages().get("hud.fight", Messages.tag("size", Params.format(Math.round(match.borderSize())))));
         }
         long toRound = match.ticksToNextRound();
-        lines.add(toRound < 0 ? messages().get("hud.rounds-done")
-                : messages().get("hud.next-round", Messages.tag("round", match.nextRoundNumber()),
-                Messages.tag("time", Format.clock((toRound + 19) / 20))));
+        if (match.isPractice()) {
+            lines.add(messages().get(match.practicePvp() ? "hud.practice-pvp-on" : "hud.practice-pvp-off"));
+        } else {
+            lines.add(toRound < 0 ? messages().get("hud.rounds-done")
+                    : messages().get("hud.next-round", Messages.tag("round", match.nextRoundNumber()),
+                    Messages.tag("time", Format.clock((toRound + 19) / 20))));
+        }
         lines.add(messages().get("hud.alive", Messages.tag("alive", session.aliveCount())));
         boolean participant = session.isParticipant(viewer);
         if (participant) {

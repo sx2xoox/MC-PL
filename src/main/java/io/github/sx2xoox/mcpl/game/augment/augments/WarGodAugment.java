@@ -10,7 +10,7 @@ import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 
 /** 전쟁의 신: every enemy player killed adds attack damage (up to a cap) and heals. */
@@ -33,8 +33,8 @@ public final class WarGodAugment implements Augment {
     }
 
     @Override
-    public void onKill(Player victim) {
-        Player player = ctx.player();
+    public void onKill(LivingEntity victim) {
+        LivingEntity player = ctx.owner();
         if (stacks < ctx.params().integer("max_stacks")) {
             stacks++;
             ctx.addModifier(Attribute.ATTACK_DAMAGE, stacks * ctx.params().num("damage"),
@@ -44,7 +44,7 @@ public final class WarGodAugment implements Augment {
         if (heal > 0 && !player.isDead()) {
             player.heal(heal, EntityRegainHealthEvent.RegainReason.MAGIC);
         }
-        player.playSound(player, Sound.ENTITY_RAVAGER_ROAR, 0.6f, 1.2f);
+        player.getWorld().playSound(player, Sound.ENTITY_RAVAGER_ROAR, 0.6f, 1.2f);
         ctx.actionBar("augment-fx.war-god", Messages.tag("stacks", stacks));
     }
 }

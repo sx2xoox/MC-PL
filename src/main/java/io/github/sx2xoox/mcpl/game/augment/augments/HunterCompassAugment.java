@@ -10,6 +10,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.jspecify.annotations.Nullable;
@@ -50,7 +51,7 @@ public final class HunterCompassAugment implements Augment {
             return;
         }
         Player owner = ctx.player();
-        Player target = ctx.pvp() ? Nearby.nearestEnemy(ctx) : null;
+        LivingEntity target = ctx.pvp() ? Nearby.nearestEnemy(ctx) : null;
         if (target != null) {
             owner.setCompassTarget(target.getLocation());
         }

@@ -9,6 +9,7 @@ import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 /** 발소리: now and then, particles at the feet of nearby enemy players that only the owner sees. */
@@ -38,7 +39,7 @@ public final class FootstepsAugment implements Augment {
         }
         Player owner = ctx.player();
         double radius = ctx.params().num("radius");
-        for (Player enemy : Nearby.enemyPlayers(ctx)) {
+        for (LivingEntity enemy : Nearby.enemyPlayers(ctx)) {
             Location feet = enemy.getLocation();
             if (feet.distanceSquared(owner.getLocation()) > radius * radius) {
                 continue;

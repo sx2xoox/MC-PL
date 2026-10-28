@@ -40,6 +40,8 @@ import org.bukkit.entity.Player;
  * /게임 증강 보너스|bonus        the bonus conditions
  * /게임 증강 리롤|reroll         redraw the shown cards
  * </pre>
+ *
+ * plus the 증강 연습 subcommands of {@link PracticeCommand}.
  */
 public final class AugmentCommand {
 
@@ -77,22 +79,30 @@ public final class AugmentCommand {
             for (String name : List.of("리롤", "reroll")) {
                 node.then(Commands.literal(name).executes(ctx -> reroll(ctx.getSource().getSender())));
             }
+            new PracticeCommand(game).addTo(node, registrar, english, this::suggest);
             registrar.register(node);
         }
     }
 
     private CompletableFuture<Suggestions> suggest(CommandContext<CommandSourceStack> ctx, SuggestionsBuilder builder) {
-        String remaining = builder.getRemainingLowerCase().replace(" ", "");
-        for (AugmentRegistry.Entry entry : game.registry().all()) {
+        augmentSuggestions(game.registry(), builder.getRemaining()).forEach(builder::suggest);
+        return builder.buildFuture();
+    }
+
+    /** Augment names and ids starting with {@code typed} (case and spaces ignored): the tab completion. */
+    public static List<String> augmentSuggestions(AugmentRegistry registry, String typed) {
+        String remaining = typed.toLowerCase(java.util.Locale.ROOT).replace(" ", "");
+        List<String> out = new ArrayList<>();
+        for (AugmentRegistry.Entry entry : registry.all()) {
             AugmentInfo info = entry.info();
             if (info.name().replace(" ", "").startsWith(remaining)) {
-                builder.suggest(info.name());
+                out.add(info.name());
             }
             if (info.id().startsWith(remaining)) {
-                builder.suggest(info.id());
+                out.add(info.id());
             }
         }
-        return builder.buildFuture();
+        return out;
     }
 
     private int usage(CommandSender sender) {

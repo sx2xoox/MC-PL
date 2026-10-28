@@ -69,7 +69,8 @@ final class MatchListener implements Listener {
             event.setCancelled(true);
             return;
         }
-        if (match.phase() == MatchPhase.FARMING) {
+        boolean gated = match.isPractice() ? !match.practicePvp() : match.phase() == MatchPhase.FARMING;
+        if (gated) {
             Player attacker = session.combat().resolveAttacker(event);
             if (attacker != null && !attacker.getUniqueId().equals(victim.getUniqueId())
                     && session.isParticipant(attacker)) {
@@ -114,8 +115,8 @@ final class MatchListener implements Listener {
                 match.forEachAugment(attacker, "afterOutgoingDamage",
                         augment -> augment.afterOutgoingDamage(victim, dealt));
             }
-            if (victim instanceof Player hurt) {
-                match.bonus().onPlayerHit(hurt, attacker);
+            if (victim instanceof Player || match.isRival(victim)) {
+                match.bonus().onPlayerHit(victim, attacker);
             }
         }
         if (victim instanceof Player player && session.isInPlay(player)

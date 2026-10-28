@@ -124,6 +124,16 @@ public final class CombatTracker {
         lastHits.put(victim.getUniqueId(), new Hit(attacker.getUniqueId(), Bukkit.getCurrentTick()));
     }
 
+    /**
+     * Remembers that {@code attacker} hit {@code victim} now, by id: for combatants that are not players (a mode's
+     * bots or dummies), on either side. Self-hits are ignored.
+     */
+    public void recordHit(UUID victim, UUID attacker) {
+        if (!victim.equals(attacker)) {
+            lastHits.put(victim, new Hit(attacker, Bukkit.getCurrentTick()));
+        }
+    }
+
     /** The last player who hit {@code victim} within {@link #DEFAULT_WINDOW_TICKS}, if still online. */
     public @Nullable Player lastAttacker(Player victim) {
         return lastAttacker(victim.getUniqueId(), DEFAULT_WINDOW_TICKS);

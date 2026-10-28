@@ -38,7 +38,10 @@ public class MCPLPlugin extends JavaPlugin {
         // 능력 연습 (solo practice of the superpower abilities); not in the default rotation.
         games.register(superpower.practice());
         // 증강 야생전: a fresh survival world per match with LoL/TFT-style augments.
-        games.register(new AugmentGame(hub));
+        AugmentGame augment = new AugmentGame(hub);
+        games.register(augment);
+        // 증강 연습 (solo practice of the augments in a fresh world); not in the default rotation.
+        games.register(augment.practice());
     }
 
     @Override

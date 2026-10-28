@@ -25,6 +25,7 @@ import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.augment.AugmentGame;
+import io.github.sx2xoox.mcpl.game.augment.AugmentPracticeSettings;
 import io.github.sx2xoox.mcpl.game.augment.AugmentSettings;
 import io.github.sx2xoox.mcpl.game.augment.api.Augment;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentInfo;
@@ -77,20 +78,40 @@ public final class AugmentMatch implements GameInstance {
     private int nextRound;
     private int roundsPlayed;
     private boolean borderShrinking;
+    /** {@link #clock} when the fight phase started. */
+    private long fightStart;
     private boolean borderFinal;
     private @Nullable ManagedBossBar bar;
     private boolean stopped;
     /** Nesting depth of {@link #damage} calls (augment damage runs no augment damage hooks). */
     private int augmentDamageDepth;
+    private final MatchMode mode;
+    private final @Nullable AugmentPracticeSettings practiceSettings;
+    private final @Nullable PracticeDummies dummies;
+    /** Practice: practising players can hurt each other. */
+    private boolean practicePvp;
 
     public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings) {
+        this(game, session, wild, settings, MatchMode.NORMAL, null);
+    }
+
+    public AugmentMatch(AugmentGame game, GameSession session, WildArena wild, AugmentSettings settings,
+                        MatchMode mode, @Nullable AugmentPracticeSettings practiceSettings) {
         this.game = game;
         this.session = session;
         this.wild = wild;
         this.settings = settings;
+        this.mode = mode;
         this.config = game.augments().snapshot();
         this.bonus = new BonusTracker(this);
         this.hud = new MatchHud(this);
+        AugmentPracticeSettings practice = practiceSettings;
+        if (mode == MatchMode.PRACTICE && practice == null) {
+            practice = game.readPracticeSettings();
+        }
+        this.practiceSettings = mode == MatchMode.PRACTICE ? practice : null;
+        this.dummies = this.practiceSettings != null ? new PracticeDummies(this, this.practiceSettings) : null;
+        this.practicePvp = this.practiceSettings != null && this.practiceSettings.pvp();
     }
 
     // =================================================================== accessors
@@ -121,6 +142,20 @@ public final class AugmentMatch implements GameInstance {
 
     public MatchPhase phase() {
         return phase;
+    }
+
+    public MatchMode mode() {
+        return mode;
+    }
+
+    /** True for a 증강 연습 session. */
+    public boolean isPractice() {
+        return mode == MatchMode.PRACTICE;
+    }
+
+    /** Practice: whether practising players can hurt each other (always false in a real match: see the phases). */
+    public boolean practicePvp() {
+        return practicePvp;
     }
 
     /** Ticks since the farming started. */
@@ -205,13 +240,16 @@ public final class AugmentMatch implements GameInstance {
             players.put(id, new PlayerState(id, settings.rerolls()));
         }
         session.registerListener(new MatchListener(this));
+        if (dummies != null) {
+            session.registerListener(dummies);
+        }
         bar = session.sharedBossBar(messages().get("bar.preparing", Messages.tag("percent", 0),
                         Messages.tag("done", 0), Messages.tag("total", 0)), 0f, BossBar.Color.WHITE,
                 BossBar.Overlay.PROGRESS);
         if (wild.ready()) {
             beginFarming();
         } else {
-            session.broadcast(messages().prefixed("phase.preparing"));
+            announce(messages().prefixed("phase.preparing"));
         }
     }
 
@@ -230,11 +268,15 @@ public final class AugmentMatch implements GameInstance {
             return;
         }
         clock++;
-        if (phase == MatchPhase.FARMING && clock >= settings.farmingTicks()) {
-            beginFight();
-        }
-        while (nextRound < settings.rounds().size() && clock >= settings.rounds().get(nextRound).atTicks()) {
-            startRound(nextRound++);
+        if (!isPractice()) {
+            if (phase == MatchPhase.FARMING && clock >= settings.farmingTicks()) {
+                beginFight();
+            }
+            while (nextRound < settings.rounds().size() && clock >= settings.rounds().get(nextRound).atTicks()) {
+                startRound(nextRound++);
+            }
+        } else if (dummies != null && clock % 10 == 0) {
+            dummies.tick(clock);
         }
         if (phase == MatchPhase.FIGHT) {
             tickBorder();
@@ -252,16 +294,17 @@ public final class AugmentMatch implements GameInstance {
 
     @Override
     public boolean dropsOnDeath() {
-        return true;
+        return !isPractice(); // a practising player keeps their things
     }
 
     @Override
     public DeathOutcome onDeath(Player victim, @Nullable Player killer, PlayerDeathEvent event) {
-        if (killer != null) {
-            bonus.onPlayerKill(killer, victim);
-            if (!session.sameTeam(killer.getUniqueId(), victim.getUniqueId())) {
-                forEachAugment(killer, "onKill", augment -> augment.onKill(victim));
-            }
+        if (killer != null && !session.sameTeam(killer.getUniqueId(), victim.getUniqueId())) {
+            creditKill(killer, victim);
+        }
+        if (isPractice()) {
+            // practice: back on your feet near where you fell, augments kept
+            return DeathOutcome.respawn(session.safeSpot(victim.getLocation()));
         }
         PlayerState dead = players.get(victim.getUniqueId());
         if (dead != null && !stopped) {
@@ -276,6 +319,49 @@ public final class AugmentMatch implements GameInstance {
             }
         }
         return DeathOutcome.eliminate();
+    }
+
+    /** The participant {@code killer} was credited with killing the enemy combatant {@code victim}. */
+    void creditKill(Player killer, LivingEntity victim) {
+        if (stopped || !isEnemy(killer.getUniqueId(), victim) && !(victim instanceof Player)) {
+            return;
+        }
+        bonus.onPlayerKill(killer, victim);
+        forEachAugment(killer, "onKill", augment -> augment.onKill(victim));
+    }
+
+    @Override
+    public void onRespawn(Player player) {
+        player.setGameMode(GameMode.SURVIVAL);
+        PlayerReset.heal(player);
+    }
+
+    @Override
+    public boolean allowLateJoin(Player player, boolean rejoining) {
+        return isPractice() && !stopped && (game.takePracticeJoin(player.getUniqueId()) || rejoining);
+    }
+
+    @Override
+    public void onLateJoin(Player player) {
+        players.computeIfAbsent(player.getUniqueId(), id -> new PlayerState(id, settings.rerolls()));
+        if (phase == MatchPhase.PREPARING) {
+            return; // spread with everyone when the world is ready
+        }
+        Location spot = null;
+        for (Player other : session.alivePlayers()) {
+            if (!other.equals(player) && other.getWorld().equals(wild.world())) {
+                spot = session.safeSpot(other.getLocation());
+                break;
+            }
+        }
+        if (spot == null) {
+            spot = Spread.findSurfaceSpawns(wild.arena(), 1, session.random()).getFirst();
+        }
+        player.setFallDistance(0f);
+        player.teleport(spot);
+        player.setGameMode(GameMode.SURVIVAL);
+        PlayerReset.heal(player);
+        hud.update();
     }
 
     @Override
@@ -313,6 +399,9 @@ public final class AugmentMatch implements GameInstance {
         stopped = true;
         if (wild.pregen() != null) {
             wild.pregen().cancel();
+        }
+        if (dummies != null) {
+            dummies.dispose();
         }
         for (PlayerState state : players.values()) {
             closeMenu(state);
@@ -359,11 +448,17 @@ public final class AugmentMatch implements GameInstance {
         if (bar != null) {
             bar.color(BossBar.Color.GREEN);
         }
-        Feedback.title(session.audience(), messages().get("phase.farming-title"),
-                messages().get("phase.farming-subtitle", Messages.tag("time", Format.duration(
-                        settings.farmingTicks() * 50))), 5, 60, 15);
-        session.broadcast(messages().prefixed("phase.farming", Messages.tag("time",
-                Format.duration(settings.farmingTicks() * 50)), Messages.tag("rounds", settings.rounds().size())));
+        if (isPractice()) {
+            Feedback.title(session.audience(), messages().get("practice.title"),
+                    messages().get("practice.subtitle"), 5, 60, 15);
+            announce(messages().prefixed("practice.started"));
+        } else {
+            Feedback.title(session.audience(), messages().get("phase.farming-title"),
+                    messages().get("phase.farming-subtitle", Messages.tag("time", Format.duration(
+                            settings.farmingTicks() * 50))), 5, 60, 15);
+            announce(messages().prefixed("phase.farming", Messages.tag("time",
+                    Format.duration(settings.farmingTicks() * 50)), Messages.tag("rounds", settings.rounds().size())));
+        }
         session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 1f, 1.2f);
         hud.update();
     }
@@ -397,14 +492,26 @@ public final class AugmentMatch implements GameInstance {
         }
     }
 
+    /** A chat line to everyone; in practice only to the practising players. */
+    void announce(Component line) {
+        if (!isPractice()) {
+            session.broadcast(line);
+            return;
+        }
+        for (Player player : session.participants()) {
+            player.sendMessage(line);
+        }
+    }
+
     private void beginFight() {
         phase = MatchPhase.FIGHT;
+        fightStart = clock;
         if (bar != null) {
             bar.color(BossBar.Color.RED);
         }
         Feedback.title(session.audience(), messages().get("phase.fight-title"), messages().get("phase.fight-subtitle"),
                 5, 60, 15);
-        session.broadcast(messages().prefixed("phase.fight", Messages.tag("time",
+        announce(messages().prefixed("phase.fight", Messages.tag("time",
                 Format.duration(settings.borderDelayTicks() * 50)), Messages.tag("size",
                 Params.format(settings.borderFinalSize()))));
         session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.7f, 1f);
@@ -412,7 +519,7 @@ public final class AugmentMatch implements GameInstance {
 
     /** Fight ticks since PvP started. */
     long fightTicks() {
-        return phase == MatchPhase.FIGHT ? clock - settings.farmingTicks() : 0;
+        return phase == MatchPhase.FIGHT ? clock - fightStart : 0;
     }
 
     private void tickBorder() {
@@ -425,14 +532,14 @@ public final class AugmentMatch implements GameInstance {
             } else {
                 border.changeSize(settings.borderFinalSize(), settings.borderShrinkTicks());
             }
-            session.broadcast(messages().prefixed("phase.border-shrinking", Messages.tag("time",
+            announce(messages().prefixed("phase.border-shrinking", Messages.tag("time",
                     Format.duration(settings.borderShrinkTicks() * 50)), Messages.tag("size",
                     Params.format(settings.borderFinalSize()))));
             session.playSound(Sound.BLOCK_BEACON_POWER_SELECT, 1f, 0.8f);
         }
         if (borderShrinking && !borderFinal && fight >= settings.borderDelayTicks() + settings.borderShrinkTicks()) {
             borderFinal = true;
-            session.broadcast(messages().prefixed(settings.glowAtFinal() ? "phase.final-glow" : "phase.final"));
+            announce(messages().prefixed(settings.glowAtFinal() ? "phase.final-glow" : "phase.final"));
             session.playSound(Sound.ENTITY_WITHER_SPAWN, 0.5f, 1.4f);
         }
         if (borderFinal && settings.glowAtFinal() && clock % 20 == 0) {
@@ -483,7 +590,7 @@ public final class AugmentMatch implements GameInstance {
         }
         Feedback.title(session.audience(), messages().get("round.title", Messages.tag("tier", tierName)),
                 messages().get("round.subtitle", Messages.tag("round", index + 1)), 5, 50, 15);
-        session.broadcast(messages().prefixed("round.announce", Messages.tag("round", index + 1),
+        announce(messages().prefixed("round.announce", Messages.tag("round", index + 1),
                 Messages.tag("tier", tierName),
                 Messages.tag("chances", Component.join(JoinConfiguration.separator(Component.text(" · ",
                         NamedTextColor.DARK_GRAY)), chances))));
@@ -722,12 +829,14 @@ public final class AugmentMatch implements GameInstance {
         };
     }
 
-    /** Gives the player an augment (also used by tests and admin tools). */
-    public void grant(Player player, AugmentInfo info) {
+    /** Gives the player an augment (also used by tests and admin tools); false if they could not get it. */
+    public boolean grant(Player player, AugmentInfo info) {
         PlayerState state = players.get(player.getUniqueId());
-        if (state != null) {
-            grant(player, state, info, false);
+        if (state == null || state.owns(info)) {
+            return false;
         }
+        grant(player, state, info, false);
+        return state.owns(info);
     }
 
     private void grant(Player player, PlayerState state, AugmentInfo info, boolean random) {
@@ -888,6 +997,107 @@ public final class AugmentMatch implements GameInstance {
         return augmentDamageDepth > 0;
     }
 
+    // =================================================================== practice
+
+    /** What {@link #advancePhase()} did. */
+    public enum PhaseStep {
+        /** Farming → fight (PvP flags on, the border delay starts). */
+        FIGHT,
+        /** The border starts shrinking now. */
+        SHRINK,
+        /** The border jumps to its final size. */
+        FINAL,
+        /** Nothing left to skip (or not a practice / not started). */
+        NONE
+    }
+
+    /** Practice ({@code /게임 증강 다음단계}): skips to the next step of the match flow. */
+    public PhaseStep advancePhase() {
+        if (!isPractice() || stopped || phase == MatchPhase.PREPARING) {
+            return PhaseStep.NONE;
+        }
+        if (phase == MatchPhase.FARMING) {
+            beginFight();
+            hud.update();
+            return PhaseStep.FIGHT;
+        }
+        if (!borderShrinking) {
+            fightStart = clock - settings.borderDelayTicks();
+            tickBorder();
+            hud.update();
+            return PhaseStep.SHRINK;
+        }
+        if (!borderFinal) {
+            fightStart = clock - settings.borderDelayTicks() - settings.borderShrinkTicks();
+            wild.world().getWorldBorder().setSize(settings.borderFinalSize());
+            tickBorder();
+            hud.update();
+            return PhaseStep.FINAL;
+        }
+        return PhaseStep.NONE;
+    }
+
+    /** Practice: practising players can (not) hurt each other. */
+    public void setPracticePvp(boolean enabled) {
+        practicePvp = enabled;
+    }
+
+    /** Practice: places dummies in front of {@code player}; the number standing, 0 if none could be placed. */
+    public int placeDummies(Player player, int count) {
+        if (dummies == null || stopped || phase == MatchPhase.PREPARING || !session.isInPlay(player)) {
+            return 0;
+        }
+        return dummies.place(player, count);
+    }
+
+    /** Practice: the live dummies {@code player} placed. */
+    public List<? extends LivingEntity> dummiesOf(UUID player) {
+        return dummies == null ? List.of() : dummies.of(player);
+    }
+
+    /** The practice settings (null in a real match). */
+    public @Nullable AugmentPracticeSettings practiceSettings() {
+        return practiceSettings;
+    }
+
+    /** Takes one augment away from the player (practice tools); false if they do not own it. */
+    public boolean revoke(Player player, AugmentInfo info) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || stopped) {
+            return false;
+        }
+        for (AugmentSlot slot : List.copyOf(state.slots)) {
+            if (slot.info().id().equals(info.id())) {
+                slot.remove();
+                state.slots.remove(slot);
+                hud.update();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Takes every augment away from the player (practice tools); the number removed. */
+    public int revokeAll(Player player) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || stopped) {
+            return 0;
+        }
+        int count = state.slots.size();
+        for (AugmentSlot slot : state.slots) {
+            slot.remove();
+        }
+        state.slots.clear();
+        hud.update();
+        return count;
+    }
+
+    /** True if the player owns {@code info} right now. */
+    public boolean owns(UUID player, AugmentInfo info) {
+        PlayerState state = players.get(player);
+        return state != null && state.owns(info);
+    }
+
     // =================================================================== bonuses
 
     /**
@@ -909,7 +1119,7 @@ public final class AugmentMatch implements GameInstance {
         }
         AugmentTier tier = config.tier(condition);
         Params params = config.params(condition);
-        session.broadcast(messages().prefixed(condition.firstCome() ? "bonus.announce-first" : "bonus.announce",
+        announce(messages().prefixed(condition.firstCome() ? "bonus.announce-first" : "bonus.announce",
                 Messages.tag("player", session.publicName(player.getUniqueId())),
                 Messages.tag("condition", Component.text(condition.koreanName())),
                 Messages.tag("description", Component.text(params.render(condition.description()))),
@@ -931,11 +1141,43 @@ public final class AugmentMatch implements GameInstance {
             return !target.getUniqueId().equals(owner) && session.isParticipant(target) && session.isInPlay(target)
                     && !session.sameTeam(owner, target.getUniqueId());
         }
+        if (dummies != null && dummies.isDummy(entity)) {
+            return true;
+        }
         return entity instanceof Enemy;
+    }
+
+    /** True for a non-player combatant of this match (a practice dummy). */
+    boolean isRival(@Nullable Entity entity) {
+        return dummies != null && dummies.isDummy(entity);
+    }
+
+    /** See {@link io.github.sx2xoox.mcpl.game.augment.api.AugmentContext#rivals()}. */
+    List<LivingEntity> rivals(UUID owner, org.bukkit.World world) {
+        List<LivingEntity> out = new ArrayList<>();
+        for (Player player : session.alivePlayers()) {
+            if (player.getWorld().equals(world) && isEnemy(owner, player)) {
+                out.add(player);
+            }
+        }
+        if (dummies != null) {
+            for (LivingEntity dummy : dummies.live()) {
+                if (dummy.getWorld().equals(world)) {
+                    out.add(dummy);
+                }
+            }
+        }
+        return out;
     }
 
     private void checkWin() {
         if (!session.isRunning() || stopped) {
+            return;
+        }
+        if (isPractice()) {
+            if (session.aliveCount() == 0) {
+                session.abort(messages().get("practice.everyone-left"));
+            }
             return;
         }
         if (session.isTeamMode()) {
@@ -974,7 +1216,7 @@ public final class AugmentMatch implements GameInstance {
             lines.add(messages().get("summary.row", Messages.tag("player", session.name(state.id)),
                     Messages.tag("augments", list)));
         }
-        session.broadcast(Component.join(JoinConfiguration.newlines(), lines));
+        announce(Component.join(JoinConfiguration.newlines(), lines));
     }
 
     void log(String what, Throwable error) {
