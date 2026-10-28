@@ -455,6 +455,31 @@ public final class GameSession {
         return true;
     }
 
+    /**
+     * Splits the participants into teams of the configured size when the match started without any: a
+     * {@link MiniGame#spectatorsOnly() bots-only} match calls it after adding its bots in {@code start()}.
+     *
+     * @return true if teams were formed (false: not RUNNING, already teams, no team size or the mode has none)
+     */
+    public boolean formTeams() {
+        if (state != GameState.RUNNING || isTeamMode() || !game.supportsTeams()) {
+            return false;
+        }
+        List<MatchTeam> formed = TeamAssigner.assign(participants, hub.config().teamSize(), random);
+        if (formed.isEmpty()) {
+            return false;
+        }
+        teams = formed;
+        for (MatchTeam team : teams) {
+            for (UUID member : team.members()) {
+                teamByPlayer.put(member, team);
+            }
+        }
+        boards.setTeams(teams, this::plainName);
+        announceTeams();
+        return true;
+    }
+
     /** True for a participant added with {@link #addBot}. */
     public boolean isBot(UUID id) {
         return bots.contains(id);
@@ -857,7 +882,8 @@ public final class GameSession {
         Bukkit.getPluginManager().registerEvents(protectionListener, hub.plugin());
         countdownLeft = hub.config().countdownSeconds();
         loop = Bukkit.getScheduler().runTaskTimer(hub.plugin(), this::loop, 1L, 1L);
-        broadcast("match.starting", Messages.tag("game", game.displayComponent()),
+        broadcast(game.spectatorsOnly() ? "match.starting-watch" : "match.starting",
+                Messages.tag("game", game.displayComponent()),
                 Messages.tag("count", participants.size()), Messages.tag("seconds", countdownLeft));
     }
 
@@ -906,7 +932,12 @@ public final class GameSession {
 
     private void countdownStep() {
         participants.removeIf(id -> Bukkit.getPlayer(id) == null || manager.prefersSpectating(id));
-        if (participants.size() < Math.max(1, game.minPlayers())) {
+        if (game.spectatorsOnly()) {
+            if (Bukkit.getOnlinePlayers().isEmpty()) {
+                abort(messages().get("match.reason-no-viewers"));
+                return;
+            }
+        } else if (participants.size() < Math.max(1, game.minPlayers())) {
             abort(messages().get("match.reason-not-enough", Messages.tag("count", participants.size()),
                     Messages.tag("min", game.minPlayers())));
             return;
@@ -925,7 +956,12 @@ public final class GameSession {
 
     private void begin() {
         List<Player> players = online(participants);
-        if (players.size() < Math.max(1, game.minPlayers())) {
+        boolean watchOnly = game.spectatorsOnly();
+        if (watchOnly && Bukkit.getOnlinePlayers().isEmpty()) {
+            abort(messages().get("match.reason-no-viewers"));
+            return;
+        }
+        if (!watchOnly && players.size() < Math.max(1, game.minPlayers())) {
             abort(messages().get("match.reason-not-enough", Messages.tag("count", players.size()),
                     Messages.tag("min", game.minPlayers())));
             return;
@@ -946,7 +982,7 @@ public final class GameSession {
                 participants.remove(id);
             }
         }
-        if (captured.size() < Math.max(1, game.minPlayers())) {
+        if (!watchOnly && captured.size() < Math.max(1, game.minPlayers())) {
             abort(messages().get("match.reason-not-enough", Messages.tag("count", captured.size()),
                     Messages.tag("min", game.minPlayers())));
             return;
@@ -1312,7 +1348,7 @@ public final class GameSession {
                 if (hub.snapshots().has(id)) {
                     hub.snapshots().restore(player);
                 }
-                if (!manager.prefersSpectating(id) && participants.add(id)) {
+                if (!game.spectatorsOnly() && !manager.prefersSpectating(id) && participants.add(id)) {
                     broadcast("match.joined-countdown", Messages.tag("player", Component.text(player.getName())),
                             Messages.tag("count", participants.size()));
                 }
@@ -1375,7 +1411,7 @@ public final class GameSession {
             }
             return;
         }
-        if (state != GameState.COUNTDOWN) {
+        if (state != GameState.COUNTDOWN || game.spectatorsOnly()) {
             return;
         }
         if (spectate) {

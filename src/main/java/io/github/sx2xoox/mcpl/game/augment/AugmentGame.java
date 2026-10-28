@@ -69,7 +69,8 @@ public final class AugmentGame implements MiniGame {
     private @Nullable AugmentMatch current;
     private final AugmentPracticeGame practice;
     private final AugmentBotGame botGame;
-    /** Bots and difficulty asked for with {@code /게임 증강 봇전}, used by the next 봇전 match. */
+    private final AugmentSpectateGame spectateGame;
+    /** Bots and difficulty asked for with {@code /게임 증강 봇전 [관전]}, used by the next bot match. */
     private AugmentMatch.@Nullable BotSetup botRequest;
     /** Players who asked to join the running practice ({@code /게임 증강 연습}). */
     private final java.util.Set<java.util.UUID> practiceJoins = new java.util.HashSet<>();
@@ -79,6 +80,7 @@ public final class AugmentGame implements MiniGame {
         BuiltinAugments.registerAll(registry);
         this.practice = new AugmentPracticeGame(this);
         this.botGame = new AugmentBotGame(this);
+        this.spectateGame = new AugmentSpectateGame(this);
         this.messages = new Messages(hub.plugin(), MESSAGES_FILE, hub.messages());
         this.messages.load();
         this.augments = new AugmentConfig(new File(hub.plugin().getDataFolder(), AugmentConfig.FILE_NAME),
@@ -156,6 +158,10 @@ public final class AugmentGame implements MiniGame {
         AugmentSettings read = readSettings();
         if (mode == MatchMode.PRACTICE) {
             read = read.withRadius(readPracticeSettings().radius());
+        } else if (mode == MatchMode.SPECTATE) {
+            BotSettings.Spectate spectate = readBotSettings().spectate();
+            read = read.withTimings(spectate.farmingTicks(), spectate.borderDelayTicks(),
+                    spectate.borderShrinkTicks());
         }
         World world;
         try {
@@ -236,12 +242,15 @@ public final class AugmentGame implements MiniGame {
             read = readSettings();
         }
         AugmentMatch.BotSetup bots = null;
-        if (mode == MatchMode.BOTS) {
+        if (mode == MatchMode.BOTS || mode == MatchMode.SPECTATE) {
             bots = botRequest;
             botRequest = null;
             if (bots == null) {
                 BotSettings botSettings = readBotSettings();
-                bots = new AugmentMatch.BotSetup(botSettings, botSettings.difficulty(), botSettings.count());
+                bots = AugmentMatch.BotSetup.of(botSettings, botSettings.difficulty(), botSettings.count());
+            }
+            if (mode == MatchMode.SPECTATE && bots.count() < 2) {
+                bots = AugmentMatch.BotSetup.of(bots.settings(), bots.lineup().getFirst(), 2); // a fight needs two
             }
         }
         AugmentMatch match = new AugmentMatch(this, session, wild, read, mode,
@@ -304,7 +313,12 @@ public final class AugmentGame implements MiniGame {
         return botGame;
     }
 
-    /** The bots of the next 봇전 (null: the configured defaults). */
+    /** 봇 관전전 ({@code /게임 증강 봇전 관전}): only bots play, everyone watches. */
+    public AugmentSpectateGame spectateGame() {
+        return spectateGame;
+    }
+
+    /** The bots of the next 봇전 or 봇 관전전 (null: the configured defaults). */
     public void requestBots(AugmentMatch.@Nullable BotSetup setup) {
         this.botRequest = setup;
     }

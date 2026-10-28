@@ -312,6 +312,111 @@ class AugmentBotMatchTest {
         assertNull(h.match());
     }
 
+    /** Records the chunks the bots hold loaded (the mock server has no chunk tickets). */
+    static final class RecordingTickets implements io.github.sx2xoox.mcpl.game.augment.bot.ChunkTickets {
+        final java.util.Set<Long> held = new java.util.HashSet<>();
+        int removedAll;
+
+        @Override
+        public void add(int chunkX, int chunkZ) {
+            assertTrue(held.add(key(chunkX, chunkZ)), "never twice");
+        }
+
+        @Override
+        public void remove(int chunkX, int chunkZ) {
+            assertTrue(held.remove(key(chunkX, chunkZ)), "only what it holds");
+        }
+
+        @Override
+        public void removeAll() {
+            removedAll++;
+            held.clear();
+        }
+
+        static long key(int x, int z) {
+            return ((long) x << 32) | (z & 0xFFFFFFFFL);
+        }
+    }
+
+    @Test
+    void botsHoldTheChunksAroundThemLoadedAndLetGoAfterwards() {
+        assertTrue(h.server.dispatchCommand(admin, "게임 증강 봇전 2 쉬움"));
+        h.tickUntil(() -> h.match() != null, 400, "match");
+        RecordingTickets tickets = new RecordingTickets();
+        h.match().bots().useTickets(tickets);
+        h.tickUntilPhase(MatchPhase.FARMING);
+        AugmentMatch match = h.match();
+        BotManager bots = match.bots();
+        for (BotController bot : bots.all()) {
+            org.bukkit.Location at = bot.body().legs().getLocation();
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    assertTrue(tickets.held.contains(RecordingTickets.key((at.getBlockX() >> 4) + dx,
+                            (at.getBlockZ() >> 4) + dz)), "3x3 around the legs from the spawn on");
+                }
+            }
+        }
+        assertEquals(tickets.held.size(), bots.heldChunks());
+        BotController first = bots.all().getFirst();
+        org.bukkit.Location far = first.body().legs().getLocation().add(36, 0, 0);
+        int oldX = first.body().legs().getLocation().getBlockX() >> 4;
+        int oldZ = first.body().legs().getLocation().getBlockZ() >> 4;
+        first.body().legs().teleport(far);
+        h.ticks(21);
+        assertTrue(tickets.held.contains(RecordingTickets.key(far.getBlockX() >> 4, far.getBlockZ() >> 4)),
+                "moves with the bot");
+        BotController second = bots.all().get(1);
+        org.bukkit.Location other = second.body().legs().getLocation();
+        if (Math.abs((other.getBlockX() >> 4) - oldX) > 2 || Math.abs((other.getBlockZ() >> 4) - oldZ) > 2) {
+            assertFalse(tickets.held.contains(RecordingTickets.key(oldX, oldZ)), "and lets go of the old area");
+        }
+        h.tickUntilPhase(MatchPhase.FIGHT);
+        org.bukkit.Location dying = first.body().legs().getLocation();
+        org.bukkit.Location living = second.body().legs().getLocation();
+        kill(first.body().body(), admin);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int x = (dying.getBlockX() >> 4) + dx;
+                int z = (dying.getBlockZ() >> 4) + dz;
+                boolean shared = Math.abs(x - (living.getBlockX() >> 4)) <= 1
+                        && Math.abs(z - (living.getBlockZ() >> 4)) <= 1;
+                assertEquals(shared, tickets.held.contains(RecordingTickets.key(x, z)),
+                        "a dead bot's chunks go at once (unless the other bot needs them)");
+            }
+        }
+        h.hub.games().stop(Component.text("test"));
+        assertTrue(tickets.held.isEmpty() && tickets.removedAll > 0, "every ticket goes at the end");
+        assertEquals(0, bots.heldChunks());
+    }
+
+    @Test
+    void botsSpawnOnDryGroundAndKeepBreathing() {
+        AugmentMatch match = botMatch("1 쉬움");
+        World world = match.wild().world();
+        BotController bot = match.bots().all().getFirst();
+        org.bukkit.Location at = bot.body().legs().getLocation();
+        assertTrue(BotManager.dry(at.clone()), "spawned on dry ground");
+        org.bukkit.Location pond = at.clone().add(30, 0, 30);
+        world.getBlockAt(pond.getBlockX() + 1, pond.getBlockY() - 1, pond.getBlockZ())
+                .setType(org.bukkit.Material.WATER);
+        assertFalse(BotManager.dry(pond), "water next to it");
+        assertTrue(BotManager.dry(pond.clone().add(10, 0, 0)), "dry a little further");
+        Mannequin body = bot.body().body();
+        body.setRemainingAir(30);
+        h.ticks(2);
+        assertEquals(body.getMaximumAir(), body.getRemainingAir(), "the body breathes on land");
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                world.getBlockAt(at.getBlockX() + 40 + dx, at.getBlockY() - 1, at.getBlockZ() + dz)
+                        .setType(org.bukkit.Material.WATER);
+            }
+        }
+        org.bukkit.Location shore = io.github.sx2xoox.mcpl.game.augment.bot.BotController.nearestDry(
+                at.clone().add(40, 0, 0), 24);
+        assertNotNull(shore, "a way out of the water");
+        assertFalse(world.getBlockAt(shore.getBlockX(), shore.getBlockY() - 1, shore.getBlockZ()).isLiquid());
+    }
+
     /** Checks placed base blocks in the world. */
     static final class BasePlannerCheck {
         static void assertPlaced(World world, io.github.sx2xoox.mcpl.game.augment.bot.BasePlanner.Plan plan, int built) {

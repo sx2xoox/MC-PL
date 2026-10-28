@@ -45,6 +45,8 @@ tasks.processResources {
 
 tasks.test {
     useJUnitPlatform()
+    // the bot matches survey terrain in mock worlds that keep every block they were asked for
+    maxHeapSize = "1g"
 }
 
 tasks.runServer {

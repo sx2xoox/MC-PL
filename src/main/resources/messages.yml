@@ -89,6 +89,7 @@ command:
 # ── 경기 진행 ────────────────────────────────────────────────
 match:
   starting: "<game> <white>경기를 시작합니다! <gray>참가자 <white><count></white>명 · <white><seconds></white>초 후 시작"
+  starting-watch: "<game> <white>경기를 시작합니다! <gray>모두 관전합니다 · <white><seconds></white>초 후 시작"
   countdown-title: "<gradient:#ffb347:#ff5e62><bold><seconds></bold></gradient>"
   countdown-subtitle: "<game> <gray>시작까지"
   start-title: "<gradient:#ffb347:#ff5e62><bold>START!</bold></gradient>"
@@ -107,6 +108,7 @@ match:
   aborted: "<red>경기가 중단되었습니다. <gray>(<reason><gray>)"
   reason-admin: "<white><player></white>님이 경기를 중지함"
   reason-not-enough: "인원 부족: <white><count></white>/<white><min></white>명"
+  reason-no-viewers: "관전할 사람이 없습니다"
   reason-error: "내부 오류"
   reason-shutdown: "서버 종료"
   restored: "<gray>경기 전 상태(인벤토리·위치·체력·경험치)로 복구되었습니다."

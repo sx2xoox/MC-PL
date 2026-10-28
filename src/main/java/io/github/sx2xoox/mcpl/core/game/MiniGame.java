@@ -56,6 +56,16 @@ public interface MiniGame {
         return 2;
     }
 
+    /**
+     * True for a mode nobody plays in person (a bots-only match): it starts without participants, every online
+     * player watches it as a spectator (snapshotted and restored as usual) and joiners never take part. The mode adds
+     * its own participants in {@link GameInstance#start()} ({@link GameSession#addBot}); {@link #minPlayers()} is
+     * ignored and the match is aborted when nobody is online to watch it during the countdown.
+     */
+    default boolean spectatorsOnly() {
+        return false;
+    }
+
     /** Whether the configured team size applies to this mode. False → always free-for-all. */
     default boolean supportsTeams() {
         return false;

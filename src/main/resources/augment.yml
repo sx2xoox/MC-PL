@@ -100,6 +100,7 @@ hud:
   more: " <dark_gray>외 <count>개 (/게임 증강)"
   pending: "<yellow>⚑ 고를 증강 <count>개 <gray>(/게임 증강)"
   spectating: "<dark_gray>관전 중"
+  time-scale: "<aqua>배속 x<scale>"
   practice-farming: "<green>연습</green> <gray>파밍 (PvP 꺼짐)"
   practice-pvp-on: "<gray>연습 대전 <red>켜짐"
   practice-pvp-off: "<gray>연습 대전 <dark_gray>꺼짐"
@@ -174,7 +175,48 @@ bots:
   joined: "<white><count></white><gray>명의 봇이 참가합니다 (난이도 <white><difficulty></white>). 봇이 마지막까지 남으면 사람은 집니다."
   starting: "<green>봇전을 시작합니다:</green> <gray>봇 <white><count></white>명, 난이도 <white><difficulty></white>"
   won-reason: "모든 사람이 탈락해 살아남은 봇이 이겼습니다"
-  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white>"
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white> <dark_gray>(섞기: 쉬움 3 어려움 2)"
+
+# ── 봇 관전전 (/게임 증강 봇전 관전) ─────────────────────────
+spectate:
+  name: "<gradient:#4fc3f7:#ff8c8c><bold>증강 봇 관전전</bold></gradient>"
+  game-description:
+    - "봇끼리만 싸우는 증강 야생전을 모두가 관전합니다. 마지막 봇(팀)이 이길 때까지."
+    - "<white>/게임 증강 봇전 관전 [봇 수] [난이도 | 쉬움 3 어려움 2]</white> <gray>· 따라가기 <white>/게임 증강 관전"
+  starting: "<green>봇 관전전을 시작합니다:</green> <gray>봇 <white><count></white>명 (<white><difficulty></white>). 모두 관전합니다."
+  joined: "<white><count></white><gray>명의 봇이 끝까지 싸웁니다 (<white><difficulty></white>). 사람은 모두 관전합니다."
+  welcome: "<gray>관전 도구: <click:run_command:'/게임 증강 관전'><hover:show_text:'<gray>클릭하여 봇 목록'><white>[봇 목록]</white></hover></click> <gray>이름을 클릭하면 그 봇의 시점으로 따라갑니다 · <click:run_command:'/게임 증강 관전 다음'><hover:show_text:'<gray>클릭하여 다음 봇'><white>[다음 봇]</white></hover></click> <dark_gray>(웅크리면 시점에서 나옵니다)"
+  team: " <team><gray>: <members>"
+  farming: "<green>봇들의 파밍 시작!</green> <gray><white><time></white> 뒤에 전투가 시작됩니다. 증강 라운드 <white><rounds></white>번."
+  farming-subtitle: "<gray>봇들의 전투는 <white><time></white> 뒤에"
+  feed: "<dark_gray>▸</dark_gray> <bot> <gray><doing>"
+  feed-target: "<dark_gray>▸</dark_gray> <bot> <gray>→</gray> <target> <gray><doing>"
+  click-follow: "<gray>클릭하여 이 봇 따라가기"
+  following: "<gray>따라가는 중: <white><bot></white> <dark_gray>(웅크리면 나옴 · /게임 증강 관전 다음)"
+  hud-alive: "<gray>남은 봇 <white><alive></white><dark_gray>/<total>"
+  hud-bot: "<bot> <red>❤<health></red> <gray>⚔<kills> <gold>◆<augments></gold> <dark_gray><doing>"
+  hud-more: " <dark_gray>외 <count>명 (/게임 증강 관전)"
+  list-header: "<gradient:#4fc3f7:#ff8c8c><bold>남은 봇</bold></gradient> <gray><alive>명 <dark_gray>· 이름을 클릭하면 따라갑니다"
+  winner: "<gold><bold>우승!</bold></gold> <bot> <gray>(킬 <white><kills></white> · 증강 <white><augments></white>개)"
+  winners: "<gold><bold>우승!</bold></gold> <bots>"
+  draw: "<gray>살아남은 봇이 없습니다. 무승부!"
+  everyone-left: "관전하는 사람이 모두 나갔습니다"
+  nobody-online: "<red>관전할 사람이 없습니다."
+  no-match: "<red>진행 중인 봇 관전전이 없습니다. <gray>관리자가 <white>/게임 증강 봇전 관전</white>으로 시작합니다."
+  unknown-bot: "<red>'<white><input></white>'(이)라는 봇이 없거나 이미 탈락했습니다. <gray><white>/게임 증강 관전</white>으로 목록을 보세요."
+  cannot-follow: "<red>관전 중인 사람만 봇을 따라갈 수 있습니다."
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 관전 [봇 수] [난이도]</white> <dark_gray>(섞기: 쉬움 3 어려움 2)"
+  scale-no-match: "<red>배속은 진행 중인 봇전·봇 관전전에서만 바꿀 수 있습니다."
+  scale-current: "<gray>지금 배속: <white>x<scale></white> <dark_gray>(/게임 증강 배속 1~4)"
+  scale-set: "<aqua>경기 시계 배속 x<scale></aqua> <gray>(<player>): 파밍·증강 라운드·월드보더·봇 장비·기지 짓기가 빨라집니다."
+
+# ── 단계 건너뛰기 (/게임 증강 다음단계, 관리자) ──────────────
+skip:
+  admin-only: "<red>경기 중 단계 건너뛰기는 관리자만 할 수 있습니다."
+  not-started: "<red>경기 월드가 아직 준비 중입니다."
+  fight: "<red>관리자가 무적(파밍) 시간을 건너뛰었습니다</red> <gray>(<player>). 지금부터 PvP! 밀린 증강 라운드가 열리고 월드보더 일정이 시작됩니다."
+  shrink: "<gold>관리자가 월드보더 대기 시간을 건너뛰었습니다</gold> <gray>(<player>). 월드보더가 지금 줄어들기 시작합니다."
+  final: "<dark_red>관리자가 월드보더를 최종 크기로 줄였습니다</dark_red> <gray>(<player>)."
 
 # ── 오류 ─────────────────────────────────────────────────────
 error:
@@ -193,7 +235,9 @@ command:
     - " <click:suggest_command:'/게임 증강 보너스'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 보너스</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>보너스 증강을 주는 업적"
     - " <click:suggest_command:'/게임 증강 리롤'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 리롤</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>보이는 카드 다시 뽑기"
     - " <click:suggest_command:'/게임 증강 연습'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 연습</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>증강 연습 (받기 · 빼기 · 카드 · 다음단계 · 허수아비 · 대전)"
-    - " <click:suggest_command:'/게임 증강 봇전 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 봇전 [봇 수] [난이도]</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>관리자: 봇과 함께하는 증강 야생전 (쉬움 · 보통 · 어려움 · 지옥)"
+    - " <click:suggest_command:'/게임 증강 봇전 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 봇전 [봇 수] [난이도]</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>관리자: 봇과 함께하는 증강 야생전 (쉬움 · 보통 · 어려움 · 지옥, 섞기: 쉬움 3 어려움 2)"
+    - " <click:suggest_command:'/게임 증강 봇전 관전 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 봇전 관전 [봇 수] [난이도]</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>관리자: 봇끼리만 싸우는 관전전 (따라가기 <white>/게임 증강 관전</white>, 배속 <white>/게임 증강 배속</white>)"
+    - " <click:suggest_command:'/게임 증강 다음단계'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 다음단계</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>연습, 또는 관리자: 경기 단계 건너뛰기 (파밍 → 전투 → 보더 축소 → 최종)"
   usage-info: "<gray>사용법: <white>/게임 증강 정보 \\<증강 이름 또는 id></white> <dark_gray>(예: 이단 점프, double_jump)"
   mine-none: "<gray>아직 받은 증강이 없습니다."
   mine-header: "<gold>내 증강 <white><count></white>개"

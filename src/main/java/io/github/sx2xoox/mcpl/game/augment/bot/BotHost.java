@@ -27,6 +27,19 @@ public interface BotHost {
     /** Ticks since the farming started. */
     long clock();
 
+    /**
+     * How fast the match clocks run ({@code /게임 증강 배속}, 1 normally): the farming, the gear schedule
+     * ({@link #farmingProgress()}) and the border follow it already; the bots build their bases this much faster.
+     * Reactions, walking and fighting stay real-time.
+     */
+    int timeScale();
+
+    /**
+     * 0..1, how late the fight is: 0 until PvP, then rising with the fight time until the border reaches its final
+     * size (1). The bots wait, avoid and hide less as it rises, and their scouting drifts to the final zone.
+     */
+    double pressure();
+
     /** PvP is on. */
     boolean fight();
 

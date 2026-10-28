@@ -130,6 +130,22 @@ public record AugmentSettings(
                 glowAtFinal, choiceTicks, rerolls, rounds, bonusEnabled);
     }
 
+    /**
+     * These settings with other phase lengths (봇 관전전 plays quicker): the augment rounds move with the farming
+     * (a round at the fight start stays at the fight start), the border waits and closes as given.
+     */
+    public AugmentSettings withTimings(long newFarmingTicks, long newBorderDelayTicks, long newBorderShrinkTicks) {
+        double ratio = farmingTicks > 0 ? (double) newFarmingTicks / farmingTicks : 1.0;
+        List<Round> moved = new ArrayList<>(rounds.size());
+        for (Round round : rounds) {
+            moved.add(new Round(Math.round(round.atTicks() * ratio), round.weights()));
+        }
+        return new AugmentSettings(radius, structures, difficulty, pregenerate, pregenChunksPerTick,
+                pregenMaxWaitTicks, Math.max(0, newFarmingTicks), Math.max(0, newBorderDelayTicks),
+                Math.max(0, newBorderShrinkTicks), borderFinalSize, borderDamage, glowAtFinal, choiceTicks, rerolls,
+                moved, bonusEnabled);
+    }
+
     /** The default rounds: 5, 12, 20 (fight start) and 30 minutes, leaning higher as the match goes on. */
     static List<Map<String, Object>> defaultRounds() {
         return List.of(

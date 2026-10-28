@@ -54,12 +54,18 @@ public final class BotController {
     static final double REACH = 3.0;
     static final int DRAW_TICKS = 20;
     static final int APPLE_TICKS = 32;
+    /** After walling itself in once, how long before it may do it again. */
+    static final int FORTIFY_COOLDOWN = 30 * 20;
+    /** A player with food heals about 1 health every 4 s out of combat; so does a bot (it does not eat). */
+    static final int REGEN_TICKS = 80;
+    static final int REGEN_AFTER_HURT = 100;
 
     private record Seen(LivingEntity entity, Location at, long tick, double distance, double previous) {
     }
 
     private final UUID id;
     private final String name;
+    private final BotDifficulty difficulty;
     private final BotManager manager;
     private final BotHost host;
     private final BotProfile profile;
@@ -85,6 +91,11 @@ public final class BotController {
     private double buildCredit;
     private final List<Block> fortress = new ArrayList<>();
     private long fortifyUntil = -1;
+    private long fortifyAgainAt;
+    private @Nullable Location shore;
+    private long shoreUntil;
+    private double lastHealth = -1;
+    private long lastHurtAt;
     private long nextSwing;
     private long drawStart = -1;
     private long nextShot;
@@ -92,8 +103,20 @@ public final class BotController {
     private long nextShieldAt;
     private int strafe = 1;
     private long strafeAt;
+    /** The head (camera) as the client sees it. */
     private float yaw;
     private float pitch;
+    private float bodyYaw;
+    /** Where the bot means to look this tick (NaN: nothing in particular), set by {@link #face}. */
+    private float wantYaw = Float.NaN;
+    private float wantPitch = Float.NaN;
+    /** A sound it turned towards (someone heard but not seen). */
+    private @Nullable Location glance;
+    private long glanceUntil;
+    private long eatLookUntil;
+    private long idleLookAt;
+    private float idleYaw;
+    private float idlePitch;
     private @Nullable Location wander;
     private long wanderUntil;
     private @Nullable Location holdSpot;
@@ -101,10 +124,11 @@ public final class BotController {
     private long lastMoveCheck;
     private float lastFall;
 
-    BotController(UUID id, String name, BotManager manager, BotHost host, BotProfile profile, Random random,
-                  int offset) {
+    BotController(UUID id, String name, BotDifficulty difficulty, BotManager manager, BotHost host, BotProfile profile,
+                  Random random, int offset) {
         this.id = id;
         this.name = name;
+        this.difficulty = difficulty;
         this.manager = manager;
         this.host = host;
         this.profile = profile;
@@ -118,8 +142,13 @@ public final class BotController {
         return id;
     }
 
+    /** The name on its body ("철수 봇"); the match shows {@code session.name(id)} (with the difficulty when mixed). */
     public String name() {
         return name;
+    }
+
+    public BotDifficulty difficulty() {
+        return difficulty;
     }
 
     public @Nullable BotBody body() {
@@ -129,7 +158,9 @@ public final class BotController {
     void attach(BotBody spawned) {
         this.body = spawned;
         Location at = spawned.legs().getLocation();
-        this.yaw = at.getYaw();
+        this.yaw = BotAim.wrap(at.getYaw());
+        this.bodyYaw = yaw;
+        this.idleYaw = yaw;
         spawned.dress(loadout);
     }
 
@@ -182,6 +213,7 @@ public final class BotController {
         if ((now + offset) % 20 == 0) {
             updateGear();
         }
+        regenerate(now, b.body());
         if (host.fight() && !applesGiven) {
             applesGiven = true;
             apples = profile.goldenApples();
@@ -190,13 +222,157 @@ public final class BotController {
             think(now);
             nextThink = now + profile.reactionTicks() + (random.nextInt(3) == 0 ? 1 : 0);
         }
+        wantYaw = Float.NaN;
+        wantPitch = Float.NaN;
         try {
-            act(now, b);
+            if (drowning(b.body())) {
+                surface(now, b); // nothing else matters while out of air
+            } else {
+                act(now, b);
+            }
         } catch (RuntimeException e) {
             manager.log("bot " + name, e);
         }
         fall(b);
-        b.sync(yaw, pitch);
+        look(now, b);
+        b.sync(yaw, pitch, bodyYaw);
+        breathe(b);
+    }
+
+    /** Under water and running out of air. */
+    private static boolean drowning(Mannequin self) {
+        return self.getRemainingAir() < self.getMaximumAir() * 0.6 && self.getEyeLocation().getBlock().isLiquid();
+    }
+
+    /** Swims up and heads for the nearest dry ground. */
+    private void surface(long now, BotBody b) {
+        WanderingTrader legs = b.legs();
+        Vector velocity = legs.getVelocity();
+        legs.setVelocity(velocity.setY(Math.max(velocity.getY(), 0.3)));
+        Location at = legs.getLocation();
+        if (shore == null || now >= shoreUntil) {
+            shore = nearestDry(at, 24);
+            shoreUntil = now + 60;
+        }
+        if (shore != null) {
+            goTo(now, shore, 1.3);
+        }
+    }
+
+    /** The body breathes while the legs' head is above the water (it is put where the legs are, not swimming). */
+    private static void breathe(BotBody b) {
+        Mannequin self = b.body();
+        if (self.getRemainingAir() < self.getMaximumAir() && !self.getEyeLocation().getBlock().isLiquid()
+                && !b.legs().getEyeLocation().getBlock().isLiquid()) {
+            self.setRemainingAir(self.getMaximumAir());
+        }
+    }
+
+    /** The nearest standing spot on dry ground within {@code range} blocks (rings of 4 blocks), or null. */
+    public static @Nullable Location nearestDry(Location from, int range) {
+        World world = from.getWorld();
+        for (int r = 4; r <= range; r += 4) {
+            for (int i = 0; i < 16; i++) {
+                double angle = i * Math.PI / 8;
+                int x = from.getBlockX() + (int) Math.round(Math.cos(angle) * r);
+                int z = from.getBlockZ() + (int) Math.round(Math.sin(angle) * r);
+                Block top = world.getHighestBlockAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+                if (top.getType().isSolid() && !top.isLiquid()) {
+                    return new Location(world, x + 0.5, top.getY() + 1, z + 0.5);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Turns the camera like a player moving the mouse: towards what it deals with ({@link #face}: a target, the bow's
+     * aim, a block being placed), else a sound it heard, else where it walks, else an occasional look around; at the
+     * difficulty's turn speed, the short way round. The body follows the walking direction (or the head when it
+     * fights or stands), never more than {@link BotAim#BODY_LAG} from the head.
+     */
+    private void look(long now, BotBody b) {
+        float speed = difficulty.turnSpeed();
+        boolean explicit = !Float.isNaN(wantYaw);
+        Location at = b.legs().getLocation();
+        float moveYaw = movementYaw(b);
+        boolean moving = !Float.isNaN(moveYaw);
+        float targetYaw;
+        float targetPitch;
+        if (explicit) {
+            targetYaw = wantYaw;
+            targetPitch = wantPitch;
+        } else if (glance != null && now < glanceUntil && glance.getWorld() == at.getWorld()) {
+            Location eye = at.clone().add(0, 1.62, 0);
+            targetYaw = BotAim.yaw(glance.getX() - eye.getX(), glance.getZ() - eye.getZ(), yaw);
+            targetPitch = BotAim.pitch(glance.getX() - eye.getX(), glance.getY() + 1.5 - eye.getY(),
+                    glance.getZ() - eye.getZ());
+        } else if (moving) {
+            targetYaw = moveYaw;
+            targetPitch = 5f;
+        } else {
+            if (now >= idleLookAt) {
+                idleLookAt = now + 40 + random.nextInt(60);
+                idleYaw = BotAim.wrap(bodyYaw + (random.nextFloat() * 2 - 1) * 70f);
+                idlePitch = -10f + random.nextFloat() * 25f;
+            }
+            targetYaw = idleYaw;
+            targetPitch = idlePitch;
+        }
+        if (now < eatLookUntil) {
+            targetPitch = Math.max(targetPitch, 30f); // eating: a glance down at the apple
+        }
+        yaw = BotAim.turn(yaw, targetYaw, speed, explicit && difficulty.flicks());
+        pitch = BotAim.turnPitch(pitch, targetPitch, speed * 0.7f);
+        float bodyWanted = !explicit && moving ? moveYaw : yaw;
+        bodyYaw = BotAim.body(bodyYaw, yaw, bodyWanted, speed * 0.6f);
+    }
+
+    /** The walking direction (from the legs' velocity or the next path point), NaN when standing. */
+    private float movementYaw(BotBody b) {
+        Vector velocity = b.legs().getVelocity();
+        if (velocity.getX() * velocity.getX() + velocity.getZ() * velocity.getZ() > 4.0E-4) {
+            return BotAim.yaw(velocity.getX(), velocity.getZ(), yaw);
+        }
+        if (goal == null) {
+            return Float.NaN;
+        }
+        Location at = b.legs().getLocation();
+        Location next = null;
+        try {
+            var path = b.legs().getPathfinder().getCurrentPath();
+            next = path == null ? null : path.getNextPoint();
+        } catch (RuntimeException ignored) {
+            // no path information: head for the goal
+        }
+        Location towards = next != null ? next : goal;
+        if (towards.getWorld() != at.getWorld() || towards.distanceSquared(at) < 0.25) {
+            return Float.NaN;
+        }
+        return BotAim.yaw(towards.getX() - at.getX(), towards.getZ() - at.getZ(), yaw);
+    }
+
+    /** The head's yaw now (for tests). */
+    public float headYaw() {
+        return yaw;
+    }
+
+    /** The head's pitch now (for tests). */
+    public float headPitch() {
+        return pitch;
+    }
+
+    /** Natural regeneration like a fed player's: 1 health every 4 s once not hurt for 5 s. */
+    private void regenerate(long now, Mannequin self) {
+        double health = self.getHealth();
+        if (lastHealth >= 0 && health < lastHealth) {
+            lastHurtAt = now;
+        }
+        if (now - lastHurtAt >= REGEN_AFTER_HURT && (now + offset) % REGEN_TICKS == 0 && !self.isDead()) {
+            health = Math.min(maxHealth(self), health + 1);
+            self.setHealth(health);
+        }
+        lastHealth = health;
     }
 
     /** The gear grows on the schedule (difficulty scales the pace). */
@@ -233,6 +409,13 @@ public final class BotController {
             double distance = rival.getLocation().distance(at);
             boolean heard = distance <= (rival instanceof Player p && p.isSneaking() ? SNEAK_HEARING : HEARING);
             boolean seen = distance <= SIGHT && self.hasLineOfSight(rival);
+            if (heard && !seen) {
+                Seen known = memory.get(who);
+                if (known == null || now - known.tick() > 40) {
+                    glance = rival.getLocation(); // a step behind it: turn towards the sound
+                    glanceUntil = now + 25;
+                }
+            }
             if (seen || heard) {
                 Seen old = memory.get(who);
                 memory.put(who, new Seen(rival, rival.getLocation(), now, distance,
@@ -256,9 +439,9 @@ public final class BotController {
                     maxHealth(rival), manager.gearOf(rival), visible, manager.fightingOther(entry.getKey(), id, now),
                     seen.distance() < seen.previous() - 0.5, holdsBow(rival)));
         }
-        double half = host.borderHalfIn(host.borderShrinking() ? 400 : 0);
-        double margin = half - Math.max(Math.abs(at.getX() - host.borderCenterX()),
-                Math.abs(at.getZ() - host.borderCenterZ()));
+        // the nearer of where the border is now and where it will be in 20 s (it keeps closing in)
+        double off = Math.max(Math.abs(at.getX() - host.borderCenterX()), Math.abs(at.getZ() - host.borderCenterZ()));
+        double margin = Math.min(host.borderHalfIn(0), host.borderHalfIn(host.borderShrinking() ? 400 : 0)) - off;
         double zone = Math.hypot(at.getX() - host.borderCenterX(), at.getZ() - host.borderCenterZ());
         BasePlanner.Plan plan = base;
         boolean baseBuilt = plan != null && built >= plan.placements().size() / 2;
@@ -270,9 +453,11 @@ public final class BotController {
         Decision current = decision;
         return new BotBrain.Situation(host.fight(), Math.max(0, 1 - host.farmingProgress()), self.getHealth(),
                 self.getAbsorptionAmount(), maxHealth(self), apples, now >= nextAppleAt, gearScore(),
-                loadout.bow() && arrows() > 0, blocks(), margin, host.borderShrinking(), zone, host.finalHalf(),
+                loadout.bow() && arrows() > 0, now < fortifyAgainAt ? 0 : blocks(), margin, host.borderShrinking(),
+                zone, host.finalHalf(),
                 baseBuilt, baseDone, baseDistance, baseSafe, highGround(at),
-                current == null ? null : current.behaviour(), current == null ? null : current.target(), contacts);
+                current == null ? null : current.behaviour(), current == null ? null : current.target(), contacts,
+                host.pressure());
     }
 
     private boolean highGround(Location at) {
@@ -327,7 +512,7 @@ public final class BotController {
                 if (lead != null) {
                     goTo(now, lead, 1.1);
                 } else {
-                    roam(now, self, 30);
+                    scout(now, self);
                 }
                 swingAtAnyone(now, self);
             }
@@ -527,8 +712,11 @@ public final class BotController {
                 || !self.hasLineOfSight(target)) {
             return false;
         }
-        nextSwing = now + profile.attackTicks();
         face(self, target.getEyeLocation());
+        if (!aimedAt(self, target)) {
+            return false; // still turning towards them
+        }
+        nextSwing = now + profile.attackTicks();
         self.swingMainHand();
         double hitChance = Math.max(0.5, Math.min(1, 1 - profile.aimError() / 25.0));
         if (random.nextDouble() >= hitChance) {
@@ -574,11 +762,6 @@ public final class BotController {
         if (drawStart < 0) {
             drawStart = now;
             b.hold(true, loadout.sword());
-            return true;
-        }
-        face(self, target.getEyeLocation());
-        if (now - drawStart < DRAW_TICKS) {
-            return true;
         }
         Location eye = self.getEyeLocation();
         Location aim = target.getLocation().add(0, target.getHeight() * 0.6, 0);
@@ -586,6 +769,10 @@ public final class BotController {
         double[] launch = Ballistics.launch(new double[] {eye.getX(), eye.getY(), eye.getZ()},
                 new double[] {aim.getX(), aim.getY(), aim.getZ()},
                 new double[] {velocity.getX(), velocity.getY(), velocity.getZ()}, profile.bowSkill());
+        faceAlong(launch); // the camera follows the lead and the arc while drawing
+        if (now - drawStart < DRAW_TICKS) {
+            return true;
+        }
         launch = Ballistics.scatter(launch, profile.aimError() * 0.6, random);
         Arrow arrow = self.launchProjectile(Arrow.class, new Vector(launch[0], launch[1], launch[2]));
         arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
@@ -605,6 +792,7 @@ public final class BotController {
         }
         apples--;
         nextAppleAt = now + APPLE_TICKS + 40;
+        eatLookUntil = now + APPLE_TICKS / 2;
         self.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 100, 1, false, true, true));
         self.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION, 2400, 0, false, true, true));
         self.getWorld().playSound(self.getLocation(), Sound.ENTITY_GENERIC_EAT, 0.8f, 1f);
@@ -668,7 +856,7 @@ public final class BotController {
             return;
         }
         stop();
-        buildCredit += profile.buildPerSecond() / 20.0;
+        buildCredit += profile.buildPerSecond() * Math.max(1, host.timeScale()) / 20.0;
         while (buildCredit >= 1 && built < plan.placements().size()) {
             buildCredit--;
             BasePlanner.Placement next = plan.placements().get(built++);
@@ -678,6 +866,9 @@ public final class BotController {
         }
         if (built >= plan.placements().size()) {
             buildCredit = 0;
+        } else {
+            BasePlanner.Placement next = plan.placements().get(built); // eyes on where the next block goes
+            face(self, new Location(self.getWorld(), next.x() + 0.5, next.y() + 0.5, next.z() + 0.5));
         }
     }
 
@@ -775,6 +966,7 @@ public final class BotController {
             buildCredit--;
             if (place(self, block.getX(), block.getY(), block.getZ(), material(BasePlanner.Part.WALL))) {
                 fortress.add(block);
+                face(self, block.getLocation().add(0.5, 0.5, 0.5));
             }
         }
         if (self.getHealth() >= Math.min(maxHealth(self), profile.healAt() * 1.7) || now >= fortifyUntil) {
@@ -784,17 +976,22 @@ public final class BotController {
         }
     }
 
-    /** Opens the shelter: its own side blocks go (the match world is thrown away after the match). */
+    /**
+     * Takes the shelter down again (a player mines their way out): every block of it that is still its own goes, so
+     * no box is left around it that would hide it from everyone for the rest of the match.
+     */
     private void breakOut() {
         Iterator<Block> it = fortress.iterator();
-        int opened = 0;
+        Material wall = material(BasePlanner.Part.WALL);
         while (it.hasNext()) {
             Block block = it.next();
-            if (opened < 2 && block.getY() < (body == null ? 0 : body.body().getLocation().getBlockY()) + 2) {
+            if (block.getType() == wall) {
                 block.setType(Material.AIR);
-                opened++;
             }
             it.remove();
+        }
+        if (fortifyUntil >= 0) {
+            fortifyAgainAt = host.clock() + FORTIFY_COOLDOWN; // no hiding in a box over and over
         }
         fortifyUntil = -1;
     }
@@ -856,9 +1053,39 @@ public final class BotController {
         goTo(now, wander, 1.0);
     }
 
+    /**
+     * Looks for someone: roams, but each leg of the walk is pulled towards the final zone (more as the fight goes
+     * on), where everyone ends up; so bots spread over a big world still meet.
+     */
+    private void scout(long now, Mannequin self) {
+        if (wander == null || now >= wanderUntil || wander.distance(self.getLocation()) < 2) {
+            Location at = self.getLocation();
+            double pull = scoutPull(host.pressure());
+            double x = at.getX() + (host.borderCenterX() - at.getX()) * pull + (random.nextDouble() * 2 - 1) * 24;
+            double z = at.getZ() + (host.borderCenterZ() - at.getZ()) * pull + (random.nextDouble() * 2 - 1) * 24;
+            wander = ground(self.getWorld(), x, z);
+            wanderUntil = now + 300;
+        }
+        goTo(now, wander, 1.1);
+    }
+
+    /** The share of the way to the zone center a scouting leg covers (0.3 at the fight start, 0.8 at the end). */
+    static double scoutPull(double pressure) {
+        return 0.3 + 0.5 * Math.max(0, Math.min(1, pressure));
+    }
+
+    /** The standing spot of column {@code x, z}; over water or lava the nearest dry ground near it if any. */
     private static Location ground(World world, double x, double z) {
-        int y = world.getHighestBlockYAt((int) Math.floor(x), (int) Math.floor(z), HeightMap.MOTION_BLOCKING_NO_LEAVES);
-        return new Location(world, x, y + 1, z);
+        Block top = world.getHighestBlockAt((int) Math.floor(x), (int) Math.floor(z),
+                HeightMap.MOTION_BLOCKING_NO_LEAVES);
+        Location spot = new Location(world, x, top.getY() + 1, z);
+        if (top.isLiquid()) {
+            Location dry = nearestDry(spot, 12); // walk around lakes, not through them
+            if (dry != null) {
+                return dry;
+            }
+        }
+        return spot;
     }
 
     private static Location away(Location from, Location threat, double distance) {
@@ -869,16 +1096,31 @@ public final class BotController {
         return from.clone().add(out.normalize().multiply(distance));
     }
 
+    /** Means to look at {@code at} this tick (the head turns there at its turn speed, see {@link #look}). */
     private void face(Mannequin self, Location at) {
         Location eye = self.getEyeLocation();
-        Vector direction = at.toVector().subtract(eye.toVector());
-        if (direction.lengthSquared() < 1.0E-6) {
+        double dx = at.getX() - eye.getX();
+        double dy = at.getY() - eye.getY();
+        double dz = at.getZ() - eye.getZ();
+        if (dx * dx + dy * dy + dz * dz < 1.0E-6) {
             return;
         }
-        Location look = eye.clone();
-        look.setDirection(direction);
-        yaw = look.getYaw();
-        pitch = look.getPitch();
+        wantYaw = BotAim.yaw(dx, dz, yaw);
+        wantPitch = BotAim.pitch(dx, dy, dz);
+    }
+
+    /** Means to look along {@code direction} this tick (the bow's launch, arc included). */
+    private void faceAlong(double[] direction) {
+        wantYaw = BotAim.yaw(direction[0], direction[2], yaw);
+        wantPitch = BotAim.pitch(direction[0], direction[1], direction[2]);
+    }
+
+    /** True when the head points at {@code target} closely enough to land a swing (within 60°). */
+    private boolean aimedAt(Mannequin self, LivingEntity target) {
+        Location eye = self.getEyeLocation();
+        Location to = target.getLocation();
+        float wanted = BotAim.yaw(to.getX() - eye.getX(), to.getZ() - eye.getZ(), yaw);
+        return Math.abs(BotAim.delta(yaw, wanted)) <= 60f;
     }
 
     /** Stuck in place while it should walk: hop, then pick another way. */

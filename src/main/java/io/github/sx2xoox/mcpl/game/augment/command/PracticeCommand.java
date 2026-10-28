@@ -41,7 +41,8 @@ import org.jspecify.annotations.Nullable;
  * /게임 증강 받기|give &lt;증강&gt;               practice: get an augment
  * /게임 증강 빼기|take &lt;증강|전부&gt;          practice: lose one or all augments
  * /게임 증강 카드|cards [실버|골드|프리즘]     practice: a card offer now (random tier without one)
- * /게임 증강 다음단계|next                   practice: farming → fight → border shrinks → final border
+ * /게임 증강 다음단계|next                   practice (and admins in every real match): farming → fight →
+ *                                          border shrinks → final border
  * /게임 증강 허수아비|dummies [개수]          practice: dummies in front of you
  * /게임 증강 대전|pvp [켜기|끄기]             practice: practising players can hurt each other
  * </pre>
@@ -307,6 +308,10 @@ public final class PracticeCommand {
     }
 
     private int next(CommandSender sender) {
+        GameSession session = game.hub().games().session();
+        if (session != null && session.game() != game.practice() && game.currentMatch() != null) {
+            return skip(sender, game.currentMatch());
+        }
         AugmentMatch match = practising(sender);
         if (match == null) {
             return 0;
@@ -321,6 +326,29 @@ public final class PracticeCommand {
         for (Player each : match.session().participants()) {
             each.sendMessage(line);
         }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * {@code /게임 증강 다음단계} in a real match (증강 야생전, 봇전, 봇 관전전): admins only; the step is announced to
+     * everyone.
+     */
+    private int skip(CommandSender sender, AugmentMatch match) {
+        if (!sender.hasPermission(Permissions.ADMIN)) {
+            messages().send(sender, "skip.admin-only");
+            return 0;
+        }
+        if (match.phase() == MatchPhase.PREPARING) {
+            messages().send(sender, "skip.not-started");
+            return 0;
+        }
+        AugmentMatch.PhaseStep step = match.advancePhase();
+        if (step == AugmentMatch.PhaseStep.NONE) {
+            messages().send(sender, "practice.next-none");
+            return 0;
+        }
+        match.session().broadcast(messages().prefixed("skip." + step.name().toLowerCase(java.util.Locale.ROOT),
+                Messages.tag("player", sender.name())));
         return Command.SINGLE_SUCCESS;
     }
 
