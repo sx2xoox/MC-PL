@@ -37,6 +37,7 @@ import org.jspecify.annotations.Nullable;
  * @param offerUi              how cards are shown: a dialog screen (default) or the chest menu
  * @param farmingInvulnerable  real matches: participants (players and bots) take no damage while farming
  * @param farmingNoHunger      real matches: players' food and saturation stay full while farming
+ * @param startKit             what every player gets when the farming starts (empty = nothing)
  */
 public record AugmentSettings(
         int radius,
@@ -57,7 +58,8 @@ public record AugmentSettings(
         boolean bonusEnabled,
         OfferUi offerUi,
         boolean farmingInvulnerable,
-        boolean farmingNoHunger
+        boolean farmingNoHunger,
+        StartKit startKit
 ) {
 
     public static final String RADIUS = "world.radius";
@@ -78,6 +80,8 @@ public record AugmentSettings(
     public static final String BONUS = "bonus.enabled";
     public static final String OFFER_UI = "augments.ui";
     public static final String FARMING_INVULNERABLE = "farming.invulnerable";
+    public static final String START_KIT = "start-kit.enabled";
+    public static final String START_KIT_ITEMS = "start-kit.items";
     public static final String FARMING_NO_HUNGER = "farming.no-hunger";
 
     public static final int MIN_RADIUS = 32;
@@ -157,7 +161,8 @@ public record AugmentSettings(
     public AugmentSettings withRadius(int newRadius) {
         return new AugmentSettings(newRadius, structures, difficulty, pregenerate, pregenChunksPerTick,
                 pregenMaxWaitTicks, farmingTicks, borderDelayTicks, borderShrinkTicks, borderFinalSize, borderDamage,
-                glowAtFinal, choiceTicks, rerolls, rounds, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger);
+                glowAtFinal, choiceTicks, rerolls, rounds, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger,
+                startKit);
     }
 
     /**
@@ -173,7 +178,7 @@ public record AugmentSettings(
         return new AugmentSettings(radius, structures, difficulty, pregenerate, pregenChunksPerTick,
                 pregenMaxWaitTicks, Math.max(0, newFarmingTicks), Math.max(0, newBorderDelayTicks),
                 Math.max(0, newBorderShrinkTicks), borderFinalSize, borderDamage, glowAtFinal, choiceTicks, rerolls,
-                moved, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger);
+                moved, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger, startKit);
     }
 
     /** The default rounds: 5, 12, 20 (fight start) and 30 minutes, leaning higher as the match goes on. */
@@ -223,6 +228,14 @@ public record AugmentSettings(
                 "끄면 플레이어끼리의 공격만 막고 몹·낙하·용암은 위험합니다."));
         d.set(FARMING_NO_HUNGER, true);
         d.setComments(FARMING_NO_HUNGER, List.of("파밍 시간 동안 플레이어의 배고픔(허기·포화)이 줄지 않고 가득 찬 채로 유지됩니다."));
+
+        d.set(START_KIT, true);
+        d.setComments("start-kit", List.of(
+                "시작 지급품: 파밍이 시작될 때 플레이어가 받는 아이템 (갑옷은 바로 착용). 기본은 음식만.",
+                "철 흉갑 이상을 넣으면 봇도 철 장비부터 시작합니다. 경기가 끝나면 원래 인벤토리로 돌아갑니다."));
+        d.setComments(START_KIT, List.of("시작 지급품 켜기/끄기 (끄면 빈손으로 시작)"));
+        d.set(START_KIT_ITEMS, StartKit.DEFAULT_ITEMS);
+        d.setComments(START_KIT_ITEMS, List.of("\"아이템 개수\" (개수를 빼면 1). 아이템 이름은 마인크래프트 ID (예: iron_sword, cooked_beef 32)"));
 
         d.set(BORDER_DELAY, 60);
         d.setComments("border", List.of("전투 (PvP 켜짐): 월드보더가 최종 크기까지 줄어듭니다."));
@@ -286,7 +299,8 @@ public record AugmentSettings(
                 s.getBoolean(BONUS, true),
                 readOfferUi(s, logger),
                 s.getBoolean(FARMING_INVULNERABLE, true),
-                s.getBoolean(FARMING_NO_HUNGER, true));
+                s.getBoolean(FARMING_NO_HUNGER, true),
+                StartKit.read(s, logger));
     }
 
     private static OfferUi readOfferUi(ConfigurationSection s, Logger logger) {
@@ -344,5 +358,58 @@ public record AugmentSettings(
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    /**
+     * What every player gets when the farming starts: armor is worn, the rest goes to the inventory, in order.
+     *
+     * @param items the items with their amounts, in the configured order (empty when off)
+     */
+    public record StartKit(Map<org.bukkit.Material, Integer> items) {
+
+        /** Plenty of food (farming is for gear, not for hunting). */
+        static final List<String> DEFAULT_ITEMS = List.of("cooked_beef 64", "bread 32");
+
+        public StartKit {
+            items = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(items));
+        }
+
+        /** Nothing. */
+        public static final StartKit NONE = new StartKit(Map.of());
+
+        /** The kit gives a chestplate of iron or better: the players start in iron. */
+        public boolean armored() {
+            return items.keySet().stream().anyMatch(m -> m == org.bukkit.Material.IRON_CHESTPLATE
+                    || m == org.bukkit.Material.DIAMOND_CHESTPLATE || m == org.bukkit.Material.NETHERITE_CHESTPLATE);
+        }
+
+        static StartKit read(ConfigurationSection s, Logger logger) {
+            if (!s.getBoolean(START_KIT, true)) {
+                return NONE;
+            }
+            List<String> raw = s.isList(START_KIT_ITEMS) ? s.getStringList(START_KIT_ITEMS) : DEFAULT_ITEMS;
+            Map<org.bukkit.Material, Integer> items = new LinkedHashMap<>();
+            for (String line : raw) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length == 0 || parts[0].isEmpty()) {
+                    continue;
+                }
+                org.bukkit.Material material = org.bukkit.Material.matchMaterial(parts[0]);
+                if (material == null || !material.isItem() || material.isAir()) {
+                    logger.warning("games.augment." + START_KIT_ITEMS + ": unknown item '" + parts[0] + "', skipped");
+                    continue;
+                }
+                int amount = 1;
+                if (parts.length > 1) {
+                    try {
+                        amount = Integer.parseInt(parts[1]);
+                    } catch (NumberFormatException e) {
+                        logger.warning("games.augment." + START_KIT_ITEMS + ": bad amount in '" + line + "', using 1");
+                    }
+                }
+                items.merge(material, Math.max(1, Math.min(64 * 36, amount)), Integer::sum);
+            }
+            return new StartKit(items);
+        }
     }
 }

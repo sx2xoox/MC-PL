@@ -726,7 +726,7 @@ public final class BotController {
 
     /** The gear grows on the schedule (difficulty scales the pace). */
     void updateGear() {
-        Gear.Loadout next = Gear.at(host.farmingProgress() * profile.gearPace());
+        Gear.Loadout next = Gear.at(Math.max(host.gearFloor(), host.farmingProgress() * profile.gearPace()));
         if (next.score() > loadout.score() || next.blocks() > loadout.blocks()) {
             boolean dress = next.score() != loadout.score() || next.shield() != loadout.shield();
             loadout = next;

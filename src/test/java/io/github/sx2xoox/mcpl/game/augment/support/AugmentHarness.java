@@ -59,6 +59,8 @@ public final class AugmentHarness implements AutoCloseable {
         // most tests hurt players with augments while farming; FarmingGraceTest turns the grace on
         s.set(AugmentSettings.FARMING_INVULNERABLE, false);
         s.set(AugmentSettings.FARMING_NO_HUNGER, false);
+        // tests count the items augments hand out; AugmentMatchTest turns the kit on
+        s.set(AugmentSettings.START_KIT, false);
     }
 
     /** Cards in the chest menu instead of the dialog ({@code augments.ui: CHEST}). */

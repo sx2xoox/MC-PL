@@ -53,6 +53,7 @@ class AugmentMatchTest {
 
     @Test
     void aFreshWorldIsMadePlayedInAndDeletedAfterTheMatch() {
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.AugmentSettings.START_KIT, true);
         List<TestPlayer> players = h.join(2);
         players.getFirst().getInventory().setItem(0, ItemStack.of(Material.DIAMOND, 3));
         GameSession session = h.start();
@@ -68,7 +69,12 @@ class AugmentMatchTest {
         for (TestPlayer player : players) {
             assertEquals(world, player.getWorld(), "spread over the match world");
             assertEquals(GameMode.SURVIVAL, player.getGameMode());
-            assertTrue(player.getInventory().isEmpty(), "empty inventory");
+            assertEquals(64, player.getInventory().all(Material.COOKED_BEEF).values().stream()
+                    .mapToInt(ItemStack::getAmount).sum(), "only the starting food");
+            assertEquals(32, player.getInventory().all(Material.BREAD).values().stream()
+                    .mapToInt(ItemStack::getAmount).sum());
+            assertEquals(2, java.util.Arrays.stream(player.getInventory().getStorageContents())
+                    .filter(item -> item != null && !item.isEmpty()).count(), "nothing else");
         }
         assertEquals(MatchPhase.FARMING, match.phase());
 

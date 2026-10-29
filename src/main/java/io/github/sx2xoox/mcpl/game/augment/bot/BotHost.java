@@ -46,6 +46,14 @@ public interface BotHost {
     /** 0..1 of the farming phase done (1 in the fight). */
     double farmingProgress();
 
+    /**
+     * The farming progress the bots' gear starts from: when the players' starting kit puts them in iron, the bots start
+     * with the matching step of their gear schedule instead of nothing. 0 otherwise.
+     */
+    default double gearFloor() {
+        return 0;
+    }
+
     /** Match-clock ticks of the farming still to go (0 in the fight); real ticks are this over {@link #timeScale()}. */
     long farmingTicksLeft();
 

@@ -614,6 +614,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         player.teleport(spot);
         player.setGameMode(GameMode.SURVIVAL);
         PlayerReset.heal(player);
+        giveStartKit(player);
         hud.update();
     }
 
@@ -816,7 +817,37 @@ public final class AugmentMatch implements GameInstance, BotHost {
             player.teleport(spot);
             player.setGameMode(GameMode.SURVIVAL);
             PlayerReset.heal(player);
+            giveStartKit(player);
         }
+    }
+
+    /** The configured starting kit: armor worn (when the slot is free), the rest into the inventory. */
+    private void giveStartKit(Player player) {
+        org.bukkit.inventory.PlayerInventory inventory = player.getInventory();
+        settings.startKit().items().forEach((material, amount) -> {
+            String name = material.name();
+            org.bukkit.inventory.EquipmentSlot slot = name.endsWith("_HELMET") ? org.bukkit.inventory.EquipmentSlot.HEAD
+                    : name.endsWith("_CHESTPLATE") ? org.bukkit.inventory.EquipmentSlot.CHEST
+                    : name.endsWith("_LEGGINGS") ? org.bukkit.inventory.EquipmentSlot.LEGS
+                    : name.endsWith("_BOOTS") ? org.bukkit.inventory.EquipmentSlot.FEET : null;
+            if (slot != null && amount == 1 && inventory.getItem(slot).isEmpty()) {
+                inventory.setItem(slot, org.bukkit.inventory.ItemStack.of(material));
+                return;
+            }
+            int left = amount;
+            while (left > 0) {
+                int stack = Math.min(left, material.getMaxStackSize());
+                inventory.addItem(org.bukkit.inventory.ItemStack.of(material, stack)).values()
+                        .forEach(rest -> player.getWorld().dropItem(player.getLocation(), rest));
+                left -= stack;
+            }
+        });
+    }
+
+    @Override
+    public double gearFloor() {
+        // full iron at the start: the bots' schedule step with full iron and an iron sword
+        return settings.startKit().armored() ? 0.5 : 0;
     }
 
     /** A chat line to everyone; in practice only to the practising players. */
