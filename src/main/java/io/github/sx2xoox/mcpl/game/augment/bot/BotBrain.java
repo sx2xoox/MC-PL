@@ -275,15 +275,9 @@ public final class BotBrain {
             double urgency = s.borderMargin() < 0 ? 175 + Math.min(40, -s.borderMargin() * 3) : 115;
             out.add(new Decision(Behaviour.FLEE_BORDER, null, urgency + (danger - Math.max(0, s.borderMargin())) * 3));
         }
-        Set<UUID> sureKills = new HashSet<>();
-        if (s.fight()) {
-            for (Contact c : s.contacts()) {
-                if (c.visible() && c.distance() <= SURE_KILL_REACH && c.health() <= SURE_KILL_HEALTH && !low) {
-                    // a finishing blow is worth a moment more outside
-                    sureKills.add(c.id());
-                    out.add(new Decision(Behaviour.ENGAGE, c.id(), 200));
-                }
-            }
+        Set<UUID> sureKills = sureKills(s);
+        for (UUID id : sureKills) {
+            out.add(new Decision(Behaviour.ENGAGE, id, 200)); // a finishing blow is worth a moment more outside
         }
         if (!s.fight()) {
             // No PvP yet: a smart player farms and builds, it does not chase anyone. A builder sticks to its base
@@ -490,6 +484,25 @@ public final class BotBrain {
     }
 
     /**
+     * The enemies it could finish right now (visible, within {@link #SURE_KILL_REACH}, at most
+     * {@link #SURE_KILL_HEALTH} health, and it is not low itself): the only reason to stay outside the border a moment.
+     * Only these are exempt from {@link #borderFirst}; an option's score never makes a sure kill (a capped score
+     * can be 200 or more when getting back in is urgent).
+     */
+    Set<UUID> sureKills(Situation s) {
+        Set<UUID> out = new HashSet<>();
+        if (!s.fight() || s.health() <= healAt()) {
+            return out;
+        }
+        for (Contact c : s.contacts()) {
+            if (c.visible() && c.distance() <= SURE_KILL_REACH && c.health() <= SURE_KILL_HEALTH) {
+                out.add(c.id());
+            }
+        }
+        return out;
+    }
+
+    /**
      * Getting back inside the border beats everything but a sure kill: no personality weight, base, hold, ambush or
      * shadowing (however strongly weighted, sticky or committed) may keep a bot where the closing border will be
      * before it could walk in. Every other option is capped just under {@link Behaviour#FLEE_BORDER}.
@@ -590,12 +603,9 @@ public final class BotBrain {
         boolean protector = who == BotPersonality.TANK || who == BotPersonality.FORTRESS
                 || who == BotPersonality.AVENGER;
         boolean loner = who == BotPersonality.NOMAD || who == BotPersonality.ASSASSIN;
-        Set<UUID> sureKills = new HashSet<>();
-        for (Decision d : base) {
-            if (d.behaviour() == Behaviour.ENGAGE && d.score() >= 200 && d.target() != null) {
-                sureKills.add(d.target());
-            }
-        }
+        // the same sure kills as the free-for-all options, never "any ENGAGE scored 200 or more": an ENGAGE capped
+        // just under an urgent FLEE_BORDER scores that much, and the team bonuses would then lift it over the border
+        Set<UUID> sureKills = sureKills(s);
         for (Decision d : base) {
             double score = d.score();
             if (s.fight() && d.target() != null) {

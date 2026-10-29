@@ -1442,6 +1442,11 @@ public final class AugmentMatch implements GameInstance, BotHost {
         return bots != null && bots.body(id) != null;
     }
 
+    /** The boss bar and sidebars. */
+    MatchHud hud() {
+        return hud;
+    }
+
     /** The body of a participant in play: the player or a bot's body; null if none. */
     @Nullable LivingEntity body(UUID id) {
         Player player = org.bukkit.Bukkit.getPlayer(id);

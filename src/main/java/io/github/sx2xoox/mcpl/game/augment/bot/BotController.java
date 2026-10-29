@@ -2390,11 +2390,21 @@ public final class BotController {
         }
     }
 
+    /**
+     * Time to get out of a base of half side {@code half} and round it (ticks): {@link #BASE_EXIT_TICKS} plus a second
+     * per block of half side (to the door, and round the walls when the door faces away from the zone); a team base
+     * takes longer still (the whole team leaves by one doorway).
+     */
+    static long exitTicks(int half, boolean shared) {
+        return BASE_EXIT_TICKS + half * 20L + (shared ? BASE_EXIT_TICKS / 2 : 0);
+    }
+
     /** The border leaves {@code plan} alone for the next half minute. */
     private boolean baseSafeFor(BasePlanner.Plan plan) {
         double off = Math.max(Math.abs(plan.x() - host.borderCenterX()), Math.abs(plan.z() - host.borderCenterZ()));
         // the border must leave it alone while it could still get out and walk in (its walls cost time too)
-        long ahead = host.fight() ? Math.max(BASE_SAFE_TICKS, borderLookahead(off, host.finalHalf()) + BASE_EXIT_TICKS)
+        long ahead = host.fight() ? Math.max(BASE_SAFE_TICKS, borderLookahead(off, host.finalHalf())
+                + exitTicks(plan.half(), teamBase != null))
                 : BASE_SAFE_TICKS;
         return Math.min(host.borderHalfIn(0), host.borderHalfIn(ahead)) - off > plan.half() + 2
                 + (host.fight() ? BotBrain.edgeMargin(host.borderShrinking(), host.finalHalf()) : 0);

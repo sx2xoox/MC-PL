@@ -137,20 +137,14 @@ public final class SpectatorView {
         List<BotController> standing = ranked();
         int room = Sidebar.MAX_LINES - 4 - lines.size();
         if (session.isTeamMode()) {
-            // per team: a header (alive / members, kills) and its standing bots
+            // per team: a header (power gauge, alive / members, kills) and its standing bots
             int shown = 0;
             for (MatchTeam team : session.teams()) {
                 List<BotController> members = standing.stream().filter(bot -> team.contains(bot.id())).toList();
                 if (members.isEmpty() || lines.size() >= Sidebar.MAX_LINES - 4) {
                     continue;
                 }
-                int kills = 0;
-                for (UUID member : team.members()) {
-                    kills += session.stats().of(member).kills();
-                }
-                lines.add(messages().get("spectate.hud-team", Messages.tag("team", team.displayName()),
-                        Messages.tag("alive", members.size()), Messages.tag("size", team.size()),
-                        Messages.tag("kills", kills)));
+                lines.add(match.hud().teamPower(team, members.size(), "spectate.hud-team-power"));
                 for (BotController bot : members) {
                     if (lines.size() >= Sidebar.MAX_LINES - 4) {
                         break;

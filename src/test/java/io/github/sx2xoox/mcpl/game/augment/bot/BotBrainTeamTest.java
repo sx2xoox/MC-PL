@@ -127,4 +127,24 @@ class BotBrainTeamTest {
         Decision edge = tank.decide(fight(20, 1, contacts), new TeamView(3, 80, 16, false, A, B, true));
         assertEquals(Behaviour.FLEE_BORDER, edge.behaviour(), "at the edge too: " + edge);
     }
+
+    @ParameterizedTest
+    @EnumSource(BotPersonality.class)
+    void farOutsideNoTeamBonusLiftsAFightOverTheBorder(BotPersonality personality) {
+        // far outside where the border is heading: getting back in scores over 200, so every other option is capped
+        // just under it (200 or more); the team's focus, peel and allies must not lift such a capped fight over it
+        // (only a real sure kill may: an enemy within reach with almost no health)
+        List<Contact> contacts = List.of(enemy(A, 5, 12, IRON, false), enemy(B, 9, 20, IRON, true));
+        for (int seed = 0; seed < 6; seed++) {
+            BotBrain brain = new BotBrain(BotProfile.preset(BotDifficulty.HARD), personality.traits(new Random(seed)),
+                    new Random(seed));
+            Decision d = brain.decide(fight(20, -12, contacts), new TeamView(3, 4, 16, false, A, A, true));
+            assertEquals(Behaviour.FLEE_BORDER, d.behaviour(), personality + " far outside: back in first, " + d);
+        }
+        BotBrain brain = new BotBrain(BotProfile.preset(BotDifficulty.HARD), personality.traits(new Random(1)),
+                new Random(1));
+        Decision finish = brain.decide(fight(20, -12, List.of(enemy(A, 2, 3, IRON, false))),
+                new TeamView(3, 4, 16, false, A, null, false));
+        assertEquals(Behaviour.ENGAGE, finish.behaviour(), personality + ": a sure kill is still worth it, " + finish);
+    }
 }
