@@ -286,4 +286,59 @@ class BotPersonalityTest {
         assertEquals("철수 봇 [어려움·사냥꾼]", read.name(0, BotDifficulty.HARD, BotPersonality.HUNTER));
         assertEquals("영희 봇 [보통]", read.name(1, BotDifficulty.NORMAL, null));
     }
+
+    /** A situation late in the fight, the border closing, with {@code rivalsLeft} enemies still in play. */
+    private static Situation closing(double health, List<Contact> contacts, boolean baseBuilt, double baseDistance,
+                                     boolean baseSafe, double margin, Behaviour current, UUID target,
+                                     double pressure, int rivalsLeft) {
+        return new Situation(true, 0, health, 0, 20, 3, true, IRON, true, 100, margin, true, 60, 12, baseBuilt, true,
+                baseDistance, baseSafe, false, current, target, contacts, pressure, false, rivalsLeft, 0.5);
+    }
+
+    @Test
+    void theBorderBeatsEveryPersonalityHabit() {
+        // regression: a berserker mid-duel, an opportunist shadowing a fight, an assassin stalking, a fortress builder
+        // in its keep: each died to the border once its personality weights outscored getting back in
+        Contact duel = enemy(A, 3.5, 20, IRON, false);
+        Contact fighting = new Contact(B, 22, 18, 20, IRON, true, true, false, false);
+        for (BotPersonality personality : BotPersonality.values()) {
+            for (double margin : new double[] {2, -1, -6}) {
+                for (Behaviour current : new Behaviour[] {Behaviour.ENGAGE, Behaviour.THIRD_PARTY,
+                        Behaviour.DEFEND_BASE, Behaviour.AMBUSH}) {
+                    UUID target = current == Behaviour.ENGAGE ? A : current == Behaviour.THIRD_PARTY ? B : null;
+                    Situation s = closing(20, List.of(duel, fighting), true, 1, true, margin, current, target, 0.6, 8);
+                    assertEquals(Behaviour.FLEE_BORDER, choice(brain(personality), s),
+                            personality + " " + current + " at margin " + margin);
+                }
+            }
+        }
+        // only a sure kill right there is worth a moment more
+        Situation sure = closing(20, List.of(enemy(A, 3, 3, IRON, false)), false, Double.POSITIVE_INFINITY, false,
+                -1, Behaviour.ENGAGE, A, 0.6, 8);
+        assertEquals(Behaviour.ENGAGE, choice(brain(BotPersonality.SURVIVOR), sure));
+    }
+
+    @Test
+    void aSurvivorSitsSealedInItsBurrowUntilFewAreLeft() {
+        Contact coming = new Contact(A, 18, 20, 20, IRON, true, false, true, false);
+        Situation many = closing(20, List.of(coming), true, 1, true, 80, Behaviour.DEFEND_BASE, null, 0.5, 7);
+        assertEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.SURVIVOR), many), "hidden while 7 are left");
+        Situation quiet = closing(20, List.of(), true, 1, true, 80, Behaviour.DEFEND_BASE, null, 0.9, 6);
+        assertEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.SURVIVOR), quiet), "even late, while many");
+        Situation few = closing(20, List.of(coming), true, 1, true, 80, Behaviour.DEFEND_BASE, null, 0.5, 3);
+        assertNotEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.SURVIVOR), few), "out with three left");
+        Situation border = closing(20, List.of(), true, 1, false, 80, Behaviour.DEFEND_BASE, null, 0.5, 7);
+        assertNotEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.SURVIVOR), border),
+                "a burrow the border will take is left");
+    }
+
+    @Test
+    void aSniperThatKnowsSomeoneInRangeShootsInsteadOfHoldingTheZone() {
+        Contact hidden = new Contact(A, 24, 20, 20, IRON, false, false, false, false); // behind cover right now
+        Situation s = closing(20, List.of(hidden), true, 1, true, 80, Behaviour.HOLD_ZONE, null, 0.4, 6);
+        assertEquals(Behaviour.KITE, choice(brain(BotPersonality.ARCHER), s), "it moves for a line of fire");
+        Contact seen = new Contact(A, 24, 20, 20, IRON, true, false, false, false);
+        Situation open = closing(20, List.of(seen), true, 1, true, 80, Behaviour.HOLD_ZONE, null, 0.4, 6);
+        assertEquals(Behaviour.KITE, choice(brain(BotPersonality.ARCHER), open));
+    }
 }

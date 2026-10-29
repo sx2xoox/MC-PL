@@ -1,7 +1,9 @@
 package io.github.sx2xoox.mcpl.game.augment.bot;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.jspecify.annotations.Nullable;
@@ -188,6 +190,8 @@ public final class BotBrain {
     static final double SURE_KILL_HEALTH = 4;
     /** In the final zone with at most this many enemies left, nobody hides, waits or runs any more. */
     static final int SHOWDOWN_RIVALS = 3;
+    /** How much more a survivor wants to stay sealed in its burrow while more than {@link #SHOWDOWN_RIVALS} are left. */
+    static final double SURVIVOR_HIDE = 45;
 
     private final BotProfile profile;
     private final BotPersonality.Traits traits;
@@ -239,10 +243,12 @@ public final class BotBrain {
             double urgency = s.borderMargin() < 0 ? 175 + Math.min(40, -s.borderMargin() * 3) : 115;
             out.add(new Decision(Behaviour.FLEE_BORDER, null, urgency + (danger - Math.max(0, s.borderMargin())) * 3));
         }
+        Set<UUID> sureKills = new HashSet<>();
         if (s.fight()) {
             for (Contact c : s.contacts()) {
                 if (c.visible() && c.distance() <= SURE_KILL_REACH && c.health() <= SURE_KILL_HEALTH && !low) {
                     // a finishing blow is worth a moment more outside
+                    sureKills.add(c.id());
                     out.add(new Decision(Behaviour.ENGAGE, c.id(), 200));
                 }
             }
@@ -287,6 +293,7 @@ public final class BotBrain {
         for (Contact c : s.contacts()) {
             grudgeKnown |= c.grudge() && traits.grudges();
         }
+        boolean inBowRange = false; // a sniper knows someone it could shoot: no waiting in the zone
         for (Contact c : s.contacts()) {
             double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
@@ -380,6 +387,14 @@ public final class BotBrain {
                 }
                 out.add(new Decision(Behaviour.KITE, c.id(), kite));
             }
+            if (who == BotPersonality.ARCHER && s.hasBow() && bowRange() > 0 && !c.visible() && c.distance() > 7
+                    && c.distance() <= bowRange() && !(grudgeKnown && !c.grudge())) {
+                // a sniper that knows someone in range moves for a line of fire (another slit, down from its nest)
+                inBowRange = true;
+                out.add(new Decision(Behaviour.KITE, c.id(), 56 + 25 * clamp(1 - advantage, 0, 1)));
+            } else if (who == BotPersonality.ARCHER && s.hasBow() && c.distance() <= bowRange()) {
+                inBowRange = true;
+            }
             // an even match (advantage around 1) alone is fought, not avoided by both sides
             if (!showdown && (advantage < 0.75 - 0.25 * p || others >= 1 && advantage < 1.6 - 0.5 * p)) {
                 out.add(new Decision(Behaviour.AVOID, c.id(), (58 + 40 * clamp(0.9 - advantage, 0, 1)
@@ -408,6 +423,11 @@ public final class BotBrain {
             // there less as the fight drags on and when nobody comes for a long while
             double score = 45 + 40 * homebody - 25 * p - 20 * s.idle() - s.baseDistance() * 0.15
                     + (s.contacts().isEmpty() ? -10 : 8) + (low ? 20 : 0) + (near >= 2 ? 10 : 0);
+            if (who == BotPersonality.SURVIVOR && s.rivalsLeft() > SHOWDOWN_RIVALS) {
+                // a survivor sits sealed in its burrow while many are left (the border or a breach gets it out);
+                // with the last few left it comes out to ambush
+                score += SURVIVOR_HIDE;
+            }
             out.add(new Decision(Behaviour.DEFEND_BASE, null, score));
         } else if (!showdown && s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48
                 && (low || !s.contacts().isEmpty())) {
@@ -428,13 +448,39 @@ public final class BotBrain {
             // early in the shrink: get to the zone in time; later, sitting in it waiting is no plan
             double outside = Math.max(0, s.zoneDistance() - s.zoneRadius() * 0.6);
             out.add(new Decision(Behaviour.HOLD_ZONE, null, 38 + Math.min(20, outside * 0.5) - 15 * p
-                    - (s.contacts().isEmpty() ? 0 : 12)));
+                    - (s.contacts().isEmpty() ? 0 : 12) - (inBowRange ? 25 : 0)));
         }
         // nobody known: go looking (the controller heads for the last known or heard rival, else the zone); a bot that
         // has not fought for a long while and the last few in the final zone go looking hardest
         out.add(new Decision(Behaviour.SCOUT, null, showdown ? (s.contacts().isEmpty() ? 70 : 40)
                 : 25 + 15 * p + 25 * s.idle() * p));
-        return sorted(weigh(out, showdown ? 1 : p), s);
+        return borderFirst(sorted(weigh(out, showdown ? 1 : p), s), sureKills);
+    }
+
+    /**
+     * Getting back inside the border beats everything but a sure kill: no personality weight, base, hold, ambush or
+     * shadowing (however strongly weighted, sticky or committed) may keep a bot where the closing border will be
+     * before it could walk in. Every other option is capped just under {@link Behaviour#FLEE_BORDER}.
+     */
+    static List<Decision> borderFirst(List<Decision> sorted, Set<UUID> sureKills) {
+        Decision flee = null;
+        for (Decision d : sorted) {
+            if (d.behaviour() == Behaviour.FLEE_BORDER) {
+                flee = d;
+                break;
+            }
+        }
+        if (flee == null || sorted.getFirst() == flee) {
+            return sorted;
+        }
+        List<Decision> out = new ArrayList<>(sorted.size());
+        for (Decision d : sorted) {
+            boolean sureKill = d.behaviour() == Behaviour.ENGAGE && sureKills.contains(d.target());
+            out.add(d == flee || sureKill || d.score() < flee.score() ? d
+                    : new Decision(d.behaviour(), d.target(), flee.score() - 1));
+        }
+        out.sort((a, b) -> Double.compare(b.score(), a.score()));
+        return out;
     }
 
     /**

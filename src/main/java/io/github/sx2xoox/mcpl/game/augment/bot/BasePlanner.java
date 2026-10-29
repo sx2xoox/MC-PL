@@ -988,8 +988,8 @@ public final class BasePlanner {
          * The trapper's field (the start of it: it keeps laying traps further out once closed): a fenced funnel along
          * the lane to the doorway (the only free way in, straight at the shut door and its slits), webs at the
          * funnel's mouth and under the slits, a ring of two-deep pits, berry bushes and webs two out from the walls,
-         * a palisade with bushes in its gaps one further, a scatter of webs beyond (from 7 on), and a few webs on the
-         * solid roof against anyone pillaring over.
+         * a palisade with bushes in its gaps one further, a scatter of webs beyond (from 7 on), and three webs on the
+         * corners of its solid roof against anyone pillaring over.
          */
         private void trapField(int roofY) {
             int rings = half >= 3 ? 3 : 2;
@@ -1049,11 +1049,14 @@ public final class BasePlanner {
                     }
                 }
             }
-            // a few webs on the roof against anyone pillaring over (the roof itself is solid)
-            for (int dx = -half; dx <= half; dx++) {
-                for (int dz = -half; dz <= half; dz++) {
-                    if (Math.floorMod(dx + 2 * dz, 4) == 0) {
-                        out.add(new Placement(x + dx, roofY + 1, z + dz, Part.COBWEB));
+            // a solid roof with just a few webs on it against anyone pillaring over: at the three corners away from
+            // the lookout (the corner behind the doorway)
+            int lookoutX = x - (ox != 0 ? ox : -1) * half;
+            int lookoutZ = z - (oz != 0 ? oz : -1) * half;
+            for (int sx : new int[] {-1, 1}) {
+                for (int sz : new int[] {-1, 1}) {
+                    if (x + sx * half != lookoutX || z + sz * half != lookoutZ) {
+                        out.add(new Placement(x + sx * half, roofY + 1, z + sz * half, Part.COBWEB));
                     }
                 }
             }

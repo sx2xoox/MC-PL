@@ -166,7 +166,10 @@ class BasePlannerTest {
         assertEquals(Design.TRAPS, plan.design());
         long roofWebs = plan.placements().stream()
                 .filter(p -> p.part() == Part.COBWEB && p.y() == plan.roofY() + 1).count();
-        assertTrue(roofWebs > 3 && roofWebs < 25, "a few webs on the solid roof against pillaring over");
+        assertEquals(3, roofWebs, "three webs on the corners of the solid roof against pillaring over");
+        long roofTiles = plan.placements().stream()
+                .filter(p -> p.part() == Part.ROOF && p.y() == plan.roofY()).count();
+        assertEquals(25, roofTiles, "the roof itself is solid: no webs in it");
         Set<String> trapped = new HashSet<>();
         Set<String> fences = new HashSet<>();
         java.util.EnumSet<Part> kinds = java.util.EnumSet.noneOf(Part.class);
@@ -446,5 +449,70 @@ class BasePlannerTest {
             }
         }
         return -1;
+    }
+
+    @Test
+    void aBotWalksInAndOutOfEveryWalledBaseAlongItsDoorwayLane() {
+        // regression: bots shut in their own base (pathfinder lost in the room, recovery refusing their walls) died
+        // to the border; they now step out along the doorway lane, never through a wall
+        for (Design design : new Design[] {Design.BOX, Design.WATCHPOST, Design.TRAPS, Design.KEEP, Design.BUNKER,
+                Design.TOWER, Design.BURROW}) {
+            for (int size : new int[] {5, 7, 9, 11}) {
+                Plan plan = BasePlanner.plan(FLAT, 0, 0, size, 100, 30, design);
+                Set<String> walls = new HashSet<>();
+                for (Placement p : plan.placements()) {
+                    if (p.part() != Part.CLEAR && p.part() != Part.FLOOR && p.y() == plan.floorY() + 1) {
+                        walls.add(p.x() + "," + p.z());
+                    }
+                }
+                for (double[] start : new double[][] {{0.5, 0.5}, {-plan.half() + 1.5, plan.half() - 0.5},
+                        {plan.half() - 0.5, -plan.half() + 1.5}}) {
+                    double x = start[0];
+                    double z = start[1];
+                    int steps = 0;
+                    for (double[] next; (next = BotController.exitStep(plan, x, z)) != null; steps++) {
+                        assertTrue(steps < 40, design + " " + size + ": out in a few steps");
+                        // walk there in small bits: no bit may cross a wall cell
+                        for (int k = 1; k <= 8; k++) {
+                            double px = x + (next[0] - x) * k / 8;
+                            double pz = z + (next[1] - z) * k / 8;
+                            boolean inRoom = Math.abs(px - 0.5) < plan.half() - 0.5 && Math.abs(pz - 0.5)
+                                    < plan.half() - 0.5;
+                            if (!inRoom) {
+                                assertFalse(walls.contains((int) Math.floor(px) + "," + (int) Math.floor(pz)),
+                                        design + " " + size + " walks through a wall at " + px + "," + pz);
+                            }
+                        }
+                        x = next[0];
+                        z = next[1];
+                    }
+                    int[] out = plan.outer();
+                    assertEquals(out[0] + 0.5, x, 0.6, design + " " + size + " ends at the spot outside");
+                    assertEquals(out[2] + 0.5, z, 0.6, design + " " + size + " ends at the spot outside");
+                }
+                // and back in from the spot outside, along the lane to the room
+                int[] out = plan.outer();
+                double x = out[0] + 0.5;
+                double z = out[2] + 0.5;
+                int steps = 0;
+                for (double[] next; (next = BotController.enterStep(plan, x, z)) != null; steps++) {
+                    assertTrue(steps < 40, design + " " + size + ": in in a few steps");
+                    x = next[0];
+                    z = next[1];
+                }
+                assertEquals(plan.inner()[0] + 0.5, x, 0.2, design + " " + size + " ends in the room");
+                assertEquals(plan.inner()[2] + 0.5, z, 0.2, design + " " + size + " ends in the room");
+                assertTrue(plan.inside(x, plan.floorY() + 1, z), design + " " + size + " inside");
+                if (design == Design.BURROW) {
+                    // up its stairs a block per block out, to the top
+                    assertEquals(plan.floorY() + 1, BotController.laneFeet(plan, plan.half()), 0.01);
+                    assertEquals(plan.floorY() + 2, BotController.laneFeet(plan, plan.half() + 1), 0.01);
+                    assertEquals(plan.outer()[1], BotController.laneFeet(plan, plan.half() + 4), 0.01);
+                    assertTrue(BotController.onOwnStairs(plan, new org.bukkit.Location(null,
+                            plan.doorX() + 0.5 + (plan.doorX() - plan.x()) / plan.half() * 2, plan.floorY() + 3,
+                            plan.doorZ() + 0.5 + (plan.doorZ() - plan.z()) / plan.half() * 2)), "on its stairs");
+                }
+            }
+        }
     }
 }
