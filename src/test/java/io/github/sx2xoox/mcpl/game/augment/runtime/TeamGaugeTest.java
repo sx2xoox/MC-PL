@@ -14,7 +14,7 @@ class TeamGaugeTest {
         double share = TeamGauge.share(List.of(new TeamGauge.Member(20, 20, true), new TeamGauge.Member(24, 24, true)));
         assertEquals(1.0, share, 1e-9);
         assertEquals(100, TeamGauge.percent(share));
-        assertEquals("▰▰▰▰▰▰▰▰", TeamGauge.bar(share, 8));
+        assertEquals(8, TeamGauge.filled(share, 8));
     }
 
     @Test
@@ -24,7 +24,7 @@ class TeamGaugeTest {
                 new TeamGauge.Member(10, 20, true), new TeamGauge.Member(15, 20, false)));
         assertEquals(0.5, share, 1e-9);
         assertEquals(50, TeamGauge.percent(share));
-        assertEquals("▰▰▰▰▱▱▱▱", TeamGauge.bar(share, 8));
+        assertEquals(4, TeamGauge.filled(share, 8));
     }
 
     @Test
@@ -38,7 +38,7 @@ class TeamGaugeTest {
         double share = TeamGauge.share(List.of(new TeamGauge.Member(0, 20, false), new TeamGauge.Member(0, 20, false)));
         assertEquals(0.0, share, 1e-9);
         assertEquals(0, TeamGauge.percent(share));
-        assertEquals("▱▱▱▱▱▱▱▱", TeamGauge.bar(share, 8));
+        assertEquals(0, TeamGauge.filled(share, 8));
         assertEquals(0.0, TeamGauge.share(List.of()), 1e-9);
     }
 
@@ -47,7 +47,7 @@ class TeamGaugeTest {
         double share = TeamGauge.share(List.of(new TeamGauge.Member(0.5, 20, true), new TeamGauge.Member(0, 20, false),
                 new TeamGauge.Member(0, 20, false)));
         assertEquals(1, TeamGauge.percent(share));
-        assertEquals("▰▱▱▱▱▱▱▱", TeamGauge.bar(share, 8));
+        assertEquals(1, TeamGauge.filled(share, 8));
     }
 
     @Test
@@ -55,6 +55,6 @@ class TeamGaugeTest {
         // 62% of 8 = 4.96 -> 5 segments
         double share = TeamGauge.share(List.of(new TeamGauge.Member(37.2, 60, true)));
         assertEquals(62, TeamGauge.percent(share));
-        assertEquals("▰▰▰▰▰▱▱▱", TeamGauge.bar(share, 8));
+        assertEquals(5, TeamGauge.filled(share, 8));
     }
 }

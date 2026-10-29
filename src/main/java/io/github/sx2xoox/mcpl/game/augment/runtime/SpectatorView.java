@@ -137,25 +137,19 @@ public final class SpectatorView {
         List<BotController> standing = ranked();
         int room = Sidebar.MAX_LINES - 4 - lines.size();
         if (session.isTeamMode()) {
-            // per team: a header (power gauge, alive / members, kills) and its standing bots
-            int shown = 0;
+            // per team still standing: one compact power line (the bots are listed by /게임 증강 관전)
+            int out = 0;
             for (MatchTeam team : session.teams()) {
-                List<BotController> members = standing.stream().filter(bot -> team.contains(bot.id())).toList();
-                if (members.isEmpty() || lines.size() >= Sidebar.MAX_LINES - 4) {
-                    continue;
-                }
-                lines.add(match.hud().teamPower(team, members.size(), "spectate.hud-team-power"));
-                for (BotController bot : members) {
-                    if (lines.size() >= Sidebar.MAX_LINES - 4) {
-                        break;
+                long members = standing.stream().filter(bot -> team.contains(bot.id())).count();
+                if (members > 0) {
+                    out++;
+                    if (lines.size() < Sidebar.MAX_LINES - 4) {
+                        lines.add(match.hud().teamPower(team, (int) members, "spectate.hud-team-power"));
                     }
-                    lines.add(row(bot));
-                    shown++;
                 }
             }
-            if (shown < standing.size()) {
-                lines.add(messages().get("spectate.hud-more", Messages.tag("count", standing.size() - shown)));
-            }
+            lines.set(1, messages().get("spectate.hud-teams-alive", Messages.tag("alive", out),
+                    Messages.tag("total", session.teams().size()), Messages.tag("bots", session.aliveCount())));
             return lines;
         }
         for (int i = 0; i < standing.size() && i < room; i++) {

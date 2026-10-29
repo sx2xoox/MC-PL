@@ -4,16 +4,14 @@ import java.util.List;
 
 /**
  * 팀전 team power for the sidebar (pure): the team's total current health over its total max health, a member out of
- * play counting as 0 of its max, drawn as a short health-bar-like gauge ("▰▰▰▰▰▱▱▱").
+ * play counting as 0 of its max, drawn like a health bar: {@link #SEGMENTS} bars, the filled ones in the team colour.
  */
 public final class TeamGauge {
 
-    /** Segments of the gauge (a sidebar line has little room). */
-    public static final int SEGMENTS = 8;
-    /** A filled segment. */
-    public static final char FULL = '▰';
-    /** An empty segment. */
-    public static final char EMPTY = '▱';
+    /** Segments of the gauge. */
+    public static final int SEGMENTS = 20;
+    /** One segment (thin, so many fit; the font draws it everywhere). */
+    public static final String SEGMENT = "|";
 
     private TeamGauge() {
     }
@@ -50,9 +48,8 @@ public final class TeamGauge {
         return Math.clamp(Math.round(share * 100), 1, 100);
     }
 
-    /** The gauge: {@code segments} cells, filled to {@code share} (at least one while the team has any health). */
-    public static String bar(double share, int segments) {
-        int filled = share <= 0 ? 0 : Math.clamp(Math.round(share * segments), 1, segments);
-        return String.valueOf(FULL).repeat(filled) + String.valueOf(EMPTY).repeat(segments - filled);
+    /** Filled segments of {@code segments} for {@code share} (at least one while the team has any health). */
+    public static int filled(double share, int segments) {
+        return share <= 0 ? 0 : Math.clamp(Math.round(share * segments), 1, segments);
     }
 }

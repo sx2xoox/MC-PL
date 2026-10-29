@@ -212,8 +212,16 @@ final class MatchHud {
         }
         double share = TeamGauge.share(members);
         return messages().get(key, Messages.tag("team", team.displayName()),
-                Messages.tag("bar", Component.text(TeamGauge.bar(share, TeamGauge.SEGMENTS), team.color())),
+                Messages.tag("bar", bar(share, team)),
                 Messages.tag("percent", TeamGauge.percent(share)), Messages.tag("alive", alive),
                 Messages.tag("size", team.size()), Messages.tag("kills", kills));
+    }
+
+    /** The gauge: the filled bars in the team colour, the rest dark gray. */
+    private static Component bar(double share, MatchTeam team) {
+        int filled = TeamGauge.filled(share, TeamGauge.SEGMENTS);
+        return Component.text(TeamGauge.SEGMENT.repeat(filled), team.color())
+                .append(Component.text(TeamGauge.SEGMENT.repeat(TeamGauge.SEGMENTS - filled),
+                        net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY));
     }
 }
