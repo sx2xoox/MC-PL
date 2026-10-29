@@ -200,6 +200,8 @@ public final class AugmentGame implements MiniGame {
         world.setDifficulty(read.difficulty());
         world.setTime(0);
         rule(world, GameRules.KEEP_INVENTORY, false);
+        // PvP is gated by the match phase, not the world: a server with pvp off by default must not block the fight
+        rule(world, GameRules.PVP, true);
         // Overworld only, and nothing that leaks positions or hints at the real world.
         rule(world, GameRules.ALLOW_ENTERING_NETHER_USING_PORTALS, false);
         rule(world, GameRules.LOCATOR_BAR, false);
