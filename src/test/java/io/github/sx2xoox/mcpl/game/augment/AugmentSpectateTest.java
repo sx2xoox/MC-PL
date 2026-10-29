@@ -561,4 +561,61 @@ class AugmentSpectateTest {
         UUID id = late.getUniqueId();
         assertFalse(match.session().aliveIds().contains(id));
     }
+
+    // =================================================================== 봇 채팅
+
+    private static boolean botLine(String line) {
+        return line.matches("^<\\S+ 봇> .+");
+    }
+
+    @Test
+    void botsTalkInChatLikePlayers() {
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCE, 5);
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCES + ".greeting", 1.0);
+        spectate("3 쉬움");
+        chat(admin);
+        h.ticks(20 * 30);
+        List<String> lines = chat(admin).stream().filter(AugmentSpectateTest::botLine).toList();
+        assertFalse(lines.isEmpty(), "greetings: " + lines);
+        assertTrue(lines.size() <= 30 / 4 + 1, "the global gap keeps it sparse: " + lines);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("<target>") || line.contains("<augment>")),
+                "placeholders resolve: " + lines);
+    }
+
+    @Test
+    void disabledBotChatIsSilent() {
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.ENABLED, false);
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCE, 5);
+        AugmentMatch match = spectate("3 쉬움");
+        h.tickUntilPhase(MatchPhase.FIGHT);
+        List<BotController> bots = match.bots().all();
+        hit(bots.get(0).body().body(), bots.get(1).body().body(), 1000);
+        h.ticks(60);
+        assertTrue(chat(admin).stream().noneMatch(AugmentSpectateTest::botLine));
+    }
+
+    @Test
+    void aKillIsTauntedAndTheVictimSaysLastWords() {
+        h.settings().set(BotSettings.Spectate.BORDER_DELAY, 600);
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCES + ".kill", 1.0);
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCES + ".death", 1.0);
+        h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCE, 5);
+        for (String trigger : List.of("greeting", "fight-start", "augment", "gear", "spot", "engage", "border",
+                "base-done", "low", "escape", "third-party", "showdown")) {
+            h.settings().set(io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.CHANCES + "." + trigger, 0.0);
+        }
+        AugmentMatch match = spectate("3 쉬움");
+        h.tickUntilPhase(MatchPhase.FIGHT);
+        h.ticks(100);
+        chat(admin);
+        List<BotController> bots = match.bots().all();
+        hit(bots.get(0).body().body(), bots.get(1).body().body(), 1000);
+        h.ticks(60);
+        List<String> all = chat(admin);
+        List<String> lines = all.stream().filter(AugmentSpectateTest::botLine).toList();
+        assertFalse(lines.isEmpty(), "chat: " + all);
+        assertTrue(lines.stream().anyMatch(line -> line.startsWith("<철수 봇> ")), "last words: " + lines);
+        assertTrue(lines.stream().anyMatch(line -> line.startsWith("<영희 봇> ")), "the taunt: " + lines);
+        assertTrue(lines.stream().noneMatch(line -> line.contains("<target>") || line.contains("<kills>")), lines.toString());
+    }
 }

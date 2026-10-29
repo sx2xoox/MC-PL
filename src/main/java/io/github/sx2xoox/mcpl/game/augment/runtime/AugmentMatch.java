@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -33,6 +34,7 @@ import io.github.sx2xoox.mcpl.game.augment.api.AugmentRegistry;
 import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
 import io.github.sx2xoox.mcpl.game.augment.api.Params;
 import io.github.sx2xoox.mcpl.game.augment.bonus.BonusCondition;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotChat;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotController;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotDifficulty;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotHost;
@@ -101,6 +103,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
     private final @Nullable BotManager bots;
     private final @Nullable BotSetup botSetup;
     private final @Nullable SpectatorView spectators;
+    /** Recent hits between participants (bot matches): the bots' chat reads it (a third party joining a fight). */
+    private final FightLog fightLog = new FightLog();
+    /** 봇 채팅 (bot matches). */
+    private final @Nullable BotChatFeed chat;
     /** Match-clock ticks since the farming started: phases, rounds and the border run on it. */
     private long time;
     private int timeScale = 1;
@@ -184,6 +190,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 spectate || botSetup.mixed(), true) : null;
         this.spectators = spectate && bots != null ? new SpectatorView(this, bots, botSetup.settings().spectate())
                 : null;
+        this.chat = bots != null && mode != MatchMode.PRACTICE ? new BotChatFeed(this, bots,
+                new BotChat(BotChat.Settings.read(game.hub().config().gameSection(AugmentGame.ID)),
+                        BotChatFeed.loadLines(game.hub().plugin()), new Random()), fightLog, new Random()) : null;
         if (spectate && botSetup != null) {
             this.timeScale = botSetup.settings().spectate().timeScale();
         }
@@ -406,6 +415,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 players.put(id, new PlayerState(id, 0));
             }
             session.registerListener(bots);
+            if (chat != null) {
+                session.registerListener(new FightLog.Recorder(this, fightLog, chat::hit));
+            }
             if (isSpectate()) {
                 session.formTeams();
                 announce(messages().prefixed("spectate.joined", Messages.tag("count", bots.all().size()),
@@ -475,6 +487,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (spectators != null && clock % 20 == 0) {
             spectators.tick();
         }
+        if (chat != null && clock % 10 == 0) {
+            chat.tick();
+        }
         bonus.tick();
         if (clock % 10 == 0) {
             hud.update();
@@ -499,6 +514,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (bot != null) {
             killerBody = body(bot);
             forEachAugment(bot, "onKill", augment -> augment.onKill(victim));
+            if (chat != null) {
+                chat.killed(bot, victim.getUniqueId());
+            }
         }
         if (isPractice()) {
             // practice: back on your feet near where you fell, augments kept
@@ -688,6 +706,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
         session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 1f, 1.2f);
         hud.update();
+        if (chat != null) {
+            chat.farmingStarted();
+        }
     }
 
     private void spread() {
@@ -749,6 +770,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 Format.duration(realTicks(settings.borderDelayTicks()) * 50)), Messages.tag("size",
                 Params.format(settings.borderFinalSize()))));
         session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.7f, 1f);
+        if (chat != null) {
+            chat.fightStarted();
+        }
     }
 
     /** Match-clock ticks since PvP started. */
@@ -771,6 +795,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
                     Format.duration(realTicks(Math.max(0, left)) * 50)), Messages.tag("size",
                     Params.format(settings.borderFinalSize()))));
             session.playSound(Sound.BLOCK_BEACON_POWER_SELECT, 1f, 0.8f);
+            if (chat != null) {
+                chat.borderShrinking();
+            }
         }
         if (borderShrinking && !borderFinal && fight >= settings.borderDelayTicks() + settings.borderShrinkTicks()) {
             borderFinal = true;
@@ -871,6 +898,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             log("onGrant of " + info.id() + " (bot)", e);
         }
         hud.update();
+        if (chat != null) {
+            chat.augmentGranted(bot, info);
+        }
         return info;
     }
 
@@ -1749,6 +1779,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
         strip(bot);
         session.eliminateBot(bot, credited, io.github.sx2xoox.mcpl.core.game.DeathCauses.describe(session.messages(),
                 lastDamage));
+        if (chat != null) {
+            chat.died(bot, credited);
+            if (credited != null) {
+                chat.killed(credited, bot);
+            }
+        }
         if (spectators != null) {
             spectators.botDied(bot, credited);
         }
@@ -1792,6 +1828,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
     private void finish(GameResult result) {
         if (spectators != null) {
             spectators.announceWinner(result);
+        }
+        if (chat != null) {
+            chat.finished(result);
         }
         broadcastSummary();
         session.finish(result);

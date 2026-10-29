@@ -8,6 +8,7 @@ import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.config.SettingsSection;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotChat;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.MemoryConfiguration;
@@ -88,13 +89,24 @@ final class AugmentSettingEntries {
         Setting bonus = toggle("augment.bonus", "보너스", "bonus", Material.TOTEM_OF_UNDYING, "settings.bonus",
                 AugmentSettings.BONUS);
 
+        Setting botChat = toggle("augment.bot-chat", "봇채팅", "bot-chat", Material.WRITABLE_BOOK,
+                "settings.bot-chat", BotChat.Settings.ENABLED);
+        Setting botChatChance = number("augment.bot-chat-chance", "봇채팅확률", "bot-chat-chance", Material.PAPER,
+                "settings.bot-chat-chance", BotChat.Settings.CHANCE)
+                .range(0, BotChat.Settings.MAX_CHANCE).steps(0.25, 1).unit(Setting.Unit.MULTIPLIER)
+                .number(decimal(BotChat.Settings.CHANCE),
+                        value -> config.setGameValue(AugmentGame.ID, BotChat.Settings.CHANCE, value),
+                        defaults.getDouble(BotChat.Settings.CHANCE));
+
         return List.of(
                 new SettingsSection("augment.match", Material.AMETHYST_CLUSTER, messages, "settings.section.match",
                         List.of(farming, invulnerable, noHunger, borderDelay, borderShrink, borderFinal, glow)),
                 new SettingsSection("augment.world", Material.GRASS_BLOCK, messages, "settings.section.world",
                         List.of(radius, structures, pregenerate)),
                 new SettingsSection("augment.augments", Material.ENCHANTED_BOOK, messages, "settings.section.augments",
-                        List.of(choice, ui, rerolls, bonus)));
+                        List.of(choice, ui, rerolls, bonus)),
+                new SettingsSection("augment.bots", Material.ARMOR_STAND, messages, "settings.section.bots",
+                        List.of(botChat, botChatChance)));
     }
 
     // =================================================================== helpers

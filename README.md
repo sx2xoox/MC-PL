@@ -50,6 +50,7 @@
    - `abilities.yml`: 초능력별 사용 여부와 수치
    - `augments.yml`: 증강과 보너스 조건별 사용 여부, 등급, 수치
    - `messages.yml`, `superpower.yml`, `augment.yml`: 메시지
+   - `augment-bots-chat.yml`: 봇전·봇 관전전에서 봇이 채팅으로 하는 말 (상황·성격별 문구)
 
 ### 직접 빌드
 
@@ -237,7 +238,8 @@
     초능력 전용 아이템(`ULTIMATE_CRYSTAL`, `RECHARGE_CHARM`)을 쓸 수 있습니다. 잘못된 줄은 콘솔 경고와 함께 건너뜁니다.
     가까운 상자 반짝임(`nearby-hint`, `nearby-hint-radius`)도 여기서 켜고 끕니다.
   - 증강 야생전 설정(`games.augment`): 월드(반경, 구조물, 난이도, 미리 생성), 파밍 시간, 월드보더(축소 대기·시간, 최종 크기,
-    보더 피해, 최종 발광), 증강(선택 시간, 리롤, 라운드 시각과 등급 가중치 `augments.rounds`), 보너스 증강 켜기/끄기
+    보더 피해, 최종 발광), 증강(선택 시간, 리롤, 라운드 시각과 등급 가중치 `augments.rounds`), 보너스 증강 켜기/끄기,
+    봇 채팅(`bots.chat`: 켜기, 확률 배율, 상황별 확률)
 - **`augments.yml`**: 증강마다 `enabled`와 수치, 보너스 조건마다 `enabled`, 받는 등급(`tier`), 수치.
 - **`abilities.yml`**: 능력마다 `enabled`(사용 여부)와 쿨타임, 피해량, 범위 같은 모든 수치를 조정할 수 있습니다.
 - 수정한 뒤 `/게임 리로드`를 입력하면 다음 경기부터 적용됩니다. 자주 바꾸는 설정은 아래처럼 게임 안에서 바꿀 수 있습니다.

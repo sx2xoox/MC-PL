@@ -136,6 +136,7 @@ public final class AugmentGame implements MiniGame {
         AugmentSettings.declareDefaults(defaults);
         AugmentPracticeSettings.declareDefaults(defaults);
         BotSettings.declareDefaults(defaults);
+        io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.declareDefaults(defaults);
     }
 
     @Override
