@@ -532,6 +532,11 @@ class AugmentSpectateTest {
     @Test
     void aBotTurnsItsHeadTowardsATargetAtItsTurnSpeed() {
         h.settings().set(BotSettings.Spectate.BORDER_DELAY, 600);
+        for (io.github.sx2xoox.mcpl.game.augment.bot.BotPersonality each
+                : io.github.sx2xoox.mcpl.game.augment.bot.BotPersonality.values()) {
+            // the plain mind: no homebody behind its walls, no stalker, just the turn
+            h.settings().set(BotSettings.PERSONALITIES + "." + each.key(), 0);
+        }
         AugmentMatch match = spectate("쉬움 1 지옥 1");
         h.tickUntilPhase(MatchPhase.FIGHT);
         BotController easy = match.bots().all().get(0);

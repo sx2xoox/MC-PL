@@ -46,6 +46,9 @@ public interface BotHost {
     /** 0..1 of the farming phase done (1 in the fight). */
     double farmingProgress();
 
+    /** Match-clock ticks of the farming still to go (0 in the fight); real ticks are this over {@link #timeScale()}. */
+    long farmingTicksLeft();
+
     double borderCenterX();
 
     double borderCenterZ();

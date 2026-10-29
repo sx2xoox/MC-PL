@@ -535,6 +535,18 @@ public final class BotManager implements Listener {
         }
     }
 
+    /** The cells of the trappers' hidden pits (every bot knows them and keeps out). */
+    private final java.util.Set<org.bukkit.block.Block> traps = new java.util.HashSet<>();
+
+    void markTrap(org.bukkit.block.Block cell) {
+        traps.add(cell);
+    }
+
+    /** True if {@code cell} is part of a trapper's hidden pit. */
+    boolean trap(org.bukkit.block.Block cell) {
+        return !traps.isEmpty() && traps.contains(cell);
+    }
+
     /** Centers of the other bots' bases. */
     List<int[]> baseCenters(UUID except) {
         List<int[]> out = new ArrayList<>();
@@ -613,6 +625,19 @@ public final class BotManager implements Listener {
         }
     }
 
+    /** The living body that dealt {@code event} (the shooter of a projectile), or null. */
+    static @Nullable LivingEntity attackerBody(EntityDamageEvent event) {
+        if (!(event instanceof EntityDamageByEntityEvent byEntity)) {
+            return null;
+        }
+        Entity damager = byEntity.getDamager();
+        if (damager instanceof org.bukkit.entity.Projectile projectile
+                && projectile.getShooter() instanceof LivingEntity shooter) {
+            return shooter;
+        }
+        return damager instanceof LivingEntity living ? living : null;
+    }
+
     /** Stats, kill credit, fights for third parties and the knockback of a bot's body. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onRecord(EntityDamageEvent event) {
@@ -629,7 +654,7 @@ public final class BotManager implements Listener {
         lastHit.put(attacker, new Hit(victimId, now));
         BotController hurt = bots.get(victimId);
         if (hurt != null && session.isParticipant(attacker)) {
-            hurt.grudge(attacker, now); // it remembers who hit it
+            hurt.struck(attacker, attackerBody(event), now); // it remembers who hit it, and where they are
         }
         for (UUID side : new UUID[] {attacker, victimId}) {
             BotController bot = bots.get(side);

@@ -17,11 +17,15 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
+import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.Ageable;
+import org.bukkit.block.data.Directional;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.AbstractArrow;
@@ -32,6 +36,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.WanderingTrader;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -81,6 +86,24 @@ public final class BotController {
     static final int LEAD_TICKS = 60 * 20;
     /** Fights (hits) are heard this far away, like a player hears swords and bows. */
     static final double FIGHT_HEARING = 48;
+    /** A failed site search is tried again after this many ticks (it roams in between). */
+    static final int PLAN_AGAIN_TICKS = 5 * 20;
+    /** A base site it has not reached after this many ticks of walking is given up for another. */
+    static final int SITE_WALK_TICKS = 25 * 20;
+    /** Inspections (two seconds apart) that may find a hole in its base still open before it is left. */
+    static final int MEND_TRIES = 30;
+    /** Holes in its walls and roof (beyond those it was built with) that make its base no place to hold. */
+    static final int BREACH_HOLES = 6;
+    /** How far a trapper throws a cobweb onto an enemy's feet. */
+    static final double WEB_THROW_REACH = 6;
+    /** Blocks a builder keeps back from its base's extras and traps (to shut its door, bridge, wall itself in). */
+    static final int BLOCK_RESERVE = 24;
+    /** Ticks between two cobwebs a trapper throws on its enemy's feet. */
+    static final int WEB_THROW_TICKS = 8 * 20;
+    /** Real ticks before the fight a bot with a finished base heads home. */
+    static final int HOME_BEFORE_FIGHT_TICKS = 15 * 20;
+    /** Its pace over rough ground on the way to a base site, for planning (sprinting, with detours). */
+    static final double WALK_BLOCKS_PER_SECOND = 4.0;
 
     private final UUID id;
     private final String name;
@@ -105,6 +128,18 @@ public final class BotController {
     private final Map<UUID, Seen> memory = new HashMap<>();
     private BasePlanner.@Nullable Plan base;
     private BasePlanner.@Nullable Palette palette;
+    /** The shaft block it puts under its feet climbing its tower, and when it jumped. */
+    private int @Nullable [] shaftCell;
+    /** When a trapper may throw its next cobweb, and until when a tank's shield stays up. */
+    private long nextThrowAt;
+    /** Traps a trapper has laid around its base. */
+    private int trapsLaid;
+    /** Cobwebs a trapper threw on enemies' feet. */
+    private int websThrown;
+    private long shieldUpUntil;
+    private long shaftSince;
+    /** The layout it builds (its personality's; a gambler's drawn once). */
+    private BasePlanner.@Nullable Design design;
     private boolean baseFailed;
     private int built;
     private double buildCredit;
@@ -159,8 +194,23 @@ public final class BotController {
     private boolean relocating;
     /** The base's doorway is shut with its own blocks. */
     private boolean doorClosed;
-    /** Placements it could not place yet (someone stood there): tried again once. */
+    /** Ticks the placement in hand has failed (someone stands there): passed over after a second, mended later. */
     private int buildBlockedTicks;
+    /** Holes in its finished base to fill ({@link #inspectBase}), and how often each was tried. */
+    private final List<BasePlanner.Placement> mending = new ArrayList<>();
+    private final Map<Block, Integer> mendTries = new HashMap<>();
+    private long nextInspect;
+    /** The cells of its base's shell (for {@link #ownShell}), for the plan they were made for. */
+    private final java.util.Set<Long> shellCells = new java.util.HashSet<>();
+    private BasePlanner.@Nullable Plan shellOf;
+    private long nextBreachCheck;
+    private boolean wasBreached;
+    /** No site found: when it looks again. */
+    private long planAgainAt;
+    /** Ticks it has been walking to its base site without getting there. */
+    private int siteWalk;
+    /** Sites it could not reach ({x, z}). */
+    private final List<int[]> badSites = new ArrayList<>();
     /** Whom it holds a grudge against, and since when (ticks). */
     private final Map<UUID, Long> grudges = new HashMap<>();
     /** Where a grudge target was last seen or heard. */
@@ -249,6 +299,24 @@ public final class BotController {
         }
     }
 
+    /**
+     * {@code who} hit it ({@code by}: their body, or null): it knows where they are now, even unseen behind its walls
+     * (a player turns towards whatever shot them).
+     */
+    void struck(UUID who, @Nullable LivingEntity by, long now) {
+        grudge(who, now);
+        BotBody b = body;
+        if (by == null || b == null || who.equals(id) || !by.getWorld().equals(b.body().getWorld())) {
+            return;
+        }
+        double distance = by.getLocation().distance(b.body().getLocation());
+        Seen old = memory.get(who);
+        memory.put(who, new Seen(by, by.getLocation(), now, distance, old == null ? distance : old.distance(),
+                old != null && old.tick() == now && old.inSight()));
+        glance = by.getLocation();
+        glanceUntil = now + 25;
+    }
+
     boolean holdsGrudge(UUID who) {
         return grudges.containsKey(who);
     }
@@ -288,7 +356,7 @@ public final class BotController {
     }
 
     public int blocks() {
-        return Math.max(0, loadout.blocks() - blocksUsed);
+        return Math.max(0, stock(loadout) - blocksUsed);
     }
 
     public int arrows() {
@@ -325,6 +393,9 @@ public final class BotController {
         if (b == null || !b.valid()) {
             return;
         }
+        if (traits.builds()) {
+            inspectBase(now, b.body());
+        }
         if ((now + offset) % 20 == 0) {
             updateGear();
         }
@@ -339,6 +410,9 @@ public final class BotController {
         }
         wantYaw = Float.NaN;
         wantPitch = Float.NaN;
+        if (now > shieldUpUntil && b.body().isHandRaised() && drawStart < 0) {
+            b.body().clearActiveItem();
+        }
         try {
             if (drowning(b.body())) {
                 surface(now, b); // nothing else matters while out of air
@@ -467,8 +541,8 @@ public final class BotController {
     /** Breaks a block of the match world (a player mining it): its own placed blocks are forgotten. */
     private void dig(Block block) {
         if (!block.getWorld().equals(host.world()) || Hazards.UNBREAKABLE.contains(block.getType())
-                || block.getType().isAir()) {
-            return;
+                || block.getType().isAir() || recovering() && ownShell(block)) {
+            return; // never digs its way out through its own walls: it leaves by the door
         }
         Material was = block.getType();
         block.setType(Material.AIR);
@@ -646,7 +720,8 @@ public final class BotController {
             double distance = seen.tick() == now ? seen.distance() : seen.at().distance(at);
             contacts.add(new Contact(entry.getKey(), distance, rival.getHealth() + rival.getAbsorptionAmount(),
                     maxHealth(rival), manager.gearOf(rival), visible, manager.fightingOther(entry.getKey(), id, now),
-                    seen.distance() < seen.previous() - 0.5, holdsBow(rival), grudges.containsKey(entry.getKey())));
+                    seen.distance() < seen.previous() - 0.5, holdsBow(rival), grudges.containsKey(entry.getKey()),
+                    seen.tick() == now && webbed(rival)));
         }
         // the nearer of where the border is now and where it will be once it could have walked in (the farther out,
         // the earlier it heads in: terrain makes the way longer than the straight line)
@@ -656,11 +731,11 @@ public final class BotController {
         double zone = Math.hypot(at.getX() - host.borderCenterX(), at.getZ() - host.borderCenterZ());
         BasePlanner.Plan plan = base;
         boolean baseBuilt = relocating || plan != null && built >= plan.placements().size() / 2;
-        boolean baseDone = baseFailed || plan != null && built >= plan.placements().size();
+        boolean baseDone = baseFailed || baseFinished();
         double baseDistance = plan == null ? Double.POSITIVE_INFINITY
                 : Math.hypot(at.getX() - (plan.x() + 0.5), at.getZ() - (plan.z() + 0.5));
         // while it relocates, the brain sees the lost base (built, unsafe): it keeps building the new one
-        boolean baseSafe = !relocating && plan != null && baseSafeFor(plan);
+        boolean baseSafe = !relocating && plan != null && baseSafeFor(plan) && !breached(now, plan);
         Decision current = decision;
         return new BotBrain.Situation(host.fight(), Math.max(0, 1 - host.farmingProgress()), self.getHealth(),
                 self.getAbsorptionAmount(), maxHealth(self), apples, now >= nextAppleAt, gearScore(),
@@ -759,10 +834,23 @@ public final class BotController {
         if (doorClosed && !atBase) {
             openDoor(); // out it goes: the doorway opens again
         }
+        if (!atBase && upInTower(self.getLocation()) && d.behaviour() != Behaviour.AMBUSH) {
+            if (d.behaviour() == Behaviour.KITE && target != null) {
+                stop(); // the nest is the best place to shoot from
+                face(self, target.getEyeLocation());
+                shoot(now, b, self, target);
+                return;
+            }
+            BasePlanner.Plan tower = base;
+            if (tower != null) {
+                descend(now, b, tower); // down the shaft first, wherever it goes next
+            }
+            return;
+        }
         boolean sneak = false;
         switch (d.behaviour()) {
             case FARM -> {
-                roam(now, self, 40 * traits.roam());
+                farm(now, self);
                 defendAgainstMobs(now, self);
             }
             case BUILD_BASE -> buildBase(now, self);
@@ -788,14 +876,7 @@ public final class BotController {
                     return;
                 }
                 Location at = where(d.target(), target, now);
-                double distance = self.getLocation().distance(at);
-                if (distance < 9) {
-                    goTo(now, away(self.getLocation(), at, 12), Gait.SPRINT);
-                } else if (distance > brain.bowRange() * 0.85) {
-                    goTo(now, at, Gait.SPRINT);
-                } else {
-                    stop();
-                }
+                kiteMove(now, self, at);
                 face(self, target.getEyeLocation());
                 if (!shoot(now, b, self, target)) {
                     tryMelee(now, self, target);
@@ -851,7 +932,8 @@ public final class BotController {
                     face(self, target.getEyeLocation());
                     if (self.getLocation().distance(target.getLocation()) < 5) {
                         decision = new Decision(Behaviour.ENGAGE, d.target(), d.score());
-                    } else if (base != null && base.inside(self.getLocation().getX(), self.getLocation().getZ())) {
+                    } else if (base != null && base.inside(self.getLocation().getX(), self.getLocation().getY(),
+                            self.getLocation().getZ())) {
                         shoot(now, b, self, target); // through the slit while it walks up
                     }
                 }
@@ -863,11 +945,18 @@ public final class BotController {
                 }
                 Location at = where(d.target(), target, now);
                 double distance = self.getLocation().distance(at);
-                if (distance < 14) {
-                    goTo(now, away(self.getLocation(), at, 8), traits.sneaks() ? Gait.SNEAK : Gait.WALK);
-                    sneak = traits.sneaks();
-                } else if (distance > 24) {
-                    goTo(now, at, Gait.SPRINT);
+                // an assassin stalks close, crouching; an opportunist shadows the fight from 20 to 30 blocks
+                boolean stalker = traits.sneaks();
+                boolean shadow = traits.personality() == BotPersonality.OPPORTUNIST;
+                double near = stalker ? 8 : shadow ? 20 : 14;
+                double far = stalker ? 16 : shadow ? 30 : 24;
+                if (distance < near) {
+                    goTo(now, away(self.getLocation(), at, 6), stalker ? Gait.SNEAK : Gait.WALK);
+                    sneak = stalker;
+                } else if (distance > far) {
+                    boolean creep = stalker && distance < far + 10;
+                    goTo(now, at, creep ? Gait.SNEAK : stalker ? Gait.WALK : Gait.SPRINT);
+                    sneak = creep;
                 } else {
                     stop();
                     face(self, target.getEyeLocation());
@@ -894,6 +983,12 @@ public final class BotController {
             case FLEE_BORDER -> {
                 goTo(now, safeFromBorder(self.getLocation()), Gait.RUSH);
                 eatIfLow(now, self);
+            }
+        }
+        if (traits.personality() == BotPersonality.TANK && host.fight()) {
+            LivingEntity close = nearestKnown();
+            if (close != null && close.getLocation().distance(self.getLocation()) <= 6) {
+                raiseShield(now, b, self, close); // a melee enemy close by: the shield goes up
             }
         }
         if (self.isSneaking() != sneak) {
@@ -956,29 +1051,52 @@ public final class BotController {
         Location at = self.getLocation();
         World world = self.getWorld();
         int[] inner = plan.inner();
-        if (!plan.inside(at.getX(), at.getZ())) {
+        if (!plan.inside(at.getX(), at.getY(), at.getZ())) {
             int[] door = plan.door().getFirst();
-            if (doorClosed && Math.hypot(at.getX() - (door[0] + 0.5), at.getZ() - (door[2] + 0.5)) < 4) {
-                openDoor();
+            if (Math.hypot(at.getX() - (door[0] + 0.5), at.getZ() - (door[2] + 0.5)) < 4) {
+                clearPassage(plan); // its way in: whatever blocks the doorway goes
             }
-            goTo(now, new Location(world, inner[0] + 0.5, inner[1], inner[2] + 0.5), Gait.SPRINT);
+            // to the spot outside its way in first (round the walls, off the roof), then in through it
+            int[] outer = plan.outer();
+            Location front = new Location(world, outer[0] + 0.5, outer[1], outer[2] + 0.5);
+            boolean atFront = Math.hypot(at.getX() - front.getX(), at.getZ() - front.getZ()) < 1.5
+                    && Math.abs(at.getY() - front.getY()) < 1.5;
+            boolean onTheWay = Math.abs(at.getY() - (plan.floorY() + 1)) < 1.5 && Math.hypot(at.getX()
+                    - (door[0] + 0.5), at.getZ() - (door[2] + 0.5)) < Math.hypot(front.getX() - (door[0] + 0.5),
+                    front.getZ() - (door[2] + 0.5)) + 0.5 && !atFront;
+            if (!atFront && !onTheWay && plan.design() != BasePlanner.Design.BURROW) {
+                goTo(now, front, Gait.SPRINT);
+            } else {
+                goTo(now, new Location(world, inner[0] + 0.5, inner[1], inner[2] + 0.5), Gait.SPRINT);
+            }
             swingAtAnyone(now, self);
             return;
         }
         boolean holdDoorway = !loadout.bow() || arrows() <= 0 || traits.weight(Behaviour.ENGAGE) >= 1.1
-                && !healing;
+                && !healing || plan.slits().isEmpty();
         boolean threat = target != null && !target.isDead();
-        if (threat && target.getLocation().distance(at) <= REACH + 1.5) {
+        if (threat) {
+            throwWeb(now, self, target); // a trapper webs whoever walks up to its walls
+        }
+        if (threat && target.getLocation().distance(at) <= REACH + 1.5
+                && Math.abs(target.getLocation().getY() - at.getY()) < 2) {
             face(self, target.getEyeLocation());
             tryMelee(now, self, target); // whoever gets in is fought
             goTo(now, target.getLocation(), Gait.WALK);
+            raiseShield(now, b, self, target);
             return;
         }
         if (holdDoorway) {
-            if (doorClosed && !healing) {
+            if (plan.tower() && at.getY() > plan.floorY() + 2.5) {
+                descend(now, b, plan);
+                return;
+            }
+            // a survivor hides in its burrow sealed in; the others hold the doorway open and fight whoever comes
+            boolean hide = traits.personality() == BotPersonality.SURVIVOR;
+            if (doorClosed && !healing && !hide) {
                 openDoor();
             }
-            if (!doorClosed && healing && threat) {
+            if (!doorClosed && (healing && threat || hide)) {
                 closeDoor(self);
             }
             Location spot = new Location(world, inner[0] + 0.5, inner[1], inner[2] + 0.5);
@@ -992,11 +1110,12 @@ public final class BotController {
                     : new Location(world, door[0] + 0.5, door[1] + 1.1, door[2] + 0.5));
             if (threat) {
                 swingAtAnyone(now, self);
+                raiseShield(now, b, self, target);
             }
             return;
         }
-        if (threat && !doorClosed) {
-            closeDoor(self);
+        if ((threat || traits.homebody() >= 0.7) && !doorClosed) {
+            closeDoor(self); // a homebody keeps its gate shut all fight long
         }
         // the slit facing the enemy (or the zone), and stand right behind it
         int[] slit = null;
@@ -1010,24 +1129,85 @@ public final class BotController {
                 slit = s;
             }
         }
-        if (slit != null) {
-            int sx = slit[0] - Integer.signum(slit[0] - plan.x());
-            int sz = slit[2] - Integer.signum(slit[2] - plan.z());
-            Location spot = new Location(world, sx + 0.5, plan.floorY() + 1, sz + 0.5);
-            if (spot.distance(at) > 0.7) {
-                goTo(now, spot, Gait.WALK);
-            } else {
-                stop();
+        if (slit == null) {
+            return;
+        }
+        if (plan.tower() && at.getY() < slit[4] - 0.5) {
+            climb(now, b, plan); // up the shaft to the nest
+            return;
+        }
+        Location spot = new Location(world, slit[3] + 0.5, slit[4], slit[5] + 0.5);
+        if (spot.distance(at) > 0.7) {
+            goTo(now, spot, Gait.WALK);
+        } else {
+            stop();
+        }
+        if (threat) {
+            face(self, target.getEyeLocation());
+            if (!shoot(now, b, self, target)) {
+                swingAtAnyone(now, self);
             }
-            if (threat) {
-                face(self, target.getEyeLocation());
-                if (!shoot(now, b, self, target)) {
-                    swingAtAnyone(now, self);
-                }
-            } else {
-                face(self, new Location(world, slit[0] + 0.5, slit[1] + 0.5, slit[2] + 0.5));
+        } else {
+            face(self, new Location(world, slit[0] + 0.5, slit[1] + 0.5, slit[2] + 0.5));
+        }
+    }
+
+    /**
+     * Up its tower's shaft like a player: stands in the middle, jumps and puts a block under its feet, again and
+     * again until it stands in the nest.
+     */
+    private void climb(long now, BotBody b, BasePlanner.Plan plan) {
+        WanderingTrader legs = b.legs();
+        Location at = legs.getLocation();
+        int[] cell = shaftCell;
+        if (cell != null) {
+            if (at.getY() >= cell[1] + 1.05 && b.body().getLocation().getY() >= cell[1] + 1.0
+                    || now - shaftSince > 14) {
+                placeAny(b.body(), cell[0], cell[1], cell[2], material(BasePlanner.Part.WALL));
+                shaftCell = null;
+            }
+            return;
+        }
+        Location middle = new Location(at.getWorld(), plan.x() + 0.5, at.getY(), plan.z() + 0.5);
+        if (Math.hypot(at.getX() - middle.getX(), at.getZ() - middle.getZ()) > 0.35) {
+            goTo(now, middle, Gait.WALK);
+            return;
+        }
+        stop();
+        legs.setVelocity(new Vector(0, legs.getVelocity().getY(), 0));
+        if (legs.isOnGround() && at.getBlockY() <= plan.nestY()) {
+            shaftCell = new int[] {plan.x(), at.getBlockY(), plan.z()};
+            shaftSince = now;
+            legs.setVelocity(new Vector(0, 0.42, 0));
+            face(b.body(), new Location(at.getWorld(), plan.x() + 0.5, at.getBlockY() - 0.5, plan.z() + 0.5));
+        }
+    }
+
+    /** Down its tower's shaft: from the middle of the nest it digs out the block under its feet, one at a time. */
+    private void descend(long now, BotBody b, BasePlanner.Plan plan) {
+        WanderingTrader legs = b.legs();
+        Location at = legs.getLocation();
+        Location middle = new Location(at.getWorld(), plan.x() + 0.5, at.getY(), plan.z() + 0.5);
+        if (Math.hypot(at.getX() - middle.getX(), at.getZ() - middle.getZ()) > 0.35) {
+            goTo(now, middle, Gait.WALK);
+            return;
+        }
+        stop();
+        if (legs.isOnGround() && now >= nextSwing) {
+            Block under = at.getWorld().getBlockAt(plan.x(), at.getBlockY() - 1, plan.z());
+            if (under.getY() > plan.floorY()) {
+                nextSwing = now + digTicks();
+                face(b.body(), under.getLocation().add(0.5, 0.5, 0.5));
+                dig(under);
             }
         }
+    }
+
+    /** It stands up in its tower's nest (or on the shaft): it has to come down before it goes anywhere. */
+    private boolean upInTower(Location at) {
+        BasePlanner.Plan plan = base;
+        return plan != null && plan.tower() && plan.inside(at.getX(), at.getZ()) && at.getY() > plan.floorY() + 2.5
+                && at.getY() < plan.roofY();
     }
 
     /** Shuts the doorway with two of its blocks (never on anyone standing in it). */
@@ -1052,6 +1232,34 @@ public final class BotController {
         }
     }
 
+    /**
+     * Digs out whatever stands in its way in, from the spot outside the doorway to the one inside (its own door
+     * blocks, a block someone put there); not a burrow's stairs.
+     */
+    private void clearPassage(BasePlanner.Plan plan) {
+        if (plan.design() == BasePlanner.Design.BURROW) {
+            openDoor();
+            return;
+        }
+        World world = host.world();
+        int ox = Integer.signum(plan.doorX() - plan.x());
+        int oz = Integer.signum(plan.doorZ() - plan.z());
+        int[] in = plan.inner();
+        int x = plan.outer()[0];
+        int z = plan.outer()[2];
+        for (int step = 0; step < 8 && (x != in[0] || z != in[2]); step++) {
+            x -= ox;
+            z -= oz;
+            for (int y = plan.floorY() + 1; y <= plan.floorY() + 2; y++) {
+                Block block = world.getBlockAt(x, y, z);
+                if (!block.getType().isAir() && !block.isLiquid()) {
+                    dig(block);
+                }
+            }
+        }
+        doorClosed = false;
+    }
+
     /** Opens the doorway again (breaks the blocks it shut it with). */
     void openDoor() {
         BasePlanner.Plan plan = base;
@@ -1070,7 +1278,7 @@ public final class BotController {
 
     /** A trapper drops a cobweb behind itself when a chaser is close (a few per fight). */
     private void layWeb(long now, Mannequin self, Location threat) {
-        if (!traits.traps() || websLaid >= 8 || now < nextWebAt || threat.distance(self.getLocation()) > 8) {
+        if (!traits.traps() || websLaid >= 16 || now < nextWebAt || threat.distance(self.getLocation()) > 8) {
             return;
         }
         Location at = self.getLocation();
@@ -1087,6 +1295,308 @@ public final class BotController {
         }
     }
 
+    /**
+     * Where it moves while shooting: a sniper keeps 15 to 30 blocks, backs off up to higher ground and steps side to
+     * side between shots; a nomad never stands still, circling its target; anyone else backs off when they come
+     * close, closes in when out of range and stands to shoot.
+     */
+    private void kiteMove(long now, Mannequin self, Location at) {
+        Location me = self.getLocation();
+        double distance = me.distance(at);
+        BotPersonality who = traits.personality();
+        if (who == BotPersonality.ARCHER) {
+            if (distance < 15) {
+                goTo(now, higherAway(me, at, 10), distance < 8 ? Gait.SPRINT : Gait.WALK);
+            } else if (distance > Math.min(30, brain.bowRange() * 0.9)) {
+                goTo(now, at, Gait.SPRINT);
+            } else {
+                goTo(now, sideStep(now, me, at, 3), Gait.WALK);
+            }
+            return;
+        }
+        if (who == BotPersonality.NOMAD) {
+            double want = Math.max(12, brain.bowRange() * 0.6);
+            Location orbit = sideStep(now, me, at, 6);
+            Vector radial = orbit.toVector().subtract(at.toVector()).setY(0);
+            if (radial.lengthSquared() > 1.0E-6) {
+                orbit = at.clone().add(radial.normalize().multiply(want));
+            }
+            goTo(now, ground(self.getWorld(), orbit.getX(), orbit.getZ()), Gait.SPRINT); // hit and run, never still
+            return;
+        }
+        if (distance < 9) {
+            goTo(now, away(me, at, 12), Gait.SPRINT);
+        } else if (distance > brain.bowRange() * 0.85) {
+            goTo(now, at, Gait.SPRINT);
+        } else {
+            stop();
+        }
+    }
+
+    /** A spot {@code step} blocks to the side of the line to {@code at}, the side switching every second or two. */
+    private Location sideStep(long now, Location me, Location at, double step) {
+        if (now >= strafeAt) {
+            strafeAt = now + 25 + random.nextInt(20);
+            strafe = -strafe;
+        }
+        Vector to = at.toVector().subtract(me.toVector()).setY(0);
+        if (to.lengthSquared() < 1.0E-6) {
+            return me;
+        }
+        Vector side = new Vector(-to.getZ(), 0, to.getX()).normalize().multiply(step * strafe);
+        return me.clone().add(side);
+    }
+
+    /** Of a few spots {@code distance} blocks away from {@code threat}, the highest (a sniper wants the high ground). */
+    private Location higherAway(Location from, Location threat, double distance) {
+        Vector out = from.toVector().subtract(threat.toVector()).setY(0);
+        if (out.lengthSquared() < 1.0E-6) {
+            out = new Vector(1, 0, 0);
+        }
+        out.normalize();
+        Location best = from;
+        double bestY = Double.NEGATIVE_INFINITY;
+        for (int turn = -2; turn <= 2; turn++) {
+            Vector dir = out.clone().rotateAroundY(turn * Math.PI / 8).multiply(distance);
+            Location spot = ground(from.getWorld(), from.getX() + dir.getX(), from.getZ() + dir.getZ());
+            if (spot.getY() > bestY + 0.5) {
+                best = spot;
+                bestY = spot.getY();
+            }
+        }
+        return best;
+    }
+
+    /** True if {@code entity} stands in a cobweb. */
+    static boolean webbed(LivingEntity entity) {
+        Location at = entity.getLocation();
+        return at.getBlock().getType() == Material.COBWEB
+                || at.clone().add(0, 1, 0).getBlock().getType() == Material.COBWEB;
+    }
+
+    /**
+     * A trapper in melee throws a cobweb on its enemy's feet now and then (a player places one at their feet): stuck,
+     * they are easy to hit. Only into air, in the match world.
+     */
+    private void throwWeb(long now, Mannequin self, LivingEntity target) {
+        if (!traits.traps() || now < nextThrowAt || target.getLocation().distance(self.getLocation()) > WEB_THROW_REACH
+                || blocks() <= 0 || !self.hasLineOfSight(target)) {
+            return;
+        }
+        Block feet = target.getLocation().getBlock();
+        if (!feet.getType().isAir() || !feet.getWorld().equals(host.world())
+                || !host.arena().contains(feet.getLocation().add(0.5, 0, 0.5))) {
+            return;
+        }
+        feet.setType(Material.COBWEB);
+        placed.put(feet, Material.COBWEB);
+        blocksUsed++;
+        self.swingMainHand();
+        feet.getWorld().playSound(feet.getLocation(), Sound.BLOCK_WOOL_PLACE, 0.8f, 1f);
+        nextThrowAt = now + WEB_THROW_TICKS;
+        websThrown++;
+    }
+
+    /**
+     * A tank holds its shield up while it walks into a fight or holds a doorway (it shows, and frontal hits are
+     * blocked); it lowers it to swing.
+     */
+    private void raiseShield(long now, BotBody b, Mannequin self, @Nullable LivingEntity target) {
+        if (!loadout.shield() || traits.personality() != BotPersonality.TANK || target == null) {
+            return;
+        }
+        if (!self.isHandRaised()) {
+            self.startUsingItem(EquipmentSlot.OFF_HAND);
+        }
+        shieldUpUntil = now + 10;
+    }
+
+    /**
+     * A trapper whose base is closed spends the rest of the farming covering its surroundings with traps, standing
+     * at its doorway: cobwebs and hidden pits (two or three deep under a tuft of grass) scattered over every approach
+     * out to {@link #trapRadius}, never on the lane to its own door, until it has laid {@link #trapCap}. Other bots
+     * know where the pits are and path around them (they see the webs).
+     */
+    private void layTraps(long now, Mannequin self, BasePlanner.Plan home) {
+        int[] door = home.outer();
+        Location stand = new Location(self.getWorld(), door[0] + 0.5, door[1], door[2] + 0.5);
+        if (stand.distance(self.getLocation()) > 1.5) {
+            goTo(now, stand, Gait.WALK);
+            return;
+        }
+        stop();
+        buildCredit += buildRate() * Math.max(1, host.timeScale()) / 4 / 20.0;
+        if (buildCredit < 1 || trapsLaid >= trapCap() || blocks() <= BLOCK_RESERVE) {
+            buildCredit = Math.min(buildCredit, 1);
+            return;
+        }
+        buildCredit--;
+        World world = self.getWorld();
+        int ox = Integer.signum(home.doorX() - home.x());
+        int oz = Integer.signum(home.doorZ() - home.z());
+        for (int attempt = 0; attempt < 6; attempt++) {
+            double angle = random.nextDouble() * Math.PI * 2;
+            double r = home.half() + 2 + random.nextDouble() * (trapRadius() - home.half() - 2);
+            int x = home.x() + (int) Math.round(Math.cos(angle) * r);
+            int z = home.z() + (int) Math.round(Math.sin(angle) * r);
+            int along = (x - home.x()) * ox + (z - home.z()) * oz;
+            int across = (x - home.x()) * -oz + (z - home.z()) * ox;
+            if (along > home.half() && Math.abs(across) <= 1 || Math.max(Math.abs(x - home.x()),
+                    Math.abs(z - home.z())) <= home.half() + 1 || !host.arena().contains(new Location(world, x, 0, z))) {
+                continue; // its own way in, its walls
+            }
+            Block top = world.getHighestBlockAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+            Block above = top.getRelative(0, 1, 0);
+            if (!top.getType().isSolid() || Hazards.hazard(top) || Hazards.UNBREAKABLE.contains(top.getType())
+                    || !(above.getType().isAir() || above.isReplaceable() && !above.isLiquid())) {
+                continue;
+            }
+            face(self, top.getLocation().add(0.5, 1, 0.5));
+            if (layTrap(self, top, above)) {
+                trapsLaid++;
+                return;
+            }
+        }
+    }
+
+    /** The kinds of trap a trapper lays around its base, with how often (weights). */
+    enum Trap {
+        /** A pit two or three deep under a floating tuft of grass, berry bushes at the bottom (powder snow when cold). */
+        PIT(32),
+        /** A berry bush: scratches and slows. */
+        BUSH(20),
+        /** A honey block in the ground: sticks to the feet. */
+        HONEY(14),
+        /** A pressure plate with a dispenser of arrows beside it, aimed across it. */
+        ARROWS(14),
+        /** A cobweb. */
+        WEB(20);
+
+        final int weight;
+
+        Trap(int weight) {
+            this.weight = weight;
+        }
+
+        static Trap pick(Random random) {
+            int total = 0;
+            for (Trap t : values()) {
+                total += t.weight;
+            }
+            int roll = random.nextInt(total);
+            for (Trap t : values()) {
+                roll -= t.weight;
+                if (roll < 0) {
+                    return t;
+                }
+            }
+            return WEB;
+        }
+    }
+
+    /**
+     * Lays one trap on the ground block {@code top} (with {@code above} the air over it); false if it could not.
+     * Every cell of it is marked for the other bots ({@link BotManager#markTrap}): they path around it.
+     */
+    private boolean layTrap(Mannequin self, Block top, Block above) {
+        World world = self.getWorld();
+        Trap trap = Trap.pick(random);
+        switch (trap) {
+            case WEB -> {
+                return place(self, above.getX(), above.getY(), above.getZ(), Material.COBWEB);
+            }
+            case BUSH -> {
+                return place(self, above.getX(), above.getY(), above.getZ(), Material.SWEET_BERRY_BUSH);
+            }
+            case HONEY -> {
+                if (Hazards.UNBREAKABLE.contains(top.getType()) || Tag.LOGS.isTagged(top.getType())) {
+                    return false;
+                }
+                top.setType(Material.HONEY_BLOCK);
+                placed.put(top, Material.HONEY_BLOCK);
+                blocksUsed++;
+                manager.markTrap(top);
+                return true;
+            }
+            case ARROWS -> {
+                // the plate on the ground, the dispenser beside it facing across it
+                BlockFace[] sides = {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST};
+                BlockFace side = sides[random.nextInt(sides.length)];
+                Block box = above.getRelative(side);
+                if (!above.getType().isAir() || !box.getType().isAir() || !box.getRelative(BlockFace.DOWN).getType()
+                        .isSolid() || blocks() < 2 || !host.arena().contains(box.getLocation())) {
+                    return false;
+                }
+                above.setType(Material.STONE_PRESSURE_PLATE);
+                placed.put(above, Material.STONE_PRESSURE_PLATE);
+                box.setType(Material.DISPENSER);
+                placed.put(box, Material.DISPENSER);
+                if (box.getBlockData() instanceof Directional facing) {
+                    facing.setFacing(side.getOppositeFace());
+                    box.setBlockData(facing);
+                }
+                if (box.getState() instanceof org.bukkit.block.Dispenser dispenser) {
+                    dispenser.getInventory().addItem(ItemStack.of(Material.ARROW, 6));
+                }
+                blocksUsed += 2;
+                manager.markTrap(above);
+                manager.markTrap(box);
+                return true;
+            }
+            case PIT -> {
+                int depth = 2 + random.nextInt(2);
+                List<Block> cells = new ArrayList<>();
+                for (int d = 0; d < depth; d++) {
+                    Block cell = top.getRelative(0, -d, 0);
+                    if (Hazards.UNBREAKABLE.contains(cell.getType()) || cell.isLiquid()) {
+                        break;
+                    }
+                    cells.add(cell);
+                }
+                if (cells.size() < 2) {
+                    return false;
+                }
+                for (Block cell : cells) {
+                    dig(cell);
+                    manager.markTrap(cell);
+                }
+                Block bottom = cells.getLast();
+                boolean cold = world.getBlockAt(top.getX(), top.getY(), top.getZ()).getTemperature() < 0.15;
+                if (cold) {
+                    bottom.setType(Material.POWDER_SNOW); // freezes for a moment, never deep enough to kill
+                } else if (bottom.getRelative(BlockFace.DOWN).getType().isSolid()) {
+                    bottom.setType(Material.SWEET_BERRY_BUSH, false);
+                    ripen(bottom);
+                }
+                if (above.isReplaceable() && !above.getType().isAir()) {
+                    dig(above);
+                }
+                top.setType(Material.SHORT_GRASS, false); // no physics: it floats over the pit
+                blocksUsed++;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A berry bush grown far enough to scratch (a fresh one only slows). */
+    private static void ripen(Block bush) {
+        if (bush.getBlockData() instanceof Ageable age) {
+            age.setAge(Math.min(2, age.getMaximumAge()));
+            bush.setBlockData(age, false);
+        }
+    }
+
+    /** How far out a trapper's field reaches: farther the higher the difficulty (8 easy … 14 hell). */
+    int trapRadius() {
+        return 8 + Math.max(0, wantedSize(BasePlanner.Design.TRAPS) - 5);
+    }
+
+    /** How many traps a trapper lays around its base after closing it (40 easy … 130 hell). */
+    int trapCap() {
+        return 40 + 15 * Math.max(0, wantedSize(BasePlanner.Design.TRAPS) - 5);
+    }
+
     /** Fights {@code target}; true if it creeps up on them (an assassin crouching in from behind). */
     private boolean engage(long now, BotBody b, Mannequin self, LivingEntity target, Location at) {
         double distance = self.getLocation().distance(at);
@@ -1099,11 +1609,27 @@ public final class BotController {
             goTo(now, behind, distance < 8 ? Gait.SNEAK : Gait.WALK);
             return true;
         }
+        BotPersonality who = traits.personality();
+        throwWeb(now, self, target);
         if (distance > REACH + 0.6) {
-            goTo(now, at, Gait.SPRINT);
-            if (distance > 10 && distance <= brain.bowRange() && shoot(now, b, self, target)) {
+            if (who == BotPersonality.TANK) {
+                goTo(now, at, distance > 10 ? Gait.SPRINT : Gait.WALK); // slow and steady, shield up
+                raiseShield(now, b, self, target);
                 return false;
             }
+            goTo(now, at, who == BotPersonality.BERSERKER || who == BotPersonality.HUNTER ? Gait.RUSH : Gait.SPRINT);
+            if (who != BotPersonality.BERSERKER && distance > 10 && distance <= brain.bowRange()
+                    && shoot(now, b, self, target)) {
+                return false;
+            }
+        } else if (who == BotPersonality.BERSERKER) {
+            // no footwork: straight at them, jump-crit after jump-crit
+            if (drawStart >= 0) {
+                drawStart = -1;
+                b.hold(false, loadout.sword());
+            }
+            goTo(now, target.getLocation(), Gait.RUSH);
+            tryMelee(now, self, target);
         } else {
             if (drawStart >= 0) {
                 drawStart = -1;
@@ -1123,6 +1649,7 @@ public final class BotController {
                 goTo(now, target.getLocation(), Gait.WALK);
             }
             tryMelee(now, self, target);
+            raiseShield(now, b, self, target);
         }
         eatIfLow(now, self);
         return false;
@@ -1189,7 +1716,11 @@ public final class BotController {
             self.getWorld().playSound(self.getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK, 0.6f, 1f);
             return true;
         }
-        boolean crit = random.nextDouble() < profile.critChance();
+        boolean crit = random.nextDouble() < (traits.personality() == BotPersonality.BERSERKER
+                ? Math.max(0.95, profile.critChance()) : profile.critChance());
+        if (self.isHandRaised()) {
+            self.clearActiveItem(); // the shield comes down to swing
+        }
         BotBody b = body;
         if (crit && b != null) {
             b.legs().setVelocity(b.legs().getVelocity().setY(0.36));
@@ -1289,8 +1820,9 @@ public final class BotController {
     /** Called by the manager before a frontal melee hit lands: true if the shield took it. */
     boolean block(long now, @Nullable Entity attacker) {
         BotBody b = body;
-        if (b == null || !loadout.shield() || attacker == null || now < nextShieldAt
-                || random.nextDouble() >= Math.min(0.9, profile.shieldChance() + traits.shieldBonus())) {
+        boolean raised = b != null && b.body().isHandRaised();
+        if (b == null || !loadout.shield() || attacker == null || now < nextShieldAt || random.nextDouble()
+                >= (raised ? 0.95 : Math.min(0.9, profile.shieldChance() + traits.shieldBonus()))) {
             return false;
         }
         Vector facing = b.body().getLocation().getDirection().setY(0);
@@ -1307,10 +1839,12 @@ public final class BotController {
     // =================================================================== building
 
     /**
-     * Builds its base a few blocks a second from inside it. A block goes on only once it is really there (or the spot
-     * is already solid): out of blocks it waits for the next farmed batch instead of leaving a hole, and a spot
-     * someone stands in is tried again a moment later. In the fight, a base the border will swallow is given up and a
-     * new one is built nearer the middle.
+     * Builds its base a few blocks a second from the middle of it, in the plan's order (floor and doorway, walls,
+     * roof: closed first, then the furniture, the lookout and traps). A block goes on only once it is really there (or
+     * the spot is already solid): out of blocks it waits for the next farmed batch instead of leaving a hole, and a
+     * spot someone stands in is passed over and mended afterwards ({@link #mend}). With no site found it roams and
+     * looks again a few seconds later; a site it cannot reach in {@link #SITE_WALK_TICKS} is given up for another. In
+     * the fight, a base the border will swallow is given up and a new one is built nearer the middle.
      */
     private void buildBase(long now, Mannequin self) {
         BasePlanner.Plan plan = base;
@@ -1319,39 +1853,66 @@ public final class BotController {
             base = null;
             plan = null;
             built = 0;
+            mending.clear();
             baseFailed = false;
             relocating = true;
         }
         if (plan == null) {
-            plan = planBase(self);
-            if (plan == null) {
-                baseFailed = true;
-                think(now);
+            if (now < planAgainAt) {
+                roam(now, self, 24); // somewhere else may have room
                 return;
             }
+            plan = planBase(self);
+            if (plan == null) {
+                if (host.fight()) {
+                    baseFailed = true;
+                    think(now);
+                    return;
+                }
+                planAgainAt = now + PLAN_AGAIN_TICKS;
+                roam(now, self, 24);
+                return;
+            }
+            siteWalk = 0;
         }
-        Location center = new Location(self.getWorld(), plan.x() + 0.5, plan.floorY() + 1, plan.z() + 0.5);
-        if (center.distance(self.getLocation()) > 3) {
+        // a burrow is dug from its staircase; the rest is built from the middle of the room
+        int[] stand = built < plan.fromOutside() ? plan.outer() : new int[] {plan.x(), plan.floorY() + 1, plan.z()};
+        Location center = new Location(self.getWorld(), stand[0] + 0.5, stand[1], stand[2] + 0.5);
+        Location at = self.getLocation();
+        double off = Math.hypot(at.getX() - center.getX(), at.getZ() - center.getZ());
+        if (off > 2.5 || Math.abs(at.getY() - center.getY()) > 2.5) {
+            if (++siteWalk > SITE_WALK_TICKS && built < plan.closure()) {
+                giveUpSite(now, plan); // it cannot get there: another site
+                return;
+            }
             goTo(now, center, Gait.SPRINT);
             return;
         }
-        stop();
-        buildCredit += profile.buildPerSecond() * Math.max(1, host.timeScale()) / 20.0;
+        siteWalk = 0;
+        if (off > 0.5) {
+            goTo(now, center, Gait.WALK); // the middle: never in the way of its own walls
+        } else {
+            stop();
+        }
+        buildCredit += buildRate() * Math.max(1, host.timeScale()) / 20.0;
         while (buildCredit >= 1 && built < plan.placements().size()) {
+            if (built >= plan.closure() && blocks() <= BLOCK_RESERVE) {
+                break; // closed: the extras wait for more blocks, a few are kept for the door and the way
+            }
             BasePlanner.Placement next = plan.placements().get(built);
             Block block = self.getWorld().getBlockAt(next.x(), next.y(), next.z());
             if (next.part() == BasePlanner.Part.CLEAR) {
-                buildCredit--;
                 built++;
                 if (!block.getType().isAir() && host.arena().contains(block.getLocation().add(0.5, 0, 0.5))) {
+                    buildCredit--;
                     face(self, block.getLocation().add(0.5, 0.5, 0.5));
-                    dig(block); // levelling the floor
+                    dig(block); // levelling the floor, opening the doorway
                 }
                 continue;
             }
-            Material want = material(next.part());
-            if (block.getType().isSolid() && !Hazards.hazard(block.getType()) || block.getType() == want) {
-                built++; // already closed (terrain, a tree, its own block)
+            Material want = material(next.part(), next.x(), next.y(), next.z());
+            if (closed(block) || block.getType() == want) {
+                built++; // already closed (terrain, a tree trunk, its own block)
                 continue;
             }
             if (blocks() <= 0) {
@@ -1362,23 +1923,173 @@ public final class BotController {
             if (Hazards.hazard(block.getType())) {
                 clearHazard(block);
             }
+            if (Tag.LEAVES.isTagged(block.getType())) {
+                dig(block); // leaves are no wall
+            }
             if (place(self, next.x(), next.y(), next.z(), want) || placeAny(self, next.x(), next.y(), next.z(), want)) {
                 built++;
                 buildBlockedTicks = 0;
                 face(self, new Location(self.getWorld(), next.x() + 0.5, next.y() + 0.5, next.z() + 0.5));
-            } else if (++buildBlockedTicks > 60) {
-                built++; // someone keeps standing there: on with the rest
+            } else if (shoo(next.x(), next.y(), next.z()) && ++buildBlockedTicks > 20) {
+                built++; // someone keeps standing there: on with the rest, mended afterwards
                 buildBlockedTicks = 0;
             } else {
                 break;
             }
         }
         if (built >= plan.placements().size()) {
-            buildCredit = 0;
             relocating = false;
+            mend(self, plan);
         } else {
             BasePlanner.Placement next = plan.placements().get(built); // eyes on where the next block goes
             face(self, new Location(self.getWorld(), next.x() + 0.5, next.y() + 0.5, next.z() + 0.5));
+        }
+    }
+
+    /**
+     * Pushes an animal or a monster (not a player, not a bot) out of a cell it wants to build in, away from its base
+     * (a player would shove it or swing at it). Always true (for chaining).
+     */
+    private boolean shoo(int x, int y, int z) {
+        BasePlanner.Plan plan = base;
+        BoundingBox cell = new BoundingBox(x, y, z, x + 1, y + 1, z + 1);
+        for (Entity entity : host.world().getNearbyEntities(cell.clone().expand(0.5))) {
+            if (entity instanceof LivingEntity && !(entity instanceof Player) && !manager.isLegs(entity)
+                    && !manager.isBody(entity) && host.participantOf(entity) == null) {
+                Vector out = plan == null ? new Vector(1, 0, 0)
+                        : new Vector(x + 0.5 - (plan.x() + 0.5), 0, z + 0.5 - (plan.z() + 0.5));
+                if (out.lengthSquared() < 1.0E-6) {
+                    out = new Vector(1, 0, 0);
+                }
+                entity.setVelocity(out.normalize().multiply(0.6).setY(0.3));
+            }
+        }
+        return true;
+    }
+
+    /** True if {@code block} is part of its own base's walls, roof or floor. */
+    private boolean ownShell(Block block) {
+        BasePlanner.Plan plan = base;
+        if (plan == null) {
+            return false;
+        }
+        if (shellOf != plan) {
+            shellOf = plan;
+            shellCells.clear();
+            for (BasePlanner.Placement p : plan.shell()) {
+                shellCells.add(BlockKey.of(p.x(), p.y(), p.z()));
+            }
+        }
+        return shellCells.contains(BlockKey.of(block.getX(), block.getY(), block.getZ()));
+    }
+
+    /** A block position as one number. */
+    private static final class BlockKey {
+        static long of(int x, int y, int z) {
+            return ((long) (x & 0x3FFFFFF) << 38) | ((long) (z & 0x3FFFFFF) << 12) | (y & 0xFFF);
+        }
+    }
+
+    /** True if {@code block} closes its cell like a wall: solid, harmless, no leaves. */
+    private static boolean closed(Block block) {
+        Material type = block.getType();
+        return type.isSolid() && !Hazards.hazard(type) && !Tag.LEAVES.isTagged(type);
+    }
+
+    /**
+     * Mends the holes in its finished base's shell (a block passed over because someone stood there, or broken
+     * since), a few blocks a second like building; a hole it cannot fill after a few tries is left.
+     */
+    private void mend(Mannequin self, BasePlanner.Plan plan) {
+        Iterator<BasePlanner.Placement> it = mending.iterator();
+        while (buildCredit >= 1 && it.hasNext()) {
+            BasePlanner.Placement hole = it.next();
+            Block block = self.getWorld().getBlockAt(hole.x(), hole.y(), hole.z());
+            if (closed(block)) {
+                it.remove();
+                continue;
+            }
+            if (blocks() <= 0) {
+                break;
+            }
+            buildCredit--;
+            if (Tag.LEAVES.isTagged(block.getType())) {
+                dig(block);
+            }
+            Material want = material(hole.part(), hole.x(), hole.y(), hole.z());
+            face(self, new Location(self.getWorld(), hole.x() + 0.5, hole.y() + 0.5, hole.z() + 0.5));
+            if (place(self, hole.x(), hole.y(), hole.z(), want) || placeAny(self, hole.x(), hole.y(), hole.z(), want)) {
+                it.remove();
+            } else {
+                shoo(hole.x(), hole.y(), hole.z());
+            }
+        }
+        buildCredit = Math.min(buildCredit, 1);
+    }
+
+    /**
+     * Looks over its finished base for holes in the walls, roof and floor while farming (every two seconds): any found
+     * are queued for {@link #mend}, so the brain sends it back to finish the base; a hole found open
+     * {@link #MEND_TRIES} times (someone keeps standing in it) is left.
+     */
+    private void inspectBase(long now, Mannequin self) {
+        BasePlanner.Plan plan = base;
+        if (plan == null || host.fight() || built < plan.placements().size() || now < nextInspect) {
+            return;
+        }
+        nextInspect = now + 40;
+        for (BasePlanner.Placement p : plan.shell()) {
+            Block block = self.getWorld().getBlockAt(p.x(), p.y(), p.z());
+            if (closed(block)) {
+                continue;
+            }
+            if (mendTries.merge(block, 1, Integer::sum) > MEND_TRIES) {
+                mending.remove(p);
+            } else if (!mending.contains(p)) {
+                mending.add(p);
+            }
+        }
+    }
+
+    /**
+     * True if its base is broken open in the fight (more than {@link #BREACH_HOLES} holes in its walls and roof): it
+     * is no place to hold any more. Looked at every two seconds.
+     */
+    private boolean breached(long now, BasePlanner.Plan plan) {
+        if (!host.fight()) {
+            return false;
+        }
+        if (now >= nextBreachCheck) {
+            nextBreachCheck = now + 40;
+            int holes = 0;
+            World world = host.world();
+            for (BasePlanner.Placement p : plan.shell()) {
+                if (p.part() != BasePlanner.Part.FLOOR && !closed(world.getBlockAt(p.x(), p.y(), p.z()))) {
+                    holes++;
+                }
+            }
+            wasBreached = holes > BREACH_HOLES;
+        }
+        return wasBreached;
+    }
+
+    /** Its base is closed and whole (nothing left to place or mend). */
+    private boolean baseFinished() {
+        BasePlanner.Plan plan = base;
+        return plan != null && mending.isEmpty() && (built >= plan.placements().size()
+                || built >= plan.closure() && blocks() <= BLOCK_RESERVE);
+    }
+
+    /** Gives up a site it could not reach and looks for another one right away (never that one again). */
+    private void giveUpSite(long now, BasePlanner.Plan plan) {
+        badSites.add(new int[] {plan.x(), plan.z()});
+        base = null;
+        built = 0;
+        mending.clear();
+        siteWalk = 0;
+        planAgainAt = now;
+        if (recovering()) {
+            endRecovery(now);
         }
     }
 
@@ -1388,29 +2099,65 @@ public final class BotController {
                 Math.abs(plan.z() - host.borderCenterZ())) > plan.half() + 2;
     }
 
+    /** The main block of {@code part} (doorway blocks, pillars and bridges it puts up on the way). */
     private Material material(BasePlanner.Part part) {
+        return material(part, 0, 0, 0);
+    }
+
+    /** The block of {@code part} at {@code (x, y, z)}: its palette's, the mixed-in ones here and there. */
+    private Material material(BasePlanner.Part part, int x, int y, int z) {
         BasePlanner.Palette p = palette != null ? palette : BasePlanner.Palette.forBiome(null);
-        Material material = switch (part) {
-            case WALL, FLOOR, CLEAR -> Material.matchMaterial(p.wall());
-            case PILLAR -> Material.matchMaterial(p.pillar());
-            case ROOF -> Material.matchMaterial(p.roof());
-            case CHEST -> Material.CHEST;
-            case CRAFTING_TABLE -> Material.CRAFTING_TABLE;
-            case COBWEB -> Material.COBWEB;
+        String options = switch (part) {
+            case WALL, CLEAR -> p.wall();
+            case FLOOR -> p.floor();
+            case TRIM -> p.trim();
+            case FENCE -> p.fence();
+            case PILLAR -> p.pillar();
+            case ROOF -> p.roof();
+            case CRENEL -> p.crenel();
+            case WINDOW -> p.window();
+            case LIGHT -> p.light();
+            case CHEST -> "CHEST";
+            case CRAFTING_TABLE -> "CRAFTING_TABLE";
+            case COBWEB -> "COBWEB";
+            case BUSH -> "SWEET_BERRY_BUSH";
         };
+        boolean main = x == 0 && y == 0 && z == 0;
+        Material material = Material.matchMaterial(main ? options.split("\\|")[0]
+                : BasePlanner.Palette.pick(options, x, y, z));
         return material != null && material.isBlock() ? material : Material.COBBLESTONE;
     }
 
-    /** The side of its base: the difficulty's, bigger for a fortress builder, sometimes a size up or down. */
+    /** The side of a plain base: the difficulty's, sometimes a size up; at most 9 (the specialists' are grander). */
     int baseSize() {
         int size = profile.baseSize() + traits.baseSizeBonus() + (random.nextInt(4) == 0 ? 2 : 0);
-        return Math.max(5, Math.min(11, size | 1));
+        return Math.max(5, Math.min(9, size | 1));
     }
 
     /**
-     * Picks its base site: candidates around itself and towards the middle (a fortress builder or a survivor looks
-     * near the final zone), only where the border will still be for a good while, on harmless ground; its personality
-     * sets how much nearness to the middle counts.
+     * The size it wants for {@code design}: the personality picks the layout, the difficulty its grandeur (a grade
+     * from the difficulty's base size, two more for a quick builder): an easy fortress builder raises a small keep
+     * with two towers, a hell one a two-storey castle with four towers, a gatehouse and a palisade; an easy sniper's
+     * tower is 7 high, a hell one 13 with a wide nest; trap fields, burrows and bunkers grow the same way.
+     */
+    int wantedSize(BasePlanner.Design layout) {
+        int grade = profile.baseSize() + (profile.buildPerSecond() >= 5 ? 2 : 0);
+        return switch (layout) {
+            case KEEP -> grade + 4;
+            case TOWER, BUNKER -> grade + 2;
+            case BURROW, TRAPS -> grade;
+            case WATCHPOST -> Math.min(7, grade);
+            case BOX -> baseSize();
+        };
+    }
+
+    /**
+     * Picks its base site and size: candidates around itself (rings close by, so a site is found on rough ground too)
+     * and towards the middle (a fortress builder or a survivor looks near the final zone), only where the border will
+     * still be for a good while, on harmless ground, no farther than it can walk in a fair share of the farming time
+     * left, never a site it gave up; its personality sets how much nearness to the middle counts. The layout is its
+     * personality's, the size its difficulty's, made smaller until it can close it before the fight with the time
+     * and blocks it has ({@link BasePlanner#fit}); without room for that, a smaller one or a plain box.
      */
     private BasePlanner.@Nullable Plan planBase(Mannequin self) {
         World world = self.getWorld();
@@ -1418,52 +2165,199 @@ public final class BotController {
         double cx = host.borderCenterX();
         double cz = host.borderCenterZ();
         double pull = traits.centerPull();
-        int size = baseSize();
+        int scale = Math.max(1, host.timeScale());
+        double secondsLeft = host.farmingTicksLeft() / 20.0;
+        // the farthest site worth the walk: a fifth of the real farming time left (24 blocks at least)
+        double reach = host.fight() ? Double.POSITIVE_INFINITY
+                : Math.max(24, secondsLeft / scale * 0.2 * WALK_BLOCKS_PER_SECOND);
+        if (design == null) {
+            design = traits.design(random);
+        }
+        BasePlanner.Fit fit = BasePlanner.fit(design, wantedSize(design), budget(reach, secondsLeft));
+        int wanted = fit.size();
         List<int[]> candidates = new ArrayList<>();
         double nowHalf = host.borderHalfIn(0);
         double finalHalf = host.finalHalf();
-        double safeHalf = finalHalf + Math.max(0, nowHalf - finalHalf) * (0.6 - 0.45 * pull) + size;
-        for (int i = 0; i < 28; i++) {
-            Location spot;
+        double safeHalf = finalHalf + Math.max(0, nowHalf - finalHalf) * (0.6 - 0.45 * pull) + wanted;
+        for (int i = 0; i < 40; i++) {
+            double x;
+            double z;
             if (i < 8 * pull) {
                 // near the middle
                 double r = finalHalf + 8 + (nowHalf - finalHalf) * 0.2;
-                spot = new Location(world, cx + (random.nextDouble() * 2 - 1) * r, at.getY(),
-                        cz + (random.nextDouble() * 2 - 1) * r);
+                x = cx + (random.nextDouble() * 2 - 1) * r;
+                z = cz + (random.nextDouble() * 2 - 1) * r;
             } else {
                 // around itself, drawn towards where the border will end
                 double towards = 0.15 + random.nextDouble() * 0.35 + 0.4 * pull;
-                spot = new Location(world, at.getX() + (cx - at.getX()) * towards + (random.nextDouble() * 2 - 1) * 24,
-                        at.getY(), at.getZ() + (cz - at.getZ()) * towards + (random.nextDouble() * 2 - 1) * 24);
+                x = at.getX() + (cx - at.getX()) * towards + (random.nextDouble() * 2 - 1) * 24;
+                z = at.getZ() + (cz - at.getZ()) * towards + (random.nextDouble() * 2 - 1) * 24;
             }
-            if (host.arena().contains(spot)) {
-                candidates.add(new int[] {spot.getBlockX(), spot.getBlockZ()});
+            candidates.add(new int[] {(int) Math.floor(x), (int) Math.floor(z)});
+        }
+        for (int r = 6; r <= 46; r += 8) {
+            for (int i = 0; i < 12; i++) {
+                double angle = i * Math.PI / 6 + r;
+                candidates.add(new int[] {at.getBlockX() + (int) Math.round(Math.cos(angle) * r),
+                        at.getBlockZ() + (int) Math.round(Math.sin(angle) * r)});
             }
         }
         candidates.add(new int[] {at.getBlockX(), at.getBlockZ()});
+        candidates.removeIf(c -> !host.arena().contains(new Location(world, c[0] + 0.5, at.getY(), c[1] + 0.5))
+                || Math.hypot(c[0] - at.getX(), c[1] - at.getZ()) > reach || nearBadSite(c));
         WorldTerrain terrain = new WorldTerrain(world);
-        double zoneWeight = 0.04 + 0.25 * pull;
-        int[] spot = null;
-        // the size it wants, else smaller ones (rough or wet ground), else anywhere the border allows less long
-        for (int tried = size; spot == null && tried >= 5; tried -= 2) {
-            spot = BasePlanner.choose(terrain, candidates, tried, cx, cz, manager.baseCenters(id), zoneWeight,
-                    safeHalf);
-            if (spot != null) {
-                size = tried;
+        // a watch post wants the highest ground around, whatever the way to the middle
+        double zoneWeight = fit.design() == BasePlanner.Design.WATCHPOST ? 0.01 : 0.04 + 0.25 * pull;
+        List<int[]> others = manager.baseCenters(id);
+        // its own layout at the size it can close, else smaller ones (rough or wet ground, a dear site), else a plain
+        // box, else anywhere the border allows for less long
+        List<BasePlanner.Fit> tries = new ArrayList<>();
+        for (int tried = wanted; tried >= fit.design().minSize(); tried -= 2) {
+            tries.add(new BasePlanner.Fit(fit.design(), tried));
+        }
+        // then its own layout at the smallest wherever the border allows for less long (relocating is better than
+        // losing the look), then a plain box
+        List<Boolean> strict = new ArrayList<>(java.util.Collections.nCopies(tries.size(), true));
+        tries.add(new BasePlanner.Fit(fit.design(), fit.design().minSize()));
+        strict.add(false);
+        if (fit.design() != BasePlanner.Design.BOX) {
+            for (int tried = Math.min(wanted, 7); tried >= BasePlanner.MIN_SIZE; tried -= 2) {
+                tries.add(new BasePlanner.Fit(BasePlanner.Design.BOX, tried));
+                strict.add(true);
+            }
+            tries.add(new BasePlanner.Fit(BasePlanner.Design.BOX, BasePlanner.MIN_SIZE));
+            strict.add(false);
+        }
+        for (int i = 0; i < tries.size(); i++) {
+            BasePlanner.Fit t = tries.get(i);
+            int[] spot = strict.get(i)
+                    ? BasePlanner.choose(terrain, candidates, t.size(), cx, cz, others, zoneWeight, safeHalf)
+                    : BasePlanner.choose(terrain, candidates, t.size(), cx, cz, others);
+            if (spot == null) {
+                continue;
+            }
+            BasePlanner.Plan plan = BasePlanner.plan(terrain, spot[0], spot[1], t.size(), cx, cz, t.design());
+            double walk = Math.hypot(spot[0] - at.getX(), spot[1] - at.getZ());
+            double cost = t.design() == BasePlanner.Design.BURROW ? 1.0 / 3 : 1;
+            if (t.size() > t.design().minSize() && plan.closureBlocks() * cost > budget(walk, secondsLeft)) {
+                continue; // its ground costs more than the time and blocks allow: a smaller one
+            }
+            base = plan;
+            int y = terrain.height(spot[0], spot[1]);
+            palette = palette(t.design(), world.getBiome(spot[0], y, spot[1]).getKey().toString(),
+                    world.getBlockAt(spot[0], y, spot[1]).getType());
+            return plan;
+        }
+        return null;
+    }
+
+    /**
+     * Blocks it can close a base with ({@link BasePlanner#budget}): what it places in the farming time left after a
+     * walk of {@code walk} blocks, and the blocks it will have by then (its stock grows with the farming; a few kept
+     * for bridges). In the fight (no time left) that means the smallest base.
+     */
+    private double budget(double walk, double secondsLeft) {
+        int scale = Math.max(1, host.timeScale());
+        double walkSeconds = Double.isInfinite(walk) ? 0 : walk / WALK_BLOCKS_PER_SECOND * scale;
+        double progress = Math.min(1, host.farmingProgress());
+        int later = stock(Gear.at((progress + 0.9 * (1 - progress)) * profile.gearPace()));
+        int blocks = Math.max(blocks(), later - blocksUsed) - 16;
+        return BasePlanner.budget(buildRate(), secondsLeft, walkSeconds, blocks);
+    }
+
+    /**
+     * Placements a second while building: the difficulty's, much more for a base specialist (it spends the whole
+     * farming on its base: a fortress builder three times as fast).
+     */
+    double buildRate() {
+        return profile.buildPerSecond() * (1 + 2 * traits.homebody());
+    }
+
+    /** Blocks a loadout gives it: the farmed schedule, more for a base specialist (it farmed for its base). */
+    int stock(Gear.Loadout gear) {
+        return (int) Math.round(gear.blocks() * (1 + 1.5 * traits.homebody()));
+    }
+
+    /**
+     * The blocks of a base, by layout and biome, mixed like a player's farmed stock (the first block of each part
+     * mostly, the others speckled in): a keep of stone bricks with cobble, mossy and cracked ones, deepslate towers, a
+     * log band, plank floors, slab battlements and glass in the upper windows; a tower of logs at the corners and
+     * planks with some stone between; a bunker of cobble, cobbled deepslate and blackstone; a burrow patched with the
+     * very ground it is dug into; a trapper's box of logs like a palisade. Deserts and badlands build in sandstone,
+     * snowy places mix in snow, jungles and swamps moss.
+     */
+    static BasePlanner.Palette palette(BasePlanner.Design design, String biome, Material surface) {
+        BasePlanner.Palette biomes = BasePlanner.Palette.forBiome(biome);
+        String b = biome.toLowerCase(java.util.Locale.ROOT);
+        boolean red = biomes.wall().startsWith("RED_SANDSTONE");
+        boolean sandy = biomes.wall().contains("SANDSTONE");
+        boolean snowy = b.contains("snow") || b.contains("frozen") || b.contains("ice") || b.contains("grove");
+        boolean mossy = b.contains("jungle") || b.contains("swamp") || b.contains("mangrove") || b.contains("lush");
+        String wood = biomes.pillar().endsWith("_LOG") ? biomes.pillar().substring(0, biomes.pillar().length() - 4)
+                : sandy ? "ACACIA" : "SPRUCE";
+        String planks = wood + "_PLANKS";
+        String log = wood + "_LOG";
+        String stripped = "STRIPPED_" + wood + "_LOG";
+        String slab = wood + "_SLAB";
+        String sand = red ? "RED_SANDSTONE" : "SANDSTONE";
+        String sandWall = sand + "|CUT_" + sand + "|SMOOTH_" + sand;
+        String sandSlab = sand + "_SLAB|CUT_" + sand + "_SLAB";
+        return switch (design) {
+            case KEEP -> sandy
+                    ? new BasePlanner.Palette(sandWall, "CHISELED_" + sand + "|CUT_" + sand, "SMOOTH_" + sand,
+                    "STRIPPED_ACACIA_LOG", "ACACIA_PLANKS", sandSlab, "GLASS_PANE", "LANTERN")
+                    : new BasePlanner.Palette(mossy ? "MOSSY_STONE_BRICKS|STONE_BRICKS|MOSSY_COBBLESTONE|CRACKED_STONE_BRICKS"
+                    : snowy ? "STONE_BRICKS|SNOW_BLOCK|CRACKED_STONE_BRICKS|COBBLESTONE"
+                    : "STONE_BRICKS|COBBLESTONE|MOSSY_STONE_BRICKS|CRACKED_STONE_BRICKS|ANDESITE",
+                    "DEEPSLATE_BRICKS|COBBLED_DEEPSLATE|POLISHED_DEEPSLATE", planks + "|DARK_OAK_PLANKS", log, planks,
+                    "STONE_BRICK_SLAB|COBBLESTONE_SLAB|MOSSY_STONE_BRICK_SLAB", "GLASS_PANE|IRON_BARS", "LANTERN");
+            case TOWER -> sandy
+                    ? new BasePlanner.Palette(sandWall, "CHISELED_" + sand, "SMOOTH_" + sand, "STRIPPED_ACACIA_LOG",
+                    "ACACIA_PLANKS", sandSlab, "GLASS_PANE", "LANTERN")
+                    : new BasePlanner.Palette(planks + "|COBBLESTONE|" + stripped + (snowy ? "|SNOW_BLOCK" : ""), log,
+                    planks, log, planks, slab + "|COBBLESTONE_SLAB", "GLASS_PANE", "LANTERN");
+            case BUNKER -> sandy
+                    ? new BasePlanner.Palette(sand + "|COBBLESTONE|SMOOTH_" + sand, "CUT_" + sand, "SMOOTH_" + sand)
+                    : new BasePlanner.Palette("COBBLESTONE|COBBLED_DEEPSLATE|BLACKSTONE|STONE|ANDESITE",
+                    "POLISHED_BLACKSTONE", "COBBLED_DEEPSLATE|COBBLESTONE|POLISHED_BLACKSTONE");
+            case BURROW -> {
+                String ground = switch (surface) {
+                    case SAND, SANDSTONE -> "SANDSTONE|SMOOTH_SANDSTONE";
+                    case RED_SAND -> "RED_SANDSTONE|SMOOTH_RED_SANDSTONE";
+                    case STONE, ANDESITE, DIORITE, GRANITE, TUFF, DEEPSLATE, GRAVEL -> "STONE|ANDESITE|COBBLESTONE|TUFF";
+                    default -> "DIRT|COARSE_DIRT|ROOTED_DIRT";
+                };
+                String top = switch (surface) {
+                    case GRASS_BLOCK -> "GRASS_BLOCK|MOSS_BLOCK";
+                    case SNOW_BLOCK, SNOW, POWDER_SNOW -> "SNOW_BLOCK";
+                    case PODZOL, MYCELIUM, MUD, MOSS_BLOCK, COARSE_DIRT -> surface.name();
+                    default -> ground;
+                };
+                yield new BasePlanner.Palette(ground, ground, top, ground, ground, ground, "GLASS_PANE", "LANTERN");
+            }
+            case TRAPS -> sandy
+                    ? new BasePlanner.Palette(sandWall, "STRIPPED_ACACIA_LOG", "SMOOTH_" + sand)
+                    : new BasePlanner.Palette(log + "|" + planks + "|" + stripped, log, planks, log, planks, slab,
+                    "GLASS_PANE", "LANTERN");
+            case WATCHPOST, BOX -> sandy
+                    ? new BasePlanner.Palette(sandWall, "CUT_" + sand, sand, "CHISELED_" + sand, sand, sandSlab,
+                    "GLASS_PANE", "LANTERN")
+                    : biomes.wall().startsWith("COBBLESTONE")
+                    ? new BasePlanner.Palette("COBBLESTONE|MOSSY_COBBLESTONE|STONE", "STONE_BRICKS",
+                    "COBBLESTONE|STONE", "STONE_BRICKS", "COBBLESTONE", "COBBLESTONE_SLAB", "GLASS_PANE", "LANTERN")
+                    : new BasePlanner.Palette(planks + "|" + stripped, log, planks, log, planks, slab, "GLASS_PANE",
+                    "LANTERN");
+        };
+    }
+
+    /** True if {@code spot} is near a site it gave up. */
+    private boolean nearBadSite(int[] spot) {
+        for (int[] bad : badSites) {
+            if (Math.hypot(bad[0] - spot[0], bad[1] - spot[1]) < 8) {
+                return true;
             }
         }
-        if (spot == null) {
-            spot = BasePlanner.choose(terrain, candidates, 5, cx, cz, manager.baseCenters(id));
-            size = 5;
-        }
-        if (spot == null) {
-            return null;
-        }
-        BasePlanner.Plan plan = BasePlanner.plan(terrain, spot[0], spot[1], size, cx, cz, traits.traps());
-        base = plan;
-        int y = terrain.height(spot[0], spot[1]);
-        palette = BasePlanner.Palette.forBiome(world.getBiome(spot[0], y, spot[1]).getKey().toString());
-        return plan;
+        return false;
     }
 
     /**
@@ -1487,6 +2381,9 @@ public final class BotController {
             return false; // never trap anyone (or itself) inside a block
         }
         block.setType(material);
+        if (material == Material.SWEET_BERRY_BUSH) {
+            ripen(block);
+        }
         placed.put(block, material);
         blocksUsed++;
         self.swingMainHand();
@@ -1510,6 +2407,9 @@ public final class BotController {
             return false;
         }
         block.setType(material);
+        if (material == Material.SWEET_BERRY_BUSH) {
+            ripen(block);
+        }
         placed.put(block, material);
         blocksUsed++;
         self.swingMainHand();
@@ -1647,6 +2547,7 @@ public final class BotController {
         if (recovering()) {
             return; // digging, climbing or bridging its own way for now (see recover)
         }
+        dest = throughDoor(at, dest);
         Location target = waypoint(now, at, dest);
         var pathfinder = b.legs().getPathfinder();
         var path = pathfinder.findPath(target);
@@ -1658,7 +2559,7 @@ public final class BotController {
             return;
         }
         pathFailures = 0;
-        int safe = safePrefix(path.getPoints());
+        int safe = safePrefix(path.getPoints(), manager);
         if (safe < path.getPoints().size()) {
             // the path crosses powder snow (or the like): only up to the last safe point; the recovery clears or
             // bridges the rest if that is the only way
@@ -1673,6 +2574,69 @@ public final class BotController {
             }
         }
         pathfinder.moveTo(path, speed);
+    }
+
+    /**
+     * The way in and out of its own base, which the pathfinder may not find from inside: out by the doorway first; a
+     * burrow's staircase step by step, down to the room or up to the surface.
+     */
+    private Location throughDoor(Location at, Location dest) {
+        BasePlanner.Plan home = base;
+        if (home == null || home.tower()) {
+            return dest;
+        }
+        boolean atInside = home.inside(at.getX(), at.getY(), at.getZ());
+        boolean destInside = home.inside(dest.getX(), dest.getY(), dest.getZ());
+        World world = at.getWorld();
+        if (home.design() == BasePlanner.Design.BURROW && atInside != destInside) {
+            Location step = burrowStep(home, at, destInside);
+            if (step != null) {
+                return step;
+            }
+            if (destInside) {
+                int[] top = home.outer(); // to the top of its stairs first
+                return new Location(world, top[0] + 0.5, top[1], top[2] + 0.5);
+            }
+        }
+        if (atInside && !destInside) {
+            int[] door = home.outer();
+            Location out = new Location(world, door[0] + 0.5, door[1], door[2] + 0.5);
+            if (out.distanceSquared(at) > 1.5) {
+                return out;
+            }
+        }
+        return dest;
+    }
+
+    /**
+     * The next step on its burrow's staircase, down towards the room or up to the surface, or null if it is not on
+     * the stairs (or already at their end).
+     */
+    static @Nullable Location burrowStep(BasePlanner.Plan plan, Location at, boolean down) {
+        int ox = Integer.signum(plan.doorX() - plan.x());
+        int oz = Integer.signum(plan.doorZ() - plan.z());
+        int along = (at.getBlockX() - plan.x()) * ox + (at.getBlockZ() - plan.z()) * oz - plan.half();
+        int across = (at.getBlockX() - plan.x()) * -oz + (at.getBlockZ() - plan.z()) * ox;
+        boolean inRoom = plan.inside(at.getX(), at.getY(), at.getZ());
+        if (!inRoom) {
+            if (along < 0 || along > 4 || Math.abs(across) > 1
+                    || along < 4 && at.getY() > plan.floorY() + 1 + along + 1.5) {
+                return null; // not on the stairs (on the ground above them: from the top)
+            }
+            if (across != 0) {
+                return new Location(at.getWorld(), plan.doorX() + ox * along + 0.5, plan.floorY() + 1 + along,
+                        plan.doorZ() + oz * along + 0.5); // beside them: onto the step first
+            }
+        }
+        int next = (inRoom ? -1 : along) + (down ? -1 : 1);
+        if (next < -1 || next > 4) {
+            return null;
+        }
+        if (next == -1) {
+            return new Location(at.getWorld(), plan.x() + 0.5, plan.floorY() + 1, plan.z() + 0.5);
+        }
+        return new Location(at.getWorld(), plan.doorX() + ox * next + 0.5, plan.floorY() + 1 + next,
+                plan.doorZ() + oz * next + 0.5);
     }
 
     /** How far one leg of a long way reaches before the next waypoint (inside the pathfinder's range). */
@@ -1711,7 +2675,7 @@ public final class BotController {
             }
             var path = b.legs().getPathfinder().findPath(spot);
             if (path != null && path.getFinalPoint() != null
-                    && path.getFinalPoint().distanceSquared(spot) < 16 && safePrefix(path.getPoints())
+                    && path.getFinalPoint().distanceSquared(spot) < 16 && safePrefix(path.getPoints(), manager)
                     == path.getPoints().size()) {
                 fallback = spot;
                 break;
@@ -1725,10 +2689,16 @@ public final class BotController {
 
     /** How many points of a path from the start are safe to walk (no powder snow, fire, cactus, magma ...). */
     static int safePrefix(List<Location> points) {
+        return safePrefix(points, null);
+    }
+
+    /** {@link #safePrefix} that also stops before a trapper's hidden pit ({@code manager} knows them). */
+    static int safePrefix(List<Location> points, @Nullable BotManager manager) {
         for (int i = 0; i < points.size(); i++) {
             Block feet = points.get(i).getBlock();
             if (Hazards.hazard(feet) || Hazards.hazard(feet.getRelative(0, -1, 0))
-                    || Hazards.hazard(feet.getRelative(0, 1, 0))) {
+                    || Hazards.hazard(feet.getRelative(0, 1, 0))
+                    || manager != null && (manager.trap(feet) || manager.trap(feet.getRelative(0, -1, 0)))) {
                 return i;
             }
         }
@@ -1804,7 +2774,7 @@ public final class BotController {
         if (!traits.builds() || host.fight() || baseFailed) {
             return 0;
         }
-        return plan == null ? 48 : Math.max(0, Math.min(64, plan.placements().size() - built));
+        return plan == null ? 48 : Math.max(0, Math.min(96, plan.closure() - built));
     }
 
     /** Ticks between two recovery steps (a player digs a block in a few ticks; the better, the quicker). */
@@ -1873,7 +2843,8 @@ public final class BotController {
             Location probe = flat <= 16 ? g : ground(at.getWorld(), at.getX() + (g.getX() - at.getX()) * 16 / flat,
                     at.getZ() + (g.getZ() - at.getZ()) * 16 / flat);
             var path = legs.getPathfinder().findPath(probe);
-            if (path != null && path.canReachFinalPoint() && safePrefix(path.getPoints()) == path.getPoints().size()) {
+            if (path != null && path.canReachFinalPoint()
+                    && safePrefix(path.getPoints(), manager) == path.getPoints().size()) {
                 endRecovery(now); // the pathfinder can take it from here
                 return;
             }
@@ -1994,6 +2965,39 @@ public final class BotController {
         return out;
     }
 
+    /**
+     * Farming: a bot without a base roams; one with a finished base stays near it (farms around it) and is back
+     * inside when the fight starts.
+     */
+    private void farm(long now, Mannequin self) {
+        BasePlanner.Plan home = base;
+        if (home == null || !traits.builds() || host.fight() || !baseFinished()) {
+            roam(now, self, 40 * traits.roam());
+            return;
+        }
+        Location center = new Location(self.getWorld(), home.x() + 0.5, home.floorY() + 1, home.z() + 0.5);
+        if (host.farmingTicksLeft() / (double) Math.max(1, host.timeScale()) > HOME_BEFORE_FIGHT_TICKS) {
+            if (traits.traps() && home.design() == BasePlanner.Design.TRAPS && trapsLaid < trapCap()) {
+                layTraps(now, self, home); // a trapper fills its surroundings with traps
+                return;
+            }
+            if (wander == null || now >= wanderUntil || wander.distance(self.getLocation()) < 2) {
+                // around the base, never onto its roof
+                double angle = random.nextDouble() * Math.PI * 2;
+                double r = home.half() + 4 + random.nextDouble() * 16;
+                wander = ground(self.getWorld(), center.getX() + Math.cos(angle) * r,
+                        center.getZ() + Math.sin(angle) * r);
+                wanderUntil = now + 200 + random.nextInt(200);
+            }
+            goTo(now, wander, Gait.WALK);
+        } else if (center.distance(self.getLocation()) > 0.8) {
+            goTo(now, center, Gait.SPRINT); // home before the fight starts
+        } else {
+            stop();
+        }
+    }
+
+    /** Wanders: legs of {@code range} around where it is, drifting towards the middle. */
     private void roam(long now, Mannequin self, double range) {
         if (wander == null || now >= wanderUntil || wander.distance(self.getLocation()) < 2) {
             Location at = self.getLocation();
@@ -2307,11 +3311,24 @@ public final class BotController {
         return Math.max(min, Math.min(max, value));
     }
 
-    /** {@link BasePlanner.Terrain} over a Bukkit world. */
+    /**
+     * {@link BasePlanner.Terrain} over a Bukkit world: the ground under the trees (a trunk in the way is chopped like
+     * a bump, one in the wall stands in for a wall block).
+     */
     record WorldTerrain(World world) implements BasePlanner.Terrain {
         @Override
         public int height(int x, int z) {
-            return world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+            int y = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES);
+            int floor = Math.max(world.getMinHeight(), y - 32);
+            while (y > floor && tree(world.getBlockAt(x, y, z).getType())) {
+                y--;
+            }
+            return y;
+        }
+
+        private static boolean tree(Material type) {
+            return Tag.LOGS.isTagged(type) || Tag.LEAVES.isTagged(type) || type == Material.MANGROVE_ROOTS
+                    || type == Material.BAMBOO || type == Material.VINE;
         }
 
         @Override

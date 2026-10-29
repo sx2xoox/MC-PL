@@ -304,6 +304,9 @@ class BotControllerTest {
         int built = bot.built();
         for (int i = 0; i < built; i++) {
             BasePlanner.Placement p = plan.placements().get(i);
+            if (p.part() == BasePlanner.Part.CLEAR) {
+                continue; // dug, not placed
+            }
             assertFalse(world.getBlockAt(p.x(), p.y(), p.z()).getType().isAir(), "every counted block stands: " + p);
         }
         assertTrue(bot.built() <= bot.blocks() + built, "never counts a block it did not have");

@@ -1659,6 +1659,11 @@ public final class AugmentMatch implements GameInstance, BotHost {
     }
 
     @Override
+    public long farmingTicksLeft() {
+        return phase == MatchPhase.FARMING ? Math.max(0, settings.farmingTicks() - time) : 0;
+    }
+
+    @Override
     public double pressure() {
         if (phase != MatchPhase.FIGHT) {
             return 0;

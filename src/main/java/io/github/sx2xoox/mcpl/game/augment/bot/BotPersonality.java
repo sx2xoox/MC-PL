@@ -17,9 +17,9 @@ import org.jspecify.annotations.Nullable;
  * carried out. Each bot gets its own jittered copy ({@link #traits}), so two bots of one personality differ a little.
  */
 public enum BotPersonality {
-    /** Roams early, follows sounds, chases; rarely builds. */
+    /** Roams early, follows sounds, chases; builds no base. */
     HUNTER("사냥꾼", "hunter", Map.of(Behaviour.BUILD_BASE, 0.45, Behaviour.SCOUT, 1.5, Behaviour.ENGAGE, 1.2,
-            Behaviour.DEFEND_BASE, 0.4, Behaviour.HOLD_ZONE, 0.6, Behaviour.AVOID, 0.75, Behaviour.THIRD_PARTY, 0.75,
+            Behaviour.DEFEND_BASE, 0.4, Behaviour.HOLD_ZONE, 0.6, Behaviour.AVOID, 0.6, Behaviour.THIRD_PARTY, 0.75,
             Behaviour.AMBUSH, 0.8)),
     /** A strong base on high ground near the middle; defends and shoots from it. */
     FORTRESS("요새꾼", "fortress", Map.of(Behaviour.BUILD_BASE, 1.35, Behaviour.DEFEND_BASE, 2.2,
@@ -33,20 +33,20 @@ public enum BotPersonality {
             Behaviour.AVOID, 1.3, Behaviour.HOLD_ZONE, 1.1, Behaviour.SCOUT, 0.9)),
     /** Very aggressive melee, chases relentlessly, hardly retreats. */
     BERSERKER("광전사", "berserker", Map.of(Behaviour.ENGAGE, 1.4, Behaviour.RETREAT_HEAL, 0.6,
-            Behaviour.FORTIFY, 0.4, Behaviour.AVOID, 0.4, Behaviour.KITE, 0.55, Behaviour.DEFEND_BASE, 0.4,
+            Behaviour.FORTIFY, 0.4, Behaviour.AVOID, 0.3, Behaviour.KITE, 0.0, Behaviour.DEFEND_BASE, 0.4,
             Behaviour.THIRD_PARTY, 0.6, Behaviour.AMBUSH, 0.6, Behaviour.SCOUT, 1.2)),
     /** Hides, moves with the zone, heals a lot and fights late. */
-    SURVIVOR("생존왕", "survivor", Map.of(Behaviour.HOLD_ZONE, 1.5, Behaviour.AVOID, 1.3, Behaviour.RETREAT_HEAL,
+    SURVIVOR("생존왕", "survivor", Map.of(Behaviour.HOLD_ZONE, 1.1, Behaviour.AVOID, 1.3, Behaviour.RETREAT_HEAL,
             1.3, Behaviour.FORTIFY, 1.3, Behaviour.DEFEND_BASE, 1.4, Behaviour.ENGAGE, 0.75, Behaviour.SCOUT, 0.6,
-            Behaviour.THIRD_PARTY, 1.1)),
+            Behaviour.THIRD_PARTY, 1.1, Behaviour.AMBUSH, 1.5)),
     /** Cobwebs around its base and behind itself; lures chasers into them. */
     TRAPPER("트래퍼", "trapper", Map.of(Behaviour.BUILD_BASE, 1.2, Behaviour.DEFEND_BASE, 1.6, Behaviour.AMBUSH,
             1.5, Behaviour.ENGAGE, 0.9, Behaviour.AVOID, 1.1)),
     /** Sneaks up from behind or the flank, strikes the busy or the weak, gets out fast. */
-    ASSASSIN("암살자", "assassin", Map.of(Behaviour.ENGAGE, 1.05, Behaviour.THIRD_PARTY, 1.2, Behaviour.AVOID, 1.2,
+    ASSASSIN("암살자", "assassin", Map.of(Behaviour.ENGAGE, 1.05, Behaviour.THIRD_PARTY, 1.3, Behaviour.AVOID, 1.0,
             Behaviour.KITE, 0.6, Behaviour.DEFEND_BASE, 0.5, Behaviour.BUILD_BASE, 0.7, Behaviour.SCOUT, 1.1)),
     /** Shield up, trades hits, holds doorways, eats apples early: slow but hard to kill. */
-    TANK("탱커", "tank", Map.of(Behaviour.ENGAGE, 1.15, Behaviour.AVOID, 0.55, Behaviour.DEFEND_BASE, 1.3,
+    TANK("탱커", "tank", Map.of(Behaviour.ENGAGE, 1.15, Behaviour.AVOID, 0.4, Behaviour.DEFEND_BASE, 1.3,
             Behaviour.KITE, 0.6, Behaviour.FORTIFY, 0.7, Behaviour.RETREAT_HEAL, 0.85)),
     /** Remembers who hurt it or killed near it and hunts that one down. */
     AVENGER("복수귀", "avenger", Map.of(Behaviour.ENGAGE, 1.05, Behaviour.SCOUT, 1.2, Behaviour.THIRD_PARTY, 0.9)),
@@ -54,7 +54,10 @@ public enum BotPersonality {
     GAMBLER("도박사", "gambler", Map.of(Behaviour.ENGAGE, 1.1, Behaviour.KITE, 1.1, Behaviour.RETREAT_HEAL, 0.9)),
     /** Never builds, keeps moving with the zone, kites with the bow, picks off loners, never gets cornered. */
     NOMAD("유목민", "nomad", Map.of(Behaviour.BUILD_BASE, 0.0, Behaviour.DEFEND_BASE, 0.0, Behaviour.FORTIFY, 0.6,
-            Behaviour.KITE, 1.4, Behaviour.HOLD_ZONE, 1.35, Behaviour.SCOUT, 1.15, Behaviour.AVOID, 1.15));
+            Behaviour.KITE, 1.8, Behaviour.HOLD_ZONE, 1.35, Behaviour.SCOUT, 1.15, Behaviour.AVOID, 1.15));
+
+    /** The least base-building weight of a personality that builds (a jittered hunter stays below it). */
+    static final double BUILDER_WEIGHT = 0.55;
 
     private final String koreanName;
     private final String key;
@@ -130,9 +133,51 @@ public enum BotPersonality {
             return weights.getOrDefault(behaviour, 1.0);
         }
 
-        /** True if the bot builds and uses a base at all. */
+        /**
+         * True if the bot builds and uses a base at all (a hunter, who would rather roam, and a nomad do not); a
+         * builder builds before anything else while farming.
+         */
         public boolean builds() {
-            return weight(Behaviour.BUILD_BASE) > 0.05;
+            return weight(Behaviour.BUILD_BASE) >= BUILDER_WEIGHT;
+        }
+
+        /**
+         * The base layout this personality builds (a gambler's is a surprise, drawn from {@code random}); the plain
+         * box for the rest.
+         */
+        public BasePlanner.Design design(Random random) {
+            if (personality == null) {
+                return BasePlanner.Design.BOX;
+            }
+            return switch (personality) {
+                case FORTRESS -> BasePlanner.Design.KEEP;
+                case TANK -> BasePlanner.Design.BUNKER;
+                case ARCHER -> BasePlanner.Design.TOWER;
+                case SURVIVOR -> BasePlanner.Design.BURROW;
+                case TRAPPER -> BasePlanner.Design.TRAPS;
+                case OPPORTUNIST -> BasePlanner.Design.WATCHPOST;
+                case GAMBLER -> BasePlanner.Design.values()[random.nextInt(BasePlanner.Design.values().length)];
+                default -> BasePlanner.Design.BOX;
+            };
+        }
+
+        /**
+         * 0..1: how much it fights from its base (returns to it at the fight start and when threatened, holds it,
+         * leaves it only for the border, a breach or a sure win): a fortress builder all the way, a trapper, a tank and
+         * a survivor much, an archer some; the others use a base only to fall back to.
+         */
+        public double homebody() {
+            if (personality == null) {
+                return 0;
+            }
+            return switch (personality) {
+                case FORTRESS -> 1.0;
+                case TRAPPER -> 0.9;
+                case TANK -> 0.8;
+                case SURVIVOR -> 0.75;
+                case ARCHER -> 0.45;
+                default -> 0;
+            };
         }
 
         /** The label next to its name ("사냥꾼"), empty for the neutral mind. */
@@ -171,7 +216,7 @@ public enum BotPersonality {
                     0.94, 0.8);
             case AVENGER -> new Traits(this, out, 0.05 * small, 1.0, 0, 0, 0.5, false, false, true, 0, 0, 1.0, 1.1);
             case GAMBLER -> new Traits(this, out, 0.1 * small, 0.9 + 0.2 * random.nextDouble(), 0, 0, 0.3, false,
-                    false, false, 22, 0, 1.0, 1.2);
+                    false, false, 32, 0, 1.0, 1.2);
             case NOMAD -> new Traits(this, out, 0.0 + 0.05 * small, 1.1, 6, 0, 0, false, false, false, 0, 0, 1.0, 1.5);
         };
     }

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.BiFunction;
 
+import io.github.sx2xoox.mcpl.game.augment.bot.BasePlanner.Design;
 import io.github.sx2xoox.mcpl.game.augment.bot.BasePlanner.Part;
 import io.github.sx2xoox.mcpl.game.augment.bot.BasePlanner.Placement;
 import io.github.sx2xoox.mcpl.game.augment.bot.BasePlanner.Plan;
@@ -147,7 +148,8 @@ class BasePlannerTest {
                 (x, z) -> Surface.SOLID);
         assertFalse(Double.isNaN(BasePlanner.score(rough, 0, 0, 7, 0, 0, List.of())), "two up or down is fine");
         Plan plan = BasePlanner.plan(rough, 0, 0, 7, 100, 0);
-        List<Placement> clear = plan.placements().stream().filter(p -> p.part() == Part.CLEAR).toList();
+        List<Placement> clear = plan.placements().stream()
+                .filter(p -> p.part() == Part.CLEAR && p.y() <= rough.height(p.x(), p.z())).toList();
         assertEquals(2, clear.size(), "the bump is dug away");
         assertTrue(clear.stream().allMatch(p -> p.x() == 1 && p.z() == 1 && p.y() > 64));
         List<Placement> floor = plan.placements().stream().filter(p -> p.part() == Part.FLOOR).toList();
@@ -159,20 +161,210 @@ class BasePlannerTest {
     }
 
     @Test
-    void aTrapperRingsItsBaseWithCobwebs() {
-        long plain = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0).placements().stream()
-                .filter(p -> p.part() == Part.COBWEB).count();
-        long trapped = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0, true).placements().stream()
-                .filter(p -> p.part() == Part.COBWEB).count();
-        assertEquals(2, plain);
-        assertEquals(6, trapped);
-        Plan plan = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0, true);
-        for (Placement web : plan.placements()) {
-            if (web.part() == Part.COBWEB) {
-                assertFalse(plan.inside(web.x() + 0.5, web.z() + 0.5), "outside the walls");
-                assertFalse(web.x() == plan.outer()[0] && web.z() == plan.outer()[2], "never in its own doorway");
+    void aTrapperBuildsATrapFieldWithNoFreeWayIn() {
+        Plan plan = BasePlanner.plan(FLAT, 0, 0, 5, 100, 0, Design.TRAPS);
+        assertEquals(Design.TRAPS, plan.design());
+        long roofWebs = plan.placements().stream()
+                .filter(p -> p.part() == Part.COBWEB && p.y() == plan.roofY() + 1).count();
+        assertTrue(roofWebs > 3 && roofWebs < 25, "a few webs on the solid roof against pillaring over");
+        Set<String> trapped = new HashSet<>();
+        Set<String> fences = new HashSet<>();
+        java.util.EnumSet<Part> kinds = java.util.EnumSet.noneOf(Part.class);
+        for (Placement p : plan.placements()) {
+            boolean outside = Math.max(Math.abs(p.x()), Math.abs(p.z())) > plan.half();
+            if (outside && (p.part() == Part.COBWEB || p.part() == Part.BUSH || p.part() == Part.CLEAR && p.y() <= 64)) {
+                trapped.add(p.x() + "," + p.z());
+                kinds.add(p.part());
+            }
+            if (p.part() == Part.FENCE) {
+                fences.add(p.x() + "," + p.z());
             }
         }
+        assertEquals(java.util.EnumSet.of(Part.COBWEB, Part.BUSH, Part.CLEAR), kinds, "webs, bushes and pits, mixed");
+        assertTrue(plan.placements().stream().anyMatch(p -> p.part() == Part.CLEAR && p.y() == 63
+                && Math.max(Math.abs(p.x()), Math.abs(p.z())) == 4), "two-deep pits in the ring");
+        // the ring two out from the walls is all traps but for the lane to the doorway
+        for (int[] c : BasePlanner.ring(0, 0, 4)) {
+            boolean lane = c[1] == 0 && c[0] > 0;
+            boolean funnel = c[0] == 4 && Math.abs(c[1]) == 1;
+            assertEquals(!lane, trapped.contains(c[0] + "," + c[1]) || funnel, "ring cell " + c[0] + "," + c[1]);
+        }
+        assertTrue(fences.size() > 15, "a palisade ring with gaps");
+        for (int k = 1; k <= 4; k++) {
+            assertFalse(trapped.contains((2 + k) + ",0"), "the lane to its own doorway stays free");
+            if (k >= 2) {
+                assertTrue(fences.contains((2 + k) + ",1") && fences.contains((2 + k) + ",-1"), "a fenced funnel");
+            }
+        }
+        assertTrue(BasePlanner.plan(FLAT, 0, 0, 5, 100, 0).placements().stream()
+                .noneMatch(p -> p.part() == Part.COBWEB), "a plain small box has no traps");
+    }
+
+    @Test
+    void everyBaseBuildingPersonalityHasItsOwnLayout() {
+        Plan keep = BasePlanner.plan(FLAT, 0, 0, 9, 100, 0, Design.KEEP);
+        assertTrue(walls(keep).contains("4,65,1") && walls(keep).contains("3,65,1"), "a keep's walls are double");
+        assertFalse(walls(keep).contains("4,65,0") || walls(keep).contains("3,65,0"), "a gate two deep");
+        assertEquals(5, keep.slits().size(), "slits on every side, two of them beside the gate");
+        assertTrue(keep.placements().stream().anyMatch(p -> p.part() == Part.PILLAR && p.x() == -4 && p.z() == -4
+                && p.y() == 70), "corner towers");
+        Plan bunker = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0, Design.BUNKER);
+        assertEquals(67, bunker.roofY(), "a bunker is low");
+        assertTrue(walls(bunker).contains("4,65,1") && walls(bunker).contains("5,65,-1"), "a corridor to its door");
+        assertEquals(List.of(6, 65, 0), List.of(bunker.outer()[0], bunker.outer()[1], bunker.outer()[2]));
+        Plan tower = BasePlanner.plan(FLAT, 0, 0, 9, 100, 0, Design.TOWER);
+        assertTrue(tower.tower());
+        assertEquals(3, tower.half(), "a wide nest");
+        assertEquals(72, tower.nestY());
+        assertEquals(75, tower.roofY(), "eleven blocks up");
+        assertEquals(4, tower.slits().size(), "the nest looks out on every side");
+        assertTrue(tower.slits().stream().allMatch(s -> s[1] == 74 && s[4] == 73));
+        assertTrue(tower.placements().stream().anyMatch(p -> p.part() == Part.TRIM && p.x() == 3 && p.z() == 3),
+                "log corners");
+        Plan small = BasePlanner.plan(FLAT, 0, 0, 7, 100, 0, Design.TOWER);
+        assertTrue(small.roofY() < tower.roofY() && small.half() == 2, "an easy sniper's tower is shorter");
+        assertTrue(tower.placements().stream().noneMatch(p -> p.x() == 0 && p.z() == 0 && p.part() != Part.CLEAR
+                && p.part() != Part.ROOF), "the shaft in the middle stays open");
+        Plan burrow = BasePlanner.plan(FLAT, 0, 0, 5, 100, 0, Design.BURROW);
+        assertEquals(60, burrow.floorY(), "dug four blocks down");
+        assertTrue(burrow.placements().stream().allMatch(p -> p.y() <= 64), "nothing shows above the ground");
+        assertTrue(burrow.slits().isEmpty());
+        assertEquals(65, burrow.outer()[1], "its way in starts at the surface");
+        assertTrue(burrow.fromOutside() > 0, "dug from its staircase");
+        for (int i = burrow.fromOutside(); i < burrow.placements().size(); i++) {
+            Placement p = burrow.placements().get(i);
+            assertFalse(p.part() == Part.CLEAR && Math.max(Math.abs(p.x()), Math.abs(p.z())) < 2,
+                    "the whole room is dug before it walks down into it");
+        }
+        Plan post = BasePlanner.plan(FLAT, 0, 0, 5, 100, 0, Design.WATCHPOST);
+        assertTrue(post.placements().stream().filter(p -> p.part() == Part.CRENEL && p.y() == 69).count() >= 6,
+                "a crenellated parapet");
+    }
+
+    @Test
+    void theDifficultyDecidesHowGrandAKeepIs() {
+        Plan easy = BasePlanner.plan(FLAT, 0, 0, 9, 100, 0, Design.KEEP);
+        Plan hell = BasePlanner.plan(FLAT, 0, 0, 13, 100, 0, Design.KEEP);
+        assertEquals(2, towers(easy), "a small keep: two towers at the back");
+        assertEquals(4, towers(hell), "a castle: a tower at every corner");
+        assertTrue(easy.placements().stream().noneMatch(p -> p.part() == Part.TRIM || p.part() == Part.FENCE));
+        assertTrue(hell.placements().stream().anyMatch(p -> p.part() == Part.TRIM && p.y() == 68),
+                "two storeys with a log band between them");
+        assertTrue(hell.placements().stream().anyMatch(p -> p.part() == Part.FLOOR && p.y() == 68), "an upper floor");
+        assertTrue(hell.placements().stream().filter(p -> p.part() == Part.FENCE).count() > 40, "a palisade");
+        assertTrue(hell.placements().stream().anyMatch(p -> p.part() == Part.PILLAR && p.x() == 8 && p.z() == 2),
+                "a gatehouse");
+        assertTrue(hell.roofY() > easy.roofY());
+        assertEquals(12, hell.placements().stream().filter(p -> p.part() == Part.WINDOW).count(),
+                "windows up top (never in a slit)");
+        for (Placement w : hell.placements()) {
+            if (w.part() == Part.WINDOW) {
+                assertTrue(hell.slits().stream().noneMatch(s -> s[0] == w.x() && s[1] == w.y() && s[2] == w.z()));
+            }
+        }
+        assertTrue(BasePlanner.closureBlocks(Design.KEEP, 13) > 2 * BasePlanner.closureBlocks(Design.KEEP, 9));
+        // both are keeps: double walls, the gate two deep, slits beside it
+        for (Plan keep : List.of(easy, hell)) {
+            assertEquals(5, keep.slits().size());
+            assertTrue(walls(keep).contains(keep.half() + ",65,1") && walls(keep).contains((keep.half() - 1) + ",65,1"));
+        }
+    }
+
+    /** Corner towers: pillars standing diagonally out of the corners. */
+    private static int towers(Plan plan) {
+        int count = 0;
+        for (int[] c : new int[][] {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}) {
+            int tx = c[0] * (plan.half() + 1);
+            int tz = c[1] * (plan.half() + 1);
+            if (plan.placements().stream().anyMatch(p -> p.part() == Part.PILLAR && p.x() == tx && p.z() == tz)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Test
+    void aBurrowIsWalkedIntoStepByStep() {
+        Plan burrow = BasePlanner.plan(FLAT, 0, 0, 5, 100, 0, Design.BURROW);
+        // the door is at x 2 (feet 61), the stairs climb east to the surface at x 6 (feet 65)
+        org.bukkit.Location top = new org.bukkit.Location(null, 6.5, 65, 0.5);
+        org.bukkit.Location step = BotController.burrowStep(burrow, top, true);
+        assertNotNull(step);
+        assertEquals(5, step.getBlockX());
+        assertEquals(64, step.getBlockY(), "one step down");
+        org.bukkit.Location door = new org.bukkit.Location(null, 2.5, 61, 0.5);
+        assertEquals(0, BotController.burrowStep(burrow, door, true).getBlockX(), "then into the room");
+        org.bukkit.Location room = new org.bukkit.Location(null, 0.5, 61, 0.5);
+        assertEquals(2, BotController.burrowStep(burrow, room, false).getBlockX(), "out by the door");
+        assertEquals(64, BotController.burrowStep(burrow, new org.bukkit.Location(null, 4.5, 63, 0.5), false)
+                .getBlockY(), "and up the stairs");
+        assertNull(BotController.burrowStep(burrow, new org.bukkit.Location(null, 20.5, 65, 9.5), true),
+                "not on the stairs");
+    }
+
+    @Test
+    void everyLayoutIsClosedBeforeAnythingElse() {
+        for (Design design : Design.values()) {
+            Plan plan = BasePlanner.plan(FLAT, 0, 0, 13, 0, 100, design);
+            int closure = plan.closure();
+            assertTrue(closure > 0, design.name());
+            int lastWall = -1;
+            for (int i = 0; i < plan.placements().size(); i++) {
+                Part part = plan.placements().get(i).part();
+                if (part == Part.WALL || part == Part.FLOOR || part == Part.ROOF) {
+                    assertTrue(i < closure, design + ": the shell first, " + plan.placements().get(i));
+                }
+                if (part == Part.CHEST || part == Part.CRAFTING_TABLE || part == Part.PILLAR || part == Part.COBWEB
+                        || part == Part.FENCE || part == Part.CRENEL || part == Part.WINDOW || part == Part.LIGHT) {
+                    assertTrue(i >= closure, design + ": furniture, lookouts and traps last");
+                }
+                if (part == Part.WALL) {
+                    lastWall = i;
+                }
+            }
+            assertTrue(lastWall < indexOf(plan, Part.ROOF), design + ": the walls before the roof");
+            assertEquals(design == Design.BURROW ? 3 : 2, plan.door().size(), "a doorway two blocks can shut");
+            assertTrue(plan.inside(plan.inner()[0] + 0.5, plan.inner()[2] + 0.5), design + ": held from inside");
+            assertFalse(plan.inside(plan.outer()[0] + 0.5, plan.outer()[2] + 0.5), design + ": entered from outside");
+        }
+    }
+
+    @Test
+    void theSizeFitsTheTimeAndTheBlocksLeft() {
+        assertTrue(BasePlanner.closureBlocks(Design.BOX, 5) < BasePlanner.closureBlocks(Design.BOX, 7));
+        assertTrue(BasePlanner.closureBlocks(Design.BOX, 7) < BasePlanner.closureBlocks(Design.BOX, 9));
+        assertTrue(BasePlanner.closureBlocks(Design.KEEP, 9) > BasePlanner.closureBlocks(Design.BOX, 9),
+                "double walls cost more");
+        // plenty: the size it wants
+        assertEquals(new BasePlanner.Fit(Design.BOX, 11), BasePlanner.fit(Design.BOX, 11,
+                BasePlanner.budget(3.5, 300, 0, 300)));
+        // the blocks run short: smaller but closed
+        assertEquals(300, BasePlanner.budget(3.5, 300, 0, 300), 1.0E-9, "the blocks bind");
+        assertEquals(new BasePlanner.Fit(Design.BOX, 7), BasePlanner.fit(Design.BOX, 11, 120));
+        // the time runs short: a long walk eats it (3.5 blocks a second over 20 s, half of it planned)
+        assertEquals(35, BasePlanner.budget(3.5, 60, 40, 500), 1.0E-9, "the time binds");
+        assertEquals(new BasePlanner.Fit(Design.BOX, 5), BasePlanner.fit(Design.BOX, 11, 35),
+                "even with too little: the smallest closed box");
+        // a keep that does not fit becomes a plain box that does
+        assertEquals(new BasePlanner.Fit(Design.KEEP, 11), BasePlanner.fit(Design.KEEP, 11, 1000));
+        assertEquals(new BasePlanner.Fit(Design.BOX, 5), BasePlanner.fit(Design.KEEP, 9, 100));
+        assertEquals(new BasePlanner.Fit(Design.TOWER, 13), BasePlanner.fit(Design.TOWER, 13, 1000));
+        BasePlanner.Fit shortTower = BasePlanner.fit(Design.TOWER, 13, 200);
+        assertTrue(shortTower.design() == Design.TOWER && shortTower.size() < 13, "short of blocks: a shorter tower");
+        for (Design design : Design.values()) {
+            assertEquals(design, BasePlanner.fit(design, 7, 1000).design(), "plenty of blocks: its own layout");
+        }
+        assertEquals(0, BasePlanner.budget(3.5, 0, 0, 300), 1.0E-9, "in the fight: no time, the smallest base");
+    }
+
+    private static Set<String> walls(Plan plan) {
+        Set<String> out = new HashSet<>();
+        for (Placement p : plan.placements()) {
+            if (p.part() == Part.WALL) {
+                out.add(p.x() + "," + p.y() + "," + p.z());
+            }
+        }
+        return out;
     }
 
     @Test
@@ -191,6 +383,23 @@ class BasePlannerTest {
         assertNotNull(apart);
         assertTrue(Math.abs(apart[0]) == 40, "not inside another bot's base");
         assertNull(BasePlanner.choose(FLAT, List.<int[]>of(new int[] {5, 0}), 5, 0, 0, List.<int[]>of(new int[] {5, 0})));
+    }
+
+    @Test
+    void aPaletteMixesItsBlocks() {
+        String options = "STONE_BRICKS|MOSSY_STONE_BRICKS|CRACKED_STONE_BRICKS";
+        java.util.Map<String, Integer> count = new java.util.HashMap<>();
+        for (int x = 0; x < 30; x++) {
+            for (int y = 0; y < 30; y++) {
+                count.merge(BasePlanner.Palette.pick(options, x, y, 7), 1, Integer::sum);
+            }
+        }
+        assertEquals(3, count.size(), "every block shows up");
+        assertTrue(count.get("STONE_BRICKS") > 900 * 0.6 && count.get("STONE_BRICKS") < 900 * 0.85, "mostly the first");
+        assertEquals(BasePlanner.Palette.pick(options, 3, 4, 5), BasePlanner.Palette.pick(options, 3, 4, 5),
+                "the same block for the same spot (a mended hole looks like before)");
+        assertEquals("OAK_PLANKS", BasePlanner.Palette.pick("OAK_PLANKS", 1, 2, 3));
+        assertEquals("OAK_FENCE", new BasePlanner.Palette("OAK_PLANKS", "OAK_LOG", "OAK_PLANKS").fence());
     }
 
     @Test

@@ -78,9 +78,17 @@ public final class BotBrain {
      * @param approaching   getting closer
      * @param hasBow        holds or carries a bow (visible in hand)
      * @param grudge        it hurt this bot or killed someone near it (an avenger hunts it down)
+     * @param trapped       stuck in a cobweb right now (easy to hit, cannot get away)
      */
     public record Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
-                          boolean fightingOther, boolean approaching, boolean hasBow, boolean grudge) {
+                          boolean fightingOther, boolean approaching, boolean hasBow, boolean grudge,
+                          boolean trapped) {
+
+        /** A contact that is not stuck in a web. */
+        public Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
+                       boolean fightingOther, boolean approaching, boolean hasBow, boolean grudge) {
+            this(id, distance, health, maxHealth, gear, visible, fightingOther, approaching, hasBow, grudge, false);
+        }
 
         /** A contact the bot holds no grudge against. */
         public Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
@@ -240,11 +248,13 @@ public final class BotBrain {
             }
         }
         if (!s.fight()) {
-            // No PvP yet: a smart player farms and builds, it does not chase anyone.
-            if (!s.baseDone()) {
+            // No PvP yet: a smart player farms and builds, it does not chase anyone. A builder sticks to its base
+            // until it is closed (a base left half built is no base when the fight starts); the rest farm.
+            if (!s.baseDone() && traits.builds()) {
                 out.add(new Decision(Behaviour.BUILD_BASE, null, 60 + 10 * s.farmingLeft()));
+            } else {
+                out.add(new Decision(Behaviour.FARM, null, 40));
             }
-            out.add(new Decision(Behaviour.FARM, null, 40));
             return sorted(weigh(out, 0), s);
         }
         double myPower = power(hp + (s.appleReady() ? Math.min(s.apples(), 2) * 4.0 : 0), s.gear());
@@ -268,6 +278,15 @@ public final class BotBrain {
         double aggression = showdown ? 1 : baseAggression + (1 - baseAggression)
                 * Math.min(1, 0.6 * p + 0.4 * s.idle() * Math.max(p, 0.5));
         double maxHp = Math.max(1, s.maxHealth());
+        BotPersonality who = traits.personality();
+        // a homebody holds its base: it fights from behind its walls and leaves them only for the border, a breach (the
+        // controller then calls the base unsafe) or a fight it is clearly winning right outside
+        double homebody = traits.homebody();
+        boolean home = homebody > 0 && !showdown && s.baseBuilt() && s.baseSafe() && s.baseDistance() < 64;
+        boolean grudgeKnown = false;
+        for (Contact c : s.contacts()) {
+            grudgeKnown |= c.grudge() && traits.grudges();
+        }
         for (Contact c : s.contacts()) {
             double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
@@ -303,6 +322,42 @@ public final class BotBrain {
             if (traits.personality() == BotPersonality.NOMAD && others == 0 && hurtRatio < 0.8) {
                 engage += 10; // a loner is easy prey
             }
+            // the signature styles: strong enough that two personalities in one spot visibly act differently
+            if (who != null && !showdown) {
+                switch (who) {
+                    case ARCHER -> engage -= s.hasBow() && c.distance() > 5 ? 22 : 0; // the bow, not the sword
+                    case BERSERKER -> engage += 15 + Math.min(10, c.distance() * 0.4); // straight in, whatever the range
+                    case HUNTER -> engage += !c.approaching() && c.distance() > 4 ? 18 : 6; // runs down whoever runs
+                    case ASSASSIN -> {
+                        if (!c.fightingOther() && hurtRatio > 0.6 && c.distance() > 10) {
+                            // never a fair fight from afar: it stalks until someone else starts one or it is close
+                            // enough to come in from behind
+                            engage -= 25;
+                            out.add(new Decision(Behaviour.THIRD_PARTY, c.id(), 56 - 20 * p));
+                        }
+                    }
+                    case SURVIVOR -> engage -= s.rivalsLeft() > SHOWDOWN_RIVALS && hurtRatio > 0.35 ? 25 : 0;
+                    case OPPORTUNIST -> {
+                        if (c.visible() && c.distance() < 40) {
+                            out.add(new Decision(Behaviour.THIRD_PARTY, c.id(), 50 - 20 * p)); // shadows from afar
+                        }
+                    }
+                    case AVENGER -> engage -= grudgeKnown && !c.grudge() ? 30 : 0; // nobody else matters
+                    default -> {
+                    }
+                }
+            }
+            if (c.trapped()) {
+                engage += traits.traps() ? 30 : 15; // stuck in a web: punish it
+            }
+            if (home) {
+                if (c.distance() < 6 && hurtRatio < 0.4 && advantage > 1.2) {
+                    engage += 25 * homebody; // a weak one right outside its walls: out and finish it
+                } else {
+                    // it would rather meet them at its walls: the farther they are, the less it goes out
+                    engage -= homebody * (20 + Math.max(0, c.distance() - 8));
+                }
+            }
             out.add(new Decision(Behaviour.ENGAGE, c.id(), engage));
             if (traits.sneaks() && !showdown && hp < maxHp * 0.55 && c.distance() < 10) {
                 // the strike failed: an assassin gets out fast
@@ -314,6 +369,15 @@ public final class BotBrain {
             if (s.hasBow() && bowRange() > 0 && c.distance() > 7 && c.distance() <= bowRange()
                     && c.visible()) {
                 double kite = 42 + 25 * clamp(1 - advantage, 0, 1) + (c.hasBow() ? -8 : 6);
+                if (who == BotPersonality.ARCHER || who == BotPersonality.NOMAD) {
+                    kite += 30; // the bow is how it fights
+                }
+                if (c.trapped()) {
+                    kite += 15;
+                }
+                if (grudgeKnown && !c.grudge()) {
+                    kite -= 20;
+                }
                 out.add(new Decision(Behaviour.KITE, c.id(), kite));
             }
             // an even match (advantage around 1) alone is fought, not avoided by both sides
@@ -339,9 +403,15 @@ public final class BotBrain {
             out.add(new Decision(Behaviour.RETREAT_HEAL, null, (s.apples() > 0 ? 80 : 64 - 25 * p)
                     + (threatened ? 4 : 0)));
         }
-        // the base is a place to fall back to when hunted or hurt, not a place to sit out the match in
-        if (!showdown && s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48
+        if (home) {
+            // its base is where it fights: back to it when the fight starts, when anyone shows up, to heal; it waits
+            // there less as the fight drags on and when nobody comes for a long while
+            double score = 45 + 40 * homebody - 25 * p - 20 * s.idle() - s.baseDistance() * 0.15
+                    + (s.contacts().isEmpty() ? -10 : 8) + (low ? 20 : 0) + (near >= 2 ? 10 : 0);
+            out.add(new Decision(Behaviour.DEFEND_BASE, null, score));
+        } else if (!showdown && s.baseBuilt() && s.baseSafe() && s.baseDistance() < 48
                 && (low || !s.contacts().isEmpty())) {
+            // the base is a place to fall back to when hunted or hurt, not a place to sit out the match in
             // an enemy walking up to its walls is fought from behind them (the slit, the doorway)
             boolean comingClose = nearestThreat != null && nearestThreat.approaching() && s.baseDistance() < 12
                     && nearestThreat.distance() < 30;
@@ -383,10 +453,16 @@ public final class BotBrain {
                 out.add(d);
                 continue;
             }
-            double m = 1 + (traits.weight(d.behaviour()) - 1) * (1 - 0.6 * pressure);
-            if (m <= 0.01) {
-                continue; // never (a nomad's base)
+            double w = traits.weight(d.behaviour());
+            if (w <= 0.01) {
+                continue; // never (a nomad's base, a berserker's bow)
             }
+            if (d.behaviour() == Behaviour.DEFEND_BASE && traits.homebody() > 0) {
+                w = 1; // a homebody's base score is its own already
+            }
+            // the personality counts a lot (two personalities in one spot act differently), fading a little as the
+            // fight gets late
+            double m = 1 + (Math.pow(w, 1.5) - 1) * (1 - 0.4 * pressure);
             double swing = mood.getOrDefault(d.behaviour(), 0.0) * (1 - pressure);
             out.add(new Decision(d.behaviour(), d.target(), d.score() * m + swing));
         }

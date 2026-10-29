@@ -110,6 +110,63 @@ class BotPersonalityTest {
     }
 
     @Test
+    void aFortressBuilderWaitsInItsKeepWhenTheFightStartsWhereABerserkerGoesLooking() {
+        Situation start = fight(20, List.of(), true, 30, true);
+        assertEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.FORTRESS), start), "home to its keep");
+        assertEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.TRAPPER), start), "and its traps");
+        assertEquals(Behaviour.SCOUT, choice(brain(BotPersonality.BERSERKER), start));
+        Situation lost = fight(20, List.of(), true, 30, false);
+        assertNotEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.FORTRESS), lost),
+                "a base the border takes (or that is broken open) is left");
+        // it does not run out at someone far off, but finishes a weak one right outside its walls
+        Situation far = fight(20, List.of(enemy(A, 28, 20, IRON, false)), true, 2, true);
+        assertEquals(Behaviour.DEFEND_BASE, choice(brain(BotPersonality.FORTRESS), far));
+        Situation weak = fight(20, List.of(enemy(A, 4, 5, IRON, false)), true, 2, true);
+        assertEquals(Behaviour.ENGAGE, choice(brain(BotPersonality.FORTRESS), weak));
+    }
+
+    @Test
+    void inTheSameDuelEveryPersonalityFightsItsOwnWay() {
+        Situation duel = fight(20, List.of(enemy(A, 20, 20, IRON, false)), false, Double.POSITIVE_INFINITY, false);
+        assertEquals(Behaviour.KITE, choice(brain(BotPersonality.ARCHER), duel), "the bow from afar");
+        assertEquals(Behaviour.KITE, choice(brain(BotPersonality.NOMAD), duel), "hit and run");
+        assertEquals(Behaviour.ENGAGE, choice(brain(BotPersonality.BERSERKER), duel), "straight in");
+        assertTrue(brain(BotPersonality.BERSERKER).options(duel).stream()
+                .noneMatch(d -> d.behaviour() == Behaviour.KITE), "a berserker never kites");
+        assertEquals(Behaviour.ENGAGE, choice(brain(BotPersonality.HUNTER), duel), "runs them down");
+        assertEquals(Behaviour.THIRD_PARTY, choice(brain(BotPersonality.ASSASSIN), duel),
+                "no fair fights: it stalks the healthy");
+        assertNotEquals(Behaviour.ENGAGE, choice(brain(BotPersonality.SURVIVOR), duel),
+                "keeps out of it while many are left");
+        // an avenger goes for whoever wronged it, past someone nearer
+        Situation grudge = fight(20, List.of(enemy(A, 8, 20, IRON, false),
+                new Contact(B, 25, 20, 20, IRON, true, false, false, false, true)), false, Double.POSITIVE_INFINITY,
+                false);
+        assertEquals(B, brain(BotPersonality.AVENGER).decide(grudge).target());
+        // stuck in a web: punished
+        Situation webbed = fight(20, List.of(new Contact(A, 12, 20, 20, IRON, true, false, false, false, false,
+                true)), false, Double.POSITIVE_INFINITY, false);
+        double free = brain(BotPersonality.TRAPPER).options(duel).stream()
+                .filter(d -> d.behaviour() == Behaviour.ENGAGE).findFirst().orElseThrow().score();
+        double stuck = brain(BotPersonality.TRAPPER).options(webbed).stream()
+                .filter(d -> d.behaviour() == Behaviour.ENGAGE).findFirst().orElseThrow().score();
+        assertTrue(stuck > free + 20, "a trapper goes for whoever is stuck in a web");
+    }
+
+    @Test
+    void everyBuilderBuildsUntilItsBaseIsClosed() {
+        Situation farming = new Situation(false, 0.3, 20, 0, 20, 0, false, IRON, false, 100, 100, false, 50, 12,
+                true, false, 10, false, false, null, null, List.of());
+        for (BotPersonality each : BotPersonality.values()) {
+            BotBrain brain = brain(each);
+            assertEquals(brain.traits().builds() ? Behaviour.BUILD_BASE : Behaviour.FARM, choice(brain, farming),
+                    each.name());
+        }
+        assertTrue(brain(BotPersonality.ASSASSIN).traits().builds());
+        assertFalse(brain(BotPersonality.HUNTER).traits().builds());
+    }
+
+    @Test
     void aNomadNeverBuildsAndAHunterRarelyDoes() {
         Situation farming = new Situation(false, 0.8, 20, 0, 20, 0, false, IRON, false, 100, 100, false, 50, 12,
                 false, false, Double.POSITIVE_INFINITY, false, false, null, null, List.of());

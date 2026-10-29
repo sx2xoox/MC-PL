@@ -19,7 +19,8 @@ public final class Hazards {
     /** Blocks that hurt, trap or freeze whoever is in or on them. */
     static final Set<Material> HAZARDS = EnumSet.of(Material.POWDER_SNOW, Material.LAVA, Material.FIRE,
             Material.SOUL_FIRE, Material.CACTUS, Material.SWEET_BERRY_BUSH, Material.MAGMA_BLOCK, Material.CAMPFIRE,
-            Material.SOUL_CAMPFIRE, Material.WITHER_ROSE, Material.POINTED_DRIPSTONE, Material.COBWEB);
+            Material.SOUL_CAMPFIRE, Material.WITHER_ROSE, Material.POINTED_DRIPSTONE, Material.COBWEB,
+            Material.HONEY_BLOCK);
 
     /** Blocks a bot never breaks. */
     static final Set<Material> UNBREAKABLE = EnumSet.of(Material.BEDROCK, Material.BARRIER, Material.END_PORTAL_FRAME,
