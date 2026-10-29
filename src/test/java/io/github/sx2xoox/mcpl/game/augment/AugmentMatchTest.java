@@ -329,7 +329,8 @@ class AugmentMatchTest {
         assertEquals(1200 * 20, defaults.farmingTicks());
         assertEquals(2, defaults.rerolls());
         assertEquals(4, defaults.rounds().size());
-        assertEquals(300 * 20, defaults.rounds().getFirst().atTicks());
+        assertEquals(180 * 20, defaults.rounds().getFirst().atTicks());
+        assertTrue(defaults.rounds().getLast().atTicks() < defaults.farmingTicks(), "every round before the fight");
         assertEquals(5.0, defaults.rounds().getFirst().percent(AugmentTier.PRISM), 1.0E-6);
 
         section.set(AugmentSettings.RADIUS, 5);

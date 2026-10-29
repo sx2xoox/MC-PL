@@ -181,13 +181,16 @@ public record AugmentSettings(
                 moved, bonusEnabled, offerUi, farmingInvulnerable, farmingNoHunger, startKit);
     }
 
-    /** The default rounds: 5, 12, 20 (fight start) and 30 minutes, leaning higher as the match goes on. */
+    /**
+     * The default rounds: 3, 8, 13 and 18 minutes, all within the 20 minute farming (everyone has every augment before
+     * the fight), leaning higher as the match goes on.
+     */
     static List<Map<String, Object>> defaultRounds() {
         return List.of(
-                round(300, 70, 25, 5),
-                round(720, 40, 45, 15),
-                round(1200, 20, 50, 30),
-                round(1800, 10, 45, 45));
+                round(180, 70, 25, 5),
+                round(480, 40, 45, 15),
+                round(780, 20, 50, 30),
+                round(1080, 10, 45, 45));
     }
 
     private static Map<String, Object> round(int at, int silver, int gold, int prism) {
@@ -263,7 +266,7 @@ public record AugmentSettings(
         d.set(ROUNDS, defaultRounds());
         d.setComments(ROUNDS, List.of(
                 "증강 라운드: at = 파밍 시작 후 몇 초에, silver/gold/prism = 그 라운드 등급의 가중치",
-                "한 라운드에서는 모두가 같은 등급(무작위)의 카드를 받습니다. 기본: 5분, 12분, 20분(전투 시작), 30분"));
+                "한 라운드에서는 모두가 같은 등급(무작위)의 카드를 받습니다. 기본: 3분, 8분, 13분, 18분 (모두 파밍 중, 전투 전에 다 받음)"));
 
         d.set(BONUS, true);
         d.setComments("bonus", List.of("보너스 증강: 특별한 업적(첫 번째 피, 심연의 광부 …)을 달성하면 증강을 하나 더 받습니다."));
