@@ -194,7 +194,11 @@ bots:
   won-reason: "모든 사람이 탈락해 살아남은 봇이 이겼습니다"
   # 봇 채팅 한 줄 (플레이어 채팅처럼): <name> 봇 이름, <message> 문구 (augment-bots-chat.yml)
   chat-line: "\\<<name>> <message>"
-  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white> <dark_gray>(섞기: 쉬움 3 어려움 2)"
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white> <dark_gray>(섞기: 쉬움 3 어려움 2 · 팀전: 팀 3 4 보통)"
+  team-bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [관전] 팀 [팀당 인원] [팀 수] [난이도]</white> <dark_gray>(예: 팀 3 4 보통, 팀 2 3 쉬움 3 어려움 2)"
+  team-full: "<red>자리가 없습니다: <gray>사람 <white><count></white>명이 팀 자리 <white><places></white>개를 다 채웁니다. 팀당 인원이나 팀 수를 늘리세요."
+  team-starting: "<green>봇전 팀전을 시작합니다:</green> <gray><white><teams></white>팀 × <white><size></white>명, 봇 <white><count></white>명 (<white><difficulty></white>)"
+  team-joined: "<gray>팀전: <white><teams></white>팀, 사람은 팀마다 고르게, 빈자리는 봇이 채웁니다. 마지막까지 남은 팀이 이깁니다. 팀원끼리는 때릴 수 없습니다."
 
 # ── 봇 관전전 (/게임 증강 봇전 관전) ─────────────────────────
 spectate:
@@ -218,6 +222,8 @@ spectate:
   list-header: "<gradient:#4fc3f7:#ff8c8c><bold>남은 봇</bold></gradient> <gray><alive>명 <dark_gray>· 이름을 클릭하면 따라갑니다"
   winner: "<gold><bold>우승!</bold></gold> <bot> <gray>(킬 <white><kills></white> · 증강 <white><augments></white>개)"
   winners: "<gold><bold>우승!</bold></gold> <bots>"
+  team-winner: "<gold><bold>우승!</bold></gold> <team> <gray>(생존 <white><alive></white>/<size> · 킬 <white><kills></white>) <dark_gray>— <members>"
+  hud-team: "<team> <gray><alive>/<size> <dark_gray>⚔<kills>"
   draw: "<gray>살아남은 봇이 없습니다. 무승부!"
   everyone-left: "관전하는 사람이 모두 나갔습니다"
   nobody-online: "<red>관전할 사람이 없습니다."
@@ -373,4 +379,18 @@ settings:
     lore:
       - "<gray>모든 상황의 말할 확률에 곱합니다."
       - "<gray>상황별 확률: config.yml 의 bots.chat.chances"
+  bot-team-cohesion:
+    name: "봇 팀 뭉침 거리"
+    lore:
+      - "<gray>봇전 팀전: 봇이 팀장(사람 팀원, 없으면 가장 강한 봇)에게서"
+      - "<gray>이 거리 안에 머물고, 멀어지면 다시 합류합니다."
+  bot-team-base:
+    name: "봇 팀 기지"
+    lore:
+      - "<gray>봇전 팀전: 팀의 기지 짓는 봇들이 기지 하나를 함께 짓고 지킵니다."
+      - "<gray>끄면 봇마다 자기 기지를 짓습니다."
+  bot-team-chat:
+    name: "봇 팀 채팅"
+    lore:
+      - "<gray>봇전 팀전: 합류, 도움 요청, 집중 공격, 팀원 사망·처치, 팀 우승 대사"
     zero: "<red>말 안 함"

@@ -46,7 +46,9 @@ public final class BotBrain {
         /** Outgeared or outnumbered: keep away from the target. */
         AVOID("회피", false),
         /** Outside or at the edge of the closing border: get inside. */
-        FLEE_BORDER("보더 탈출", false);
+        FLEE_BORDER("보더 탈출", false),
+        /** 팀전: too far from its team's leader: back to the team. */
+        REGROUP("합류", false);
 
         private final String koreanName;
         private final boolean notable;
@@ -175,6 +177,31 @@ public final class BotBrain {
         }
     }
 
+    /**
+     * What a bot of a team knows about its team (봇전 팀전), or null in free-for-all.
+     *
+     * @param alliesNear     teammates in play within {@link #NEAR} blocks (they fight with it)
+     * @param leaderDistance blocks to its team's leader (0 if it leads)
+     * @param cohesion       how far from the leader it may be (blocks, {@code bots.team.cohesion-radius})
+     * @param leads          it is the leader (nobody to follow)
+     * @param focus          the enemy its team is hitting (focus fire), or null
+     * @param peel           an enemy hitting a teammate in trouble, or null
+     * @param peelForHuman   that teammate is a human (a protector bot cares even more)
+     */
+    public record TeamView(int alliesNear, double leaderDistance, double cohesion, boolean leads,
+                           @Nullable UUID focus, @Nullable UUID peel, boolean peelForHuman) {
+
+        public TeamView {
+            alliesNear = Math.max(0, alliesNear);
+            leaderDistance = Double.isFinite(leaderDistance) ? Math.max(0, leaderDistance) : 0;
+        }
+
+        /** A teammate with no team news. */
+        public static TeamView alone(double cohesion) {
+            return new TeamView(0, 0, cohesion, true, null, null, false);
+        }
+    }
+
     /** The chosen option. */
     public record Decision(Behaviour behaviour, @Nullable UUID target, double score) {
     }
@@ -232,6 +259,11 @@ public final class BotBrain {
 
     /** Every option with its score, best first (for tests and debugging). */
     public List<Decision> options(Situation s) {
+        return scored(s, 0);
+    }
+
+    /** The options when {@code allies} teammates fight next to it: they take on that many of the enemies near. */
+    private List<Decision> scored(Situation s, int allies) {
         List<Decision> out = new ArrayList<>();
         double hp = s.health() + s.absorption();
         boolean low = s.health() <= healAt();
@@ -297,7 +329,7 @@ public final class BotBrain {
         for (Contact c : s.contacts()) {
             double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
-            int others = near - (c.distance() <= NEAR ? 1 : 0);
+            int others = Math.max(0, near - (c.distance() <= NEAR ? 1 : 0) - allies);
             if (c.fightingOther()) {
                 if (hurtRatio > 0.5 && !low && !showdown) {
                     // let them wear each other down first (less patient late in the fight)
@@ -528,6 +560,110 @@ public final class BotBrain {
     public Decision decide(Situation s) {
         return options(s).getFirst();
     }
+
+    /** The best option for a bot of a team (null {@code team}: free-for-all, as {@link #decide(Situation)}). */
+    public Decision decide(Situation s, @Nullable TeamView team) {
+        return options(s, team).getFirst();
+    }
+
+    /** Engage bonus for the enemy the team is hitting (focus fire). */
+    static final double FOCUS_BONUS = 26;
+    /** Engage bonus for the enemy hitting a teammate in trouble (peel). */
+    static final double PEEL_BONUS = 34;
+    /** Engage bonus per teammate close by (numbers win fights). */
+    static final double ALLY_BONUS = 7;
+
+    /**
+     * {@link #options(Situation)} for a bot of a team: the enemies its teammates fight do not count against it (no
+     * "1v2" when it is 2v2), it prefers the target its team hits and the one hurting a teammate in trouble (a
+     * protector, the tank and the fortress builder, most of all for a human teammate), it never waits for a teammate's
+     * fight to wear the enemy down (that is its own fight) and it goes back to the team when it strays farther than
+     * the cohesion radius. The border still beats everything ({@link #borderFirst}).
+     */
+    public List<Decision> options(Situation s, @Nullable TeamView team) {
+        if (team == null) {
+            return options(s);
+        }
+        List<Decision> base = scored(s, s.fight() ? team.alliesNear() : 0);
+        List<Decision> out = new ArrayList<>(base.size() + 2);
+        BotPersonality who = traits.personality();
+        boolean protector = who == BotPersonality.TANK || who == BotPersonality.FORTRESS
+                || who == BotPersonality.AVENGER;
+        boolean loner = who == BotPersonality.NOMAD || who == BotPersonality.ASSASSIN;
+        Set<UUID> sureKills = new HashSet<>();
+        for (Decision d : base) {
+            if (d.behaviour() == Behaviour.ENGAGE && d.score() >= 200 && d.target() != null) {
+                sureKills.add(d.target());
+            }
+        }
+        for (Decision d : base) {
+            double score = d.score();
+            if (s.fight() && d.target() != null) {
+                boolean teamFight = d.target().equals(team.focus()) || d.target().equals(team.peel());
+                if (d.behaviour() == Behaviour.THIRD_PARTY && teamFight) {
+                    continue; // its teammate's fight is its own fight
+                }
+                if (d.behaviour() == Behaviour.AVOID && team.alliesNear() > 0) {
+                    score -= 18 * team.alliesNear();
+                }
+                if (d.behaviour() == Behaviour.ENGAGE || d.behaviour() == Behaviour.KITE) {
+                    if (d.target().equals(team.focus())) {
+                        score += d.behaviour() == Behaviour.ENGAGE ? FOCUS_BONUS : FOCUS_BONUS * 0.6;
+                    }
+                    if (d.target().equals(team.peel())) {
+                        score += PEEL_BONUS * (protector ? 1.5 : 1) * (team.peelForHuman() ? 1.3 : 1);
+                    }
+                    score += ALLY_BONUS * Math.min(3, team.alliesNear());
+                }
+            }
+            out.add(score == d.score() ? d : new Decision(d.behaviour(), d.target(), score));
+        }
+        if (s.fight() && team.peel() != null && contactOf(s, team.peel()) == null) {
+            // a teammate in trouble against someone it has not seen itself: it goes to help (its teammate saw them)
+            out.add(new Decision(Behaviour.REGROUP, null, 48 + (protector ? 18 : 0) + (team.peelForHuman() ? 10 : 0)));
+        }
+        if (!team.leads() && team.leaderDistance() > team.cohesion()) {
+            double stray = team.leaderDistance() - team.cohesion();
+            double score = 34 + Math.min(42, stray * 1.4);
+            if (!s.fight()) {
+                score -= 10; // farming: loosely around the team (a builder keeps building, see below)
+            }
+            if (loner) {
+                score -= 12; // a lone wolf comes along, grudgingly
+            }
+            for (Contact c : s.contacts()) {
+                if (c.visible() && c.distance() < 12) {
+                    score -= 25; // fight first, regroup after
+                    break;
+                }
+            }
+            if (s.health() <= healAt()) {
+                score += 12; // hurt: back to the team
+            }
+            out.add(new Decision(Behaviour.REGROUP, null, score));
+        }
+        if (!s.fight()) {
+            // a builder that has not closed its base keeps building (the team base is the team's)
+            for (Decision d : out) {
+                if (d.behaviour() == Behaviour.BUILD_BASE) {
+                    out.removeIf(o -> o.behaviour() == Behaviour.REGROUP);
+                    break;
+                }
+            }
+        }
+        out.sort((a, b) -> Double.compare(b.score(), a.score()));
+        return borderFirst(out, sureKills); // no team bonus passes the way back inside the border
+    }
+
+    private static @Nullable Contact contactOf(Situation s, UUID id) {
+        for (Contact c : s.contacts()) {
+            if (c.id().equals(id)) {
+                return c;
+            }
+        }
+        return null;
+    }
+
 
     private List<Decision> sorted(List<Decision> options, Situation s) {
         List<Decision> out = new ArrayList<>(options.size());

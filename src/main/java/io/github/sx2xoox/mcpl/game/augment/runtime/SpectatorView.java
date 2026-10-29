@@ -92,6 +92,21 @@ public final class SpectatorView {
             match.announce(messages().prefixed("spectate.draw"));
             return;
         }
+        MatchTeam winningTeam = session().isTeamMode() ? session().teamOf(result.winners().getFirst()) : null;
+        if (winningTeam != null) {
+            int kills = 0;
+            int alive = 0;
+            List<Component> names = new ArrayList<>();
+            for (UUID member : winningTeam.members()) {
+                kills += session().stats().of(member).kills();
+                alive += session().isAlive(member) ? 1 : 0;
+                names.add(session().name(member));
+            }
+            match.announce(messages().prefixed("spectate.team-winner", Messages.tag("team", winningTeam.displayName()),
+                    Messages.tag("alive", alive), Messages.tag("size", winningTeam.size()), Messages.tag("kills", kills),
+                    Messages.tag("members", Component.join(JoinConfiguration.commas(true), names))));
+            return;
+        }
         if (result.winners().size() == 1) {
             UUID winner = result.winners().getFirst();
             match.announce(messages().prefixed("spectate.winner", Messages.tag("bot", session().name(winner)),
@@ -121,6 +136,34 @@ public final class SpectatorView {
                 Messages.tag("total", bots.all().size())));
         List<BotController> standing = ranked();
         int room = Sidebar.MAX_LINES - 4 - lines.size();
+        if (session.isTeamMode()) {
+            // per team: a header (alive / members, kills) and its standing bots
+            int shown = 0;
+            for (MatchTeam team : session.teams()) {
+                List<BotController> members = standing.stream().filter(bot -> team.contains(bot.id())).toList();
+                if (members.isEmpty() || lines.size() >= Sidebar.MAX_LINES - 4) {
+                    continue;
+                }
+                int kills = 0;
+                for (UUID member : team.members()) {
+                    kills += session.stats().of(member).kills();
+                }
+                lines.add(messages().get("spectate.hud-team", Messages.tag("team", team.displayName()),
+                        Messages.tag("alive", members.size()), Messages.tag("size", team.size()),
+                        Messages.tag("kills", kills)));
+                for (BotController bot : members) {
+                    if (lines.size() >= Sidebar.MAX_LINES - 4) {
+                        break;
+                    }
+                    lines.add(row(bot));
+                    shown++;
+                }
+            }
+            if (shown < standing.size()) {
+                lines.add(messages().get("spectate.hud-more", Messages.tag("count", standing.size() - shown)));
+            }
+            return lines;
+        }
         for (int i = 0; i < standing.size() && i < room; i++) {
             lines.add(row(standing.get(i)));
         }

@@ -173,11 +173,79 @@ final class BotChatFeed {
     }
 
     void finished(GameResult result) {
+        boolean team = bots.teamChat() && result.winners().size() > 1;
         for (UUID winner : result.winners()) {
-            if (bots.isBot(winner)) {
-                say(winner, Trigger.WIN, Map.of("kills", Component.text(session().stats().of(winner).kills())));
+            if (bots.isBot(winner) && (!team || bots.body(winner) != null)) {
+                say(winner, team ? Trigger.TEAM_WIN : Trigger.WIN,
+                        Map.of("kills", Component.text(session().stats().of(winner).kills())));
             }
         }
+    }
+
+    /**
+     * 팀전: {@code dead} (a bot or a player, still counted alive) went down, by {@code killer} if any: one of its
+     * teammates mourns it (or, the last one of its team, says so) and one of the killer's teammates cheers.
+     */
+    void teamDeath(UUID dead, @Nullable UUID killer) {
+        if (!bots.teamChat()) {
+            return;
+        }
+        long at = match.clock() + 30 + random.nextInt(30);
+        List<UUID> mates = livingBotMates(dead, null);
+        int teamsLeft = 0;
+        for (io.github.sx2xoox.mcpl.core.game.MatchTeam team : session().aliveTeams()) {
+            boolean other = team.members().stream().anyMatch(id -> !id.equals(dead) && session().isAlive(id));
+            teamsLeft += other ? 1 : 0;
+        }
+        if (!mates.isEmpty()) {
+            UUID speaker = mates.get(random.nextInt(mates.size()));
+            Map<String, Component> tags = new HashMap<>();
+            tags.put("ally", name(dead));
+            tags.put("alive", Component.text(Math.max(0, session().aliveCount() - 1)));
+            if (killer != null && !session().sameTeam(killer, dead)) {
+                tags.put("target", name(killer));
+            }
+            boolean last = mates.size() == 1 && teamMembersAlive(dead) == 1 && teamsLeft >= 2;
+            pending.add(new Pending(speaker, last ? Trigger.TEAM_LOSING : Trigger.TEAM_ALLY_DOWN, tags, at));
+        }
+        if (killer != null && !session().sameTeam(killer, dead)) {
+            List<UUID> cheer = livingBotMates(killer, dead);
+            if (!cheer.isEmpty()) {
+                UUID speaker = cheer.get(random.nextInt(cheer.size()));
+                pending.add(new Pending(speaker, Trigger.TEAM_ALLY_KILL,
+                        Map.of("ally", name(killer), "target", name(dead)), at + 40 + random.nextInt(40)));
+            }
+        }
+    }
+
+    /** Living bots on {@code of}'s team other than {@code of} (and {@code except}). */
+    private List<UUID> livingBotMates(UUID of, @Nullable UUID except) {
+        io.github.sx2xoox.mcpl.core.game.MatchTeam team = session().teamOf(of);
+        List<UUID> out = new ArrayList<>();
+        if (team == null) {
+            return out;
+        }
+        for (UUID member : team.members()) {
+            if (!member.equals(of) && !member.equals(except) && bots.isBot(member) && bots.body(member) != null) {
+                out.add(member);
+            }
+        }
+        return out;
+    }
+
+    /** Members of {@code dead}'s team still in play, not counting {@code dead}. */
+    private int teamMembersAlive(UUID dead) {
+        io.github.sx2xoox.mcpl.core.game.MatchTeam team = session().teamOf(dead);
+        if (team == null) {
+            return 0;
+        }
+        int n = 0;
+        for (UUID member : team.members()) {
+            if (!member.equals(dead) && session().isAlive(member)) {
+                n++;
+            }
+        }
+        return n;
     }
 
     /** A hit between participants was just recorded: maybe a third party joined a bot's fight. */
@@ -281,11 +349,19 @@ final class BotChatFeed {
         boolean sees = targetBody != null && targetBody.getWorld().equals(body.getWorld())
                 && targetBody.getLocation().distanceSquared(body.getLocation()) < SPOT_RANGE * SPOT_RANGE
                 && body.hasLineOfSight(targetBody);
+        boolean team = bots.teamChat();
         if (switched && behaviour == Behaviour.FLEE_BORDER) {
             say(id, Trigger.BORDER, Map.of("alive", Component.text(session().aliveCount())));
+        } else if (switched && team && behaviour == Behaviour.REGROUP) {
+            say(id, Trigger.TEAM_REGROUP, Map.of());
         } else if (switched && FALLING_BACK.contains(behaviour) && fraction < 0.45) {
             UUID attacker = log.lastAttacker(id, now, CALM * 2);
-            say(id, Trigger.LOW, attacker == null ? Map.of() : Map.of("target", name(attacker)));
+            boolean mates = team && teamMembersAlive(id) > 0;
+            say(id, mates ? Trigger.TEAM_HELP : Trigger.LOW,
+                    attacker == null ? Map.of() : Map.of("target", name(attacker)));
+        } else if (switched && team && ENGAGING.contains(behaviour) && target != null
+                && target.equals(bots.teamFocus(id)) && !log.opponents(id, now, CALM).contains(target)) {
+            say(id, Trigger.TEAM_FOCUS, Map.of("target", name(target))); // joins the fight its team started
         } else if (sees && freshSpot(id, target, now)) {
             say(id, switched && ENGAGING.contains(behaviour) ? Trigger.ENGAGE : Trigger.SPOT,
                     Map.of("target", name(target)));

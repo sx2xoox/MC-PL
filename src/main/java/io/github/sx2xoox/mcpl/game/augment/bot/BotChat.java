@@ -56,7 +56,21 @@ public final class BotChat {
         /** Last words. */
         DEATH("death", 0.5, true),
         /** It won. */
-        WIN("win", 1.0, true);
+        WIN("win", 1.0, true),
+        /** 팀전: it strayed and goes back to its team. */
+        TEAM_REGROUP("team-regroup", 0.2, false),
+        /** 팀전: low health with teammates around: it calls for help. */
+        TEAM_HELP("team-help", 0.35, false),
+        /** 팀전: it joins its team's focus target. */
+        TEAM_FOCUS("team-focus", 0.2, false),
+        /** 팀전: a teammate went down (avenge them). */
+        TEAM_ALLY_DOWN("team-ally-down", 0.45, false),
+        /** 팀전: a teammate got a kill. */
+        TEAM_ALLY_KILL("team-ally-kill", 0.3, false),
+        /** 팀전: it is the last one of its team. */
+        TEAM_LOSING("team-losing", 0.5, false),
+        /** 팀전: its team won. */
+        TEAM_WIN("team-win", 1.0, true);
 
         private final String key;
         private final double chance;
@@ -81,6 +95,16 @@ public final class BotChat {
         /** Said right away: a kill, last words, the win skip the bot's own gap and wait less for others. */
         public boolean urgent() {
             return urgent;
+        }
+
+        /** The win lines: always said (no chance roll, no gap). */
+        public boolean win() {
+            return this == WIN || this == TEAM_WIN;
+        }
+
+        /** A 팀전 line ({@code bots.team.team-chat}). */
+        public boolean team() {
+            return key.startsWith("team-");
         }
     }
 
@@ -159,7 +183,9 @@ public final class BotChat {
             d.setComments(CHANCES, List.of(
                     "상황마다 말할 확률 (0~1): greeting 시작 인사 · base-done 기지 완성 · gear 장비 · augment 증강",
                     "fight-start 전투 시작 · spot 적 발견 · engage 교전 · kill 처치 · low 후퇴 · escape 아슬아슬한 생존",
-                    "third-party 끼어듦 · border 보더 · showdown 최후의 결전 · death 마지막 말 · win 우승"));
+                    "third-party 끼어듦 · border 보더 · showdown 최후의 결전 · death 마지막 말 · win 우승",
+                    "팀전: team-regroup 합류 · team-help 도움 요청 · team-focus 집중 공격 · team-ally-down 팀원 사망",
+                    "team-ally-kill 팀원 처치 · team-losing 혼자 남음 · team-win 팀 우승"));
         }
 
         public static Settings read(ConfigurationSection s) {
@@ -232,7 +258,8 @@ public final class BotChat {
     }
 
     /** Every placeholder a line may use. */
-    public static final List<String> PLACEHOLDERS = List.of("target", "augment", "gear", "kills", "alive", "me");
+    public static final List<String> PLACEHOLDERS = List.of("target", "augment", "gear", "kills", "alive", "me",
+            "ally");
 
     private final Settings settings;
     private final Lines lines;
@@ -278,7 +305,7 @@ public final class BotChat {
         if (!settings.enabled()) {
             return null;
         }
-        long globalGap = trigger == Trigger.WIN ? 0 : trigger.urgent() ? URGENT_GAP : GLOBAL_GAP;
+        long globalGap = trigger.win() ? 0 : trigger.urgent() ? URGENT_GAP : GLOBAL_GAP;
         if (now - lastAny < globalGap) {
             return null;
         }
@@ -286,7 +313,7 @@ public final class BotChat {
         if (!trigger.urgent() && allowed != null && now < allowed) {
             return null;
         }
-        double chance = trigger == Trigger.WIN ? settings.chance(trigger)
+        double chance = trigger.win() ? settings.chance(trigger)
                 : Math.min(1, settings.chances().get(trigger) * settings.chance() * talkativeness(personality));
         if (random.nextDouble() >= chance) {
             return null;

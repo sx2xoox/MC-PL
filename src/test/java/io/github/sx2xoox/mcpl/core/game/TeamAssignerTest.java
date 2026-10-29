@@ -79,4 +79,19 @@ class TeamAssignerTest {
         assertEquals(20, teams.size());
         assertEquals("17번 팀", teams.get(16).name());
     }
+
+    @Test
+    void aFixedTeamCountSpreadsPlayersAndLeavesRoomForBots() {
+        List<UUID> two = players(2);
+        List<MatchTeam> teams = TeamAssigner.spread(two, 4, new Random(1));
+        assertEquals(4, teams.size(), "exactly the asked count, even with fewer players");
+        assertEquals(2, teams.stream().filter(t -> t.size() == 1).count(), "one human per team at most");
+        for (int i = 0; i < 6; i++) {
+            TeamAssigner.addToSmallest(teams, UUID.randomUUID()); // the bots fill the empty places
+        }
+        assertTrue(teams.stream().allMatch(t -> t.size() == 2), "every team ends up full");
+        List<MatchTeam> ordered = TeamAssigner.spread(players(6), 3, null);
+        assertEquals(2, ordered.getFirst().size());
+        assertEquals(2, TeamAssigner.spread(players(3), 1, null).size(), "at least two teams");
+    }
 }
