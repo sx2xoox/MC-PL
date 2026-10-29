@@ -74,8 +74,8 @@ class AugmentBotTeamTest {
         assertEquals(4, team.teamCount(settings));
         assertEquals(10, team.lineup(settings, 2).size(), "12 places, 2 humans: 10 bots");
         assertTrue(team.lineup(settings, 2).stream().allMatch(d -> d == BotDifficulty.NORMAL));
-        BotCommand.TeamOptions big = BotCommand.TeamOptions.parse("팀 4 5");
-        assertEquals(15, big.lineup(settings, 0).size(), "at most bots.max bots");
+        BotCommand.TeamOptions big = BotCommand.TeamOptions.parse("팀 5 8");
+        assertEquals(settings.max(), big.lineup(settings, 0).size(), "at most bots.max bots");
         BotCommand.TeamOptions mixed = BotCommand.TeamOptions.parse("팀 2 3 쉬움 1 어려움 1");
         List<BotDifficulty> lineup = mixed.lineup(settings, 0);
         assertEquals(6, lineup.size());
