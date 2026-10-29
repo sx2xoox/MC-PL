@@ -114,10 +114,21 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
                 : name(index) + " [" + difficulty.koreanName() + "·" + personality.koreanName() + "]";
     }
 
-    /** The display name of the {@code index}-th bot (0-based): "철수 봇", ... ("봇 16" past the list). */
+    /**
+     * The display name of the {@code index}-th bot (0-based): "철수 봇", ...; past a short configured list the default
+     * names it does not use yet, then numbers ("42 봇").
+     */
     public String name(int index) {
-        String base = index < names.size() ? names.get(index) : Integer.toString(index + 1);
-        return base + " 봇";
+        if (index < names.size()) {
+            return names.get(index) + " 봇";
+        }
+        int extra = index - names.size();
+        for (String fallback : DEFAULT_NAMES) {
+            if (!names.contains(fallback) && extra-- == 0) {
+                return fallback + " 봇";
+            }
+        }
+        return (index + 1) + " 봇";
     }
 
     /** Declares the defaults (with Korean comments) in {@code games.augment}. */

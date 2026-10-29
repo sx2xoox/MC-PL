@@ -341,4 +341,19 @@ class BotPersonalityTest {
         Situation open = closing(20, List.of(seen), true, 1, true, 80, Behaviour.HOLD_ZONE, null, 0.4, 6);
         assertEquals(Behaviour.KITE, choice(brain(BotPersonality.ARCHER), open));
     }
+
+    @Test
+    void namesPastAShortConfiguredListComeFromTheDefaults() {
+        MemoryConfiguration config = new MemoryConfiguration();
+        BotSettings.declareDefaults(config);
+        config.set(BotSettings.NAMES, List.of("철수", "가나"));
+        BotSettings settings = BotSettings.read(config);
+        assertEquals("철수 봇", settings.name(0));
+        assertEquals("가나 봇", settings.name(1));
+        assertEquals("영희 봇", settings.name(2), "the next unused default name, not a number");
+        java.util.Set<String> names = new HashSet<>();
+        for (int i = 0; i < BotSettings.HARD_MAX; i++) {
+            assertTrue(names.add(settings.name(i)), "unique: " + settings.name(i));
+        }
+    }
 }
