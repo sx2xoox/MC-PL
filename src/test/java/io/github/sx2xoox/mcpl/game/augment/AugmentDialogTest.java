@@ -19,7 +19,9 @@ import io.github.sx2xoox.mcpl.game.augment.support.AugmentHarness;
 import io.github.sx2xoox.mcpl.game.augment.support.TestDialogs;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.ObjectComponent;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.object.SpriteObjectContents;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -80,24 +82,93 @@ class AugmentDialogTest {
                 AugmentInfo info = offer.cards().get(i);
                 OfferDialog.Card card = dialog.cards().get(i);
                 assertEquals(info, card.info());
-                assertEquals(info.name(), plain(card.label()));
-                assertEquals(info.tier().color(), card.label().children().isEmpty()
-                        ? card.label().color() : card.label().children().getFirst().color(), "tier colour");
+                assertEquals(info.name(), plain(card.name()));
+                assertEquals(info.tier().color(), card.name().color(), "tier colour");
                 assertTrue(plain(card.tooltip()).contains(match.config().params(info).render(info.description())),
                         "the tooltip has the full description");
-                assertTrue(plain(card.description()).startsWith(info.name()));
-                assertEquals(info.icon(), card.icon().getType());
+                List<Component> lines = card.lines();
+                assertEquals(7, lines.size(), "tier, name, kind, 3 description lines, pick");
+                assertEquals("◆ 실버", plain(lines.get(0)));
+                assertTrue(plain(lines.get(1)).endsWith(info.name()), plain(lines.get(1)));
+                assertTrue(hasSprite(lines.get(1)), "the icon is an inline sprite");
+                assertEquals(info.kind().koreanName(), plain(lines.get(2)));
+                String description = match.config().params(info).render(info.description());
+                String visible = String.join(" ", lines.subList(3, 6).stream().map(AugmentDialogTest::plain)
+                        .filter(line -> !line.isEmpty()).toList());
+                String head = visible.endsWith("…") ? visible.substring(0, visible.length() - 1).strip() : visible;
+                assertTrue(description.replace(" ", "").startsWith(head.replace(" ", "")), visible + " / " + description);
+                assertEquals("▶ 선택", plain(lines.get(6)));
             }
         }
     }
 
+    private static boolean hasSprite(Component component) {
+        if (component instanceof ObjectComponent object && object.contents() instanceof SpriteObjectContents) {
+            return true;
+        }
+        return component.children().stream().anyMatch(AugmentDialogTest::hasSprite);
+    }
+
     @Test
-    void cardLabelsAreBold() {
+    void theCardsAreColumnsOfTheButtonGrid() {
         AugmentMatch match = roundOpen();
-        OfferDialog.Card card = dialogs.open(a).dialog.cards().getFirst();
-        Component name = card.label().children().isEmpty() ? card.label() : card.label().children().getFirst();
-        assertEquals(TextDecoration.State.TRUE, name.decoration(TextDecoration.BOLD));
+        OfferDialog dialog = dialogs.open(a).dialog;
         assertNotNull(match);
+        int columns = dialog.columns();
+        int rows = dialog.rows();
+        assertEquals(3, columns);
+        assertEquals(7, rows);
+        List<OfferDialog.Button> grid = dialog.grid();
+        assertEquals(rows * columns + 1, grid.size(), "the card rows, then the reroll button");
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < columns; c++) {
+                OfferDialog.Button button = grid.get(r * columns + c);
+                OfferDialog.Card card = dialog.cards().get(c);
+                assertEquals(OfferDialog.Action.pick(c), button.action(), "row " + r + " column " + c);
+                assertEquals(card.lines().get(r), button.label());
+                assertEquals(card.tooltip(), button.tooltip());
+                assertEquals(dialog.cardWidth(), button.width());
+            }
+        }
+        assertEquals(OfferDialog.Action.REROLL, grid.getLast().action());
+        assertTrue(dialog.bodyWidth() >= 3 * dialog.cardWidth() && dialog.bodyWidth() <= 480,
+                "three cards fit a small GUI");
+    }
+
+    @Test
+    void moreCardsMakeNarrowerShorterColumns() {
+        for (int cards = 1; cards <= 5; cards++) {
+            int width = cards * OfferDialog.cardWidth(cards) + (cards - 1) * 2;
+            assertTrue(width <= 480, cards + " cards fit a small GUI: " + width);
+        }
+        assertTrue(OfferDialog.cardWidth(5) < OfferDialog.cardWidth(4));
+        assertTrue(OfferDialog.cardWidth(4) < OfferDialog.cardWidth(3));
+        assertEquals(3, OfferDialog.descriptionLines(3));
+        assertEquals(2, OfferDialog.descriptionLines(5), "narrow cards get fewer description lines");
+    }
+
+    @Test
+    void wrapBreaksAtSpacesAndEndsCutTextWithAnEllipsis() {
+        assertEquals(List.of("짧은 설명"), OfferDialog.wrap("짧은 설명", 140, 3, false));
+        assertEquals(9 * 3 + 4, OfferDialog.width("가나 다", false), "Hangul 9 px, a space 4 px");
+        assertEquals(6 + 2 + 3, OfferDialog.width("ail", false));
+        assertEquals(7 * 2, OfferDialog.width("aa", true), "bold adds 1 px a glyph");
+
+        String text = "최대 체력이 4 늘어나고 늘어난 만큼 바로 회복합니다. 그리고 아주 긴 설명이 계속 이어집니다.";
+        List<String> lines = OfferDialog.wrap(text, 100, 2, false);
+        assertEquals(2, lines.size());
+        for (String line : lines) {
+            assertTrue(OfferDialog.width(line, false) <= 100, line);
+            assertFalse(line.startsWith(" ") || line.endsWith(" "), line);
+        }
+        assertEquals("최대 체력이 4 늘어나고", lines.getFirst(), "breaks at the last space that fits");
+        assertEquals("늘어난 만큼 바로…", lines.getLast());
+        assertTrue(lines.getLast().endsWith("…"), "cut text ends in an ellipsis");
+        assertTrue(text.startsWith(String.join(" ", lines).replace("…", "")), lines.toString());
+
+        List<String> word = OfferDialog.wrap("가나다라마바사아자차카타파하", 40, 2, false);
+        assertEquals(List.of("가나다라", "마바사…"), word, "a long word breaks anywhere");
+        assertEquals(List.of(), OfferDialog.wrap("  ", 40, 2, false));
     }
 
     @Test

@@ -17,8 +17,9 @@ import net.kyori.adventure.text.event.ClickCallback;
 import org.bukkit.entity.Player;
 
 /**
- * {@link OfferDialogs} with Paper's dialog API: a multi-action dialog that does not pause the game and closes on
- * any click (the match then shows what comes next: after a reroll the new cards, after a pick the next queued offer).
+ * {@link OfferDialogs} with Paper's dialog API: a multi-action dialog whose button grid ({@link OfferDialog#grid()},
+ * one column per card) draws the cards side by side; it does not pause the game and closes on any click (the match
+ * then shows what comes next: after a reroll the new cards, after a pick the next queued offer).
  * Buttons run one-use click callbacks that only answer the player they were shown to.
  */
 public final class PaperOfferDialogs implements OfferDialogs {
@@ -44,28 +45,14 @@ public final class PaperOfferDialogs implements OfferDialogs {
     static Dialog build(UUID owner, OfferDialog dialog, Consumer<OfferDialog.Action> onClick) {
         List<DialogBody> body = new ArrayList<>();
         for (Component line : dialog.header()) {
-            body.add(DialogBody.plainMessage(line, OfferDialog.TEXT_WIDTH));
+            body.add(DialogBody.plainMessage(line, dialog.bodyWidth()));
         }
-        for (OfferDialog.Card card : dialog.cards()) {
-            body.add(DialogBody.item(card.icon())
-                    .description(DialogBody.plainMessage(card.description(), OfferDialog.TEXT_WIDTH))
-                    .showDecorations(false)
-                    .showTooltip(true)
-                    .build());
-        }
-        body.add(DialogBody.plainMessage(dialog.countdown(), OfferDialog.TEXT_WIDTH));
+        body.add(DialogBody.plainMessage(dialog.countdown(), dialog.bodyWidth()));
 
         List<ActionButton> buttons = new ArrayList<>();
-        for (int i = 0; i < dialog.cards().size(); i++) {
-            OfferDialog.Card card = dialog.cards().get(i);
-            buttons.add(ActionButton.builder(card.label()).tooltip(card.tooltip()).width(dialog.buttonWidth())
-                    .action(callback(owner, OfferDialog.Action.pick(i), onClick)).build());
-        }
-        Component reroll = dialog.reroll();
-        if (reroll != null) {
-            buttons.add(ActionButton.builder(reroll).tooltip(dialog.rerollTooltip())
-                    .width(OfferDialog.REROLL_WIDTH)
-                    .action(callback(owner, OfferDialog.Action.REROLL, onClick)).build());
+        for (OfferDialog.Button button : dialog.grid()) {
+            buttons.add(ActionButton.builder(button.label()).tooltip(button.tooltip()).width(button.width())
+                    .action(callback(owner, button.action(), onClick)).build());
         }
         ActionButton later = ActionButton.builder(dialog.later()).tooltip(dialog.laterTooltip())
                 .width(OfferDialog.LATER_WIDTH).action(callback(owner, OfferDialog.Action.LATER, onClick)).build();
