@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -118,14 +119,20 @@ public final class AugmentMatch implements GameInstance, BotHost {
      *
      * @param settings {@code games.augment.bots}
      * @param lineup   the difficulty of each bot (how many and how well they play)
+     * @param teams    봇전 팀전: exactly this many teams (humans spread over them, bots fill them), 0 otherwise
      */
-    public record BotSetup(BotSettings settings, List<BotDifficulty> lineup) {
+    public record BotSetup(BotSettings settings, List<BotDifficulty> lineup, int teams) {
 
         public BotSetup {
             lineup = List.copyOf(lineup);
             if (lineup.isEmpty()) {
                 throw new IllegalArgumentException("no bots");
             }
+            teams = teams >= 2 ? teams : 0;
+        }
+
+        public BotSetup(BotSettings settings, List<BotDifficulty> lineup) {
+            this(settings, lineup, 0);
         }
 
         /** {@code count} bots of one difficulty. */
@@ -261,6 +268,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
     /** Ticks of the match clocks since the farming started (runs {@link #timeScale()} times as fast as the clock). */
     public long time() {
         return time;
+    }
+
+    /** 봇전 팀전: the fixed number of teams (the hub forms them and the bots fill them). */
+    @Override
+    public int teamCount() {
+        return botSetup == null ? 0 : botSetup.teams();
     }
 
     /** The bots of a 봇전 match (null otherwise). */
@@ -430,6 +443,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 announce(messages().prefixed("bots.joined", Messages.tag("count", bots.all().size()),
                         Messages.tag("difficulty", botSetup.describe())));
             }
+            if (botSetup.teams() > 0 && session.isTeamMode()) {
+                announce(messages().prefixed("bots.team-joined", Messages.tag("teams", session.teams().size())));
+                if (!isSpectate()) {
+                    announceBotTeams();
+                }
+            }
         }
         bar = session.sharedBossBar(messages().get("bar.preparing", Messages.tag("percent", 0),
                         Messages.tag("done", 0), Messages.tag("total", 0)), 0f, BossBar.Color.WHITE,
@@ -483,6 +502,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         tickAugments();
         if (bots != null) {
             bots.tick(clock);
+            if (clock % 1200 == 600 && fight()) {
+                logTeamplay("fight");
+            }
         }
         if (spectators != null && clock % 20 == 0) {
             spectators.tick();
@@ -521,6 +543,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (isPractice()) {
             // practice: back on your feet near where you fell, augments kept
             return DeathOutcome.respawn(session.safeSpot(victim.getLocation()));
+        }
+        if (chat != null) {
+            chat.teamDeath(victim.getUniqueId(), killer != null ? killer.getUniqueId() : bot);
         }
         PlayerState dead = players.get(victim.getUniqueId());
         if (dead != null && !stopped) {
@@ -673,10 +698,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
         phase = MatchPhase.FARMING;
         clock = 0;
         time = 0;
-        spread();
+        Map<MatchTeam, Location> teamSpots = teamSpots();
+        spread(teamSpots);
         if (bots != null && !bots.all().isEmpty()) {
-            // more spots than bots: the manager prefers the dry ones
-            bots.spawnAll(Spread.findSurfaceSpawns(wild.arena(), bots.all().size() * 3, session.random()));
+            // more spots than bots: the manager prefers the dry ones; in team mode each next to its team
+            bots.spawnAll(Spread.findSurfaceSpawns(wild.arena(), bots.all().size() * 3, session.random()),
+                    botSpots(teamSpots));
         }
         WorldBorder border = wild.world().getWorldBorder();
         border.setCenter(wild.arena().centerX(), wild.arena().centerZ());
@@ -711,7 +738,58 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
     }
 
-    private void spread() {
+    /** 팀전 with bots: one spawn spot per team (players and bots of a team start together); empty otherwise. */
+    private Map<MatchTeam, Location> teamSpots() {
+        if (bots == null || !session.isTeamMode()) {
+            return Map.of();
+        }
+        List<MatchTeam> teams = session.teams();
+        List<Location> found = Spread.findSurfaceSpawns(wild.arena(), teams.size(), session.random());
+        Map<MatchTeam, Location> out = new LinkedHashMap<>();
+        for (int i = 0; i < teams.size() && !found.isEmpty(); i++) {
+            out.put(teams.get(i), found.get(Math.min(i, found.size() - 1)));
+        }
+        return out;
+    }
+
+    /** Each bot's spawn next to its team's spot: around it, a few blocks apart, on the ground. */
+    private Map<UUID, Location> botSpots(Map<MatchTeam, Location> teamSpots) {
+        Map<UUID, Location> out = new HashMap<>();
+        if (bots == null || teamSpots.isEmpty()) {
+            return out;
+        }
+        Map<MatchTeam, Integer> placed = new HashMap<>();
+        for (BotController bot : bots.all()) {
+            MatchTeam team = session.teamOf(bot.id());
+            Location center = team == null ? null : teamSpots.get(team);
+            if (center == null) {
+                continue;
+            }
+            int k = placed.merge(team, 1, Integer::sum);
+            double angle = k * 2.1;
+            int x = (int) Math.floor(center.getX() + Math.cos(angle) * 2.5);
+            int z = (int) Math.floor(center.getZ() + Math.sin(angle) * 2.5);
+            Location spot = new Location(center.getWorld(), x + 0.5,
+                    center.getWorld().getHighestBlockYAt(x, z, org.bukkit.HeightMap.MOTION_BLOCKING_NO_LEAVES) + 1,
+                    z + 0.5);
+            out.put(bot.id(), BotManager.dry(spot) ? spot : center.clone());
+        }
+        return out;
+    }
+
+    /** 봇전 팀전: every team with its members (players and bots) in chat. */
+    private void announceBotTeams() {
+        for (MatchTeam team : session.teams()) {
+            List<Component> names = new ArrayList<>();
+            for (UUID member : team.members()) {
+                names.add(session.name(member));
+            }
+            announce(messages().get("spectate.team", Messages.tag("team", team.displayName()),
+                    Messages.tag("members", Component.join(JoinConfiguration.commas(true), names))));
+        }
+    }
+
+    private void spread(Map<MatchTeam, Location> teamSpots) {
         List<Player> playing = session.alivePlayers();
         if (playing.isEmpty()) {
             return;
@@ -731,7 +809,8 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
         for (Player player : playing) {
             MatchTeam team = session.teamOf(player);
-            Location spot = spots.get(team != null ? team : player.getUniqueId());
+            Location spot = team != null && teamSpots.containsKey(team) ? teamSpots.get(team)
+                    : spots.get(team != null ? team : player.getUniqueId());
             player.setFallDistance(0f);
             player.setVelocity(new org.bukkit.util.Vector());
             player.teleport(spot);
@@ -1782,6 +1861,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             }
         }
         strip(bot);
+        if (chat != null) {
+            chat.teamDeath(bot, credited);
+        }
         session.eliminateBot(bot, credited, io.github.sx2xoox.mcpl.core.game.DeathCauses.describe(session.messages(),
                 lastDamage));
         if (chat != null) {
@@ -1807,7 +1889,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             }
             return;
         }
-        if (mode == MatchMode.BOTS && bots != null && !bots.all().isEmpty() && !session.aliveIds().isEmpty()
+        // (팀전: the last team standing wins, even when every human is out: their bot teammates fight on)
+        if (mode == MatchMode.BOTS && !session.isTeamMode() && bots != null && !bots.all().isEmpty()
+                && !session.aliveIds().isEmpty()
                 && session.aliveIds().stream().allMatch(bots::isBot)) {
             // every human is out: the bots still standing win together (nobody is left to watch them finish it)
             finish(GameResult.builder().winners(session.aliveIds()).reason(messages().get("bots.won-reason")).build());
@@ -1830,7 +1914,16 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
     }
 
+    /** 팀전 with bots: the teamplay numbers in the server log (once a minute in the fight and at the end). */
+    private void logTeamplay(String when) {
+        String report = bots == null ? null : bots.teamReport();
+        if (report != null) {
+            game.hub().plugin().getLogger().info("[team-bots " + when + "] " + report);
+        }
+    }
+
     private void finish(GameResult result) {
+        logTeamplay("end");
         if (spectators != null) {
             spectators.announceWinner(result);
         }

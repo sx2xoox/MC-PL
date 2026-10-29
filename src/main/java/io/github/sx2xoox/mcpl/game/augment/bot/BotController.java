@@ -141,6 +141,10 @@ public final class BotController {
     private long nextPath;
     private @Nullable Location goal;
     private final Map<UUID, Seen> memory = new HashMap<>();
+    /** 팀전: the teammate building its team's base (it shares that base instead of building one), or null. */
+    private @Nullable BotController architect;
+    /** 팀전: its team's base and what the team puts into it, or null. */
+    private TeamTactics.@Nullable SharedBase teamBase;
     private BasePlanner.@Nullable Plan base;
     private BasePlanner.@Nullable Palette palette;
     /** The shaft block it puts under its feet climbing its tower, and when it jumped. */
@@ -425,7 +429,8 @@ public final class BotController {
         if (b == null || !b.valid()) {
             return;
         }
-        if (traits.builds()) {
+        syncTeamBase(now);
+        if (traits.builds() && architect == null) {
             inspectBase(now, b.body());
         }
         if ((now + offset) % 20 == 0) {
@@ -739,7 +744,38 @@ public final class BotController {
             return;
         }
         perceive(now, b);
-        decision = brain.decide(situation(now, b));
+        BotBrain.TeamView team = manager.teams().active()
+                ? manager.teams().view(id, b.body().getLocation(), host.fight(), now) : null;
+        decision = brain.decide(situation(now, b), team);
+    }
+
+    /**
+     * 팀전 with a shared base: a bot that is not its team's architect lives in the architect's base (the plan, how far
+     * it stands) instead of building its own; the architect builds with the team's rate and blocks. An architect that
+     * dies hands the base to the next best builder, who carries on where it stopped.
+     */
+    private void syncTeamBase(long now) {
+        if (!manager.teams().active()) {
+            return;
+        }
+        TeamTactics.SharedBase shared = manager.teams().sharedBase(id, now);
+        teamBase = shared;
+        BotController arch = shared == null ? null : manager.bot(shared.architect());
+        if (arch == null || arch == this) {
+            architect = null;
+            return;
+        }
+        architect = arch;
+        base = arch.base;
+        built = arch.built;
+        design = arch.design;
+        palette = arch.palette;
+        relocating = false;
+    }
+
+    /** 팀전: it shares a teammate's base (and does not build one itself). */
+    boolean follower() {
+        return architect != null;
     }
 
     private void perceive(long now, BotBody b) {
@@ -763,6 +799,7 @@ public final class BotController {
                 }
             }
             if (seen || heard || glowing) {
+                manager.teams().report(id, who, rival, rival.getLocation(), now);
                 Seen old = memory.get(who);
                 memory.put(who, new Seen(rival, rival.getLocation(), now, distance,
                         old == null ? distance : old.distance(), seen));
@@ -773,6 +810,17 @@ public final class BotController {
                     grudgeLeadAt = now;
                 }
             }
+        }
+        // what its teammates saw or fought (never more than that): known, though not in its own sight
+        for (BotTeams.Intel intel : manager.teams().shared(id, now)) {
+            UUID who = host.participantOf(intel.entity());
+            Seen old = who == null ? null : memory.get(who);
+            if (who == null || old != null && old.tick() >= intel.tick() || intel.at().getWorld() != at.getWorld()) {
+                continue;
+            }
+            double distance = intel.at().distance(at);
+            memory.put(who, new Seen(intel.entity(), intel.at(), intel.tick(), distance,
+                    old == null ? distance : old.distance(), false));
         }
         memory.values().removeIf(seen -> now - seen.tick() > MEMORY_TICKS || seen.entity().isDead()
                 || !host.isEnemy(id, seen.entity()));
@@ -799,7 +847,7 @@ public final class BotController {
         double zone = Math.hypot(at.getX() - host.borderCenterX(), at.getZ() - host.borderCenterZ());
         BasePlanner.Plan plan = base;
         boolean baseBuilt = relocating || plan != null && built >= plan.placements().size() / 2;
-        boolean baseDone = baseFailed || baseFinished();
+        boolean baseDone = baseFailed || baseFinished() || follower(); // a follower's base is built by its architect
         double baseDistance = plan == null ? Double.POSITIVE_INFINITY
                 : Math.hypot(at.getX() - (plan.x() + 0.5), at.getZ() - (plan.z() + 0.5));
         // while it relocates, the brain sees the lost base (built, unsafe): it keeps building the new one
@@ -943,7 +991,29 @@ public final class BotController {
                 farm(now, self);
                 defendAgainstMobs(now, self);
             }
-            case BUILD_BASE -> buildBase(now, self);
+            case BUILD_BASE -> {
+                if (follower()) {
+                    farm(now, self); // its architect builds the team base
+                } else {
+                    buildBase(now, self);
+                }
+            }
+            case REGROUP -> {
+                Location to = manager.teams().rally(id, now);
+                if (to == null || to.getWorld() != self.getWorld()) {
+                    scout(now, self);
+                } else {
+                    Location dest = insideSafe(to) ? to : safeFromBorder(to);
+                    double distance = dest.distance(self.getLocation());
+                    if (distance > 4) {
+                        goTo(now, dest, distance > 14 ? Gait.SPRINT : Gait.WALK);
+                    } else {
+                        stop();
+                    }
+                }
+                eatIfLow(now, self);
+                swingAtAnyone(now, self);
+            }
             case SCOUT -> {
                 Location trail = trail(now, self.getLocation());
                 if (trail != null) {
@@ -978,7 +1048,13 @@ public final class BotController {
                     holdBase(now, b, self, target, true); // home to heal behind its walls
                 } else {
                     Location threat = nearestThreat();
-                    if (threat != null) {
+                    Location mate = manager.teams().active()
+                            ? manager.teams().healthyMate(id, self.getLocation()) : null;
+                    if (threat != null && mate != null && mate.distance(threat) > 6
+                            && mate.distance(self.getLocation()) > 3 && insideSafe(mate)) {
+                        goTo(now, mate, Gait.SPRINT); // back to a healthy teammate, not off alone
+                        layWeb(now, self, threat);
+                    } else if (threat != null) {
                         goTo(now, away(self.getLocation(), threat, 14), Gait.SPRINT);
                         layWeb(now, self, threat);
                     } else {
@@ -2495,11 +2571,34 @@ public final class BotController {
      * farming on its base: a fortress builder three times as fast).
      */
     double buildRate() {
+        TeamTactics.SharedBase team = teamBase;
+        return team != null && team.architect().equals(id) ? Math.max(ownBuildRate(), team.rate()) : ownBuildRate();
+    }
+
+    /** Its own building rate (without its team's help). */
+    double ownBuildRate() {
         return profile.buildPerSecond() * (1 + 2 * traits.homebody());
     }
 
-    /** Blocks a loadout gives it: the farmed schedule, more for a base specialist (it farmed for its base). */
+    /**
+     * Blocks a loadout gives it: the farmed schedule, more for a base specialist (it farmed for its base); a team's
+     * architect gets its team's blocks too.
+     */
     int stock(Gear.Loadout gear) {
+        int own = rawStock(gear);
+        TeamTactics.SharedBase team = teamBase;
+        if (team == null || !team.architect().equals(id) || host.fight()) {
+            return own; // the team's blocks are for its base in the farming, not for rebuilding it in the fight
+        }
+        return (int) Math.round(own * Math.max(1, team.stock() / (double) Math.max(1, rawStock(loadout))));
+    }
+
+    /** Its own blocks now (without its team's). */
+    int ownStock() {
+        return rawStock(loadout);
+    }
+
+    private int rawStock(Gear.Loadout gear) {
         return (int) Math.round(gear.blocks() * (1 + 1.5 * traits.homebody()));
     }
 
@@ -3412,13 +3511,15 @@ public final class BotController {
      */
     private void farm(long now, Mannequin self) {
         BasePlanner.Plan home = base;
-        if (home == null || !traits.builds() || host.fight() || !baseFinished()) {
+        boolean follows = follower() && home != null;
+        if (home == null || !traits.builds() && !follows || host.fight() || !follows && !baseFinished()) {
             roam(now, self, 40 * traits.roam());
             return;
         }
         Location center = new Location(self.getWorld(), home.x() + 0.5, home.floorY() + 1, home.z() + 0.5);
         if (host.farmingTicksLeft() / (double) Math.max(1, host.timeScale()) > HOME_BEFORE_FIGHT_TICKS) {
-            if (traits.traps() && home.design() == BasePlanner.Design.TRAPS && trapsLaid < trapCap()) {
+            if (traits.traps() && (home.design() == BasePlanner.Design.TRAPS || follows && built >= home.closure())
+                    && trapsLaid < trapCap()) {
                 layTraps(now, self, home); // a trapper fills its surroundings with traps
                 return;
             }

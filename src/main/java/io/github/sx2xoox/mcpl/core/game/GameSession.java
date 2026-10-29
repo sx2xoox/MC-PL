@@ -465,7 +465,9 @@ public final class GameSession {
         if (state != GameState.RUNNING || isTeamMode() || !game.supportsTeams()) {
             return false;
         }
-        List<MatchTeam> formed = TeamAssigner.assign(participants, hub.config().teamSize(), random);
+        int teamCount = fixedTeamCount();
+        List<MatchTeam> formed = teamCount >= 2 ? TeamAssigner.spread(participants, teamCount, null)
+                : TeamAssigner.assign(participants, hub.config().teamSize(), random);
         if (formed.isEmpty()) {
             return false;
         }
@@ -478,6 +480,19 @@ public final class GameSession {
         boards.setTeams(teams, this::plainName);
         announceTeams();
         return true;
+    }
+
+    /** The mode's {@link GameInstance#teamCount() fixed team count}, or 0. */
+    private int fixedTeamCount() {
+        if (instance == null) {
+            return 0;
+        }
+        try {
+            return instance.teamCount();
+        } catch (RuntimeException e) {
+            log("teamCount", e);
+            return 0;
+        }
     }
 
     /** True for a participant added with {@link #addBot}. */
@@ -990,7 +1005,15 @@ public final class GameSession {
         players = captured;
 
         int teamSize = hub.config().teamSize();
-        if (game.supportsTeams() && teamSize > 0) {
+        int teamCount = fixedTeamCount();
+        if (game.supportsTeams() && teamCount >= 2) {
+            teams = TeamAssigner.spread(participants, teamCount, random);
+            for (MatchTeam team : teams) {
+                for (UUID member : team.members()) {
+                    teamByPlayer.put(member, team);
+                }
+            }
+        } else if (game.supportsTeams() && teamSize > 0) {
             teams = TeamAssigner.assign(participants, teamSize, random);
             for (MatchTeam team : teams) {
                 for (UUID member : team.members()) {

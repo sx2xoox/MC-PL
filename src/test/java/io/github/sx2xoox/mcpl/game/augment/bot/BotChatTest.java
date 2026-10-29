@@ -242,4 +242,28 @@ class BotChatTest {
         assertTrue(merged.lines(Trigger.KILL, "berserker").isEmpty(), "the edited trigger is taken as written");
         assertFalse(merged.lines(Trigger.DEATH, BotChat.GENERAL).isEmpty(), "other triggers stay");
     }
+
+    @Test
+    void teamLinesHaveTheirOwnAttitudePerPersonalityAndTheTeamWinIsAlwaysSaid() throws Exception {
+        BotChat.Lines pool = bundled();
+        for (Trigger trigger : Trigger.values()) {
+            if (!trigger.team()) {
+                continue;
+            }
+            for (BotPersonality personality : BotPersonality.values()) {
+                assertFalse(pool.lines(trigger, personality.key()).isEmpty(),
+                        trigger + " has lines of its own for " + personality);
+            }
+        }
+        assertTrue(Trigger.TEAM_WIN.win() && Trigger.TEAM_WIN.team());
+        assertFalse(Trigger.KILL.team());
+        BotChat chat = new BotChat(BotChat.Settings.defaults(), pool, new Random(4));
+        UUID bot = UUID.randomUUID();
+        assertNotNull(chat.consider(bot, BotPersonality.SURVIVOR, Trigger.TEAM_WIN, Set.of("kills", "me"), 0),
+                "the team win is always said");
+        BotChat.Line line = chat.consider(UUID.randomUUID(), null, Trigger.TEAM_ALLY_DOWN, Set.of("ally", "me"), 100);
+        if (line != null) {
+            assertFalse(line.text().contains("<target>"), "no killer known: no line naming one");
+        }
+    }
 }

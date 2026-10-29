@@ -130,6 +130,16 @@ public interface GameInstance {
     }
 
     /**
+     * A fixed number of teams for this match (at least 2), or 0 (default) for the hub's team size
+     * ({@code match.team-size}). With a fixed count the hub creates exactly that many teams when the countdown ends
+     * (even with fewer players: a mode fills them with {@link GameSession#addBot bots}, which join the smallest team)
+     * and spreads the players evenly over them. Only used if the mode {@link MiniGame#supportsTeams() supports teams}.
+     */
+    default int teamCount() {
+        return 0;
+    }
+
+    /**
      * Clean up everything this instance created that the session does not own. Called exactly once (see class
      * docs), possibly without {@link #start()} having been called.
      */

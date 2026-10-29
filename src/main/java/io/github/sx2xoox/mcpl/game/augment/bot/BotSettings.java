@@ -21,10 +21,56 @@ import org.bukkit.configuration.MemoryConfiguration;
  * @param profiles    how well each difficulty plays
  * @param spectate    봇 관전전 ({@code bots.spectate.*})
  * @param personalities how often each {@link BotPersonality} is drawn (0 = never)
+ * @param team        봇전 팀전 ({@code bots.team.*})
  */
 public record BotSettings(int count, BotDifficulty difficulty, int max, List<String> names, List<String> skins,
                           double moveSpeed, Map<BotDifficulty, BotProfile> profiles, Spectate spectate,
-                          Map<BotPersonality, Double> personalities) {
+                          Map<BotPersonality, Double> personalities, Team team) {
+
+    /**
+     * The {@code games.augment.bots.team.*} settings of 봇전 팀전 ({@code /게임 증강 봇전 팀 [팀당 인원] [팀 수]}).
+     *
+     * @param size            players per team when the command names none
+     * @param count           teams when the command names none
+     * @param cohesionRadius  blocks a bot keeps within of its team's leader (a human teammate, else the strongest bot)
+     * @param sharedBase      the team's base builders build one base together (else each its own)
+     * @param teamChat        team lines in bot chat (regroup, help, focus, ally down, team win)
+     */
+    public record Team(int size, int count, double cohesionRadius, boolean sharedBase, boolean teamChat) {
+
+        public static final String SIZE = "bots.team.size";
+        public static final String COUNT = "bots.team.count";
+        public static final String COHESION = "bots.team.cohesion-radius";
+        public static final String SHARED_BASE = "bots.team.shared-base";
+        public static final String TEAM_CHAT = "bots.team.team-chat";
+        /** The most teams (the hub's colour palette). */
+        public static final int MAX_TEAMS = 8;
+        public static final Team DEFAULTS = new Team(3, 2, 16, true, true);
+
+        static void declareDefaults(ConfigurationSection d) {
+            d.setComments("bots.team", List.of(
+                    "봇전 팀전 (/게임 증강 봇전 팀 [팀당 인원] [팀 수] [난이도]): 사람은 팀마다 고르게 나뉘고 빈자리는 봇이 채웁니다.",
+                    "봇끼리만: /게임 증강 봇전 관전 팀 3 4 보통. 마지막까지 남은 팀이 이깁니다."));
+            d.set(SIZE, DEFAULTS.size());
+            d.setComments(SIZE, List.of("팀당 인원을 쓰지 않았을 때"));
+            d.set(COUNT, DEFAULTS.count());
+            d.setComments(COUNT, List.of("팀 수를 쓰지 않았을 때 (2~" + MAX_TEAMS + ")"));
+            d.set(COHESION, DEFAULTS.cohesionRadius());
+            d.setComments(COHESION, List.of("봇이 팀장(사람 팀원, 없으면 가장 강한 봇)에게서 이만큼(블록) 안에 머뭅니다"));
+            d.set(SHARED_BASE, DEFAULTS.sharedBase());
+            d.setComments(SHARED_BASE, List.of("팀의 기지 짓는 봇들이 함께 기지 하나를 지음 (끄면 봇마다 자기 기지)"));
+            d.set(TEAM_CHAT, DEFAULTS.teamChat());
+            d.setComments(TEAM_CHAT, List.of("봇 채팅의 팀 대사 (합류, 도움 요청, 집중 공격, 팀원 사망, 팀 우승)"));
+        }
+
+        static Team read(ConfigurationSection s) {
+            double radius = s.getDouble(COHESION, DEFAULTS.cohesionRadius());
+            return new Team(Math.max(1, Math.min(HARD_MAX, s.getInt(SIZE, DEFAULTS.size()))),
+                    Math.max(2, Math.min(MAX_TEAMS, s.getInt(COUNT, DEFAULTS.count()))),
+                    Double.isFinite(radius) ? Math.max(4, Math.min(64, radius)) : DEFAULTS.cohesionRadius(),
+                    s.getBoolean(SHARED_BASE, true), s.getBoolean(TEAM_CHAT, true));
+        }
+    }
 
     /**
      * The {@code games.augment.bots.spectate.*} settings of 봇 관전전 ({@code /게임 증강 봇전 관전}): a quicker match
@@ -150,6 +196,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
                 "hunter 사냥꾼 · fortress 요새꾼 · archer 저격수 · opportunist 어부지리형 · berserker 광전사 · survivor 생존왕",
                 "trapper 트래퍼 · assassin 암살자 · tank 탱커 · avenger 복수귀 · gambler 도박사 · nomad 유목민"));
         Spectate.declareDefaults(d);
+        Team.declareDefaults(d);
     }
 
     /** Reads the live {@code games.augment} section; invalid values fall back to the defaults. */
@@ -185,6 +232,6 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         return new BotSettings(Math.max(1, Math.min(max, s.getInt(COUNT, 5))),
                 difficulty != null ? difficulty : BotDifficulty.NORMAL, max, names, skins,
                 Double.isFinite(speed) ? Math.max(0.05, Math.min(1.0, speed)) : 0.32, profiles,
-                Spectate.read(s), personalities);
+                Spectate.read(s), personalities, Team.read(s));
     }
 }

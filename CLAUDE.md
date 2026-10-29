@@ -42,7 +42,8 @@ src/main/java/io/github/sx2xoox/mcpl/
     config/ runtime/ command/  augments.yml, the match (phases, offers/card menu, bonus tracker, HUD), /게임 증강
     bot/                       봇전 bots: pure brain (utility AI), gear schedule, base planner, ballistics, aim/turn math +
                                Bukkit body/controller/manager (chunk tickets, border damage); 봇 관전전 = AugmentSpectateGame
-                               (MiniGame#spectatorsOnly) + runtime/SpectatorView
+                               (MiniGame#spectatorsOnly) + runtime/SpectatorView; 봇전 팀전 = pure TeamTactics +
+                               BotTeams (shared sightings, focus, peel, leader, shared base)
   util/                        small shared helpers (Text = MiniMessage)
 docs/                          game design docs (Korean), the source of truth for game rules; abilities.md and augments.md
                                are generated

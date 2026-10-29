@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.DyeColor;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Splits participants into balanced teams of the configured size. Pure logic (no server access) so it is easy to
@@ -59,6 +60,23 @@ public final class TeamAssigner {
         Collections.shuffle(shuffled, random);
         for (int i = 0; i < shuffled.size(); i++) {
             teams.get(i % count).add(shuffled.get(i));
+        }
+        return List.copyOf(teams);
+    }
+
+    /**
+     * Spreads {@code players} round-robin over exactly {@code count} teams (at least 2), shuffled first when a
+     * {@code random} is given (else in the given order, e.g. a bot lineup sorted by difficulty, so every team gets a
+     * fair share). Teams may stay empty: a mode fills them later with {@link GameSession#addBot bots}.
+     */
+    public static List<MatchTeam> spread(Collection<UUID> players, int count, @Nullable Random random) {
+        List<MatchTeam> teams = createTeams(Math.max(2, count));
+        List<UUID> order = new ArrayList<>(players);
+        if (random != null) {
+            Collections.shuffle(order, random);
+        }
+        for (int i = 0; i < order.size(); i++) {
+            teams.get(i % teams.size()).add(order.get(i));
         }
         return List.copyOf(teams);
     }

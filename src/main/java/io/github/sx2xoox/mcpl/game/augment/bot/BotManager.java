@@ -82,6 +82,9 @@ public final class BotManager implements Listener {
     private final Map<UUID, Long> borderHurt = new HashMap<>();
     private int forwarding;
     private boolean disposed;
+    private final BotTeams teams;
+    /** Bots killed by the world border (measurement: should stay 0). */
+    private int borderDeaths;
 
     public BotManager(BotHost host, BotSettings settings, BotDifficulty difficulty) {
         this(host, settings, List.of(difficulty), false, false);
@@ -106,6 +109,47 @@ public final class BotManager implements Listener {
         this.keepLoaded = keepLoaded;
         this.random = session.random();
         this.namespace = session.hub().key("bot").getNamespace();
+        this.teams = new BotTeams(this, session, settings.team());
+    }
+
+    /** The shared minds of the teams (봇전 팀전; inactive in free-for-all). */
+    BotTeams teams() {
+        return teams;
+    }
+
+    /** 팀전: team lines in bot chat ({@code bots.team.team-chat}) and a team match. */
+    public boolean teamChat() {
+        return teams.active() && settings.team().teamChat();
+    }
+
+    /** 팀전: the enemy {@code bot}'s team is hitting now (focus fire), or null. */
+    public @Nullable UUID teamFocus(UUID bot) {
+        return teams.active() ? teams.focus(bot, host.clock()) : null;
+    }
+
+    /** PvP is on. */
+    boolean fightOn() {
+        return host.fight();
+    }
+
+    /** 팀전 measurement: share of bot hits on an enemy a teammate hit just before (focus fire). */
+    public double focusShare() {
+        return teams.focusShare();
+    }
+
+    /** 팀전 measurement: one summary line (focus fire, cohesion, behaviours, team bases), or null outside 팀전. */
+    public @Nullable String teamReport() {
+        return teams.active() ? teams.report() + " borderDeaths=" + borderDeaths : null;
+    }
+
+    /** 팀전 measurement: bot hits on enemies so far. */
+    public long botHits() {
+        return teams.botHits();
+    }
+
+    /** 팀전 measurement: average distance of a living bot to its nearest teammate in the fight (NaN: none). */
+    public double averageMateDistance() {
+        return teams.averageMateDistance();
     }
 
     /** The difficulty of the first bot (all of them unless the lineup is mixed). */
@@ -152,6 +196,11 @@ public final class BotManager implements Listener {
      * them, see {@link #dry}), the others only if there are not enough.
      */
     public void spawnAll(List<Location> spots) {
+        spawnAll(spots, Map.of());
+    }
+
+    /** {@link #spawnAll(List)}, but each bot in {@code teamSpots} (팀전: by its team's spot) spawns there. */
+    public void spawnAll(List<Location> spots, Map<UUID, Location> teamSpots) {
         if (disposed || spots.isEmpty()) {
             return;
         }
@@ -173,7 +222,14 @@ public final class BotManager implements Listener {
             }
             Location spot = ordered.get(Math.min(i++, ordered.size() - 1)).clone();
             spot.setYaw(random.nextFloat() * 360f);
-            BotBody body = BotBody.spawn(session, spot, Component.text(bot.name(), NamedTextColor.WHITE),
+            Location own = teamSpots.get(bot.id());
+            if (own != null) {
+                spot = own.clone(); // 팀전: next to its team
+                spot.setYaw(random.nextFloat() * 360f);
+            }
+            io.github.sx2xoox.mcpl.core.game.MatchTeam team = session.teamOf(bot.id());
+            BotBody body = BotBody.spawn(session, spot, Component.text(bot.name(),
+                            team == null ? NamedTextColor.WHITE : team.color()),
                     host.messages().get("bots.description",
                             Messages.tag("difficulty", bot.difficulty().koreanName())),
                     settings.skins().isEmpty() ? null : settings.skins().get(i % settings.skins().size()),
@@ -241,6 +297,9 @@ public final class BotManager implements Listener {
         }
         if (clock % 20 == 10) {
             borderDamage(clock);
+        }
+        if (clock % 100 == 50 && host.fight()) {
+            teams.sample();
         }
     }
 
@@ -486,8 +545,11 @@ public final class BotManager implements Listener {
     boolean fightingOther(UUID who, UUID me, long now) {
         Hit hurt = lastHurtBy.get(who);
         Hit hit = lastHit.get(who);
-        return hurt != null && !hurt.other().equals(me) && now - hurt.tick() <= FIGHT_TICKS
-                || hit != null && !hit.other().equals(me) && now - hit.tick() <= FIGHT_TICKS;
+        // a fight with a teammate of mine is my team's fight, not one to wait out
+        return hurt != null && !hurt.other().equals(me) && !session.sameTeam(hurt.other(), me)
+                && now - hurt.tick() <= FIGHT_TICKS
+                || hit != null && !hit.other().equals(me) && !session.sameTeam(hit.other(), me)
+                && now - hit.tick() <= FIGHT_TICKS;
     }
 
     /**
@@ -552,7 +614,7 @@ public final class BotManager implements Listener {
         List<int[]> out = new ArrayList<>();
         for (BotController bot : bots.values()) {
             BasePlanner.Plan plan = bot.base();
-            if (plan != null && !bot.id().equals(except)) {
+            if (plan != null && !bot.id().equals(except) && !session.sameTeam(bot.id(), except)) {
                 out.add(new int[] {plan.x(), plan.z()});
             }
         }
@@ -667,6 +729,9 @@ public final class BotManager implements Listener {
             noises.removeFirst();
         }
         noises.add(new Noise(victim.getLocation(), now, attacker, victimId));
+        if (session.isParticipant(attacker) && session.isParticipant(victimId)) {
+            teams.hit(attacker, victimId, attackerBody(event), victim, now);
+        }
         if (isBot(attacker) || isBot(victimId)) {
             double dealt = Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
             session.recordDamage(attacker, victimId, dealt);
@@ -705,6 +770,10 @@ public final class BotManager implements Listener {
             return;
         }
         event.getDrops().addAll(bot.loot());
+        EntityDamageEvent last = dead.getLastDamageCause();
+        if (last != null && last.getDamageSource().getDamageType() == DamageType.OUTSIDE_BORDER) {
+            borderDeaths++;
+        }
         UUID killer = session.combat().lastAttackerId(id, CombatTracker.DEFAULT_WINDOW_TICKS);
         BotBody body = bot.body();
         if (body != null) {

@@ -9,6 +9,7 @@ import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.config.SettingsSection;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.augment.bot.BotChat;
+import io.github.sx2xoox.mcpl.game.augment.bot.BotSettings;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.MemoryConfiguration;
@@ -98,6 +99,16 @@ final class AugmentSettingEntries {
                         value -> config.setGameValue(AugmentGame.ID, BotChat.Settings.CHANCE, value),
                         defaults.getDouble(BotChat.Settings.CHANCE));
 
+        Setting teamCohesion = number("augment.bot-team-cohesion", "팀뭉침", "bot-team-cohesion", Material.LEAD,
+                "settings.bot-team-cohesion", BotSettings.Team.COHESION)
+                .range(4, 64).steps(2, 8).integer().unit(Setting.Unit.BLOCKS)
+                .number(integer(BotSettings.Team.COHESION), store(BotSettings.Team.COHESION),
+                        defaults.getInt(BotSettings.Team.COHESION));
+        Setting teamBase = toggle("augment.bot-team-base", "팀기지", "bot-team-base", Material.BRICKS,
+                "settings.bot-team-base", BotSettings.Team.SHARED_BASE);
+        Setting teamChat = toggle("augment.bot-team-chat", "팀채팅", "bot-team-chat", Material.NAME_TAG,
+                "settings.bot-team-chat", BotSettings.Team.TEAM_CHAT);
+
         return List.of(
                 new SettingsSection("augment.match", Material.AMETHYST_CLUSTER, messages, "settings.section.match",
                         List.of(farming, invulnerable, noHunger, borderDelay, borderShrink, borderFinal, glow)),
@@ -106,7 +117,7 @@ final class AugmentSettingEntries {
                 new SettingsSection("augment.augments", Material.ENCHANTED_BOOK, messages, "settings.section.augments",
                         List.of(choice, ui, rerolls, bonus)),
                 new SettingsSection("augment.bots", Material.ARMOR_STAND, messages, "settings.section.bots",
-                        List.of(botChat, botChatChance)));
+                        List.of(botChat, botChatChance, teamCohesion, teamBase, teamChat)));
     }
 
     // =================================================================== helpers
