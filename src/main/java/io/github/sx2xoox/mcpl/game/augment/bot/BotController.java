@@ -68,6 +68,15 @@ public final class BotController {
     static final double REACH = 3.0;
     static final int DRAW_TICKS = 20;
     static final int APPLE_TICKS = 32;
+    /** Arrow dodging: only from a bow farther than this (closer, it is a melee fight), for this long after the draw
+     * is seen, this many blocks to the side. */
+    static final double DODGE_MIN = 7;
+    static final int DODGE_TICKS = 24;
+    static final double DODGE_STEP = 3;
+    /** Hit and back: how far beyond its reach it waits while recharging, and how many ticks before the charge is full
+     * it steps in again (a sprint step covers about a block). */
+    static final double SPACE_OUT = 0.8;
+    static final int STEP_IN_TICKS = 4;
     /** After walling itself in once, how long before it may do it again. */
     static final int FORTIFY_COOLDOWN = 30 * 20;
     /** The longest it stays walled in: a short pause to heal, never a place to sit out the match. */
@@ -188,6 +197,14 @@ public final class BotController {
     private long nextShieldAt;
     private int strafe = 1;
     private long strafeAt;
+    /** Arrow dodging: whose drawn bow it zig-zags from, until when, and the side it steps to now. */
+    private @Nullable LivingEntity dodgeFrom;
+    private long dodgeUntil;
+    private long dodgeCheckAt;
+    private long dodgeFlipAt;
+    /** Backs off out of reach until its sword is charged again (decided at each swing, see {@code spacing}). */
+    private boolean spaceOut;
+    private int dodgeSide = 1;
     /** The head (camera) as the client sees it. */
     private float yaw;
     private float pitch;
@@ -1055,7 +1072,7 @@ public final class BotController {
                         goTo(now, mate, Gait.SPRINT); // back to a healthy teammate, not off alone
                         layWeb(now, self, threat);
                     } else if (threat != null) {
-                        goTo(now, away(self.getLocation(), threat, 14), Gait.SPRINT);
+                        goTo(now, dodge(now, self, away(self.getLocation(), threat, 14)), Gait.SPRINT);
                         layWeb(now, self, threat);
                     } else {
                         stop();
@@ -1136,7 +1153,7 @@ public final class BotController {
                     if (baseUsable(self.getLocation()) && traits.weight(Behaviour.DEFEND_BASE) >= 1) {
                         holdBase(now, b, self, target, true); // lure the chaser to its walls
                     } else {
-                        goTo(now, away(self.getLocation(), threat, 16), Gait.SPRINT);
+                        goTo(now, dodge(now, self, away(self.getLocation(), threat, 16)), Gait.SPRINT);
                         layWeb(now, self, threat);
                     }
                     if (profile.bowSkill() >= 0.9 || traits.weight(Behaviour.KITE) > 1.2) {
@@ -1588,12 +1605,64 @@ public final class BotController {
             return;
         }
         if (distance < 9) {
-            goTo(now, away(me, at, 12), Gait.SPRINT);
+            goTo(now, dodge(now, self, away(me, at, 12)), Gait.SPRINT);
         } else if (distance > brain.bowRange() * 0.85) {
-            goTo(now, at, Gait.SPRINT);
+            goTo(now, dodge(now, self, at), Gait.SPRINT);
         } else {
-            stop();
+            Location step = dodge(now, self, me);
+            if (step != me) {
+                goTo(now, step, Gait.WALK); // a bow duel: out of their line of fire while drawing its own
+            } else {
+                stop();
+            }
         }
+    }
+
+    /**
+     * Where to step on the way to {@code toward} while someone it sees draws a bow at it: (at the difficulty's
+     * {@code dodge-chance}) a zig-zag across the line of fire, the side switching every third to two thirds of a
+     * second, so a shot that leads its movement misses (a player strafes the other way when the bow comes up).
+     * Otherwise {@code toward} itself.
+     */
+    Location dodge(long now, Mannequin self, Location toward) {
+        if (now >= dodgeCheckAt) {
+            dodgeCheckAt = now + profile.reactionTicks() + 2;
+            for (Seen seen : memory.values()) {
+                if (seen.inSight() && now - seen.tick() <= 5 && seen.distance() > DODGE_MIN
+                        && manager.aimingAt(seen.entity(), self)) {
+                    if (random.nextDouble() < profile.dodgeChance()) {
+                        dodgeFrom = seen.entity();
+                        dodgeUntil = now + DODGE_TICKS;
+                    }
+                    break;
+                }
+            }
+        }
+        LivingEntity shooter = dodgeFrom;
+        if (now > dodgeUntil || shooter == null || shooter.isDead() || shooter.getWorld() != self.getWorld()) {
+            return toward;
+        }
+        if (now >= dodgeFlipAt) {
+            dodgeFlipAt = now + 6 + random.nextInt(8);
+            dodgeSide = -dodgeSide;
+        }
+        Location me = self.getLocation();
+        Vector line = shooter.getLocation().toVector().subtract(me.toVector()).setY(0);
+        if (line.lengthSquared() < 1.0E-6) {
+            return toward;
+        }
+        Vector side = new Vector(-line.getZ(), 0, line.getX()).normalize().multiply(DODGE_STEP * dodgeSide);
+        Vector forward = toward.toVector().subtract(me.toVector()).setY(0);
+        if (forward.lengthSquared() > 1.0) {
+            side.add(forward.normalize().multiply(1.5)); // still on its way
+        }
+        Location step = ground(self.getWorld(), me.getX() + side.getX(), me.getZ() + side.getZ());
+        return insideSafe(step) ? step : toward;
+    }
+
+    /** True while it zig-zags out of someone's line of fire. */
+    boolean dodging(long now) {
+        return now <= dodgeUntil && dodgeFrom != null;
     }
 
     /** A spot {@code step} blocks to the side of the line to {@code at}, the side switching every second or two. */
@@ -1909,9 +1978,11 @@ public final class BotController {
                 raiseShield(now, b, self, target);
                 return false;
             }
-            goTo(now, at, who == BotPersonality.BERSERKER || who == BotPersonality.HUNTER ? Gait.RUSH : Gait.SPRINT);
-            if (who != BotPersonality.BERSERKER && distance > 10 && distance <= brain.bowRange()
-                    && shoot(now, b, self, target)) {
+            goTo(now, dodge(now, self, at),
+                    who == BotPersonality.BERSERKER || who == BotPersonality.HUNTER ? Gait.RUSH : Gait.SPRINT);
+            // a shot on the way in: begun beyond 10 blocks, loosed even if they have come closer meanwhile
+            if (who != BotPersonality.BERSERKER && (distance > 10 || drawStart >= 0 && distance > 6)
+                    && distance <= brain.bowRange() && shoot(now, b, self, target)) {
                 return false;
             }
         } else if (who == BotPersonality.BERSERKER) {
@@ -1934,7 +2005,15 @@ public final class BotController {
                 }
             }
             Vector toTarget = target.getLocation().toVector().subtract(self.getLocation().toVector()).setY(0);
-            if (toTarget.lengthSquared() > 1.0E-6 && random.nextDouble() < profile.strafeChance()) {
+            if (spaceOut && nextSwing - now > STEP_IN_TICKS && toTarget.lengthSquared() > 1.0E-6) {
+                // hit and back: out of their reach while its sword recharges (circling to its side), in again
+                // when it is charged, so it lands the first blow of the next exchange instead of trading
+                Vector out = toTarget.clone().normalize().multiply(-(REACH + SPACE_OUT));
+                Vector side = new Vector(-toTarget.getZ(), 0, toTarget.getX()).normalize().multiply(strafe);
+                Location back = target.getLocation().add(out).add(side);
+                back = ground(self.getWorld(), back.getX(), back.getZ());
+                goTo(now, insideSafe(back) ? back : target.getLocation(), Gait.WALK); // never out into the border
+            } else if (toTarget.lengthSquared() > 1.0E-6 && random.nextDouble() < profile.strafeChance()) {
                 Vector side = new Vector(-toTarget.getZ(), 0, toTarget.getX()).normalize().multiply(1.5 * strafe);
                 goTo(now, target.getLocation().add(side), Gait.WALK);
             } else {
@@ -2002,14 +2081,17 @@ public final class BotController {
             return false; // still turning towards them
         }
         nextSwing = now + profile.attackTicks();
+        spaceOut = random.nextDouble() < profile.spacing();
         self.swingMainHand();
         double hitChance = Math.max(0.5, Math.min(1, 1 - profile.aimError() / 25.0));
         if (random.nextDouble() >= hitChance) {
+            manager.stats().swing(id, false, false);
             self.getWorld().playSound(self.getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK, 0.6f, 1f);
             return true;
         }
         boolean crit = random.nextDouble() < (traits.personality() == BotPersonality.BERSERKER
                 ? Math.max(0.95, profile.critChance()) : profile.critChance());
+        manager.stats().swing(id, true, crit);
         if (self.isHandRaised()) {
             self.clearActiveItem(); // the shield comes down to swing
         }
@@ -2054,7 +2136,7 @@ public final class BotController {
         }
         Location eye = self.getEyeLocation();
         Location aim = target.getLocation().add(0, target.getHeight() * 0.6, 0);
-        Vector velocity = target.getVelocity();
+        Vector velocity = manager.motion(target); // its real movement (a walking player's velocity is ~0)
         double[] launch = Ballistics.launch(new double[] {eye.getX(), eye.getY(), eye.getZ()},
                 new double[] {aim.getX(), aim.getY(), aim.getZ()},
                 new double[] {velocity.getX(), velocity.getY(), velocity.getZ()}, profile.bowSkill());
@@ -2067,6 +2149,7 @@ public final class BotController {
         arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
         arrow.setShooter(self);
         manager.session().track(arrow);
+        manager.stats().arrow(id);
         self.getWorld().playSound(self.getLocation(), Sound.ENTITY_ARROW_SHOOT, 1f, 1f);
         arrowsUsed++;
         drawStart = -1;
@@ -2080,6 +2163,7 @@ public final class BotController {
             return;
         }
         apples--;
+        manager.stats().apple(id);
         nextAppleAt = now + APPLE_TICKS + 40;
         eatLookUntil = now + APPLE_TICKS / 2;
         self.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 100, 1, false, true, true));

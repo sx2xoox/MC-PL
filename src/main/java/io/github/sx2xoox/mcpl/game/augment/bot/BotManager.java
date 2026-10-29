@@ -85,6 +85,8 @@ public final class BotManager implements Listener {
     private final BotTeams teams;
     /** Bots killed by the world border (measurement: should stay 0). */
     private int borderDeaths;
+    private final BotStats stats = new BotStats();
+    private final MotionTracker motion = new MotionTracker();
 
     public BotManager(BotHost host, BotSettings settings, BotDifficulty difficulty) {
         this(host, settings, List.of(difficulty), false, false);
@@ -186,8 +188,35 @@ public final class BotManager implements Listener {
             bots.put(id, new BotController(id, name, difficulty, this, host, settings.profile(difficulty),
                     personality == null ? BotPersonality.Traits.NEUTRAL : personality.traits(own), own,
                     i * 7 + own.nextInt(5)));
+            stats.add(id, name, difficulty.key(), personality == null ? "-" : personality.key());
             out.add(id);
         }
+        return out;
+    }
+
+    private void track(LivingEntity entity, long clock) {
+        Location at = entity.getLocation();
+        motion.update(entity.getUniqueId(), at.getX(), at.getY(), at.getZ(), clock);
+    }
+
+    /** How {@code entity} really moves (blocks per tick, smoothed from its positions; zero if not tracked). */
+    Vector motion(LivingEntity entity) {
+        double[] v = motion.velocity(entity.getUniqueId());
+        return new Vector(v[0], v[1], v[2]);
+    }
+
+    /** The fight numbers of this match (server log). */
+    public BotStats stats() {
+        return stats;
+    }
+
+    /** The fight numbers as server log lines: the bots still standing count as winners. */
+    public List<String> statsReport() {
+        for (UUID alive : session.aliveIds()) {
+            stats.won(alive);
+        }
+        List<String> out = new ArrayList<>(stats.report());
+        out.add("borderDeaths=" + borderDeaths);
         return out;
     }
 
@@ -273,6 +302,31 @@ public final class BotManager implements Listener {
         return true;
     }
 
+    /**
+     * True if {@code shooter} draws a bow (a bot holds its bow only while drawing) pointed at {@code at} (within about
+     * 25°): an arrow is on its way.
+     */
+    boolean aimingAt(LivingEntity shooter, Entity at) {
+        boolean drawing;
+        if (shooter instanceof org.bukkit.entity.Player player) {
+            org.bukkit.Material active = player.getActiveItem().getType();
+            drawing = player.isHandRaised() && (active == org.bukkit.Material.BOW
+                    || active == org.bukkit.Material.CROSSBOW);
+        } else {
+            org.bukkit.inventory.EntityEquipment equipment = shooter.getEquipment();
+            drawing = equipment != null && equipment.getItemInMainHand().getType() == org.bukkit.Material.BOW;
+        }
+        if (!drawing) {
+            return false;
+        }
+        Vector look = shooter.getEyeLocation().getDirection().setY(0);
+        Vector to = at.getLocation().toVector().subtract(shooter.getLocation().toVector()).setY(0);
+        if (look.lengthSquared() < 1.0E-6 || to.lengthSquared() < 1.0E-6) {
+            return false;
+        }
+        return look.normalize().dot(to.normalize()) > 0.9;
+    }
+
     /** True if {@code who} looks towards {@code at} (within about 70°): it would see someone sneaking up. */
     boolean facing(LivingEntity who, Entity at) {
         Vector look = who.getLocation().getDirection().setY(0);
@@ -287,6 +341,14 @@ public final class BotManager implements Listener {
         if (disposed) {
             return;
         }
+        if (host.fight()) {
+            for (LivingEntity body : liveBodies()) {
+                track(body, clock);
+            }
+            for (org.bukkit.entity.Player player : session.alivePlayers()) {
+                track(player, clock);
+            }
+        }
         for (BotController bot : List.copyOf(bots.values())) {
             if (session.isAlive(bot.id())) {
                 bot.tick(clock);
@@ -300,6 +362,11 @@ public final class BotManager implements Listener {
         }
         if (clock % 100 == 50 && host.fight()) {
             teams.sample();
+            for (BotController bot : bots.values()) {
+                if (session.isAlive(bot.id()) && bot.decision() != null) {
+                    stats.sample(bot.id(), bot.decision().behaviour());
+                }
+            }
         }
     }
 
@@ -735,6 +802,11 @@ public final class BotManager implements Listener {
         if (isBot(attacker) || isBot(victimId)) {
             double dealt = Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
             session.recordDamage(attacker, victimId, dealt);
+            boolean arrow = event instanceof EntityDamageByEntityEvent byEntity
+                    && byEntity.getDamager() instanceof org.bukkit.entity.Projectile;
+            boolean melee = event.getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK
+                    || event.getCause() == EntityDamageEvent.DamageCause.ENTITY_SWEEP_ATTACK;
+            stats.damage(attacker, victimId, dealt, arrow, melee && !arrow);
         }
         if (isBody(victim) && event instanceof EntityDamageByEntityEvent byEntity) {
             knockBack(victimId, byEntity.getDamager());
@@ -775,6 +847,10 @@ public final class BotManager implements Listener {
             borderDeaths++;
         }
         UUID killer = session.combat().lastAttackerId(id, CombatTracker.DEFAULT_WINDOW_TICKS);
+        stats.died(id, session.aliveIds().size(), last == null ? "?" : last.getDamageSource().getDamageType()
+                == DamageType.OUTSIDE_BORDER ? "border" : killer != null ? (isBot(killer) ? "bot" : "player")
+                + (last.getCause() == EntityDamageEvent.DamageCause.PROJECTILE ? "-arrow" : "")
+                : last.getCause().name().toLowerCase(java.util.Locale.ROOT), killer);
         BotBody body = bot.body();
         if (body != null) {
             body.legs().remove();

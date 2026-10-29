@@ -25,19 +25,22 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param shieldChance      chance to block a frontal melee hit with its shield (from the second gear step)
  * @param attackTicks       ticks between two melee swings (a fully charged sword is 12)
  * @param damageScale       multiplier of all damage it deals (1 = exactly its gear)
+ * @param dodgeChance       0..1: chance to zig-zag out of the line of fire when it sees a bow drawn at it
+ * @param spacing           0..1: chance to back off out of reach while its sword recharges and step in charged
+ *                          (hit and back), instead of trading blows face to face
  */
 public record BotProfile(int reactionTicks, double aimError, double critChance, double strafeChance, double bowSkill,
                          double bowRange, int goldenApples, double healAt, double gearPace, double gearRead,
                          double buildPerSecond, int baseSize, double aggression, double shieldChance, int attackTicks,
-                         double damageScale) {
+                         double damageScale, double dodgeChance, double spacing) {
 
     /** The presets, also the defaults in {@code config.yml}. */
     public static BotProfile preset(BotDifficulty difficulty) {
         return switch (difficulty) {
-            case EASY -> new BotProfile(9, 6.0, 0.45, 0.45, 0.55, 24, 2, 8, 0.9, 0.7, 2.0, 5, 0.5, 0.0, 13, 1.0);
-            case NORMAL -> new BotProfile(5, 3.0, 0.7, 0.75, 0.8, 32, 3, 10, 1.05, 0.85, 3.5, 7, 0.6, 0.25, 12, 1.0);
-            case HARD -> new BotProfile(2, 1.0, 0.9, 0.9, 0.95, 40, 5, 12, 1.3, 0.95, 6.0, 7, 0.72, 0.45, 12, 1.05);
-            case HELL -> new BotProfile(1, 0.3, 1.0, 1.0, 1.0, 48, 7, 13, 1.5, 1.0, 9.0, 9, 0.85, 0.6, 11, 1.15);
+            case EASY -> new BotProfile(9, 6.0, 0.45, 0.45, 0.55, 24, 2, 8, 0.9, 0.7, 2.0, 5, 0.5, 0.0, 13, 1.0, 0.15, 0.0);
+            case NORMAL -> new BotProfile(5, 3.0, 0.7, 0.75, 0.8, 32, 3, 10, 1.05, 0.85, 3.5, 7, 0.6, 0.25, 12, 1.0, 0.45, 0.35);
+            case HARD -> new BotProfile(2, 1.0, 0.9, 0.9, 0.95, 40, 5, 12, 1.3, 0.95, 6.0, 7, 0.72, 0.45, 12, 1.05, 0.8, 0.7);
+            case HELL -> new BotProfile(1, 0.3, 1.0, 1.0, 1.0, 48, 7, 13, 1.5, 1.0, 9.0, 9, 0.85, 0.6, 11, 1.15, 0.95, 0.9);
         };
     }
 
@@ -57,6 +60,8 @@ public record BotProfile(int reactionTicks, double aimError, double critChance, 
     static final String SHIELD = "shield-chance";
     static final String ATTACK = "attack-interval-ms";
     static final String DAMAGE = "damage-scale";
+    static final String DODGE = "dodge-chance";
+    static final String SPACING = "spacing";
 
     /** The values as config entries (key → value), in declaration order. */
     Map<String, Object> toConfig() {
@@ -77,6 +82,8 @@ public record BotProfile(int reactionTicks, double aimError, double critChance, 
         out.put(SHIELD, shieldChance);
         out.put(ATTACK, attackTicks * 50);
         out.put(DAMAGE, damageScale);
+        out.put(DODGE, dodgeChance);
+        out.put(SPACING, spacing);
         return out;
     }
 
@@ -87,7 +94,8 @@ public record BotProfile(int reactionTicks, double aimError, double critChance, 
             "gear-pace: 장비가 좋아지는 속도(1 = 사람 속도) · gear-read: 상대 장비를 읽는 정확도(0~1)",
             "build-blocks-per-second: 기지·방어벽을 짓는 속도 · base-size: 기지 한 변(5~9, 홀수)",
             "aggression: 싸움을 거는 성향(0~1) · shield-chance: 정면 근접 공격을 방패로 막을 확률",
-            "attack-interval-ms: 근접 공격 간격 · damage-scale: 주는 피해 배율");
+            "attack-interval-ms: 근접 공격 간격 · damage-scale: 주는 피해 배율",
+            "dodge-chance: 활을 겨누는 적을 보면 지그재그로 사선을 피할 확률 · spacing: 칼이 다시 찰 때까지 사거리 밖으로 빠졌다가 들어가 치는 확률");
 
     /** Reads a difficulty's section; missing or invalid values fall back to the preset. */
     static BotProfile read(ConfigurationSection s, BotDifficulty difficulty) {
@@ -114,7 +122,9 @@ public record BotProfile(int reactionTicks, double aimError, double critChance, 
                 clamp(s.getDouble(SHIELD, d.shieldChance), 0, 1, d.shieldChance),
                 (int) Math.max(4, Math.round(clamp(s.getDouble(ATTACK, d.attackTicks * 50), 200, 5000,
                         d.attackTicks * 50) / 50.0)),
-                clamp(s.getDouble(DAMAGE, d.damageScale), 0.1, 5, d.damageScale));
+                clamp(s.getDouble(DAMAGE, d.damageScale), 0.1, 5, d.damageScale),
+                clamp(s.getDouble(DODGE, d.dodgeChance), 0, 1, d.dodgeChance),
+                clamp(s.getDouble(SPACING, d.spacing), 0, 1, d.spacing));
     }
 
     private static double clamp(double value, double min, double max, double fallback) {

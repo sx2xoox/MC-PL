@@ -1961,6 +1961,11 @@ public final class AugmentMatch implements GameInstance, BotHost {
 
     private void finish(GameResult result) {
         logTeamplay("end");
+        if (bots != null && !isPractice()) {
+            for (String line : bots.statsReport()) {
+                game.hub().plugin().getLogger().info("[bots end] " + line);
+            }
+        }
         if (spectators != null) {
             spectators.announceWinner(result);
         }
