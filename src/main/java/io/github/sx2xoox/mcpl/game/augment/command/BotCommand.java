@@ -72,7 +72,7 @@ public final class BotCommand {
     /** What the options argument suggests for the word being typed: counts and difficulties. */
     public static List<String> suggestions(String word) {
         List<String> out = new ArrayList<>();
-        for (String count : List.of("2", "3", "5", "8", "11", "15")) {
+        for (String count : List.of("2", "3", "5", "8", "15", "20", "30", "40")) {
             if (count.startsWith(word)) {
                 out.add(count);
             }

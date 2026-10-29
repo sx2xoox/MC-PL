@@ -166,25 +166,31 @@ class AugmentBotMatchTest {
     }
 
     @Test
-    void aBotCanKillThePlayerAndWin() {
+    void theBotsFightItOutAfterTheLastHumanFalls() {
         AugmentMatch match = botMatch("2 지옥");
         GameSession session = match.session();
         h.tickUntilPhase(MatchPhase.FIGHT);
         BotController bot = match.bots().all().getFirst();
+        BotController other = match.bots().all().get(1);
         Mannequin body = bot.body().body();
         admin.teleport(body.getLocation().add(1.5, 0, 0));
         admin.setNoDamageTicks(0);
         admin.damage(1000, DamageSource.builder(DamageType.MOB_ATTACK).withCausingEntity(body)
                 .withDirectEntity(body).build());
-        assertEquals(GameState.ENDING, session.state(), "the last human fell");
+        assertFalse(session.isAlive(admin.getUniqueId()));
+        assertEquals(GameState.RUNNING, session.state(), "the human watches the bots finish it");
+        assertEquals(1, session.stats().of(bot.id()).kills(), "the bot got the kill");
+        LivingEntity loser = other.body().body();
+        loser.setNoDamageTicks(0);
+        // magic, so the hell bot's shield cannot block it
+        loser.damage(1000, DamageSource.builder(DamageType.MAGIC).withCausingEntity(body).build());
+        assertFalse(session.isAlive(other.id()), "the other bot fell");
+        assertEquals(GameState.ENDING, session.state(), "the last bot standing wins");
         GameResult result = session.result();
         assertNotNull(result);
-        assertTrue(result.isWinner(bot.id()), "the bot wins");
-        for (BotController each : match.bots().all()) {
-            assertEquals(session.isAlive(each.id()), result.isWinner(each.id()), "every bot still standing wins");
-        }
+        assertTrue(result.isWinner(bot.id()));
+        assertFalse(result.isWinner(other.id()));
         assertFalse(result.isWinner(admin.getUniqueId()));
-        assertEquals(1, session.stats().of(bot.id()).kills(), "the bot got the kill");
     }
 
     @Test

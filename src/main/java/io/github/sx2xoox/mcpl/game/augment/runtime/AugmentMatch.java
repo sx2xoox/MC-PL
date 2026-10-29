@@ -1808,8 +1808,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             return;
         }
         if (mode == MatchMode.BOTS && bots != null && !bots.all().isEmpty() && !session.aliveIds().isEmpty()
-                && session.aliveIds().stream().allMatch(bots::isBot)) {
-            // every human is out: the bots still standing win together (nobody is left to watch them finish it)
+                && session.aliveIds().stream().allMatch(bots::isBot) && wild.world().getPlayers().isEmpty()) {
+            // every human is out and nobody is left watching: the bots still standing win together. While an
+            // eliminated human still watches, the bots fight it out to the last one.
             finish(GameResult.builder().winners(session.aliveIds()).reason(messages().get("bots.won-reason")).build());
             return;
         }

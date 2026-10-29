@@ -85,10 +85,12 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
     public static final String PERSONALITIES = "bots.personalities";
 
     /** Hard cap of bots in one match (performance). */
-    public static final int HARD_MAX = 15;
+    public static final int HARD_MAX = 40;
 
     static final List<String> DEFAULT_NAMES = List.of("철수", "영희", "민수", "지민", "서연", "도윤", "하준", "지우",
-            "수아", "예준", "시우", "하은", "유진", "현우", "다은");
+            "수아", "예준", "시우", "하은", "유진", "현우", "다은", "준서", "서윤", "주원", "지아", "건우", "채원", "우진",
+            "소율", "선우", "지유", "연우", "윤서", "은우", "하린", "정우", "아린", "승우", "수빈", "지호", "예린", "태윤",
+            "나윤", "민준", "가은", "도현", "서아");
 
     public BotSettings {
         names = List.copyOf(names);
@@ -128,7 +130,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         d.setComments(COUNT, List.of("봇 수를 쓰지 않았을 때 넣는 봇 수"));
         d.set(DIFFICULTY, BotDifficulty.NORMAL.key());
         d.setComments(DIFFICULTY, List.of("난이도를 쓰지 않았을 때: easy(쉬움), normal(보통), hard(어려움), hell(지옥)"));
-        d.set(MAX, 15);
+        d.set(MAX, 30);
         d.setComments(MAX, List.of("한 경기의 최대 봇 수 (1~" + HARD_MAX + ", 서버 성능)"));
         d.set(NAMES, DEFAULT_NAMES);
         d.setComments(NAMES, List.of("봇 이름 (\"철수\" → \"철수 봇\")"));
@@ -175,7 +177,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
             ConfigurationSection section = s.getConfigurationSection("bots." + each.key());
             profiles.put(each, BotProfile.read(section != null ? section : new MemoryConfiguration(), each));
         }
-        int max = Math.max(1, Math.min(HARD_MAX, s.getInt(MAX, 15)));
+        int max = Math.max(1, Math.min(HARD_MAX, s.getInt(MAX, 30)));
         double speed = s.getDouble(SPEED, 0.32);
         Map<BotPersonality, Double> personalities = new EnumMap<>(BotPersonality.class);
         for (BotPersonality each : BotPersonality.values()) {
