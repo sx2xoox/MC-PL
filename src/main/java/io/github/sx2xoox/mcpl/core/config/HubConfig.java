@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 
+import io.github.sx2xoox.mcpl.core.pack.ResourcePackSettings;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -76,6 +77,7 @@ public final class HubConfig {
     private double arenaZ;
     private int arenaRadius = 60;
     private ProtectionSettings protection = ProtectionSettings.ALL;
+    private ResourcePackSettings resourcePack = ResourcePackSettings.DISABLED;
     private BlockDamageScope abilityBlockDamage = BlockDamageScope.MAP_WORLDS;
     private int abilityBlockDamageLimit = DEFAULT_BLOCK_DAMAGE_LIMIT;
     private boolean loadedOnce;
@@ -296,6 +298,8 @@ public final class HubConfig {
         arenaZ = config.getDouble("arena.z");
         arenaRadius = clamp(config.getInt("arena.radius", 60), MIN_RADIUS, MAX_RADIUS);
 
+        resourcePack = ResourcePackSettings.read(config.getConfigurationSection("resource-pack"));
+
         ConfigurationSection protectionSection = config.getConfigurationSection("protection");
         protection = protectionSection == null ? ProtectionSettings.ALL : ProtectionSettings.read(protectionSection);
         // YAML reads an unquoted OFF (or on/yes/no) as a boolean: off/false is OFF, on/true the default.
@@ -472,6 +476,11 @@ public final class HubConfig {
 
     public ProtectionSettings protection() {
         return protection;
+    }
+
+    /** The {@code resource-pack.*} settings (who is sent the MCPL resource pack and from where). */
+    public ResourcePackSettings resourcePack() {
+        return resourcePack;
     }
 
     /** Where abilities may break blocks during a match (restored when it ends). */

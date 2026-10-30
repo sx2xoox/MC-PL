@@ -244,21 +244,31 @@ public record OfferDialog(
      */
     static Component icon(Material material, TextColor color) {
         Component symbol = Component.text("◆", color);
-        if (NO_SPRITE.contains(material)) {
+        String sprite = sprite(material);
+        if (sprite == null) {
             return symbol;
         }
-        Key atlas = ITEMS;
+        Key atlas = sprite.startsWith("block/") ? BLOCKS : ITEMS;
+        return Component.object(ObjectContents.sprite(atlas, Key.key("minecraft", sprite))).fallback(symbol);
+    }
+
+    /**
+     * The flat texture that stands for {@code material} ({@code item/diamond_sword}, {@code block/tnt_side}), or null
+     * for items drawn by an entity model. Also the big card icon of the resource pack screen ({@link PackScreen}).
+     */
+    public static @Nullable String sprite(Material material) {
+        if (NO_SPRITE.contains(material)) {
+            return null;
+        }
         String sprite = ITEM_SPRITES.get(material);
         if (sprite == null) {
-            atlas = BLOCKS;
             sprite = BLOCK_SPRITES.get(material);
         }
         if (sprite == null) {
             boolean block = material.isBlock() && blockTextured(material);
-            atlas = block ? BLOCKS : ITEMS;
             sprite = (block ? "block/" : "item/") + material.getKey().getKey();
         }
-        return Component.object(ObjectContents.sprite(atlas, Key.key("minecraft", sprite))).fallback(symbol);
+        return sprite;
     }
 
     /** Blocks whose item shows the block texture (most), as opposed to blocks with an item texture of their own. */

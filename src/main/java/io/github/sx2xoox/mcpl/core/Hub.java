@@ -10,6 +10,7 @@ import io.github.sx2xoox.mcpl.core.command.GameCommand;
 import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.map.MapService;
+import io.github.sx2xoox.mcpl.core.pack.ResourcePackService;
 import io.github.sx2xoox.mcpl.core.player.SnapshotStore;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
@@ -53,6 +54,7 @@ public final class Hub {
     private final HubListener listener;
     private final SettingsEditor settings;
     private final SettingsMenuListener settingsListener;
+    private final ResourcePackService resourcePacks;
     private boolean enabled;
 
     public Hub(JavaPlugin plugin) {
@@ -71,6 +73,7 @@ public final class Hub {
         this.listener = new HubListener(this);
         this.settings = new SettingsEditor(this);
         this.settingsListener = new SettingsMenuListener(this);
+        this.resourcePacks = new ResourcePackService(plugin, config::resourcePack, messages);
     }
 
     /**
@@ -92,6 +95,7 @@ public final class Hub {
         Bukkit.getPluginManager().registerEvents(listener, plugin);
         Bukkit.getPluginManager().registerEvents(settingsListener, plugin);
         maps.enable();
+        resourcePacks.enable();
         for (Player player : Bukkit.getOnlinePlayers()) {
             listener.restorePending(player);
         }
@@ -120,6 +124,7 @@ public final class Hub {
         gameRules.shutdown();
         tempWorlds.shutdown();
         maps.disable();
+        resourcePacks.disable();
         HandlerList.unregisterAll(listener);
         HandlerList.unregisterAll(settingsListener);
         combat.clear();
@@ -129,6 +134,7 @@ public final class Hub {
     public void reload() {
         config.load();
         messages.load();
+        resourcePacks.reload();
         games.reload();
         settings.refreshMenus();
     }
@@ -139,6 +145,11 @@ public final class Hub {
 
     public JavaPlugin plugin() {
         return plugin;
+    }
+
+    /** Sends the MCPL resource pack and knows who loaded it ({@code resource-pack.*}). */
+    public ResourcePackService resourcePacks() {
+        return resourcePacks;
     }
 
     public HubConfig config() {

@@ -1,0 +1,526 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/anvil.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue400"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/bookshelf.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue401"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/cactus_side.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue402"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/cobweb.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue403"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/furnace_front.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue404"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/iron_block.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue405"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/packed_ice.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue406"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/sculk_sensor_top.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue407"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/sunflower_front.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue408"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/tnt_side.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue409"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:block/wither_rose.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue40a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/amethyst_shard.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue40b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/arrow.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue40c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/blaze_powder.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue40d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/blaze_rod.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue40e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/bone.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue40f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/brewing_stand.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue410"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/bundle.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue411"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/compass_16.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue412"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/cooked_beef.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue413"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/diamond.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue414"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/diamond_pickaxe.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue415"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/echo_shard.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue416"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/elytra.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue417"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/emerald.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue418"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/ender_eye.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue419"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/ender_pearl.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue41a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/experience_bottle.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue41b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/feather.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue41c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/gold_ingot.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue41d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/golden_apple.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue41e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/golden_axe.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue41f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/golden_boots.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue420"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/golden_pickaxe.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue421"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/golden_sword.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue422"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/heart_of_the_sea.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue423"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/iron_axe.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue424"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/iron_golem_spawn_egg.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue425"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/iron_ingot.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue426"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/iron_pickaxe.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue427"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/iron_sword.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue428"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/leather.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue429"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/mace.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue42a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/netherite_axe.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue42b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/netherite_chestplate.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue42c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/netherite_ingot.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue42d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/netherite_sword.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue42e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/phantom_membrane.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue42f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/rabbit_foot.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue430"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/raw_iron.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue431"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/recovery_compass_16.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue432"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/redstone.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue433"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/slime_ball.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue434"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/spectral_arrow.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue435"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/spider_eye.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue436"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/spyglass.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue437"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/sugar.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue438"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:item/tropical_fish.png",
+      "ascent": -20,
+      "height": 32,
+      "chars": [
+        "\ue439"
+      ]
+    }
+  ]
+}

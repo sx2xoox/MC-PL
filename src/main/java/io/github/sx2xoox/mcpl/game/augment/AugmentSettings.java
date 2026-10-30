@@ -34,7 +34,8 @@ import org.jspecify.annotations.Nullable;
  * @param rerolls              rerolls per player per match
  * @param rounds               timed augment rounds, in order
  * @param bonusEnabled         special achievements grant extra augments
- * @param offerUi              how cards are shown: a dialog screen (default) or the chest menu
+ * @param offerUi              how cards are shown: the resource pack screen (default; the dialog without the pack), a
+ *                             dialog screen or the chest menu
  * @param farmingInvulnerable  real matches: participants (players and bots) take no damage while farming
  * @param farmingNoHunger      real matches: players' food and saturation stay full while farming
  * @param startKit             what every player gets when the farming starts (empty = nothing)
@@ -99,7 +100,17 @@ public record AugmentSettings(
         /** A dialog screen (Paper dialog API): cards side by side, like League of Legends' augment pick. */
         DIALOG,
         /** The 3-row chest menu (for clients or proxies that cannot show dialogs). */
-        CHEST;
+        CHEST,
+        /**
+         * The resource pack screen: card art drawn by the MCPL resource pack ({@code resource-pack.*}). Players who
+         * did not load the pack (disabled, declined, failed) get {@link #DIALOG}.
+         */
+        PACK;
+
+        /** The UI a player actually gets: {@link #PACK} needs the resource pack, else the dialog. */
+        public OfferUi resolve(boolean hasPack) {
+            return this == PACK && !hasPack ? DIALOG : this;
+        }
 
         /** The UI named {@code raw} (case-insensitive), or null. */
         public static @Nullable OfferUi parse(@Nullable String raw) {
@@ -257,9 +268,10 @@ public record AugmentSettings(
         d.setComments(CHOICE, List.of(
                 "카드 3장 중 하나를 고르는 제한 시간(초). 시간이 지나면 무작위로 하나를 받습니다. (5~300)",
                 "메뉴를 닫았다면 /게임 증강 으로 다시 열 수 있습니다."));
-        d.set(OFFER_UI, OfferUi.DIALOG.name());
+        d.set(OFFER_UI, OfferUi.PACK.name());
         d.setComments(OFFER_UI, List.of(
-                "카드 선택 화면: DIALOG = 대화창(리그 오브 레전드처럼 카드가 나란히, 기본), CHEST = 상자 메뉴.",
+                "카드 선택 화면: PACK = 리소스팩 화면(카드 그림, 기본), DIALOG = 대화창(카드가 나란히), CHEST = 상자 메뉴.",
+                "PACK 은 리소스팩(config.yml 의 resource-pack)을 받은 플레이어에게만 보이고, 나머지는 DIALOG 를 봅니다.",
                 "대화창이 보이지 않는 클라이언트(오래된 버전, 일부 프록시)가 있다면 CHEST 로 바꾸세요."));
         d.set(REROLLS, 2);
         d.setComments(REROLLS, List.of("경기당 리롤 횟수 (보이는 카드 3장을 다시 뽑기, 0~10)"));
@@ -307,11 +319,11 @@ public record AugmentSettings(
     }
 
     private static OfferUi readOfferUi(ConfigurationSection s, Logger logger) {
-        String raw = s.getString(OFFER_UI, OfferUi.DIALOG.name());
+        String raw = s.getString(OFFER_UI, OfferUi.PACK.name());
         OfferUi ui = OfferUi.parse(raw);
         if (ui == null) {
-            logger.warning("games.augment." + OFFER_UI + ": unknown UI '" + raw + "', using DIALOG");
-            return OfferUi.DIALOG;
+            logger.warning("games.augment." + OFFER_UI + ": unknown UI '" + raw + "', using PACK");
+            return OfferUi.PACK;
         }
         return ui;
     }
