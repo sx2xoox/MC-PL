@@ -69,8 +69,7 @@ import org.jspecify.annotations.Nullable;
  * generates, {@link MatchPhase#FARMING} (survival, no PvP), then {@link MatchPhase#FIGHT} (PvP, the world border
  * shrinks) until one player or team is left. Augments are offered in timed rounds and for special achievements
  * ({@link BonusTracker}); each player picks one of three cards in a dialog ({@link OfferDialog}) or, with
- * {@code augments.ui: CHEST}, a chest menu ({@link OfferMenu}), or with {@code PACK} the resource pack screen
- * ({@link PackOfferMenu}) for players who loaded the MCPL pack.
+ * {@code augments.ui: CHEST}, a chest menu ({@link OfferMenu}).
  */
 public final class AugmentMatch implements GameInstance, BotHost {
 
@@ -380,11 +379,6 @@ public final class AugmentMatch implements GameInstance, BotHost {
 
     /** The open card menu of the player, or null. */
     public @Nullable OfferMenu menu(UUID player) {
-        return cardMenu(player) instanceof OfferMenu menu ? menu : null;
-    }
-
-    /** The open card menu (chest or resource pack screen) of the player, or null. */
-    public @Nullable CardMenu cardMenu(UUID player) {
         PlayerState state = players.get(player);
         return state == null ? null : state.menu;
     }
@@ -1110,16 +1104,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (!offer.started()) {
             offer.deadline(clock + settings.choiceTicks());
         }
-        AugmentSettings.OfferUi ui = settings.offerUi().resolve(game.hasPack(player));
-        if (ui == AugmentSettings.OfferUi.DIALOG) {
+        if (settings.offerUi() == AugmentSettings.OfferUi.DIALOG) {
             showDialog(player, state, offer);
             Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 0.8f, 1.3f);
             return true;
         }
-        CardMenu menu = ui == AugmentSettings.OfferUi.PACK
-                ? new PackOfferMenu(player.getUniqueId(), offer, messages(), config::params, state.rerolls,
-                secondsLeft(offer), state.offers.size() - 1)
-                : new OfferMenu(player.getUniqueId(), offer, messages(), config::params, state.rerolls,
+        OfferMenu menu = new OfferMenu(player.getUniqueId(), offer, messages(), config::params, state.rerolls,
                 secondsLeft(offer));
         state.menu = menu;
         player.openInventory(menu.getInventory());
@@ -1220,8 +1210,8 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
         state.rerolls--;
         offer.cards(cards);
-        if (state.menu != null && state.menu.offer() == offer && !state.menu.redraw(config::params, state.rerolls)) {
-            openMenu(player); // the screen draws the cards in its title: show the new ones
+        if (state.menu != null && state.menu.offer() == offer) {
+            state.menu.render(config::params, state.rerolls);
         }
         if (state.dialog == offer) {
             showDialog(player, state, offer);
@@ -1232,7 +1222,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
     }
 
     /** The menu of the player was closed (by them or the server). */
-    void menuClosed(Player player, CardMenu menu) {
+    void menuClosed(Player player, OfferMenu menu) {
         PlayerState state = players.get(player.getUniqueId());
         if (state == null || state.menu != menu) {
             return;
@@ -1245,7 +1235,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
     }
 
     private void closeMenu(PlayerState state) {
-        CardMenu menu = state.menu;
+        OfferMenu menu = state.menu;
         state.menu = null;
         if (state.dialog != null) {
             state.dialog = null;
@@ -1400,10 +1390,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
             return;
         }
         state.rerolls += count;
-        Player owner = org.bukkit.Bukkit.getPlayer(player);
-        if (state.menu != null && !state.menu.redraw(config::params, state.rerolls) && owner != null) {
-            openMenu(owner);
+        if (state.menu != null) {
+            state.menu.render(config::params, state.rerolls);
         }
+        Player owner = org.bukkit.Bukkit.getPlayer(player);
         if (state.dialog != null && state.dialog == state.current() && owner != null) {
             showDialog(owner, state, state.dialog);
         }

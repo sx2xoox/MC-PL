@@ -17,6 +17,7 @@ import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.jspecify.annotations.Nullable;
 
@@ -24,7 +25,7 @@ import org.jspecify.annotations.Nullable;
  * The card menu of one offer: a 3-row chest with up to three augment cards, a reroll button and a clock. Clicks are
  * handled by the match listener, which recognises the menu by its holder.
  */
-public final class OfferMenu implements CardMenu {
+public final class OfferMenu implements InventoryHolder {
 
     /** Slots of three cards, left to right. */
     static final int[] CARD_SLOTS = {11, 13, 15};
@@ -81,34 +82,15 @@ public final class OfferMenu implements CardMenu {
         inventory.setItem(REROLL_SLOT, rerollButton(rerolls));
     }
 
-    @Override
-    public boolean redraw(Function<AugmentInfo, Params> params, int rerolls) {
-        render(params, rerolls);
-        return true;
-    }
-
-    @Override
-    public boolean isReroll(int rawSlot) {
-        return rawSlot == REROLL_SLOT;
-    }
-
-    @Override
-    public boolean isLater(int rawSlot) {
-        return false;
-    }
-
-    @Override
     public UUID owner() {
         return owner;
     }
 
-    @Override
     public Offer offer() {
         return offer;
     }
 
     /** The card in {@code rawSlot}, or null. */
-    @Override
     public @Nullable AugmentInfo cardAt(int rawSlot) {
         List<AugmentInfo> cards = offer.cards();
         int[] slots = cardSlots(cards.size());
@@ -142,8 +124,7 @@ public final class OfferMenu implements CardMenu {
     }
 
     /** Shows the seconds left on the clock item. */
-    @Override
-    public void updateClock(long secondsLeft) {
+    void updateClock(long secondsLeft) {
         ItemStack clock = ItemStack.of(Material.CLOCK, (int) Math.max(1, Math.min(64, secondsLeft)));
         clock.setData(DataComponentTypes.ITEM_NAME, messages.get("offer.clock", Messages.tag("seconds", secondsLeft))
                 .decoration(TextDecoration.ITALIC, false));
@@ -160,7 +141,7 @@ public final class OfferMenu implements CardMenu {
     }
 
     /** A card item: the augment's icon, its name in the tier color, kind, description and a pick hint. */
-    public static ItemStack card(Messages messages, AugmentInfo info, Params params, boolean pickHint) {
+    static ItemStack card(Messages messages, AugmentInfo info, Params params, boolean pickHint) {
         ItemStack item = ItemStack.of(info.icon());
         item.setData(DataComponentTypes.ITEM_NAME, name(info).decoration(TextDecoration.BOLD, true)
                 .decoration(TextDecoration.ITALIC, false));

@@ -27,7 +27,7 @@ final class PlayerState {
     int rerolls;
     int mobKills;
     float lastFallDistance;
-    @Nullable CardMenu menu;
+    @Nullable OfferMenu menu;
     /** The offer whose pick dialog the player sees (until they pick, close it or it is replaced), or null. */
     @Nullable Offer dialog;
 

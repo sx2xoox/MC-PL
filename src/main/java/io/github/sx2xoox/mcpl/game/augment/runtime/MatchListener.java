@@ -237,21 +237,17 @@ final class MatchListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onMenuClick(InventoryClickEvent event) {
         InventoryHolder holder = event.getView().getTopInventory().getHolder(false);
-        if (!(holder instanceof CardMenu menu)) {
+        if (!(holder instanceof OfferMenu menu)) {
             return;
         }
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player) || !menu.owner().equals(player.getUniqueId())
-                || match.cardMenu(player.getUniqueId()) != menu) {
+                || match.menu(player.getUniqueId()) != menu) {
             return;
         }
         int slot = event.getRawSlot();
-        if (menu.isReroll(slot)) {
+        if (slot == OfferMenu.REROLL_SLOT) {
             match.reroll(player);
-            return;
-        }
-        if (menu.isLater(slot)) {
-            player.closeInventory();
             return;
         }
         AugmentInfo card = menu.cardAt(slot);
@@ -262,14 +258,14 @@ final class MatchListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onMenuDrag(InventoryDragEvent event) {
-        if (event.getView().getTopInventory().getHolder(false) instanceof CardMenu) {
+        if (event.getView().getTopInventory().getHolder(false) instanceof OfferMenu) {
             event.setCancelled(true);
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onMenuClose(InventoryCloseEvent event) {
-        if (event.getInventory().getHolder(false) instanceof CardMenu menu
+        if (event.getInventory().getHolder(false) instanceof OfferMenu menu
                 && event.getPlayer() instanceof Player player) {
             match.menuClosed(player, menu);
         }

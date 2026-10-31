@@ -94,17 +94,6 @@ offer:
   dialog-reroll-tooltip: "<gray>보이는 카드를 모두 다시 뽑습니다.<newline>리롤은 경기 전체에서 정해진 횟수만 쓸 수 있습니다."
   dialog-later: "<gray>나중에 고르기"
   dialog-later-tooltip: "<gray>창을 닫습니다 (ESC도 같음).<newline><white>/게임 증강</white> 으로 다시 열 수 있고, 시간이 지나면 무작위로 받습니다."
-  # 리소스팩 화면 (games.augment.augments.ui: PACK). 카드 위 글자는 리소스팩 글꼴로 그려집니다
-  # (한글 KS X 1001 2350자, 영문·숫자, · … × ◆ ★ ♥ ▶ → 만 표시, 나머지는 ?).
-  pack-header: "<#d8d0f0><source>"
-  pack-header-queued: "<#d8d0f0><source> <#8c84a8>· 다음 증강 <count>개"
-  pack-reroll: "리롤 <count>"
-  pack-reroll-none: "리롤 없음"
-  pack-later: "나중에"
-  pack-later-name: "<yellow>나중에 고르기"
-  pack-later-lore:
-    - "<gray>창을 닫습니다 (ESC도 같음)."
-    - "<white>/게임 증강</white> <gray>으로 다시 열 수 있고, 시간이 지나면 무작위로 받습니다."
   reminder: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>/게임 증강</white> · <white><seconds>초</white> 뒤 무작위"
 
 # ── 보너스 증강 ──────────────────────────────────────────────
@@ -370,11 +359,9 @@ settings:
   ui:
     name: "증강 선택 화면"
     lore:
-      - "<gray>리소스팩: 카드 그림이 있는 화면 (기본, 팩이 없는 플레이어는 대화창)"
-      - "<gray>대화창: 카드가 나란히 뜨는 선택 화면"
+      - "<gray>대화창: 카드가 나란히 뜨는 선택 화면 (기본)"
       - "<gray>상자: 예전 상자 메뉴 (대화창이 안 보이는 클라이언트용)"
     option:
-      pack: "<light_purple>리소스팩"
       dialog: "<aqua>대화창"
       chest: "<gold>상자"
   rerolls:

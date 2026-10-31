@@ -4,7 +4,6 @@ import java.io.File;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
-import java.util.function.Predicate;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.Hub;
@@ -70,7 +69,6 @@ public final class AugmentGame implements MiniGame {
     private @Nullable WildArena preparing;
     private @Nullable AugmentSettings preparingSettings;
     private @Nullable AugmentMatch current;
-    private @Nullable Predicate<Player> packCheck;
     private OfferDialogs offerDialogs =
             PaperOfferDialogs.INSTANCE;
     private final AugmentPracticeGame practice;
@@ -359,16 +357,6 @@ public final class AugmentGame implements MiniGame {
     /** Replaces how dialogs are shown (tests: MockBukkit cannot build Paper dialogs). */
     public void offerDialogs(OfferDialogs dialogs) {
         this.offerDialogs = dialogs;
-    }
-
-    /** The player loaded the MCPL resource pack ({@code augments.ui: PACK} shows them the pack screen). */
-    public boolean hasPack(Player player) {
-        return packCheck != null ? packCheck.test(player) : hub().resourcePacks().hasPack(player);
-    }
-
-    /** Replaces the resource pack check (tests: MockBukkit clients load no packs); null restores it. */
-    public void packCheck(@Nullable Predicate<Player> check) {
-        this.packCheck = check;
     }
 
     public AugmentRegistry registry() {

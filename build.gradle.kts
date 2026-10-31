@@ -34,27 +34,12 @@ tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.addAll(listOf("-Xlint:all", "-Xlint:-serial", "-Xlint:-processing", "-Xlint:-classfile"))
 }
 
-// 증강 선택 화면 리소스팩: src/main/resourcepack (tools/resourcepack/generate_pack.py 로 생성) → MCPL-pack.zip.
-// Reproducible (fixed order and timestamps), so the same sources always give the same SHA-1 the clients check.
-val resourcePack = tasks.register<Zip>("resourcePack") {
-    description = "Zips the MCPL resource pack to build/resourcepack/MCPL-pack.zip (also bundled into the plugin jar)."
-    group = "build"
-    from("src/main/resourcepack")
-    archiveFileName = "MCPL-pack.zip"
-    destinationDirectory = layout.buildDirectory.dir("resourcepack")
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-}
-
 tasks.processResources {
     val props = mapOf("version" to project.version)
     inputs.properties(props)
     filteringCharset = Charsets.UTF_8.name()
     filesMatching("plugin.yml") {
         expand(props)
-    }
-    from(resourcePack) {
-        into("resourcepack")
     }
 }
 

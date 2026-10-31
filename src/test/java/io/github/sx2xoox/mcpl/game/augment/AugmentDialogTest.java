@@ -90,8 +90,7 @@ class AugmentDialogTest {
                 assertEquals(7, lines.size(), "tier, name, kind, 3 description lines, pick");
                 assertEquals("◆ 실버", plain(lines.get(0)));
                 assertTrue(plain(lines.get(1)).endsWith(info.name()), plain(lines.get(1)));
-                assertEquals(OfferDialog.sprite(info.icon()) != null, hasSprite(lines.get(1)),
-                        "the icon is an inline sprite (a symbol for items drawn by an entity model, e.g. the shield)");
+                assertTrue(hasSprite(lines.get(1)), "the icon is an inline sprite");
                 assertEquals(info.kind().koreanName(), plain(lines.get(2)));
                 String description = match.config().params(info).render(info.description());
                 String visible = String.join(" ", lines.subList(3, 6).stream().map(AugmentDialogTest::plain)

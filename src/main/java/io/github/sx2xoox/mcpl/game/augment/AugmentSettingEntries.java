@@ -75,15 +75,13 @@ final class AugmentSettingEntries {
                 .icon(Material.ITEM_FRAME).text(messages, "settings.ui").path(path(AugmentSettings.OFFER_UI))
                 .readWhenMatchOpens()
                 .choice(List.of(
-                                new Setting.Choice.Option(AugmentSettings.OfferUi.PACK.name(),
-                                        List.of("리소스팩", "팩"), List.of("pack")),
                                 new Setting.Choice.Option(AugmentSettings.OfferUi.DIALOG.name(),
                                         List.of("대화창", "다이얼로그"), List.of("dialog")),
                                 new Setting.Choice.Option(AugmentSettings.OfferUi.CHEST.name(),
                                         List.of("상자", "메뉴"), List.of("chest"))),
                         () -> live().getString(AugmentSettings.OFFER_UI),
                         value -> config.setGameValue(AugmentGame.ID, AugmentSettings.OFFER_UI, value),
-                        defaults.getString(AugmentSettings.OFFER_UI, AugmentSettings.OfferUi.PACK.name()));
+                        defaults.getString(AugmentSettings.OFFER_UI, AugmentSettings.OfferUi.DIALOG.name()));
         Setting rerolls = number("augment.rerolls", "리롤", "rerolls", Material.ENDER_EYE, "settings.rerolls",
                 AugmentSettings.REROLLS)
                 .range(0, AugmentSettings.MAX_REROLLS).steps(1, 3).integer().unit(Setting.Unit.TIMES)
