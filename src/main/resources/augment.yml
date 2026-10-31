@@ -1,0 +1,402 @@
+# ─────────────────────────────────────────────────────────────
+#  증강 야생전 메시지 (MiniMessage 형식: https://docs.advntr.dev/minimessage/format)
+#  prefix 를 지정하지 않으면 messages.yml 의 prefix 를 그대로 씁니다.
+#  <augment>, <player>, <seconds> 같은 꺾쇠 이름은 자동으로 채워집니다.
+#  이 파일에 없는 키는 플러그인에 내장된 기본 문구를 사용합니다. 수정 후 /게임 리로드
+# ─────────────────────────────────────────────────────────────
+
+# ── 게임 소개 ────────────────────────────────────────────────
+game:
+  name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient>"
+  description:
+    - "경기마다 새로 만든 야생 월드에서 파밍하고, PvP가 켜지면 좁아지는 월드보더 안에서 최후의 1인(팀)을 가립니다."
+    - "정해진 시간과 특별한 업적마다 <white>증강</white> 카드 3장 중 하나를 고릅니다 (증강 <count>종)."
+    - "<click:suggest_command:'/게임 증강'><hover:show_text:'<gray>클릭하여 입력'><white>/게임 증강</white></hover></click> <gray>증강 선택 · 목록 · 보너스 조건"
+
+# ── 등급 ─────────────────────────────────────────────────────
+tier:
+  silver: "<#c9d6df><bold>실버</bold></#c9d6df>"
+  gold: "<#ffc83d><bold>골드</bold></#ffc83d>"
+  prism: "<gradient:#7bd8ff:#d58cff:#ff8cc6><bold>프리즘</bold></gradient>"
+
+# ── 보스바 ───────────────────────────────────────────────────
+bar:
+  preparing: "<gray>새 야생 월드를 만드는 중 <white><percent>%</white> <dark_gray>(<done>/<total> 청크)"
+  farming: "<green><bold>파밍</bold></green> <gray>· PvP 시작까지 <white><time>"
+  fight-wait: "<red><bold>전투</bold></red> <gray>· 월드보더 <white><size></white>칸 · 축소까지 <white><time>"
+  fight-shrink: "<red><bold>전투</bold></red> <gray>· 월드보더 <white><size></white>칸으로 줄어드는 중 · <white><time>"
+  fight-final: "<dark_red><bold>최종 구역</bold></dark_red> <gray>· 월드보더 <white><size></white>칸 · 생존 <white><alive>명"
+  practice: "<green><bold>증강 연습</bold></green> <gray>· 전투로 넘어가기 <white>/게임 증강 다음단계</white> · 끝내기 <white>/게임 중지"
+
+# ── 진행 ─────────────────────────────────────────────────────
+phase:
+  preparing: "<gray>새 야생 월드를 만드는 중입니다. 보스바에 진행률이 나오며, 다 되면 모두 월드 곳곳으로 흩어집니다."
+  farming-title: "<green><bold>파밍 시작!</bold>"
+  farming-subtitle: "<gray>PvP는 <white><time></white> 뒤에 켜집니다"
+  farming: "<green>파밍 시작!</green> <gray>새 야생 월드에 흩어졌습니다. <white><time></white> 동안 플레이어끼리는 공격할 수 없습니다. 증강 라운드 <white><rounds></white>번이 기다립니다."
+  farming-grace: "<gray>파밍 시간에는 모두(봇 포함) <white>무적</white>이고 <white>배고프지 않습니다</white>. 전투가 시작되면 끝납니다."
+  farming-invulnerable: "<gray>파밍 시간에는 모두(봇 포함) <white>무적</white>입니다. 전투가 시작되면 끝납니다."
+  farming-no-hunger: "<gray>파밍 시간에는 <white>배고프지 않습니다</white>. 몹·낙하·용암은 위험합니다."
+  fight-title: "<red><bold>PvP 시작!</bold>"
+  fight-subtitle: "<gray>최후의 1인(팀)이 될 때까지"
+  fight: "<red>PvP가 켜졌습니다!</red> <gray>월드보더는 <white><time></white> 뒤부터 한 변 <white><size></white>칸까지 줄어듭니다."
+  border-shrinking: "<gold>월드보더가 줄어들기 시작합니다!</gold> <gray><white><time></white>에 걸쳐 한 변 <white><size></white>칸까지. 보더 밖에서는 피해를 받습니다."
+  final: "<dark_red>최종 구역!</dark_red> <gray>월드보더가 다 줄었습니다."
+  final-glow: "<dark_red>최종 구역!</dark_red> <gray>월드보더가 다 줄었습니다. 살아 있는 모두가 <white>발광</white>합니다."
+
+# ── 증강 라운드 ──────────────────────────────────────────────
+round:
+  title: "<tier> <white>증강"
+  subtitle: "<gray><round>번째 증강 라운드 · 카드 3장 중 하나를 고르세요"
+  announce: "<white><round>번째 증강 라운드:</white> <tier> <dark_gray>(<chances>)"
+  chance: "<tier> <gray><percent>%"
+
+source:
+  round: "<round>번째 라운드"
+  bonus: "보너스 · <condition>"
+  augment: "증강 · <augment>"
+  practice: "연습"
+
+# ── 카드 선택 ────────────────────────────────────────────────
+offer:
+  menu-title: "<tier> <dark_gray>증강 선택 · <source>"
+  clock: "<yellow>남은 시간 <white><seconds>초</white> <gray>(시간이 지나면 무작위)"
+  card-kind: "<tier> <dark_gray>·</dark_gray> <gray><kind>"
+  card-line: "<white><text>"
+  card-pick: "<green>▶ 클릭하여 선택"
+  reroll-name: "<aqua>리롤</aqua> <gray>(<white><count></white>회 남음)"
+  reroll-none: "<red>리롤 없음"
+  reroll-lore:
+    - "<gray>보이는 카드를 모두 다시 뽑습니다."
+    - "<gray>리롤은 경기 전체에서 정해진 횟수만 쓸 수 있습니다."
+  picked: "<augment> <green>증강을 얻었습니다!</green> <gray><description>"
+  timeout: "<yellow>시간 초과!</yellow> <gray>무작위로</gray> <augment> <gray>증강을 얻었습니다. <description>"
+  none-left: "<gray>더 받을 수 있는 증강이 없습니다."
+  queued: "<gray>고를 증강이 <white><count></white>개 쌓여 있습니다. 지금 것을 고르면 다음 것이 열립니다."
+  no-rerolls: "<red>리롤이 남아 있지 않습니다."
+  rerolled: "<aqua>카드를 다시 뽑았습니다.</aqua> <gray>(리롤 <white><count></white>회 남음)"
+  closed: "<yellow>증강을 아직 고르지 않았습니다.</yellow> <click:run_command:'/게임 증강'><hover:show_text:'<gray>클릭하여 다시 열기'><white>[여기를 클릭]</white></hover></click> <gray>또는 <white>/게임 증강</white> 으로 다시 열 수 있습니다 (<white><seconds>초</white> 뒤 무작위)."
+  # 대화창 (games.augment.augments.ui: DIALOG)
+  dialog-title: "<white><bold>증강 선택</bold></white> <dark_gray>·</dark_gray> <tier>"
+  dialog-external-title: "<white>증강 선택"
+  dialog-header: "<gray><source></gray> <dark_gray>·</dark_gray> <white>카드를 하나 고르세요"
+  dialog-queued: "<dark_gray>이 다음에 고를 증강이 <white><count></white>개 더 있습니다"
+  # 카드 한 장 = 버튼 한 열 (위에서 아래로: 등급, 아이콘+이름, 종류, 설명 줄들, 선택)
+  card-tier: "<gem> <tier>"
+  card-name: "<icon> <name>"
+  card-kind: "<gray><kind>"
+  card-line: "<white><line>"
+  card-pick: "<green>▶ 선택"
+  dialog-card-tooltip: "<name> <dark_gray>·</dark_gray> <tier> <gray><kind></gray><newline><white><description></white><newline><newline><green>▶ 클릭하여 선택"
+  dialog-countdown: "<yellow><seconds>초</yellow> <gray>안에 고르지 않으면 보이는 카드 중 <white>무작위</white>로 하나를 받습니다"
+  dialog-countdown-urgent: "<red><bold><seconds>초</bold></red> <gray>안에 고르지 않으면 보이는 카드 중 <white>무작위</white>로 하나를 받습니다"
+  dialog-reroll: "<aqua>다시 뽑기</aqua> <gray>(<white><count></white>회 남음)"
+  dialog-reroll-tooltip: "<gray>보이는 카드를 모두 다시 뽑습니다.<newline>리롤은 경기 전체에서 정해진 횟수만 쓸 수 있습니다."
+  dialog-later: "<gray>나중에 고르기"
+  dialog-later-tooltip: "<gray>창을 닫습니다 (ESC도 같음).<newline><white>/게임 증강</white> 으로 다시 열 수 있고, 시간이 지나면 무작위로 받습니다."
+  reminder: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>/게임 증강</white> · <white><seconds>초</white> 뒤 무작위"
+
+# ── 보너스 증강 ──────────────────────────────────────────────
+bonus:
+  announce: "<player> <gray>님이 <gold>[<condition>]</gold> 달성! <dark_gray>(<description>)</dark_gray> <tier> <gray>보너스 증강을 받습니다."
+  announce-first: "<player> <gray>님이 가장 먼저 <gold>[<condition>]</gold> 달성! <dark_gray>(<description>)</dark_gray> <tier> <gray>보너스 증강을 받습니다."
+
+# ── 경기 결과 ────────────────────────────────────────────────
+summary:
+  header: "<gradient:#7bd88f:#d58cff><bold>이번 경기의 증강</bold></gradient>"
+  row: " <dark_gray>▪</dark_gray> <player><gray>: <augments>"
+  none: "<dark_gray>없음"
+
+# ── 사이드바 ─────────────────────────────────────────────────
+hud:
+  farming: "<green>파밍</green> <gray>PvP까지 <white><time>"
+  fight: "<red>전투</red> <gray>월드보더 <white><size></white>칸"
+  next-round: "<aqua><round>번째 증강</aqua> <gray>까지 <white><time>"
+  rounds-done: "<dark_gray>증강 라운드 끝"
+  alive: "<gray>생존자 <white><alive>명"
+  team: "<team> <bar> <white><percent>%</white> <gray><alive>/<size>"
+  kills: "<gray>내 킬 <red><kills>"
+  augments: "<gold>내 증강 <white><count></white> <dark_gray>(리롤 <rerolls>)"
+  no-augments: " <dark_gray>아직 없음"
+  augment: " <dark_gray>▸</dark_gray> <augment>"
+  more: " <dark_gray>외 <count>개 (/게임 증강)"
+  pending: "<yellow>⚑ 고를 증강 <count>개 <gray>(/게임 증강)"
+  spectating: "<dark_gray>관전 중"
+  time-scale: "<aqua>배속 x<scale>"
+  practice-farming: "<green>연습</green> <gray>파밍 (PvP 꺼짐)"
+  practice-pvp-on: "<gray>연습 대전 <red>켜짐"
+  practice-pvp-off: "<gray>연습 대전 <dark_gray>꺼짐"
+
+# ── 규칙 ─────────────────────────────────────────────────────
+rules:
+  ender-chest: "<red>경기 중에는 엔더 상자를 열 수 없습니다."
+
+# ── 증강 효과 ────────────────────────────────────────────────
+augment-fx:
+  phoenix: "<gold>불사조의 깃털</gold><gray>이 타올라 죽음을 피했습니다!"
+  # Group B
+  shadow-ready: "<dark_purple>그림자 일격</dark_purple><gray> 준비: 투명한 동안 다음 근접 공격이 강해집니다"
+  war-god: "<red>전쟁의 신</red><gray>: 공격력 강화 <white><stacks></white>단계"
+  # Group C
+  cooldown: "<augment> <gray>재사용까지 <white><seconds>초"
+  blink-blocked: "<gray>앞이 막혀 있어 <white>점멸</white>할 수 없습니다."
+  rewind: "<aqua>시간 역행</aqua><gray>: <white><seconds>초</white> 전으로 돌아갔습니다."
+  hidden: "<dark_gray>잠복 중 <gray>· 움직이거나 싸우면 모습이 드러납니다"
+  compass-idle: "<gray>추적 나침반은 <red>PvP</red>가 켜진 뒤에 작동합니다."
+  compass-target: "<red><arrow></red> <white><target></white> <gray>· <white><distance></white>블록"
+  vengeful: "<dark_purple>복수의 영혼</dark_purple><gray>이 나를 쓰러뜨린 적에게 깃들었습니다. 그 적은 시들어 가며 모두에게 보입니다."
+
+# ── 증강 연습 (/게임 증강 연습) ──────────────────────────────
+practice:
+  name: "<gradient:#7bd88f:#4fc3f7><bold>증강 연습</bold></gradient>"
+  description:
+    - "증강 야생전을 혼자서도: 새 야생 월드에서 증강을 마음대로 받고 빼고, 허수아비로 시험합니다."
+    - "<white>/게임 증강 연습</white> <gray>시작(관리자) · 참가"
+  title: "<gradient:#7bd88f:#4fc3f7><bold>증강 연습</bold></gradient>"
+  subtitle: "<gray>/게임 증강 받기 · 카드 · 허수아비 · 다음단계"
+  started: "<green>증강 연습을 시작합니다.</green> <gray>증강 라운드는 없고 단계는 <white>/게임 증강 다음단계</white>로 넘깁니다. <white>/게임 증강 받기 \\<증강></white>, <white>빼기</white>, <white>카드</white>, <white>허수아비</white>, <white>대전</white>을 쓸 수 있습니다. 끝내려면 <white>/게임 중지</white>."
+  starting: "<green>증강 연습을 준비합니다.</green> <gray>새 야생 월드를 만드는 중입니다."
+  start-admin-only: "<red>증강 연습은 관리자만 시작할 수 있습니다. 진행 중인 연습에는 누구나 참가할 수 있습니다."
+  real-match: "<red>지금은 진짜 경기 중이라 연습 명령어를 쓸 수 없습니다."
+  no-session: "<red>진행 중인 증강 연습이 없습니다. <gray>관리자가 <white>/게임 증강 연습</white>으로 시작합니다."
+  not-started: "<red>연습 월드가 아직 준비 중입니다."
+  not-participant: "<red>연습에 참가한 플레이어만 쓸 수 있습니다. <gray><white>/게임 증강 연습</white>으로 참가하세요."
+  joined-countdown: "<green>증강 연습에 참가합니다."
+  already-in: "<gray>이미 연습 중입니다."
+  not-now: "<red>지금은 참가할 수 없습니다."
+  join-failed: "<red>연습에 참가하지 못했습니다."
+  everyone-left: "연습하는 플레이어가 없습니다"
+  usage-give: "<gray>사용법: <white>/게임 증강 받기 \\<증강 이름 또는 id></white>"
+  usage-take: "<gray>사용법: <white>/게임 증강 빼기 \\<증강 이름 또는 id | 전부></white>"
+  already-owned: "<gray>이미 <augment><gray>을(를) 가지고 있습니다."
+  not-owned: "<red><augment><red>은(는) 가지고 있지 않습니다."
+  took: "<augment><gray>을(를) 뺐습니다."
+  took-all: "<gray>증강 <white><count></white>개를 모두 뺐습니다."
+  unknown-tier: "<red>'<white><input></white>'(이)라는 등급은 없습니다. <gray>실버, 골드, 프리즘 중에서 고르세요."
+  next-fight: "<red>PvP 단계</red><gray>로 넘어갑니다 (<player>). 전투용 증강이 반응하고, 월드보더가 곧 줄어듭니다."
+  next-shrink: "<gold>월드보더가 지금 줄어들기 시작합니다</gold> <gray>(<player>)."
+  next-final: "<dark_red>월드보더가 최종 크기가 됩니다</dark_red> <gray>(<player>)."
+  next-none: "<gray>더 넘길 단계가 없습니다."
+  dummies-placed: "<green>허수아비 <white><count></white>개를 세웠습니다.</green> <gray>모든 증강에 적으로 취급되고, 죽이면 처치로 인정됩니다."
+  dummies-failed: "<red>허수아비를 세우지 못했습니다."
+  dummy-name: "<red>허수아비"
+  dummy-health: "<red>❤ <white><health></white><gray> / <max>"
+  pvp-current: "<gray>연습 대전(플레이어끼리 공격): <state>"
+  state-on: "<green>켜짐"
+  state-off: "<red>꺼짐"
+  pvp-on: "<red>연습 대전이 켜졌습니다</red> <gray>(<player>): 연습하는 플레이어끼리 공격할 수 있습니다."
+  pvp-off: "<gray>연습 대전이 꺼졌습니다 (<player>): 플레이어끼리 공격할 수 없습니다."
+
+# ── 봇전 (/게임 증강 봇전) ───────────────────────────────────
+bots:
+  name: "<gradient:#7bd88f:#ff8c8c><bold>증강 봇전</bold></gradient>"
+  game-description:
+    - "봇이 빈자리를 채우는 진짜 증강 야생전. 혼자서도 할 수 있습니다."
+    - "<white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white>"
+  description: "<gray><difficulty> 봇"
+  joined: "<white><count></white><gray>명의 봇이 참가합니다 (난이도 <white><difficulty></white>). 봇이 마지막까지 남으면 사람은 집니다."
+  starting: "<green>봇전을 시작합니다:</green> <gray>봇 <white><count></white>명, 난이도 <white><difficulty></white>"
+  won-reason: "모든 사람이 탈락해 살아남은 봇이 이겼습니다"
+  # 봇 채팅 한 줄 (플레이어 채팅처럼): <name> 봇 이름, <message> 문구 (augment-bots-chat.yml)
+  chat-line: "\\<<name>> <message>"
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]</white> <dark_gray>(섞기: 쉬움 3 어려움 2 · 팀전: 팀 3 4 보통)"
+  team-bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 [관전] 팀 [팀당 인원] [팀 수] [난이도]</white> <dark_gray>(예: 팀 3 4 보통, 팀 2 3 쉬움 3 어려움 2)"
+  team-full: "<red>자리가 없습니다: <gray>사람 <white><count></white>명이 팀 자리 <white><places></white>개를 다 채웁니다. 팀당 인원이나 팀 수를 늘리세요."
+  team-starting: "<green>봇전 팀전을 시작합니다:</green> <gray><white><teams></white>팀 × <white><size></white>명, 봇 <white><count></white>명 (<white><difficulty></white>)"
+  team-joined: "<gray>팀전: <white><teams></white>팀, 사람은 팀마다 고르게, 빈자리는 봇이 채웁니다. 마지막까지 남은 팀이 이깁니다. 팀원끼리는 때릴 수 없습니다."
+
+# ── 봇 관전전 (/게임 증강 봇전 관전) ─────────────────────────
+spectate:
+  name: "<gradient:#4fc3f7:#ff8c8c><bold>증강 봇 관전전</bold></gradient>"
+  game-description:
+    - "봇끼리만 싸우는 증강 야생전을 모두가 관전합니다. 마지막 봇(팀)이 이길 때까지."
+    - "<white>/게임 증강 봇전 관전 [봇 수] [난이도 | 쉬움 3 어려움 2]</white> <gray>· 따라가기 <white>/게임 증강 관전"
+  starting: "<green>봇 관전전을 시작합니다:</green> <gray>봇 <white><count></white>명 (<white><difficulty></white>). 모두 관전합니다."
+  joined: "<white><count></white><gray>명의 봇이 끝까지 싸웁니다 (<white><difficulty></white>). 사람은 모두 관전합니다."
+  welcome: "<gray>관전 도구: <click:run_command:'/게임 증강 관전'><hover:show_text:'<gray>클릭하여 봇 목록'><white>[봇 목록]</white></hover></click> <gray>이름을 클릭하면 그 봇의 시점으로 따라갑니다 · <click:run_command:'/게임 증강 관전 다음'><hover:show_text:'<gray>클릭하여 다음 봇'><white>[다음 봇]</white></hover></click> <dark_gray>(웅크리면 시점에서 나옵니다)"
+  team: " <team><gray>: <members>"
+  farming: "<green>봇들의 파밍 시작!</green> <gray><white><time></white> 뒤에 전투가 시작됩니다. 증강 라운드 <white><rounds></white>번."
+  farming-subtitle: "<gray>봇들의 전투는 <white><time></white> 뒤에"
+  feed: "<dark_gray>▸</dark_gray> <bot> <gray><doing>"
+  feed-target: "<dark_gray>▸</dark_gray> <bot> <gray>→</gray> <target> <gray><doing>"
+  click-follow: "<gray>클릭하여 이 봇 따라가기"
+  following: "<gray>따라가는 중: <white><bot></white> <dark_gray>(웅크리면 나옴 · /게임 증강 관전 다음)"
+  hud-alive: "<gray>남은 봇 <white><alive></white><dark_gray>/<total>"
+  hud-bot: "<bot> <red>❤<health></red> <gray>⚔<kills> <gold>◆<augments></gold> <dark_gray><doing>"
+  hud-more: " <dark_gray>외 <count>명 (/게임 증강 관전)"
+  list-header: "<gradient:#4fc3f7:#ff8c8c><bold>남은 봇</bold></gradient> <gray><alive>명 <dark_gray>· 이름을 클릭하면 따라갑니다"
+  winner: "<gold><bold>우승!</bold></gold> <bot> <gray>(킬 <white><kills></white> · 증강 <white><augments></white>개)"
+  winners: "<gold><bold>우승!</bold></gold> <bots>"
+  team-winner: "<gold><bold>우승!</bold></gold> <team> <gray>(생존 <white><alive></white>/<size> · 킬 <white><kills></white>) <dark_gray>— <members>"
+  hud-team-power: "<team> <bar> <white><percent>%</white> <gray><alive>/<size>"
+  hud-teams-alive: "<gray>남은 팀 <white><alive></white><dark_gray>/<total></dark_gray> <dark_gray>· 봇 <bots>명"
+  draw: "<gray>살아남은 봇이 없습니다. 무승부!"
+  everyone-left: "관전하는 사람이 모두 나갔습니다"
+  nobody-online: "<red>관전할 사람이 없습니다."
+  no-match: "<red>진행 중인 봇 관전전이 없습니다. <gray>관리자가 <white>/게임 증강 봇전 관전</white>으로 시작합니다."
+  unknown-bot: "<red>'<white><input></white>'(이)라는 봇이 없거나 이미 탈락했습니다. <gray><white>/게임 증강 관전</white>으로 목록을 보세요."
+  cannot-follow: "<red>관전 중인 사람만 봇을 따라갈 수 있습니다."
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 증강 봇전 관전 [봇 수] [난이도]</white> <dark_gray>(섞기: 쉬움 3 어려움 2)"
+  scale-no-match: "<red>배속은 진행 중인 봇전·봇 관전전에서만 바꿀 수 있습니다."
+  scale-current: "<gray>지금 배속: <white>x<scale></white> <dark_gray>(/게임 증강 배속 1~4)"
+  scale-set: "<aqua>경기 시계 배속 x<scale></aqua> <gray>(<player>): 파밍·증강 라운드·월드보더·봇 장비·기지 짓기가 빨라집니다."
+
+# ── 단계 건너뛰기 (/게임 증강 다음단계, 관리자) ──────────────
+skip:
+  admin-only: "<red>경기 중 단계 건너뛰기는 관리자만 할 수 있습니다."
+  not-started: "<red>경기 월드가 아직 준비 중입니다."
+  fight: "<red>관리자가 무적(파밍) 시간을 건너뛰었습니다</red> <gray>(<player>). 지금부터 PvP! 밀린 증강 라운드가 열리고 월드보더 일정이 시작됩니다."
+  shrink: "<gold>관리자가 월드보더 대기 시간을 건너뛰었습니다</gold> <gray>(<player>). 월드보더가 지금 줄어들기 시작합니다."
+  final: "<dark_red>관리자가 월드보더를 최종 크기로 줄였습니다</dark_red> <gray>(<player>)."
+
+# ── 오류 ─────────────────────────────────────────────────────
+error:
+  world-failed: "<red>경기 월드를 만들지 못했습니다. 콘솔 로그를 확인해 주세요."
+
+config:
+  augments-broken: "<red>augments.yml 을 읽을 수 없어 이전 증강 설정을 그대로 씁니다. <gray>(콘솔 로그에서 YAML 오류를 확인하세요)"
+
+# ── 명령어 (/게임 증강) ──────────────────────────────────────
+command:
+  help:
+    - "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>명령어 <dark_gray>· 명령어를 클릭하면 입력됩니다"
+    - " <click:suggest_command:'/게임 증강'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>경기 중: 닫은 증강 선택 창 다시 열기, 내 증강 보기"
+    - " <click:suggest_command:'/게임 증강 목록'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 목록</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>모든 증강 (마우스를 올리면 설명)"
+    - " <click:suggest_command:'/게임 증강 정보 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 정보 \\<증강></#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>증강 설명"
+    - " <click:suggest_command:'/게임 증강 보너스'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 보너스</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>보너스 증강을 주는 업적"
+    - " <click:suggest_command:'/게임 증강 리롤'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 리롤</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>보이는 카드 다시 뽑기"
+    - " <click:suggest_command:'/게임 증강 연습'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 연습</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>증강 연습 (받기 · 빼기 · 카드 · 다음단계 · 허수아비 · 대전)"
+    - " <click:suggest_command:'/게임 증강 봇전 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 봇전 [봇 수] [난이도]</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>관리자: 봇과 함께하는 증강 야생전 (쉬움 · 보통 · 어려움 · 지옥, 섞기: 쉬움 3 어려움 2)"
+    - " <click:suggest_command:'/게임 증강 봇전 관전 '><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 봇전 관전 [봇 수] [난이도]</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>관리자: 봇끼리만 싸우는 관전전 (따라가기 <white>/게임 증강 관전</white>, 배속 <white>/게임 증강 배속</white>)"
+    - " <click:suggest_command:'/게임 증강 다음단계'><hover:show_text:'<gray>클릭하여 입력'><#d58cff>/게임 증강 다음단계</#d58cff></hover></click> <dark_gray>-</dark_gray> <gray>연습, 또는 관리자: 경기 단계 건너뛰기 (파밍 → 전투 → 보더 축소 → 최종)"
+  usage-info: "<gray>사용법: <white>/게임 증강 정보 \\<증강 이름 또는 id></white> <dark_gray>(예: 이단 점프, double_jump)"
+  mine-none: "<gray>아직 받은 증강이 없습니다."
+  mine-header: "<gold>내 증강 <white><count></white>개"
+  mine-entry: " <dark_gray>▪</dark_gray> <augment> <gray><description>"
+  nothing-to-pick: "<red>지금 고를 증강이 없습니다."
+  list-header: "<gradient:#7bd88f:#d58cff><bold>증강 목록</bold></gradient> <gray><count>종"
+  list-tier: " <tier><dark_gray>:</dark_gray> <augments>"
+  list-footer: "<dark_gray>이름에 마우스를 올리면 설명이, 클릭하면 자세한 정보가 나옵니다. 회색은 꺼진 증강입니다."
+  unknown-augment: "<red>'<white><input></white>'(이)라는 증강을 찾을 수 없습니다. <gray><white>/게임 증강 목록</white>으로 확인해 주세요."
+  info: "<augment> <tier> <dark_gray>· <kind> · <id></dark_gray> <state>\n <white><description>"
+  state-on: ""
+  state-off: "<red>[꺼짐]"
+  bonus-header: "<gradient:#7bd88f:#d58cff><bold>보너스 증강 조건</bold></gradient> <gray>(조건마다 한 번, 증강 하나 더)"
+  bonus-entry: " <dark_gray>▪</dark_gray> <gold><condition></gold> <tier> <state><dark_gray>:</dark_gray> <gray><description>"
+  bonus-entry-first: " <dark_gray>▪</dark_gray> <gold><condition></gold> <tier> <light_purple>선착순</light_purple> <state><dark_gray>:</dark_gray> <gray><description>"
+
+# ── 설정 메뉴 (/게임 설정) ───────────────────────────────────
+settings:
+  section:
+    match:
+      name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>진행"
+      lore:
+        - "<gray>파밍 시간과 규칙, 월드보더"
+    world:
+      name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>월드"
+      lore:
+        - "<gray>경기마다 새로 만드는 야생 월드"
+    augments:
+      name: "<gradient:#7bd88f:#d58cff><bold>증강 야생전</bold></gradient> <gray>증강"
+      lore:
+        - "<gray>카드 선택 시간, 선택 화면, 리롤, 보너스 증강"
+    bots:
+      name: "<gradient:#7bd88f:#ff8c8c><bold>증강 봇전</bold></gradient> <gray>봇"
+      lore:
+        - "<gray>봇 채팅 (봇전·봇 관전전)"
+  farming:
+    name: "파밍 시간"
+    lore:
+      - "<gray>PvP 없이 파밍하는 시간입니다."
+    zero: "<red>바로 전투"
+  farming-invulnerable:
+    name: "파밍 중 무적"
+    lore:
+      - "<gray>파밍 시간 동안 참가자(플레이어와 봇)는"
+      - "<gray>몹·낙하·용암을 포함해 어떤 피해도 받지 않습니다."
+      - "<gray>끄면 플레이어끼리의 공격만 막습니다. (연습 제외)"
+  farming-no-hunger:
+    name: "파밍 중 배고픔 없음"
+    lore:
+      - "<gray>파밍 시간 동안 배고픔과 포화가 가득 찬 채로 유지됩니다."
+  border-delay:
+    name: "월드보더 축소 대기"
+    lore:
+      - "<gray>PvP가 켜진 뒤 월드보더가 줄어들기 시작할 때까지"
+    zero: "<aqua>바로 축소"
+  border-shrink:
+    name: "월드보더 축소 시간"
+    lore:
+      - "<gray>월드보더가 최종 크기까지 줄어드는 데 걸리는 시간"
+    zero: "<aqua>한 번에"
+  border-final:
+    name: "최종 월드보더 크기"
+    lore:
+      - "<gray>마지막 구역 한 변의 길이"
+  glow:
+    name: "최종 구역 발광"
+    lore:
+      - "<gray>월드보더가 다 줄면 살아 있는 모두가 발광합니다."
+  radius:
+    name: "플레이 구역 반경"
+    lore:
+      - "<gray>월드보더가 한 변 = 반경 x 2 에서 시작합니다."
+      - "<gray>넓을수록 월드 준비(미리 생성)가 오래 걸립니다."
+  structures:
+    name: "구조물 생성"
+    lore:
+      - "<gray>마을·폐광·난파선 같은 구조물과 보물 상자"
+  pregenerate:
+    name: "월드 미리 생성"
+    lore:
+      - "<gray>파밍 전에 플레이 구역을 미리 만들어 둡니다."
+      - "<gray>끄면 바로 시작하지만 처음 몇 분 동안 서버가 무거울 수 있습니다."
+  choice:
+    name: "증강 선택 시간"
+    lore:
+      - "<gray>카드 3장 중 하나를 고르는 시간입니다."
+      - "<gray>시간이 지나면 무작위로 하나를 받습니다."
+  ui:
+    name: "증강 선택 화면"
+    lore:
+      - "<gray>대화창: 카드가 나란히 뜨는 선택 화면 (기본)"
+      - "<gray>상자: 예전 상자 메뉴 (대화창이 안 보이는 클라이언트용)"
+    option:
+      dialog: "<aqua>대화창"
+      chest: "<gold>상자"
+  rerolls:
+    name: "증강 리롤 횟수"
+    lore:
+      - "<gray>경기 전체에서 카드를 다시 뽑을 수 있는 횟수"
+    zero: "<red>리롤 없음"
+  bonus:
+    name: "보너스 증강"
+    lore:
+      - "<gray>첫 번째 피, 심연의 광부 같은 업적을 달성하면"
+      - "<gray>증강을 하나 더 받습니다 (조건은 augments.yml)."
+  bot-chat:
+    name: "봇 채팅"
+    lore:
+      - "<gray>봇전·봇 관전전에서 봇이 플레이어처럼 채팅합니다."
+      - "<gray>상황마다 확률로만, 봇마다 20~40초에 한 줄까지."
+      - "<gray>문구: augment-bots-chat.yml"
+  bot-chat-chance:
+    name: "봇 채팅 확률 배율"
+    lore:
+      - "<gray>모든 상황의 말할 확률에 곱합니다."
+      - "<gray>상황별 확률: config.yml 의 bots.chat.chances"
+  bot-team-cohesion:
+    name: "봇 팀 뭉침 거리"
+    lore:
+      - "<gray>봇전 팀전: 봇이 팀장(사람 팀원, 없으면 가장 강한 봇)에게서"
+      - "<gray>이 거리 안에 머물고, 멀어지면 다시 합류합니다."
+  bot-team-base:
+    name: "봇 팀 기지"
+    lore:
+      - "<gray>봇전 팀전: 팀의 기지 짓는 봇들이 기지 하나를 함께 짓고 지킵니다."
+      - "<gray>끄면 봇마다 자기 기지를 짓습니다."
+  bot-team-chat:
+    name: "봇 팀 채팅"
+    lore:
+      - "<gray>봇전 팀전: 합류, 도움 요청, 집중 공격, 팀원 사망·처치, 팀 우승 대사"
+    zero: "<red>말 안 함"

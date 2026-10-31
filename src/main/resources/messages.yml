@@ -1,0 +1,315 @@
+# ─────────────────────────────────────────────────────────────
+#  MCPL 메시지 (MiniMessage 형식: https://docs.advntr.dev/minimessage/format)
+#  <prefix> 는 아래 prefix 로 바뀝니다. <player>, <game> 같은 꺾쇠 이름은 자동으로 채워집니다.
+#  이 파일에 없는 키는 플러그인에 내장된 기본 문구를 사용합니다. 수정 후 /게임 리로드
+# ─────────────────────────────────────────────────────────────
+
+prefix: "<gradient:#ffb347:#ff5e62><bold>MCPL</bold></gradient> <dark_gray>»</dark_gray> "
+
+# ── 오류 ─────────────────────────────────────────────────────
+error:
+  internal: "<red>내부 오류가 발생했습니다. 콘솔 로그를 확인해 주세요."
+  already-running: "<red>이미 <game><red> 경기가 진행 중입니다. <gray>먼저 <white>/게임 중지</white> 해 주세요."
+  not-enough-players: "<red>인원이 부족합니다. <gray>(참가 가능 <white><count></white>명 / 최소 <white><min></white>명)"
+  map-unknown: "<red>맵 <white><id></white>을(를) 찾을 수 없습니다. <gray><white>/게임 경기장 맵</white>으로 목록을 확인하세요."
+  map-busy: "<red>다른 맵을 짓는 중입니다. 끝난 뒤 다시 시도해 주세요."
+  map-match-running: "<red>경기 중에는 맵을 지을 수 없습니다. 경기가 끝난 뒤 다시 시도해 주세요."
+  map-not-built: "<red>맵 <white><name></white>을(를) 아직 짓지 않았습니다. <gray><white>/게임 경기장 맵 <id></white>로 먼저 지어 주세요."
+  arena-world-missing: "<red>경기장 월드 <white><world></white>을(를) 찾을 수 없습니다. <gray><white>/게임 경기장 초기화</white> 또는 다시 설정해 주세요."
+  no-games: "<red>등록된 미니게임이 없습니다."
+  choose-game: "<red>시작할 게임을 지정해 주세요. <gray>예) <white>/게임 시작 초능력전쟁</white> · 목록은 <white>/게임 목록</white>"
+  unknown-game: "<red>'<white><input></white>'(이)라는 게임을 찾을 수 없습니다. <gray><white>/게임 목록</white>으로 확인해 주세요."
+  nothing-to-stop: "<gray>진행 중인 경기나 대기 중인 순환이 없습니다."
+  player-only: "<red>플레이어만 사용할 수 있는 명령어입니다."
+  rotation-empty: "<red>순환 목록(config.yml 의 rotation.games)에 등록된 게임이 없습니다."
+  reload-failed: "<red>설정을 다시 불러오지 못했습니다. 콘솔 로그를 확인해 주세요."
+  config-broken: "<red>config.yml 에 문법 오류가 있어 설정을 저장할 수 없습니다. <gray>파일을 고친 뒤 <white>/게임 리로드</white> 해 주세요. (콘솔 로그 참고)"
+  config-changed: "<red>config.yml 이 수정된 뒤 아직 불러오지 않아 설정을 바꾸지 않았습니다. <gray>바꾸면 그 수정 내용을 덮어쓰게 됩니다. <white>/게임 리로드</white> 로 먼저 불러온 뒤 다시 해 주세요."
+
+# ── 도움말 (/게임) ───────────────────────────────────────────
+help:
+  header: "<gradient:#ffb347:#ff5e62><bold>MCPL</bold></gradient> <gray>고전 미니게임 허브 <dark_gray>· <gray>명령어를 클릭하면 입력됩니다"
+  play:
+    - " <click:suggest_command:'/게임 목록'><hover:show_text:'<gray>클릭하여 입력'><#ffb347>/게임 목록</#ffb347></hover></click> <dark_gray>-</dark_gray> <gray>미니게임 목록"
+    - " <click:suggest_command:'/게임 참가'><hover:show_text:'<gray>클릭하여 입력'><#ffb347>/게임 참가</#ffb347></hover></click> <dark_gray>/</dark_gray> <click:suggest_command:'/게임 관전'><hover:show_text:'<gray>클릭하여 입력'><#ffb347>관전</#ffb347></hover></click> <dark_gray>-</dark_gray> <gray>다음 경기 참가 / 관전 선택"
+  admin:
+    - " <click:suggest_command:'/게임 시작 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 시작 [모드]</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기 시작 (생략 시 순환 목록의 다음 게임)"
+    - " <click:suggest_command:'/게임 중지'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 중지</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기 강제 종료 및 복구"
+    - " <click:suggest_command:'/게임 순환 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 순환 \\<켜기|끄기|목록></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>자동 연속 진행"
+    - " <click:suggest_command:'/게임 경기장 설정 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 경기장 설정 [반경]</#ff7f50></hover></click> <dark_gray>/</dark_gray> <click:suggest_command:'/게임 경기장 초기화'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>초기화</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기장 중심"
+    - " <click:suggest_command:'/게임 설정'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 설정</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>설정 메뉴 (팀 인원, 상자, 자기장 …) <dark_gray>·</dark_gray> <click:suggest_command:'/게임 설정 목록'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>목록</#ff7f50></hover></click> <gray>현재 값과 명령어"
+    - " <click:suggest_command:'/게임 리로드'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 리로드</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>설정 다시 불러오기"
+  footer: "<dark_gray>영어 명령어도 사용할 수 있습니다: /mcpl start, stop, list, join, spectate, rotation, arena, settings, reload"
+
+# ── 목록 (/게임 목록) ────────────────────────────────────────
+list:
+  header: "<gradient:#ffb347:#ff5e62><bold>미니게임</bold></gradient> <gray><count>종"
+  entry: " <dark_gray>▪</dark_gray> <game> <dark_gray>(<id>)</dark_gray> <gray>최소 <white><min></white>명 · <mode></gray><status>"
+  description: "    <gray><line>"
+  teams-yes: "개인전/팀전"
+  teams-no: "개인전"
+  status-running: " <green>● 진행 중</green>"
+  status-next: " <yellow>▶ 다음 순서</yellow>"
+
+# ── 명령어 응답 ──────────────────────────────────────────────
+command:
+  stopped: "<yellow>경기를 중지했습니다. 모두 경기 전 상태로 복구됩니다."
+  rotation-cancelled: "<yellow>대기 중이던 다음 경기를 취소했습니다. <gray>(순환 모드는 켜져 있으며, 다음 경기가 끝나면 다시 이어집니다)"
+  join: "<green>다음 경기부터 <bold>참가</bold>합니다."
+  join-now: "<green>경기에 합류했습니다!"
+  join-already: "<gray>이미 경기에 참가 중입니다."
+  join-next-match: "<green>다음 경기부터 참가합니다. <gray>(지금은 관전 중)"
+  spectate: "<yellow>다음 경기부터 <bold>관전</bold>합니다. <gray>참가하려면 <white>/게임 참가</white>"
+  spectate-next-match: "<yellow>다음 경기부터 관전합니다. <gray>(이번 경기는 끝까지 진행됩니다)"
+  rotation-status-on: "<gray>순환 모드: <green><bold>켜짐</bold></green> <dark_gray>·</dark_gray> 다음 게임 <next> <dark_gray>·</dark_gray> 대기 <white><seconds></white>초"
+  rotation-status-off: "<gray>순환 모드: <red><bold>꺼짐</bold></red> <dark_gray>·</dark_gray> 다음 순서 <next>"
+  rotation-none: "<dark_gray>없음"
+  rotation-waiting: "<gray>다음 경기까지 <yellow><seconds></yellow>초"
+  rotation-on: "<green>순환 모드를 켰습니다. <gray>경기가 끝나면 <white><seconds></white>초 뒤 다음 게임이 자동으로 시작됩니다."
+  rotation-off: "<yellow>순환 모드를 껐습니다."
+  rotation-list: "<gray>순환 순서: <list>"
+  rotation-list-empty: "<gray>순환 목록이 비어 있습니다. <dark_gray>(config.yml → rotation.games)"
+  arena-none: "<gray>저장된 경기장이 없습니다. 경기를 시작한 사람의 위치가 중심이 됩니다. <dark_gray>(반경 <radius>)"
+  arena-info: "<gray>경기장: <white><world></white> <dark_gray>(<x>, <y>, <z>)</dark_gray> 반경 <white><radius></white>"
+  arena-set: "<green>경기장을 저장했습니다: <white><world></white> <dark_gray>(<x>, <y>, <z>)</dark_gray> <green>반경 <white><radius></white>"
+  arena-reset: "<yellow>경기장 설정을 지웠습니다. <gray>이제 경기를 시작한 사람의 위치가 중심이 됩니다. (반경 <radius>)"
+  map-list-header: "<gradient:#ffb347:#ff5e62><bold>전투 맵</bold></gradient> <dark_gray>(/게임 경기장 맵 <맵> 으로 짓고 경기장으로 설정)"
+  map-list-entry: "<white><id></white> <gray><name></gray> <dark_gray>· 지름 <size> ·</dark_gray> <status> <dark_gray>— <description>"
+  map-status-built: "<green>준비됨"
+  map-status-missing: "<yellow>아직 짓지 않음"
+  map-status-outdated: "<gold>새 버전 있음 (다시 지어야 함)"
+  map-building-start: "<gray>맵 <white><name></white>을(를) 전용 월드 <white><world></white>에 짓습니다. <dark_gray>잠시 서버가 바쁠 수 있습니다."
+  map-building-progress: "<gray>맵 짓는 중 <white><percent>%</white>"
+  map-built: "<green>맵 <white><name></white>을(를) 다 지었습니다."
+  map-arena-set: "<green>경기장을 맵 <white><name></white>(으)로 설정했습니다. <gray>반경 <white><radius></white>"
+  map-teleport: "<gray>맵 <white><name></white>(으)로 이동했습니다."
+  applies-next-match: "<gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
+  reloaded: "<green>설정을 다시 불러왔습니다. <dark_gray>(<ms>ms)"
+
+# ── 경기 진행 ────────────────────────────────────────────────
+match:
+  starting: "<game> <white>경기를 시작합니다! <gray>참가자 <white><count></white>명 · <white><seconds></white>초 후 시작"
+  starting-watch: "<game> <white>경기를 시작합니다! <gray>모두 관전합니다 · <white><seconds></white>초 후 시작"
+  countdown-title: "<gradient:#ffb347:#ff5e62><bold><seconds></bold></gradient>"
+  countdown-subtitle: "<game> <gray>시작까지"
+  start-title: "<gradient:#ffb347:#ff5e62><bold>START!</bold></gradient>"
+  start-subtitle: "<game>"
+  team-assigned: "<gray>당신은 <team><gray>입니다. 팀원: <members>"
+  joined-countdown: "<green>+</green> <white><player></white><gray>님이 참가합니다. <dark_gray>(<count>명)"
+  left-countdown: "<red>-</red> <white><player></white><gray>님이 빠졌습니다. <dark_gray>(<count>명)"
+  joined-spectator: "<gray>진행 중인 <game><gray> 경기를 관전합니다. 경기가 끝나면 원래 상태로 돌아갑니다."
+  late-join: "<green>+</green> <player><gray>님이 경기에 합류했습니다."
+  rejoined-participant: "<green>+</green> <player><gray>님이 경기에 복귀했습니다."
+  eliminated-title: "<red><bold>탈락!"
+  eliminated-subtitle: "<gray>관전 모드로 전환됩니다"
+  eliminated-subtitle-killer: "<gray>처치자 <killer>"
+  respawn-title: "<red><bold>사망!"
+  respawn-subtitle: "<gray><white><seconds></white>초 후 부활합니다"
+  aborted: "<red>경기가 중단되었습니다. <gray>(<reason><gray>)"
+  reason-admin: "<white><player></white>님이 경기를 중지함"
+  reason-not-enough: "인원 부족: <white><count></white>/<white><min></white>명"
+  reason-no-viewers: "관전할 사람이 없습니다"
+  reason-error: "내부 오류"
+  reason-shutdown: "서버 종료"
+  restored: "<gray>경기 전 상태(인벤토리·위치·체력·경험치)로 복구되었습니다."
+  restored-pending: "<gray>지난 경기에서 저장된 원래 상태로 복구되었습니다."
+  snapshot-failed: "<red>원래 상태(인벤토리·위치)를 디스크에 저장하지 못해 이번 경기에서 제외되었습니다. <gray>관리자에게 알려 주세요."
+
+# ── 킬로그 ───────────────────────────────────────────────────
+kill-feed:
+  kill: "<dark_gray>[<red>☠</red>]</dark_gray> <killer> <gray>→</gray> <victim>"
+  death: "<dark_gray>[<red>☠</red>]</dark_gray> <victim> <dark_gray>(<gray><cause></gray>)"
+  remaining: " <dark_gray>· 남은 인원 <white><alive></white>명"
+
+death-cause:
+  generic: "사망"
+  eliminated: "탈락"
+  quit: "퇴장"
+  killed: "처형"
+  fall: "추락"
+  void: "공허"
+  border: "자기장"
+  lava: "용암"
+  fire: "화염"
+  drown: "익사"
+  explosion: "폭발"
+  magic: "마법"
+  wither: "시듦"
+  starve: "굶주림"
+  freeze: "동사"
+  lightning: "낙뢰"
+  prick: "가시"
+  suffocation: "질식"
+  crushed: "깔림"
+  projectile: "투사체"
+  mob: "몹"
+
+# ── 결과 ─────────────────────────────────────────────────────
+results:
+  title-win: "<gradient:#ffd700:#ffb347><bold>승리!</bold></gradient>"
+  subtitle-win: "<game> <yellow>우승을 축하합니다!"
+  title-other: "<winner>"
+  subtitle-other: "<gold>우승!"
+  title-draw: "<gray><bold>무승부"
+  subtitle-draw: "<gray>승자가 없습니다"
+  nobody: "<gray>없음"
+  and-more: "<gray> 외 <count>명"
+  header: "<dark_gray><st>              </st></dark_gray> <gradient:#ffb347:#ff5e62><bold>경기 결과</bold></gradient> <dark_gray>·</dark_gray> <game> <dark_gray><st>              </st>"
+  winner-line: " <gold>🏆 우승</gold> <winner>"
+  draw-line: " <gray>무승부 — 승자가 없습니다"
+  reason-line: " <dark_gray>└</dark_gray> <gray><reason>"
+  row: " <rank> <player> <dark_gray>·</dark_gray> <red><kills>킬</red> <gray><deaths>데스</gray> <dark_gray>·</dark_gray> <yellow>피해 <damage></yellow>"
+  more: " <dark_gray>… 외 <count>명"
+  mvp-line: " <light_purple>★ MVP</light_purple> <player> <gray>(<kills>킬 · 피해 <damage>)"
+  duration-line: " <dark_gray>경기 시간 <gray><duration>"
+  footer: "<dark_gray><st>                                                                    </st>"
+  personal: "<gray>내 순위 <rank> <dark_gray>·</dark_gray> <red><kills>킬</red> <gray><deaths>데스</gray> <dark_gray>·</dark_gray> <yellow>준 피해 <damage></yellow> <dark_gray>·</dark_gray> <gray>받은 피해 <taken>"
+  sidebar-title: "<gradient:#ffb347:#ff5e62><bold>경기 종료</bold></gradient>"
+  sidebar:
+    - ""
+    - "<gray>우승"
+    - " <winner>"
+    - " "
+    - "<gray>내 순위 <rank>"
+    - "<gray>킬 <white><kills></white> <dark_gray>·</dark_gray> 데스 <white><deaths>"
+    - "<gray>피해 <yellow><damage>"
+    - "  "
+    - "<gray>복구까지 <yellow><seconds>초"
+  sidebar-spectator:
+    - ""
+    - "<gray>우승"
+    - " <winner>"
+    - " "
+    - "<gray>복구까지 <yellow><seconds>초"
+
+# ── 순환 모드 ────────────────────────────────────────────────
+rotation:
+  announce: "<aqua>순환 모드</aqua> <gray>· <game><gray> 경기가 <white><seconds></white>초 후 시작됩니다. <dark_gray>(관전하려면 /게임 관전)"
+  bossbar-countdown: "<yellow>다음 게임</yellow> <white><game></white> <gray>· <white><seconds></white>초 후 시작"
+  bossbar-waiting: "<gray>다음 게임</gray> <white><game></white> <gray>· 인원 대기 중 <white><count></white>/<white><min></white>"
+
+# ── 설정 (/게임 설정) ────────────────────────────────────────
+settings:
+  "on": "<green>켜짐"
+  "off": "<red>꺼짐"
+  # 숫자 표시 (<value> = 숫자, <duration> = 1분 이상일 때 "2분 30초")
+  unit:
+    seconds: "<white><value>초"
+    minutes: "<white><duration></white> <dark_gray>(<value>초)"
+    blocks: "<white><value>블록"
+    players: "<white><value>명"
+    count: "<white><value>개"
+    times: "<white><value>회"
+    multiplier: "<white>×<value>"
+    percent: "<white><value>%"
+  # 명령어로 바꿨을 때 (채팅)
+  changed: "<gray><name></gray> <dark_gray>→</dark_gray> <value> <dark_gray>(config.yml 에 저장됨)"
+  unchanged: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>(이미 이 값입니다)"
+  # 디스크가 가득 찼거나 폴더에 쓸 수 없을 때 (콘솔 로그에 원인)
+  save-failed: "<red><name> → <value> 로 바꿨지만 config.yml 에 저장하지 못했습니다. <gray>서버를 다시 켜면 사라집니다. (콘솔 로그 참고)"
+  clamped: "<gray>입력한 값이 범위를 벗어나 가장 가까운 값으로 맞췄습니다. <dark_gray>범위: <min> ~ <max>"
+  # 곧 시작할 경기(카운트다운 중)에도 적용되는 변경
+  applies-this-match: "<gray>카운트다운 중인 경기에도 적용됩니다."
+  current: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <dark_gray>· 바꾸려면 <white><usage>"
+  no-permission: "<red>설정을 바꿀 권한이 없습니다."
+  # /게임 설정 목록 (콘솔에서 /게임 설정 도 같은 목록)
+  list:
+    header: "<gradient:#ffb347:#ff5e62><bold>현재 설정</bold></gradient> <dark_gray>· 줄을 클릭하면 명령어가 입력됩니다 · 메뉴: /게임 설정"
+    section: " <section>"
+    entry: "   <dark_gray>▪</dark_gray> <gray><name></gray> <value>"
+    hover: "<gray>클릭하면 입력됩니다: <white><usage>"
+    footer: "   <dark_gray>그 밖에 (config.yml): 결과 표시 <gray><ending>초</gray> · 순환 모드 <rotation><dark_gray> · 순환 대기 <gray><intermission>초</gray> · 경기장 반경 <gray><radius></gray> · 월드 보호 <gray><protection></gray> 항목"
+  # 설정 메뉴 (상자 화면)
+  menu:
+    title: "<dark_gray>MCPL 설정"
+    entry-name: "<yellow><name></yellow> <dark_gray>·</dark_gray> <value>"
+    value: "<gray>현재 값: <value>"
+    value-max: "<gray>현재 값: <value> <red>(최댓값)"
+    value-min: "<gray>현재 값: <value> <red>(최솟값)"
+    default: "<dark_gray>기본값: <default>"
+    # <zero> = 0 의 뜻이 있을 때 zero-means, 없으면 빈칸
+    range: "<dark_gray>범위 <min> ~ <max><zero> · 기본값 <default>"
+    zero-means: "<dark_gray> (0 = <zero><dark_gray>)"
+    # 경기 중이라 이 항목을 바꾸면 다음 경기부터 적용될 때
+    waits: "<gold>⏳ 진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다"
+    options: "<dark_gray>선택지: <options>"
+    option: "<dark_gray><option>"
+    option-current: "<white><bold>▶</bold> <option>"
+    option-separator: "<dark_gray> / "
+    hint-toggle: "<yellow>클릭</yellow> <gray>켜기 / 끄기"
+    hint-number: "<yellow>좌클릭</yellow> <gray>+<step></gray> <dark_gray>·</dark_gray> <yellow>우클릭</yellow> <gray>-<step></gray> <dark_gray>·</dark_gray> <yellow>Shift+클릭</yellow> <gray>±<big>"
+    hint-choice: "<yellow>좌클릭</yellow> <gray>다음</gray> <dark_gray>·</dark_gray> <yellow>우클릭</yellow> <gray>이전"
+    hint-reset: "<yellow>Q</yellow> <gray>(버리기 키) 기본값으로"
+    command: "<dark_gray>명령어: <command>"
+    path: "<dark_gray>config.yml → <path>"
+    # 액션바
+    changed: "<gray><name></gray> <dark_gray>→</dark_gray> <value>"
+    changed-next-match: "<gray><name></gray> <dark_gray>→</dark_gray> <value> <dark_gray>· 다음 경기부터 적용"
+    unchanged: "<gray><name></gray> <dark_gray>:</dark_gray> <value>"
+    at-max: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <red>(최댓값)"
+    at-min: "<gray><name></gray> <dark_gray>:</dark_gray> <value> <red>(최솟값)"
+    help:
+      name: "<gold>설정 메뉴 사용법"
+      lore:
+        - "<gray>항목을 클릭하면 값이 바뀌고 <white>config.yml</white> 에 바로 저장됩니다."
+        - "<gray>숫자: 좌클릭 +, 우클릭 -, Shift+클릭은 크게"
+        - "<gray>켜기/끄기: 클릭 · 선택지: 좌클릭 다음, 우클릭 이전"
+        - "<gray>Q(버리기 키): 기본값으로 되돌리기"
+        - ""
+        - "<dark_gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
+        - "<dark_gray>카운트다운 중에 바꾸면 곧 시작할 경기에 적용됩니다"
+        - "<dark_gray>(카운트다운 시간과 능력 지형 파괴는 다음 경기부터)."
+        - "<dark_gray>명령어로도 바꿀 수 있습니다: /게임 설정 목록"
+    close:
+      name: "<red>닫기"
+      lore: []
+    previous:
+      name: "<yellow>◀ 이전 쪽"
+      lore: []
+    next:
+      name: "<yellow>다음 쪽 ▶"
+      lore: []
+    status-idle:
+      name: "<green>대기 중"
+      lore:
+        - "<gray>바꾼 설정은 다음 경기부터 적용됩니다."
+        - "<dark_gray><page> / <pages> 쪽"
+    status-countdown:
+      name: "<yellow>경기 시작 전 (카운트다운)"
+      lore:
+        - "<gray>지금 바꾼 설정은 <white>곧 시작할 경기</white>에 적용됩니다."
+        - "<gray>카운트다운 시간과 능력 지형 파괴만 다음 경기부터 적용됩니다."
+        - "<dark_gray><page> / <pages> 쪽"
+    status-running:
+      name: "<gold>경기 진행 중"
+      lore:
+        - "<gray>지금 경기는 시작할 때의 설정으로 진행되고,"
+        - "<gray>바꾼 설정은 <white>다음 경기</white>부터 적용됩니다."
+        - "<dark_gray><page> / <pages> 쪽"
+  # 공통 설정 (모든 게임)
+  hub:
+    section:
+      name: "<gold><bold>공통 설정"
+      lore:
+        - "<gray>모든 게임에 적용되는 설정입니다."
+    team:
+      name: "팀 인원"
+      lore:
+        - "<gray>팀당 인원입니다. 0이면 개인전입니다."
+        - "<gray>팀전을 지원하는 게임(초능력전쟁)에만 적용됩니다."
+      zero: "<aqua>개인전"
+    countdown:
+      name: "카운트다운"
+      lore:
+        - "<gray>경기를 시작하기 전 카운트다운(초)입니다."
+      zero: "<aqua>바로 시작"
+    terrain:
+      name: "능력 지형 파괴"
+      lore:
+        - "<gray>폭발·강타 같은 능력이 지형(블록)을 부수는 곳입니다."
+        - "<gray>부서진 블록은 경기가 끝나면 모두 원래대로 돌아옵니다."
+        - "<dark_gray>땅은 최대 2칸까지만 파이고 상자·표지판·물가는 부수지 않습니다."
+      option:
+        "off": "<red>끄기"
+        map-worlds: "<green>전투 맵에서만"
+        all-worlds: "<gold>모든 월드"
