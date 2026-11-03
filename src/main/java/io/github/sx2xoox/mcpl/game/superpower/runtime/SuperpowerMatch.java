@@ -649,7 +649,13 @@ public final class SuperpowerMatch implements GameInstance {
 
     private Ability createAbility(String id, Player player) {
         Ability ability = game.registry().create(id);
-        ability.bind(player, context(), params(id));
+        AbilityParams params = params(id);
+        if (host != null) {
+            // The host may change what this owner reads (공성전 level perks), on every read.
+            MatchHost owned = host;
+            params = params.withAdjuster((key, value) -> owned.abilityParam(player, id, key, value));
+        }
+        ability.bind(player, context(), params);
         return ability;
     }
 
@@ -1212,8 +1218,14 @@ public final class SuperpowerMatch implements GameInstance {
         if (participant.ability == ability && session.isInPlay(player)) {
             if (cooldownsEnabled) {
                 Double multiplier = guard.call(id, "cooldownMultiplier", ability::cooldownMultiplier);
-                participant.cooldown.start(fightTicks, params(id).cooldownSeconds(),
-                        multiplier == null ? 1.0 : multiplier);
+                double factor = multiplier == null ? 1.0 : multiplier;
+                double seconds = params(id).cooldownSeconds();
+                if (host != null) {
+                    seconds = hostCooldown(player, id, seconds);
+                    double hosted = host.cooldownMultiplier(player);
+                    factor *= Double.isFinite(hosted) ? Math.max(0.0, hosted) : 1.0;
+                }
+                participant.cooldown.start(fightTicks, seconds, factor);
                 showCooldown(participant, player);
             }
             // A quiet cue only: abilities show their own action-bar feedback, which must not be overwritten.
@@ -2295,6 +2307,15 @@ public final class SuperpowerMatch implements GameInstance {
 
     AbilityParams params(AbilityInfo info) {
         return abilities.params(info);
+    }
+
+    /** The active cooldown {@code player} gets for {@code abilityId} as the host adjusts it (level perks). */
+    private double hostCooldown(Player player, String abilityId, double seconds) {
+        if (host == null) {
+            return seconds;
+        }
+        double adjusted = host.abilityParam(player, abilityId, AbilityInfo.COOLDOWN, seconds);
+        return Double.isFinite(adjusted) ? Math.max(0.0, adjusted) : seconds;
     }
 
     AbilityParams params(String abilityId) {

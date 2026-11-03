@@ -50,6 +50,15 @@ public interface AbilityContext {
         return true;
     }
 
+    /**
+     * The in-match level of {@code owner} in a mode with levels (공성전: 1…9), 0 everywhere else (초능력전쟁, practice).
+     * The mode already scales ability damage and applies its level perks to the owner's {@link Ability#params()}, so
+     * an ability reads this only for an effect a param cannot express.
+     */
+    default int level(Player owner) {
+        return 0;
+    }
+
     /** Ticks since the fight began. */
     long currentTick();
 

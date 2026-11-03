@@ -193,6 +193,12 @@ public final class MatchContext implements AbilityContext {
     }
 
     @Override
+    public int level(Player owner) {
+        MatchHost host = match.host();
+        return host == null ? 0 : Math.max(0, host.abilityLevel(owner));
+    }
+
+    @Override
     public boolean isEnabled(String abilityId) {
         return match.abilities().isEnabled(abilityId);
     }
@@ -404,11 +410,29 @@ public final class MatchContext implements AbilityContext {
                 || !isEnemy(source, target)) {
             return;
         }
+        double scaled = amount * hostDamageMultiplier(source, target, isUltimateOrigin(source.getUniqueId()));
+        if (!(scaled > 0)) {
+            return;
+        }
         DamageSource damageSource = DamageSource.builder(type)
                 .withCausingEntity(source)
                 .withDirectEntity(source)
                 .build();
-        deliver(target, amount, damageSource);
+        deliver(target, scaled, damageSource);
+    }
+
+    /**
+     * The hosting mode's factor on ability damage {@code source} deals to {@code target} ({@link
+     * MatchHost#abilityDamageMultiplier(Player, LivingEntity, boolean)}), 1.0 without a host; never negative or
+     * non-finite.
+     */
+    double hostDamageMultiplier(Player source, LivingEntity target, boolean ultimate) {
+        MatchHost host = match.host();
+        if (host == null) {
+            return 1.0;
+        }
+        double multiplier = host.abilityDamageMultiplier(source, target, ultimate);
+        return Double.isFinite(multiplier) ? Math.max(0.0, multiplier) : 1.0;
     }
 
     /**

@@ -194,16 +194,21 @@ final class MatchListener implements Listener {
 
     /**
      * Summons hit with exactly their {@link Attribute#ATTACK_DAMAGE}: no vanilla randomness (iron golem) and no
-     * difficulty scaling against players, so the numbers in {@code abilities.yml} are what lands.
+     * difficulty scaling against players, so the numbers in {@code abilities.yml} are what lands. A hosting mode's
+     * ability damage factor ({@link MatchHost#abilityDamageMultiplier}) applies to it like to the owner's own skills.
      */
     private void normalizeSummonHit(EntityDamageByEntityEvent event) {
-        if (!(event.getDamager() instanceof LivingEntity summon) || ctx().summonOwner(summon) == null
+        UUID ownerId = event.getDamager() instanceof LivingEntity living ? ctx().summonOwner(living) : null;
+        if (!(event.getDamager() instanceof LivingEntity summon) || ownerId == null
                 || ctx().isAbilityDamage() || event.getDamageSource().getDamageType() != DamageType.MOB_ATTACK) {
             return;
         }
         AttributeInstance attack = summon.getAttribute(Attribute.ATTACK_DAMAGE);
         if (attack != null && Double.isFinite(attack.getValue())) {
-            event.setDamage(Math.max(0.0, attack.getValue()));
+            Player owner = Bukkit.getPlayer(ownerId);
+            double multiplier = owner == null || !(event.getEntity() instanceof LivingEntity victim) ? 1.0
+                    : ctx().hostDamageMultiplier(owner, victim, ctx().isUltimateEntity(summon));
+            event.setDamage(Math.max(0.0, attack.getValue() * multiplier));
         }
     }
 

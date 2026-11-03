@@ -51,6 +51,11 @@ src/main/java/io/github/sx2xoox/mcpl/
   game/siege/                  초능력 공성전 (SiegeGame = the MiniGame, SiegeSettings = games.siege.*, SiegeMatch = flow, score,
                                respawns; abilities run in a hosted SuperpowerMatch = runtime/MatchHost; map via
                                core/map/siege/SiegeSites, FallbackSiegeSites in tests)
+    balance/                   ability balance in 공성전 only: SiegeBalance(+Settings) = global factor × per-ability correction
+                               (generated siege-balance.yml) × level, SiegePerks = level 3/6/9 param perks (capped),
+                               SiegeModifiers = per-player skill damage/taken/cooldown for shop items and buffs;
+                               `./gradlew updateSiegeBalance` regenerates docs/siege-balance.md + siege-balance.yml
+                               (SiegeBalanceReport fails while stale)
     tower/                     Tower (rules + Mannequin hitbox) and looks (TowerLook contract; ModelTowerLook = 3D models +
                                per-viewer vanilla fallback)
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)

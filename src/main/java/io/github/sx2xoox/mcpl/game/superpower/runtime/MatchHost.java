@@ -99,4 +99,46 @@ public interface MatchHost {
     default boolean canChargeGauge(Player player) {
         return true;
     }
+
+    // ------------------------------------------------------------------ balance (공성전 levels, items, buffs)
+
+    /**
+     * The in-match level of {@code player} that its ability may read ({@code AbilityContext#level}): 1 and up in a
+     * mode with levels (공성전 1…9), 0 (the default) when the host has none.
+     */
+    default int abilityLevel(Player player) {
+        return 0;
+    }
+
+    /**
+     * Factor on every hit of ability damage {@code attacker} deals to {@code target} through the ability context
+     * ({@code AbilityContext#damage}, kit {@code Combat}) and by its summons' melee hits. 1.0 (the default) leaves the
+     * numbers of {@code abilities.yml} as they are. Read once per hit, so it may change at any time (levels, items).
+     */
+    default double abilityDamageMultiplier(Player attacker, LivingEntity target) {
+        return 1.0;
+    }
+
+    /**
+     * Like {@link #abilityDamageMultiplier(Player, LivingEntity)}, told whether the hit belongs to the attacker's
+     * ultimate (dealt by its ultimate code or an entity the ultimate created), so a host can weigh the active and
+     * passive skills and the ultimate apart. The default ignores {@code ultimate}.
+     */
+    default double abilityDamageMultiplier(Player attacker, LivingEntity target, boolean ultimate) {
+        return abilityDamageMultiplier(attacker, target);
+    }
+
+    /**
+     * The value {@code owner}'s ability reads for its declared param {@code key} (configured: {@code value}), e.g. a
+     * level perk adding to a radius. Asked on every read; the default returns {@code value}. The active cooldown that
+     * the match starts is read through it too (key {@code cooldown}).
+     */
+    default double abilityParam(Player owner, String abilityId, String key, double value) {
+        return value;
+    }
+
+    /** Factor on the active cooldown {@code player} gets after a successful cast (items, buffs); 1.0 by default. */
+    default double cooldownMultiplier(Player player) {
+        return 1.0;
+    }
 }

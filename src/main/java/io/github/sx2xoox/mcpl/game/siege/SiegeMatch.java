@@ -18,6 +18,9 @@ import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalance;
+import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
+import io.github.sx2xoox.mcpl.game.siege.balance.SiegeModifiers;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
@@ -80,6 +83,9 @@ public final class SiegeMatch implements GameInstance {
     private @Nullable ObjectivePoints objectives;
     /** The neutral monster camps ({@link JungleCamps}). */
     private @Nullable JungleCamps camps;
+    /** Stat modifiers of items and buffs ({@link #modifiers()}) and the ability balance read from them. */
+    private final SiegeModifiers modifiers = new SiegeModifiers();
+    private SiegeBalance balance = new SiegeBalance(SiegeBalanceSettings.defaults(), modifiers);
     private final List<MatchTeam> teams = new ArrayList<>();
     private final List<Tower> towers = new ArrayList<>();
     private final Map<UUID, Long> protectedUntil = new HashMap<>();
@@ -123,6 +129,7 @@ public final class SiegeMatch implements GameInstance {
     @Override
     public void start() {
         settings = SiegeSettings.read(session.gameConfig());
+        balance = new SiegeBalance(SiegeBalanceSettings.read(session.gameConfig()), modifiers);
         if (session.teams().size() < 2) {
             session.abort(messages.get("start.no-teams"));
             return;
@@ -299,6 +306,57 @@ public final class SiegeMatch implements GameInstance {
         public boolean canChargeGauge(Player player) {
             return progress == null || progress.canChargeGauge(player);
         }
+
+        @Override
+        public int abilityLevel(Player player) {
+            return balanceLevel(player.getUniqueId());
+        }
+
+        @Override
+        public double abilityDamageMultiplier(Player attacker, LivingEntity target) {
+            return abilityDamageMultiplier(attacker, target, false);
+        }
+
+        /** Players and summons only: towers and camps keep their own numbers (their health is tuned for them). */
+        @Override
+        public double abilityDamageMultiplier(Player attacker, LivingEntity target, boolean ultimate) {
+            if (isExtraTarget(target)) {
+                return 1.0;
+            }
+            UUID id = attacker.getUniqueId();
+            Participant participant = abilities == null ? null : abilities.participant(id);
+            return balance.damageMultiplier(participant == null ? null : participant.abilityId(), balanceLevel(id),
+                    id, target instanceof Player player ? player.getUniqueId() : null, ultimate);
+        }
+
+        @Override
+        public double abilityParam(Player owner, String abilityId, String key, double value) {
+            return balance.param(abilityId, balanceLevel(owner.getUniqueId()), key, value);
+        }
+
+        @Override
+        public double cooldownMultiplier(Player player) {
+            return balance.cooldownMultiplier(player.getUniqueId());
+        }
+    }
+
+    /** The level abilities scale with: the player's level, 1 while levels are off or before the match started. */
+    private int balanceLevel(UUID player) {
+        return progress == null || !progress.levels().settings().levelsEnabled() ? 1
+                : progress.levels().level(player);
+    }
+
+    /**
+     * Per-player stat modifiers (skill damage, skill damage taken, cooldown) for shop items and buffs: set them with
+     * a key of their source and remove them when it ends; ability hits and cooldowns read them at once.
+     */
+    public SiegeModifiers modifiers() {
+        return modifiers;
+    }
+
+    /** The ability balance of this match (global factor, corrections, level scaling, perks, modifiers). */
+    public SiegeBalance balance() {
+        return balance;
     }
 
     private DeathOutcome hostDeath(Player victim, @Nullable Player killer) {

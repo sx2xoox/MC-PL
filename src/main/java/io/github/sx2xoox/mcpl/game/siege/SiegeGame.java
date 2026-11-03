@@ -16,6 +16,7 @@ import io.github.sx2xoox.mcpl.core.map.ArenaMap;
 import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
 import io.github.sx2xoox.mcpl.game.siege.tower.TowerLook;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
@@ -106,6 +107,7 @@ public final class SiegeGame implements MiniGame {
         SiegeSettings.declareDefaults(defaults);
         SiegeProgressSettings.declareDefaults(defaults);
         CampSettings.declareDefaults(defaults);
+        SiegeBalanceSettings.declareDefaults(defaults);
     }
 
     @Override

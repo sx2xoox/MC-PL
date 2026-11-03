@@ -4,14 +4,33 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * The effective tunable numbers of one ability: the defaults declared in {@link AbilityInfo} overridden by
  * {@code abilities.yml}. Only declared keys may be read; reading an undeclared key is a programming error.
+ *
+ * <p>The params a match binds to one owner's ability may carry an {@link Adjuster} ({@link #withAdjuster}): a hosting
+ * mode changes the numbers that owner reads while it plays (공성전 level perks: "6레벨: 불길 범위 +1"). {@link #num}
+ * and everything built on it ask the adjuster on every read, so abilities that read their params when they use them
+ * follow level-ups at once; {@link #values()} stays the configured numbers (docs, item texts).
  */
 public final class AbilityParams {
 
+    /** Changes the value an owner reads for a declared param (see {@link #withAdjuster}). */
+    @FunctionalInterface
+    public interface Adjuster {
+        /**
+         * @param key   the declared param
+         * @param value its configured value
+         * @return the value to use now (non-finite results are ignored)
+         */
+        double adjust(String key, double value);
+    }
+
     private final AbilityInfo info;
     private final Map<String, Double> values;
+    private final @Nullable Adjuster adjuster;
 
     /**
      * @param info      the ability the params belong to
@@ -26,6 +45,21 @@ public final class AbilityParams {
             }
         });
         this.values = Collections.unmodifiableMap(merged);
+        this.adjuster = null;
+    }
+
+    private AbilityParams(AbilityInfo info, Map<String, Double> values, @Nullable Adjuster adjuster) {
+        this.info = info;
+        this.values = values;
+        this.adjuster = adjuster;
+    }
+
+    /**
+     * The same params read through {@code adjuster} (replacing any adjuster these params had): what a hosting mode
+     * binds to one owner's ability. The configured {@link #values()} are shared, not copied.
+     */
+    public AbilityParams withAdjuster(@Nullable Adjuster adjuster) {
+        return new AbilityParams(info, values, adjuster);
     }
 
     /** Params with every value at its declared default. */
@@ -41,11 +75,17 @@ public final class AbilityParams {
         return values.containsKey(key);
     }
 
-    /** The configured value of a declared param. */
+    /** The value of a declared param: the configured one, changed by the adjuster if these params have one. */
     public double num(String key) {
         Double value = values.get(key);
         if (value == null) {
             throw new IllegalArgumentException("Ability " + info.id() + " has no param '" + key + "'");
+        }
+        if (adjuster != null) {
+            double adjusted = adjuster.adjust(key, value);
+            if (Double.isFinite(adjusted)) {
+                return adjusted;
+            }
         }
         return value;
     }
@@ -65,7 +105,7 @@ public final class AbilityParams {
         return num(AbilityInfo.COOLDOWN);
     }
 
-    /** All effective values in declaration order. */
+    /** All configured values in declaration order (without the {@link #withAdjuster adjuster}). */
     public Map<String, Double> values() {
         return values;
     }

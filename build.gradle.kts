@@ -88,6 +88,19 @@ tasks.register<Test>("updateAbilityDocs") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("updateSiegeBalance") {
+    description = "Regenerates docs/siege-balance.md and the bundled siege-balance.yml corrections (SiegeBalanceReport)."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*SiegeBalanceReport")
+    }
+    systemProperty("mcpl.updateDocs", "true")
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("updateAugmentDocs") {
     description = "Regenerates docs/augments.md from the augment definitions (AugmentInfo, BonusCondition)."
     group = "documentation"
