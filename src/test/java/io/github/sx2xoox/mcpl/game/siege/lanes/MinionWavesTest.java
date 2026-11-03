@@ -14,6 +14,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionKind;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
 import org.bukkit.Location;
+import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.entity.IronGolem;
@@ -146,6 +147,10 @@ class MinionWavesTest extends LaneTestBase {
         run(40);
         assertTrue(red.body().getHealth() < 22, "the enemy minion took hits");
         assertEquals(20, bluePlayer.getHealth(), 1.0E-6, "allies are never hit");
+        // the skins play it: the attackers' attack motion, the victims' flinch; everyone hears the wind-up click
+        assertTrue(skinEvents.contains("minion_melee attack"), skinEvents.toString());
+        assertTrue(skinEvents.contains("minion_melee hit"), skinEvents.toString());
+        assertTrue(arena.sounds.contains(Sound.BLOCK_TRIPWIRE_CLICK_ON), arena.sounds.toString());
 
         // Without enemy minions around, the enemy player is the target.
         for (MinionWaves.Minion other : of(LaneSites.Side.RED, MinionKind.MELEE)) {

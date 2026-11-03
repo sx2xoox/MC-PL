@@ -37,7 +37,10 @@ public interface CreatureSkin {
         default void hit() {
         }
 
-        /** Attacks now: a short lunge (the cannon recoils). */
+        /**
+         * Attacks now: the kind's attack motion ({@link CreatureModels.Attack}: the soldier thrusts, the cannon recoils,
+         * the jelly pounces, ...).
+         */
         default void attack() {
         }
 

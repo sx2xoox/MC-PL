@@ -32,6 +32,18 @@ public interface CreatureLook {
     default void removed(Mob body) {
     }
 
+    /**
+     * The body attacks now (the systems call it with each strike; the rabbit, which never strikes, when it is hit and
+     * the shopkeeper when a player opens its shop): the look plays the kind's attack motion. Nothing by default (the
+     * vanilla body swings its arm in {@link Creatures#strike}).
+     */
+    default void attack(Mob body) {
+    }
+
+    /** The body took a hit (a landed hit): the look flinches. Nothing by default (vanilla mobs flash red). */
+    default void hurt(Mob body) {
+    }
+
     /** Called every tick for each live body (animations); nothing by default. */
     default void tick(Mob body, CreatureKind kind) {
     }

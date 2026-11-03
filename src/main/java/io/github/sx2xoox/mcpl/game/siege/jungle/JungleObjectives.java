@@ -22,6 +22,7 @@ import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
@@ -434,7 +435,16 @@ public final class JungleObjectives implements Listener {
         } finally {
             striking = false;
         }
-        JungleSounds.attack(arena, site.kind(), mob.getLocation());
+        attackMotion(site, mob);
+    }
+
+    /** The monster's attack motion (pack players) and sound (everyone). */
+    private void attackMotion(Site site, Mob mob) {
+        look.attack(mob);
+        CreatureKind creature = CreatureKind.of(site.kind());
+        if (creature != null) {
+            CreatureSounds.attack(arena, creature, mob.getLocation());
+        }
     }
 
     /** Back home, full health, standing still again. */
@@ -853,8 +863,14 @@ public final class JungleObjectives implements Listener {
             return;
         }
         site.healthDirty = true;
-        arena.damageNumber((LivingEntity) event.getEntity(), event.getFinalDamage());
-        JungleSounds.hurt(arena, site.kind(), event.getEntity().getLocation());
+        Mob hurt = (Mob) event.getEntity();
+        arena.damageNumber(hurt, event.getFinalDamage());
+        JungleSounds.hurt(arena, site.kind(), hurt.getLocation());
+        look.hurt(hurt);
+        if (site.kindSettings().range() <= 0) {
+            // the clock rabbit never strikes: its "attack" is a startled hop when hit
+            attackMotion(site, hurt);
+        }
         Player attacker = arena.attacker(event);
         LivingEntity hitter;
         UUID hitterId;

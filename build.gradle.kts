@@ -114,6 +114,19 @@ tasks.register<Test>("updateBasicAttackDocs") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("updateCreatureAttacks") {
+    description = "Regenerates tools/assetgen/models/creature_attacks.json (the attack poses the preview GIFs draw)."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*CreatureAttacksExportTest")
+    }
+    systemProperty("mcpl.updateDocs", "true")
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("updateAugmentDocs") {
     description = "Regenerates docs/augments.md from the augment definitions (AugmentInfo, BonusCondition)."
     group = "documentation"

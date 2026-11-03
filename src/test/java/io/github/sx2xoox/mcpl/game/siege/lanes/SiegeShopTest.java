@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Comparator;
 import java.util.List;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
@@ -26,6 +27,7 @@ import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -107,6 +109,12 @@ class SiegeShopTest extends LaneTestBase {
         assertFalse(shop().open(blue));
 
         blue.teleport(shop().terminal(LaneSites.Side.BLUE).add(7, 0, 0));
+        // clicking the terminal: the shopkeeper there bows
+        Location home = shop().terminal(LaneSites.Side.BLUE);
+        Interaction terminal = h.flatWorld().getEntitiesByClass(Interaction.class).stream()
+                .min(Comparator.comparingDouble(i -> i.getLocation().distanceSquared(home))).orElseThrow();
+        new PlayerInteractEntityEvent(blue, terminal).callEvent();
+        assertEquals(List.of("shopkeeper attack"), skinEvents);
         assertTrue(shop().open(blue));
         ShopMenu menu = shop().menu(blue);
         assertNotNull(menu);

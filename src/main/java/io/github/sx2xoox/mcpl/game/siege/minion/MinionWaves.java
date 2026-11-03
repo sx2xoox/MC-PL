@@ -14,6 +14,7 @@ import java.util.logging.Level;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
@@ -432,6 +433,8 @@ public final class MinionWaves implements Listener {
         } finally {
             striking = false;
         }
+        look.attack(minion.body);
+        CreatureSounds.attack(arena, minion.kind.creature(), minion.body.getLocation());
     }
 
     // ------------------------------------------------------------------ queries
@@ -580,6 +583,7 @@ public final class MinionWaves implements Listener {
         }
         minion.healthDirty = true;
         arena.damageNumber(minion.body, event.getFinalDamage());
+        look.hurt(minion.body);
         if (event.getFinalDamage() >= minion.body.getHealth()) {
             Player attacker = arena.attacker(event);
             minion.lastHitter = attacker != null ? attacker.getUniqueId() : arena.fighterAttacker(event);

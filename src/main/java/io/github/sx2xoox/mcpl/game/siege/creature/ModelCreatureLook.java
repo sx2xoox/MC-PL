@@ -5,11 +5,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
 
 import io.github.sx2xoox.mcpl.core.pack.PackAudience;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Attack;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Motion;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Offset;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Part;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Puff;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -32,6 +36,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
@@ -42,7 +47,8 @@ import org.jspecify.annotations.Nullable;
  * <ul>
  *   <li>players with the pack ({@link PackAudience#hasPack}) see item displays of the creature's models following the
  *       mob (teleported every tick with a short teleport interpolation, turned with the mob, animated: waddle, wobble,
- *       hop, flapping wings, turning wind-up keys) and do not see the vanilla mob; they hit it through an invisible
+ *       hop, flapping wings, turning wind-up keys; each kind's {@link Attack} on {@link Visual#attack()} and a flinch
+ *       on {@link Visual#hit()}) and do not see the vanilla mob; they hit it through an invisible
  *       {@link Interaction} the size of the mob, whose melee attacks are passed on to the mob as the player's own
  *       attack (so damage, kill credit and the game's damage rules work as for the mob);</li>
  *   <li>everyone else sees the vanilla mob and never receives the model displays or the hitbox.</li>
@@ -57,7 +63,6 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
 
     private static final int TELEPORT_TICKS = 2;
     private static final int FLASH_TICKS = 3;
-    private static final int LUNGE_TICKS = 4;
     private static final float VIEW_RANGE = 2f;
 
     private final Plugin plugin;
@@ -178,8 +183,47 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
         display.setTransformation(to);
     }
 
-    /** A step's pose of a part (shared by creatures and landmarks): its height, motion and a hit / lunge offset. */
-    static Transformation pose(Part part, int step, boolean moving, boolean squash, float lunge) {
+    /**
+     * An attack's puff of particles ahead of a creature standing at {@code feet} (its yaw is where it looks), drifting
+     * forward; seen by everyone.
+     */
+    static void puff(Location feet, Puff puff) {
+        double yaw = Math.toRadians(feet.getYaw());
+        Vector ahead = new Vector(-Math.sin(yaw), 0, Math.cos(yaw));
+        Location at = feet.clone().add(ahead.clone().multiply(puff.forward())).add(0, puff.up(), 0);
+        Vector drift = ahead.clone().add(new Vector(0, 0.15, 0));
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int i = 0; i < puff.count(); i++) {
+            Location p = at.clone().add(random.nextGaussian() * puff.spread(), random.nextGaussian() * puff.spread(),
+                    random.nextGaussian() * puff.spread());
+            feet.getWorld().spawnParticle(puff.particle(), p, 0, drift.getX(), drift.getY(), drift.getZ(),
+                    puff.speed());
+        }
+    }
+
+    /**
+     * A step's pose of a part moved by an attack / flinch {@code offset} (about the feet, in the model's frame: its
+     * front is -z). Every part of a creature gets the same offset, so the model moves as one; wings spread too.
+     */
+    static Transformation pose(Part part, int step, boolean moving, Offset offset) {
+        Transformation base = pose(part, step, moving);
+        if (offset.equals(Offset.REST)) {
+            return base;
+        }
+        Quaternionf turn = new Quaternionf().rotateY((float) Math.toRadians(offset.yaw()))
+                .rotateX((float) Math.toRadians(-offset.pitch())).rotateZ((float) Math.toRadians(-offset.roll()));
+        Vector3f squash = new Vector3f(offset.width(), offset.height(), offset.width());
+        Vector3f at = new Vector3f(base.getTranslation()).mul(squash).rotate(turn)
+                .add(0, offset.up(), -offset.forward());
+        Vector3f scale = new Vector3f(base.getScale()).mul(squash);
+        if (part.motion() == Motion.FLAP) {
+            scale.x *= Math.max(0.2f, 1 + offset.wings());
+        }
+        return new Transformation(at, turn.mul(base.getLeftRotation()), scale, base.getRightRotation());
+    }
+
+    /** A step's pose of a part (shared by creatures and landmarks): its height and motion. */
+    static Transformation pose(Part part, int step, boolean moving) {
         float y = part.height();
         float s = part.scale();
         Vector3f scale = new Vector3f(s, s, s);
@@ -213,10 +257,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             case NONE -> {
             }
         }
-        if (squash) {
-            scale.mul(1.1f, 0.85f, 1.1f);
-        }
-        return new Transformation(new Vector3f(0, y, -lunge), rotation, scale, new Quaternionf());
+        return new Transformation(new Vector3f(0, y, 0), rotation, scale, new Quaternionf());
     }
 
     // ------------------------------------------------------------------------------------------ creatures
@@ -233,8 +274,11 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
         private final int[] steps;
         private Location last;
         private int age;
+        private final Attack attack;
         private int flash;
-        private int lunge;
+        /** The tick of the attack / flinch playing (1 = its first), 0 = none. */
+        private int attackTick;
+        private int hitTick;
         private boolean wasMoving;
         private boolean removed;
 
@@ -242,6 +286,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             this.body = body;
             this.kind = kind;
             this.parts = parts;
+            this.attack = CreatureModels.ATTACKS.getOrDefault(kind, Attack.THRUST);
             this.team = team;
             this.steps = new int[parts.size()];
             this.last = body.getLocation();
@@ -253,7 +298,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                     d.setVisibleByDefault(false); // only players with the pack are shown it
                     d.setItemStack(part.ref().item(team));
                     d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE);
-                    d.setTransformation(pose(part, 0, false, false, 0));
+                    d.setTransformation(pose(part, 0, false));
                     d.setTeleportDuration(TELEPORT_TICKS);
                     d.setViewRange(VIEW_RANGE);
                     d.setShadowRadius(0);
@@ -285,16 +330,19 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 display.setGlowColorOverride(Color.WHITE);
                 display.setGlowing(true);
             }
-            showNow(1);
+            hitTick = 1;
+            show(1);
         }
 
+        /** Plays the kind's {@link CreatureModels.Attack} from the start (again, if it was still playing). */
         @Override
         public void attack() {
             if (removed) {
                 return;
             }
-            lunge = LUNGE_TICKS;
-            showNow(2);
+            attackTick = 1;
+            puffs();
+            show(1);
         }
 
         @Override
@@ -332,6 +380,19 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
 
         boolean isRemoved() {
             return removed;
+        }
+
+        Attack attackMotion() {
+            return attack;
+        }
+
+        /** The attack's tick playing (1 = its first), 0 = none. */
+        int attackTick() {
+            return attackTick;
+        }
+
+        int hitTick() {
+            return hitTick;
         }
 
         // ------------------------------------------------------------------ per viewer, ticking
@@ -386,29 +447,62 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                     display.setGlowColorOverride(null);
                 }
             }
-            if (lunge > 0) {
-                lunge--;
-            }
             boolean restart = moving != wasMoving;
             wasMoving = moving;
+            boolean playing = playing();
+            if (attackTick > 0 && ++attackTick > attack.ticks()) {
+                attackTick = 0;
+            }
+            if (hitTick > 0 && ++hitTick > CreatureModels.HIT_TICKS) {
+                hitTick = 0;
+            }
+            if (playing()) {
+                puffs();
+                show(1);
+                return;
+            }
+            if (playing) {
+                show(2); // back into the motion's pose
+            }
             for (int i = 0; i < parts.size(); i++) {
                 Motion motion = parts.get(i).motion();
                 int period = moving ? motion.moving : motion.idle;
                 if (period > 0 && (age % period == 0 || restart)) {
                     steps[i]++;
-                    animate(displays.get(i), pose(parts.get(i), steps[i], moving, false, lunge > 0 ? 0.25f : 0),
-                            period);
+                    animate(displays.get(i), pose(parts.get(i), steps[i], moving), period);
                 } else if (period == 0 && restart) {
-                    animate(displays.get(i), pose(parts.get(i), steps[i], false, false, 0), 4);
+                    animate(displays.get(i), pose(parts.get(i), steps[i], false), 4);
                 }
             }
         }
 
-        /** Shows the hit squash / attack lunge now, for {@code ticks}, then the motion takes over again. */
-        private void showNow(int ticks) {
+        private boolean playing() {
+            return attackTick > 0 || hitTick > 0;
+        }
+
+        /** Where the attack and the flinch put the model now (rest when neither plays). */
+        Offset offset() {
+            Offset out = attackTick > 0 ? attack.at(attackTick) : Offset.REST;
+            return hitTick > 0 ? out.plus(CreatureModels.hitAt(hitTick)) : out;
+        }
+
+        /** Every part to the motion's pose moved by {@link #offset()}, reached in {@code ticks}. */
+        private void show(int ticks) {
+            Offset offset = offset();
             for (int i = 0; i < parts.size(); i++) {
-                animate(displays.get(i), ModelCreatureLook.pose(parts.get(i), steps[i], wasMoving, flash > 0,
-                        lunge > 0 ? 0.25f : 0), ticks);
+                animate(displays.get(i), pose(parts.get(i), steps[i], wasMoving, offset), ticks);
+            }
+        }
+
+        /** The attack's particle puffs of this tick, for everyone (they are where the vanilla mob is too). */
+        private void puffs() {
+            if (attackTick <= 0) {
+                return;
+            }
+            for (Puff puff : attack.puffs()) {
+                if (puff.tick() == attackTick) {
+                    puff(body.getLocation(), puff);
+                }
             }
         }
 
@@ -453,7 +547,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                     d.setVisibleByDefault(false);
                     d.setItemStack(part.ref().item(owner));
                     d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE);
-                    d.setTransformation(turned(pose(part, 0, false, false, 0)));
+                    d.setTransformation(turned(pose(part, 0, false)));
                     d.setViewRange(VIEW_RANGE * 2);
                     d.setShadowRadius(0);
                 }));
@@ -547,7 +641,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 int period = part.motion().idle;
                 if (period > 0 && age % period == 0) {
                     spin++;
-                    animate(displays.get(i), turned(pose(part, spin, false, false, 0)), period);
+                    animate(displays.get(i), turned(pose(part, spin, false)), period);
                 }
             }
         }

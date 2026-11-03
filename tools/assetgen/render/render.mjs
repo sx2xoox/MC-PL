@@ -16,14 +16,16 @@ if (!existsSync(threePath)) {
   process.exit(1);
 }
 const threeUrl = pathToFileURL(threePath).href;
+// the canvas is 1600 x 1000 unless the preview gives its own size (frame sheets: "width", "height")
+const { width: W = 1600, height: H = 1000 } = JSON.parse(model);
 
 const html = `<!doctype html><html><body style="margin:0;background:#1b1d22">
-<canvas id="c" width="1600" height="1000"></canvas>
+<canvas id="c" width="${W}" height="${H}"></canvas>
 <script type="importmap">{"imports":{"three":"${threeUrl}"}}</script>
 <script type="module">
 import * as THREE from 'three';
 const M = ${model};
-const W = 1600, H = 1000;
+const W = ${W}, H = ${H};
 const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(1); renderer.autoClear = false; renderer.setClearColor(0x1b1d22);
 const loader = new THREE.TextureLoader();
@@ -123,7 +125,7 @@ const tmp = join(dirname(output), '.render-' + process.pid + '.html');
 writeFileSync(tmp, html);
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--allow-file-access-from-files'] });
 try {
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: W, height: H } });
   page.on('pageerror', e => console.error('[pageerror]', e.message));
   await page.goto(pathToFileURL(tmp).href);
   await page.waitForFunction(() => window.__done === true, null, { timeout: 60000 });

@@ -28,18 +28,6 @@ final class JungleSounds {
         }
     }
 
-    /** A monster of {@code kind} hits. */
-    static void attack(SiegeArena arena, ObjectiveKind kind, Location at) {
-        switch (kind) {
-            case JELLY -> arena.sound(at, Sound.ENTITY_SLIME_ATTACK, 0.8f, 1.5f);
-            case MICE -> arena.sound(at, Sound.ENTITY_SILVERFISH_AMBIENT, 0.8f, 2f);
-            case TEDDY -> arena.sound(at, Sound.ENTITY_RAVAGER_STEP, 1f, 1.6f);
-            case DRAGON -> arena.sound(at, Sound.ENTITY_RAVAGER_ATTACK, 1f, 1.2f);
-            default -> {
-            }
-        }
-    }
-
     /** Once a second while the objective is up (only the ones that make a noise: the ticking clock rabbit). */
     static void ambient(SiegeArena arena, ObjectiveKind kind, Location at, long second) {
         if (kind == ObjectiveKind.RABBIT) {

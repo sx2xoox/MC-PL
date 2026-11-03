@@ -19,6 +19,7 @@ import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
@@ -373,7 +374,20 @@ public final class SiegeShop implements Listener {
     public void onTerminal(PlayerInteractEntityEvent event) {
         if (isTerminal(event.getRightClicked())) {
             event.setCancelled(true);
+            greet(event.getRightClicked());
             open(event.getPlayer());
+        }
+    }
+
+    /** The shopkeeper at a clicked terminal bows (its attack motion) with a friendly word. */
+    private void greet(Entity clicked) {
+        for (Entity part : terminalParts) {
+            if (part instanceof Mob keeper && keeper.getWorld().equals(clicked.getWorld())
+                    && keeper.getLocation().distanceSquared(clicked.getLocation()) <= 9) {
+                look.attack(keeper);
+                CreatureSounds.attack(arena, CreatureKind.SHOPKEEPER, keeper.getLocation());
+                return;
+            }
         }
     }
 
@@ -386,6 +400,7 @@ public final class SiegeShop implements Listener {
         event.setCancelled(true);
         if (event.getDamageSource().getCausingEntity() instanceof Player player
                 && event.getDamageSource().getDirectEntity() == player) {
+            greet(event.getEntity());
             open(player);
         }
     }

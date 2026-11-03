@@ -43,6 +43,18 @@ public final class SkinnedCreatureLook implements CreatureLook {
     }
 
     @Override
+    public void attack(Mob body) {
+        visual(body).attack();
+        bodies.attack(body);
+    }
+
+    @Override
+    public void hurt(Mob body) {
+        visual(body).hit();
+        bodies.hurt(body);
+    }
+
+    @Override
     public void removed(Mob body) {
         CreatureSkin.Visual visual = visuals.remove(body.getUniqueId());
         if (visual != null) {

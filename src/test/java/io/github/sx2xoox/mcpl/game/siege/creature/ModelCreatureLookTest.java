@@ -178,6 +178,58 @@ class ModelCreatureLookTest {
     }
 
     @Test
+    void eachKindPlaysItsOwnAttackThenTheMotionAgainAndFlinchesWhenHit() {
+        ModelCreatureLook.ModelCreature soldier = look.attach(mob(5, 5, 0), "soldier", Color.RED);
+        ModelCreatureLook.ModelCreature jelly = look.attach(mob(9, 9, 0), "jelly", null);
+        ModelCreatureLook.ModelCreature cannon = look.attach(mob(13, 13, 0), "cannon", Color.BLUE);
+        assertSame(CreatureModels.Attack.THRUST, soldier.attackMotion());
+        assertSame(CreatureModels.Attack.POUNCE, jelly.attackMotion());
+        assertSame(CreatureModels.Attack.RECOIL, cannon.attackMotion());
+        soldier.attack();
+        jelly.attack();
+        cannon.attack();
+        assertEquals(1, soldier.attackTick());
+        server.getScheduler().performTicks(3);
+        int tick = soldier.attackTick();
+        assertTrue(tick > 1 && tick < CreatureModels.Attack.THRUST.ticks(), "playing: " + tick);
+        Vector3f lunge = translation(soldier);
+        Vector3f pounce = translation(jelly);
+        Vector3f recoil = translation(cannon);
+        assertEquals(expected(CreatureModels.SOLDIER, CreatureModels.Attack.THRUST.at(tick)), lunge);
+        assertEquals(expected(CreatureModels.JELLY, CreatureModels.Attack.POUNCE.at(tick)), pounce);
+        assertEquals(expected(CreatureModels.CANNON, CreatureModels.Attack.RECOIL.at(tick)), recoil);
+        assertTrue(lunge.z < -0.2, "the soldier thrusts forward (-z): " + lunge);
+        assertTrue(recoil.z > 0.2, "the cannon kicks back: " + recoil);
+        assertTrue(pounce.y > 1.1, "the jelly springs up: " + pounce);
+        // every part goes along: the soldier's key leans with him
+        assertTrue(soldier.displays().get(1).getTransformation().getTranslation().z < -0.1);
+
+        server.getScheduler().performTicks(CreatureModels.Attack.POUNCE.ticks());
+        assertEquals(0, soldier.attackTick(), "over");
+        assertEquals(new Vector3f(0, 1, 0), translation(soldier), "back in its own pose");
+
+        jelly.hit();
+        assertEquals(1, jelly.hitTick());
+        assertTrue(jelly.displays().getFirst().isGlowing(), "a white flash");
+        assertTrue(jelly.displays().getFirst().getTransformation().getScale().y < 0.9, "squashed");
+        server.getScheduler().performTicks(CreatureModels.HIT_TICKS + 2);
+        assertEquals(0, jelly.hitTick());
+        assertFalse(jelly.displays().getFirst().isGlowing());
+        soldier.remove();
+        jelly.remove();
+        cannon.remove();
+    }
+
+    private static Vector3f translation(ModelCreatureLook.ModelCreature creature) {
+        return creature.displays().getFirst().getTransformation().getTranslation();
+    }
+
+    private static Vector3f expected(String kind, CreatureModels.Offset offset) {
+        return ModelCreatureLook.pose(CreatureModels.CREATURES.get(kind).getFirst(), 0, false, offset)
+                .getTranslation();
+    }
+
+    @Test
     void removeCleansEverythingAndGivesTheMobBack() {
         int before = world.getEntities().size();
         Zombie body = mob(5, 5, 0);

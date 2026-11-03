@@ -16,6 +16,8 @@ import io.github.sx2xoox.mcpl.game.siege.SiegeGame;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSkin;
+import io.github.sx2xoox.mcpl.game.siege.creature.SkinnedCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.VanillaCreatureLook;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
@@ -23,6 +25,7 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.damage.DamageSource;
@@ -52,6 +55,24 @@ abstract class LaneTestBase {
     TestArena arena;
     SiegeSystems systems;
     CreatureMover mover = CreatureMover.pathfinder();
+    /** What the creatures' skins were asked to play: {@code "<kind> attack"}, {@code "<kind> hit"}. */
+    final List<String> skinEvents = new ArrayList<>();
+    /** A skin that records its visuals' calls (the look is the match's: vanilla bodies + a skin). */
+    final CreatureSkin recordingSkin = (body, kind, team) -> new CreatureSkin.Visual() {
+        @Override
+        public void hit() {
+            skinEvents.add(kind + " hit");
+        }
+
+        @Override
+        public void attack() {
+            skinEvents.add(kind + " attack");
+        }
+
+        @Override
+        public void remove() {
+        }
+    };
 
     @BeforeEach
     void setUpLanes() {
@@ -85,7 +106,8 @@ abstract class LaneTestBase {
         for (int i = 0; i < red; i++) {
             arena.add(join("R" + (i + 1)), LaneSites.Side.RED);
         }
-        systems = new SiegeSystems(arena, config, new VanillaCreatureLook(), mover);
+        systems = new SiegeSystems(arena, config,
+                new SkinnedCreatureLook(new VanillaCreatureLook(), recordingSkin), mover);
         for (Listener listener : systems.listeners()) {
             Bukkit.getPluginManager().registerEvents(listener, h.hub.plugin());
         }
@@ -158,6 +180,7 @@ abstract class LaneTestBase {
         final Map<UUID, Double> cooldownGiven = new HashMap<>();
         boolean fighting = true;
         boolean abilityDamage;
+        final List<Sound> sounds = new ArrayList<>();
 
         TestArena(JavaPlugin plugin, Messages messages, LaneSites sites, World world) {
             this.plugin = plugin;
@@ -219,6 +242,11 @@ abstract class LaneTestBase {
         @Override
         public boolean isFighting() {
             return fighting;
+        }
+
+        @Override
+        public void sound(Location at, Sound sound, float volume, float pitch) {
+            sounds.add(sound);
         }
 
         @Override

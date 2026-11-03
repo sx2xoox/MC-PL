@@ -12,6 +12,7 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.ObjectiveKind;
 import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
 import io.github.sx2xoox.mcpl.game.siege.jungle.JungleObjectives;
 import org.bukkit.Location;
+import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.entity.Endermite;
@@ -103,6 +104,9 @@ class JungleObjectivesTest extends LaneTestBase {
         assertTrue(teddy.isFighting());
         run(60);
         assertTrue(player.getHealth() < 20, "the teddy fights back");
+        assertTrue(skinEvents.contains("teddy hit"), "the skin flinches when hit: " + skinEvents);
+        assertTrue(skinEvents.contains("teddy attack"), "and swings when it strikes: " + skinEvents);
+        assertTrue(arena.sounds.contains(Sound.BLOCK_WOOL_PLACE), "a soft whump: " + arena.sounds);
 
         // Pulled beyond the leash: home, full health, idle.
         bear.teleport(teddy.at().add(30, 0, 0));
@@ -189,6 +193,9 @@ class JungleObjectivesTest extends LaneTestBase {
         run(20);
         assertTrue(bunny.getLocation().distance(player.getLocation()) > before + 1, "flees");
         assertEquals(20, player.getHealth(), 1.0E-6, "never bites");
+        assertTrue(skinEvents.contains("rabbit hit") && skinEvents.contains("rabbit attack"),
+                "a startled hop when hit: " + skinEvents);
+        assertTrue(arena.sounds.contains(Sound.ENTITY_RABBIT_JUMP), arena.sounds.toString());
 
         clear(rabbit, player);
         assertTrue(jungle().hasBuff(player.getUniqueId(), ObjectiveKind.RABBIT));

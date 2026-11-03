@@ -10,6 +10,7 @@ sub folder is part of the id, so `models/weapon/police.bbmodel` becomes the item
 python3 -I tools/assetgen/build.py                                       # rebuild every model
 cd tools/assetgen/render && npm install                                  # once, for previews (three.js)
 python3 -I tools/assetgen/build.py --render <dir> [--only weapons|toys]  # + preview PNGs
+python3 -I tools/assetgen/attack_preview.py <dir> [kind ...]             # creature attack GIFs (Pillow)
 ```
 
 Previews need Node + Playwright (Chromium). In a cloud session:
@@ -22,6 +23,7 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 | `mcpl_assets/toy_textures.py` | toy kingdom textures (`t_*`, 32 px) and their pastel ramps; `t_bubble` = the shader's marker alpha |
 | `mcpl_assets/toykit.py` | block-space builder for buildings / creatures: `rbox` (chamfered toy box), eyes, cheeks, slabs |
 | `toy_preview.py` | toy sheets: building stages + bubble, minions in both team colours, jungle, one sheet per creature, scale lineup |
+| `attack_preview.py` | creature attack GIFs from `models/creature_attacks.json` (the game's poses; `./gradlew updateCreatureAttacks`) |
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |
 | `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range) |
 | `mcpl_assets/weaponkit.py` | the weapon builder: weapon space, common parts, the shared `display` preset |

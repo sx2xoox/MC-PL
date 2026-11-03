@@ -19,6 +19,9 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
   `./gradlew updateAugmentDocs` after changing them (`AugmentDocsTest` fails while it is stale).
 - The 공성전 basic attack (평타) table in `docs/siege-v2.md` §8 is generated from `BasicAttacks`: run
   `./gradlew updateBasicAttackDocs` after changing them (`BasicAttackDocsTest` fails while it is stale).
+- 공성전 creature attack motions (`CreatureModels.Attack` keyframes) are exported as the game's poses to
+  `tools/assetgen/models/creature_attacks.json`: run `./gradlew updateCreatureAttacks` after changing them
+  (`CreatureAttacksExportTest` fails while it is stale); `tools/assetgen/attack_preview.py <dir>` draws GIFs from it.
 - Resource pack: `./gradlew resourcePack` (part of `build`) converts `src/main/resourcepack-src` into
   `build/resourcepack/MCPL-pack.zip` (bundled into the jar; 26.3 `pack.mcmeta` uses `min_format`/`max_format` 97, no
   `pack_format`). Models are code in `tools/assetgen/models/*.py`: after changing one run
