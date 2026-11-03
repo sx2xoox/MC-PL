@@ -151,6 +151,7 @@ final class SiegeHud {
         }
         if (match.phase() == SiegeMatch.Phase.FIGHT) {
             addIfPresent(lines, match.objectives().hudLine());
+            addIfPresent(lines, match.camps().hudLine());
         }
         UUID id = viewer.getUniqueId();
         if (match.teamIndex(id) >= 0) {

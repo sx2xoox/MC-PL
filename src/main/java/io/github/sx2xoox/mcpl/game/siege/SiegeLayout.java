@@ -53,6 +53,11 @@ public final class SiegeLayout {
         return new Location(world, originX + objective.x() + 0.5, objective.y(), originZ + objective.z() + 0.5);
     }
 
+    /** The centre of a monster camp. */
+    public Location at(SiegeSites.Camp camp) {
+        return new Location(world, originX + camp.x() + 0.5, camp.y(), originZ + camp.z() + 0.5);
+    }
+
     public List<Location> attackerSpawns() {
         return all(sites.attackerSpawns());
     }

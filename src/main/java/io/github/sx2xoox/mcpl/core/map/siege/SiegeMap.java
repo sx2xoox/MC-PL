@@ -55,6 +55,23 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
             new Objective("canal", "수로 데이터 노드", -16, SiegeLayout.CANAL_Y + 1, 48, 4, false),
             new Objective("center", "오버클럭 코어", -16, G + 1, 0, 5, true));
 
+    /**
+     * Monster camps in the side streets and blocks of both halves (docs/siege.md §13): on each half three small camps
+     * and one buff camp (레드 서버 on the attackers' half, 블루 서버 on the defenders' half), and the epic
+     * 메인프레임 수호자 in the headquarters' north forecourt. Each centre is a free standing place with a flat open
+     * area around it ({@code SiegeMapTest#theCampsHaveOpenReachableGround}).
+     */
+    private static final List<Camp> CAMPS = List.of(
+            new Camp("west-drones", "드론 둥지", "drones", -89, G + 1, -34, 4),
+            new Camp("west-rats", "변종 쥐떼", "rats", -64, G + 1, 67, 4),
+            new Camp("west-scrap", "고철 골렘", "scrap", -89, G + 1, 34, 4),
+            new Camp("red", "레드 서버", "red", -65, G + 1, -80, 5),
+            new Camp("east-drones", "드론 둥지", "drones", 19, G + 1, -64, 3),
+            new Camp("east-rats", "변종 쥐떼", "rats", 55, G + 1, 66, 4),
+            new Camp("east-scrap", "고철 골렘", "scrap", 72, G + 1, 34, 4),
+            new Camp("blue", "블루 서버", "blue", 94, G + 1, 78, 5),
+            new Camp("guardian", "메인프레임 수호자", "guardian", 82, G + 1, -30, 7));
+
     /** Spawn spots on a grid (every combination of {@code xs} and {@code zs}), all looking at one place. */
     private static List<Spot> grid(int[] xs, int[] zs, int y, int lookX, int lookZ) {
         List<Spot> spots = new ArrayList<>();
@@ -135,6 +152,11 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
     @Override
     public List<Objective> objectives() {
         return OBJECTIVES;
+    }
+
+    @Override
+    public List<Camp> camps() {
+        return CAMPS;
     }
 
     /** The zones in build order (exposed for tests and previews). */
