@@ -17,6 +17,7 @@ Reference weapons (the 공성전 default pool):
 
 from mcpl_assets import weapon_textures  # noqa: F401  (registers the w_* textures)
 from mcpl_assets.weaponkit import Weapon
+from models import weapons_b1
 
 
 def police():
@@ -171,3 +172,4 @@ WEAPONS.update(weapons_b2.WEAPONS)
 
 from models.weapons_b3 import WEAPONS as _B3  # noqa: E402  (batch 3: engineer .. batter)
 WEAPONS.update(_B3)
+WEAPONS.update(weapons_b1.WEAPONS_B1)     # batch 1: models/weapons_b1.py

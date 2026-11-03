@@ -178,27 +178,12 @@ class ResourcePackContentsTest {
         assertNull(AbilityWeaponModels.model("no_such_ability"));
     }
 
-    /**
-     * The 공성전 default pool abilities whose weapon batch is in this branch (the five references + batches 2 and 3).
-     * The weapons of the pool arrive in three batches; the merge that brings in the last one replaces this set with
-     * the whole pool (every DEFAULT_POOL id must be in MODELED).
-     */
-    private static final Set<String> POOL_WEAPONS_LANDED = Set.of(
-            "police", "miner", "blacksmith", "gunslinger", "chef",
-            "hydro", "magma", "light", "shadow", "vampire", "reaper", "necromancer", "demon", "phoenix", "dragon",
-            "werewolf", "dokkaebi", "healer", "bard", "alchemist",
-            "engineer", "hacker", "mech", "bomber", "gravity", "magnet", "chrono", "blink", "speedster", "venom",
-            "spider", "pirate", "angler", "farmer", "batter");
-
     @Test
     void everySiegePoolAbilityHasAWeapon() {
         assertEquals(SiegeSettings.DEFAULT_POOL.size(), new HashSet<>(SiegeSettings.DEFAULT_POOL).size(),
                 "the 공성전 default pool lists an ability twice");
-        assertTrue(SiegeSettings.DEFAULT_POOL.containsAll(POOL_WEAPONS_LANDED));
         for (String id : SiegeSettings.DEFAULT_POOL) {
-            if (POOL_WEAPONS_LANDED.contains(id)) {
-                assertTrue(AbilityWeaponModels.modeled().contains(id), id);
-            }
+            assertTrue(AbilityWeaponModels.modeled().contains(id), "공성전 pool ability without a weapon: " + id);
         }
     }
 

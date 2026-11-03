@@ -25,7 +25,10 @@ public final class AbilityWeaponModels {
             "werewolf", "dokkaebi", "healer", "bard", "alchemist",
             // batch 3 (tools/assetgen/models/weapons_b3.py)
             "engineer", "hacker", "mech", "bomber", "gravity", "magnet", "chrono", "blink", "speedster", "venom",
-            "spider", "pirate", "angler", "farmer", "batter");
+            "spider", "pirate", "angler", "farmer", "batter",
+            // batch 1 (tools/assetgen/models/weapons_b1.py)
+            "ninja", "blade", "duelist", "archer", "sniper", "hunter", "lancer", "berserker", "guardian",
+            "fighter", "pyro", "frost", "thunder", "aero", "earth");
 
     private AbilityWeaponModels() {
     }

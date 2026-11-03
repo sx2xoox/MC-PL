@@ -46,6 +46,12 @@ In 공성전 a player's sword shows the 3D weapon of their ability (`AbilityWeap
 - Upright along +y: pommel at the bottom, tip at the top. x = the broad plane (blade width, axe/pick head, gun
   profile; the business side towards +x), z = thickness (the two flats). `Weapon.box` takes x/z relative to the
   centre line, y as is.
+- **Orientation rule** (every weapon, no exceptions): the business side is **+x** (cutting edge, striking face, pick
+  point, axe bit, hook, a gun's trigger guard and sights' far side), the tip / head at the top (+y), the hand at
+  `GRIP_Y`. The shared preset turns +x so it faces **forward / down in hand** (first and third person, both hands: a
+  cleaver's edge and a hammer's face lead the swing, the spine stays back) and **upper-left in the inventory icon**,
+  exactly like the blade of a vanilla axe. Never mirror a model or tune `display` per weapon to fix a backwards look:
+  move the part to +x instead.
 - The hand holds `(0, GRIP_Y = 1.5, 0)`: grip about y −2..6, pommel below, the weapon's "head" from y ~16 up.
   Reference length 26 units (y −4..26); keep x within −7..7 (a few units more for a spike), z within −3..3.
 - Thickness: blades 0.75–1.25, shafts 1.75–3, heads 4–5.5. Details (rivets, badges, bands) are at least 0.125–0.25 thick.

@@ -6,6 +6,9 @@ so all of them sit the same way in the hand, in the inventory, on the ground and
 Weapon space (model units, 16 = one block at display scale 1):
   - the weapon stands UPRIGHT along +y: pommel at the bottom, tip at the top
   - x = the weapon's broad plane (blade width, axe/pick head, gun profile): edge / business side towards +x
+    (ORIENTATION RULE: the cutting edge, striking face, pick point, hook, trigger guard... is always on +x; the tip /
+    head is at the top, the hand at GRIP_Y. The preset turns +x to face forward/down in hand, like a real swing and
+    like a vanilla axe's blade, and to the upper-left in the inventory icon, like the vanilla axe / hoe sprites)
   - z = thickness (keep it thin: 1-3 units for blades, up to 5 for heads); the two z sides are the two flats
   - x and z are relative to the centre line (model x = 8 + x, z = 8 + z), y is the model's own y
   - the HAND holds (0, GRIP_Y, 0): put the middle of the grip there
@@ -44,6 +47,24 @@ def rot_xyz(rx, ry, rz):
     y = np.array([[math.cos(b), 0, math.sin(b)], [0, 1, 0], [-math.sin(b), 0, math.cos(b)]])
     z = np.array([[math.cos(c), -math.sin(c), 0], [math.sin(c), math.cos(c), 0], [0, 0, 1]])
     return x @ y @ z
+
+
+def euler_xyz(m):
+    """The XYZ Euler angles (degrees) of a rotation matrix m = Rx * Ry * Rz (inverse of rot_xyz)."""
+    b = math.asin(max(-1.0, min(1.0, m[0][2])))
+    if abs(m[0][2]) < 0.999999:
+        a = math.atan2(-m[1][2], m[2][2])
+        c = math.atan2(-m[0][1], m[0][0])
+    else:                                   # gimbal lock: put it all in x
+        a = math.atan2(m[2][1], m[1][1])
+        c = 0.0
+    return tuple(math.degrees(v) for v in (a, b, c))
+
+
+def business_side(rotation):
+    """A display rotation applied after turning the weapon 180 degrees about its own long axis (y), so the +x
+    business side ends up where the vanilla sword pose puts a vanilla axe's blade (see ORIENTATION RULE above)."""
+    return euler_xyz(rot_xyz(*rotation) @ rot_xyz(0, 180, 0))
 
 
 def _r(v):
@@ -246,6 +267,33 @@ class Weapon:
                 angle = -45 if k in (1, 5) else 45
                 self.box(f"{name}{k}", (x - a, y - bar / 2, -z), (x + a, y + bar / 2, z), tex,
                          rotation=("z", angle, (x, y, 0)), **kw)
+    def strut(self, name, p0, p1, w, d, tex, z=0.0, extend=0.0, **kw):
+        """
+        A bar from (x, y) point p0 to p1 in the weapon's broad plane, `w` wide and `d` deep, centred on depth z. Item
+        models only turn elements in 22.5 degree steps, so the bar's direction snaps to the nearest step (any of
+        0..180); `extend` lengthens both ends (overlap at the joints of a bent chain: a bow limb, a sickle, a bolt).
+        Returns the snapped angle from +y (degrees, positive towards +x).
+        """
+        dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+        length = math.hypot(dx, dy) + 2 * extend
+        mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+        a = (math.degrees(math.atan2(dx, dy)) + 90) % 180 - 90
+        a = round(a / 22.5) * 22.5
+        if abs(a) <= 45:
+            frm, to, angle = (mx - w / 2, my - length / 2, z - d / 2), (mx + w / 2, my + length / 2, z + d / 2), -a
+        else:
+            b = 90 - a
+            b = b - 180 if b > 90 else b
+            frm, to, angle = (mx - length / 2, my - w / 2, z - d / 2), (mx + length / 2, my + w / 2, z + d / 2), b
+        rotation = ("z", angle, (mx, my, z)) if angle else None
+        self.box(name, frm, to, tex, rotation=rotation, **kw)
+        return a
+
+    def polyline(self, name, points, w, d, tex, z=0.0, extend=None, **kw):
+        """Struts through consecutive (x, y) points (a curved limb, blade or bolt); joints overlap by w/2."""
+        for n in range(len(points) - 1):
+            self.strut(f"{name}{n}", points[n], points[n + 1], w, d, tex, z=z,
+                       extend=w / 2 if extend is None else extend, **kw)
         return self
 
     # --- output ------------------------------------------------------------------------------------
@@ -271,6 +319,7 @@ def _bounds(model):
 
 def _fit(model, rotation, extent, centre_to=(0, 0, 0), scale_cap=1.6):
     """Scale + translation that rotate the model and fit its projected (x, y) bounds in `extent` units."""
+    rotation = business_side(rotation)
     r = rot_xyz(*rotation)
     p = (_bounds(model) - 8) @ r.T
     lo, hi = p.min(axis=0), p.max(axis=0)
@@ -292,7 +341,7 @@ def display(model, size=1.0):
     out = {}
     grip = np.array([8, GRIP_Y, 8], float)
     for ctx, (hrot, htr, hs) in HANDHELD.items():
-        rot = (hrot[0], hrot[1], hrot[2] + DIAGONAL)
+        rot = business_side((hrot[0], hrot[1], hrot[2] + DIAGONAL))
         s = hs * k
         target = np.array(htr) + rot_xyz(*hrot) @ ((np.array(SPRITE_GRIP) - 8) * hs)
         t = target - rot_xyz(*rot) @ ((grip - 8) * s)
