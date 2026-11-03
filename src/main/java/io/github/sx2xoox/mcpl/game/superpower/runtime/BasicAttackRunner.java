@@ -1,0 +1,1022 @@
+package io.github.sx2xoox.mcpl.game.superpower.runtime;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+
+import io.github.sx2xoox.mcpl.core.game.GameSession;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack.Palette;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
+import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
+import io.github.sx2xoox.mcpl.util.Text;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.ItemLore;
+import io.papermc.paper.event.player.PlayerArmSwingEvent;
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.FluidCollisionMode;
+import org.bukkit.Location;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
+import org.bukkit.SoundCategory;
+import org.bukkit.World;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.damage.DamageType;
+import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.EquipmentSlotGroup;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.BoundingBox;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Basic attacks (평타) of a hosted match ({@link MatchHost#basicAttacks()}): a left-click with the ability weapon
+ * fires the ability's {@link BasicAttack} instead of a vanilla sword hit.
+ *
+ * <ul>
+ *     <li>Input: every main-hand arm swing of a fighting participant holding the weapon (a click on air, a block or
+ *     an entity). Swings that come with a right-click or a drop in the same tick are not attacks.</li>
+ *     <li>Vanilla hits with the weapon are cancelled before any damage ({@link PrePlayerAttackEntityEvent}, and any
+ *     melee damage event the weapon would still cause), so nothing is dealt twice.</li>
+ *     <li>Cadence: one attack per {@link BasicAttack#cooldown()} ticks; a click up to {@value #BUFFER_TICKS} ticks
+ *     early is kept and fires when ready. The player's attack speed is set so the crosshair attack indicator fills
+ *     in exactly that time.</li>
+ *     <li>Damage: {@link MatchContext#basicHit} (a melee hit: armor applies, hooks and kill credit as a sword hit; only
+ *     enemies, so team mode, spectators and the host's targets work), times the host's
+ *     {@link MatchHost#basicAttackMultiplier}, the configured scale and the attacker's attack damage bonuses.</li>
+ *     <li>Everything it creates is owner-scoped (tasks, displays), so a death or the match end removes it.</li>
+ * </ul>
+ */
+final class BasicAttackRunner implements Listener {
+
+    /** A click this many ticks before the attack is ready still fires (when it is). */
+    static final long BUFFER_TICKS = 3;
+    /** Attack speed of a sword (the ability weapon's base): the crosshair indicator fills in 20 / this ticks. */
+    static final double SWORD_ATTACK_SPEED = 1.6;
+    /** Ticks between damage-over-time pulses. */
+    static final long DOT_PERIOD = 10;
+    /** Ticks between chain jumps (so the eye can follow the zap). */
+    static final long CHAIN_STEP = 2;
+    /** Gravity of a lobbed object, blocks per tick². */
+    static final double LOB_GRAVITY = 0.06;
+    /** A lobbed object bursts at the latest after this many ticks. */
+    static final int LOB_MAX_TICKS = 60;
+    /** The vanilla item attack damage modifier (the weapon's own damage, not a bonus). */
+    private static final NamespacedKey ITEM_DAMAGE = NamespacedKey.minecraft("base_attack_damage");
+
+    private final SuperpowerMatch match;
+    private final GameSession session;
+    private final AbilityItems items;
+    private final MatchHost host;
+    private final BasicAttackSettings settings;
+    private final NamespacedKey speedKey;
+    private final Map<UUID, State> states = new HashMap<>();
+
+    /** One attacker's cadence and its running effects on others. */
+    private static final class State {
+        long readyAt = Long.MIN_VALUE;
+        boolean queued;
+        /** A right-click or drop happened in this tick: its arm swing is not an attack. */
+        long blockedTick = -1;
+        @Nullable UUID hint;
+        long hintTick = -1;
+        final Map<UUID, NamespacedKey> slows = new HashMap<>();
+        final Map<UUID, NamespacedKey> weakens = new HashMap<>();
+        final Map<UUID, BukkitTask> dots = new HashMap<>();
+    }
+
+    BasicAttackRunner(SuperpowerMatch match, MatchHost host, BasicAttackSettings settings) {
+        this.match = match;
+        this.session = match.session();
+        this.items = match.items();
+        this.host = host;
+        this.settings = settings;
+        this.speedKey = session.hub().key("basic_attack_speed");
+    }
+
+    BasicAttackSettings settings() {
+        return settings;
+    }
+
+    private MatchContext ctx() {
+        return match.context();
+    }
+
+    private State state(Player player) {
+        return states.computeIfAbsent(player.getUniqueId(), id -> new State());
+    }
+
+    // =================================================================== input
+
+    /** True if {@code player} fights holding its ability weapon (its clicks are basic attacks). */
+    boolean wields(Player player) {
+        if (match.phase() != MatchPhase.FIGHT || !session.isParticipant(player) || !session.isInPlay(player)) {
+            return false;
+        }
+        Participant participant = match.participant(player.getUniqueId());
+        return participant != null && participant.ability != null && participant.abilityId != null
+                && items.isAbilityItem(player.getInventory().getItemInMainHand());
+    }
+
+    /** A melee hit with the weapon: never the vanilla hit; remembered as a hint for the swing that follows. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onAttackEntity(PrePlayerAttackEntityEvent event) {
+        Player player = event.getPlayer();
+        if (!wields(player)) {
+            return;
+        }
+        event.setCancelled(true);
+        if (event.getAttacked() instanceof LivingEntity living) {
+            State state = state(player);
+            state.hint = living.getUniqueId();
+            state.hintTick = session.tick();
+        }
+    }
+
+    /**
+     * Any melee damage the weapon still causes (e.g. a hitbox that forwards the hit with {@code Player#attack}) is
+     * cancelled: the basic attack already dealt it.
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onVanillaHit(EntityDamageByEntityEvent event) {
+        DamageCause cause = event.getCause();
+        if ((cause != DamageCause.ENTITY_ATTACK && cause != DamageCause.ENTITY_SWEEP_ATTACK)
+                || !(event.getDamager() instanceof Player player)) {
+            return;
+        }
+        MatchContext ctx = ctx();
+        if (!ctx.isBasicHit() && !ctx.isAbilityDamage() && wields(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onSwing(PlayerArmSwingEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND) {
+            return;
+        }
+        Player player = event.getPlayer();
+        if (wields(player) && state(player).blockedTick != session.tick()) {
+            trigger(player);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onUse(PlayerInteractEvent event) {
+        Action action = event.getAction();
+        if (action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK) {
+            block(event.getPlayer());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onUseEntity(PlayerInteractEntityEvent event) {
+        block(event.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onDrop(PlayerDropItemEvent event) {
+        block(event.getPlayer());
+    }
+
+    private void block(Player player) {
+        if (session.isParticipant(player)) {
+            state(player).blockedTick = session.tick();
+        }
+    }
+
+    /**
+     * A basic attack click of {@code player}: fires now if ready, later if it is ready within
+     * {@value #BUFFER_TICKS} ticks, otherwise nothing.
+     *
+     * @return true if it fired now
+     */
+    boolean trigger(Player player) {
+        if (!wields(player)) {
+            return false;
+        }
+        State state = state(player);
+        long now = session.tick();
+        if (now < state.readyAt) {
+            long wait = state.readyAt - now;
+            if (wait <= BUFFER_TICKS && !state.queued) {
+                state.queued = true;
+                ctx().runLater(player, wait, () -> {
+                    state.queued = false;
+                    if (player.isOnline() && wields(player)) {
+                        fire(player, state);
+                    }
+                });
+            }
+            return false;
+        }
+        fire(player, state);
+        return true;
+    }
+
+    private void fire(Player player, State state) {
+        Participant participant = match.participant(player.getUniqueId());
+        String abilityId = participant == null ? null : participant.abilityId;
+        if (abilityId == null) {
+            return;
+        }
+        BasicAttack attack = settings.attack(abilityId);
+        long now = session.tick();
+        state.readyAt = now + attack.cooldown();
+        LivingEntity hint = null;
+        if (state.hintTick == now && state.hint != null
+                && player.getWorld().getEntity(state.hint) instanceof LivingEntity living) {
+            hint = living;
+        }
+        state.hint = null;
+        LivingEntity aimed = hint;
+        ctx().runOwnCode(player.getUniqueId(),
+                () -> match.guard().run(abilityId, "basicAttack", () -> execute(player, attack, aimed)));
+    }
+
+    // =================================================================== shapes
+
+    private void execute(Player owner, BasicAttack attack, @Nullable LivingEntity hint) {
+        if (attack.effect() == BasicAttack.Effect.LUNGE) {
+            Vector forward = Motion.horizontalFacing(owner.getLocation()).multiply(attack.effectPower());
+            ctx().setVoluntaryVelocity(owner, forward.setY(Math.max(0.0, owner.getVelocity().getY())));
+        }
+        Palette palette = attack.palette();
+        sound(owner.getLocation(), palette.sound(), palette.pitch(), 0.6f);
+        switch (attack.shape()) {
+            case SWING -> swing(owner, attack, 0, hint);
+            case COMBO -> repeat(owner, attack, index -> swing(owner, attack, index, index == 0 ? hint : null));
+            case THRUST -> thrust(owner, attack);
+            case SHOT -> repeat(owner, attack, index -> shot(owner, attack, index));
+            case PROJECTILE -> projectiles(owner, attack);
+            case LOB -> lob(owner, attack);
+            case CHAIN -> chain(owner, attack);
+            case CONE -> repeat(owner, attack, index -> cone(owner, attack));
+            case NOVA -> nova(owner, attack);
+            case STRIKE -> strike(owner, attack);
+        }
+    }
+
+    /** Runs {@code hit} for each of the attack's hits, {@code interval} ticks apart (the first one now). */
+    private void repeat(Player owner, BasicAttack attack, java.util.function.IntConsumer hit) {
+        hit.accept(0);
+        for (int i = 1; i < attack.hits(); i++) {
+            int index = i;
+            ctx().runLater(owner, Math.max(1, (long) attack.interval() * i), () -> {
+                if (session.isInPlay(owner)) {
+                    if (index > 0) {
+                        sound(owner.getLocation(), attack.palette().sound(),
+                                attack.palette().pitch() + 0.08f * index, 0.45f);
+                    }
+                    hit.accept(index);
+                }
+            });
+        }
+    }
+
+    /** A horizontal arc in front: every enemy inside (up to {@code pierce}), the clicked one first. */
+    private void swing(Player owner, BasicAttack attack, int index, @Nullable LivingEntity hint) {
+        Location eye = owner.getEyeLocation();
+        Vector look = horizontal(eye.getDirection(), owner);
+        List<LivingEntity> found = new ArrayList<>();
+        if (hint != null && ctx().isEnemy(owner, hint)
+                && MatchContext.distanceToBox(eye, hint.getBoundingBox()) <= attack.range() + 0.5) {
+            found.add(hint);
+        }
+        for (LivingEntity enemy : ctx().enemiesNear(owner, eye, attack.range())) {
+            if (!found.contains(enemy) && withinArc(eye, look, enemy, attack.angle()) && canSee(owner, enemy)) {
+                found.add(enemy);
+            }
+        }
+        Palette palette = attack.palette();
+        double height = index % 2 == 0 ? -0.35 : -0.15;
+        Location center = eye.clone().add(0, height, 0);
+        double width = Math.max(40, attack.angle());
+        int points = (int) Math.max(6, Math.round(width / 12));
+        Vfx.arc(ctx(), center, attack.range() * 0.75, eye.getYaw(), width, points, Particle.DUST,
+                dust(palette, 1.1f), false);
+        Vfx.arc(ctx(), center, attack.range() * 0.55, eye.getYaw(), width * 0.8, Math.max(3, points / 2),
+                palette.particle(), null, false);
+        hitAll(owner, attack, limit(found, attack.pierce()), attack.damage());
+    }
+
+    /** A straight poke through enemies, stopped by walls. */
+    private void thrust(Player owner, BasicAttack attack) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize();
+        double reach = reach(eye, direction, attack.range());
+        List<LivingEntity> found = new ArrayList<>();
+        for (LivingEntity enemy : ctx().enemiesNear(owner, eye, reach + attack.radius())) {
+            if (onRay(eye, direction, reach, enemy, attack.radius())) {
+                found.add(enemy);
+            }
+        }
+        Location from = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(0.6));
+        Location tip = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(reach));
+        Palette palette = attack.palette();
+        Vfx.line(ctx(), from, tip, 4, Particle.DUST, dust(palette, 0.8f), false);
+        Vfx.cloud(ctx(), tip, palette.particle(), 4, 0.1, 0.02, null, false);
+        hitAll(owner, attack, limit(found, attack.pierce()), attack.damage());
+    }
+
+    /** An instant shot at the aimed enemy (aim assist, walls block), with a tracer. */
+    private void shot(Player owner, BasicAttack attack, int index) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize();
+        LivingEntity target = ctx().findTarget(owner, attack.range());
+        Location muzzle = eye.clone().add(0, -0.2, 0).add(direction.clone().multiply(0.7));
+        Location end = target != null ? Fx.body(target) : eye.clone().add(direction.clone()
+                .multiply(reach(eye, direction, attack.range())));
+        Palette palette = attack.palette();
+        Vfx.line(ctx(), muzzle, end, 2.5, Particle.DUST, dust(palette, 0.6f), false);
+        Vfx.cloud(ctx(), muzzle, palette.particle(), 2, 0.05, 0.01, null, false);
+        if (index > 0) {
+            sound(muzzle, palette.sound(), palette.pitch() + 0.1f, 0.4f);
+        }
+        if (target != null) {
+            hitAll(owner, attack, List.of(target), attack.damage());
+        } else {
+            Vfx.cloud(ctx(), end, palette.particle(), 3, 0.1, 0.02, null, false);
+        }
+    }
+
+    /** {@code hits} projectiles fanned over {@code angle} (or one after another when {@code interval} is set). */
+    private void projectiles(Player owner, BasicAttack attack) {
+        int count = attack.hits();
+        for (int i = 0; i < count; i++) {
+            double offset = count > 1 && attack.interval() == 0
+                    ? -attack.angle() / 2 + attack.angle() * i / (count - 1) : 0;
+            if (attack.interval() > 0 && i > 0) {
+                ctx().runLater(owner, (long) attack.interval() * i, () -> {
+                    if (session.isInPlay(owner)) {
+                        launch(owner, attack, 0);
+                    }
+                });
+            } else {
+                launch(owner, attack, offset);
+            }
+        }
+    }
+
+    private void launch(Player owner, BasicAttack attack, double yawOffset) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize().rotateAroundY(Math.toRadians(-yawOffset));
+        Location start = eye.clone().add(0, -0.15, 0).add(direction.clone().multiply(0.4));
+        new Flight(owner, attack, start, direction).begin();
+    }
+
+    /** One flying projectile: moves {@code speed} blocks a tick, hits enemies on its path, heals allies it passes. */
+    private final class Flight {
+        final Player owner;
+        final BasicAttack attack;
+        final Location position;
+        final Vector direction;
+        final Set<UUID> touched = new HashSet<>();
+        final @Nullable ItemDisplay display;
+        double traveled;
+        int hits;
+        @Nullable BukkitTask task;
+
+        Flight(Player owner, BasicAttack attack, Location start, Vector direction) {
+            this.owner = owner;
+            this.attack = attack;
+            this.position = start;
+            this.direction = direction;
+            long lifetime = (long) Math.ceil(attack.range() / attack.speed()) + 4;
+            this.display = attack.palette().item() == null ? null : projectileDisplay(owner, attack, start, lifetime);
+        }
+
+        void begin() {
+            if (step()) {
+                task = ctx().runTimer(owner, 1, 1, () -> {
+                    if (!step()) {
+                        end();
+                    }
+                });
+            } else {
+                end();
+            }
+        }
+
+        /** One tick of flight; false when it is over. */
+        boolean step() {
+            double length = Math.min(attack.speed(), attack.range() - traveled);
+            if (!(length > 0) || !session.isInPlay(owner)) {
+                return false;
+            }
+            double free = reach(position, direction, length);
+            Location mid = position.clone().add(direction.clone().multiply(free / 2));
+            double search = free / 2 + attack.radius() + 1.5;
+            List<Hit> path = new ArrayList<>();
+            for (LivingEntity enemy : ctx().enemiesNear(owner, mid, search)) {
+                double along = along(position, direction, free, enemy, attack.radius());
+                if (along >= 0 && !touched.contains(enemy.getUniqueId())) {
+                    path.add(new Hit(enemy, along));
+                }
+            }
+            path.sort((a, b) -> Double.compare(a.along, b.along));
+            double stop = free;
+            boolean over = free < length;
+            for (Hit hit : path) {
+                touched.add(hit.entity.getUniqueId());
+                hitAll(owner, attack, List.of(hit.entity), attack.damage());
+                hits++;
+                if (attack.pierce() > 0 && hits >= attack.pierce()) {
+                    stop = hit.along;
+                    over = true;
+                    break;
+                }
+            }
+            if (attack.effect() == BasicAttack.Effect.HEAL_ALLIES) {
+                for (Player ally : ctx().alliesNear(owner, mid, search)) {
+                    if (along(position, direction, stop, ally, attack.radius() + 0.4) >= 0
+                            && touched.add(ally.getUniqueId())) {
+                        healAlly(owner, attack, ally);
+                    }
+                }
+            }
+            Location next = position.clone().add(direction.clone().multiply(stop));
+            Palette palette = attack.palette();
+            Vfx.line(ctx(), position, next, 2, Particle.DUST, dust(palette, 0.7f), false);
+            Vfx.dot(next, palette.particle(), null, false);
+            position.setX(next.getX());
+            position.setY(next.getY());
+            position.setZ(next.getZ());
+            traveled += stop;
+            if (display != null) {
+                Displays.moveTo(display, position);
+            }
+            return !over && traveled < attack.range() - 1.0E-6;
+        }
+
+        void end() {
+            if (task != null) {
+                task.cancel();
+                task = null;
+            }
+            Vfx.cloud(ctx(), position, attack.palette().particle(), 3, 0.08, 0.02, null, false);
+            if (display != null && display.isValid()) {
+                display.remove();
+            }
+        }
+    }
+
+    private record Hit(LivingEntity entity, double along) {
+    }
+
+    /** A thrown object falling in an arc; bursts on a wall, the ground or an enemy and splashes {@code radius}. */
+    private void lob(Player owner, BasicAttack attack) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize();
+        Location position = eye.clone().add(0, -0.2, 0).add(direction.clone().multiply(0.5));
+        Vector velocity = direction.clone().multiply(attack.speed()).add(new Vector(0, 0.15, 0));
+        Location start = position.clone();
+        ItemDisplay display = attack.palette().item() == null ? null
+                : projectileDisplay(owner, attack, position, LOB_MAX_TICKS + 4);
+        BukkitTask[] task = new BukkitTask[1];
+        int[] ticks = {0};
+        Runnable step = () -> {
+            ticks[0]++;
+            double length = velocity.length();
+            Vector heading = velocity.clone().normalize();
+            double free = reach(position, heading, length);
+            Location burst = null;
+            for (LivingEntity enemy : ctx().enemiesNear(owner, position, length + 1.5)) {
+                double along = along(position, heading, free, enemy, 0.3);
+                if (along >= 0) {
+                    burst = position.clone().add(heading.clone().multiply(along));
+                    break;
+                }
+            }
+            if (burst == null && free < length) {
+                burst = position.clone().add(heading.clone().multiply(Math.max(0, free - 0.1)));
+            }
+            Location next = position.clone().add(heading.clone().multiply(free));
+            Vfx.dot(next, attack.palette().particle(), null, false);
+            position.setX(next.getX());
+            position.setY(next.getY());
+            position.setZ(next.getZ());
+            if (display != null) {
+                Displays.moveTo(display, position);
+            }
+            velocity.setY(velocity.getY() - LOB_GRAVITY).multiply(0.99);
+            double horizontal = Math.hypot(position.getX() - start.getX(), position.getZ() - start.getZ());
+            if (burst == null && (ticks[0] >= LOB_MAX_TICKS || horizontal >= attack.range()
+                    || !session.isInPlay(owner))) {
+                burst = position.clone();
+            }
+            if (burst != null) {
+                if (task[0] != null) {
+                    task[0].cancel();
+                }
+                if (display != null && display.isValid()) {
+                    display.remove();
+                }
+                if (session.isInPlay(owner)) {
+                    splash(owner, attack, burst);
+                }
+            }
+        };
+        task[0] = ctx().runTimer(owner, 1, 1, step);
+    }
+
+    /** The burst of a lob: every enemy within {@code radius}. */
+    private void splash(Player owner, BasicAttack attack, Location at) {
+        Palette palette = attack.palette();
+        Location center = at.clone().add(0, 0.3, 0);
+        Vfx.ring(ctx(), center, attack.radius(), 14, 0, Particle.DUST, dust(palette, 1.2f), false);
+        Vfx.cloud(ctx(), center, palette.particle(), 10, attack.radius() * 0.4, 0.05, null, false);
+        if (attack.radius() >= 1.8) {
+            Vfx.dot(center, Particle.EXPLOSION, null, false);
+        }
+        sound(center, palette.impact(), palette.impactPitch(), 0.7f);
+        hitAll(owner, attack, ctx().enemiesNear(owner, center, attack.radius()), attack.damage());
+        healAlliesNear(owner, attack, center, attack.radius());
+    }
+
+    /** A zap on the aimed enemy that jumps on to the nearest ones it has not hit. */
+    private void chain(Player owner, BasicAttack attack) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize();
+        Location hand = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(0.6));
+        LivingEntity first = ctx().findTarget(owner, attack.range());
+        if (first == null) {
+            zap(attack, hand, eye.clone().add(direction.multiply(reach(eye, direction, attack.range()))));
+            return;
+        }
+        zap(attack, hand, Fx.body(first));
+        hitAll(owner, attack, List.of(first), attack.damage());
+        Set<UUID> struck = new HashSet<>();
+        struck.add(first.getUniqueId());
+        jump(owner, attack, first, struck, 1, attack.damage() * attack.falloff());
+    }
+
+    private void jump(Player owner, BasicAttack attack, LivingEntity from, Set<UUID> struck, int index,
+                      double damage) {
+        if (index >= attack.hits() || !(damage > 0)) {
+            return;
+        }
+        ctx().runLater(owner, CHAIN_STEP, () -> {
+            if (!session.isInPlay(owner)) {
+                return;
+            }
+            Location origin = from.isValid() ? Fx.body(from) : from.getLocation();
+            LivingEntity next = null;
+            for (LivingEntity enemy : ctx().enemiesNear(owner, origin, attack.radius())) {
+                if (!struck.contains(enemy.getUniqueId()) && (!from.isValid() || from.hasLineOfSight(enemy))) {
+                    next = enemy;
+                    break;
+                }
+            }
+            if (next == null) {
+                return;
+            }
+            struck.add(next.getUniqueId());
+            zap(attack, origin, Fx.body(next));
+            hitAll(owner, attack, List.of(next), damage);
+            jump(owner, attack, next, struck, index + 1, damage * attack.falloff());
+        });
+    }
+
+    /** A jagged bolt from {@code from} to {@code to}. */
+    private void zap(BasicAttack attack, Location from, Location to) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Vector delta = to.toVector().subtract(from.toVector());
+        int segments = (int) Math.max(2, Math.min(8, Math.round(delta.length() / 1.2)));
+        Location previous = from.clone();
+        Palette palette = attack.palette();
+        for (int i = 1; i <= segments; i++) {
+            Location point = from.clone().add(delta.clone().multiply((double) i / segments));
+            if (i < segments) {
+                point.add(random.nextDouble(-0.25, 0.25), random.nextDouble(-0.25, 0.25),
+                        random.nextDouble(-0.25, 0.25));
+            }
+            Vfx.line(ctx(), previous, point, 4, Particle.DUST, dust(palette, 0.6f), false);
+            Vfx.dot(point, palette.particle(), null, false);
+            previous = point;
+        }
+    }
+
+    /** A short cone in front: every enemy inside (up to {@code pierce}). */
+    private void cone(Player owner, BasicAttack attack) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize();
+        List<LivingEntity> found = new ArrayList<>();
+        for (LivingEntity enemy : ctx().enemiesNear(owner, eye, attack.range())) {
+            if (withinCone(eye, direction, enemy, attack.angle()) && canSee(owner, enemy)) {
+                found.add(enemy);
+            }
+        }
+        Palette palette = attack.palette();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        double half = Math.toRadians(attack.angle() / 2);
+        int puffs = Vfx.n(ctx(), 10);
+        World world = eye.getWorld();
+        for (int i = 0; i < puffs; i++) {
+            Vector spray = direction.clone()
+                    .rotateAroundY(random.nextDouble(-half, half))
+                    .multiply(random.nextDouble(0.8, attack.range()));
+            Location at = eye.clone().add(0, -0.3 + random.nextDouble(-0.2, 0.2), 0).add(spray);
+            world.spawnParticle(i % 2 == 0 ? palette.particle() : Particle.DUST, at, 1, 0, 0, 0, 0,
+                    i % 2 == 0 ? null : dust(palette, 1.0f), false);
+        }
+        hitAll(owner, attack, limit(found, attack.pierce()), attack.damage());
+    }
+
+    /** A burst around the attacker: every enemy within {@code range}; allies inside may heal. */
+    private void nova(Player owner, BasicAttack attack) {
+        Location center = owner.getLocation().add(0, 1, 0);
+        Palette palette = attack.palette();
+        for (int i = 0; i < 3; i++) {
+            double radius = attack.range() * (i + 1) / 3.0;
+            if (i == 0) {
+                Vfx.ring(ctx(), center, radius, 10, 0, Particle.DUST, dust(palette, 1.0f), false);
+            } else {
+                ctx().runLater(owner, i, () -> Vfx.ring(ctx(), center, radius, (int) Math.round(radius * 5), 0.3,
+                        Particle.DUST, dust(palette, 1.0f), false));
+            }
+        }
+        Vfx.ring(ctx(), center, attack.range() * 0.5, 6, 0.2, palette.particle(), null, false);
+        hitAll(owner, attack, ctx().enemiesNear(owner, center, attack.range()), attack.damage());
+        healAlliesNear(owner, attack, center, attack.range());
+    }
+
+    /** A blow on the aimed spot (the aimed enemy, or the block looked at) after {@code interval} ticks. */
+    private void strike(Player owner, BasicAttack attack) {
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection().normalize();
+        LivingEntity aimed = ctx().findTarget(owner, attack.range());
+        Location spot;
+        if (aimed != null) {
+            spot = aimed.getLocation();
+        } else {
+            double reach = reach(eye, direction, attack.range());
+            spot = ground(eye.clone().add(direction.clone().multiply(Math.max(0, reach - 0.2))));
+        }
+        Palette palette = attack.palette();
+        Location mark = spot.clone().add(0, 0.1, 0);
+        Vfx.ring(ctx(), mark, attack.radius(), 12, 0, Particle.DUST, dust(palette, 0.9f), false);
+        Runnable land = () -> {
+            if (!session.isInPlay(owner)) {
+                return;
+            }
+            Location center = spot.clone().add(0, 0.6, 0);
+            Vfx.cloud(ctx(), center, palette.particle(), 12, attack.radius() * 0.4, 0.05, null, false);
+            Vfx.line(ctx(), spot, spot.clone().add(0, 1.8, 0), 4, Particle.DUST, dust(palette, 1.2f), false);
+            if (palette.item() != null) {
+                ItemDisplay spike = Displays.item(ctx(), owner, spot.clone().add(0, 0.2, 0),
+                        new ItemStack(palette.item()), Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0), 12);
+                Displays.animateNextTick(ctx(), owner, spike, Displays.centered(0, 0.6f, 0, 1.3f, 1.6f, 1.3f,
+                        0, 0, 0), 3);
+            }
+            sound(center, palette.impact(), palette.impactPitch(), 0.7f);
+            hitAll(owner, attack, ctx().enemiesNear(owner, center, attack.radius()), attack.damage());
+            healAlliesNear(owner, attack, center, attack.radius());
+        };
+        if (attack.interval() > 0) {
+            ctx().runLater(owner, attack.interval(), land);
+        } else {
+            land.run();
+        }
+    }
+
+    // =================================================================== hits & effects
+
+    private void hitAll(Player owner, BasicAttack attack, List<LivingEntity> targets, double damage) {
+        for (LivingEntity target : targets) {
+            if (!session.isInPlay(owner) || !ctx().isEnemy(owner, target)) {
+                continue;
+            }
+            hit(owner, attack, target, damage);
+        }
+    }
+
+    /** One hit: the damage, its look and sound, and the side effect. */
+    private void hit(Player owner, BasicAttack attack, LivingEntity target, double damage) {
+        double amount = scaled(owner, target, damage);
+        Location body = Fx.body(target);
+        double lost = ctx().basicHit(owner, target, amount, DamageType.PLAYER_ATTACK);
+        Palette palette = attack.palette();
+        Vfx.cloud(ctx(), body, palette.particle(), 5, 0.2, 0.03, null, false);
+        Vfx.cloud(ctx(), body, Particle.DUST, 4, 0.25, 0, dust(palette, 1.0f), false);
+        sound(body, palette.impact(), palette.impactPitch(), 0.55f);
+        if (target.isDead() || !target.isValid()) {
+            return;
+        }
+        long ticks = Math.max(1, Math.round(attack.effectSeconds() * 20));
+        State state = state(owner);
+        switch (attack.effect()) {
+            case SLOW -> timedModifier(owner, target, Attribute.MOVEMENT_SPEED, -attack.effectPower(),
+                    AttributeModifier.Operation.MULTIPLY_SCALAR_1, ticks, state.slows);
+            case WEAKEN -> timedModifier(owner, target, Attribute.ATTACK_DAMAGE, -attack.effectPower(),
+                    AttributeModifier.Operation.ADD_NUMBER, ticks, state.weakens);
+            case DOT -> damageOverTime(owner, attack, target, ticks, state);
+            case KNOCKBACK -> {
+                if (!match.isHostTarget(target)) {
+                    Vector away = target.getLocation().toVector().subtract(owner.getLocation().toVector()).setY(0);
+                    away = away.lengthSquared() < 1.0E-4 ? Motion.horizontalFacing(owner.getLocation())
+                            : away.normalize();
+                    double power = attack.effectPower();
+                    Motion.push(target, away.multiply(power).setY(Math.min(0.45, 0.2 + power * 0.2)), 2.0);
+                }
+            }
+            case PULL -> {
+                if (!match.isHostTarget(target)) {
+                    Vector toward = owner.getLocation().toVector().subtract(target.getLocation().toVector())
+                            .setY(0);
+                    if (toward.lengthSquared() > 1.0) {
+                        Motion.push(target, toward.normalize().multiply(attack.effectPower()).setY(0.15), 2.0);
+                    }
+                }
+            }
+            case LIFESTEAL -> {
+                if (lost > 0) {
+                    ctx().heal(owner, lost * attack.effectPower());
+                }
+            }
+            case HEAL_ALLIES -> {
+                if (attack.shape() != BasicAttack.Shape.PROJECTILE && attack.shape() != BasicAttack.Shape.NOVA
+                        && attack.shape() != BasicAttack.Shape.LOB && attack.shape() != BasicAttack.Shape.STRIKE) {
+                    healAlliesNear(owner, attack, body, 2.0);
+                }
+            }
+            default -> {
+            }
+        }
+    }
+
+    /**
+     * The damage of one hit: the attack's number × the configured scale × the host's factor × the attacker's attack
+     * damage bonuses (added bonus scaled by the hit's share of {@link BasicAttackSettings#bonusReference()}, scalar
+     * bonuses as they are; the weapon's own damage is not a bonus).
+     */
+    double scaled(Player owner, LivingEntity target, double damage) {
+        double multiplier = host.basicAttackMultiplier(owner, target);
+        if (!Double.isFinite(multiplier) || multiplier < 0) {
+            multiplier = 1.0;
+        }
+        return damage * settings.damageScale() * multiplier * bonusFactor(owner);
+    }
+
+    /** The factor the attacker's attack damage modifiers (items, buffs, weakness) put on a basic attack. */
+    double bonusFactor(Player owner) {
+        AttributeInstance attack = owner.getAttribute(Attribute.ATTACK_DAMAGE);
+        if (attack == null) {
+            return 1.0;
+        }
+        double added = 0;
+        double scalar = 0;
+        double multiplied = 1;
+        for (AttributeModifier modifier : attack.getModifiers()) {
+            if (ITEM_DAMAGE.equals(modifier.getKey())) {
+                continue;
+            }
+            switch (modifier.getOperation()) {
+                case ADD_NUMBER -> added += modifier.getAmount();
+                case ADD_SCALAR -> scalar += modifier.getAmount();
+                case MULTIPLY_SCALAR_1 -> multiplied *= 1 + modifier.getAmount();
+            }
+        }
+        double reference = settings.bonusReference();
+        double flat = reference > 0 ? 1 + added / reference : 1;
+        double factor = flat * (1 + scalar) * multiplied;
+        return Double.isFinite(factor) ? Math.max(0.1, factor) : 1.0;
+    }
+
+    /** A slow or weaken from this attacker on {@code target}, replacing its previous one (never stacking). */
+    private void timedModifier(Player owner, LivingEntity target, Attribute attribute, double amount,
+                               AttributeModifier.Operation operation, long ticks, Map<UUID, NamespacedKey> running) {
+        if (!(amount < 0)) {
+            return;
+        }
+        NamespacedKey previous = running.remove(target.getUniqueId());
+        if (previous != null) {
+            ctx().removeModifier(target, previous);
+        }
+        running.put(target.getUniqueId(), ctx().addModifier(owner, target, attribute, amount, operation, ticks));
+    }
+
+    /** {@code effectPower} more damage over {@code effectSeconds}, in pulses; a new hit restarts it. */
+    private void damageOverTime(Player owner, BasicAttack attack, LivingEntity target, long ticks, State state) {
+        BukkitTask previous = state.dots.remove(target.getUniqueId());
+        if (previous != null) {
+            previous.cancel();
+        }
+        int pulses = (int) Math.max(1, ticks / DOT_PERIOD);
+        double each = attack.effectPower() / pulses;
+        if (!(each > 0)) {
+            return;
+        }
+        int[] left = {pulses};
+        BukkitTask[] task = new BukkitTask[1];
+        task[0] = ctx().runTimer(owner, DOT_PERIOD, DOT_PERIOD, () -> {
+            if (left[0]-- <= 0 || !target.isValid() || target.isDead() || !ctx().isEnemy(owner, target)) {
+                task[0].cancel();
+                state.dots.remove(target.getUniqueId(), task[0]);
+                return;
+            }
+            ctx().basicHit(owner, target, scaled(owner, target, each), DamageType.MAGIC);
+            Vfx.cloud(ctx(), Fx.body(target), attack.palette().particle(), 3, 0.25, 0.01, null, false);
+        });
+        state.dots.put(target.getUniqueId(), task[0]);
+    }
+
+    private void healAlliesNear(Player owner, BasicAttack attack, Location center, double radius) {
+        if (attack.effect() != BasicAttack.Effect.HEAL_ALLIES) {
+            return;
+        }
+        for (Player ally : ctx().alliesNear(owner, center, radius)) {
+            healAlly(owner, attack, ally);
+        }
+    }
+
+    private void healAlly(Player owner, BasicAttack attack, Player ally) {
+        ctx().heal(ally, attack.effectPower());
+        Vfx.cloud(ctx(), Fx.body(ally), Particle.HAPPY_VILLAGER, 4, 0.3, 0, null, false);
+    }
+
+    // =================================================================== attack speed (crosshair indicator)
+
+    /**
+     * Keeps every participant's attack speed matching its basic attack's cadence while it fights with an ability
+     * (the crosshair indicator fills when the next attack is ready) and removes it otherwise.
+     */
+    void syncAttackSpeed() {
+        for (Participant participant : match.participants()) {
+            Player player = participant.player();
+            if (player == null) {
+                continue;
+            }
+            boolean fighting = match.phase() == MatchPhase.FIGHT && participant.ability != null
+                    && participant.abilityId != null && session.isInPlay(player);
+            AttributeInstance speed = player.getAttribute(Attribute.ATTACK_SPEED);
+            if (speed == null) {
+                continue;
+            }
+            if (!fighting) {
+                speed.removeModifier(speedKey);
+                continue;
+            }
+            BasicAttack attack = settings.attack(participant.abilityId);
+            double amount = 20.0 / attack.cooldown() - SWORD_ATTACK_SPEED;
+            AttributeModifier current = speed.getModifier(speedKey);
+            if (current != null && Math.abs(current.getAmount() - amount) < 1.0E-9) {
+                continue;
+            }
+            speed.removeModifier(speedKey);
+            speed.addModifier(new AttributeModifier(speedKey, amount, AttributeModifier.Operation.ADD_NUMBER,
+                    EquipmentSlotGroup.ANY));
+        }
+    }
+
+    /** The match ended: every attack speed change is undone. */
+    void dispose() {
+        for (Participant participant : match.participants()) {
+            Player player = participant.player();
+            AttributeInstance speed = player == null ? null : player.getAttribute(Attribute.ATTACK_SPEED);
+            if (speed != null) {
+                speed.removeModifier(speedKey);
+            }
+        }
+        for (State state : states.values()) {
+            state.dots.values().forEach(BukkitTask::cancel);
+        }
+        states.clear();
+    }
+
+    /** The weapon's lore gets a line naming its basic attack. */
+    void describe(ItemStack weapon, String abilityId) {
+        BasicAttack attack = settings.attack(abilityId);
+        ItemLore lore = weapon.getData(DataComponentTypes.LORE);
+        List<Component> lines = new ArrayList<>(lore == null ? List.of() : lore.lines());
+        lines.add(Component.empty());
+        lines.add(Text.mm("<gray>좌클릭 평타: <white>" + attack.name() + "</white> <dark_gray>("
+                + attack.shape().korean() + ")").decoration(TextDecoration.ITALIC, false));
+        lines.add(Text.mm("<dark_gray>" + attack.description()).decoration(TextDecoration.ITALIC, false));
+        weapon.setData(DataComponentTypes.LORE, ItemLore.lore(lines));
+    }
+
+    // =================================================================== geometry & looks
+
+    private ItemDisplay projectileDisplay(Player owner, BasicAttack attack, Location at, long lifetime) {
+        float scale = attack.palette().item() != null && attack.palette().item().isBlock() ? 0.3f : 0.45f;
+        ItemDisplay display = Displays.item(ctx(), owner, at, new ItemStack(attack.palette().item()),
+                Displays.centered(0, 0, 0, scale, scale, scale, 0, 0, 0), lifetime);
+        display.setBillboard(Display.Billboard.CENTER);
+        display.setTeleportDuration(1);
+        return display;
+    }
+
+    /** How far a ray from {@code from} gets before a solid block (at most {@code length}). */
+    private static double reach(Location from, Vector direction, double length) {
+        World world = from.getWorld();
+        if (world == null || !(length > 0)) {
+            return 0;
+        }
+        RayTraceResult wall = world.rayTraceBlocks(from, direction, length, FluidCollisionMode.NEVER, true);
+        return wall == null ? length : Math.min(length, wall.getHitPosition().distance(from.toVector()));
+    }
+
+    /**
+     * Where along a ray of {@code length} the entity's box widened by {@code radius} is entered (0 if the ray starts
+     * inside), or −1 if it is missed.
+     */
+    private static double along(Location from, Vector direction, double length, Entity entity, double radius) {
+        BoundingBox box = entity.getBoundingBox().expand(radius);
+        Vector start = from.toVector();
+        if (box.contains(start)) {
+            return 0;
+        }
+        if (!(length > 0)) {
+            return -1;
+        }
+        RayTraceResult hit = box.rayTrace(start, direction, length);
+        return hit == null ? -1 : hit.getHitPosition().distance(start);
+    }
+
+    private static boolean onRay(Location from, Vector direction, double length, Entity entity, double radius) {
+        return along(from, direction, length, entity, radius) >= 0;
+    }
+
+    /** True if the entity is within {@code angle} degrees (total) of {@code look} on the horizontal plane. */
+    private static boolean withinArc(Location eye, Vector look, LivingEntity entity, double angle) {
+        Vector to = Fx.body(entity).toVector().subtract(eye.toVector()).setY(0);
+        double distance = to.length();
+        if (distance < 0.8) {
+            return true;
+        }
+        double slack = Math.toDegrees(Math.atan2(entity.getWidth() / 2, distance));
+        return Math.toDegrees(look.angle(to)) <= angle / 2 + slack;
+    }
+
+    /** True if the entity is within {@code angle} degrees (total) of {@code direction}. */
+    private static boolean withinCone(Location eye, Vector direction, LivingEntity entity, double angle) {
+        Vector to = Fx.body(entity).toVector().subtract(eye.toVector());
+        double distance = to.length();
+        if (distance < 0.8) {
+            return true;
+        }
+        double slack = Math.toDegrees(Math.atan2(Math.max(entity.getWidth(), entity.getHeight()) / 2, distance));
+        return Math.toDegrees(direction.angle(to)) <= angle / 2 + slack;
+    }
+
+    private static boolean canSee(Player owner, LivingEntity entity) {
+        return owner.hasLineOfSight(entity);
+    }
+
+    /** The horizontal part of {@code direction}, or the player's facing when it looks straight up or down. */
+    private static Vector horizontal(Vector direction, Player player) {
+        Vector flat = direction.clone().setY(0);
+        return flat.lengthSquared() < 1.0E-6 ? Motion.horizontalFacing(player.getLocation()) : flat.normalize();
+    }
+
+    /** The ground under {@code at} (up to 6 blocks down), or {@code at} itself. */
+    private static Location ground(Location at) {
+        World world = at.getWorld();
+        RayTraceResult down = world == null ? null
+                : world.rayTraceBlocks(at, new Vector(0, -1, 0), 6, FluidCollisionMode.NEVER, true);
+        return down == null ? at : down.getHitPosition().toLocation(world);
+    }
+
+    private static <T> List<T> limit(List<T> list, int max) {
+        return max > 0 && list.size() > max ? new ArrayList<>(list.subList(0, max)) : list;
+    }
+
+    private static Particle.DustOptions dust(Palette palette, float size) {
+        return new Particle.DustOptions(palette.color(), size);
+    }
+
+    private static void sound(Location at, org.bukkit.Sound sound, float pitch, float volume) {
+        at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume,
+                Math.max(0.5f, Math.min(2.0f, pitch + Fx.jitter(0.05f))));
+    }
+}

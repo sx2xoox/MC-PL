@@ -384,6 +384,8 @@ class SiegeReadabilityTest {
         defender.setNoDamageTicks(0);
         defender.damage(5, DamageSource.builder(DamageType.PLAYER_ATTACK).withCausingEntity(attacker)
                 .withDirectEntity(attacker).build());
-        assertEquals(before - 5, defender.getHealth(), 1.0E-6, "a sword hit still hurts");
+        assertEquals(before, defender.getHealth(), 1.0E-6,
+                "a vanilla sword hit is replaced by the basic attack (평타, BasicAttackMatchTest)");
+        assertTrue(match.abilities().basicAttack(attacker), "left-click fires the ability's basic attack");
     }
 }

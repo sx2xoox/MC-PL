@@ -22,6 +22,7 @@ import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
 import io.github.sx2xoox.mcpl.game.siege.tower.TowerLook;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -112,6 +113,7 @@ public final class SiegeGame implements MiniGame {
         SiegeSettings.declareDefaults(defaults);
         SiegeProgressSettings.declareDefaults(defaults);
         SiegeBalanceSettings.declareDefaults(defaults);
+        BasicAttackSettings.declareDefaults(defaults, SiegeMatch.BASIC_ATTACKS);
     }
 
     @Override

@@ -101,6 +101,19 @@ tasks.register<Test>("updateSiegeBalance") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("updateBasicAttackDocs") {
+    description = "Regenerates the basic attack (평타) table in docs/siege-v2.md §8 from BasicAttacks."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*BasicAttackDocsTest")
+    }
+    systemProperty("mcpl.updateDocs", "true")
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("updateAugmentDocs") {
     description = "Regenerates docs/augments.md from the augment definitions (AugmentInfo, BonusCondition)."
     group = "documentation"

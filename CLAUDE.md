@@ -17,6 +17,8 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
   `./gradlew updateAbilityDocs` (`AbilityDocsTest` fails while it is stale). New abilities need a docs section there.
 - `docs/augments.md` is generated the same way from every `AugmentInfo` and `BonusCondition`: run
   `./gradlew updateAugmentDocs` after changing them (`AugmentDocsTest` fails while it is stale).
+- The 공성전 basic attack (평타) table in `docs/siege-v2.md` §8 is generated from `BasicAttacks`: run
+  `./gradlew updateBasicAttackDocs` after changing them (`BasicAttackDocsTest` fails while it is stale).
 - Resource pack: `./gradlew resourcePack` (part of `build`) converts `src/main/resourcepack-src` into
   `build/resourcepack/MCPL-pack.zip` (bundled into the jar; 26.3 `pack.mcmeta` uses `min_format`/`max_format` 97, no
   `pack_format`). Models are code in `tools/assetgen/models/*.py`: after changing one run
@@ -74,6 +76,9 @@ src/main/java/io/github/sx2xoox/mcpl/
                                parts, motions; tools/assetgen/models/creatures.py); tests on lanes/TestLaneSites
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
+    basic/                     basic attacks (평타) of the ability weapon: BasicAttack (shape + numbers + effect + look),
+                               BasicAttacks (the 50 pool defaults), BasicAttackSettings; run by runtime/BasicAttackRunner
+                               when a MatchHost turns them on (공성전)
     abilities/                 one class per ability + BuiltinAbilities registration
     config/                    abilities.yml (enabled flags + params, generated from AbilityInfo)
     runtime/                   the match: phases, AbilityContext impl, listener, assignment, gauge, cooldown, HUD

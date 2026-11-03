@@ -25,6 +25,7 @@ import io.github.sx2xoox.mcpl.game.siege.balance.SiegeModifiers;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchHost;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
@@ -60,6 +61,9 @@ import org.jspecify.annotations.Nullable;
  */
 public final class SiegeMatch implements GameInstance {
 
+    /** The config section of the basic attacks (평타) under {@code games.siege}. */
+    public static final String BASIC_ATTACKS = "basic-attacks";
+
     /** Phases of the match (all inside the hub's RUNNING state). */
     public enum Phase {
         /** Before a round's fight: everyone at their spawn, invulnerable, rerolls open. */
@@ -88,6 +92,8 @@ public final class SiegeMatch implements GameInstance {
     /** Stat modifiers of items and buffs ({@link #modifiers()}) and the ability balance read from them. */
     private final SiegeModifiers modifiers = new SiegeModifiers();
     private SiegeBalance balance = new SiegeBalance(SiegeBalanceSettings.defaults(), modifiers);
+    /** The basic attacks (평타) of the ability weapons, read at the start ({@code games.siege.basic-attacks}). */
+    private BasicAttackSettings basicAttacks = BasicAttackSettings.defaults();
     private final List<SiegeModule> modules = new ArrayList<>();
     /** The built-in lane systems (minions, jungle, gold, shop), null if they failed to start. */
     private @Nullable LaneSystemsModule lanes;
@@ -135,6 +141,7 @@ public final class SiegeMatch implements GameInstance {
     public void start() {
         settings = SiegeSettings.read(session.gameConfig());
         balance = new SiegeBalance(SiegeBalanceSettings.read(session.gameConfig()), modifiers);
+        basicAttacks = BasicAttackSettings.read(session.gameConfig().getConfigurationSection(BASIC_ATTACKS));
         if (session.teams().size() < 2) {
             session.abort(messages.get("start.no-teams"));
             return;
@@ -304,6 +311,18 @@ public final class SiegeMatch implements GameInstance {
         @Override
         public boolean abilityWeapon() {
             return true;
+        }
+
+        /** 공성전: left-clicks fire each ability's basic attack (평타, {@code games.siege.basic-attacks}). */
+        @Override
+        public BasicAttackSettings basicAttacks() {
+            return basicAttacks;
+        }
+
+        /** Basic attacks grow with the level like ability damage does ({@code balance.damage-per-level}). */
+        @Override
+        public double basicAttackMultiplier(Player attacker, LivingEntity target) {
+            return balance.levelFactor(balanceLevel(attacker.getUniqueId()));
         }
 
         @Override

@@ -32,6 +32,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import io.github.sx2xoox.mcpl.game.superpower.config.AbilityConfig;
 import io.github.sx2xoox.mcpl.game.superpower.loot.LootListener;
 import io.github.sx2xoox.mcpl.game.superpower.loot.LootManager;
@@ -148,6 +149,8 @@ public final class SuperpowerMatch implements GameInstance {
     /** Day to night and showers over a plugin map world, null elsewhere and in practice ({@link MatchSky}). */
     private @Nullable MatchSky sky;
     private @Nullable MatchHud hud;
+    /** Basic attacks (평타) of the ability weapon, null unless the host turns them on ({@link MatchHost#basicAttacks()}). */
+    private @Nullable BasicAttackRunner basics;
     /** Loot chests and supply drops, null when loot is off for this match ({@code loot.enabled}). */
     private @Nullable LootManager loot;
     private MatchPhase phase = MatchPhase.INTRO;
@@ -218,6 +221,11 @@ public final class SuperpowerMatch implements GameInstance {
         }
         border = new BorderController(session, settings);
         if (host != null) {
+            BasicAttackSettings basicAttacks = host.abilityWeapon() ? host.basicAttacks() : null;
+            if (basicAttacks != null && basicAttacks.enabled()) {
+                basics = new BasicAttackRunner(this, host, basicAttacks);
+                session.registerListener(basics);
+            }
             startHosted();
             return;
         }
@@ -289,6 +297,9 @@ public final class SuperpowerMatch implements GameInstance {
         }
         if (tick % 20 == 0) {
             maintainItems();
+        }
+        if (basics != null && tick % 10 == 0) {
+            basics.syncAttackSpeed();
         }
         if (tick % 100 == 0) {
             ctx.prune();
@@ -389,6 +400,9 @@ public final class SuperpowerMatch implements GameInstance {
                 }
             }
             reveals.clear();
+            if (basics != null) {
+                basics.dispose();
+            }
             if (dummies != null) {
                 dummies.dispose();
             }
@@ -1669,6 +1683,25 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
+    /** The basic attacks (평타) of this match, or null when the ability weapon swings like a plain sword. */
+    @Nullable BasicAttackRunner basicAttacks() {
+        return basics;
+    }
+
+    /**
+     * A basic attack click of {@code player} (a left-click with the ability weapon), as the arm swing would fire it.
+     *
+     * @return true if an attack fired now (false: not on, not wielding the weapon, or not ready yet)
+     */
+    public boolean basicAttack(Player player) {
+        return basics != null && basics.trigger(player);
+    }
+
+    /** True if left-clicks with the ability weapon fire basic attacks (평타) in this match. */
+    public boolean hasBasicAttacks() {
+        return basics != null;
+    }
+
     /** True if the ability item is the player's sword ({@link MatchHost#abilityWeapon()}, 공성전). */
     public boolean isAbilityWeapon() {
         return host != null && host.abilityWeapon();
@@ -1752,9 +1785,13 @@ public final class SuperpowerMatch implements GameInstance {
             return;
         }
         ItemStack displaced = isEmpty(current) || items.isAbilityItem(current) ? null : current;
-        inventory.setItem(abilitySlot, weapon
+        ItemStack created = weapon
                 ? items.createWeapon(info, params(info), weaponBase(), texts)
-                : items.create(info, params(info), settings.abilityItemMaterial(), texts));
+                : items.create(info, params(info), settings.abilityItemMaterial(), texts);
+        if (weapon && basics != null) {
+            basics.describe(created, info.id());
+        }
+        inventory.setItem(abilitySlot, created);
         if (displaced != null) {
             for (ItemStack leftover : inventory.addItem(displaced).values()) {
                 Item dropped = player.getWorld().dropItem(player.getLocation(), leftover);

@@ -90,6 +90,7 @@ public final class MatchContext implements AbilityContext {
     /** Entities created by ultimate code (tracked, summoned or tagged), by entity id. */
     private final Set<UUID> ultimateEntities = new HashSet<>();
     private int abilityDamageDepth;
+    private int basicHitDepth;
     private long modifierSequence;
     private boolean closed;
 
@@ -458,6 +459,50 @@ public final class MatchContext implements AbilityContext {
                 target.setLastDamage(previousLastDamage);
             }
         }
+    }
+
+    /**
+     * A basic attack hit (평타, {@code BasicAttackRunner}): {@code source} hits {@code target} like its own weapon
+     * would ({@code type} {@code PLAYER_ATTACK}: armor applies, the hit is a melee hit to every hook and to kill credit,
+     * not {@link #isAbilityDamage() ability damage}), only an enemy, with no vanilla knockback and without touching the
+     * target's invulnerability frames (so quick combo hits and several attackers all land). {@code amount} is final:
+     * no host ability factor. While it lands {@link #isBasicHit()} is true.
+     *
+     * @return the health (and absorption) the target lost
+     */
+    double basicHit(Player source, LivingEntity target, double amount, DamageType type) {
+        if (closed || !(amount > 0) || !Double.isFinite(amount) || !session.isAlive(source)
+                || !isEnemy(source, target)) {
+            return 0;
+        }
+        DamageSource damageSource = DamageSource.builder(type)
+                .withCausingEntity(source)
+                .withDirectEntity(source)
+                .build();
+        UUID id = target.getUniqueId();
+        double before = target.getHealth() + target.getAbsorptionAmount();
+        int previousNoDamageTicks = target.getNoDamageTicks();
+        double previousLastDamage = target.getLastDamage();
+        target.setNoDamageTicks(0);
+        basicHitDepth++;
+        knockbackSuppressed.merge(id, 1, Integer::sum);
+        try {
+            target.damage(amount, damageSource);
+        } finally {
+            basicHitDepth--;
+            knockbackSuppressed.computeIfPresent(id, (key, count) -> count <= 1 ? null : count - 1);
+            if (!target.isDead()) {
+                target.setNoDamageTicks(previousNoDamageTicks);
+                target.setLastDamage(previousLastDamage);
+            }
+        }
+        double after = target.isDead() ? 0 : target.getHealth() + target.getAbsorptionAmount();
+        return Math.max(0, before - after);
+    }
+
+    /** True while a basic attack hit ({@link #basicHit}) is landing. */
+    public boolean isBasicHit() {
+        return basicHitDepth > 0;
     }
 
     /** Border damage: no attacker (the combat tracker credits the last hit), ignores invulnerability frames. */

@@ -3,6 +3,8 @@ package io.github.sx2xoox.mcpl.game.superpower.runtime;
 import java.util.List;
 
 import io.github.sx2xoox.mcpl.core.game.DeathOutcome;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -59,6 +61,24 @@ public interface MatchHost {
      */
     default boolean abilityWeapon() {
         return false;
+    }
+
+    /**
+     * The basic attacks (평타) of the {@link #abilityWeapon() ability weapon}, or null (the default): a left-click
+     * with the weapon then fires the ability's own basic attack ({@link BasicAttack}: a swing, combo, shot, projectile,
+     * ...) instead of a vanilla sword hit, whose damage is cancelled. Read once when the match starts; ignored unless
+     * {@link #abilityWeapon()} is true and the table is {@link BasicAttackSettings#enabled() enabled}.
+     */
+    default @Nullable BasicAttackSettings basicAttacks() {
+        return null;
+    }
+
+    /**
+     * Factor on every basic attack hit {@code attacker} deals to {@code target} (e.g. 공성전 levels); 1.0 by default.
+     * Attack damage bonuses (items, buffs) are added by the match on top ({@link BasicAttackSettings#bonusReference()}).
+     */
+    default double basicAttackMultiplier(Player attacker, LivingEntity target) {
+        return 1.0;
     }
 
     /** Live non-player targets abilities may hit (enemy candidates for targeting), e.g. tower hitboxes. */
