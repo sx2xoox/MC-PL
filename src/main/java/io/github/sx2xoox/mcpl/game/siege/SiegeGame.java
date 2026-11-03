@@ -19,6 +19,8 @@ import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
+import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotSettings;
+import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
 import io.github.sx2xoox.mcpl.game.siege.tower.TowerLook;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
@@ -43,6 +45,8 @@ public final class SiegeGame implements MiniGame {
     public static final String ID = "siege";
     public static final String MAP_ID = "toykingdom";
     public static final String MESSAGES_FILE = "siege.yml";
+    /** How long a 봇전 request waits for its match to start (the countdown). */
+    static final long BOT_REQUEST_MILLIS = 120_000;
 
     private final Hub hub;
     private final SuperpowerGame superpower;
@@ -52,6 +56,10 @@ public final class SiegeGame implements MiniGame {
     private final List<Function<SiegeMatch, SiegeModule>> moduleFactories = new ArrayList<>();
     private @Nullable List<SettingsSection> settings;
     private @Nullable SiegeMatch current;
+    /** The bots asked for with {@code /게임 시작 공성전 봇전}, taken by the next match. */
+    private SiegeBots.@Nullable Setup botRequest;
+    /** When {@link #botRequest} was made (a request whose start never came expires). */
+    private long botRequestedAt;
 
     public SiegeGame(Hub hub, SuperpowerGame superpower) {
         this.hub = hub;
@@ -114,6 +122,7 @@ public final class SiegeGame implements MiniGame {
         SiegeProgressSettings.declareDefaults(defaults);
         SiegeBalanceSettings.declareDefaults(defaults);
         BasicAttackSettings.declareDefaults(defaults, SiegeMatch.BASIC_ATTACKS);
+        SiegeBotSettings.declareDefaults(defaults);
     }
 
     @Override
@@ -250,6 +259,28 @@ public final class SiegeGame implements MiniGame {
         if (current == match) {
             current = null;
         }
+    }
+
+    /**
+     * 공성전 봇전: the next match fills both sides with bots as {@code setup} says (null: no bots). The match takes it
+     * when it starts ({@link #takeBotRequest}).
+     */
+    public void requestBots(SiegeBots.@Nullable Setup setup) {
+        this.botRequest = setup;
+        this.botRequestedAt = System.currentTimeMillis();
+    }
+
+    /** The bots asked for the starting match, cleared (null: a match without bots). */
+    SiegeBots.@Nullable Setup takeBotRequest() {
+        SiegeBots.Setup setup = botRequest;
+        botRequest = null;
+        // A countdown that was cancelled leaves its request behind: the next ordinary start must not get bots.
+        return setup != null && System.currentTimeMillis() - botRequestedAt <= BOT_REQUEST_MILLIS ? setup : null;
+    }
+
+    /** The 봇전 settings ({@code games.siege.bots.*}) as configured now. */
+    public SiegeBotSettings botSettings() {
+        return SiegeBotSettings.read(config());
     }
 
     /** {@code games.siege} of {@code config.yml}. */

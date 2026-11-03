@@ -15,6 +15,8 @@ import io.github.sx2xoox.mcpl.core.command.MatchCommands;
 import io.github.sx2xoox.mcpl.core.command.Permissions;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotOptions;
+import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
@@ -28,7 +30,8 @@ import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 공성전 commands: {@code /게임 시작 공성전} ({@code start siege}, admin), {@code /게임 리롤 · 점수 · 내정보 · 팀}
+ * The 공성전 commands: {@code /게임 시작 공성전} ({@code start siege}, admin), {@code /게임 시작 공성전 봇전 [팀당 인원]
+ * [난이도]} ({@code start siege bots}, bots fill the teams), {@code /게임 리롤 · 점수 · 내정보 · 팀}
  * in a match ({@link MatchCommands}), and {@code /게임 공성전} ({@code siege}): help, the ability pool for admins
  * ({@code 능력풀 추가|제거|목록|초기화 [능력]}). The old {@code /게임 공성전 리롤 · 점수} still work.
  */
@@ -52,12 +55,22 @@ final class SiegeCommand {
         for (String root : List.of("공성전", "siege")) {
             boolean english = root.equals("siege");
             String abilityArg = english ? "ability" : "능력";
+            String botsWord = english ? "bots" : "봇전";
+            String optionsArg = english ? "options" : "옵션";
             registrar.registerStart(Commands.literal(root)
                     .requires(registrar.admin())
-                    .executes(ctx -> registrar.startMatch(ctx.getSource().getSender(), game)));
+                    .executes(ctx -> registrar.startMatch(ctx.getSource().getSender(), game))
+                    .then(Commands.literal(botsWord)
+                            .executes(ctx -> startBots(registrar, ctx.getSource().getSender(), ""))
+                            .then(Commands.argument(optionsArg, StringArgumentType.greedyString())
+                                    .suggests(this::suggestBotOptions)
+                                    .executes(ctx -> startBots(registrar, ctx.getSource().getSender(),
+                                            StringArgumentType.getString(ctx, optionsArg))))));
             LiteralArgumentBuilder<CommandSourceStack> node = Commands.literal(root)
                     .requires(registrar.play())
                     .executes(ctx -> help(ctx.getSource().getSender()));
+            node.then(Commands.literal(english ? "bots" : "봇").requires(registrar.admin())
+                    .executes(ctx -> botStatus(ctx.getSource().getSender())));
             for (String name : List.of("능력풀", "pool")) {
                 LiteralArgumentBuilder<CommandSourceStack> pool = Commands.literal(name).requires(registrar.admin())
                         .executes(ctx -> poolList(ctx.getSource().getSender()));
@@ -128,7 +141,37 @@ final class SiegeCommand {
         }
     }
 
+    private CompletableFuture<Suggestions> suggestBotOptions(CommandContext<CommandSourceStack> ctx,
+                                                            SuggestionsBuilder builder) {
+        String typed = builder.getRemaining();
+        int space = typed.lastIndexOf(' ');
+        SuggestionsBuilder last = builder.createOffset(builder.getStart() + space + 1);
+        for (String option : SiegeBotOptions.suggestions(typed.substring(space + 1))) {
+            last.suggest(option);
+        }
+        return last.buildFuture();
+    }
+
     // ------------------------------------------------------------------ handlers
+
+    /** {@code /게임 시작 공성전 봇전 [팀당 인원] [난이도]}: a match whose empty places bots fill (docs/siege-v2.md §9). */
+    private int startBots(GameCommandRegistrar registrar, CommandSender sender, String input) {
+        SiegeBotOptions options = SiegeBotOptions.parse(input);
+        if (options.error() != null) {
+            messages().send(sender, "bots.bad-option", Messages.tag("input", options.error()));
+            return 0;
+        }
+        SiegeBots.Setup setup = options.setup(game.botSettings());
+        game.requestBots(setup);
+        int result = registrar.startMatch(sender, game);
+        if (result == 0) {
+            game.requestBots(null);
+            return 0;
+        }
+        messages().send(sender, "bots.starting", Messages.tag("size", setup.perSide()),
+                Messages.tag("difficulty", setup.difficulty().koreanName()));
+        return result;
+    }
 
     private int help(CommandSender sender) {
         messages().lines("command.help").forEach(sender::sendMessage);
@@ -224,6 +267,25 @@ final class SiegeCommand {
                 return null;
             }
         }
+    }
+
+    /** {@code /게임 공성전 봇}: every bot of the running 봇전 with what it is doing (admins, streamers). */
+    private int botStatus(CommandSender sender) {
+        SiegeMatch match = game.currentMatch();
+        SiegeBots bots = null;
+        if (match != null) {
+            for (SiegeModule module : match.modules()) {
+                if (module instanceof SiegeBots found) {
+                    bots = found;
+                }
+            }
+        }
+        if (match == null || bots == null) {
+            messages().send(sender, "bots.no-match");
+            return 0;
+        }
+        bots.status().forEach(sender::sendMessage);
+        return Command.SINGLE_SUCCESS;
     }
 
     private int poolList(CommandSender sender) {

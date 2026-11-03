@@ -273,13 +273,16 @@ class CommandLayoutTest {
         for (String old : List.of("리롤", "연습", "봇전", "받기", "빼기", "카드", "다음단계", "허수아비", "대전")) {
             assertFalse(augment.contains(old), old + " in " + augment);
         }
-        assertEquals(List.of("능력풀"), complete(admin, "게임 공성전 ").stream().filter(w -> !w.equals("pool")).toList());
+        assertEquals(List.of("능력풀", "봇"), complete(admin, "게임 공성전 ").stream()
+                .filter(w -> !w.equals("pool") && !w.equals("bots")).toList());
 
         List<String> start = complete(admin, "게임 시작 ");
         assertTrue(start.containsAll(List.of("초능력전쟁", "증강", "공성전")), start.toString());
         assertFalse(start.contains("연습"), start.toString());
         assertTrue(complete(admin, "게임 시작 증강 ").containsAll(List.of("연습", "봇전", "관전")));
         assertTrue(complete(admin, "게임 시작 증강 봇전 ").contains("팀"));
+        assertTrue(complete(admin, "게임 시작 공성전 ").contains("봇전"));
+        assertTrue(complete(admin, "게임 시작 공성전 봇전 ").containsAll(List.of("3", "쉬움", "보통", "어려움")));
         assertTrue(complete(admin, "게임 시작 초능력전쟁 연습 ").contains("모두"));
         assertTrue(complete(admin, "게임 연습 ").containsAll(List.of("허수아비", "바꾸기", "충전", "쿨타임", "받기",
                 "빼기", "카드", "다음단계", "대전")));
@@ -304,6 +307,7 @@ class CommandLayoutTest {
             assertTrue(adminHelp.contains("▸ " + title), title + "\n" + adminHelp);
         }
         assertTrue(adminHelp.contains("/게임 시작 증강 봇전 [수] [난이도]"), adminHelp);
+        assertTrue(adminHelp.contains("/게임 시작 공성전 봇전 [팀당 인원] [난이도]"), adminHelp);
         assertFalse(adminHelp.contains("<cmd"), "every command tag rendered:\n" + adminHelp);
         assertFalse(adminHelp.contains("missing"), adminHelp);
         for (String old : List.of("/게임 경기장", "/게임 능력 연습", "/게임 증강 연습", "/게임 증강 봇전", "/게임 능력 리롤")) {

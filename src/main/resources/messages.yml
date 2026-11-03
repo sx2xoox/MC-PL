@@ -72,6 +72,7 @@ help:
         - " <cmd:'/게임 시작 증강 봇전 ':'/게임 시작 증강 봇전 [수] [난이도]'> <dark_gray>-</dark_gray> <gray>봇이 빈자리를 채우는 증강 야생전 (섞기: 쉬움 3 어려움 2 · 팀전: <cmd:'/게임 시작 증강 봇전 팀 ':'봇전 팀 3 4 보통'><gray>)"
         - " <cmd:'/게임 시작 증강 관전 ':'/게임 시작 증강 관전 [수] [난이도]'> <dark_gray>-</dark_gray> <gray>봇끼리만 싸우고 모두 관전 (팀전: <cmd:'/게임 시작 증강 관전 팀 ':'관전 팀 3 2 보통'><gray>)"
         - " <cmd:'/게임 시작 공성전'> <dark_gray>-</dark_gray> <gray>초능력 공성전: 두 팀이 탑 셋을 공격·수비"
+        - " <cmd:'/게임 시작 공성전 봇전 ':'/게임 시작 공성전 봇전 [팀당 인원] [난이도]'> <dark_gray>-</dark_gray> <gray>봇이 빈자리를 채우는 공성전 (봇 전용 직업: 기사·궁수·마법사·치유사·암살자)"
         - " <cmd:'/게임 시작 ':'/게임 시작'> <dark_gray>-</dark_gray> <gray>모드를 생략하면 순환 목록의 다음 게임"
     flow:
       title: "<#ffb347><bold>▸ 진행</bold>"
@@ -111,6 +112,7 @@ help:
         - " <cmd:'/게임 능력 지정 ':'/게임 능력 지정 [플레이어] [능력]'> <dark_gray>·</dark_gray> <cmd:'/게임 능력 선택방식 ':'선택방식 [RANDOM|CHOICE]'> <dark_gray>-</dark_gray> <gray>능력 지정, 배정 방식"
         - " <cmd:'/게임 증강 배속 ':'/게임 증강 배속 [1~4]'> <dark_gray>-</dark_gray> <gray>봇 경기의 시간 배속"
         - " <cmd:'/게임 공성전 능력풀 ':'/게임 공성전 능력풀 [목록|추가|제거|초기화]'> <dark_gray>-</dark_gray> <gray>공성전에서 나오는 능력"
+        - " <cmd:'/게임 공성전 봇'> <dark_gray>-</dark_gray> <gray>공성전 봇전: 봇마다 직업·라인·레벨·체력·하는 일"
     map:
       title: "<#ff7f50><bold>▸ 맵</bold>"
       play: []

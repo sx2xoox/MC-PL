@@ -42,7 +42,7 @@ import org.jspecify.annotations.Nullable;
  * wave down both lanes from its base: melee and ranged minions (one more melee per few players), a cannon every few
  * waves. Minions walk {@link LaneSites#lanePath} (BLUE as given, RED reversed) with the pathfinder, re-path when
  * stuck and are put back on the path when that does not help; they fight the nearest enemy minion, else an enemy
- * tower or core in reach ({@link SiegeArena#structures}), else an enemy player, and never chase farther than
+ * tower or core in reach ({@link SiegeArena#structures}), else an enemy player or bot, and never chase farther than
  * {@link MinionSettings#leash()} from the lane. Vanilla AI is off: they target nothing by themselves and hurt only
  * through their own hits.
  *
@@ -372,6 +372,11 @@ public final class MinionWaves implements Listener {
                 == minion.side)) {
             return false;
         }
+        UUID fighter = target instanceof Player ? null : arena.fighterOf(target);
+        if (fighter != null && (arena.side(fighter) == minion.side
+                || !arena.extraFighters(enemy(minion.side)).contains(target))) {
+            return false;
+        }
         if (arena.isStructure(target) && !arena.structures(enemy(minion.side)).contains(target)) {
             return false;
         }
@@ -402,11 +407,13 @@ public final class MinionWaves implements Listener {
         if (best != null) {
             return best;
         }
-        for (Player player : arena.fighters(enemy(minion.side))) {
-            double distance = player.getWorld().equals(at.getWorld())
-                    ? Creatures.flatDistanceSquared(at, player.getLocation()) : Double.MAX_VALUE;
-            if (distance <= radius * radius && distance < bestDistance && inLeash(minion, player)) {
-                best = player;
+        List<LivingEntity> fighters = new ArrayList<>(arena.fighters(enemy(minion.side)));
+        fighters.addAll(arena.extraFighters(enemy(minion.side)));
+        for (LivingEntity fighter : fighters) {
+            double distance = fighter.getWorld().equals(at.getWorld())
+                    ? Creatures.flatDistanceSquared(at, fighter.getLocation()) : Double.MAX_VALUE;
+            if (distance <= radius * radius && distance < bestDistance && inLeash(minion, fighter)) {
+                best = fighter;
                 bestDistance = distance;
             }
         }
@@ -543,6 +550,14 @@ public final class MinionWaves implements Listener {
             return;
         }
         Player attacker = arena.attacker(event);
+        UUID bot = attacker == null ? arena.fighterAttacker(event) : null;
+        if (bot != null) {
+            // A 봇전 bot: like a player, only one of the other side.
+            if (arena.side(bot) == null || arena.side(bot) == minion.side) {
+                event.setCancelled(true);
+            }
+            return;
+        }
         if (attacker == null) {
             switch (event.getCause()) {
                 case FIRE_TICK, POISON, WITHER, KILL, VOID -> {
@@ -567,7 +582,7 @@ public final class MinionWaves implements Listener {
         arena.damageNumber(minion.body, event.getFinalDamage());
         if (event.getFinalDamage() >= minion.body.getHealth()) {
             Player attacker = arena.attacker(event);
-            minion.lastHitter = attacker == null ? null : attacker.getUniqueId();
+            minion.lastHitter = attacker != null ? attacker.getUniqueId() : arena.fighterAttacker(event);
         }
     }
 
@@ -601,6 +616,14 @@ public final class MinionWaves implements Listener {
                     && player.getLocation().distanceSquared(at) <= settings.xpRadius() * settings.xpRadius()) {
                 given.add(player.getUniqueId());
                 arena.addXp(player.getUniqueId(), xp);
+            }
+        }
+        for (LivingEntity fighter : arena.extraFighters(enemy(minion.side))) {
+            UUID id = arena.fighterOf(fighter);
+            if (id != null && fighter.getWorld().equals(at.getWorld())
+                    && fighter.getLocation().distanceSquared(at) <= settings.xpRadius() * settings.xpRadius()
+                    && given.add(id)) {
+                arena.addXp(id, xp);
             }
         }
         if (hitter != null && !given.contains(hitter) && arena.side(hitter) == enemy(minion.side)) {

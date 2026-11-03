@@ -244,6 +244,20 @@ final class LaneSystemsModule implements SiegeModule {
         }
 
         @Override
+        public List<LivingEntity> extraFighters(LaneSites.Side side) {
+            List<LivingEntity> out = new ArrayList<>();
+            for (SiegeModule module : match.modules()) {
+                out.addAll(module.fighters(side));
+            }
+            return out;
+        }
+
+        @Override
+        public @Nullable UUID fighterOf(@Nullable Entity entity) {
+            return match.fighterOf(entity);
+        }
+
+        @Override
         public boolean isFighting() {
             return match.phase() == SiegeMatch.Phase.FIGHT;
         }

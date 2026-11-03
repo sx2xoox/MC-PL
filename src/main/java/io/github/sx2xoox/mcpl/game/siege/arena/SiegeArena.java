@@ -48,6 +48,28 @@ public interface SiegeArena {
     /** A side's players in play: alive, not respawning, may fight and be hit. */
     List<Player> fighters(LaneSites.Side side);
 
+    /**
+     * A side's fighters that are not players (봇전 bots) in play: minions and monsters fight them like players. Their
+     * participant ids come from {@link #fighterOf}; {@link #side} knows their side.
+     */
+    default List<LivingEntity> extraFighters(LaneSites.Side side) {
+        return List.of();
+    }
+
+    /** The participant id of the non-player fighter (a bot) whose body is {@code entity}, or null. */
+    default @Nullable UUID fighterOf(@Nullable Entity entity) {
+        return null;
+    }
+
+    /**
+     * The non-player fighter (a bot) that caused a damage event (its causing or direct entity), or null; like
+     * {@link #attacker} for players.
+     */
+    default @Nullable UUID fighterAttacker(EntityDamageEvent event) {
+        UUID id = fighterOf(event.getDamageSource().getCausingEntity());
+        return id != null ? id : fighterOf(event.getDamageSource().getDirectEntity());
+    }
+
     /** Whether the fight of the round is running (minions walk, monsters spawn, gold flows). */
     boolean isFighting();
 

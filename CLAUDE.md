@@ -68,6 +68,10 @@ src/main/java/io/github/sx2xoox/mcpl/
                                (SiegeBalanceReport fails while stale)
     tower/                     Tower (rules + Mannequin hitbox) and looks (TowerLook contract; ModelTowerLook = 3D models +
                                per-viewer vanilla fallback; v2 toy kingdom: look ids tower / core)
+    bot/                       공성전 봇전 (docs/siege-v2.md §9): bot-only jobs (BotJob, SiegeBotSettings = games.siege.bots.*),
+                               pure SiegeBotBrain + LanePath, SiegeBots = the SiegeModule (bots enlisted with
+                               GameSession#addBot; Mannequin body + hidden legs + plate; rules, kill credit, respawns);
+                               /게임 시작 공성전 봇전 [팀당 인원] [난이도]
     arena/ minion/ jungle/     v2 lane systems (docs/siege-v2.md §2–§4) behind SiegeArena (what they need from the rules);
     economy/ shop/ creature/   SiegeSystems = facade the match drives (+ MatchHost hooks), LaneModifiers = shared additive
                                per-player modifiers; creature/CreatureLook spawns the vanilla body (VanillaCreatureLook),

@@ -385,7 +385,7 @@ public final class JungleObjectives implements Listener {
         }
         for (Mob mob : site.mobs.keySet()) {
             LivingEntity target = site.targets.get(mob);
-            if (!(target instanceof Player player) || !fighter(site, player)) {
+            if (target == null || !fighter(site, target)) {
                 target = nearestFighter(site, mob.getLocation());
                 site.targets.put(mob, target);
             }
@@ -454,23 +454,34 @@ public final class JungleObjectives implements Listener {
         site.at.getWorld().spawnParticle(Particle.HAPPY_VILLAGER, site.at.clone().add(0, 1, 0), 12, 1, 0.6, 1, 0);
     }
 
-    private boolean fighter(Site site, Player player) {
-        return arena.canFight(player) && player.getWorld().equals(site.at.getWorld())
-                && Creatures.flatDistanceSquared(player.getLocation(), site.at)
+    /** A player in play or a 봇전 bot in play, inside the camp's leash. */
+    private boolean fighter(Site site, LivingEntity entity) {
+        boolean inPlay;
+        if (entity instanceof Player player) {
+            inPlay = arena.canFight(player);
+        } else {
+            UUID bot = arena.fighterOf(entity);
+            LaneSites.Side side = bot == null ? null : arena.side(bot);
+            inPlay = side != null && arena.extraFighters(side).contains(entity);
+        }
+        return inPlay && entity.getWorld().equals(site.at.getWorld())
+                && Creatures.flatDistanceSquared(entity.getLocation(), site.at)
                 <= site.kindSettings().leash() * site.kindSettings().leash();
     }
 
-    private @Nullable Player nearestFighter(Site site, Location from) {
-        Player best = null;
+    private @Nullable LivingEntity nearestFighter(Site site, Location from) {
+        LivingEntity best = null;
         double bestDistance = Double.MAX_VALUE;
         for (LaneSites.Side side : LaneSites.Side.values()) {
-            for (Player player : arena.fighters(side)) {
-                if (!fighter(site, player)) {
+            List<LivingEntity> fighters = new ArrayList<>(arena.fighters(side));
+            fighters.addAll(arena.extraFighters(side));
+            for (LivingEntity fighter : fighters) {
+                if (!fighter(site, fighter)) {
                     continue;
                 }
-                double distance = player.getLocation().distanceSquared(from);
+                double distance = fighter.getLocation().distanceSquared(from);
                 if (distance < bestDistance) {
-                    best = player;
+                    best = fighter;
                     bestDistance = distance;
                 }
             }
@@ -813,6 +824,14 @@ public final class JungleObjectives implements Listener {
             return;
         }
         Player attacker = arena.attacker(event);
+        UUID bot = attacker == null ? arena.fighterAttacker(event) : null;
+        if (bot != null) {
+            // A 봇전 bot in play may fight any camp, like a player.
+            if (arena.side(bot) == null) {
+                event.setCancelled(true);
+            }
+            return;
+        }
         if (attacker == null) {
             switch (event.getCause()) {
                 case FIRE_TICK, POISON, WITHER, KILL, VOID -> {
@@ -837,19 +856,31 @@ public final class JungleObjectives implements Listener {
         arena.damageNumber((LivingEntity) event.getEntity(), event.getFinalDamage());
         JungleSounds.hurt(arena, site.kind(), event.getEntity().getLocation());
         Player attacker = arena.attacker(event);
-        if (attacker == null || !arena.canFight(attacker)) {
-            return;
+        LivingEntity hitter;
+        UUID hitterId;
+        if (attacker != null && arena.canFight(attacker)) {
+            hitter = attacker;
+            hitterId = attacker.getUniqueId();
+        } else {
+            UUID bot = attacker == null ? arena.fighterAttacker(event) : null;
+            Entity body = event.getDamageSource().getCausingEntity();
+            if (bot == null || !(body instanceof LivingEntity living) || arena.side(bot) == null) {
+                return;
+            }
+            hitter = living;
+            hitterId = bot;
         }
         if (!site.aggro) {
             JungleSounds.aggro(arena, site.kind(), site.at);
         }
         site.aggro = true;
         site.lastHit = now;
-        site.lastHitter = attacker.getUniqueId();
-        site.hitters.put(event.getEntity().getUniqueId(), attacker.getUniqueId());
+        site.lastHitter = hitterId;
+        site.hitters.put(event.getEntity().getUniqueId(), hitterId);
         for (Mob mob : site.mobs.keySet()) {
-            if (!(site.targets.get(mob) instanceof Player)) {
-                site.targets.put(mob, attacker);
+            LivingEntity current = site.targets.get(mob);
+            if (current == null || !current.isValid() || current.isDead()) {
+                site.targets.put(mob, hitter);
             }
         }
     }

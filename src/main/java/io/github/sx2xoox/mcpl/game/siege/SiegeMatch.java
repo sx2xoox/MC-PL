@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.Hub;
+import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.command.Permissions;
 import io.github.sx2xoox.mcpl.core.game.DeathOutcome;
 import io.github.sx2xoox.mcpl.core.game.GameInstance;
@@ -22,6 +23,7 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalance;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeModifiers;
+import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
@@ -148,6 +150,8 @@ public final class SiegeMatch implements GameInstance {
         }
         teams.addAll(session.teams().subList(0, 2));
         assignSides();
+        SiegeBots.Setup botSetup = game.takeBotRequest();
+        List<SiegeBots.Seat> seats = botSetup == null ? List.of() : SiegeBots.enlist(session, botSetup);
         solo = teams.stream().anyMatch(team -> team.members().isEmpty());
         layout = game.layoutFor(session.arena());
         holdChunks();
@@ -173,6 +177,13 @@ public final class SiegeMatch implements GameInstance {
             modules.add(lanes);
         } catch (RuntimeException e) {
             session.plugin().getLogger().log(Level.WARNING, "The siege lane systems could not start", e);
+        }
+        if (botSetup != null) {
+            try {
+                modules.add(new SiegeBots(this, botSetup, seats));
+            } catch (RuntimeException e) {
+                session.plugin().getLogger().log(Level.WARNING, "The siege bots could not start", e);
+            }
         }
         hud = new SiegeHud(this, hudSettings);
         startRound();
@@ -244,6 +255,15 @@ public final class SiegeMatch implements GameInstance {
 
     @Override
     public @Nullable Component playerTag(UUID player) {
+        if (session.isBot(player)) {
+            for (SiegeModule module : modules) {
+                Component tag = module.fighterTag(player);
+                if (tag != null) {
+                    return tag;
+                }
+            }
+            return null;
+        }
         return abilities == null ? null : abilities.playerTag(player);
     }
 
@@ -373,16 +393,20 @@ public final class SiegeMatch implements GameInstance {
             return abilityDamageMultiplier(attacker, target, false);
         }
 
-        /** Players and summons only: structures and modules' targets keep their own numbers. */
+        /**
+         * Players, summons and 봇전 bots (fighters like players): structures and the other modules' targets keep their
+         * own numbers.
+         */
         @Override
         public double abilityDamageMultiplier(Player attacker, LivingEntity target, boolean ultimate) {
-            if (isExtraTarget(target)) {
+            UUID fighter = target instanceof Player player ? player.getUniqueId() : fighterOf(target);
+            if (fighter == null && isExtraTarget(target)) {
                 return 1.0;
             }
             UUID id = attacker.getUniqueId();
             Participant participant = abilities == null ? null : abilities.participant(id);
             return balance.damageMultiplier(participant == null ? null : participant.abilityId(), balanceLevel(id),
-                    id, target instanceof Player player ? player.getUniqueId() : null, ultimate);
+                    id, fighter, ultimate);
         }
 
         @Override
@@ -417,37 +441,68 @@ public final class SiegeMatch implements GameInstance {
     private DeathOutcome hostDeath(Player victim, @Nullable Player killer) {
         UUID id = victim.getUniqueId();
         protectedUntil.remove(id);
-        SiegeScore points = score();
         UUID killerId = killer == null ? null : killer.getUniqueId();
-        if (phase == Phase.FIGHT) {
-            SiegeScore.Kill kill = points.kill(id, killerId, session.tick());
-            int killerTeam = killerId == null ? -1 : teamIndex(killerId);
-            if (killer != null && killerTeam >= 0 && killerTeam != teamIndex(id)) {
-                progress().kill(killer.getUniqueId(), kill.assisters());
-                sounds().kill(killer);
-                guidance().suggest(killer, messages.get("score.kill-points", Messages.tag("points", kill.points())),
-                        Guidance.INFO, 40);
-                for (UUID assister : kill.assisters()) {
-                    Player helper = Bukkit.getPlayer(assister);
-                    if (helper != null) {
-                        guidance().suggest(helper, messages.get("score.assist-points",
-                                Messages.tag("points", settings.assistPoints())), Guidance.INFO, 40);
-                    }
-                }
-                eachModule(module -> module.playerKilled(id, killerId, kill.assisters()));
-                scored(killerTeam);
-            } else {
-                eachModule(module -> module.playerKilled(id, null, List.of()));
-            }
+        if (killerId == null) {
+            // A 봇전 bot that hit the player last gets the kill (the hub credits it the same way).
+            UUID last = session.combat().lastAttackerId(id, CombatTracker.DEFAULT_WINDOW_TICKS);
+            killerId = last != null && session.isBot(last) ? last : null;
         }
+        creditKill(id, killerId);
         diedInRound.put(id, roundSerial);
-        int delay = settings.respawnDelay(points.roundDeaths(id));
-        for (SiegeModule module : modules) {
-            delay = Math.max(20, module.respawnTicks(id, delay));
-        }
+        int delay = respawnTicks(id);
         Location spawn = spawnFor(id);
         session.runLater(2, () -> watchTeammate(victim));
         return DeathOutcome.respawn(spawn, delay);
+    }
+
+    /**
+     * Scores a death during the fight: the death, the kill points of {@code killerId} (a player or a bot of the other
+     * team; null: nobody) and the assists, experience, the modules' kill rewards.
+     */
+    private void creditKill(UUID id, @Nullable UUID killerId) {
+        if (phase != Phase.FIGHT) {
+            return;
+        }
+        SiegeScore.Kill kill = score().kill(id, killerId, session.tick());
+        int killerTeam = killerId == null ? -1 : teamIndex(killerId);
+        if (killerId != null && killerTeam >= 0 && killerTeam != teamIndex(id)) {
+            progress().kill(killerId, kill.assisters());
+            Player killer = Bukkit.getPlayer(killerId);
+            if (killer != null) {
+                sounds().kill(killer);
+                guidance().suggest(killer, messages.get("score.kill-points", Messages.tag("points", kill.points())),
+                        Guidance.INFO, 40);
+            }
+            for (UUID assister : kill.assisters()) {
+                Player helper = Bukkit.getPlayer(assister);
+                if (helper != null) {
+                    guidance().suggest(helper, messages.get("score.assist-points",
+                            Messages.tag("points", settings.assistPoints())), Guidance.INFO, 40);
+                }
+            }
+            UUID credited = killerId;
+            eachModule(module -> module.playerKilled(id, credited, kill.assisters()));
+            scored(killerTeam);
+        } else {
+            eachModule(module -> module.playerKilled(id, null, List.of()));
+        }
+    }
+
+    /**
+     * A 봇전 bot died ({@code killer}: the player or bot credited, null for none): scored like a player's death
+     * (kill points, assists, gold, experience). Its module respawns it after {@link #respawnTicks}.
+     */
+    public void fighterKilled(UUID bot, @Nullable UUID killer) {
+        creditKill(bot, killer);
+    }
+
+    /** The respawn delay (ticks) of a participant now: the deaths of this round, then what the modules change. */
+    public int respawnTicks(UUID id) {
+        int delay = settings.respawnDelay(score().roundDeaths(id));
+        for (SiegeModule module : modules) {
+            delay = Math.max(20, module.respawnTicks(id, delay));
+        }
+        return delay;
     }
 
     private void hostRespawn(Player player) {
@@ -573,7 +628,9 @@ public final class SiegeMatch implements GameInstance {
         AbilityRegistry registry = game.superpower().registry();
         List<String> enabled = new ArrayList<>(game.superpower().abilities().snapshot().enabledIds());
         enabled.removeIf(id -> registry.get(id) == null);
-        int biggest = Math.max(members(0).size(), members(1).size());
+        List<UUID> first = players(0);
+        List<UUID> second = players(1);
+        int biggest = Math.max(first.size(), second.size());
         SiegeAbilities.Pool pool = SiegeAbilities.pool(game.abilityPool(), enabled, biggest, session.random());
         if (!pool.unknown().isEmpty()) {
             tellAdmins(messages.prefixed("pool.unknown-warning",
@@ -587,8 +644,7 @@ public final class SiegeMatch implements GameInstance {
             session.abort(messages.get("start.no-abilities"));
             return;
         }
-        Map<UUID, String> assignment = SiegeAbilities.assign(List.of(members(0), members(1)), roundPool,
-                session.random());
+        Map<UUID, String> assignment = SiegeAbilities.assign(List.of(first, second), roundPool, session.random());
         hosted.hostAssign(assignment);
         rerollsLeft.clear();
         for (UUID id : assignment.keySet()) {
@@ -684,6 +740,14 @@ public final class SiegeMatch implements GameInstance {
             LaneSites.Side side = side(player.getUniqueId());
             if (side != null && side != tower.owner() && session.isInPlay(player) && tower.isNear(player.getLocation())) {
                 return true;
+            }
+        }
+        LaneSites.Side enemy = tower.owner() == LaneSites.Side.BLUE ? LaneSites.Side.RED : LaneSites.Side.BLUE;
+        for (SiegeModule module : modules) {
+            for (LivingEntity fighter : module.fighters(enemy)) {
+                if (tower.isNear(fighter.getLocation())) {
+                    return true;
+                }
             }
         }
         return false;
@@ -961,11 +1025,16 @@ public final class SiegeMatch implements GameInstance {
      * @return the health the structure lost
      */
     public double damageStructure(Tower tower, LaneSites.Side by, double amount, @Nullable Player credit) {
+        return damageStructureBy(tower, by, amount, credit == null ? null : credit.getUniqueId());
+    }
+
+    /** {@link #damageStructure(Tower, LaneSites.Side, double, Player)} credited to a participant id (a bot). */
+    public double damageStructureBy(Tower tower, LaneSites.Side by, double amount, @Nullable UUID credit) {
         if (phase != Phase.FIGHT || tower.isDestroyed() || tower.isShielded() || by == tower.owner()) {
             return 0;
         }
         long now = session.tick();
-        double dealt = tower.damage(amount, credit == null ? null : credit.getUniqueId(), now);
+        double dealt = tower.damage(amount, credit, now);
         if (!(dealt > 0)) {
             return 0;
         }
@@ -1001,10 +1070,10 @@ public final class SiegeMatch implements GameInstance {
         return tower.isCore() ? SiegeSounds.Surface.PORCELAIN : SiegeSounds.Surface.WOOD;
     }
 
-    private void structureDestroyed(Tower tower, LaneSites.Side by, @Nullable Player credit) {
+    private void structureDestroyed(Tower tower, LaneSites.Side by, @Nullable UUID credit) {
         int team = teamOf(by);
         UUID top = tower.topDamager();
-        UUID destroyer = top != null ? top : credit == null ? null : credit.getUniqueId();
+        UUID destroyer = top != null ? top : credit;
         sounds().destroyed(tower.base(), surface(tower), online(team), online(1 - team));
         firework(tower.base().add(0, 4, 0), teams.get(team));
         eachModule(module -> module.structureDestroyed(tower, by, destroyer));
@@ -1375,7 +1444,8 @@ public final class SiegeMatch implements GameInstance {
         return game;
     }
 
-    Messages messages() {
+    /** The 공성전 messages (siege.yml). */
+    public Messages messages() {
         return messages;
     }
 
@@ -1545,6 +1615,47 @@ public final class SiegeMatch implements GameInstance {
 
     List<UUID> members(int team) {
         return team < 0 || team >= teams.size() ? List.of() : new ArrayList<>(teams.get(team).members());
+    }
+
+    /** The members of a team who are players (not 봇전 bots). */
+    List<UUID> players(int team) {
+        List<UUID> out = members(team);
+        out.removeIf(session::isBot);
+        return out;
+    }
+
+    /** The participant (a 봇전 bot) whose body is {@code entity}, from the modules; null for anything else. */
+    public @Nullable UUID fighterOf(@Nullable Entity entity) {
+        if (entity == null || entity instanceof Player) {
+            return null;
+        }
+        for (SiegeModule module : modules) {
+            UUID id = module.fighterOf(entity);
+            if (id != null) {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    /** The health plate text ({@code Lv.3 이름} over the bar) of a fighter that is not a player (a bot). */
+    public Component plateText(UUID id, Component name, double health, double max) {
+        return NamePlates.plate(plateLevel(id), name, health, 0, max, messages);
+    }
+
+    /** The extra maximum health of a participant's level (docs/siege.md "레벨"), 0 while levels are off. */
+    public double levelHealth(UUID id) {
+        return progress == null ? 0 : progress.settings().bonusHealth(level(id));
+    }
+
+    /** The damage factor of a participant's level (as abilities and basic attacks grow), 1 while levels are off. */
+    public double levelFactor(UUID id) {
+        return balance.levelFactor(balanceLevel(id));
+    }
+
+    /** Experience everyone in play gets every second of the fight. */
+    public int passiveXpPerSecond() {
+        return progress == null ? 0 : Math.max(0, progress.settings().xpPassivePerSecond());
     }
 
     /** Online members of a team who are part of the session. */

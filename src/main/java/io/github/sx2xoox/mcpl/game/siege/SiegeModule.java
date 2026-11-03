@@ -42,7 +42,10 @@ public interface SiegeModule {
     default void stop() {
     }
 
-    /** A participant died; {@code killer} (null: no player credit) and the {@code assisters} got the kill. */
+    /**
+     * A participant (a player or a 봇전 bot) died; {@code killer} (null: no credit; a player or a bot) and the
+     * {@code assisters} got the kill.
+     */
     default void playerKilled(UUID victim, @Nullable UUID killer, List<UUID> assisters) {
     }
 
@@ -80,6 +83,24 @@ public interface SiegeModule {
 
     /** {@code tower} fired at the module's {@code target} for {@code damage}. */
     default void towerShot(Tower tower, LivingEntity target, double damage) {
+    }
+
+    /**
+     * This module's fighters that are not players (봇전 bots) of {@code side} in play: alive and hittable. Minions,
+     * monsters and towers fight them like players.
+     */
+    default List<LivingEntity> fighters(LaneSites.Side side) {
+        return List.of();
+    }
+
+    /** The participant id of the non-player fighter whose body is {@code entity} (a bot), or null. */
+    default @Nullable UUID fighterOf(@Nullable Entity entity) {
+        return null;
+    }
+
+    /** The kill feed tag of a fighter this module owns ("기사" for a bot), or null. */
+    default @Nullable Component fighterTag(UUID id) {
+        return null;
     }
 
     /** The "next big objective" sidebar line (the dragon timer, a buff monster), or null for none. */
