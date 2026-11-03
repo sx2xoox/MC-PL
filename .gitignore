@@ -8,3 +8,5 @@ out/
 .kotlin/
 .claude/worktrees/
 dist/
+__pycache__/
+tools/assetgen/render/node_modules/

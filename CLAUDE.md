@@ -15,6 +15,12 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
   `./gradlew updateAbilityDocs` (`AbilityDocsTest` fails while it is stale). New abilities need a docs section there.
 - `docs/augments.md` is generated the same way from every `AugmentInfo` and `BonusCondition`: run
   `./gradlew updateAugmentDocs` after changing them (`AugmentDocsTest` fails while it is stale).
+- Resource pack: `./gradlew resourcePack` (part of `build`) converts `src/main/resourcepack-src` into
+  `build/resourcepack/MCPL-pack.zip` (bundled into the jar; 26.3 `pack.mcmeta` uses `min_format`/`max_format` 97, no
+  `pack_format`). Models are code in `tools/assetgen/models/*.py`: after changing one run
+  `python3 -I tools/assetgen/build.py` (`--render <dir>` for previews) and commit the `.bbmodel`;
+  `ResourcePackContentsTest` fails while the bundled pack is stale or a reference is missing. Show pack models only to
+  `PackAudience#hasPack` players with a vanilla fallback for the rest.
 - Sandboxed cloud sessions cannot reach `repo.papermc.io`; a locally built Paper API is published to `~/.m2` and
   `~/.gradle/gradle.properties` + `~/.gradle/init.d/` redirect the build to it. Do not commit those overrides.
 - Paper API sources for reference (when available): `/home/user/papermc/paper/paper-api/src/main/java`. Check a
@@ -30,6 +36,9 @@ src/main/java/io/github/sx2xoox/mcpl/
     map/                       battle maps built in code into void worlds (MapCanvas/BlockSpec, MapService, /게임 경기장 맵)
       citadel/                 폐허의 성채: CitadelLayout (the plan) + one MapZone class per zone
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
+    pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
+                               PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model)
+  game/siege/tower/            공성전 tower looks (TowerLook contract; ModelTowerLook = 3D models + per-viewer vanilla fallback)
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
     abilities/                 one class per ability + BuiltinAbilities registration
@@ -45,6 +54,8 @@ src/main/java/io/github/sx2xoox/mcpl/
                                (MiniGame#spectatorsOnly) + runtime/SpectatorView; 봇전 팀전 = pure TeamTactics +
                                BotTeams (shared sightings, focus, peel, leader, shared base)
   util/                        small shared helpers (Text = MiniMessage)
+src/main/resourcepack-src/     pack sources: models/*.bbmodel (from tools/assetgen) + assets/ (copied as-is)
+tools/assetgen/                Python model/texture generator (STSV palette + checks), render/ = preview renderer
 docs/                          game design docs (Korean), the source of truth for game rules; abilities.md and augments.md
                                are generated
 ```
