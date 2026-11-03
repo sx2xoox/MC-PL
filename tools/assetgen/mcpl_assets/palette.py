@@ -89,3 +89,12 @@ def ramp(name: str, i: int, alpha: int = 255):
 
 def size(name: str) -> int:
     return len(PALETTE[name])
+
+
+def add_ramps(specs):
+    """Registers extra material ramps {name: (hue, chroma, center, span, steps, accent)} built by the same formula
+    (for asset modules that keep their materials next to their textures); a name may only be defined once."""
+    for name, spec in specs.items():
+        assert name not in MATERIALS, f"palette ramp {name} is defined twice"
+        MATERIALS[name] = spec
+        PALETTE[name] = build_ramp(*spec)

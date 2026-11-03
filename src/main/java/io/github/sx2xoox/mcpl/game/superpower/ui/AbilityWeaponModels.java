@@ -22,7 +22,10 @@ public final class AbilityWeaponModels {
             "police", "miner", "blacksmith", "gunslinger", "chef",
             // element, spirit and support abilities (weapons_b2.py)
             "hydro", "magma", "light", "shadow", "vampire", "reaper", "necromancer", "demon", "phoenix", "dragon",
-            "werewolf", "dokkaebi", "healer", "bard", "alchemist");
+            "werewolf", "dokkaebi", "healer", "bard", "alchemist",
+            // batch 3 (tools/assetgen/models/weapons_b3.py)
+            "engineer", "hacker", "mech", "bomber", "gravity", "magnet", "chrono", "blink", "speedster", "venom",
+            "spider", "pirate", "angler", "farmer", "batter");
 
     private AbilityWeaponModels() {
     }

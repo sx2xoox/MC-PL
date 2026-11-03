@@ -216,6 +216,38 @@ class Weapon:
             points.append(p)
         return points
 
+    def disc(self, name, cx, cy, r, z0, z1, tex, row=1.0, **kw):
+        """A round plate in the x/y plane (a clock dial, a coin, a bobber's side): rows `row` tall, each as wide as
+        the circle of radius r at that height, from z0 to z1 (relative to the centre line)."""
+        n = max(1, round(2 * r / row))
+        for i in range(n):
+            ya = cy - r + i * row
+            mid = ya + row / 2 - cy
+            half = math.sqrt(max(0.0, r * r - mid * mid))
+            half = round(half * 4) / 4
+            if half > 0:
+                self.box(f"{name}{i}", (cx - half, ya, z0), (cx + half, ya + row, z1), tex, **kw)
+        return self
+
+    def octagon(self, name, cx, cy, r, bar, z, tex, **kw):
+        """An octagonal ring in the x/y plane (a halo, an orbit, a dial rim): eight bars `bar` wide whose outer
+        edges are r from (cx, cy), z = half its depth. The four diagonal bars are turned 45 degrees about z."""
+        a = r * math.tan(math.radians(22.5)) + bar * 0.2     # half a side, a little overlap at the corners
+        c = r - bar / 2
+        for k in range(8):
+            t = math.radians(45 * k)
+            x, y = cx + c * math.cos(t), cy + c * math.sin(t)
+            if k % 2 == 0:
+                if k in (0, 4):
+                    self.box(f"{name}{k}", (x - bar / 2, y - a, -z), (x + bar / 2, y + a, z), tex, **kw)
+                else:
+                    self.box(f"{name}{k}", (x - a, y - bar / 2, -z), (x + a, y + bar / 2, z), tex, **kw)
+            else:
+                angle = -45 if k in (1, 5) else 45
+                self.box(f"{name}{k}", (x - a, y - bar / 2, -z), (x + a, y + bar / 2, z), tex,
+                         rotation=("z", angle, (x, y, 0)), **kw)
+        return self
+
     # --- output ------------------------------------------------------------------------------------
 
     def finish(self):

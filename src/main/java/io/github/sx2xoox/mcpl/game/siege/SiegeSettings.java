@@ -98,8 +98,23 @@ public record SiegeSettings(
     public static final String HITBOX_SCALE = "towers.hitbox-scale";
 
     public static final int MAX_SECONDS = 3600;
-    /** The default ability pool (경찰, 광부, 대장장이, 총잡이, 요리사); owners add more with {@code /게임 공성전 능력풀}. */
-    public static final List<String> DEFAULT_POOL = List.of("police", "miner", "blacksmith", "gunslinger", "chef");
+    /**
+     * The default ability pool: 50 abilities that each have a 3D weapon (AbilityWeaponModels); owners change it with
+     * {@code /게임 공성전 능력풀}.
+     */
+    public static final List<String> DEFAULT_POOL = List.of(
+            // jobs and weapons
+            "police", "miner", "blacksmith", "gunslinger", "chef", "ninja", "blade", "duelist", "archer", "sniper",
+            "hunter", "lancer", "berserker", "guardian", "fighter",
+            // elements
+            "pyro", "frost", "thunder", "aero", "earth", "hydro", "magma", "light", "shadow",
+            // dark and myth
+            "vampire", "reaper", "necromancer", "demon", "phoenix", "dragon", "werewolf", "dokkaebi",
+            // support
+            "healer", "bard", "alchemist",
+            // tech, space-time, venom, the sea and the field
+            "engineer", "hacker", "mech", "bomber", "gravity", "magnet", "chrono", "blink", "speedster", "venom",
+            "spider", "pirate", "angler", "farmer", "batter");
 
     /** Reads the live section; values out of range are clamped, missing ones use the defaults. */
     public static SiegeSettings read(ConfigurationSection c) {

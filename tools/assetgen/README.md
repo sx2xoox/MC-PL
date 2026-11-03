@@ -32,7 +32,8 @@ In 공성전 a player's sword shows the 3D weapon of their ability (`AbilityWeap
    classic, readable, real-world or fantasy (a nightstick, a pickaxe, a forge hammer, a revolver with a bayonet, a
    cleaver...), never sci-fi greebles. Add one or two identity details (a badge, handcuffs, a lantern, a hot face).
    It must still read as a melee weapon in hand.
-2. Write `def <id>():` in `tools/assetgen/models/weapons.py` with `Weapon("weapon/<id>")` and end with
+2. Write `def <id>():` in `tools/assetgen/models/weapons.py` (or a batch module such as `models/weapons_b3.py`, whose
+   `WEAPONS` weapons.py merges) with `Weapon("weapon/<id>")` and end with
    `return w.finish()`; add it to `WEAPONS`. Use the five reference weapons there as templates.
 3. Add the id to `AbilityWeaponModels.MODELED` (`game/superpower/ui/AbilityWeaponModels.java`).
 4. `python3 -I tools/assetgen/build.py --render <dir> --only weapons`, look at `weapon_<id>.png` and
