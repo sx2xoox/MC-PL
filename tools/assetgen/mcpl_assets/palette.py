@@ -46,6 +46,12 @@ MATERIALS = {
     # tintable parts are drawn in near-white greys: the minecraft:dye tint multiplies them with the team colour
     "tint":        (85, 0.004, 0.80, 0.36, 5, False),
     "shield":      (215, 0.080, 0.86, 0.16, 3, True),   # pale energy bubble (drawn translucent)
+    # --- MCPL ability weapons (tools/assetgen/models/weapons.py) ---------------------------------
+    "brass":       (82, 0.085, 0.62, 0.40, 5, False),   # gun brass, rivets, ferrules
+    "rubber":      (265, 0.010, 0.27, 0.12, 3, False),  # rubber grips, black lacquer
+    "oak":         (62, 0.075, 0.52, 0.30, 5, False),   # warm handle wood (walnut / oak)
+    "cyan":        (205, 0.120, 0.76, 0.40, 5, True),   # electricity, lightning
+    "ore":         (160, 0.150, 0.72, 0.44, 5, True),   # magic crystals
 }
 
 

@@ -240,3 +240,22 @@ resource-pack:
   `src/main/resourcepack-src/assets/` 의 파일은 그대로 복사됩니다.
 - 미리보기: `cd tools/assetgen/render && npm install` 후 `python3 -I tools/assetgen/build.py --render <폴더>`
   (Node + Playwright 로 단계별 시트를 PNG 로).
+
+### 능력 무기 (3D 모델)
+
+팩이 적용된 플레이어에게는 각자의 칼이 **능력마다 다른 3D 무기**로 보입니다(아이템 모델 `mcpl:weapon/<능력 id>`,
+`AbilityWeaponModels`). 팩이 없으면 바닐라 칼 그대로입니다. 무기는 그 능력·직업이 자연스럽게 들 법한 고전적인 모습이고,
+빛나는 부분은 능력의 원소가 빛일 때(불, 번개, 등불, 마법)만 씁니다. 기본 능력풀 5종:
+
+| 능력 | 무기 |
+|---|---|
+| 경찰 `police` | 검은 경찰봉: 고무 손잡이, 금색 경찰 배지, 끈 고리에 매달린 수갑 |
+| 광부 `miner` | 광부 곡괭이: 나무 자루에 쇠 양날 곡괭이 머리, 가죽 손잡이, 머리 위에 불 켜진 작은 랜턴 |
+| 대장장이 `blacksmith` | 대장간 망치: 묵직한 쇠 머리(한쪽은 벌겋게 달아오른 타격면, 반대쪽은 크로스핀), 가죽 감은 자루 |
+| 총잡이 `gunslinger` | 서부 리볼버 + 총검: 호두나무 손잡이, 황동 방아쇠울, 청색 강철 실린더·긴 총신, 총구 너머로 뻗은 칼날 |
+| 요리사 `chef` | 중식도: 넓은 강철 날과 걸이 구멍, 황동 리벳 박힌 나무 손잡이 |
+
+새 능력의 무기를 추가하는 방법(모양 규칙, 색 규칙, 등록, 미리보기 확인)은 `tools/assetgen/README.md` 의
+"새 능력 무기 추가하는 법"에 있습니다. 무기 모델은 `tools/assetgen/models/weapons.py`, 공통 부품과 손에 쥐는 자세(표시
+설정)는 `tools/assetgen/mcpl_assets/weaponkit.py` 에 있고, `--render <폴더> --only weapons` 로 아이콘·1인칭·3인칭 시트를
+그립니다.

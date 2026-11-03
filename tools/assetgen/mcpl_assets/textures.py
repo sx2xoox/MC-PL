@@ -625,7 +625,7 @@ def get(name):
 
 def first_frame(name):
     im = get(name)
-    return im.crop((0, 0, S, S)) if im.height > S else im
+    return im.crop((0, 0, im.width, im.width)) if im.height > im.width else im
 
 
 def has_transparency(name):

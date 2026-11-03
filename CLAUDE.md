@@ -22,7 +22,9 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
   `pack_format`). Models are code in `tools/assetgen/models/*.py`: after changing one run
   `python3 -I tools/assetgen/build.py` (`--render <dir>` for previews) and commit the `.bbmodel`;
   `ResourcePackContentsTest` fails while the bundled pack is stale or a reference is missing. Show pack models only to
-  `PackAudience#hasPack` players with a vanilla fallback for the rest.
+  `PackAudience#hasPack` players with a vanilla fallback for the rest. Ability weapons (`mcpl:weapon/<ability id>`):
+  `tools/assetgen/models/weapons.py` + `weaponkit.py`, listed in `AbilityWeaponModels.MODELED`; how-to and style guide
+  in `tools/assetgen/README.md`.
 - Sandboxed cloud sessions cannot reach `repo.papermc.io`; a locally built Paper API is published to `~/.m2` and
   `~/.gradle/gradle.properties` + `~/.gradle/init.d/` redirect the build to it. Do not commit those overrides.
 - Paper API sources for reference (when available): `/home/user/papermc/paper/paper-api/src/main/java`. Check a

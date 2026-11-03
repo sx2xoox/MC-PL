@@ -6,6 +6,7 @@ run when a model changes (its output is committed).
     python3 -I tools/assetgen/build.py                      # models only
     python3 -I tools/assetgen/build.py --render <out dir>   # + preview PNGs (needs node, playwright and three:
                                                             #   cd tools/assetgen/render && npm install)
+    python3 -I tools/assetgen/build.py --render <out dir> --only weapons   # just the ability weapon sheets
 
 Ported from STSV tools/assetgen (same palette formula, texture rules and model checks; see docs/siege.md).
 """
@@ -20,7 +21,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from mcpl_assets.palette import PALETTE  # noqa: E402
-from models import towers  # noqa: E402
+from models import towers, weapons  # noqa: E402
+import weapon_preview  # noqa: E402
 
 REPO = HERE.parent.parent
 MODELS = REPO / "src" / "main" / "resourcepack-src" / "models"
@@ -173,6 +175,22 @@ def main():
             stale.unlink()
             print(f"removed {stale.name} (model no longer defined)")
 
+    only = args[args.index("--only") + 1] if "--only" in args else None
+
+    weapon_dir = MODELS / "weapon"
+    weapon_dir.mkdir(exist_ok=True)
+    for stale in weapon_dir.glob("*.bbmodel"):
+        if stale.stem not in weapons.WEAPONS:
+            stale.unlink()
+            print(f"removed weapon/{stale.name} (weapon no longer defined)")
+    armoury = []
+    for ability, fn in weapons.WEAPONS.items():
+        model = fn()
+        assert model.name == f"weapon/{ability}", f"{ability}: the model must be named weapon/{ability}"
+        armoury.append(model)
+        model.write(weapon_dir / f"{ability}.bbmodel")
+        print(f"weapon  {ability}: {len(model.elements)} elements")
+
     built = {}
     for name, fn in towers.ALL.items():
         model = fn()
@@ -180,7 +198,12 @@ def main():
         model.write(MODELS / f"{name}.bbmodel")
         print(f"model   {name}: {len(model.elements)} elements")
 
-    if render_dir:
+    if render_dir and only in (None, "weapons"):
+        render_dir.mkdir(parents=True, exist_ok=True)
+        for model in armoury:
+            weapon_preview.sheet(model, render, BUILD, render_dir / f"{model.name.replace('/', '_')}.png")
+        weapon_preview.lineup(armoury, render, BUILD, render_dir / "weapons_lineup.png")
+    if render_dir and only in (None, "towers"):
         render_dir.mkdir(parents=True, exist_ok=True)
         built["_figure"] = figure_model()
         for kind in ("front", "middle", "core"):
