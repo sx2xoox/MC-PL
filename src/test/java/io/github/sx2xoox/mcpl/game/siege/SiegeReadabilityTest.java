@@ -34,15 +34,15 @@ import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.entity.Zombie;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scoreboard.DisplaySlot;
-import org.bukkit.scoreboard.Objective;
-import org.bukkit.scoreboard.Score;
+import org.bukkit.scoreboard.Team;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -308,43 +308,106 @@ class SiegeReadabilityTest {
     @Test
     void plateText() {
         SiegeMatch match = start(2);
-        Component plate = NamePlates.plate(3, 14, 20, NamedTextColor.RED, match.messages());
-        assertEquals("Lv.3 ▮▮▮▮▮▮▮▯▯▯ 14", Scenario.plain(plate));
-        assertEquals("▮▯▯▯▯▯▯▯▯▯ 1", Scenario.plain(NamePlates.plate(0, 0.4, 20, NamedTextColor.RED,
-                match.messages())), "no level: bar and health only; one segment while alive");
+        Component plate = NamePlates.plate(3, Component.text("Steve", NamedTextColor.RED), 14, 0, 20,
+                match.messages());
+        assertEquals("Lv.3 Steve\n■■■■■■■□□□ ❤ 14/20", Scenario.plain(plate));
+        assertEquals("Steve\n■□□□□□□□□□ ❤ 1/20 +4", Scenario.plain(NamePlates.plate(0,
+                Component.text("Steve"), 0.4, 3.5, 20, match.messages())),
+                "no level: name and bar only; one segment while alive; absorption after the health");
+        assertEquals(NamedTextColor.GREEN, NamePlates.bar(15, 20).color());
+        assertEquals(NamedTextColor.GOLD, NamePlates.bar(8, 20).color());
+        assertEquals(NamedTextColor.RED, NamePlates.bar(4, 20).color());
     }
 
     @Test
-    void platesShowToOthersNeverToSelfAndNeverGiveAwayAConcealedPlayer() {
+    void platesRideAboveTheHeadShowToOthersNeverToSelfAndNeverGiveAwayAConcealedPlayer() {
         SiegeMatch match = start(4);
         Player a1 = member(match, 0, 0);
         Player a2 = member(match, 0, 1);
         Player b1 = member(match, 1, 0);
         h.ticks(11);
-        assertTrue(plateShown(b1, a1), "an enemy sees the plate");
-        assertTrue(plateShown(a2, a1), "a teammate sees the plate");
-        assertFalse(plateShown(a1, a1), "never your own");
-        assertTrue(Scenario.plain(match.hud().plates().plate(a1)).startsWith("Lv." + match.level(a1.getUniqueId())
-                + " "), "the in-match level is on the plate");
+        NamePlates plates = match.hud().plates();
+        TextDisplay display = plates.display(a1);
+        assertNotNull(display, "a fighter carries a plate");
+        assertEquals(a1, display.getVehicle(), "it rides on the player, above the head");
+        assertFalse(display.isVisibleByDefault(), "shown per viewer only");
+        assertTrue(Scenario.plain(display.text()).contains(a1.getName()), "the name is on the plate");
+        assertTrue(Scenario.plain(display.text()).startsWith("Lv." + match.level(a1.getUniqueId()) + " "),
+                "the in-match level is on the plate");
+        assertTrue(Scenario.plain(display.text()).contains("❤ 20/20"), "the health is on the plate");
+        assertTrue(plates.isShownTo(a1, b1), "an enemy sees the plate");
+        assertTrue(plates.isShownTo(a1, a2), "a teammate sees the plate");
+        assertFalse(plates.isShownTo(a1, a1), "never your own");
+        assertTrue(b1.canSee(display));
+        assertFalse(a1.canSee(display), "the player never sees their own plate");
+
+        Team team = b1.getScoreboard().getEntryTeam(a1.getName());
+        assertNotNull(team);
+        assertEquals(Team.OptionStatus.NEVER, team.getOption(Team.Option.NAME_TAG_VISIBILITY),
+                "the plate replaces the vanilla name tag");
+
+        a1.setNoDamageTicks(0);
+        a1.damage(6, DamageSource.builder(DamageType.GENERIC).build());
+        h.ticks(1);
+        assertTrue(Scenario.plain(display.text()).contains("❤ 14/20"), "redrawn right after a health change: "
+                + a1.getHealth() + " " + Scenario.plain(display.text()));
 
         a1.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 400, 0));
-        h.ticks(11);
-        assertFalse(plateShown(b1, a1), "an invisible player's plate is gone for enemies");
-        assertTrue(plateShown(a2, a1), "teammates still see it");
+        h.ticks(1);
+        assertFalse(plates.isShownTo(a1, b1), "an invisible player's plate is gone for enemies");
+        assertFalse(b1.canSee(display));
+        assertTrue(plates.isShownTo(a1, a2), "teammates still see it");
         a1.removePotionEffect(PotionEffectType.INVISIBILITY);
-        h.ticks(11);
-        assertTrue(plateShown(b1, a1));
+        h.ticks(1);
+        assertTrue(plates.isShownTo(a1, b1));
+
+        b1.hidePlayer(match.session().plugin(), a1);
+        h.ticks(1);
+        assertFalse(plates.isShownTo(a1, b1), "hidden with hidePlayer: no plate either");
+        b1.showPlayer(match.session().plugin(), a1);
+
+        display.leaveVehicle();
+        h.ticks(1);
+        TextDisplay seated = plates.display(a1);
+        assertNotNull(seated);
+        assertEquals(a1, seated.getVehicle(), "a plate that lost its seat is replaced");
+        assertFalse(display.isValid());
+
+        a1.setHealth(0);
+        h.ticks(1);
+        assertTrue(plates.display(a1) == null, "a dead player has no plate");
+        assertFalse(seated.isValid());
+
+        TextDisplay b1Plate = plates.display(b1);
+        assertNotNull(b1Plate);
+        match.stop();
+        assertFalse(b1Plate.isValid(), "the plates go with the match");
+        assertEquals(Team.OptionStatus.ALWAYS, team.getOption(Team.Option.NAME_TAG_VISIBILITY),
+                "the name tags come back");
     }
 
-    private static Score plate(Player viewer, Player target) {
-        Objective objective = viewer.getScoreboard().getObjective(NamePlates.OBJECTIVE);
-        assertNotNull(objective, "the viewer's board has the plate objective");
-        assertEquals(DisplaySlot.BELOW_NAME, objective.getDisplaySlot());
-        return objective.getScore(target.getName());
+    @Test
+    void matchCreaturesDieWithoutTheirNameSoTheServerDoesNotLogEveryMinion() {
+        SiegeMatch match = start(2);
+        Player a = member(match, 0, 0);
+        h.tickUntil(() -> minion(a) != null, 2000, "the first minion wave");
+        Zombie minion = minion(a);
+        assertNotNull(minion);
+        Zombie bystander = a.getWorld().spawn(a.getLocation().add(-5, 0, 0), Zombie.class,
+                z -> z.customName(Component.text("pet")));
+        minion.setHealth(0);
+        bystander.setHealth(0);
+        assertTrue(minion.customName() == null, "no \"Named entity ... died\" line per minion");
+        assertNotNull(bystander.customName(), "entities the match does not own keep their name");
     }
 
-    private static boolean plateShown(Player viewer, Player target) {
-        return plate(viewer, target).isScoreSet();
+    private static @Nullable Zombie minion(Player in) {
+        for (Zombie zombie : in.getWorld().getEntitiesByClass(Zombie.class)) {
+            if (!zombie.isDead() && zombie.customName() != null) {
+                return zombie;
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ the ability sword

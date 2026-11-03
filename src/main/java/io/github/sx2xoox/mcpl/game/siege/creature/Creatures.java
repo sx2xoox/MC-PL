@@ -7,6 +7,7 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.util.TriState;
 import org.bukkit.Bukkit;
+import org.bukkit.Difficulty;
 import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.attribute.Attribute;
@@ -15,6 +16,7 @@ import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
+import org.bukkit.entity.Player;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -97,8 +99,27 @@ public final class Creatures {
             }
             return;
         }
-        victim.damage(damage, DamageSource.builder(DamageType.MOB_ATTACK).withCausingEntity(attacker)
+        if (victim instanceof Player && victim.getWorld().getDifficulty() == Difficulty.PEACEFUL) {
+            // Peaceful turns damage a mob causes to a player into nothing: without a causing entity it is not scaled.
+            victim.damage(damage, DamageSource.builder(DamageType.MOB_ATTACK).withDirectEntity(attacker).build());
+            return;
+        }
+        double dealt = victim instanceof Player ? beforeDifficulty(damage, victim.getWorld().getDifficulty()) : damage;
+        victim.damage(dealt, DamageSource.builder(DamageType.MOB_ATTACK).withCausingEntity(attacker)
                 .withDirectEntity(attacker).build());
+    }
+
+    /**
+     * The amount a mob must deal for a player to take {@code damage}: the game scales damage a mob causes to a player
+     * by the world difficulty (easy {@code min(x / 2 + 1, x)}, hard {@code x * 1.5}), while the balance numbers are
+     * what the player takes, on every server.
+     */
+    public static double beforeDifficulty(double damage, Difficulty difficulty) {
+        return switch (difficulty) {
+            case EASY -> damage <= 2 ? damage : 2 * (damage - 1);
+            case HARD -> damage / 1.5;
+            case NORMAL, PEACEFUL -> damage;
+        };
     }
 
     /** Turns the body towards a place. */

@@ -8,7 +8,7 @@ import org.bukkit.configuration.ConfigurationSection;
  * The {@code games.siege.hud.*} settings (docs/siege.md "화면 표시"): the plates under the names, the floating damage
  * numbers, the "▶ 지금 할 일" line and the start tutorial. Read once per match.
  *
- * @param namePlates        health bar and level under every player's name
+ * @param namePlates        name, health bar and level above every fighter's head
  * @param damageNumbers     floating damage numbers over hit players, structures and monsters
  * @param damageNumberRange only players this close (blocks) see a damage number
  * @param guidance          the "▶ 지금 할 일" action bar line
@@ -44,7 +44,7 @@ public record SiegeHudSettings(
     public static void declareDefaults(ConfigurationSection d) {
         d.setComments("hud", List.of("화면 표시 (체력은 머리 위 막대, 보스바는 남은 시간 1줄)"));
         d.set(NAME_PLATES, DEFAULTS.namePlates);
-        d.setComments(NAME_PLATES, List.of("이름 밑 체력 막대와 레벨 (자신과 은신한 적에게는 보이지 않음)"));
+        d.setComments(NAME_PLATES, List.of("머리 위 이름·체력 막대·레벨 (바닐라 이름표 대신; 자신과 은신한 적에게는 보이지 않음)"));
         d.set(DAMAGE_NUMBERS, DEFAULTS.damageNumbers);
         d.setComments(DAMAGE_NUMBERS, List.of("떠오르는 피해 숫자 (흰색 일반, 노랑 능력, 초록 회복, 주황 건물)"));
         d.set(DAMAGE_NUMBER_RANGE, DEFAULTS.damageNumberRange);

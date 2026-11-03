@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.siege;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchContext;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -10,6 +11,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Bukkit events of one 공성전 match: hits on structure hitboxes become structure damage (the hitbox itself is never
@@ -20,6 +22,9 @@ final class SiegeListener implements Listener {
 
     private final SiegeMatch match;
     private final GameSession session;
+
+    /** The match's named creature whose death event is running (see {@link #onCreatureDying}). */
+    private @Nullable LivingEntity dyingCreature;
 
     SiegeListener(SiegeMatch match) {
         this.match = match;
@@ -97,6 +102,27 @@ final class SiegeListener implements Listener {
         if (match.towerOf(event.getEntity()) != null) {
             event.getDrops().clear();
             event.setDroppedExp(0);
+        }
+    }
+
+    /**
+     * The server logs the death of every named mob ("Named entity … died") after the death event: the match's minions
+     * and monsters die by the hundred, so they lose their name tag once every other listener has read it. Whether the
+     * dead one is the match's is asked first (the systems stop tracking their creatures during the event).
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onCreatureDying(EntityDeathEvent event) {
+        LivingEntity dead = event.getEntity();
+        dyingCreature = !(dead instanceof Player) && dead.customName() != null && session.isMatchEntity(dead)
+                ? dead : null;
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onCreatureDied(EntityDeathEvent event) {
+        LivingEntity dead = dyingCreature;
+        dyingCreature = null;
+        if (dead != null && dead.equals(event.getEntity())) {
+            dead.customName(null);
         }
     }
 }

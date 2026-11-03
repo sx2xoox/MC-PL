@@ -228,9 +228,11 @@ class MinionWavesTest extends LaneTestBase {
         assertTrue(other.body().isDead(), "killed by the BLUE minion");
         assertEquals(now, systems.gold().balance(hitter.getUniqueId()));
 
-        // A cannon pays more.
+        // A cannon pays more (the hitter waits out of the minions' reach meanwhile).
+        hitter.teleport(at(0, 80));
         run(60);
         MinionWaves.Minion cannon = of(LaneSites.Side.RED, MinionKind.CANNON).getFirst();
+        hitter.teleport(cannon.body().getLocation().add(1, 0, 0));
         int beforeCannon = systems.gold().balance(hitter.getUniqueId());
         melee(hitter, cannon.body(), 1000);
         assertEquals(beforeCannon + 40, systems.gold().balance(hitter.getUniqueId()));

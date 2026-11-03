@@ -231,6 +231,9 @@ public final class SiegeMatch implements GameInstance {
 
     @Override
     public void onQuit(Player player) {
+        if (hud != null) {
+            hud.playerLeft(player);
+        }
         abilities().onQuit(player);
     }
 

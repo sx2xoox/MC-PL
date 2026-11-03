@@ -24,7 +24,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * The 공성전 HUD (docs/siege.md "화면 표시"), kept small on purpose: one boss bar with the round timer only, a private
  * sidebar of at most six lines per viewer (score and rounds, time, standing towers, my level and gold, the next big
- * objective from a {@link SiegeModule}, my ability), the health plates under the names ({@link NamePlates}) and the
+ * objective from a {@link SiegeModule}, my ability), the health plates over the heads ({@link NamePlates}) and the
  * start tutorial (three titles and a chat summary). Structure health floats over the structures ({@link OverheadBar});
  * the "▶ 지금 할 일" line is {@link Guidance}.
  */
@@ -50,10 +50,10 @@ final class SiegeHud {
         this.plates = new NamePlates(match, match::plateLevel);
     }
 
-    /** Every tick: plates of players whose health changed. */
+    /** Every tick: the plates over the heads (who carries one, who sees it, health changes). */
     void tick() {
         if (settings.namePlates()) {
-            plates.flush();
+            plates.tick();
         }
     }
 
@@ -62,7 +62,13 @@ final class SiegeHud {
         plates.changed(player);
     }
 
+    /** {@code player} left: their plate goes now. */
+    void playerLeft(Player player) {
+        plates.remove(player.getUniqueId());
+    }
+
     void dispose() {
+        plates.dispose();
         if (timer != null) {
             timer.hideAll();
         }

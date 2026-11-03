@@ -34,7 +34,9 @@ import org.jspecify.annotations.Nullable;
  *     rabbit, 장난감 드래곤 = a ravager; 태엽 상인 = a villager.</li>
  * </ul>
  *
- * Sizes come from the settings ({@code Attribute.SCALE}, set by the systems' configure step).
+ * Sizes come from the settings ({@code Attribute.SCALE}, set by the systems' configure step). Every body is spawned
+ * without vanilla's random spawn data: no chicken jockey under a baby zombie (an untracked chicken outliving the match),
+ * no random armour or leader-zombie health.
  */
 public final class VanillaCreatureLook implements CreatureLook {
 
@@ -48,41 +50,41 @@ public final class VanillaCreatureLook implements CreatureLook {
     public Mob spawn(CreatureKind kind, LaneSites.@Nullable Side side, Location at, Consumer<Mob> configure) {
         Color colour = side == LaneSites.Side.RED ? RED : BLUE;
         return switch (kind) {
-            case MINION_MELEE -> at.getWorld().spawn(at, Zombie.class, zombie -> {
+            case MINION_MELEE -> at.getWorld().spawn(at, Zombie.class, false, zombie -> {
                 zombie.setBaby();
                 optional(() -> zombie.setShouldBurnInDay(false));
                 dress(zombie, colour, Material.WOODEN_SWORD);
                 configure.accept(zombie);
             });
-            case MINION_RANGED -> at.getWorld().spawn(at, Skeleton.class, skeleton -> {
+            case MINION_RANGED -> at.getWorld().spawn(at, Skeleton.class, false, skeleton -> {
                 optional(() -> skeleton.setShouldBurnInDay(false));
                 dress(skeleton, colour, Material.BOW);
                 configure.accept(skeleton);
             });
-            case MINION_CANNON -> at.getWorld().spawn(at, IronGolem.class, golem -> {
+            case MINION_CANNON -> at.getWorld().spawn(at, IronGolem.class, false, golem -> {
                 optional(() -> golem.setPlayerCreated(true));
                 configure.accept(golem);
             });
-            case JELLY -> at.getWorld().spawn(at, Slime.class, slime -> {
+            case JELLY -> at.getWorld().spawn(at, Slime.class, false, slime -> {
                 slime.setSize(1);
                 configure.accept(slime);
             });
             case MICE -> (mice++ % 2 == 0)
-                    ? at.getWorld().spawn(at, Silverfish.class, configure::accept)
-                    : at.getWorld().spawn(at, Endermite.class, configure::accept);
-            case TEDDY -> at.getWorld().spawn(at, Panda.class, panda -> {
+                    ? at.getWorld().spawn(at, Silverfish.class, false, configure::accept)
+                    : at.getWorld().spawn(at, Endermite.class, false, configure::accept);
+            case TEDDY -> at.getWorld().spawn(at, Panda.class, false, panda -> {
                 optional(() -> {
                     panda.setMainGene(Panda.Gene.BROWN);
                     panda.setHiddenGene(Panda.Gene.BROWN);
                 });
                 configure.accept(panda);
             });
-            case RABBIT -> at.getWorld().spawn(at, Rabbit.class, rabbit -> {
+            case RABBIT -> at.getWorld().spawn(at, Rabbit.class, false, rabbit -> {
                 optional(() -> rabbit.setRabbitType(Rabbit.Type.GOLD));
                 configure.accept(rabbit);
             });
-            case DRAGON -> at.getWorld().spawn(at, Ravager.class, configure::accept);
-            case SHOPKEEPER -> at.getWorld().spawn(at, Villager.class, villager -> {
+            case DRAGON -> at.getWorld().spawn(at, Ravager.class, false, configure::accept);
+            case SHOPKEEPER -> at.getWorld().spawn(at, Villager.class, false, villager -> {
                 optional(() -> villager.setVillagerLevel(5));
                 configure.accept(villager);
             });

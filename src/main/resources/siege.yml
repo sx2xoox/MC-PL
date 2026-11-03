@@ -135,8 +135,9 @@ hud:
   ability: "<gray>능력 </gray><ability>"
   ability-reroll: "<gray>능력 </gray><ability> <dark_gray>(리롤 <count>)"
   spectating: "<gray>관전 중"
-  plate: "<level><bar> <white><health>"
+  plate: "<level><name><newline><bar> <red>❤</red> <white><health></white><gray>/<max></gray><absorption>"
   plate-level: "<gold>Lv.<level></gold> "
+  plate-absorption: " <yellow>+<amount>"
 
 command:
   help:
