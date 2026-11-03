@@ -42,7 +42,7 @@ final class SiegeFirewallZone implements MapZone {
         Random random = canvas.random(name());
         wall(canvas, random);
         plaza(canvas, random);
-        checkpoint(canvas, random);
+        checkpoint(canvas);
         // Security HQ (enterable) north of the avenue, facing the plaza.
         SiegeKit.building(canvas, random, new SiegeKit.Building(-45, -43, -31, -18, 4, true, N | S));
         SiegeStreets.block(canvas, random, -29, -43, -21, -18, N | S, 2, 3, 0);
@@ -54,8 +54,10 @@ final class SiegeFirewallZone implements MapZone {
         SiegeStreets.block(canvas, random, -73, 59, -57, 88, N, 3, 6, 0.5);
         SiegeStreets.block(canvas, random, -44, 59, -21, 88, N, 3, 6, 0.5);
         BiPredicate<Integer, Integer> keep = SiegeZones::keepFree;
-        SiegeStreets.streetAlongX(canvas, random, -73, -11, -SiegeLayout.MAIN_HALF, SiegeLayout.MAIN_HALF, keep);
-        SiegeStreets.streetAlongX(canvas, random, -73, -11, SiegeLayout.NORTH_Z1, SiegeLayout.NORTH_Z2, keep);
+        SiegeStreets.streetAlongX(canvas, random, -73, -11, -SiegeLayout.MAIN_HALF, SiegeLayout.MAIN_HALF,
+                SiegeWayfinding.MAIN, keep);
+        SiegeStreets.streetAlongX(canvas, random, -73, -11, SiegeLayout.NORTH_Z1, SiegeLayout.NORTH_Z2,
+                SiegeWayfinding.NORTH, keep);
         SiegeStreets.streetAlongZ(canvas, random, -20, -12, -88, 88, keep);
         SiegeStreets.streetAlongZ(canvas, random, -54, -46, -88, -20, keep);
         SiegeStreets.streetAlongZ(canvas, random, -54, -46, 20, 88, keep);
@@ -100,9 +102,7 @@ final class SiegeFirewallZone implements MapZone {
                 }
             }
         }
-        // The lintel over the gate: a billboard facing the attackers.
-        SiegeKit.board(canvas, random, -SiegeLayout.MAIN_HALF, G + 11, X1, 2 * SiegeLayout.MAIN_HALF + 1, 6, false,
-                -1, "MAGENTA", "PURPLE");
+        // The lintel over the gate says GATE (written by SiegeWayfinding).
         // Gate pylons.
         for (int sign : new int[] {-1, 1}) {
             for (int z = 11; z <= 13; z++) {
@@ -176,7 +176,8 @@ final class SiegeFirewallZone implements MapZone {
         for (int sign : new int[] {-1, 1}) {
             for (int x = cx - 2; x <= cx + 1; x++) {
                 for (int z = 17; z <= 20; z++) {
-                    for (int y = G + 1; y <= lintel + 4; y++) {
+                    // Up above the roofs: the front tower's landmark.
+                    for (int y = G + 1; y <= lintel + 16; y++) {
                         boolean edge = x == cx - 2 || x == cx + 1 || z == 17 || z == 20;
                         canvas.set(x, y, sign * z, edge && y % 4 == 1 ? SiegeKit.glow("MAGENTA")
                                 : edge ? BlockSpec.of(Material.BLACK_CONCRETE)
@@ -198,7 +199,7 @@ final class SiegeFirewallZone implements MapZone {
     // ------------------------------------------------------------------ the checkpoint
 
     /** An open checkpoint pavilion (defender spawn 0): a roof on columns, barriers with gaps, scanner arches. */
-    private void checkpoint(MapCanvas canvas, Random random) {
+    private void checkpoint(MapCanvas canvas) {
         int x1 = SiegeLayout.CHECKPOINT_X1;
         int x2 = SiegeLayout.CHECKPOINT_X2;
         int z1 = SiegeLayout.CHECKPOINT_Z1;
@@ -207,13 +208,13 @@ final class SiegeFirewallZone implements MapZone {
         for (int x = x1; x <= x2; x++) {
             for (int z = z1; z <= z2; z++) {
                 boolean edge = x == x1 || x == x2 || z == z1 || z == z2;
-                canvas.set(x, roof, z, edge ? (Math.floorMod(x + z, 2) == 0 ? SiegeKit.glow("YELLOW")
+                canvas.set(x, roof, z, edge ? (Math.floorMod(x + z, 2) == 0 ? SiegeKit.glow("MAGENTA")
                         : BlockSpec.of(Material.BLACK_CONCRETE)) : BlockSpec.of(Material.GRAY_CONCRETE));
                 if (!edge && Math.floorMod(x - x1, 4) == 2 && Math.floorMod(z - z1, 4) == 2) {
                     canvas.set(x, roof, z, BlockSpec.of(Material.SEA_LANTERN));
                 }
                 canvas.set(x, G, z, Math.floorMod(x + z, 2) == 0 ? BlockSpec.of(Material.POLISHED_DEEPSLATE)
-                        : BlockSpec.of(Material.YELLOW_CONCRETE));
+                        : BlockSpec.of(Material.MAGENTA_TERRACOTTA));
             }
         }
         for (int x : new int[] {x1, (x1 + x2) / 2, x2}) {
@@ -241,7 +242,5 @@ final class SiegeFirewallZone implements MapZone {
             }
             canvas.set(x1 - 1, roof - 1, z, BlockSpec.of(Material.POLISHED_BLACKSTONE));
         }
-        // A billboard on the roof facing the plaza.
-        SiegeKit.board(canvas, random, z1 + 3, roof + 1, x1 + 2, 10, 5, false, -1, "YELLOW", "ORANGE");
     }
 }

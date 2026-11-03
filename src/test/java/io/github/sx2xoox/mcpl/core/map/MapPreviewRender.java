@@ -38,16 +38,24 @@ class MapPreviewRender {
                 int w = SiegeLayout.HALF_WIDTH;
                 // The isometric view leaves out the skyline in front (south and east), so the district can be seen.
                 MapPreview.night = true;
-                render(map, map.zones(), zoneName, out, -r, -w, r, w, 0, 6,
+                MapCanvas canvas = render(map, map.zones(), zoneName, out, -r, -w, r, w, 0, 6,
                         (x, z) -> z <= SiegeLayout.SIDE && x <= SiegeLayout.EAST_END);
+                // Street views looking east (towards the towers) from each district, and the annotated guide.
+                MapPreview preview = new MapPreview(canvas);
+                int[] views = {-150, -100, -70, -8, 73};
+                for (int x : views) {
+                    MapPreview.write(preview.elevationEast(x, 70, -64, 64, SiegeLayout.CANAL_Y, 112, 6),
+                            new File(out, "siege-view-" + x + ".png"));
+                }
                 MapPreview.night = false;
+                SiegeGuideMap.write(map, canvas, new File(out, "siege-guide.png"));
             }
         } finally {
             MockBukkit.unmock();
         }
     }
 
-    private static void render(ArenaMap map, List<MapZone> zones, String zoneName, File out, int minX, int minZ,
+    private static MapCanvas render(ArenaMap map, List<MapZone> zones, String zoneName, File out, int minX, int minZ,
                                int maxX, int maxZ, int ring, int tile, BiPredicate<Integer, Integer> iso)
             throws IOException {
         MapCanvas canvas = map.render();
@@ -67,6 +75,7 @@ class MapPreviewRender {
         }
         System.out.println("[previews] " + map.id() + " written to " + out.getAbsolutePath() + " ("
                 + canvas.blockCount() + " blocks)");
+        return canvas;
     }
 
     /** {minX, minZ, maxX, maxZ} of the zone's columns, with a 2-block margin. */
