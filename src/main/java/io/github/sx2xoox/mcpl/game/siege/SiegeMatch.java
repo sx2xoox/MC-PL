@@ -78,6 +78,8 @@ public final class SiegeMatch implements GameInstance {
     /** Levels and experience ({@link SiegeProgress}) and the neutral objectives ({@link ObjectivePoints}). */
     private @Nullable SiegeProgress progress;
     private @Nullable ObjectivePoints objectives;
+    /** The neutral monster camps ({@link JungleCamps}). */
+    private @Nullable JungleCamps camps;
     private final List<MatchTeam> teams = new ArrayList<>();
     private final List<Tower> towers = new ArrayList<>();
     private final Map<UUID, Long> protectedUntil = new HashMap<>();
@@ -139,6 +141,8 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         session.registerListener(new SiegeListener(this));
+        camps = new JungleCamps(this, CampSettings.read(session.gameConfig()));
+        session.registerListener(camps);
         hud = new SiegeHud(this);
         startRound();
     }
@@ -249,17 +253,24 @@ public final class SiegeMatch implements GameInstance {
 
         @Override
         public List<LivingEntity> extraTargets() {
-            return towerTargets();
+            List<LivingEntity> targets = towerTargets();
+            if (camps != null) {
+                targets.addAll(camps.targets());
+            }
+            return targets;
         }
 
         @Override
         public boolean isExtraTarget(Entity entity) {
-            return towerOf(entity) != null;
+            return towerOf(entity) != null || camps != null && camps.campOf(entity) != null;
         }
 
         @Override
         public boolean isExtraEnemy(Player owner, Entity entity) {
-            return isTowerEnemy(owner, entity);
+            if (towerOf(entity) != null) {
+                return isTowerEnemy(owner, entity);
+            }
+            return camps != null && camps.isEnemy(owner, entity);
         }
 
         @Override
@@ -446,6 +457,7 @@ public final class SiegeMatch implements GameInstance {
         protectedUntil.clear();
         score().newHalf();
         objectives().clear();
+        camps().clear();
         progress().newHalf();
         disposeTowers();
         createTowers();
@@ -510,6 +522,7 @@ public final class SiegeMatch implements GameInstance {
         abilities().hostBeginFight();
         refreshShields();
         objectives().beginFight();
+        camps().beginFight();
         session.title(messages.get("fight.title"), messages.get("fight.subtitle"));
         session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.2f);
     }
@@ -548,6 +561,7 @@ public final class SiegeMatch implements GameInstance {
         if (phase != Phase.FIGHT) {
             return;
         }
+        camps().second(now);
         Tower current = attackableTower();
         if (current == null) {
             return;
@@ -661,6 +675,7 @@ public final class SiegeMatch implements GameInstance {
             abilities().hostEndFight();
             disposeTowers();
             objectives().clear();
+            camps().clear();
             phase = Phase.HALFTIME;
             phaseTicks = 0;
             session.title(messages.get("halftime.title"), messages.get("halftime.subtitle",
@@ -696,6 +711,7 @@ public final class SiegeMatch implements GameInstance {
         abilities().hostEndFight();
         disposeTowers();
         objectives().clear();
+        camps().clear();
         points.roundWon(team);
         MatchTeam winner = teams.get(team);
         UUID mvp = points.roundMvp();
@@ -1082,6 +1098,13 @@ public final class SiegeMatch implements GameInstance {
         return objectives;
     }
 
+    JungleCamps camps() {
+        if (camps == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return camps;
+    }
+
     /** The in-match level (1 … {@code levels.max}) of a player this half, 1 before the match started. */
     public int level(UUID player) {
         return progress == null ? 1 : progress.levels().level(player);
@@ -1096,6 +1119,9 @@ public final class SiegeMatch implements GameInstance {
         try {
             if (objectives != null) {
                 objectives.clear();
+            }
+            if (camps != null) {
+                camps.stop();
             }
             if (progress != null) {
                 progress.clear();

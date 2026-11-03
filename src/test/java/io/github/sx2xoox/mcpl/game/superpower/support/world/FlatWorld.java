@@ -285,7 +285,7 @@ public final class FlatWorld extends WorldMock {
     public <T extends Entity> T spawn(Location location, Class<T> clazz, @Nullable Consumer<? super T> function,
                                       CreatureSpawnEvent.SpawnReason reason, boolean randomizeData,
                                       boolean callSpawnEvent) {
-        Class substitute = MockEntities.SUBSTITUTES.get(clazz);
+        Class substitute = MockEntities.SUBSTITUTES.getOrDefault(clazz, CampMobMocks.SUBSTITUTES.get(clazz));
         // MockBukkit runs the consumer right before it registers the entity (and removes an entity that is not valid
         // when its spawn event fires), so the mark ends with the consumer, as Paper adds the entity right after it.
         Consumer<Entity> marked = entity -> {

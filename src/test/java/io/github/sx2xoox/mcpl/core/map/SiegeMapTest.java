@@ -136,6 +136,53 @@ class SiegeMapTest {
         }
     }
 
+    /** Free height a camp's monsters need over its centre, by kind (the scaled mob plus headroom). */
+    private static int campHeight(String kind) {
+        return switch (kind) {
+            case "guardian" -> 7;
+            case "red", "blue" -> 4;
+            default -> 3;
+        };
+    }
+
+    @Test
+    void theCampsHaveOpenReachableGround() {
+        List<SiegeSites.Camp> camps = map.camps();
+        assertEquals(9, camps.size(), "six small camps, two buff camps and the epic");
+        assertEquals(camps.size(), camps.stream().map(SiegeSites.Camp::id).distinct().count(), "unique ids");
+        assertEquals(2, camps.stream().filter(c -> c.kind().equals("red") || c.kind().equals("blue")).count());
+        assertEquals(1, camps.stream().filter(c -> c.kind().equals("guardian")).count());
+        assertTrue(camps.stream().anyMatch(c -> c.x() < 0 && c.kind().equals("red"))
+                && camps.stream().anyMatch(c -> c.x() > 0 && c.kind().equals("blue")), "a buff camp on each half");
+        for (SiegeSites.Camp camp : camps) {
+            assertTrue(camp.radius() >= 3, camp.id() + ": room for the monsters");
+            for (int dx = -camp.radius(); dx <= camp.radius(); dx++) {
+                for (int dz = -camp.radius(); dz <= camp.radius(); dz++) {
+                    if (dx * dx + dz * dz > camp.radius() * camp.radius()) {
+                        continue;
+                    }
+                    int x = camp.x() + dx;
+                    int z = camp.z() + dz;
+                    MapAudit.Node node = nodes.get(key(x, camp.y(), z));
+                    assertNotNull(node, camp.id() + ": flat standable ground at " + x + "," + z);
+                    assertTrue(reachable.contains(node), camp.id() + ": reachable at " + x + "," + z);
+                    int height = dx * dx + dz * dz <= 4 ? campHeight(camp.kind()) : 3;
+                    for (int y = camp.y(); y < camp.y() + height; y++) {
+                        assertTrue(!canvas.isSolid(x, y, z), camp.id() + ": open at " + x + "," + y + "," + z);
+                    }
+                }
+            }
+            for (SiegeSites.Tower tower : map.towers()) {
+                assertTrue(Math.hypot(camp.x() - tower.x(), camp.z() - tower.z()) > tower.radius() + 12,
+                        camp.id() + " stays off the " + tower.id() + " platform");
+            }
+            for (SiegeSites.Objective objective : map.objectives()) {
+                assertTrue(Math.hypot(camp.x() - objective.x(), camp.z() - objective.z()) > 20,
+                        camp.id() + " stays away from " + objective.id());
+            }
+        }
+    }
+
     @Test
     void everyGroundPlaceCanBeReachedAndLeft() {
         assertTrue(report.problems().isEmpty(), "no floating sand, spilling water, lava or fire:\n"

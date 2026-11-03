@@ -7,7 +7,7 @@ import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
 /**
  * A plain straight layout used when no 공성전 map is registered (and by the tests): attackers at {@code z = -36},
  * the towers on the {@code z} axis (front {@code -5}, middle {@code 12}, core {@code 28}) and the defenders behind
- * each tower, two data nodes beside the front tower and the big objective in front of it. Every spot stands at
+ * each tower, two data nodes beside the front tower and the big objective in front of it, monster camps to both sides. Every spot stands at
  * {@code feetY}; {@link SiegeLayout} places it around the hub's arena center.
  */
 public final class FallbackSiegeSites implements SiegeSites {
@@ -40,6 +40,16 @@ public final class FallbackSiegeSites implements SiegeSites {
         return List.of(new Objective("north", "북쪽 데이터 노드", -14, feetY, 4, 3, false),
                 new Objective("canal", "수로 데이터 노드", 14, feetY, 4, 3, false),
                 new Objective("center", "오버클럭 코어", 0, feetY, -20, 4, true));
+    }
+
+    @Override
+    public List<Camp> camps() {
+        return List.of(new Camp("drones", "드론 둥지", "drones", -24, feetY, -18, 3),
+                new Camp("rats", "변종 쥐떼", "rats", 24, feetY, -18, 3),
+                new Camp("scrap", "고철 골렘", "scrap", -24, feetY, 20, 3),
+                new Camp("red", "레드 서버", "red", -30, feetY, 0, 4),
+                new Camp("blue", "블루 서버", "blue", 30, feetY, 0, 4),
+                new Camp("guardian", "메인프레임 수호자", "guardian", 30, feetY, 40, 6));
     }
 
     private List<Spot> row(int z, float yaw) {

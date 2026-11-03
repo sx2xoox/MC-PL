@@ -32,6 +32,15 @@ public interface SiegeSites {
     }
 
     /**
+     * Neutral monster camps (docs/siege.md §13), like jungle camps: monsters either team can kill for experience and,
+     * for the bigger ones, a team buff; each comes back on its own timer. Optional: a map without them plays without
+     * camps. The game decides the monsters by {@link Camp#kind()}.
+     */
+    default List<Camp> camps() {
+        return List.of();
+    }
+
+    /**
      * A standing place: the block the feet are in, and the direction to face.
      *
      * @param yaw Minecraft yaw in degrees (0 = +z)
@@ -59,5 +68,17 @@ public interface SiegeSites {
      * @param major  the big neutral objective that appears on a timer (otherwise a small data node)
      */
     record Objective(String id, String name, int x, int y, int z, int radius, boolean major) {
+    }
+
+    /**
+     * A monster camp: the monsters stand around {@code x, y, z} (a free standing place) within {@code radius} blocks,
+     * a flat open area the map keeps clear of blocks up to the monsters' height.
+     *
+     * @param id   stable id ({@code west-drones}, {@code red}, {@code guardian})
+     * @param name Korean name shown to players ("드론 둥지")
+     * @param kind which monsters live there: {@code drones}, {@code rats}, {@code scrap} (small camps), {@code red},
+     *             {@code blue} (buff camps) or {@code guardian} (the epic boss)
+     */
+    record Camp(String id, String name, String kind, int x, int y, int z, int radius) {
     }
 }
