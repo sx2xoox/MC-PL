@@ -6,6 +6,7 @@ import java.util.List;
 import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.jspecify.annotations.Nullable;
 
 /**
  * {@link SiegeSites} placed into a world: block coordinates relative to a center block on x/z (block {@code 0, 0}
@@ -66,6 +67,20 @@ public final class SiegeLayout {
     public List<Location> defenderSpawns(int towersDown) {
         List<List<SiegeSites.Spot>> lists = sites.defenderSpawns();
         return all(lists.get(Math.max(0, Math.min(lists.size() - 1, towersDown))));
+    }
+
+    /** The district of the map {@code location} is in, or null (outside every district, another world). */
+    public SiegeSites.@Nullable District districtAt(Location location) {
+        if (!world.equals(location.getWorld())) {
+            return null;
+        }
+        int x = location.getBlockX() - originX;
+        for (SiegeSites.District district : sites.districts()) {
+            if (x >= district.minX() && x <= district.maxX()) {
+                return district;
+            }
+        }
+        return null;
     }
 
     private List<Location> all(List<SiegeSites.Spot> spots) {

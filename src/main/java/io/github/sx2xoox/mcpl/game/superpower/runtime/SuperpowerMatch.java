@@ -39,6 +39,7 @@ import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
 import io.github.sx2xoox.mcpl.game.superpower.ui.RevealAnimation;
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Difficulty;
@@ -836,7 +837,7 @@ public final class SuperpowerMatch implements GameInstance {
         }
         Player player = participant.player();
         if (player != null && ticks > 0) {
-            player.getInventory().setItem(AbilityItems.SLOT, null);
+            player.getInventory().setItem(abilitySlot(), null);
         }
         List<AbilityInfo> reel = new ArrayList<>();
         for (String id : abilities.enabledIds()) {
@@ -1634,13 +1635,20 @@ public final class SuperpowerMatch implements GameInstance {
     public void giveKit(Player player) {
         PlayerInventory inventory = player.getInventory();
         int next = 0;
+        int abilitySlot = abilitySlot();
+        boolean skipSword = isAbilityWeapon();
         for (ItemStack stack : settings.kitCopy()) {
+            if (skipSword && Tag.ITEMS_SWORDS.isTagged(stack.getType())) {
+                // The ability weapon is this sword.
+                skipSword = false;
+                continue;
+            }
             EquipmentSlot slot = equipmentSlot(stack.getType());
             if (slot != null && isEmpty(inventory.getItem(slot))) {
                 inventory.setItem(slot, stack);
                 continue;
             }
-            while (next < 36 && (next == AbilityItems.SLOT || !isEmpty(inventory.getItem(next)))) {
+            while (next < 36 && (next == abilitySlot || !isEmpty(inventory.getItem(next)))) {
                 next++;
             }
             if (next >= 36) {
@@ -1648,6 +1656,26 @@ public final class SuperpowerMatch implements GameInstance {
             }
             inventory.setItem(next++, stack);
         }
+    }
+
+    /** True if the ability item is the player's sword ({@link MatchHost#abilityWeapon()}, 공성전). */
+    public boolean isAbilityWeapon() {
+        return host != null && host.abilityWeapon();
+    }
+
+    /** Hotbar slot of the ability item: slot 1 for the ability weapon, slot 9 for the classic item. */
+    public int abilitySlot() {
+        return isAbilityWeapon() ? AbilityItems.WEAPON_SLOT : AbilityItems.SLOT;
+    }
+
+    /** The ability weapon's base: the kit's first sword (it hits like that sword), an iron sword without one. */
+    private ItemStack weaponBase() {
+        for (ItemStack stack : settings.kit()) {
+            if (Tag.ITEMS_SWORDS.isTagged(stack.getType())) {
+                return stack;
+            }
+        }
+        return ItemStack.of(Material.IRON_SWORD);
     }
 
     /** Where a kit item is worn, or null for the main inventory. */
@@ -1698,20 +1726,26 @@ public final class SuperpowerMatch implements GameInstance {
             return;
         }
         PlayerInventory inventory = player.getInventory();
+        int abilitySlot = abilitySlot();
         for (int slot = 0; slot < inventory.getSize(); slot++) {
-            if (slot != AbilityItems.SLOT && items.isAbilityItem(inventory.getItem(slot))) {
+            if (slot != abilitySlot && items.isAbilityItem(inventory.getItem(slot))) {
                 inventory.setItem(slot, null);
             }
         }
         if (items.isAbilityItem(player.getItemOnCursor())) {
             player.setItemOnCursor(null);
         }
-        ItemStack current = inventory.getItem(AbilityItems.SLOT);
-        if (info.id().equals(items.abilityId(current))) {
+        ItemStack current = inventory.getItem(abilitySlot);
+        boolean weapon = isAbilityWeapon();
+        Key model = weapon ? AbilityItems.weaponModel(info, game.hub().resourcePacks().hasPack(player)) : null;
+        if (info.id().equals(items.abilityId(current))
+                && (model == null || model.equals(items.weaponModelOf(current)))) {
             return;
         }
         ItemStack displaced = isEmpty(current) || items.isAbilityItem(current) ? null : current;
-        inventory.setItem(AbilityItems.SLOT, items.create(info, params(info), settings.abilityItemMaterial(), texts));
+        inventory.setItem(abilitySlot, model != null
+                ? items.createWeapon(info, params(info), weaponBase(), model, texts)
+                : items.create(info, params(info), settings.abilityItemMaterial(), texts));
         if (displaced != null) {
             for (ItemStack leftover : inventory.addItem(displaced).values()) {
                 Item dropped = player.getWorld().dropItem(player.getLocation(), leftover);

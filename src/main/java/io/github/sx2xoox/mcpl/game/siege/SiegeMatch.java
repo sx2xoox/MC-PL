@@ -174,8 +174,11 @@ public final class SiegeMatch implements GameInstance {
             case OVER -> {
             }
         }
-        if (!stopped && session.isRunning() && session.tick() % 10 == 0 && hud != null) {
-            hud.update();
+        if (!stopped && session.isRunning() && hud != null) {
+            if (session.tick() % 10 == 0) {
+                hud.update();
+            }
+            hud.tick();
         }
     }
 
@@ -216,6 +219,9 @@ public final class SiegeMatch implements GameInstance {
         }
         stopped = true;
         try {
+            if (hud != null) {
+                hud.dispose();
+            }
             disposeTowers();
             clearProgress();
             releaseTowerChunks();
@@ -249,6 +255,12 @@ public final class SiegeMatch implements GameInstance {
         @Override
         public boolean onUseOutsideFight(Player player) {
             return useOutsideFight(player);
+        }
+
+        /** 공성전: the sword is the ability item (right-click = active skill, F = ultimate). */
+        @Override
+        public boolean abilityWeapon() {
+            return true;
         }
 
         @Override
@@ -523,7 +535,7 @@ public final class SiegeMatch implements GameInstance {
         refreshShields();
         objectives().beginFight();
         camps().beginFight();
-        session.title(messages.get("fight.title"), messages.get("fight.subtitle"));
+        title(messages.get("fight.title"), messages.get("fight.subtitle"));
         session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.2f);
     }
 
@@ -601,7 +613,7 @@ public final class SiegeMatch implements GameInstance {
 
     private void startClimax() {
         climax = true;
-        session.title(messages.get("climax.title"), messages.get("climax.subtitle",
+        title(messages.get("climax.title"), messages.get("climax.subtitle",
                 Messages.tag("multiplier", Format.number(settings.climaxTowerMultiplier())),
                 Messages.tag("seconds", Format.number(settings.climaxRespawnCutTicks() / 20.0))));
         session.broadcast(messages.prefixed("climax.announce",
@@ -696,7 +708,7 @@ public final class SiegeMatch implements GameInstance {
         }
         suddenDeath = true;
         halfTicks = 0;
-        session.title(messages.get("sudden-death.title"), messages.get("sudden-death.subtitle",
+        title(messages.get("sudden-death.title"), messages.get("sudden-death.subtitle",
                 Messages.tag("seconds", settings.suddenDeathTicks() / 20)));
         session.broadcast(messages.prefixed("sudden-death.announce",
                 Messages.tag("seconds", settings.suddenDeathTicks() / 20)));
@@ -757,7 +769,8 @@ public final class SiegeMatch implements GameInstance {
                     settings.towerHealth(site.id(), Math.max(1, members(1 - defenders).size())));
             tower.spawn(session, game.towerLook(), team.color(),
                     game.towerLook().hitboxScale(site.id(), settings.hitboxScale()));
-            tower.bar(session.sharedBossBar(Component.text(site.name()), 1f, BossBar.Color.WHITE,
+            // Shown per player by the HUD (TowerBars), hidden by Tower#dispose.
+            tower.bar(new ManagedBossBar(Component.text(site.name()), 1f, BossBar.Color.WHITE,
                     BossBar.Overlay.NOTCHED_10));
             towers.add(tower);
         }
@@ -835,6 +848,9 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         protectedUntil.remove(attacker.getUniqueId());
+        if (hud != null) {
+            hud.towerHit(tower, attacker);
+        }
         if (tower.isShielded()) {
             attacker.sendActionBar(messages.get("tower.shielded"));
             Feedback.play(attacker, Sound.ITEM_SHIELD_BLOCK, 0.6f, 1.2f);
@@ -883,7 +899,7 @@ public final class SiegeMatch implements GameInstance {
         int points = score().towerDestroyed(team, tower.id(), climax, tower.topDamager());
         towersDown++;
         progress().teamXp(team, progress().settings().xpTowerDestroyed());
-        session.title(messages.get("tower.destroyed-title", Messages.tag("tower", tower.name())),
+        title(messages.get("tower.destroyed-title", Messages.tag("tower", tower.name())),
                 messages.get("tower.destroyed-subtitle", Messages.tag("team", teams.get(team).displayName()),
                         Messages.tag("points", points)));
         session.broadcast(messages.prefixed("tower.destroyed", Messages.tag("tower", tower.name()),
@@ -1110,6 +1126,11 @@ public final class SiegeMatch implements GameInstance {
         return progress == null ? 1 : progress.levels().level(player);
     }
 
+    /** The level shown on {@code player}'s name plate: their level, 0 (none) when levels are off. */
+    int plateLevel(UUID player) {
+        return progress != null && progress.settings().levelsEnabled() ? level(player) : 0;
+    }
+
     /** The experience a player gathered this half. */
     public int experience(UUID player) {
         return progress == null ? 0 : progress.levels().xp(player);
@@ -1253,6 +1274,36 @@ public final class SiegeMatch implements GameInstance {
 
     Hub hub() {
         return game.hub();
+    }
+
+    /**
+     * A title for every viewer during play; the HUD holds its own titles (district names) back for a moment so they
+     * do not cover it.
+     */
+    void title(Component title, Component subtitle) {
+        session.title(title, subtitle);
+        if (hud != null) {
+            hud.titleShown(null);
+        }
+    }
+
+    /** {@code player} just got a title of its own (level up): the HUD holds its titles back for a moment. */
+    void titleShown(Player player) {
+        if (hud != null) {
+            hud.titleShown(player);
+        }
+    }
+
+    /** {@code player}'s health changed (their name plate follows). */
+    void healthChanged(Player player) {
+        if (hud != null && !stopped) {
+            hud.healthChanged(player);
+        }
+    }
+
+    /** The HUD (tests). */
+    @Nullable SiegeHud hud() {
+        return hud;
     }
 
     // =================================================================== testing

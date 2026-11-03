@@ -8,10 +8,11 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityRegainHealthEvent;
 
 /**
  * Bukkit events of one 공성전 match: hits on tower hitboxes become tower damage (the hitbox itself is never hurt),
- * spawn protection, and the hits that count for assists.
+ * spawn protection, the hits that count for assists, and health changes for the name plates.
  */
 final class SiegeListener implements Listener {
 
@@ -58,6 +59,21 @@ final class SiegeListener implements Listener {
         Player attacker = session.combat().resolveAttacker(event);
         if (attacker != null && session.isParticipant(attacker)) {
             match.score().recordHit(attacker.getUniqueId(), victim.getUniqueId(), match.halfTicks());
+        }
+    }
+
+    /** Health changes redraw the player's name plate. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onHealthLost(EntityDamageEvent event) {
+        if (event.getEntity() instanceof Player player && session.isParticipant(player)) {
+            match.healthChanged(player);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onHealthGained(EntityRegainHealthEvent event) {
+        if (event.getEntity() instanceof Player player && session.isParticipant(player)) {
+            match.healthChanged(player);
         }
     }
 

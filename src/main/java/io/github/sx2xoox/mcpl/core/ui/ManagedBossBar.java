@@ -70,6 +70,11 @@ public final class ManagedBossBar {
         return viewers.contains(player.getUniqueId());
     }
 
+    /** Everyone the bar is shown to now. */
+    public Set<UUID> viewers() {
+        return Set.copyOf(viewers);
+    }
+
     /** Hides the bar from every player it was shown to (online ones; offline players drop it on their own). */
     public void hideAll() {
         for (UUID id : Set.copyOf(viewers)) {

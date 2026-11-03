@@ -281,6 +281,7 @@ public record SiegeSettings(
         d.setComments(WARNING_COOLDOWN, List.of("타워 피격 경고(소리·액션바) 간격(초)"));
         d.set(HITBOX_SCALE, 2.5);
         d.setComments(HITBOX_SCALE, List.of("타워 피격 판정 크기 배율 (0.5~10). 3D 타워는 타워 크기에 맞춰 이 값을 더 키워 씁니다"));
+        SiegeHudSettings.declareDefaults(d);
     }
 
     private static int points(ConfigurationSection c, String key, int fallback) {

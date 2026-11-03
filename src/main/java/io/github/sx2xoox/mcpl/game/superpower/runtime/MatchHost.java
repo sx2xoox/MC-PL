@@ -52,6 +52,15 @@ public interface MatchHost {
         return false;
     }
 
+    /**
+     * True if the ability item is the player's weapon (공성전): the kit's first sword becomes the ability item in hotbar
+     * slot 1 ({@link io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems#createWeapon}); it hits like that sword,
+     * right-click casts the active skill and F the ultimate. False: the classic item in slot 9.
+     */
+    default boolean abilityWeapon() {
+        return false;
+    }
+
     /** Live non-player targets abilities may hit (enemy candidates for targeting), e.g. tower hitboxes. */
     default List<LivingEntity> extraTargets() {
         return List.of();

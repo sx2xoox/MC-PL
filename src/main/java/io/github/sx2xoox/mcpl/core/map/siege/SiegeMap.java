@@ -38,6 +38,12 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
             new Tower("core", "메인프레임", SiegeLayout.CORE_X, SiegeLayout.PODIUM_Y + 1, 0,
                     SiegeLayout.TOWER_RADIUS));
 
+    private static final List<District> DISTRICTS = List.of(
+            new District("slums", "네온 빈민가", SiegeLayout.WEST_END, SiegeLayout.FIREWALL_WEST - 1),
+            new District("firewall", "방화벽 구역", SiegeLayout.FIREWALL_WEST, SiegeLayout.HUB_WEST - 1),
+            new District("hub", "데이터 허브", SiegeLayout.HUB_WEST, SiegeLayout.HQ_WEST - 1),
+            new District("hq", "메가코프 본사", SiegeLayout.HQ_WEST, SiegeLayout.EAST_END));
+
     private static final List<Spot> ATTACKERS = grid(new int[] {-152, -148}, new int[] {-6, -2, 2, 6}, G + 1,
             SiegeLayout.FRONT_X, 0);
 
@@ -157,6 +163,11 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
     @Override
     public List<Camp> camps() {
         return CAMPS;
+    }
+
+    @Override
+    public List<District> districts() {
+        return DISTRICTS;
     }
 
     /** The zones in build order (exposed for tests and previews). */

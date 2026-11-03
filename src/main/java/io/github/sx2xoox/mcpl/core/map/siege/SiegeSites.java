@@ -41,6 +41,23 @@ public interface SiegeSites {
     }
 
     /**
+     * The named districts the attackers pass, as x ranges (relative to the map center): entering one shows its name.
+     * Default: none.
+     */
+    default List<District> districts() {
+        return List.of();
+    }
+
+    /**
+     * A district of the map: every place with {@code minX <= x <= maxX}.
+     *
+     * @param id   stable id ({@code slums}, {@code firewall}, {@code hub}, {@code hq})
+     * @param name Korean name shown to players ("네온 빈민가")
+     */
+    record District(String id, String name, int minX, int maxX) {
+    }
+
+    /**
      * A standing place: the block the feet are in, and the direction to face.
      *
      * @param yaw Minecraft yaw in degrees (0 = +z)

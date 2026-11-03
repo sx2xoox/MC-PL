@@ -125,6 +125,7 @@ final class SiegeProgress {
         }
         Feedback.title(player, messages.get("level.up-title", Messages.tag("level", to)),
                 messages.get("level.up-subtitle", Messages.tag("level", to)), 3, 25, 8);
+        match.titleShown(player);
         Feedback.play(player, Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.1f);
         if (session.isInPlay(player)) {
             player.getWorld().spawnParticle(Particle.TOTEM_OF_UNDYING, player.getLocation().add(0, 1, 0), 30,

@@ -355,7 +355,7 @@ final class JungleCamps implements Listener {
                 session.playSound(Sound.BLOCK_BEACON_POWER_SELECT, 0.6f, 1.2f);
             }
             case EPIC -> {
-                session.title(messages.get("camp.epic-title", Messages.tag("name", campName(camp))),
+                match.title(messages.get("camp.epic-title", Messages.tag("name", campName(camp))),
                         messages.get("camp.epic-subtitle", Messages.tag("xp", camp.tier().xp())));
                 session.broadcast(messages.prefixed("camp.epic-spawned", Messages.tag("name", campName(camp)),
                         Messages.tag("xp", camp.tier().xp())));
@@ -500,7 +500,7 @@ final class JungleCamps implements Listener {
                 session.playSound(Sound.BLOCK_BEACON_ACTIVATE, 0.6f, 1.3f);
             }
             case EPIC -> {
-                session.title(messages.get("camp.epic-cleared-title", Messages.tag("team", teamName),
+                match.title(messages.get("camp.epic-cleared-title", Messages.tag("team", teamName),
                                 Messages.tag("name", campName(camp))),
                         messages.get("camp.epic-cleared-subtitle", Messages.tag("xp", tier.xp())));
                 session.broadcast(messages.prefixed("camp.epic-cleared", Messages.tag("team", teamName),

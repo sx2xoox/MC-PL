@@ -32,7 +32,7 @@ result:
   reason-rounds: "판 스코어 <a> : <b>"
 
 reroll:
-  announce: "<gray>준비 시간에 <white>웅크리고 능력 아이템 우클릭</white>(또는 <white>/게임 공성전 리롤</white>)으로 능력을 <white><count>번</white> 다시 뽑을 수 있습니다."
+  announce: "<gray>준비 시간에 <white>웅크리고 검 우클릭</white>(또는 <white>/게임 공성전 리롤</white>)으로 능력을 <white><count>번</white> 다시 뽑을 수 있습니다."
   hint: "<gray>웅크리고 우클릭하면 능력 리롤 (<white><count>번</white> 남음)"
   done: "<green>능력을 다시 뽑았습니다. <gray>(남은 리롤 <white><count></white>번)"
   not-participant: "<red>이 경기의 참가자가 아닙니다."
@@ -128,6 +128,15 @@ hud:
   kd: "<gray>킬/데스 </gray><white><kills></white><gray>/</gray><white><deaths>"
   rerolls: "<gray>리롤 <white><count></white>번 (웅크리고 우클릭)"
   spectating: "<gray>관전 중"
+  bossbar-pointer: "<timer><gray> · </gray><pointer>"
+  pointer-attack: "<gold>▶ <tower></gold> <white><distance>m</white> <yellow><arrow>"
+  pointer-defend: "<aqua>🛡 <tower></aqua> <white><distance>m</white> <aqua><arrow>"
+  plate: "<level><bar> <white><health>"
+  plate-level: "<gold>Lv.<level></gold> "
+
+district:
+  title: "<aqua><bold><district>"
+  subtitle: "<gray>구역 진입"
 
 command:
   help:

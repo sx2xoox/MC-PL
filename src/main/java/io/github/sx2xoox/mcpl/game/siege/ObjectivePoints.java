@@ -200,7 +200,7 @@ final class ObjectivePoints {
         point.progressTicks = 0;
         point.contested = false;
         if (point.site.major()) {
-            session.title(messages.get("objective.core-title", Messages.tag("name", point.site.name())),
+            match.title(messages.get("objective.core-title", Messages.tag("name", point.site.name())),
                     messages.get("objective.core-subtitle", Messages.tag("xp", settings().xpMajor())));
             session.broadcast(messages.prefixed("objective.core-open", Messages.tag("name", point.site.name()),
                     Messages.tag("xp", settings().xpMajor())));
@@ -261,7 +261,7 @@ final class ObjectivePoints {
                 Messages.tag("team", winner.displayName()), Messages.tag("name", point.site.name()),
                 Messages.tag("xp", xp)));
         if (major) {
-            session.title(messages.get("objective.core-captured-title", Messages.tag("team", winner.displayName())),
+            match.title(messages.get("objective.core-captured-title", Messages.tag("team", winner.displayName())),
                     messages.get("objective.core-captured-subtitle", Messages.tag("xp", xp)));
             session.playSound(Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.7f, 1.2f);
         } else {
