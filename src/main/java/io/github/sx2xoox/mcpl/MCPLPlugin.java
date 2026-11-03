@@ -6,6 +6,7 @@ import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.map.citadel.CitadelMap;
 import io.github.sx2xoox.mcpl.core.map.siege.SiegeMap;
+import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKingdomMap;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.augment.AugmentGame;
 import io.github.sx2xoox.mcpl.game.siege.SiegeGame;
@@ -29,6 +30,7 @@ public class MCPLPlugin extends JavaPlugin {
         // Built-in battle maps; a map built before is loaded again here, before the first match needs its world.
         hub.maps().register(new CitadelMap());
         hub.maps().register(new SiegeMap());
+        hub.maps().register(new ToyKingdomMap());
         registerGames(hub.games());
         // only now: the first rotation match must follow rotation.games, not the registration order
         hub.games().startRotation();

@@ -45,6 +45,11 @@ src/main/java/io/github/sx2xoox/mcpl/
       siege/                   네온 시티 (공성전 map, cyberpunk): SiegeSites (the contract the siege game reads), SiegeLayout
                                (the plan), SiegeKit/SiegeStreets (buildings, props), SiegeMap + one MapZone per part
                                (slums, firewall, hub, hq); SiegeMapTest (+ MapBlockChecks: block support audits)
+      lanes/                   LaneSites: the contract of a two-lane 공성전 v2 map (spawns, shop, towers, core, lane paths,
+                               objectives, dragon, regions; docs/siege-v2.md)
+      toykingdom/              장난감 왕국 (공성전 v2 map, pastel, mirror symmetric): ToyLayout (the plan + geometry),
+                               ToyKit (ground, props), ToyKingdomMap (ArenaMap + LaneSites) + one MapZone per part
+                               (border, castles, lanes, jungle, river); ToyKingdomMapTest (sites, paths, symmetry, palette)
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
     pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
                                PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model)

@@ -8,6 +8,7 @@ import java.util.function.BiPredicate;
 import io.github.sx2xoox.mcpl.core.map.citadel.CitadelMap;
 import io.github.sx2xoox.mcpl.core.map.siege.SiegeLayout;
 import io.github.sx2xoox.mcpl.core.map.siege.SiegeMap;
+import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKingdomMap;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
@@ -49,6 +50,12 @@ class MapPreviewRender {
                 }
                 MapPreview.night = false;
                 SiegeGuideMap.write(map, canvas, new File(out, "siege-guide.png"));
+            }
+            if (only.isEmpty() || only.equals("toykingdom")) {
+                ToyKingdomMap map = new ToyKingdomMap();
+                int r = map.buildRadius();
+                MapCanvas canvas = render(map, map.zones(), zoneName, out, -r, -68, r, 68, 0, 6, (x, z) -> true);
+                ToyKingdomGuideMap.write(map, canvas, new File(out, "toykingdom-guide.png"));
             }
         } finally {
             MockBukkit.unmock();
