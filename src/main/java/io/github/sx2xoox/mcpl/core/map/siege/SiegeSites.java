@@ -5,8 +5,8 @@ import java.util.List;
 /**
  * The places of a 공성전 map the game needs (see docs/siege.md): where each side spawns and where the towers stand.
  * Coordinates are blocks relative to the map center on x/z and absolute on y, like everything an {@code ArenaMap}
- * builds. The map is asymmetric: the attackers come from one end, the defenders hold three towers in a row; the two
- * teams swap sides at half time on the same map.
+ * builds. The map is asymmetric: the attackers come from the −x end (the towers face them), the defenders hold three
+ * towers in a row; the two teams swap sides at half time on the same map.
  */
 public interface SiegeSites {
 

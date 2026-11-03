@@ -152,7 +152,7 @@ public record SiegeSettings(
                 ticks(c.getDouble(REGEN_DELAY, 10), 0),
                 fraction(c.getDouble(REGEN_PER_SECOND, 0.01)),
                 ticks(c.getDouble(WARNING_COOLDOWN, 3), 0),
-                Math.max(0.5, Math.min(5.0, finite(c.getDouble(HITBOX_SCALE, 2.5), 2.5))));
+                Math.max(0.5, Math.min(10.0, finite(c.getDouble(HITBOX_SCALE, 2.5), 2.5))));
     }
 
     /** Points for destroying the tower {@code towerId} ({@code front}, {@code middle}, {@code core}). */
@@ -280,7 +280,7 @@ public record SiegeSettings(
         d.set(WARNING_COOLDOWN, 3);
         d.setComments(WARNING_COOLDOWN, List.of("타워 피격 경고(소리·액션바) 간격(초)"));
         d.set(HITBOX_SCALE, 2.5);
-        d.setComments(HITBOX_SCALE, List.of("타워 피격 판정 크기 배율"));
+        d.setComments(HITBOX_SCALE, List.of("타워 피격 판정 크기 배율 (0.5~10). 3D 타워는 타워 크기에 맞춰 이 값을 더 키워 씁니다"));
     }
 
     private static int points(ConfigurationSection c, String key, int fallback) {

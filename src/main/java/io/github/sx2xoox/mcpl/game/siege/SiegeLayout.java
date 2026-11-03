@@ -40,9 +40,12 @@ public final class SiegeLayout {
         return new Location(world, originX + spot.x() + 0.5, spot.y(), originZ + spot.z() + 0.5, spot.yaw(), 0f);
     }
 
-    /** The crystal spot of a tower (the base of its visual and hitbox). */
+    /**
+     * The crystal spot of a tower (the base of its visual and hitbox), facing the attackers: they come from −x on every
+     * siege map, and yaw 90 faces −x.
+     */
     public Location at(SiegeSites.Tower tower) {
-        return new Location(world, originX + tower.x() + 0.5, tower.y(), originZ + tower.z() + 0.5);
+        return new Location(world, originX + tower.x() + 0.5, tower.y(), originZ + tower.z() + 0.5, 90f, 0f);
     }
 
     public List<Location> attackerSpawns() {

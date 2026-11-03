@@ -702,7 +702,8 @@ public final class SiegeMatch implements GameInstance {
         for (var site : layout().sites().towers()) {
             Tower tower = new Tower(site, index++, layout().at(site),
                     settings.towerHealth(site.id(), Math.max(1, members(1 - defenders).size())));
-            tower.spawn(session, game.towerLook(), team.color(), settings.hitboxScale());
+            tower.spawn(session, game.towerLook(), team.color(),
+                    game.towerLook().hitboxScale(site.id(), settings.hitboxScale()));
             tower.bar(session.sharedBossBar(Component.text(site.name()), 1f, BossBar.Color.WHITE,
                     BossBar.Overlay.NOTCHED_10));
             towers.add(tower);
