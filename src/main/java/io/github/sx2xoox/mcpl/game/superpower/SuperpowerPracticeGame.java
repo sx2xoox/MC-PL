@@ -12,7 +12,7 @@ import org.bukkit.configuration.ConfigurationSection;
 /**
  * 능력 연습 — the 초능력전쟁 abilities alone (or with friends) against training dummies, without the two-player minimum
  * of a real match. It runs the real {@link io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch} in practice
- * mode, so abilities behave and look exactly like in a match. Started with {@code /게임 능력 연습 [능력]} (only the
+ * mode, so abilities behave and look exactly like in a match. Started with {@code /게임 시작 초능력전쟁 연습 [능력]} (only the
  * sender plays) or {@code /게임 시작 연습} (everyone plays); never part of the rotation unless the owner adds
  * {@code practice} to {@code rotation.games} by hand. See {@code docs/superpower.md}.
  *

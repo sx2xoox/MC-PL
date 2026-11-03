@@ -15,7 +15,7 @@ import org.bukkit.Material;
 /**
  * 봇 관전전 — a 증강 야생전 match only bots play: every human online watches (spectator mode, snapshot and restore
  * as usual) while the bots fight to the last one (or team), on the quicker {@code games.augment.bots.spectate.*}
- * timings. Started with {@code /게임 증강 봇전 관전 [봇 수] [난이도 | 난이도별 수]}; never part of the rotation.
+ * timings. Started with {@code /게임 시작 증강 관전 [봇 수] [난이도 | 난이도별 수]}; never part of the rotation.
  */
 public final class AugmentSpectateGame implements MiniGame {
 

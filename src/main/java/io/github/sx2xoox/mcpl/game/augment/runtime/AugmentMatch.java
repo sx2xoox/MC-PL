@@ -1560,7 +1560,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
     }
 
     /**
-     * {@code /게임 증강 다음단계}: skips to the next step of the match flow (practice, and for admins every real
+     * {@code /게임 연습 다음단계}: skips to the next step of the match flow (practice, and for admins every real
      * match). Skipping the farming of a real match moves the match clock to the fight start: the rounds due by then
      * open now (the fight-start round included), the bots get their fight gear and PvP comes on.
      */

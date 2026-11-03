@@ -28,9 +28,10 @@ import org.bukkit.command.CommandSender;
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /게임 증강 봇전 [봇 수] [난이도 | 난이도별 수]} (English {@code /mcpl augment bots ...}): an admin starts a
- * real 증강 야생전 match where bots fill the lobby; everyone online plays (as for {@code /게임 시작}).
- * {@code /게임 증강 봇전 관전 ...} ({@code bots spectate}) starts a 봇 관전전 instead: only bots play, everyone watches.
+ * {@code /게임 시작 증강 봇전 [봇 수] [난이도 | 난이도별 수]} (English {@code /mcpl start augment bots ...}): an admin
+ * starts a real 증강 야생전 match where bots fill the lobby; everyone online plays (as for {@code /게임 시작}).
+ * {@code /게임 시작 증강 관전 ...} ({@code spectate}) starts a 봇 관전전 instead: only bots play, everyone watches.
+ * {@code 팀 [팀당 인원] [팀 수] [난이도]} after either gives the team version.
  * Count and difficulty may come in any order ("5 보통", "보통 5"); several difficulties mix ("쉬움 3 어려움 2");
  * missing ones come from {@code games.augment.bots}.
  */
@@ -42,21 +43,32 @@ public final class BotCommand {
         this.game = game;
     }
 
-    void addTo(LiteralArgumentBuilder<CommandSourceStack> node, GameCommandRegistrar registrar, boolean english) {
+    /**
+     * {@code 봇전 [팀] [옵션]} and {@code 관전 [팀] [옵션]} (admin) under {@code /게임 시작 증강} (English {@code bots},
+     * {@code spectate}, {@code team}).
+     */
+    void addTo(LiteralArgumentBuilder<CommandSourceStack> start, GameCommandRegistrar registrar, boolean english) {
+        start.then(mode(english ? "bots" : "봇전", registrar, english, false));
+        start.then(mode(english ? "spectate" : "관전", registrar, english, true));
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> mode(String name, GameCommandRegistrar registrar,
+                                                            boolean english, boolean spectate) {
         String optionsArg = english ? "options" : "옵션";
-        node.then(Commands.literal(english ? "bots" : "봇전")
+        String team = english ? "team" : "팀";
+        return Commands.literal(name)
                 .requires(registrar.admin())
-                .executes(ctx -> start(ctx.getSource().getSender(), "", false))
-                .then(Commands.literal(english ? "spectate" : "관전")
-                        .executes(ctx -> start(ctx.getSource().getSender(), "", true))
+                .executes(ctx -> start(ctx.getSource().getSender(), "", spectate))
+                .then(Commands.literal(team)
+                        .executes(ctx -> start(ctx.getSource().getSender(), team, spectate))
                         .then(Commands.argument(optionsArg, StringArgumentType.greedyString())
                                 .suggests(this::suggest)
                                 .executes(ctx -> start(ctx.getSource().getSender(),
-                                        StringArgumentType.getString(ctx, optionsArg), true))))
+                                        team + " " + StringArgumentType.getString(ctx, optionsArg), spectate))))
                 .then(Commands.argument(optionsArg, StringArgumentType.greedyString())
                         .suggests(this::suggest)
                         .executes(ctx -> start(ctx.getSource().getSender(),
-                                StringArgumentType.getString(ctx, optionsArg), false))));
+                                StringArgumentType.getString(ctx, optionsArg), spectate)));
     }
 
     private CompletableFuture<Suggestions> suggest(CommandContext<CommandSourceStack> ctx, SuggestionsBuilder builder) {

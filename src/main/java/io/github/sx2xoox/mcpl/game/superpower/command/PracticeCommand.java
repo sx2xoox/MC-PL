@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.mojang.brigadier.Command;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
@@ -31,17 +30,19 @@ import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The practice subcommands of {@code /게임 능력} (English twins under {@code /mcpl ability}):
+ * 능력 연습 (English twins in brackets):
  *
  * <pre>
- * /게임 능력 연습|practice [능력]       start a practice for yourself (admin), or join / switch in a running one
- * /게임 능력 변경|switch &lt;능력&gt;      practice: swap your ability
- * /게임 능력 충전|charge               practice: ultimate gauge to 100%
- * /게임 능력 쿨타임|cooldown [켜기|끄기] practice: active cooldowns on/off (admin)
- * /게임 능력 허수아비|dummies [개수]    practice: put fresh training dummies in front of you
+ * /게임 시작 초능력전쟁 연습 [능력]   (superpower practice) start a practice for yourself (admin), or join / switch
+ *                                   in a running one
+ * /게임 시작 초능력전쟁 연습 모두      (all) admin: a practice for everyone online
+ * /게임 연습 바꾸기|switch &lt;능력&gt;     practice: swap your ability
+ * /게임 연습 충전|charge              practice: ultimate gauge to 100%
+ * /게임 연습 쿨타임|cooldown [켜기|끄기] practice: active cooldowns on/off (admin)
+ * /게임 연습 허수아비|dummies [개수]   practice: fresh training dummies in front of you (the hub's tool)
  * </pre>
  *
- * Everything but starting a new practice only works in a running practice session; a real match refuses it.
+ * Everything but starting a new practice only works in a running 능력 연습; anything else running refuses it.
  */
 final class PracticeCommand {
 
@@ -55,49 +56,44 @@ final class PracticeCommand {
         return game.messages();
     }
 
-    void addTo(LiteralArgumentBuilder<CommandSourceStack> node, GameCommandRegistrar registrar, boolean english,
-               SuggestionProvider<CommandSourceStack> abilities) {
+    /**
+     * {@code 연습 [능력 | 모두]} under {@code /게임 시작 초능력전쟁}: a practice for yourself (or join / switch in the
+     * running one); {@code 모두} (admin) starts it for everyone online.
+     */
+    void addStartOptions(LiteralArgumentBuilder<CommandSourceStack> start, GameCommandRegistrar registrar,
+                         boolean english, SuggestionProvider<CommandSourceStack> abilities) {
         String abilityArg = english ? "ability" : "능력";
-        String countArg = english ? "count" : "개수";
-        for (String name : List.of("연습", "practice")) {
-            node.then(Commands.literal(name)
-                    .executes(ctx -> practice(ctx.getSource().getSender(), null))
-                    .then(Commands.argument(abilityArg, StringArgumentType.greedyString())
-                            .suggests(abilities)
-                            .executes(ctx -> practice(ctx.getSource().getSender(),
-                                    StringArgumentType.getString(ctx, abilityArg)))));
-        }
-        for (String name : List.of("변경", "switch")) {
-            node.then(Commands.literal(name)
-                    .executes(ctx -> usage(ctx.getSource().getSender(), "practice.usage-switch"))
-                    .then(Commands.argument(abilityArg, StringArgumentType.greedyString())
-                            .suggests(abilities)
-                            .executes(ctx -> switchAbility(ctx.getSource().getSender(),
-                                    StringArgumentType.getString(ctx, abilityArg)))));
-        }
-        for (String name : List.of("충전", "charge")) {
-            node.then(Commands.literal(name).executes(ctx -> charge(ctx.getSource().getSender())));
-        }
-        for (String name : List.of("쿨타임", "cooldown")) {
-            LiteralArgumentBuilder<CommandSourceStack> cooldown = Commands.literal(name)
-                    .requires(registrar.admin())
-                    .executes(ctx -> showCooldown(ctx.getSource().getSender()));
-            for (String on : List.of("켜기", "on")) {
-                cooldown.then(Commands.literal(on).executes(ctx -> setCooldown(ctx.getSource().getSender(), true)));
-            }
-            for (String off : List.of("끄기", "off")) {
-                cooldown.then(Commands.literal(off)
-                        .executes(ctx -> setCooldown(ctx.getSource().getSender(), false)));
-            }
-            node.then(cooldown);
-        }
-        for (String name : List.of("허수아비", "dummies")) {
-            node.then(Commands.literal(name)
-                    .executes(ctx -> dummies(ctx.getSource().getSender(), null))
-                    .then(Commands.argument(countArg, IntegerArgumentType.integer(1, PracticeSettings.MAX_DUMMIES))
-                            .executes(ctx -> dummies(ctx.getSource().getSender(),
-                                    IntegerArgumentType.getInteger(ctx, countArg)))));
-        }
+        start.then(Commands.literal(english ? "practice" : "연습")
+                .executes(ctx -> practice(ctx.getSource().getSender(), null))
+                .then(Commands.literal(english ? "all" : "모두")
+                        .requires(registrar.admin())
+                        .executes(ctx -> registrar.startMatch(ctx.getSource().getSender(), game.practice())))
+                .then(Commands.argument(abilityArg, StringArgumentType.greedyString())
+                        .suggests(abilities)
+                        .executes(ctx -> practice(ctx.getSource().getSender(),
+                                StringArgumentType.getString(ctx, abilityArg)))));
+    }
+
+    /** The 능력 연습 tools under {@code /게임 연습}: 바꾸기, 충전, 쿨타임 (the hub adds 허수아비). */
+    void registerTools(GameCommandRegistrar registrar, boolean english,
+                       SuggestionProvider<CommandSourceStack> abilities) {
+        String abilityArg = english ? "ability" : "능력";
+        registrar.registerPracticeTool(Commands.literal(english ? "switch" : "바꾸기")
+                .executes(ctx -> usage(ctx.getSource().getSender(), "practice.usage-switch"))
+                .then(Commands.argument(abilityArg, StringArgumentType.greedyString())
+                        .suggests(abilities)
+                        .executes(ctx -> switchAbility(ctx.getSource().getSender(),
+                                StringArgumentType.getString(ctx, abilityArg)))));
+        registrar.registerPracticeTool(Commands.literal(english ? "charge" : "충전")
+                .executes(ctx -> charge(ctx.getSource().getSender())));
+        LiteralArgumentBuilder<CommandSourceStack> cooldown = Commands.literal(english ? "cooldown" : "쿨타임")
+                .requires(registrar.admin())
+                .executes(ctx -> showCooldown(ctx.getSource().getSender()));
+        cooldown.then(Commands.literal(english ? "on" : "켜기")
+                .executes(ctx -> setCooldown(ctx.getSource().getSender(), true)));
+        cooldown.then(Commands.literal(english ? "off" : "끄기")
+                .executes(ctx -> setCooldown(ctx.getSource().getSender(), false)));
+        registrar.registerPracticeTool(cooldown);
     }
 
     private int usage(CommandSender sender, String key) {
@@ -105,7 +101,7 @@ final class PracticeCommand {
         return 0;
     }
 
-    // ------------------------------------------------------------------ /게임 능력 연습
+    // ------------------------------------------------------------------ /게임 시작 초능력전쟁 연습
 
     private int practice(CommandSender sender, @Nullable String input) {
         if (!(sender instanceof Player player)) {
@@ -213,7 +209,7 @@ final class PracticeCommand {
             return null;
         }
         if (session.game() != game.practice()) {
-            messages().send(sender, "practice.real-match");
+            messages().send(sender, "practice.tool-other-mode", Messages.tag("game", session.game().displayComponent()));
             return null;
         }
         SuperpowerMatch match = game.currentMatch();
@@ -296,16 +292,13 @@ final class PracticeCommand {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int dummies(CommandSender sender, @Nullable Integer count) {
-        if (!(sender instanceof Player player)) {
-            messages().send(sender, "command.player-only");
-            return 0;
-        }
-        SuperpowerMatch match = practiceMatch(sender);
+    /** {@code /게임 연습 허수아비 [개수]} (through the hub). */
+    int dummies(Player player, @Nullable Integer count) {
+        SuperpowerMatch match = practiceMatch(player);
         if (match == null) {
             return 0;
         }
-        int wanted = count != null ? count
+        int wanted = count != null ? Math.min(count, PracticeSettings.MAX_DUMMIES)
                 : PracticeSettings.read(game.hub().config().gameSection(game.practice().id())).dummyCount();
         PracticeResult result = match.placeDummies(player, wanted);
         if (result == PracticeResult.OK) {

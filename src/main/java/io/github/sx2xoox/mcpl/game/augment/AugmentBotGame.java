@@ -14,7 +14,7 @@ import org.bukkit.Material;
 
 /**
  * 증강 봇전 — a real 증강 야생전 match in which bots fill the lobby, so one player (or a few) can play the mode.
- * Started with {@code /게임 증강 봇전 [봇 수] [난이도]} (defaults in {@code games.augment.bots}); never part of the
+ * Started with {@code /게임 시작 증강 봇전 [봇 수] [난이도]} (defaults in {@code games.augment.bots}); never part of the
  * rotation unless the owner adds {@code augment_bots} to {@code rotation.games} by hand. See
  * {@link io.github.sx2xoox.mcpl.game.augment.bot.BotManager} and {@code docs/augment.md}.
  */

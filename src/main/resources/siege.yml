@@ -9,10 +9,10 @@ game:
   description:
     - "두 팀이 번갈아 공격과 수비를 하며 타워 3개를 부수는 팀전 (3판 2선승)."
     - "초능력전쟁의 능력을 쓰고, 죽어도 잠시 뒤 부활합니다. 판마다 능력을 새로 뽑습니다."
-    - "<click:suggest_command:'/게임 공성전'><hover:show_text:'<gray>클릭하여 입력'><white>/게임 공성전</white></hover></click> <gray>점수 · 리롤 · 능력풀"
+    - "<click:suggest_command:'/게임 공성전'><hover:show_text:'<gray>클릭하여 입력'><white>/게임 공성전</white></hover></click> <gray>능력풀 <dark_gray>·</dark_gray> <white>/게임 점수</white> <gray>· <white>/게임 리롤</white> <gray>· <white>/게임 내정보"
 
 start:
-  map-not-built: "<red>공성전 맵이 아직 지어지지 않았습니다. <white>/게임 경기장 맵 <id></white> 로 먼저 지어 주세요."
+  map-not-built: "<red>공성전 맵이 아직 지어지지 않았습니다. <white>/게임 맵 <id></white> 로 먼저 지어 주세요."
   no-teams: "공성전은 두 팀이 필요합니다"
   no-abilities: "공성전에 쓸 수 있는 능력이 없습니다"
 
@@ -32,7 +32,7 @@ result:
   reason-rounds: "판 스코어 <a> : <b>"
 
 reroll:
-  announce: "<gray>준비 시간에 <white>웅크리고 검 우클릭</white>(또는 <white>/게임 공성전 리롤</white>)으로 능력을 <white><count>번</white> 다시 뽑을 수 있습니다."
+  announce: "<gray>준비 시간에 <white>웅크리고 검 우클릭</white>(또는 <white>/게임 리롤</white>)으로 능력을 <white><count>번</white> 다시 뽑을 수 있습니다."
   hint: "<gray>웅크리고 우클릭하면 능력 리롤 (<white><count>번</white> 남음)"
   done: "<green>능력을 다시 뽑았습니다. <gray>(남은 리롤 <white><count></white>번)"
   not-participant: "<red>이 경기의 참가자가 아닙니다."
@@ -141,13 +141,19 @@ district:
 command:
   help:
     - "<gold>── 초능력 공성전 ──"
-    - "<white>/게임 공성전 점수</white> <gray>지금 점수"
-    - "<white>/게임 공성전 리롤</white> <gray>판 시작 준비 시간에 능력 다시 뽑기"
+    - "<white>/게임 점수</white> <gray>지금 점수"
+    - "<white>/게임 리롤</white> <gray>판 시작 준비 시간에 능력 다시 뽑기"
+    - "<white>/게임 내정보</white> <gray>내 능력과 레벨 · <white>/게임 팀</white> <gray>팀원의 능력"
   help-admin:
+    - "<white>/게임 시작 공성전</white> <gray>공성전 시작"
     - "<white>/게임 공성전 능력풀 [목록|추가|제거|초기화] [능력]</white> <gray>공성전에서 나오는 능력"
   usage-pool: "<red>사용법: /게임 공성전 능력풀 <추가|제거> <능력>"
   player-only: "<red>플레이어만 쓸 수 있습니다."
   no-match: "<red>진행 중인 공성전이 없습니다."
+  me: "<gray>내 능력 <ability> <dark_gray>·</dark_gray> <gray>레벨 <white><level></white> <dark_gray>(경험치 <xp>)</dark_gray> <dark_gray>·</dark_gray> <gray>남은 리롤 <white><rerolls></white>"
+  me-none: "<gray>아직 능력을 받지 않았습니다."
+  team-none: "<red>공성전 팀에 속해 있지 않습니다."
+  team: "<team> <gray>팀원: <members>"
   status: "<gold><round>판</gold><gray> — <team_a> <white><a></white> : <white><b></white> <team_b><gray> (판 <white><rounds_a> : <rounds_b></white>)"
 
 settings:

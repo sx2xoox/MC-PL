@@ -5,10 +5,10 @@ import java.util.List;
 import org.bukkit.configuration.ConfigurationSection;
 
 /**
- * The {@code games.practice.*} settings of {@code config.yml} for the ability practice ({@code /게임 능력 연습}), read
+ * The {@code games.practice.*} settings of {@code config.yml} for the ability practice ({@code /게임 시작 초능력전쟁 연습}), read
  * once per practice session. Everything else (kit, gauge rates, effects) comes from {@code games.superpower}.
  *
- * @param cooldowns          active skills have their normal cooldown (toggle in game with {@code /게임 능력 쿨타임})
+ * @param cooldowns          active skills have their normal cooldown (toggle in game with {@code /게임 연습 쿨타임})
  * @param dummyCount         training dummies placed in front of every player
  * @param dummyDistance      distance of the first dummy from the player (blocks)
  * @param dummySpacing       distance between two dummies (blocks)
@@ -42,7 +42,7 @@ public record PracticeSettings(
     public static void declareDefaults(ConfigurationSection d) {
         d.set(COOLDOWNS, true);
         d.setComments(COOLDOWNS, List.of(
-                "능력 연습(/게임 능력 연습)에서 액티브 쿨타임을 적용할지 (연습 중 /게임 능력 쿨타임 켜기|끄기 로도 바꿀 수 있습니다)",
+                "능력 연습(/게임 시작 초능력전쟁 연습)에서 액티브 쿨타임을 적용할지 (연습 중 /게임 연습 쿨타임 켜기|끄기 로도 바꿀 수 있습니다)",
                 "킷, 궁극기 게이지, 파티클 등 나머지 설정은 games.superpower 를 그대로 씁니다."));
         d.set(DUMMY_COUNT, 3);
         d.setComments("dummies", List.of("훈련용 허수아비"));

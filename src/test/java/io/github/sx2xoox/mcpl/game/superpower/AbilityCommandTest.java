@@ -114,8 +114,10 @@ class AbilityCommandTest {
     @Test
     void rerollOutsideAMatchExplainsWhy() {
         drain(user);
+        h.server.dispatchCommand(user, "게임 리롤");
+        assertTrue(anyContains(drain(user), "진행 중인 경기가 없습니다"));
         h.server.dispatchCommand(user, "게임 능력 리롤");
-        assertTrue(anyContains(drain(user), "진행 중인 초능력전쟁 경기가 없습니다"));
+        assertTrue(anyContains(drain(user), "진행 중인 경기가 없습니다"), "the old form still answers");
     }
 
     @Test

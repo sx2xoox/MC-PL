@@ -11,6 +11,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import io.github.sx2xoox.mcpl.core.command.GameCommandRegistrar;
+import io.github.sx2xoox.mcpl.core.command.MatchCommands;
 import io.github.sx2xoox.mcpl.core.command.Permissions;
 import io.github.sx2xoox.mcpl.core.config.Setting;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
@@ -21,6 +22,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.config.AbilityConfig;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -30,22 +32,26 @@ import net.kyori.adventure.text.event.ClickEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.jspecify.annotations.Nullable;
 
 /**
- * {@code /게임 능력} (English twin {@code /mcpl ability}):
+ * The 초능력전쟁 commands (English twins in brackets):
  *
  * <pre>
- * /게임 능력                                   help
- * /게임 능력 목록|list                         all abilities (hover: skills, click: info)
- * /게임 능력 정보|info &lt;능력&gt;                  one ability (id or Korean name)
- * /게임 능력 지정|assign &lt;플레이어&gt; &lt;능력&gt;      admin: for the next match or the running reveal/prep phase
- * /게임 능력 선택방식|mode [RANDOM|CHOICE]      admin: selection mode (saved to config.yml)
- * /게임 능력 리롤|reroll                        reroll during the prep phase (RANDOM)
- * /게임 능력 선택|pick                          reopen the CHOICE menu (selection phase, not picked yet)
- * /게임 능력 팀|team                            team mode: the abilities of your teammates
- * /게임 능력 연습|practice [능력]               ability practice with training dummies (see {@link PracticeCommand})
- * /게임 능력 변경|충전|쿨타임|허수아비           practice only: switch, charge, cooldown on/off, dummies
+ * /게임 시작 초능력전쟁 (superpower)            admin: a match for everyone
+ * /게임 시작 초능력전쟁 연습 [능력 | 모두]        ability practice (see {@link PracticeCommand})
+ * /게임 연습 바꾸기|충전|쿨타임                   practice tools (with the hub's 허수아비)
+ * /게임 리롤 · 내정보 · 팀                       in a match ({@link MatchCommands})
+ * /게임 능력 (ability)                          reopen the CHOICE menu while a pick waits, else help
+ * /게임 능력 목록|list                           all abilities (hover: skills, click: info)
+ * /게임 능력 정보|info &lt;능력&gt;                    one ability (id or Korean name)
+ * /게임 능력 선택|pick                           reopen the CHOICE menu (selection phase, not picked yet)
+ * /게임 능력 지정|assign &lt;플레이어&gt; &lt;능력&gt;        admin: for the next match or the running reveal/prep phase
+ * /게임 능력 선택방식|mode [RANDOM|CHOICE]        admin: selection mode (saved to config.yml)
  * </pre>
+ *
+ * The old forms ({@code /게임 능력 리롤 · 팀 · 연습 · 변경 · 충전 · 쿨타임 · 허수아비}) still work through
+ * {@link GameCommandRegistrar#moved}.
  */
 public final class AbilityCommand {
 
@@ -62,13 +68,34 @@ public final class AbilityCommand {
     }
 
     public void register(GameCommandRegistrar registrar) {
+        MatchCommands commands = new SuperpowerMatchCommands();
+        registrar.matchCommands(game, commands);
+        registrar.matchCommands(game.practice(), commands);
+        registrar.startPath(game, "초능력전쟁");
+        registrar.startPath(game.practice(), "초능력전쟁 연습 모두");
+        registrar.moved("능력|ability 리롤|reroll", "리롤");
+        registrar.moved("능력|ability 팀|team", "팀");
+        registrar.moved("능력|ability 연습|practice", "시작 초능력전쟁 연습");
+        registrar.moved("능력|ability 변경|switch", "연습 바꾸기");
+        registrar.moved("능력|ability 충전|charge", "연습 충전");
+        registrar.moved("능력|ability 쿨타임|cooldown", "연습 쿨타임");
+        registrar.moved("능력|ability 허수아비|dummies", "연습 허수아비");
+        for (String name : List.of("초능력전쟁", "superpower")) {
+            boolean english = name.equals("superpower");
+            LiteralArgumentBuilder<CommandSourceStack> start = Commands.literal(name)
+                    .requires(registrar.play())
+                    .executes(ctx -> registrar.startMatch(ctx.getSource().getSender(), game));
+            practice.addStartOptions(start, registrar, english, this::suggestAbilities);
+            registrar.registerStart(start);
+            practice.registerTools(registrar, english, this::suggestAbilities);
+        }
         for (String root : List.of("능력", "ability")) {
             boolean english = root.equals("ability");
             String abilityArg = english ? "ability" : "능력";
             String playerArg = english ? "player" : "플레이어";
             LiteralArgumentBuilder<CommandSourceStack> node = Commands.literal(root)
                     .requires(registrar.play())
-                    .executes(ctx -> help(ctx.getSource().getSender()));
+                    .executes(ctx -> open(ctx.getSource().getSender()));
             for (String name : List.of("목록", "list")) {
                 node.then(Commands.literal(name).executes(ctx -> list(ctx.getSource().getSender())));
             }
@@ -103,16 +130,9 @@ public final class AbilityCommand {
                 }
                 node.then(mode);
             }
-            for (String name : List.of("리롤", "reroll")) {
-                node.then(Commands.literal(name).executes(ctx -> reroll(ctx.getSource().getSender())));
-            }
             for (String name : List.of("선택", "pick")) {
                 node.then(Commands.literal(name).executes(ctx -> pick(ctx.getSource().getSender())));
             }
-            for (String name : List.of("팀", "team")) {
-                node.then(Commands.literal(name).executes(ctx -> team(ctx.getSource().getSender())));
-            }
-            practice.addTo(node, registrar, english, this::suggestAbilities);
             registrar.register(node);
         }
     }
@@ -153,6 +173,15 @@ public final class AbilityCommand {
     }
 
     // ------------------------------------------------------------------ handlers
+
+    /** {@code /게임 능력}: reopens the CHOICE menu while the player still has to pick, else the help. */
+    private int open(CommandSender sender) {
+        SuperpowerMatch match = game.currentMatch();
+        if (sender instanceof Player player && match != null && match.reopenMenu(player)) {
+            return Command.SINGLE_SUCCESS;
+        }
+        return help(sender);
+    }
 
     private int help(CommandSender sender) {
         messages().lines("command.help").forEach(sender::sendMessage);
@@ -257,21 +286,6 @@ public final class AbilityCommand {
         return accepted ? Command.SINGLE_SUCCESS : 0;
     }
 
-    private int reroll(CommandSender sender) {
-        if (!(sender instanceof Player player)) {
-            messages().send(sender, "command.player-only");
-            return 0;
-        }
-        SuperpowerMatch match = game.currentMatch();
-        if (match == null) {
-            messages().send(sender, "reroll.no-match");
-            return 0;
-        }
-        SuperpowerMatch.RerollResult result = match.reroll(player);
-        match.reportReroll(player, result);
-        return result == SuperpowerMatch.RerollResult.OK ? Command.SINGLE_SUCCESS : 0;
-    }
-
     private int pick(CommandSender sender) {
         if (!(sender instanceof Player player)) {
             messages().send(sender, "command.player-only");
@@ -289,27 +303,62 @@ public final class AbilityCommand {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int team(CommandSender sender) {
-        if (!(sender instanceof Player player)) {
-            messages().send(sender, "command.player-only");
-            return 0;
+    /** {@code /게임 리롤 · 내정보 · 팀 · 연습 허수아비} in 초능력전쟁 and 능력 연습. */
+    private final class SuperpowerMatchCommands implements MatchCommands {
+
+        @Override
+        public int reroll(Player player) {
+            SuperpowerMatch match = game.currentMatch();
+            if (match == null) {
+                messages().send(player, "reroll.no-match");
+                return 0;
+            }
+            SuperpowerMatch.RerollResult result = match.reroll(player);
+            match.reportReroll(player, result);
+            return result == SuperpowerMatch.RerollResult.OK ? Command.SINGLE_SUCCESS : 0;
         }
-        SuperpowerMatch match = game.currentMatch();
-        if (match == null) {
-            messages().send(sender, "reroll.no-match");
-            return 0;
+
+        @Override
+        public int myInfo(Player player) {
+            SuperpowerMatch match = game.currentMatch();
+            Participant participant = match == null ? null : match.participant(player.getUniqueId());
+            String abilityId = participant == null ? null : participant.abilityId();
+            if (abilityId == null) {
+                messages().send(player, match != null && match.reopenMenu(player) ? "command.me-picking"
+                        : "command.me-none");
+                return 0;
+            }
+            int result = info(player, abilityId);
+            if (participant.rerollsLeft() > 0) {
+                messages().send(player, "command.me-rerolls", Messages.tag("count", participant.rerollsLeft()));
+            }
+            return result;
         }
-        String error = switch (match.showTeamAbilities(player)) {
-            case OK -> null;
-            case NOT_TEAM_MODE -> "command.team-not-team-mode";
-            case DISABLED -> "command.team-disabled";
-            case NO_TEAM -> "command.team-no-team";
-            case ALONE -> "command.team-alone";
-        };
-        if (error != null) {
-            messages().send(sender, error);
-            return 0;
+
+        @Override
+        public int team(Player player) {
+            SuperpowerMatch match = game.currentMatch();
+            if (match == null) {
+                messages().send(player, "reroll.no-match");
+                return 0;
+            }
+            String error = switch (match.showTeamAbilities(player)) {
+                case OK -> null;
+                case NOT_TEAM_MODE -> "command.team-not-team-mode";
+                case DISABLED -> "command.team-disabled";
+                case NO_TEAM -> "command.team-no-team";
+                case ALONE -> "command.team-alone";
+            };
+            if (error != null) {
+                messages().send(player, error);
+                return 0;
+            }
+            return Command.SINGLE_SUCCESS;
         }
-        return Command.SINGLE_SUCCESS;
+
+        @Override
+        public int dummies(Player player, @Nullable Integer count) {
+            return practice.dummies(player, count);
+        }
     }
 }

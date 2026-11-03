@@ -181,7 +181,7 @@ public record LootSettings(
                 "모든 상자와 아이템은 경기가 끝나면 사라집니다."));
         d.setComments(p + "enabled", List.of("경기에 상자를 놓을지 여부"));
         d.set(p + "practice", false);
-        d.setComments(p + "practice", List.of("능력 연습(/게임 능력 연습)에도 상자를 놓을지 여부"));
+        d.setComments(p + "practice", List.of("능력 연습(/게임 시작 초능력전쟁 연습)에도 상자를 놓을지 여부"));
         d.set(p + "nearby-hint", true);
         d.setComments(p + "nearby-hint", List.of(
                 "아직 열지 않은 일반 상자가 가까이 있는 플레이어에게만 은은하게 반짝입니다 (파티클 배율을 따름)",

@@ -76,7 +76,7 @@ import org.jspecify.annotations.Nullable;
  * when the border starts shrinking; the superpower consumables found in them go through
  * {@link #chargeGaugeWithItem} and {@link #rechargeActiveWithItem}, which apply the match rules.
  *
- * <p><b>Practice</b> ({@code /게임 능력 연습}, {@link #isPractice()}): the same match machinery with the fight starting
+ * <p><b>Practice</b> ({@code /게임 시작 초능력전쟁 연습}, {@link #isPractice()}): the same match machinery with the fight starting
  * right away (requested or random ability, no reveal, prep phase, border shrink, time limit or win check), training
  * dummies ({@link TrainingDummies}) in front of every player, respawning instead of elimination, ability switching,
  * a gauge refill and a cooldown toggle. It ends with {@code /게임 중지} or when every player left.
@@ -166,7 +166,7 @@ public final class SuperpowerMatch implements GameInstance {
     }
 
     /**
-     * @param practice true for a practice session ({@code /게임 능력 연습}); its settings come from
+     * @param practice true for a practice session ({@code /게임 시작 초능력전쟁 연습}); its settings come from
      *                 {@code games.superpower} ({@link SuperpowerSettings#forPractice()}) and {@code games.practice}
      */
     public SuperpowerMatch(SuperpowerGame game, GameSession session, boolean practice) {
@@ -994,7 +994,7 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
-    /** {@code /게임 능력 팀}: sends the abilities of the viewer's teammates. */
+    /** {@code /게임 팀}: sends the abilities of the viewer's teammates. */
     public TeamAbilitiesResult showTeamAbilities(Player viewer) {
         if (!session.isTeamMode()) {
             return TeamAbilitiesResult.NOT_TEAM_MODE;
@@ -1821,7 +1821,7 @@ public final class SuperpowerMatch implements GameInstance {
         }
     }
 
-    /** The ability requested with {@code /게임 능력 연습 <능력>}, or a random one. */
+    /** The ability requested with {@code /게임 시작 초능력전쟁 연습 <능력>}, or a random one. */
     private String practiceAbility(UUID player) {
         String requested = game.takePracticeRequest(player);
         if (requested != null && info(requested) != null) {
@@ -1904,7 +1904,7 @@ public final class SuperpowerMatch implements GameInstance {
     }
 
     /**
-     * Practice: players who ask with {@code /게임 능력 연습} join the running practice, and so do practicing players
+     * Practice: players who ask with {@code /게임 시작 초능력전쟁 연습} join the running practice, and so do practicing players
      * coming back after quitting. Anyone else (e.g. someone logging in) watches, as in every match.
      */
     @Override
@@ -1924,7 +1924,7 @@ public final class SuperpowerMatch implements GameInstance {
         ctx.viewersChanged();
     }
 
-    /** True for a practice session ({@code /게임 능력 연습}). */
+    /** True for a practice session ({@code /게임 시작 초능력전쟁 연습}). */
     public boolean isPractice() {
         return practice;
     }

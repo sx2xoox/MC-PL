@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import com.mojang.brigadier.Command;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
@@ -34,17 +33,18 @@ import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 증강 연습 subcommands of {@code /게임 증강} (English twins under {@code /mcpl augment}):
+ * 증강 연습 (English twins in brackets):
  *
  * <pre>
- * /게임 증강 연습|practice                  start a practice (admin) or join the running one
- * /게임 증강 받기|give &lt;증강&gt;               practice: get an augment
- * /게임 증강 빼기|take &lt;증강|전부&gt;          practice: lose one or all augments
- * /게임 증강 카드|cards [실버|골드|프리즘]     practice: a card offer now (random tier without one)
- * /게임 증강 다음단계|next                   practice (and admins in every real match): farming → fight →
+ * /게임 시작 증강 연습 (augment practice)    start a practice (admin) or join the running one
+ * /게임 시작 증강 연습 모두 (all)             admin: a practice for everyone online
+ * /게임 연습 받기|give &lt;증강&gt;               practice: get an augment
+ * /게임 연습 빼기|take &lt;증강|전부&gt;          practice: lose one or all augments
+ * /게임 연습 카드|cards [실버|골드|프리즘]     practice: a card offer now (random tier without one)
+ * /게임 연습 다음단계|next                   practice (and admins in every real 증강 match): farming → fight →
  *                                          border shrinks → final border
- * /게임 증강 허수아비|dummies [개수]          practice: dummies in front of you
- * /게임 증강 대전|pvp [켜기|끄기]             practice: practising players can hurt each other
+ * /게임 연습 허수아비|dummies [개수]          practice: dummies in front of you (the hub's tool)
+ * /게임 연습 대전|pvp [켜기|끄기]             practice: practising players can hurt each other
  * </pre>
  *
  * Everything but starting or joining only works for a player practising in a running practice.
@@ -63,43 +63,49 @@ public final class PracticeCommand {
         return game.messages();
     }
 
-    void addTo(LiteralArgumentBuilder<CommandSourceStack> node, GameCommandRegistrar registrar, boolean english,
-               SuggestionProvider<CommandSourceStack> augments) {
+    /**
+     * {@code 연습 [모두]} under {@code /게임 시작 증강}: a practice for yourself (admin) or join the running one;
+     * {@code 모두} (admin) starts it for everyone online.
+     */
+    void addStartOptions(LiteralArgumentBuilder<CommandSourceStack> start, GameCommandRegistrar registrar,
+                         boolean english) {
+        start.then(Commands.literal(english ? "practice" : "연습")
+                .executes(ctx -> practice(ctx.getSource().getSender()))
+                .then(Commands.literal(english ? "all" : "모두")
+                        .requires(registrar.admin())
+                        .executes(ctx -> registrar.startMatch(ctx.getSource().getSender(), game.practice()))));
+    }
+
+    /** The 증강 연습 tools under {@code /게임 연습}: 받기, 빼기, 카드, 다음단계, 대전 (the hub adds 허수아비). */
+    void registerTools(GameCommandRegistrar registrar, boolean english,
+                       SuggestionProvider<CommandSourceStack> augments) {
         String augmentArg = english ? "augment" : "증강";
-        String countArg = english ? "count" : "개수";
         String tierArg = english ? "tier" : "등급";
-        node.then(Commands.literal(english ? "practice" : "연습")
-                .executes(ctx -> practice(ctx.getSource().getSender())));
-        node.then(Commands.literal(english ? "give" : "받기")
+        registrar.registerPracticeTool(Commands.literal(english ? "give" : "받기")
                 .executes(ctx -> usage(ctx.getSource().getSender(), "practice.usage-give"))
                 .then(Commands.argument(augmentArg, StringArgumentType.greedyString())
                         .suggests(augments)
                         .executes(ctx -> give(ctx.getSource().getSender(),
                                 StringArgumentType.getString(ctx, augmentArg)))));
-        node.then(Commands.literal(english ? "take" : "빼기")
+        registrar.registerPracticeTool(Commands.literal(english ? "take" : "빼기")
                 .executes(ctx -> usage(ctx.getSource().getSender(), "practice.usage-take"))
                 .then(Commands.argument(augmentArg, StringArgumentType.greedyString())
                         .suggests(this::suggestOwned)
                         .executes(ctx -> take(ctx.getSource().getSender(),
                                 StringArgumentType.getString(ctx, augmentArg)))));
-        node.then(Commands.literal(english ? "cards" : "카드")
+        registrar.registerPracticeTool(Commands.literal(english ? "cards" : "카드")
                 .executes(ctx -> cards(ctx.getSource().getSender(), null))
                 .then(Commands.argument(tierArg, StringArgumentType.greedyString())
                         .suggests(this::suggestTiers)
                         .executes(ctx -> cards(ctx.getSource().getSender(),
                                 StringArgumentType.getString(ctx, tierArg)))));
-        node.then(Commands.literal(english ? "next" : "다음단계")
+        registrar.registerPracticeTool(Commands.literal(english ? "next" : "다음단계")
                 .executes(ctx -> next(ctx.getSource().getSender())));
-        node.then(Commands.literal(english ? "dummies" : "허수아비")
-                .executes(ctx -> dummies(ctx.getSource().getSender(), null))
-                .then(Commands.argument(countArg, IntegerArgumentType.integer(1, AugmentPracticeSettings.MAX_DUMMIES))
-                        .executes(ctx -> dummies(ctx.getSource().getSender(),
-                                IntegerArgumentType.getInteger(ctx, countArg)))));
         LiteralArgumentBuilder<CommandSourceStack> pvp = Commands.literal(english ? "pvp" : "대전")
                 .executes(ctx -> showPvp(ctx.getSource().getSender()));
         pvp.then(Commands.literal(english ? "on" : "켜기").executes(ctx -> setPvp(ctx.getSource().getSender(), true)));
         pvp.then(Commands.literal(english ? "off" : "끄기").executes(ctx -> setPvp(ctx.getSource().getSender(), false)));
-        node.then(pvp);
+        registrar.registerPracticeTool(pvp);
     }
 
     private int usage(CommandSender sender, String key) {
@@ -117,7 +123,7 @@ public final class PracticeCommand {
         return builder.buildFuture();
     }
 
-    /** What {@code /게임 증강 빼기} suggests: "전부" and the augments the player owns, matching {@code typed}. */
+    /** What {@code /게임 연습 빼기} suggests: "전부" and the augments the player owns, matching {@code typed}. */
     public static List<String> ownedSuggestions(@Nullable AugmentMatch match, java.util.@Nullable UUID player,
                                                 String typed) {
         String remaining = typed.toLowerCase(java.util.Locale.ROOT).replace(" ", "");
@@ -227,7 +233,7 @@ public final class PracticeCommand {
             return null;
         }
         if (session.game() != game.practice()) {
-            messages().send(sender, "practice.real-match");
+            messages().send(sender, "practice.tool-other-mode", Messages.tag("game", session.game().displayComponent()));
             return null;
         }
         AugmentMatch match = game.currentMatch();
@@ -330,7 +336,7 @@ public final class PracticeCommand {
     }
 
     /**
-     * {@code /게임 증강 다음단계} in a real match (증강 야생전, 봇전, 봇 관전전): admins only; the step is announced to
+     * {@code /게임 연습 다음단계} in a real match (증강 야생전, 봇전, 봇 관전전): admins only; the step is announced to
      * everyone.
      */
     private int skip(CommandSender sender, AugmentMatch match) {
@@ -352,14 +358,16 @@ public final class PracticeCommand {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int dummies(CommandSender sender, @Nullable Integer count) {
+    /** {@code /게임 연습 허수아비 [개수]} (through the hub). */
+    int dummies(Player sender, @Nullable Integer count) {
         AugmentMatch match = practising(sender);
         if (match == null) {
             return 0;
         }
         AugmentPracticeSettings practice = match.practiceSettings();
-        int wanted = count != null ? count : practice != null ? practice.dummyCount() : 3;
-        int placed = match.placeDummies((Player) sender, wanted);
+        int wanted = count != null ? Math.min(count, AugmentPracticeSettings.MAX_DUMMIES)
+                : practice != null ? practice.dummyCount() : 3;
+        int placed = match.placeDummies(sender, wanted);
         if (placed <= 0) {
             messages().send(sender, "practice.dummies-failed");
             return 0;

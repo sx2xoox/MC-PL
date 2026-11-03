@@ -36,7 +36,7 @@ import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The training dummies of a practice session ({@code /게임 능력 연습}): {@link Mannequin}s named "훈련용 허수아비"
+ * The training dummies of a practice session ({@code /게임 시작 초능력전쟁 연습}): {@link Mannequin}s named "훈련용 허수아비"
  * standing in front of each player. They are enemies of every participant ({@link MatchContext#isEnemy}), so every
  * skill, summon and on-hit effect works on them exactly like on a player, and the damage they take charges the
  * attacker's ultimate gauge.

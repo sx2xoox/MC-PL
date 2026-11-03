@@ -9,7 +9,7 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.MemoryConfiguration;
 
 /**
- * The {@code games.augment.bots.*} settings of {@code config.yml} for 봇전 ({@code /게임 증강 봇전}).
+ * The {@code games.augment.bots.*} settings of {@code config.yml} for 봇전 ({@code /게임 시작 증강 봇전}).
  *
  * @param count       bots added when the command names no count
  * @param difficulty  difficulty when the command names none
@@ -28,7 +28,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
                           Map<BotPersonality, Double> personalities, Team team) {
 
     /**
-     * The {@code games.augment.bots.team.*} settings of 봇전 팀전 ({@code /게임 증강 봇전 팀 [팀당 인원] [팀 수]}).
+     * The {@code games.augment.bots.team.*} settings of 봇전 팀전 ({@code /게임 시작 증강 봇전 팀 [팀당 인원] [팀 수]}).
      *
      * @param size            players per team when the command names none
      * @param count           teams when the command names none
@@ -49,8 +49,8 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
 
         static void declareDefaults(ConfigurationSection d) {
             d.setComments("bots.team", List.of(
-                    "봇전 팀전 (/게임 증강 봇전 팀 [팀당 인원] [팀 수] [난이도]): 사람은 팀마다 고르게 나뉘고 빈자리는 봇이 채웁니다.",
-                    "봇끼리만: /게임 증강 봇전 관전 팀 3 4 보통. 마지막까지 남은 팀이 이깁니다."));
+                    "봇전 팀전 (/게임 시작 증강 봇전 팀 [팀당 인원] [팀 수] [난이도]): 사람은 팀마다 고르게 나뉘고 빈자리는 봇이 채웁니다.",
+                    "봇끼리만: /게임 시작 증강 관전 팀 3 4 보통. 마지막까지 남은 팀이 이깁니다."));
             d.set(SIZE, DEFAULTS.size());
             d.setComments(SIZE, List.of("팀당 인원을 쓰지 않았을 때"));
             d.set(COUNT, DEFAULTS.count());
@@ -73,7 +73,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
     }
 
     /**
-     * The {@code games.augment.bots.spectate.*} settings of 봇 관전전 ({@code /게임 증강 봇전 관전}): a quicker match
+     * The {@code games.augment.bots.spectate.*} settings of 봇 관전전 ({@code /게임 시작 증강 관전}): a quicker match
      * than the configured one (normal matches and 봇전 keep their timings).
      *
      * @param farmingTicks      farming length (the augment rounds move by the same ratio)
@@ -95,7 +95,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
 
         static void declareDefaults(ConfigurationSection d) {
             d.setComments("bots.spectate", List.of(
-                    "봇 관전전 (/게임 증강 봇전 관전 [봇 수] [난이도 | 난이도별 수]): 사람은 모두 관전하고 봇끼리 끝까지 싸웁니다.",
+                    "봇 관전전 (/게임 시작 증강 관전 [봇 수] [난이도 | 난이도별 수]): 사람은 모두 관전하고 봇끼리 끝까지 싸웁니다.",
                     "보통 경기보다 빠르게 진행됩니다 (보통 경기·봇전의 시간은 그대로). 증강 라운드는 파밍 시간 비율대로 당겨집니다."));
             d.set(FARMING, 300);
             d.setComments(FARMING, List.of("관전전의 파밍 시간(초)"));
@@ -180,9 +180,9 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
     /** Declares the defaults (with Korean comments) in {@code games.augment}. */
     public static void declareDefaults(ConfigurationSection d) {
         d.setComments("bots", List.of(
-                "봇전 (/게임 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]): 봇이 빈자리를 채우는 진짜 증강 야생전.",
+                "봇전 (/게임 시작 증강 봇전 [봇 수] [쉬움|보통|어려움|지옥]): 봇이 빈자리를 채우는 진짜 증강 야생전.",
                 "혼자서도 할 수 있고, 사람이 여럿이어도 됩니다. 봇이 이기면 사람은 집니다.",
-                "난이도를 섞을 수도 있습니다: /게임 증강 봇전 쉬움 3 어려움 2"));
+                "난이도를 섞을 수도 있습니다: /게임 시작 증강 봇전 쉬움 3 어려움 2"));
         d.set(COUNT, 5);
         d.setComments(COUNT, List.of("봇 수를 쓰지 않았을 때 넣는 봇 수"));
         d.set(DIFFICULTY, BotDifficulty.NORMAL.key());

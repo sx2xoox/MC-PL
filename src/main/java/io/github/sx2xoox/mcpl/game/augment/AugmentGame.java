@@ -74,9 +74,9 @@ public final class AugmentGame implements MiniGame {
     private final AugmentPracticeGame practice;
     private final AugmentBotGame botGame;
     private final AugmentSpectateGame spectateGame;
-    /** Bots and difficulty asked for with {@code /게임 증강 봇전 [관전]}, used by the next bot match. */
+    /** Bots and difficulty asked for with {@code /게임 시작 증강 봇전|관전}, used by the next bot match. */
     private AugmentMatch.@Nullable BotSetup botRequest;
-    /** Players who asked to join the running practice ({@code /게임 증강 연습}). */
+    /** Players who asked to join the running practice ({@code /게임 시작 증강 연습}). */
     private final java.util.Set<java.util.UUID> practiceJoins = new java.util.HashSet<>();
 
     public AugmentGame(Hub hub) {
@@ -315,12 +315,12 @@ public final class AugmentGame implements MiniGame {
         return BotSettings.read(hub.config().gameSection(ID));
     }
 
-    /** 봇전 ({@code /게임 증강 봇전}), a third mini-game sharing this mode's augments. */
+    /** 봇전 ({@code /게임 시작 증강 봇전}), a third mini-game sharing this mode's augments. */
     public AugmentBotGame botGame() {
         return botGame;
     }
 
-    /** 봇 관전전 ({@code /게임 증강 봇전 관전}): only bots play, everyone watches. */
+    /** 봇 관전전 ({@code /게임 시작 증강 관전}): only bots play, everyone watches. */
     public AugmentSpectateGame spectateGame() {
         return spectateGame;
     }
@@ -330,7 +330,7 @@ public final class AugmentGame implements MiniGame {
         this.botRequest = setup;
     }
 
-    /** 증강 연습 ({@code /게임 증강 연습}), a second mini-game sharing this mode's augments. */
+    /** 증강 연습 ({@code /게임 시작 증강 연습}), a second mini-game sharing this mode's augments. */
     public AugmentPracticeGame practice() {
         return practice;
     }

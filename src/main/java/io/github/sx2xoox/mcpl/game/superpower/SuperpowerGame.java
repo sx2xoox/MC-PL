@@ -54,9 +54,9 @@ public final class SuperpowerGame implements MiniGame {
     private final AbilityTexts texts;
     private final AbilityItems items;
     private final Map<UUID, String> pendingAssignments = new LinkedHashMap<>();
-    /** Abilities asked for with {@code /게임 능력 연습 <능력>}, used when the player enters a practice session. */
+    /** Abilities asked for with {@code /게임 시작 초능력전쟁 연습 <능력>}, used when the player enters a practice session. */
     private final Map<UUID, String> practiceRequests = new LinkedHashMap<>();
-    /** Players who asked to join the running practice ({@code /게임 능력 연습}). */
+    /** Players who asked to join the running practice ({@code /게임 시작 초능력전쟁 연습}). */
     private final Set<UUID> practiceJoins = new HashSet<>();
     private final SuperpowerPracticeGame practice;
     private @Nullable List<SettingsSection> settings;
@@ -190,7 +190,7 @@ public final class SuperpowerGame implements MiniGame {
         return hub;
     }
 
-    /** The ability practice ({@code /게임 능력 연습}), a second mini-game sharing this mode's abilities. */
+    /** The ability practice ({@code /게임 시작 초능력전쟁 연습}), a second mini-game sharing this mode's abilities. */
     public SuperpowerPracticeGame practice() {
         return practice;
     }

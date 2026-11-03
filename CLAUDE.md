@@ -40,7 +40,7 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 src/main/java/io/github/sx2xoox/mcpl/
   MCPLPlugin.java              entry point, wires core + games
   core/                        game hub shared by all modes (sessions, rotation, snapshots, arena, UI, commands)
-    map/                       battle maps built in code into void worlds (MapCanvas/BlockSpec, MapService, /게임 경기장 맵)
+    map/                       battle maps built in code into void worlds (MapCanvas/BlockSpec, MapService, /게임 맵)
       citadel/                 폐허의 성채: CitadelLayout (the plan) + one MapZone class per zone
       siege/                   네온 시티 (공성전 map, cyberpunk): SiegeSites (the contract the siege game reads), SiegeLayout
                                (the plan), SiegeKit/SiegeStreets (buildings, props), SiegeMap + one MapZone per part

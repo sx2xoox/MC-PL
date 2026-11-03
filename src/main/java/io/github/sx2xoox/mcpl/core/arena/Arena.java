@@ -9,7 +9,7 @@ import org.bukkit.entity.Entity;
 
 /**
  * The circular play area of a match: a center and a horizontal radius in one world. All games share the arena from
- * {@code config.yml} ({@code /게임 경기장 설정}); without one, the arena is centered on whoever started the match (the
+ * {@code config.yml} ({@code /게임 맵 여기}); without one, the arena is centered on whoever started the match (the
  * world spawn for the console or rotation).
  *
  * @param world  the arena world

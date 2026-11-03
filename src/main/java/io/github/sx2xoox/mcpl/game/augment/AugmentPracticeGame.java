@@ -16,7 +16,7 @@ import org.bukkit.Material;
  * 증강 연습 — the 증강 야생전 augments alone (or with friends), without the two-player minimum of a real match. It runs
  * the real {@link io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch} in {@link MatchMode#PRACTICE} in a fresh
  * (smaller) temp world: no timed rounds, phases advance by command, augments are granted and removed by command and
- * dummies stand in for enemies. Started with {@code /게임 증강 연습}; never part of the rotation unless the owner adds
+ * dummies stand in for enemies. Started with {@code /게임 시작 증강 연습}; never part of the rotation unless the owner adds
  * {@code augment_practice} to {@code rotation.games} by hand. See {@code docs/augment.md}.
  *
  * <p>Owned by {@link AugmentGame} (registry, messages, augments and the {@code /게임 증강} commands are shared).

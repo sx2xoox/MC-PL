@@ -32,7 +32,7 @@ import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The dummies of 증강 연습 ({@code /게임 증강 허수아비}): {@link Mannequin}s named "허수아비" standing in front of the
+ * The dummies of 증강 연습 ({@code /게임 연습 허수아비}): {@link Mannequin}s named "허수아비" standing in front of the
  * player who placed them. They are enemies of every practising player ({@link AugmentMatch#isEnemy}), so every
  * damage hook, executioner, thorns, sniper, arrows and the tracking augments work on them; a kill is credited to the
  * last practising player who hit it (war god, 첫 번째 피, 역전의 명수 ...).

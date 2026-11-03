@@ -29,7 +29,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The battle maps the plugin can build: each one gets a void world of its own ({@code mcpl_map_<id>}), built once by
- * an admin ({@code /게임 경기장 맵 <맵>}) and loaded again on every start. The rest of the server is never touched.
+ * an admin ({@code /게임 맵 <맵>}) and loaded again on every start. The rest of the server is never touched.
  *
  * <p>Map worlds are fixed at noon in clear weather, spawn no mobs and keep their blocks: fluids do not flow, leaves do
  * not decay, grass does not spread, and only admins can break or place blocks outside a match (see

@@ -384,10 +384,12 @@ class PracticeModeTest {
         Participant participant = participant(match, admin);
         String ability = participant.abilityId();
         drain(admin);
-        for (String command : List.of("게임 능력 변경 화염술사", "게임 능력 충전", "게임 능력 허수아비",
-                "게임 능력 쿨타임 끄기", "게임 능력 연습", "mcpl ability charge")) {
+        for (String command : List.of("게임 연습 바꾸기 화염술사", "게임 연습 충전", "게임 연습 허수아비",
+                "게임 연습 쿨타임 끄기", "게임 시작 초능력전쟁 연습", "mcpl practice charge", "게임 능력 변경 화염술사",
+                "게임 능력 연습", "mcpl ability charge")) {
             h.server.dispatchCommand(admin, command);
-            assertTrue(anyContains(drain(admin), "진짜 경기 중"), command + " is refused");
+            List<String> said = drain(admin);
+            assertTrue(anyContains(said, "진짜 경기 중") || anyContains(said, "능력 연습에서만"), command + " is refused");
         }
         assertEquals(ability, participant.abilityId(), "the ability is unchanged");
         assertTrue(participant.gauge() < 100, "the gauge is unchanged");

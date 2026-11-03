@@ -11,12 +11,13 @@ error:
   internal: "<red>내부 오류가 발생했습니다. 콘솔 로그를 확인해 주세요."
   already-running: "<red>이미 <game><red> 경기가 진행 중입니다. <gray>먼저 <white>/게임 중지</white> 해 주세요."
   not-enough-players: "<red>인원이 부족합니다. <gray>(참가 가능 <white><count></white>명 / 최소 <white><min></white>명)"
-  map-unknown: "<red>맵 <white><id></white>을(를) 찾을 수 없습니다. <gray><white>/게임 경기장 맵</white>으로 목록을 확인하세요."
+  map-unknown: "<red>맵 <white><id></white>을(를) 찾을 수 없습니다. <gray><white>/게임 맵</white>으로 목록을 확인하세요."
   map-busy: "<red>다른 맵을 짓는 중입니다. 끝난 뒤 다시 시도해 주세요."
   map-match-running: "<red>경기 중에는 맵을 지을 수 없습니다. 경기가 끝난 뒤 다시 시도해 주세요."
-  map-not-built: "<red>맵 <white><name></white>을(를) 아직 짓지 않았습니다. <gray><white>/게임 경기장 맵 <id></white>로 먼저 지어 주세요."
-  arena-world-missing: "<red>경기장 월드 <white><world></white>을(를) 찾을 수 없습니다. <gray><white>/게임 경기장 초기화</white> 또는 다시 설정해 주세요."
+  map-not-built: "<red>맵 <white><name></white>을(를) 아직 짓지 않았습니다. <gray><white>/게임 맵 <id></white>로 먼저 지어 주세요."
+  arena-world-missing: "<red>경기장 월드 <white><world></white>을(를) 찾을 수 없습니다. <gray><white>/게임 맵 해제</white> 또는 다시 설정해 주세요."
   no-games: "<red>등록된 미니게임이 없습니다."
+  admin-only: "<red>관리자만 경기를 시작할 수 있습니다."
   choose-game: "<red>시작할 게임을 지정해 주세요. <gray>예) <white>/게임 시작 초능력전쟁</white> · 목록은 <white>/게임 목록</white>"
   unknown-game: "<red>'<white><input></white>'(이)라는 게임을 찾을 수 없습니다. <gray><white>/게임 목록</white>으로 확인해 주세요."
   nothing-to-stop: "<gray>진행 중인 경기나 대기 중인 순환이 없습니다."
@@ -53,20 +54,77 @@ resource-pack:
   unknown-player: "<red>'<white><input></white>' 플레이어를 찾을 수 없습니다."
   missing-before-start: "<yellow>리소스팩이 적용되지 않은 참가자 <white><count></white>명: <white><players></white> <gray>(바닐라 블록 모습으로 보입니다) <click:run_command:'/게임 리소스팩'><hover:show_text:'<gray>클릭하여 상태 보기'><#ffb347>[/게임 리소스팩]</#ffb347></hover></click>"
 
-# ── 도움말 (/게임) ───────────────────────────────────────────
+# ── 도움말 (/게임, /게임 도움말) ─────────────────────────────
+# 분류(sections)마다 play(모두) 줄과 admin(관리자) 줄이 있습니다. 관리자가 아니면 admin 줄은 보이지 않고,
+# 보여 줄 줄이 없는 분류는 제목도 나오지 않습니다.
+# <cmd:'/게임 …'> 는 클릭하면 입력되는 명령어, <cmd:'입력될 명령어':'보이는 글'> 처럼 보이는 글을 따로 줄 수 있습니다.
 help:
   header: "<gradient:#ffb347:#ff5e62><bold>MCPL</bold></gradient> <gray>고전 미니게임 허브 <dark_gray>· <gray>명령어를 클릭하면 입력됩니다"
-  play:
-    - " <click:suggest_command:'/게임 목록'><hover:show_text:'<gray>클릭하여 입력'><#ffb347>/게임 목록</#ffb347></hover></click> <dark_gray>-</dark_gray> <gray>미니게임 목록"
-    - " <click:suggest_command:'/게임 참가'><hover:show_text:'<gray>클릭하여 입력'><#ffb347>/게임 참가</#ffb347></hover></click> <dark_gray>/</dark_gray> <click:suggest_command:'/게임 관전'><hover:show_text:'<gray>클릭하여 입력'><#ffb347>관전</#ffb347></hover></click> <dark_gray>-</dark_gray> <gray>다음 경기 참가 / 관전 선택"
-  admin:
-    - " <click:suggest_command:'/게임 시작 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 시작 [모드]</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기 시작 (생략 시 순환 목록의 다음 게임)"
-    - " <click:suggest_command:'/게임 중지'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 중지</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기 강제 종료 및 복구"
-    - " <click:suggest_command:'/게임 순환 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 순환 \\<켜기|끄기|목록></#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>자동 연속 진행"
-    - " <click:suggest_command:'/게임 경기장 설정 '><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 경기장 설정 [반경]</#ff7f50></hover></click> <dark_gray>/</dark_gray> <click:suggest_command:'/게임 경기장 초기화'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>초기화</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>경기장 중심"
-    - " <click:suggest_command:'/게임 설정'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 설정</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>설정 메뉴 (팀 인원, 상자, 자기장 …) <dark_gray>·</dark_gray> <click:suggest_command:'/게임 설정 목록'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>목록</#ff7f50></hover></click> <gray>현재 값과 명령어"
-    - " <click:suggest_command:'/게임 리로드'><hover:show_text:'<gray>클릭하여 입력'><#ff7f50>/게임 리로드</#ff7f50></hover></click> <dark_gray>-</dark_gray> <gray>설정 다시 불러오기"
-  footer: "<dark_gray>영어 명령어도 사용할 수 있습니다: /mcpl start, stop, list, join, spectate, rotation, arena, settings, reload"
+  click-hint: "<gray>클릭하여 입력"
+  footer: "<dark_gray>영어 이름도 됩니다: /mcpl start superpower, /mcpl reroll, /mcpl practice dummies, /mcpl map …"
+  sections:
+    start:
+      title: "<#ffb347><bold>▸ 시작</bold>"
+      play: []
+      admin:
+        - " <cmd:'/게임 시작 초능력전쟁'> <dark_gray>-</dark_gray> <gray>초능력전쟁 (접속 중인 모두 참가, 관전은 미리 /게임 관전)"
+        - " <cmd:'/게임 시작 증강'> <dark_gray>-</dark_gray> <gray>증강 야생전: 새 야생 월드에서 파밍 → PvP"
+        - " <cmd:'/게임 시작 증강 봇전 ':'/게임 시작 증강 봇전 [수] [난이도]'> <dark_gray>-</dark_gray> <gray>봇이 빈자리를 채우는 증강 야생전 (섞기: 쉬움 3 어려움 2 · 팀전: <cmd:'/게임 시작 증강 봇전 팀 ':'봇전 팀 3 4 보통'><gray>)"
+        - " <cmd:'/게임 시작 증강 관전 ':'/게임 시작 증강 관전 [수] [난이도]'> <dark_gray>-</dark_gray> <gray>봇끼리만 싸우고 모두 관전 (팀전: <cmd:'/게임 시작 증강 관전 팀 ':'관전 팀 3 2 보통'><gray>)"
+        - " <cmd:'/게임 시작 공성전'> <dark_gray>-</dark_gray> <gray>초능력 공성전: 두 팀이 탑 셋을 공격·수비"
+        - " <cmd:'/게임 시작 ':'/게임 시작'> <dark_gray>-</dark_gray> <gray>모드를 생략하면 순환 목록의 다음 게임"
+    flow:
+      title: "<#ffb347><bold>▸ 진행</bold>"
+      play:
+        - " <cmd:'/게임 목록'> <dark_gray>-</dark_gray> <gray>미니게임 목록"
+        - " <cmd:'/게임 참가'> <dark_gray>/</dark_gray> <cmd:'/게임 관전'> <dark_gray>-</dark_gray> <gray>다음 경기 참가 / 관전 선택"
+      admin:
+        - " <cmd:'/게임 중지'> <dark_gray>-</dark_gray> <gray>경기 강제 종료 및 복구"
+        - " <cmd:'/게임 순환 ':'/게임 순환 [켜기|끄기|목록]'> <dark_gray>-</dark_gray> <gray>경기가 끝나면 다음 게임 자동 시작"
+    match:
+      title: "<#ffb347><bold>▸ 경기 중</bold> <dark_gray>(어느 모드든)"
+      play:
+        - " <cmd:'/게임 리롤'> <dark_gray>-</dark_gray> <gray>능력 다시 뽑기 (준비 시간) · 증강 카드 다시 뽑기"
+        - " <cmd:'/게임 내정보'> <dark_gray>-</dark_gray> <gray>내 능력 · 증강 · 레벨"
+        - " <cmd:'/게임 팀'> <dark_gray>-</dark_gray> <gray>팀원과 팀원의 능력"
+        - " <cmd:'/게임 점수'> <dark_gray>-</dark_gray> <gray>지금 점수 (공성전)"
+      admin: []
+    practice:
+      title: "<#7bd88f><bold>▸ 연습</bold> <dark_gray>(시작은 관리자, 참가는 누구나)"
+      play:
+        - " <cmd:'/게임 시작 초능력전쟁 연습 ':'/게임 시작 초능력전쟁 연습 [능력]'> <dark_gray>-</dark_gray> <gray>허수아비로 능력 연습 (진행 중이면 참가 · 능력 바꾸기)"
+        - " <cmd:'/게임 시작 증강 연습'> <dark_gray>-</dark_gray> <gray>새 야생 월드에서 증강 연습 (진행 중이면 참가)"
+        - " <cmd:'/게임 연습 허수아비 ':'/게임 연습 허수아비 [개수]'> <dark_gray>-</dark_gray> <gray>허수아비 다시 세우기"
+        - " <gray>능력 연습: <cmd:'/게임 연습 바꾸기 ':'바꾸기 [능력]'> <dark_gray>·</dark_gray> <cmd:'/게임 연습 충전':'충전'> <dark_gray>-</dark_gray> <gray>능력 바꾸기, 궁극기 충전"
+        - " <gray>증강 연습: <cmd:'/게임 연습 받기 ':'받기 [증강]'> <dark_gray>·</dark_gray> <cmd:'/게임 연습 빼기 ':'빼기 [증강|전부]'> <dark_gray>·</dark_gray> <cmd:'/게임 연습 카드 ':'카드 [등급]'> <dark_gray>·</dark_gray> <cmd:'/게임 연습 다음단계':'다음단계'> <dark_gray>·</dark_gray> <cmd:'/게임 연습 대전 ':'대전 [켜기|끄기]'>"
+      admin:
+        - " <cmd:'/게임 연습 쿨타임 ':'/게임 연습 쿨타임 [켜기|끄기]'> <dark_gray>-</dark_gray> <gray>능력 연습의 액티브 쿨타임"
+        - " <cmd:'/게임 시작 초능력전쟁 연습 모두'> <dark_gray>/</dark_gray> <cmd:'/게임 시작 증강 연습 모두':'증강 연습 모두'> <dark_gray>-</dark_gray> <gray>접속 중인 모두와 연습"
+        - " <cmd:'/게임 연습 다음단계'> <dark_gray>-</dark_gray> <gray>진짜 증강 경기에서도 단계 건너뛰기 (파밍 → 전투 → 보더 축소 → 최종)"
+    modes:
+      title: "<#a78bfa><bold>▸ 모드별</bold>"
+      play:
+        - " <cmd:'/게임 능력 목록'> <dark_gray>·</dark_gray> <cmd:'/게임 능력 정보 ':'정보 [능력]'> <dark_gray>·</dark_gray> <cmd:'/게임 능력 선택':'선택'> <dark_gray>-</dark_gray> <gray>초능력: 능력 목록, 설명, 닫은 선택 창 다시 열기"
+        - " <cmd:'/게임 증강'> <dark_gray>·</dark_gray> <cmd:'/게임 증강 목록':'목록'> <dark_gray>·</dark_gray> <cmd:'/게임 증강 정보 ':'정보 [증강]'> <dark_gray>·</dark_gray> <cmd:'/게임 증강 보너스':'보너스'> <dark_gray>-</dark_gray> <gray>증강: 닫은 카드 창 다시 열기, 목록, 설명, 보너스 조건"
+        - " <cmd:'/게임 증강 관전 ':'/게임 증강 관전 [봇|다음]'> <dark_gray>-</dark_gray> <gray>봇 관전전: 봇 순위, 봇 따라가기"
+      admin:
+        - " <cmd:'/게임 능력 지정 ':'/게임 능력 지정 [플레이어] [능력]'> <dark_gray>·</dark_gray> <cmd:'/게임 능력 선택방식 ':'선택방식 [RANDOM|CHOICE]'> <dark_gray>-</dark_gray> <gray>능력 지정, 배정 방식"
+        - " <cmd:'/게임 증강 배속 ':'/게임 증강 배속 [1~4]'> <dark_gray>-</dark_gray> <gray>봇 경기의 시간 배속"
+        - " <cmd:'/게임 공성전 능력풀 ':'/게임 공성전 능력풀 [목록|추가|제거|초기화]'> <dark_gray>-</dark_gray> <gray>공성전에서 나오는 능력"
+    map:
+      title: "<#ff7f50><bold>▸ 맵</bold>"
+      play: []
+      admin:
+        - " <cmd:'/게임 맵'> <dark_gray>-</dark_gray> <gray>지금 경기장과 내장 전투 맵 목록"
+        - " <cmd:'/게임 맵 ':'/게임 맵 [맵]'> <dark_gray>·</dark_gray> <cmd:'/게임 맵 ':'[맵] 이동'> <dark_gray>·</dark_gray> <cmd:'/게임 맵 ':'[맵] 다시짓기'> <dark_gray>-</dark_gray> <gray>맵을 지어(처음 한 번) 경기장으로 사용, 구경하러 가기, 처음 상태로"
+        - " <cmd:'/게임 맵 여기 ':'/게임 맵 여기 [반경]'> <dark_gray>/</dark_gray> <cmd:'/게임 맵 해제':'해제'> <dark_gray>-</dark_gray> <gray>내 위치를 경기장으로 / 경기장 해제 (시작한 사람 위치에서 경기)"
+    server:
+      title: "<#ff7f50><bold>▸ 서버</bold>"
+      play:
+        - " <cmd:'/게임 리소스팩'> <dark_gray>·</dark_gray> <cmd:'/게임 리소스팩 다시받기':'다시받기'> <dark_gray>-</dark_gray> <gray>리소스팩 확인, 다시 받기"
+      admin:
+        - " <cmd:'/게임 설정'> <dark_gray>·</dark_gray> <cmd:'/게임 설정 목록':'목록'> <dark_gray>-</dark_gray> <gray>설정 메뉴 (팀 인원, 상자, 자기장 …), 현재 값과 명령어"
+        - " <cmd:'/게임 리로드'> <dark_gray>-</dark_gray> <gray>설정 다시 불러오기"
 
 # ── 목록 (/게임 목록) ────────────────────────────────────────
 list:
@@ -96,11 +154,23 @@ command:
   rotation-off: "<yellow>순환 모드를 껐습니다."
   rotation-list: "<gray>순환 순서: <list>"
   rotation-list-empty: "<gray>순환 목록이 비어 있습니다. <dark_gray>(config.yml → rotation.games)"
+  no-match: "<red>지금 진행 중인 경기가 없습니다."
+  reroll-none: "<red><game><red>에는 리롤이 없습니다."
+  score-none: "<gray>이 모드에는 점수가 없습니다. <dark_gray>(<game><dark_gray> · 남은 인원 <white><alive></white>/<total>명)"
+  me-none: "<gray><game><gray>에서는 보여 줄 내 정보가 없습니다."
+  team-not-team-mode: "<red>팀전이 아닙니다. <gray>(<white>/게임 설정 팀 \\<인원></white>)"
+  team-none: "<red>팀에 속해 있지 않습니다."
+  team-members: "<team> <gray>팀원: <members>"
+  practice-none: "<red>진행 중인 연습이 없습니다. <gray>시작: <white>/게임 시작 초능력전쟁 연습</white> · <white>/게임 시작 증강 연습"
+  practice-tool-unsupported: "<red>이 도구는 지금 진행 중인 <game><red>에서 쓸 수 없습니다. <gray>(<white>/게임 연습</white>으로 쓸 수 있는 도구 보기)"
+  unknown: "<red>알 수 없는 명령어입니다: <white>/게임 <input></white> <gray>· <click:run_command:'/게임 도움말'><hover:show_text:'<gray>클릭하여 도움말'><white>/게임 도움말</white></hover></click>"
+  moved: "<dark_gray>이 명령어는 <gray><command></gray> 로 바뀌었습니다."
+  moved-failed: "<red>명령어를 실행할 수 없습니다: <gray><reason>"
   arena-none: "<gray>저장된 경기장이 없습니다. 경기를 시작한 사람의 위치가 중심이 됩니다. <dark_gray>(반경 <radius>)"
   arena-info: "<gray>경기장: <white><world></white> <dark_gray>(<x>, <y>, <z>)</dark_gray> 반경 <white><radius></white>"
   arena-set: "<green>경기장을 저장했습니다: <white><world></white> <dark_gray>(<x>, <y>, <z>)</dark_gray> <green>반경 <white><radius></white>"
   arena-reset: "<yellow>경기장 설정을 지웠습니다. <gray>이제 경기를 시작한 사람의 위치가 중심이 됩니다. (반경 <radius>)"
-  map-list-header: "<gradient:#ffb347:#ff5e62><bold>전투 맵</bold></gradient> <dark_gray>(/게임 경기장 맵 <맵> 으로 짓고 경기장으로 설정)"
+  map-list-header: "<gradient:#ffb347:#ff5e62><bold>전투 맵</bold></gradient> <dark_gray>(/게임 맵 [맵 id] 으로 짓고 경기장으로 설정 · /게임 맵 여기 [반경] · /게임 맵 해제)"
   map-list-entry: "<white><id></white> <gray><name></gray> <dark_gray>· 지름 <size> ·</dark_gray> <status> <dark_gray>— <description>"
   map-status-built: "<green>준비됨"
   map-status-missing: "<yellow>아직 짓지 않음"

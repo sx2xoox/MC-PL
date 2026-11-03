@@ -115,7 +115,7 @@ public record SuperpowerSettings(
     }
 
     /**
-     * These settings for a practice session ({@code /게임 능력 연습}): no reveal, prep phase or rerolls, no time limit,
+     * These settings for a practice session ({@code /게임 시작 초능력전쟁 연습}): no reveal, prep phase or rerolls, no time limit,
      * a border that never shrinks and a sky that never changes. Kit, gauge, effects and the ability item stay as
      * configured, so abilities behave and look exactly like in a real match.
      */
@@ -190,7 +190,7 @@ public record SuperpowerSettings(
         d.setComments(KILL_FEED_ABILITY, List.of("킬로그에 능력 이름 표시: ☠ 철수(화염술사) → 영희(빙결술사)"));
         d.set(TEAM_ABILITIES, true);
         d.setComments(TEAM_ABILITIES, List.of(
-                "팀전에서 같은 팀끼리 서로의 능력을 봅니다 (사이드바, 전투 시작 채팅, /게임 능력 팀)"));
+                "팀전에서 같은 팀끼리 서로의 능력을 봅니다 (사이드바, 전투 시작 채팅, /게임 팀)"));
         d.set(ABILITY_ITEM, Material.IRON_INGOT.name());
         d.setComments(ABILITY_ITEM, List.of(
                 "능력 아이템의 기본 재료 (옛 \"능력자\" 플러그인의 철괴). 모양은 능력 아이콘으로 보입니다."));
