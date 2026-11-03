@@ -11,14 +11,13 @@ import java.util.function.ToIntFunction;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 공성전 score (pure, no Bukkit): team points, towers and kills of the current round, kill streaks (bounties),
- * assists, deaths this half (respawn delay) and every player's contribution (MVP). Teams are {@code 0} (A) and
- * {@code 1} (B).
+ * The 공성전 score (pure, no Bukkit): team points, towers and kills of the current round, assists, deaths this round
+ * (respawn delay) and every player's contribution (MVP). Teams are the indices of {@code SiegeMatch#teams()}.
  */
 public final class SiegeScore {
 
     /** What a kill was worth. */
-    public record Kill(int points, boolean bounty, int victimStreak, List<UUID> assisters, int assistPoints) {
+    public record Kill(int points, List<UUID> assisters, int assistPoints) {
     }
 
     private final SiegeSettings settings;
@@ -27,10 +26,7 @@ public final class SiegeScore {
     private final int[] towers = new int[2];
     private final int[] kills = new int[2];
     private final int[] roundWins = new int[2];
-    /** Team that destroyed the last tower this round, or -1. */
-    private int lastTowerTeam = -1;
-    private final Map<UUID, Integer> streaks = new HashMap<>();
-    private final Map<UUID, Integer> halfDeaths = new HashMap<>();
+    private final Map<UUID, Integer> roundDeaths = new HashMap<>();
     private final Map<UUID, Integer> roundContribution = new LinkedHashMap<>();
     private final Map<UUID, Integer> totalContribution = new LinkedHashMap<>();
     /** Victim → (attacker → tick of the last hit). */
@@ -59,31 +55,14 @@ public final class SiegeScore {
         return roundWins[team];
     }
 
-    public int streak(UUID player) {
-        return streaks.getOrDefault(player, 0);
-    }
-
-    public int halfDeaths(UUID player) {
-        return halfDeaths.getOrDefault(player, 0);
-    }
-
-    public int lastTowerTeam() {
-        return lastTowerTeam;
-    }
-
-    /** The team that reached the win score, or -1. */
-    public int reachedWinScore() {
-        for (int team = 0; team < 2; team++) {
-            if (points[team] >= settings.winScore()) {
-                return team;
-            }
-        }
-        return -1;
+    /** Deaths of {@code player} this round (respawn delay). */
+    public int roundDeaths(UUID player) {
+        return roundDeaths.getOrDefault(player, 0);
     }
 
     /**
-     * The winner when the second half ran out: more points, then more towers destroyed, then more kills; -1 when all
-     * of that is tied (sudden death).
+     * The winner when the round's time ran out: more points, then more towers destroyed, then more kills; -1 when all
+     * of that is tied (overtime).
      */
     public int timeUpWinner() {
         if (points[0] != points[1]) {
@@ -139,21 +118,17 @@ public final class SiegeScore {
     }
 
     /**
-     * {@code victim} died at {@code tick}, killed by {@code killer} (null: no kill credit). Updates the streaks and
-     * deaths, gives the killer's team the kill (or bounty) points and the assisters' team the assist points.
+     * {@code victim} died at {@code tick}, killed by {@code killer} (null: no kill credit). Counts the death, gives the
+     * killer's team the kill points and the assist points of every teammate who hit the victim lately.
      */
     public Kill kill(UUID victim, @Nullable UUID killer, long tick) {
-        int victimStreak = streaks.getOrDefault(victim, 0);
-        streaks.put(victim, 0);
-        halfDeaths.merge(victim, 1, Integer::sum);
+        roundDeaths.merge(victim, 1, Integer::sum);
         Map<UUID, Long> hits = recentHits.remove(victim);
         int killerTeam = killer == null ? -1 : teamOf.applyAsInt(killer);
         if (killer == null || killerTeam < 0 || killerTeam == teamOf.applyAsInt(victim)) {
-            return new Kill(0, false, victimStreak, List.of(), 0);
+            return new Kill(0, List.of(), 0);
         }
-        boolean bounty = victimStreak >= settings.bountyStreak();
-        int value = bounty ? settings.bountyPoints() : settings.killPoints();
-        streaks.merge(killer, 1, Integer::sum);
+        int value = settings.killPoints();
         kills[killerTeam]++;
         points[killerTeam] += value;
         credit(killer, value);
@@ -172,38 +147,30 @@ public final class SiegeScore {
         for (UUID assister : assisters) {
             credit(assister, settings.assistPoints());
         }
-        return new Kill(value, bounty, victimStreak, List.copyOf(assisters), assistPoints);
+        return new Kill(value, List.copyOf(assisters), assistPoints);
     }
 
     /**
-     * {@code team} destroyed the tower {@code towerId}; {@code topDamager} (may be null) gets the contribution.
+     * {@code team} destroyed an enemy tower; {@code topDamager} (may be null) gets the contribution.
      *
      * @return the points given
      */
-    public int towerDestroyed(int team, String towerId, boolean climax, @Nullable UUID topDamager) {
-        double base = settings.towerPoints(towerId);
-        int value = (int) Math.round(climax ? base * settings.climaxTowerMultiplier() : base);
+    public int towerDestroyed(int team, @Nullable UUID topDamager) {
+        int value = settings.towerPoints();
         points[team] += value;
         towers[team]++;
-        lastTowerTeam = team;
         if (topDamager != null) {
             credit(topDamager, value);
         }
         return value;
     }
 
-    /** {@code team} held its attackable tower for the defence time; every listed defender shares the credit. */
-    public int defenceSuccess(int team, List<UUID> defenders) {
-        points[team] += settings.defencePoints();
-        for (UUID defender : defenders) {
-            credit(defender, Math.max(1, settings.defencePoints() / Math.max(1, defenders.size())));
-        }
-        return settings.defencePoints();
-    }
-
-    /** Sudden death or a test: plain points for a team. */
-    public void addPoints(int team, int value) {
+    /** Points for {@code team} from anything else (jungle, objectives, overtime tests); {@code contributor} may be null. */
+    public void addPoints(int team, int value, @Nullable UUID contributor) {
         points[team] += value;
+        if (contributor != null && value > 0) {
+            credit(contributor, value);
+        }
     }
 
     private void credit(UUID player, int value) {
@@ -213,25 +180,18 @@ public final class SiegeScore {
 
     // ------------------------------------------------------------------ flow
 
-    /** A new half: deaths (respawn delay), streaks and assist hits start over; points are kept for the round. */
-    public void newHalf() {
-        halfDeaths.clear();
-        streaks.clear();
-        recentHits.clear();
-    }
-
     /** {@code team} won the round. */
     public void roundWon(int team) {
         roundWins[team]++;
     }
 
-    /** A new round: points, towers and kills start over. */
+    /** A new round: points, towers, kills, deaths and assist hits start over. */
     public void newRound() {
-        newHalf();
+        roundDeaths.clear();
+        recentHits.clear();
         points[0] = points[1] = 0;
         towers[0] = towers[1] = 0;
         kills[0] = kills[1] = 0;
-        lastTowerTeam = -1;
         roundContribution.clear();
     }
 }

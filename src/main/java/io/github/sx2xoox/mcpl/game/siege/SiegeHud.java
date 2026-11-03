@@ -1,17 +1,16 @@
 package io.github.sx2xoox.mcpl.game.siege;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
-import io.github.sx2xoox.mcpl.core.map.MapService;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
@@ -19,55 +18,36 @@ import io.github.sx2xoox.mcpl.core.ui.Sidebar;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
-import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 공성전 HUD: a timer boss bar per viewer (round, half, time, red during the 총공세, and the way to the target
- * tower: {@link Wayfinding#pointer}), the tower boss bars only for players a tower matters to ({@link TowerBars}), the
- * health plates under the names ({@link NamePlates}), the target tower's beam and frame and the district titles
- * ({@link Wayfinding}), and a private sidebar per viewer: {@code A팀 12 : 9 B팀}, the round score (●○), the phase and
- * time left, who attacks, the attackable tower's health, the 오버클럭 코어, and the viewer's own ability,
- * kills/deaths and level.
+ * The 공성전 HUD (docs/siege.md "화면 표시"), kept small on purpose: one boss bar with the round timer only, a private
+ * sidebar of at most six lines per viewer (score and rounds, time, standing towers, my level and gold, the next big
+ * objective from a {@link SiegeModule}, my ability), the health plates under the names ({@link NamePlates}) and the
+ * start tutorial (three titles and a chat summary). Structure health floats over the structures ({@link OverheadBar});
+ * the "▶ 지금 할 일" line is {@link Guidance}.
  */
 final class SiegeHud {
+
+    /** Ticks between the tutorial's titles. */
+    static final int TUTORIAL_STEP_TICKS = 130;
 
     private final SiegeMatch match;
     private final GameSession session;
     private final Messages messages;
     private final SiegeHudSettings settings;
-    private final Map<UUID, ManagedBossBar> timers = new HashMap<>();
-    private final TowerBars towerBars;
     private final NamePlates plates;
-    private final Wayfinding wayfinding;
     private final Set<UUID> broken = new HashSet<>();
+    private @Nullable ManagedBossBar timer;
     private boolean reported;
 
-    SiegeHud(SiegeMatch match) {
+    SiegeHud(SiegeMatch match, SiegeHudSettings settings) {
         this.match = match;
         this.session = match.session();
         this.messages = match.messages();
-        this.settings = SiegeHudSettings.read(session.gameConfig());
-        this.towerBars = new TowerBars(match, settings);
+        this.settings = settings;
         this.plates = new NamePlates(match, match::plateLevel);
-        this.wayfinding = new Wayfinding(match, settings);
-        if (settings.night()) {
-            night(match.layout().world());
-        }
-    }
-
-    /**
-     * Night in clear weather for the whole match, in a plugin map world only (time does not advance there, see
-     * {@link MapService}); {@link #dispose} puts back the map's noon.
-     */
-    private static void night(World world) {
-        if (!world.getName().startsWith(MapService.WORLD_PREFIX)) {
-            return;
-        }
-        world.setStorm(false);
-        world.setThundering(false);
-        world.setTime(SiegeHudSettings.NIGHT_TIME);
     }
 
     /** Every tick: plates of players whose health changed. */
@@ -77,27 +57,14 @@ final class SiegeHud {
         }
     }
 
-    /** {@code player} hit {@code tower}: its bar shows to them for a while. */
-    void towerHit(Tower tower, Player player) {
-        towerBars.hit(tower, player.getUniqueId());
-    }
-
-    /** A title was shown to {@code player} (null: everyone); the district titles wait a moment. */
-    void titleShown(@Nullable Player player) {
-        wayfinding.titleShown(player);
-    }
-
     /** {@code player}'s health changed: their plate is redrawn next tick. */
     void healthChanged(Player player) {
         plates.changed(player);
     }
 
-    /** The match ends: the markers go (the session hides the bars and removes tracked entities anyway). */
     void dispose() {
-        wayfinding.removeMarkers();
-        World world = match.layout().world();
-        if (settings.night() && world.getName().startsWith(MapService.WORLD_PREFIX)) {
-            MapService.resetSky(world);
+        if (timer != null) {
+            timer.hideAll();
         }
     }
 
@@ -105,26 +72,51 @@ final class SiegeHud {
         return settings;
     }
 
-    TowerBars towerBars() {
-        return towerBars;
-    }
-
     NamePlates plates() {
         return plates;
     }
 
-    Wayfinding wayfinding() {
-        return wayfinding;
+    /** The timer boss bar (tests). */
+    @Nullable ManagedBossBar timer() {
+        return timer;
     }
 
+    // ------------------------------------------------------------------ tutorial
+
+    /** The rules in 20 seconds: three titles {@link #TUTORIAL_STEP_TICKS} apart and a chat summary. */
+    void tutorial() {
+        if (!settings.tutorial()) {
+            return;
+        }
+        for (Component line : messages.lines("tutorial.summary")) {
+            session.broadcast(line);
+        }
+        for (int step = 1; step <= 3; step++) {
+            int index = step;
+            Runnable show = () -> {
+                if (match.phase() != SiegeMatch.Phase.PREP && index > 1) {
+                    return;
+                }
+                for (Player viewer : session.viewers()) {
+                    Feedback.title(viewer, messages.get("tutorial.title-" + index),
+                            messages.get("tutorial.subtitle-" + index), 5, TUTORIAL_STEP_TICKS - 25, 10);
+                }
+            };
+            if (step == 1) {
+                show.run();
+            } else {
+                session.runLater((long) (step - 1) * TUTORIAL_STEP_TICKS, show);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ update
+
     void update() {
-        wayfinding.update();
         try {
-            updateTimers();
-            updateTowers();
-            towerBars.update();
+            updateTimer();
         } catch (RuntimeException e) {
-            report("boss bars", e);
+            report("boss bar", e);
         }
         if (settings.namePlates()) {
             plates.update();
@@ -151,139 +143,95 @@ final class SiegeHud {
         }
     }
 
-    private void updateTimers() {
+    private void updateTimer() {
         long left = match.ticksLeft();
         long total = switch (match.phase()) {
             case PREP -> match.prepTicks();
-            case FIGHT -> match.isSuddenDeath() ? match.settings().suddenDeathTicks() : match.settings().halfTicks();
-            case HALFTIME -> match.settings().halftimeTicks();
+            case FIGHT -> match.isOvertime() ? match.settings().overtimeTicks() : match.settings().roundTicks();
             case BREAK -> match.settings().roundBreakTicks();
             case OVER -> 1;
         };
-        Component base = messages.get("hud.bossbar", Messages.tag("phase", phaseName()),
-                Messages.tag("time", Format.clock((left + 19) / 20)),
-                Messages.tag("attackers", attackers().displayName()));
+        Component name = messages.get("hud.bossbar", Messages.tag("phase", phaseName()),
+                Messages.tag("time", Format.clock((left + 19) / 20)));
         float progress = total <= 0 ? 0f : Math.max(0f, Math.min(1f, (float) left / total));
-        BossBar.Color color = match.isClimax() || match.isSuddenDeath() ? BossBar.Color.RED
+        BossBar.Color color = match.isClimax() || match.isOvertime() ? BossBar.Color.RED
                 : match.phase() == SiegeMatch.Phase.FIGHT ? BossBar.Color.YELLOW : BossBar.Color.BLUE;
-        Set<UUID> viewers = new HashSet<>();
-        for (Player viewer : session.viewers()) {
-            viewers.add(viewer.getUniqueId());
-            Component pointer = wayfinding.pointer(viewer);
-            Component name = pointer == null ? base
-                    : messages.get("hud.bossbar-pointer", Messages.tag("timer", base), Messages.tag("pointer", pointer));
-            ManagedBossBar timer = timers.get(viewer.getUniqueId());
-            if (timer == null) {
-                timer = session.playerBossBar(viewer, name, progress, color, BossBar.Overlay.PROGRESS);
-                timers.put(viewer.getUniqueId(), timer);
-            } else if (!timer.isShownTo(viewer)) {
-                timer.show(viewer);
-            }
-            timer.name(name);
-            timer.progress(progress);
-            if (timer.bar().color() != color) {
-                timer.color(color);
-            }
+        if (timer == null) {
+            timer = session.sharedBossBar(name, progress, color, BossBar.Overlay.PROGRESS);
         }
-        timers.entrySet().removeIf(entry -> {
-            if (viewers.contains(entry.getKey())) {
-                return false;
-            }
-            entry.getValue().forget(entry.getKey());
-            return true;
-        });
-    }
-
-    /** The viewer's timer bar (tests). */
-    @org.jspecify.annotations.Nullable ManagedBossBar timer(UUID viewer) {
-        return timers.get(viewer);
-    }
-
-    private void updateTowers() {
-        for (Tower tower : match.towers()) {
-            ManagedBossBar bar = tower.bar();
-            if (bar == null || tower.isDestroyed()) {
-                continue;
-            }
-            bar.name(messages.get(tower.isShielded() ? "hud.tower-shielded" : "hud.tower",
-                    Messages.tag("tower", tower.name()),
-                    Messages.tag("health", Format.number(Math.ceil(tower.health()))),
-                    Messages.tag("max", Format.number(tower.maxHealth()))));
-            bar.progress((float) Math.max(0, Math.min(1, tower.fraction())));
-            BossBar.Color color = tower.isShielded() ? BossBar.Color.WHITE : BossBar.Color.PURPLE;
-            if (bar.bar().color() != color) {
-                bar.color(color);
-            }
+        timer.name(name);
+        timer.progress(progress);
+        if (timer.bar().color() != color) {
+            timer.color(color);
         }
     }
 
     private Component phaseName() {
-        Component half = messages.get(match.half() == 2 ? "half.second" : "half.first");
         return switch (match.phase()) {
-            case PREP -> messages.get("hud.phase-prep", Messages.tag("round", match.round()), Messages.tag("half", half));
-            case FIGHT -> messages.get(match.isSuddenDeath() ? "hud.phase-sudden-death"
-                            : match.isClimax() ? "hud.phase-climax" : "hud.phase-fight",
-                    Messages.tag("round", match.round()), Messages.tag("half", half));
-            case HALFTIME -> messages.get("hud.phase-halftime", Messages.tag("round", match.round()));
+            case PREP -> messages.get("hud.phase-prep", Messages.tag("round", match.round()));
+            case FIGHT -> messages.get(match.isOvertime() ? "hud.phase-overtime"
+                    : match.isClimax() ? "hud.phase-climax" : "hud.phase-fight", Messages.tag("round", match.round()));
             case BREAK -> messages.get("hud.phase-break", Messages.tag("round", match.round() + 1));
             case OVER -> messages.get("hud.phase-over");
         };
     }
 
-    private MatchTeam attackers() {
-        return match.teams().get(match.attackingTeam());
-    }
-
-    private List<Component> lines(Player viewer) {
+    /** At most six lines: score, time, towers, level and gold, the next objective, the ability. */
+    List<Component> lines(Player viewer) {
         SiegeScore score = match.score();
         List<MatchTeam> teams = match.teams();
         List<Component> lines = new ArrayList<>();
-        lines.add(Component.empty());
         lines.add(messages.get("hud.score",
                 Messages.tag("team_a", Component.text(teams.get(0).shortName(), teams.get(0).color())),
                 Messages.tag("team_b", Component.text(teams.get(1).shortName(), teams.get(1).color())),
                 Messages.tag("a", score.points(0)), Messages.tag("b", score.points(1)),
-                Messages.tag("goal", match.settings().winScore())));
-        lines.add(messages.get("hud.rounds", Messages.tag("a", dots(score.roundWins(0))),
-                Messages.tag("b", dots(score.roundWins(1)))));
-        lines.add(Component.empty());
+                Messages.tag("rounds_a", dots(score.roundWins(0))), Messages.tag("rounds_b", dots(score.roundWins(1)))));
         lines.add(messages.get("hud.phase", Messages.tag("phase", phaseName()),
                 Messages.tag("time", Format.clock((match.ticksLeft() + 19) / 20))));
-        lines.add(messages.get("hud.attackers", Messages.tag("team", attackers().displayName())));
-        Tower tower = match.attackableTower();
-        if (tower != null && (match.phase() == SiegeMatch.Phase.FIGHT || match.phase() == SiegeMatch.Phase.PREP)) {
-            lines.add(messages.get("hud.tower", Messages.tag("tower", tower.name()),
-                    Messages.tag("health", Format.number(Math.ceil(tower.health()))),
-                    Messages.tag("max", Format.number(tower.maxHealth()))));
-        }
-        if (match.isClimax()) {
-            lines.add(messages.get("hud.climax"));
-        }
-        if (match.phase() == SiegeMatch.Phase.FIGHT) {
-            addIfPresent(lines, match.objectives().hudLine());
-            addIfPresent(lines, match.camps().hudLine());
+        if (match.phase() != SiegeMatch.Phase.BREAK && match.phase() != SiegeMatch.Phase.OVER) {
+            lines.add(messages.get("hud.towers", Messages.tag("a", standing(match.sideOf(0))),
+                    Messages.tag("b", standing(match.sideOf(1)))));
         }
         UUID id = viewer.getUniqueId();
-        if (match.teamIndex(id) >= 0) {
-            lines.add(Component.empty());
-            lines.add(messages.get("hud.ability", Messages.tag("ability", match.abilityName(id))));
-            lines.add(messages.get("hud.kd", Messages.tag("kills", session.stats().of(id).kills()),
-                    Messages.tag("deaths", session.stats().of(id).deaths())));
-            addIfPresent(lines, match.progress().hudLine(id));
-            if (match.phase() == SiegeMatch.Phase.PREP && match.half() == 1 && match.rerollsLeft(viewer) > 0) {
-                lines.add(messages.get("hud.rerolls", Messages.tag("count", match.rerollsLeft(viewer))));
-            }
-        } else {
-            lines.add(Component.empty());
+        if (match.teamIndex(id) < 0) {
             lines.add(messages.get("hud.spectating"));
+            return lines;
+        }
+        Component level = match.progress().hudLine(id);
+        SiegeEconomy economy = match.economy();
+        if (economy.enabled()) {
+            lines.add(messages.get("hud.level-gold", Messages.tag("level", level == null ? Component.empty() : level),
+                    Messages.tag("money", economy.gold(id))));
+        } else if (level != null) {
+            lines.add(level);
+        }
+        for (SiegeModule module : match.modules()) {
+            Component objective = module.sidebarLine(viewer);
+            if (objective != null) {
+                lines.add(objective);
+                break;
+            }
+        }
+        if (match.phase() == SiegeMatch.Phase.PREP && match.rerollsLeft(viewer) > 0) {
+            lines.add(messages.get("hud.ability-reroll", Messages.tag("ability", match.abilityName(id)),
+                    Messages.tag("count", match.rerollsLeft(viewer))));
+        } else {
+            lines.add(messages.get("hud.ability", Messages.tag("ability", match.abilityName(id))));
         }
         return lines;
     }
 
-    private static void addIfPresent(List<Component> lines, @Nullable Component line) {
-        if (line != null) {
-            lines.add(line);
+    /** "standing/total" structures of a side (cores included). */
+    private String standing(LaneSites.Side side) {
+        int up = 0;
+        int all = 0;
+        for (Tower tower : match.towers(side)) {
+            all++;
+            if (!tower.isDestroyed()) {
+                up++;
+            }
         }
+        return up + "/" + all;
     }
 
     private String dots(int wins) {

@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.Hub;
@@ -14,9 +15,9 @@ import io.github.sx2xoox.mcpl.core.game.GameInstance;
 import io.github.sx2xoox.mcpl.core.game.GameResult;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Format;
-import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalance;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
@@ -28,12 +29,13 @@ import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchHost;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
-import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
+import org.bukkit.Color;
 import org.bukkit.FireworkEffect;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.damage.DamageSource;
@@ -44,69 +46,72 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.inventory.meta.FireworkMeta;
+import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
 /**
- * One match of 공성전 (see docs/siege.md): rounds of (prep → 전반 → 하프타임 → 후반 [→ 연장]) until a team won
- * {@code rounds-to-win} rounds. The abilities run in a hosted {@link SuperpowerMatch}; this class owns the flow,
- * the score ({@link SiegeScore}), the towers, respawns and spawn protection.
+ * One match of 공성전 (see docs/siege.md): two sides, BLUE and RED, each with two towers per lane and a core, race for
+ * points in timed rounds (destroying the enemy core wins the round at once) until a side won {@code rounds-to-win}
+ * rounds. The abilities run in a hosted {@link SuperpowerMatch}; this class owns the flow, the score
+ * ({@link SiegeScore}), the structures, respawns and spawn protection, and offers the hooks other features
+ * ({@link SiegeModule}s: minions, jungle, gold and shop) build on: {@link #side}, {@link #sites}, {@link #layout},
+ * {@link #addScore}, {@link #addXp}, {@link #gold}, {@link #addGold}, {@link #damageStructure}, {@link #guidance},
+ * {@link #sounds}, {@link #damageNumbers}.
  */
 public final class SiegeMatch implements GameInstance {
 
     /** Phases of the match (all inside the hub's RUNNING state). */
     public enum Phase {
-        /** Before a half: everyone at their spawn, invulnerable; at the start of a round rerolls are open. */
+        /** Before a round's fight: everyone at their spawn, invulnerable, rerolls open. */
         PREP,
-        /** A half is being played. */
+        /** A round is being played. */
         FIGHT,
-        /** Between the halves of a round. */
-        HALFTIME,
         /** Between rounds. */
         BREAK,
         /** The match is decided. */
         OVER
     }
 
-    /** Why a half ended. */
-    public enum HalfEnd { TIME, CORE }
-
     private final SiegeGame game;
     private final GameSession session;
     private final Messages messages;
     private SiegeSettings settings;
     private @Nullable SuperpowerMatch abilities;
-    private @Nullable SiegeLayout layout;
+    private @Nullable LaneLayout layout;
     private @Nullable SiegeScore score;
     private @Nullable SiegeHud hud;
-    /** Levels and experience ({@link SiegeProgress}) and the neutral objectives ({@link ObjectivePoints}). */
     private @Nullable SiegeProgress progress;
-    private @Nullable ObjectivePoints objectives;
-    /** The neutral monster camps ({@link JungleCamps}). */
-    private @Nullable JungleCamps camps;
+    private @Nullable Guidance guidance;
+    private @Nullable SiegeSounds sounds;
+    private @Nullable DamageNumbers damageNumbers;
+    private SiegeEconomy economy = SiegeEconomy.NONE;
     /** Stat modifiers of items and buffs ({@link #modifiers()}) and the ability balance read from them. */
     private final SiegeModifiers modifiers = new SiegeModifiers();
     private SiegeBalance balance = new SiegeBalance(SiegeBalanceSettings.defaults(), modifiers);
+    private final List<SiegeModule> modules = new ArrayList<>();
+    /** The built-in lane systems (minions, jungle, gold, shop), null if they failed to start. */
+    private @Nullable LaneSystemsModule lanes;
     private final List<MatchTeam> teams = new ArrayList<>();
+    /** The side of each team (index as in {@link #teams}). */
+    private final LaneSites.Side[] sides = {LaneSites.Side.BLUE, LaneSites.Side.RED};
     private final List<Tower> towers = new ArrayList<>();
+    /** Session tick until which a respawned player is protected. */
     private final Map<UUID, Long> protectedUntil = new HashMap<>();
     private final Map<UUID, Integer> rerollsLeft = new HashMap<>();
-    /** Chunks held loaded around the towers ({@link #holdTowerChunks}), as {@code x, z} pairs. */
+    /** Chunks held loaded around the structures ({@link #holdChunks}), as {@code x, z} pairs. */
     private final List<int[]> heldChunks = new ArrayList<>();
-    /** The half each player who is waiting to respawn died in ({@link #halfSerial}). */
-    private final Map<UUID, Integer> diedInHalf = new HashMap<>();
-    /** Counts every half begun, so a player who respawns after a half change gets the fresh start too. */
-    private int halfSerial;
+    /** The round each player who is waiting to respawn died in ({@link #roundSerial}). */
+    private final Map<UUID, Integer> diedInRound = new HashMap<>();
+    private int roundSerial;
     private List<String> roundPool = List.of();
     private Phase phase = Phase.PREP;
     private long phaseTicks;
     private long prepTicks;
-    /** Ticks of the current half's fight (also the time base of towers and protection). */
-    private long halfTicks;
+    /** Ticks of the current round's fight clock (restarts for the overtime). */
+    private long fightTicks;
     private int round;
-    private int half;
-    private int towersDown;
+    private boolean overtime;
     private boolean climax;
-    private boolean suddenDeath;
     private int lastCountdown;
     private boolean stopped;
     /** A team started empty (one player trying the mode alone): an empty team does not lose the match. */
@@ -135,12 +140,19 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         teams.addAll(session.teams().subList(0, 2));
+        assignSides();
         solo = teams.stream().anyMatch(team -> team.members().isEmpty());
         layout = game.layoutFor(session.arena());
-        holdTowerChunks();
+        holdChunks();
         score = new SiegeScore(settings, this::teamIndex);
+        SiegeHudSettings hudSettings = SiegeHudSettings.read(session.gameConfig());
+        sounds = new SiegeSounds(session);
+        guidance = new Guidance(session, messages);
+        guidance.enabled(hudSettings.guidance());
+        guidance.fallback(this::defaultGuidance);
+        damageNumbers = new DamageNumbers(session, hudSettings.damageNumberRange());
+        damageNumbers.enabled(hudSettings.damageNumbers());
         progress = new SiegeProgress(this, SiegeProgressSettings.read(session.gameConfig()));
-        objectives = new ObjectivePoints(this, progress);
         SuperpowerMatch hosted = new SuperpowerMatch(game.superpower(), session, new Host());
         abilities = hosted;
         hosted.start();
@@ -148,10 +160,25 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         session.registerListener(new SiegeListener(this));
-        camps = new JungleCamps(this, CampSettings.read(session.gameConfig()));
-        session.registerListener(camps);
-        hud = new SiegeHud(this);
+        modules.addAll(game.createModules(this));
+        try {
+            lanes = new LaneSystemsModule(this);
+            modules.add(lanes);
+        } catch (RuntimeException e) {
+            session.plugin().getLogger().log(Level.WARNING, "The siege lane systems could not start", e);
+        }
+        hud = new SiegeHud(this, hudSettings);
         startRound();
+    }
+
+    /** The team of the hub's "파랑" palette entry plays BLUE, "빨강" RED; otherwise the first team is BLUE. */
+    private void assignSides() {
+        boolean swap = "blue".equals(teams.get(1).id()) || "red".equals(teams.get(0).id());
+        if ("blue".equals(teams.get(0).id()) || "red".equals(teams.get(1).id())) {
+            swap = false;
+        }
+        sides[0] = swap ? LaneSites.Side.RED : LaneSites.Side.BLUE;
+        sides[1] = swap ? LaneSites.Side.BLUE : LaneSites.Side.RED;
     }
 
     @Override
@@ -168,11 +195,6 @@ public final class SiegeMatch implements GameInstance {
         switch (phase) {
             case PREP -> tickPrep();
             case FIGHT -> tickFight();
-            case HALFTIME -> {
-                if (phaseTicks >= settings.halftimeTicks()) {
-                    beginHalf(2);
-                }
-            }
             case BREAK -> {
                 if (phaseTicks >= settings.roundBreakTicks()) {
                     startRound();
@@ -186,6 +208,7 @@ public final class SiegeMatch implements GameInstance {
                 hud.update();
             }
             hud.tick();
+            guidance().tick();
         }
     }
 
@@ -226,17 +249,30 @@ public final class SiegeMatch implements GameInstance {
         }
         stopped = true;
         try {
+            eachModule(SiegeModule::stop);
             if (hud != null) {
                 hud.dispose();
             }
             disposeTowers();
-            clearProgress();
-            releaseTowerChunks();
+            if (progress != null) {
+                progress.clear();
+            }
+            releaseChunks();
             if (abilities != null) {
                 abilities.stop();
             }
         } finally {
             game.matchEnded(this);
+        }
+    }
+
+    private void eachModule(Consumer<SiegeModule> call) {
+        for (SiegeModule module : List.copyOf(modules)) {
+            try {
+                call.accept(module);
+            } catch (RuntimeException e) {
+                session.plugin().getLogger().log(Level.WARNING, "A siege module failed: " + module, e);
+            }
         }
     }
 
@@ -273,15 +309,23 @@ public final class SiegeMatch implements GameInstance {
         @Override
         public List<LivingEntity> extraTargets() {
             List<LivingEntity> targets = towerTargets();
-            if (camps != null) {
-                targets.addAll(camps.targets());
+            for (SiegeModule module : modules) {
+                targets.addAll(module.targets());
             }
             return targets;
         }
 
         @Override
         public boolean isExtraTarget(Entity entity) {
-            return towerOf(entity) != null || camps != null && camps.campOf(entity) != null;
+            if (towerOf(entity) != null) {
+                return true;
+            }
+            for (SiegeModule module : modules) {
+                if (module.isTarget(entity)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @Override
@@ -289,22 +333,12 @@ public final class SiegeMatch implements GameInstance {
             if (towerOf(entity) != null) {
                 return isTowerEnemy(owner, entity);
             }
-            return camps != null && camps.isEnemy(owner, entity);
-        }
-
-        @Override
-        public @Nullable Component activeLocked(Player player) {
-            return progress == null ? null : progress.activeLocked(player);
-        }
-
-        @Override
-        public @Nullable Component ultimateLocked(Player player) {
-            return progress == null ? null : progress.ultimateLocked(player);
-        }
-
-        @Override
-        public boolean canChargeGauge(Player player) {
-            return progress == null || progress.canChargeGauge(player);
+            for (SiegeModule module : modules) {
+                if (module.isTarget(entity)) {
+                    return module.isEnemy(owner, entity);
+                }
+            }
+            return false;
         }
 
         @Override
@@ -317,7 +351,7 @@ public final class SiegeMatch implements GameInstance {
             return abilityDamageMultiplier(attacker, target, false);
         }
 
-        /** Players and summons only: towers and camps keep their own numbers (their health is tuned for them). */
+        /** Players and summons only: structures and modules' targets keep their own numbers. */
         @Override
         public double abilityDamageMultiplier(Player attacker, LivingEntity target, boolean ultimate) {
             if (isExtraTarget(target)) {
@@ -340,10 +374,9 @@ public final class SiegeMatch implements GameInstance {
         }
     }
 
-    /** The level abilities scale with: the player's level, 1 while levels are off or before the match started. */
+    /** The level abilities scale with: the player's level ({@link #level}), 1 while levels are off or before start. */
     private int balanceLevel(UUID player) {
-        return progress == null || !progress.levels().settings().levelsEnabled() ? 1
-                : progress.levels().level(player);
+        return progress == null || !progress.settings().levelsEnabled() ? 1 : progress.levels().level(player);
     }
 
     /**
@@ -363,41 +396,33 @@ public final class SiegeMatch implements GameInstance {
         UUID id = victim.getUniqueId();
         protectedUntil.remove(id);
         SiegeScore points = score();
-        boolean fighting = phase == Phase.FIGHT;
-        if (fighting) {
-            int before = killer == null ? 0 : points.streak(killer.getUniqueId());
-            SiegeScore.Kill kill = points.kill(id, killer == null ? null : killer.getUniqueId(), halfTicks);
-            if (killer != null && teamIndex(killer.getUniqueId()) >= 0
-                    && teamIndex(killer.getUniqueId()) != teamIndex(id)) {
+        UUID killerId = killer == null ? null : killer.getUniqueId();
+        if (phase == Phase.FIGHT) {
+            SiegeScore.Kill kill = points.kill(id, killerId, session.tick());
+            int killerTeam = killerId == null ? -1 : teamIndex(killerId);
+            if (killer != null && killerTeam >= 0 && killerTeam != teamIndex(id)) {
                 progress().kill(killer.getUniqueId(), kill.assisters());
-            }
-            if (killer != null && kill.points() > 0) {
-                killer.sendActionBar(messages.get("score.kill-points", Messages.tag("points", kill.points())));
-                if (kill.bounty()) {
-                    session.broadcast(messages.prefixed("score.bounty-claimed",
-                            Messages.tag("killer", session.publicName(killer.getUniqueId())),
-                            Messages.tag("victim", session.publicName(id)),
-                            Messages.tag("streak", kill.victimStreak()), Messages.tag("points", kill.points())));
-                    session.playSound(Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 0.7f);
-                }
-                int streak = points.streak(killer.getUniqueId());
-                if (streak > before && streak == settings.bountyStreak()) {
-                    session.broadcast(messages.prefixed("score.bounty-on",
-                            Messages.tag("player", session.publicName(killer.getUniqueId())),
-                            Messages.tag("streak", streak), Messages.tag("points", settings.bountyPoints())));
-                    session.playSound(Sound.ENTITY_WITHER_AMBIENT, 0.4f, 1.6f);
-                }
+                sounds().kill(killer);
+                guidance().suggest(killer, messages.get("score.kill-points", Messages.tag("points", kill.points())),
+                        Guidance.INFO, 40);
                 for (UUID assister : kill.assisters()) {
                     Player helper = Bukkit.getPlayer(assister);
                     if (helper != null) {
-                        helper.sendActionBar(messages.get("score.assist-points",
-                                Messages.tag("points", settings.assistPoints())));
+                        guidance().suggest(helper, messages.get("score.assist-points",
+                                Messages.tag("points", settings.assistPoints())), Guidance.INFO, 40);
                     }
                 }
+                eachModule(module -> module.playerKilled(id, killerId, kill.assisters()));
+                scored(killerTeam);
+            } else {
+                eachModule(module -> module.playerKilled(id, null, List.of()));
             }
         }
-        diedInHalf.put(id, halfSerial);
-        int delay = settings.respawnDelay(points.halfDeaths(id), climax && fighting);
+        diedInRound.put(id, roundSerial);
+        int delay = settings.respawnDelay(points.roundDeaths(id));
+        for (SiegeModule module : modules) {
+            delay = Math.max(20, module.respawnTicks(id, delay));
+        }
         Location spawn = spawnFor(id);
         session.runLater(2, () -> watchTeammate(victim));
         return DeathOutcome.respawn(spawn, delay);
@@ -405,14 +430,14 @@ public final class SiegeMatch implements GameInstance {
 
     private void hostRespawn(Player player) {
         player.teleport(spawnFor(player.getUniqueId()));
-        Integer died = diedInHalf.remove(player.getUniqueId());
-        if (died != null && died != halfSerial) {
-            // Died before the half (or round) changed: the kit and health reset the others got at the change.
+        Integer died = diedInRound.remove(player.getUniqueId());
+        if (died != null && died != roundSerial) {
+            // Died before the round changed: the kit and health reset the others got at the change.
             abilities().hostResetPlayer(player);
         }
         progress().respawned(player);
         if (phase == Phase.FIGHT) {
-            protectedUntil.put(player.getUniqueId(), halfTicks + settings.protectionTicks());
+            protectedUntil.put(player.getUniqueId(), session.tick() + settings.protectionTicks());
         }
         if (hud != null) {
             hud.update();
@@ -434,13 +459,13 @@ public final class SiegeMatch implements GameInstance {
     }
 
     private boolean useOutsideFight(Player player) {
-        if (phase == Phase.PREP && half == 1 && player.isSneaking()) {
+        if (phase == Phase.PREP && player.isSneaking()) {
             reportReroll(player, reroll(player));
             return true;
         }
-        if (phase == Phase.PREP && half == 1 && rerollsLeft.getOrDefault(player.getUniqueId(), 0) > 0) {
-            player.sendActionBar(messages.get("reroll.hint",
-                    Messages.tag("count", rerollsLeft.getOrDefault(player.getUniqueId(), 0))));
+        if (phase == Phase.PREP && rerollsLeft.getOrDefault(player.getUniqueId(), 0) > 0) {
+            guidance().suggest(player, messages.get("reroll.hint",
+                    Messages.tag("count", rerollsLeft.getOrDefault(player.getUniqueId(), 0))), Guidance.INFO);
             return true;
         }
         return false;
@@ -457,20 +482,68 @@ public final class SiegeMatch implements GameInstance {
         return out;
     }
 
-    /** A tower is an enemy of the attackers only, while the fight runs and the tower can be hit (no shield). */
+    /** A structure is an enemy of the other side only, while the fight runs and it can be hit (no shield). */
     public boolean isTowerEnemy(Player owner, Entity entity) {
         Tower tower = towerOf(entity);
+        LaneSites.Side side = side(owner.getUniqueId());
         return tower != null && phase == Phase.FIGHT && !tower.isDestroyed() && !tower.isShielded()
-                && teamIndex(owner.getUniqueId()) == attackingTeam();
+                && side != null && side != tower.owner();
     }
 
-    // =================================================================== rounds and halves
+    // =================================================================== rounds
 
     private void startRound() {
+        if (!session.isRunning()) {
+            return;
+        }
         round++;
         score().newRound();
+        economy.newRound();
         assignAbilities();
-        beginHalf(1);
+        if (!session.isRunning()) {
+            return;
+        }
+        SuperpowerMatch hosted = abilities();
+        hosted.hostEndFight();
+        roundSerial++;
+        overtime = false;
+        climax = false;
+        fightTicks = 0;
+        protectedUntil.clear();
+        guidance().clear();
+        progress().newRound();
+        disposeTowers();
+        createTowers();
+        int[] next = {0, 0};
+        for (Player player : session.alivePlayers()) {
+            int team = teamIndex(player.getUniqueId());
+            if (team < 0) {
+                continue;
+            }
+            Location spot = spotFor(layout().spawns(sides[team]), next[team]++);
+            player.setFallDistance(0f);
+            player.teleport(spot);
+            hosted.hostResetPlayer(player);
+        }
+        phase = Phase.PREP;
+        phaseTicks = 0;
+        prepTicks = settings.roundPrepTicks();
+        lastCountdown = Integer.MAX_VALUE;
+        title(messages.get("round.title", Messages.tag("round", round)), messages.get("round.subtitle",
+                Messages.tag("a", score().roundWins(0)), Messages.tag("b", score().roundWins(1))));
+        session.broadcast(messages.prefixed("round.started", Messages.tag("round", round),
+                Messages.tag("minutes", Format.number(settings.roundTicks() / 1200.0))));
+        if (settings.rerolls() > 0) {
+            session.broadcast(messages.prefixed("reroll.announce", Messages.tag("count", settings.rerolls())));
+        }
+        sounds().roundStart(session.viewers());
+        if (hud != null && round == 1) {
+            hud.tutorial();
+        }
+        eachModule(module -> module.roundStarted(round));
+        if (prepTicks <= 0) {
+            beginFight();
+        }
     }
 
     private void assignAbilities() {
@@ -511,62 +584,6 @@ public final class SiegeMatch implements GameInstance {
                 .plainText().serialize(message));
     }
 
-    /** Sets up a half: fresh towers, everyone at their spawn with a fresh kit, the prep countdown. */
-    private void beginHalf(int which) {
-        if (!session.isRunning()) {
-            return;
-        }
-        SuperpowerMatch hosted = abilities();
-        hosted.hostEndFight();
-        half = which;
-        halfSerial++;
-        suddenDeath = false;
-        climax = false;
-        towersDown = 0;
-        halfTicks = 0;
-        protectedUntil.clear();
-        score().newHalf();
-        objectives().clear();
-        camps().clear();
-        progress().newHalf();
-        disposeTowers();
-        createTowers();
-        int attackers = attackingTeam();
-        List<Location> attackSpawns = layout().attackerSpawns();
-        List<Location> defendSpawns = layout().defenderSpawns(0);
-        int[] next = {0, 0};
-        for (Player player : session.alivePlayers()) {
-            int team = teamIndex(player.getUniqueId());
-            if (team < 0) {
-                continue;
-            }
-            List<Location> spots = team == attackers ? attackSpawns : defendSpawns;
-            Location spot = spotFor(spots, next[team]++);
-            player.setFallDistance(0f);
-            player.teleport(spot);
-            hosted.hostResetPlayer(player);
-        }
-        phase = Phase.PREP;
-        phaseTicks = 0;
-        prepTicks = which == 1 ? settings.roundPrepTicks() : settings.halfPrepTicks();
-        lastCountdown = Integer.MAX_VALUE;
-        MatchTeam attacking = teams.get(attackers);
-        session.title(messages.get("half.title", Messages.tag("round", round),
-                        Messages.tag("half", messages.get(which == 1 ? "half.first" : "half.second"))),
-                messages.get("half.subtitle", Messages.tag("team", attacking.displayName())));
-        session.broadcast(messages.prefixed("half.started", Messages.tag("round", round),
-                Messages.tag("half", messages.get(which == 1 ? "half.first" : "half.second")),
-                Messages.tag("attackers", attacking.displayName()),
-                Messages.tag("defenders", teams.get(1 - attackers).displayName())));
-        if (which == 1 && settings.rerolls() > 0) {
-            session.broadcast(messages.prefixed("reroll.announce", Messages.tag("count", settings.rerolls())));
-        }
-        session.playSound(Sound.EVENT_RAID_HORN, 0.6f, 1.2f);
-        if (prepTicks <= 0) {
-            beginFight();
-        }
-    }
-
     private void tickPrep() {
         long left = prepTicks - phaseTicks;
         if (left <= 0) {
@@ -579,128 +596,100 @@ public final class SiegeMatch implements GameInstance {
             for (Player player : session.viewers()) {
                 Feedback.title(player, messages.get("prep.countdown", Messages.tag("seconds", seconds)),
                         Component.empty(), 0, 20, 5);
-                Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_HAT, 1f, seconds == 1 ? 1.6f : 1.2f);
             }
+            sounds().countdown(session.viewers(), seconds);
         }
     }
 
     private void beginFight() {
         phase = Phase.FIGHT;
         phaseTicks = 0;
-        halfTicks = 0;
+        fightTicks = 0;
         rerollsLeft.replaceAll((id, left) -> 0);
         abilities().hostBeginFight();
         refreshShields();
-        objectives().beginFight();
-        camps().beginFight();
         title(messages.get("fight.title"), messages.get("fight.subtitle"));
-        session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.2f);
+        sounds().fightStart(session.viewers());
+        eachModule(SiegeModule::fightStarted);
     }
 
     private void tickFight() {
-        halfTicks++;
-        if (halfTicks % 10 == 0) {
+        fightTicks++;
+        long now = session.tick();
+        if (fightTicks % 10 == 0) {
             for (Tower tower : towers) {
                 tower.anchor();
             }
         }
-        if (halfTicks % 20 == 0) {
-            secondTick();
-            if (phase != Phase.FIGHT) {
-                return;
-            }
+        if (fightTicks % 5 == 0) {
+            towerShots(now);
         }
-        if (checkRoundWinner()) {
-            return;
+        if (fightTicks % 20 == 0) {
+            secondTick(now);
         }
-        long limit = suddenDeath ? settings.suddenDeathTicks() : settings.halfTicks();
-        if (!suddenDeath && !climax && settings.climaxTicks() > 0 && limit - halfTicks <= settings.climaxTicks()) {
-            startClimax();
-        }
-        if (halfTicks >= limit) {
-            endHalf(HalfEnd.TIME);
-        }
-    }
-
-    private void secondTick() {
-        long now = halfTicks;
-        protectedUntil.entrySet().removeIf(entry -> entry.getValue() <= now);
-        spawnZoneDamage();
-        progress().second();
-        objectives().second(now);
         if (phase != Phase.FIGHT) {
             return;
         }
-        camps().second(now);
-        Tower current = attackableTower();
-        if (current == null) {
+        long tick = fightTicks;
+        eachModule(module -> module.tick(tick));
+        if (phase != Phase.FIGHT) {
             return;
         }
-        int attackers = attackingTeam();
-        boolean attackersNear = false;
-        for (Player player : session.alivePlayers()) {
-            if (teamIndex(player.getUniqueId()) == attackers && session.isInPlay(player)
-                    && current.isNear(player.getLocation())) {
-                attackersNear = true;
-                break;
-            }
+        long limit = overtime ? settings.overtimeTicks() : settings.roundTicks();
+        if (!overtime && !climax && settings.climaxTicks() > 0 && limit - fightTicks <= settings.climaxTicks()) {
+            startClimax();
         }
-        if (!attackersNear && now - current.lastDamageTick() >= settings.regenDelayTicks()
-                && current.health() < current.maxHealth()) {
-            current.heal(current.maxHealth() * settings.regenPerSecond());
-        }
-        if (current.attackableSince() >= 0 && now - current.attackableSince() >= settings.defenceTicks()) {
-            int defenders = 1 - attackers;
-            List<UUID> credited = new ArrayList<>();
-            for (UUID member : members(defenders)) {
-                if (session.isAlive(member)) {
-                    credited.add(member);
-                }
-            }
-            int points = score().defenceSuccess(defenders, credited);
-            progress().teamXp(defenders, progress().settings().xpDefence());
-            current.heal(current.maxHealth() * settings.defenceHeal());
-            current.attackableFrom(now);
-            session.broadcast(messages.prefixed("tower.defended", Messages.tag("team",
-                            teams.get(defenders).displayName()), Messages.tag("tower", current.name()),
-                    Messages.tag("points", points)));
-            session.playSound(Sound.BLOCK_BEACON_POWER_SELECT, 0.7f, 1.3f);
-            scored(defenders);
+        if (fightTicks >= limit) {
+            timeUp();
         }
     }
 
+    private void secondTick(long now) {
+        protectedUntil.entrySet().removeIf(entry -> entry.getValue() <= now);
+        spawnZoneDamage();
+        progress().second();
+        for (Tower tower : towers) {
+            if (tower.isDestroyed() || tower.isShielded() || tower.health() >= tower.maxHealth()
+                    || now - tower.lastDamageTick() < settings.regenDelayTicks() || enemyNear(tower)) {
+                continue;
+            }
+            tower.heal(tower.maxHealth() * settings.regenPerSecond());
+        }
+    }
+
+    private boolean enemyNear(Tower tower) {
+        for (Player player : session.alivePlayers()) {
+            LaneSites.Side side = side(player.getUniqueId());
+            if (side != null && side != tower.owner() && session.isInPlay(player) && tower.isNear(player.getLocation())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** "마지막 3분": an announcement and a red timer; the rules stay the same. */
     private void startClimax() {
         climax = true;
         title(messages.get("climax.title"), messages.get("climax.subtitle",
-                Messages.tag("multiplier", Format.number(settings.climaxTowerMultiplier())),
-                Messages.tag("seconds", Format.number(settings.climaxRespawnCutTicks() / 20.0))));
-        session.broadcast(messages.prefixed("climax.announce",
-                Messages.tag("multiplier", Format.number(settings.climaxTowerMultiplier())),
-                Messages.tag("seconds", Format.number(settings.climaxRespawnCutTicks() / 20.0))));
-        session.playSound(Sound.ENTITY_WITHER_SPAWN, 0.5f, 1.4f);
-        if (hud != null) {
-            hud.update();
-        }
+                Messages.tag("minutes", Format.number(settings.climaxTicks() / 1200.0))));
+        sounds().alarm(session.viewers());
     }
 
-    /** Spawn camping hurts: enemies inside a team's spawn zone take damage every second. */
+    /** Spawn camping hurts: enemies inside a side's spawn area take damage every second. */
     private void spawnZoneDamage() {
         double radius = settings.spawnZoneRadius();
         double damage = settings.spawnZoneDamage();
         if (!(radius > 0) || !(damage > 0)) {
             return;
         }
-        int attackers = attackingTeam();
-        List<Location> attackSpawns = layout().attackerSpawns();
-        List<Location> defendSpawns = layout().defenderSpawns(towersDown);
         for (Player player : session.alivePlayers()) {
-            int team = teamIndex(player.getUniqueId());
-            if (team < 0 || !session.isInPlay(player)) {
+            LaneSites.Side side = side(player.getUniqueId());
+            if (side == null || !session.isInPlay(player)) {
                 continue;
             }
-            List<Location> enemySpawns = team == attackers ? defendSpawns : attackSpawns;
-            if (near(player.getLocation(), enemySpawns, radius)) {
-                player.sendActionBar(messages.get("spawn.zone-warning"));
+            LaneSites.Side enemy = side == LaneSites.Side.BLUE ? LaneSites.Side.RED : LaneSites.Side.BLUE;
+            if (near(player.getLocation(), layout().spawns(enemy), radius)) {
+                guidance().suggest(player, messages.get("spawn.zone-warning"), Guidance.URGENT, 30);
                 player.damage(damage, DamageSource.builder(DamageType.MAGIC).build());
             }
         }
@@ -716,61 +705,49 @@ public final class SiegeMatch implements GameInstance {
         return false;
     }
 
-    /** Points changed for {@code team}: in sudden death any score wins the round; also the win score. */
+    /** Points changed for {@code team}: in the overtime any score wins the round. */
     private void scored(int team) {
-        if (suddenDeath && phase == Phase.FIGHT) {
-            roundWon(team, messages.get("result.reason-sudden-death"));
-            return;
+        if (overtime && phase == Phase.FIGHT && team >= 0) {
+            roundWon(team, messages.get("result.reason-overtime"));
         }
-        checkRoundWinner();
     }
 
-    private boolean checkRoundWinner() {
+    private void timeUp() {
         if (phase != Phase.FIGHT) {
-            return false;
-        }
-        int reached = score().reachedWinScore();
-        if (reached >= 0) {
-            roundWon(reached, messages.get("result.reason-score", Messages.tag("score", settings.winScore())));
-            return true;
-        }
-        return false;
-    }
-
-    private void endHalf(HalfEnd why) {
-        if (phase != Phase.FIGHT) {
-            return;
-        }
-        if (half == 1) {
-            abilities().hostEndFight();
-            disposeTowers();
-            objectives().clear();
-            camps().clear();
-            phase = Phase.HALFTIME;
-            phaseTicks = 0;
-            session.title(messages.get("halftime.title"), messages.get("halftime.subtitle",
-                    Messages.tag("a", score().points(0)), Messages.tag("b", score().points(1))));
-            session.broadcast(messages.prefixed(why == HalfEnd.CORE ? "halftime.core" : "halftime.time",
-                    Messages.tag("seconds", settings.halftimeTicks() / 20)));
-            return;
-        }
-        if (suddenDeath) {
-            // Nobody scored in the extra time: the defence held.
-            roundWon(1 - attackingTeam(), messages.get("result.reason-sudden-death-held"));
             return;
         }
         int winner = score().timeUpWinner();
         if (winner >= 0) {
-            roundWon(winner, messages.get("result.reason-time"));
+            roundWon(winner, messages.get(overtime ? "result.reason-overtime-time" : "result.reason-time"));
             return;
         }
-        suddenDeath = true;
-        halfTicks = 0;
-        title(messages.get("sudden-death.title"), messages.get("sudden-death.subtitle",
-                Messages.tag("seconds", settings.suddenDeathTicks() / 20)));
-        session.broadcast(messages.prefixed("sudden-death.announce",
-                Messages.tag("seconds", settings.suddenDeathTicks() / 20)));
-        session.playSound(Sound.ENTITY_LIGHTNING_BOLT_THUNDER, 0.6f, 1f);
+        if (overtime) {
+            int sturdier = sturdierTeam();
+            roundWon(sturdier >= 0 ? sturdier : session.random().nextInt(2),
+                    messages.get(sturdier >= 0 ? "result.reason-structures" : "result.reason-coin"));
+            return;
+        }
+        overtime = true;
+        fightTicks = 0;
+        title(messages.get("overtime.title"), messages.get("overtime.subtitle",
+                Messages.tag("seconds", settings.overtimeTicks() / 20)));
+        session.broadcast(messages.prefixed("overtime.announce", Messages.tag("seconds", settings.overtimeTicks() / 20)));
+        sounds().alarm(session.viewers());
+    }
+
+    /** The team whose structures kept more health in all (fractions summed), or -1 on a tie. */
+    int sturdierTeam() {
+        double[] left = new double[2];
+        for (Tower tower : towers) {
+            int team = teamOf(tower.owner());
+            if (team >= 0 && !tower.isDestroyed()) {
+                left[team] += tower.fraction();
+            }
+        }
+        if (Math.abs(left[0] - left[1]) < 1.0E-9) {
+            return -1;
+        }
+        return left[0] > left[1] ? 0 : 1;
     }
 
     private void roundWon(int team, Component reason) {
@@ -779,13 +756,12 @@ public final class SiegeMatch implements GameInstance {
         }
         SiegeScore points = score();
         abilities().hostEndFight();
+        eachModule(SiegeModule::roundEnded);
         disposeTowers();
-        objectives().clear();
-        camps().clear();
         points.roundWon(team);
         MatchTeam winner = teams.get(team);
         UUID mvp = points.roundMvp();
-        session.title(messages.get("round.won-title", Messages.tag("team", winner.displayName())),
+        title(messages.get("round.won-title", Messages.tag("team", winner.displayName())),
                 messages.get("round.won-subtitle", Messages.tag("a", points.points(0)),
                         Messages.tag("b", points.points(1))));
         session.broadcast(messages.prefixed("round.won", Messages.tag("round", round),
@@ -795,7 +771,7 @@ public final class SiegeMatch implements GameInstance {
             session.broadcast(messages.prefixed("round.mvp", Messages.tag("player", session.name(mvp)),
                     Messages.tag("points", points.roundContribution(mvp))));
         }
-        session.playSound(Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.8f, 1f);
+        sounds().roundEnd(online(team), online(1 - team));
         if (points.roundWins(team) >= settings.roundsToWin()) {
             finishMatch(team, messages.get("result.reason-rounds", Messages.tag("a", points.roundWins(0)),
                     Messages.tag("b", points.roundWins(1))));
@@ -812,52 +788,68 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         phase = Phase.OVER;
-        SiegeScore points = score();
-        session.finish(GameResult.builder().team(teams.get(team)).mvp(points.matchMvp()).reason(reason).build());
+        session.finish(GameResult.builder().team(teams.get(team)).mvp(score().matchMvp()).reason(reason).build());
     }
 
-    // =================================================================== towers
+    // =================================================================== structures
 
     private void createTowers() {
-        int defenders = 1 - attackingTeam();
-        MatchTeam team = teams.get(defenders);
-        int index = 0;
-        for (var site : layout().sites().towers()) {
-            Tower tower = new Tower(site, index++, layout().at(site),
-                    settings.towerHealth(site.id(), Math.max(1, members(1 - defenders).size())));
-            tower.spawn(session, game.towerLook(), team.color(),
-                    game.towerLook().hitboxScale(site.id(), settings.hitboxScale()));
-            // Shown per player by the HUD (TowerBars), hidden by Tower#dispose.
-            tower.bar(new ManagedBossBar(Component.text(site.name()), 1f, BossBar.Color.WHITE,
-                    BossBar.Overlay.NOTCHED_10));
-            towers.add(tower);
+        for (int team = 0; team < 2; team++) {
+            LaneSites.Side side = sides[team];
+            MatchTeam owner = teams.get(team);
+            int enemies = Math.max(1, members(1 - team).size());
+            for (LaneSites.Lane lane : LaneSites.Lane.values()) {
+                List<LaneSites.Structure> sites = layout().sites().towers(side, lane);
+                for (int i = 0; i < sites.size(); i++) {
+                    addTower(sites.get(i), side, lane, i == 0 ? Tower.Kind.OUTER : Tower.Kind.INNER, owner, enemies);
+                }
+            }
+            addTower(layout().sites().core(side), side, null, Tower.Kind.CORE, owner, enemies);
         }
         refreshShields();
     }
 
+    private void addTower(LaneSites.Structure site, LaneSites.Side side, LaneSites.@Nullable Lane lane,
+                          Tower.Kind kind, MatchTeam owner, int enemies) {
+        Tower tower = new Tower(site, side, lane, kind, layout().at(site, side),
+                settings.structureHealth(kind, enemies));
+        tower.spawn(session, game.towerLook(), owner.color(),
+                game.towerLook().hitboxScale(kind.lookId(), settings.hitboxScale()),
+                messages.get("structure.bar-name", Messages.tag("team", owner.displayName()),
+                        Messages.tag("name", site.name())));
+        towers.add(tower);
+    }
+
     /**
-     * Keeps the chunks around every tower loaded for the whole match with plugin chunk tickets: the towers' entities are
-     * not persistent, so a tower chunk unloading (nobody near it, or not yet: towers spawn before the players arrive)
-     * would silently delete the hitbox and the visual.
+     * Keeps the chunks around every structure loaded for the whole match with plugin chunk tickets: the structures'
+     * entities are not persistent, so a chunk unloading (nobody near it, or not yet: they spawn before the players
+     * arrive) would silently delete the hitbox and the visual.
      */
-    private void holdTowerChunks() {
-        SiegeLayout placed = layout();
+    private void holdChunks() {
+        LaneLayout placed = layout();
         World world = placed.world();
-        for (var site : placed.sites().towers()) {
-            Location at = placed.at(site);
-            int reach = site.radius() + 2;
-            for (int cx = (at.getBlockX() - reach) >> 4; cx <= (at.getBlockX() + reach) >> 4; cx++) {
-                for (int cz = (at.getBlockZ() - reach) >> 4; cz <= (at.getBlockZ() + reach) >> 4; cz++) {
-                    if (world.addPluginChunkTicket(cx, cz, session.plugin())) {
-                        heldChunks.add(new int[] {cx, cz});
+        for (LaneSites.Side side : LaneSites.Side.values()) {
+            List<LaneSites.Structure> all = new ArrayList<>();
+            for (LaneSites.Lane lane : LaneSites.Lane.values()) {
+                all.addAll(placed.sites().towers(side, lane));
+            }
+            all.add(placed.sites().core(side));
+            for (LaneSites.Structure site : all) {
+                Location at = placed.at(site, side);
+                int reach = site.radius() + 2;
+                for (int cx = (at.getBlockX() - reach) >> 4; cx <= (at.getBlockX() + reach) >> 4; cx++) {
+                    for (int cz = (at.getBlockZ() - reach) >> 4; cz <= (at.getBlockZ() + reach) >> 4; cz++) {
+                        if (world.addPluginChunkTicket(cx, cz, session.plugin())) {
+                            heldChunks.add(new int[] {cx, cz});
+                        }
                     }
                 }
             }
         }
     }
 
-    private void releaseTowerChunks() {
-        SiegeLayout placed = layout;
+    private void releaseChunks() {
+        LaneLayout placed = layout;
         if (placed == null) {
             return;
         }
@@ -878,105 +870,211 @@ public final class SiegeMatch implements GameInstance {
         towers.clear();
     }
 
-    /** Only the first standing tower can be hit; it starts its defence timer when it becomes attackable. */
+    /**
+     * The shield rules: a lane's inner tower is shielded while the outer tower of that lane stands; a core is shielded
+     * while any inner tower of its side stands (any tower, on a map without inner towers).
+     */
     private void refreshShields() {
-        boolean first = true;
         for (Tower tower : towers) {
             if (tower.isDestroyed()) {
                 continue;
             }
-            boolean wasShielded = tower.isShielded() || tower.attackableSince() < 0;
-            tower.shielded(!first);
-            if (first && phase == Phase.FIGHT && wasShielded) {
-                tower.attackableFrom(halfTicks);
-            }
-            first = false;
+            tower.shielded(switch (tower.kind()) {
+                case OUTER -> false;
+                case INNER -> standing(tower.owner(), tower.lane(), Tower.Kind.OUTER);
+                case CORE -> hasKind(tower.owner(), Tower.Kind.INNER)
+                        ? standing(tower.owner(), null, Tower.Kind.INNER)
+                        : standing(tower.owner(), null, Tower.Kind.OUTER);
+            });
         }
     }
 
+    /** True if a structure of {@code kind} of {@code side} (on {@code lane}, or any lane for null) still stands. */
+    private boolean standing(LaneSites.Side side, LaneSites.@Nullable Lane lane, Tower.Kind kind) {
+        for (Tower tower : towers) {
+            if (tower.owner() == side && tower.kind() == kind && !tower.isDestroyed()
+                    && (lane == null || tower.lane() == lane)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasKind(LaneSites.Side side, Tower.Kind kind) {
+        for (Tower tower : towers) {
+            if (tower.owner() == side && tower.kind() == kind) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
-     * A hit on a tower's hitbox (melee or ability damage) by {@code attacker}: only attackers in play during the
-     * fight hurt it, and only when it is not shielded. Defenders near the tower reduce the damage.
+     * A melee or ability hit of {@code attacker} on a structure's hitbox: only enemies in play during the fight hurt
+     * it, and only when it is not shielded.
      */
     void hitTower(Tower tower, @Nullable Player attacker, double amount) {
         if (phase != Phase.FIGHT || attacker == null || tower.isDestroyed() || !session.isInPlay(attacker)) {
             return;
         }
-        if (teamIndex(attacker.getUniqueId()) != attackingTeam()) {
+        LaneSites.Side side = side(attacker.getUniqueId());
+        if (side == null || side == tower.owner()) {
             return;
         }
         protectedUntil.remove(attacker.getUniqueId());
-        if (hud != null) {
-            hud.towerHit(tower, attacker);
-        }
         if (tower.isShielded()) {
-            attacker.sendActionBar(messages.get("tower.shielded"));
-            Feedback.play(attacker, Sound.ITEM_SHIELD_BLOCK, 0.6f, 1.2f);
+            guidance().suggest(attacker, messages.get(tower.isCore() ? "structure.core-shielded"
+                    : "structure.shielded"), Guidance.INFO, 40);
+            sounds().shieldBlocked(attacker);
             return;
         }
-        double dealt = tower.damage(amount, defenderReduction(tower), attacker.getUniqueId(), halfTicks);
+        damageStructure(tower, side, amount, attacker);
+    }
+
+    /**
+     * Damages a structure of the other side: the hook for anything that hurts structures (players through
+     * {@link #hitTower}, minions with a null {@code credit}). Does nothing outside the fight, to a shielded or destroyed
+     * structure or to one of {@code by}'s own.
+     *
+     * @return the health the structure lost
+     */
+    public double damageStructure(Tower tower, LaneSites.Side by, double amount, @Nullable Player credit) {
+        if (phase != Phase.FIGHT || tower.isDestroyed() || tower.isShielded() || by == tower.owner()) {
+            return 0;
+        }
+        long now = session.tick();
+        double dealt = tower.damage(amount, credit == null ? null : credit.getUniqueId(), now);
         if (!(dealt > 0)) {
-            return;
+            return 0;
         }
+        Location base = tower.base();
+        damageNumbers().show(UUID.nameUUIDFromBytes(tower.id().getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                base.clone().add(0, Math.min(6, game.towerLook().barHeight(tower.kind().lookId()) * 0.5), 0), dealt,
+                DamageNumbers.Kind.STRUCTURE);
+        sounds().hit(base, surface(tower), tower.id());
         if (tower.isDestroyed()) {
-            towerDestroyed(tower, attacker);
-            return;
+            structureDestroyed(tower, by, credit);
+            return dealt;
         }
-        if (tower.warn(halfTicks, settings.warningCooldownTicks())) {
-            for (UUID member : members(1 - attackingTeam())) {
-                Player defender = Bukkit.getPlayer(member);
-                if (defender != null && session.isMember(defender)) {
-                    defender.sendActionBar(messages.get("tower.under-attack", Messages.tag("tower", tower.name()),
-                            Messages.tag("percent", Math.round(tower.fraction() * 100))));
-                    Feedback.play(defender, Sound.BLOCK_BELL_USE, 0.8f, 1.4f);
-                }
+        int team = teamOf(tower.owner());
+        if (tower.warn(now, settings.warningCooldownTicks())) {
+            for (Player defender : online(team)) {
+                guidance().suggest(defender, messages.get("structure.under-attack", Messages.tag("name", tower.name()),
+                        Messages.tag("percent", Math.round(tower.fraction() * 100))), Guidance.ALERT, 100);
+                sounds().underAttack(defender, tower.id(), settings.warningCooldownTicks());
             }
         }
         int quarter = tower.takeQuarterCrossed();
         if (quarter > 0) {
-            session.broadcast(messages.prefixed("tower.health-announce", Messages.tag("tower", tower.name()),
-                    Messages.tag("percent", quarter * 25)));
-        }
-    }
-
-    /** Damage reduction from defenders inside the tower's radius. */
-    double defenderReduction(Tower tower) {
-        int defenders = 1 - attackingTeam();
-        int near = 0;
-        for (Player player : session.alivePlayers()) {
-            if (teamIndex(player.getUniqueId()) == defenders && session.isInPlay(player)
-                    && tower.isNear(player.getLocation())) {
-                near++;
+            sounds().healthWarning(base, quarter * 25);
+            for (Player defender : online(team)) {
+                guidance().suggest(defender, messages.get("structure.health-warning",
+                        Messages.tag("name", tower.name()), Messages.tag("percent", quarter * 25)), Guidance.ALERT, 80);
             }
         }
-        return Math.min(settings.maxDefenderReduction(), near * settings.defenderReduction());
+        return dealt;
     }
 
-    private void towerDestroyed(Tower tower, Player attacker) {
-        int team = attackingTeam();
-        int points = score().towerDestroyed(team, tower.id(), climax, tower.topDamager());
-        towersDown++;
-        progress().teamXp(team, progress().settings().xpTowerDestroyed());
-        title(messages.get("tower.destroyed-title", Messages.tag("tower", tower.name())),
-                messages.get("tower.destroyed-subtitle", Messages.tag("team", teams.get(team).displayName()),
-                        Messages.tag("points", points)));
-        session.broadcast(messages.prefixed("tower.destroyed", Messages.tag("tower", tower.name()),
-                Messages.tag("player", session.publicName(attacker.getUniqueId())),
-                Messages.tag("team", teams.get(team).displayName()), Messages.tag("points", points)));
-        session.playSound(Sound.ENTITY_GENERIC_EXPLODE, 0.8f, 0.8f);
+    private static SiegeSounds.Surface surface(Tower tower) {
+        return tower.isCore() ? SiegeSounds.Surface.PORCELAIN : SiegeSounds.Surface.WOOD;
+    }
+
+    private void structureDestroyed(Tower tower, LaneSites.Side by, @Nullable Player credit) {
+        int team = teamOf(by);
+        UUID top = tower.topDamager();
+        UUID destroyer = top != null ? top : credit == null ? null : credit.getUniqueId();
+        sounds().destroyed(tower.base(), surface(tower), online(team), online(1 - team));
         firework(tower.base().add(0, 4, 0), teams.get(team));
-        if (tower.bar() != null) {
-            tower.bar().hideAll();
+        eachModule(module -> module.structureDestroyed(tower, by, destroyer));
+        if (tower.isCore()) {
+            roundWon(team, messages.get("result.reason-core", Messages.tag("team", teams.get(1 - team).displayName())));
+            return;
         }
+        int points = score().towerDestroyed(team, destroyer);
+        progress().teamXp(team, progress().settings().xpTowerDestroyed());
+        title(messages.get("structure.destroyed-title", Messages.tag("name", tower.name()),
+                        Messages.tag("team", teams.get(1 - team).displayName())),
+                messages.get("structure.destroyed-subtitle", Messages.tag("team", teams.get(team).displayName()),
+                        Messages.tag("points", points)));
+        session.broadcast(messages.prefixed("structure.destroyed", Messages.tag("name", tower.name()),
+                Messages.tag("owner", teams.get(1 - team).displayName()),
+                Messages.tag("player", destroyer == null ? Component.text("-") : session.publicName(destroyer)),
+                Messages.tag("team", teams.get(team).displayName()), Messages.tag("points", points)));
         refreshShields();
-        Tower next = attackableTower();
-        if (next != null) {
-            session.broadcast(messages.prefixed("tower.next", Messages.tag("tower", next.name())));
-        }
         scored(team);
-        if (phase == Phase.FIGHT && next == null) {
-            endHalf(HalfEnd.CORE);
+    }
+
+    /** Towers (not cores) shoot the nearest enemy in range: a module's target (a minion) first, then players. */
+    private void towerShots(long now) {
+        double damage = settings.towerAttackDamage();
+        double range = settings.towerAttackRange();
+        if (!(damage > 0) || !(range > 0)) {
+            return;
         }
+        for (Tower tower : List.copyOf(towers)) {
+            if (tower.isDestroyed() || tower.isCore() || !tower.canAttack(now)) {
+                continue;
+            }
+            for (SiegeModule module : modules) {
+                LivingEntity target = module.towerTarget(tower, range);
+                if (target != null) {
+                    tower.attacked(now, settings.towerAttackTicks());
+                    shotEffect(tower, target);
+                    module.towerShot(tower, target, damage);
+                    break;
+                }
+            }
+            if (!tower.canAttack(now)) {
+                continue;
+            }
+            Player target = nearestEnemy(tower, range);
+            if (target != null) {
+                tower.attacked(now, settings.towerAttackTicks());
+                shotEffect(tower, target);
+                target.damage(damage, DamageSource.builder(DamageType.MAGIC).build());
+                if (phase != Phase.FIGHT) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private @Nullable Player nearestEnemy(Tower tower, double range) {
+        Player best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Player player : session.alivePlayers()) {
+            LaneSites.Side side = side(player.getUniqueId());
+            if (side == null || side == tower.owner() || !session.isInPlay(player) || isProtected(player)
+                    || !tower.isWithin(player.getLocation(), range)) {
+                continue;
+            }
+            double distance = player.getLocation().distanceSquared(tower.base());
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = player;
+            }
+        }
+        return best;
+    }
+
+    private void shotEffect(Tower tower, LivingEntity target) {
+        Location from = tower.base().add(0, 4, 0);
+        Location to = target.getLocation().add(0, target.getHeight() * 0.6, 0);
+        World world = from.getWorld();
+        if (world == null || !world.equals(to.getWorld())) {
+            return;
+        }
+        MatchTeam owner = teams.get(Math.max(0, teamOf(tower.owner())));
+        Particle.DustOptions dust = new Particle.DustOptions(Color.fromRGB(owner.color().value()), 1.2f);
+        Vector step = to.toVector().subtract(from.toVector());
+        int points = (int) Math.max(2, Math.min(40, step.length() * 2));
+        step.multiply(1.0 / points);
+        Location at = from.clone();
+        for (int i = 0; i <= points; i++) {
+            world.spawnParticle(Particle.DUST, at, 1, 0, 0, 0, 0, dust);
+            at.add(step);
+        }
+        sounds().at(from, Sound.ENTITY_ARROW_SHOOT, 0.8f, 1.4f);
     }
 
     private void firework(Location at, MatchTeam team) {
@@ -1010,13 +1108,13 @@ public final class SiegeMatch implements GameInstance {
     /** True while the player is protected after a respawn. */
     public boolean isProtected(Player player) {
         Long until = protectedUntil.get(player.getUniqueId());
-        return until != null && until > halfTicks;
+        return until != null && until > session.tick();
     }
 
     /** The protected player attacked: the protection ends. */
     void attacked(Player attacker) {
         if (protectedUntil.remove(attacker.getUniqueId()) != null) {
-            attacker.sendActionBar(messages.get("spawn.protection-ended"));
+            guidance().suggest(attacker, messages.get("spawn.protection-ended"), Guidance.INFO, 30);
         }
     }
 
@@ -1039,6 +1137,50 @@ public final class SiegeMatch implements GameInstance {
         }
     }
 
+    // =================================================================== guidance
+
+    /** The "▶ 지금 할 일" line when nothing more urgent is suggested. */
+    private @Nullable Component defaultGuidance(Player player) {
+        LaneSites.Side side = side(player.getUniqueId());
+        if (side == null) {
+            return null;
+        }
+        return switch (phase) {
+            case PREP -> messages.get(rerollsLeft(player) > 0 ? "guide.prep-reroll" : "guide.prep",
+                    Messages.tag("count", rerollsLeft(player)));
+            case FIGHT -> {
+                if (session.isRespawning(player.getUniqueId())) {
+                    yield messages.get("guide.respawning");
+                }
+                Tower target = nearestTarget(player);
+                yield target == null ? null : messages.get(target.isCore() ? "guide.core" : "guide.tower",
+                        Messages.tag("name", target.name()),
+                        Messages.tag("distance", (int) Math.round(target.base().distance(player.getLocation()))));
+            }
+            case BREAK -> messages.get("guide.break");
+            case OVER -> null;
+        };
+    }
+
+    /** The closest enemy structure {@code player} can hit now (no shield), or null. */
+    public @Nullable Tower nearestTarget(Player player) {
+        LaneSites.Side side = side(player.getUniqueId());
+        Tower best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Tower tower : towers) {
+            if (side == null || tower.owner() == side || tower.isDestroyed() || tower.isShielded()
+                    || !player.getWorld().equals(tower.base().getWorld())) {
+                continue;
+            }
+            double distance = tower.base().distanceSquared(player.getLocation());
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = tower;
+            }
+        }
+        return best;
+    }
+
     // =================================================================== rerolls
 
     /** Outcome of {@link #reroll(Player)}. */
@@ -1052,7 +1194,7 @@ public final class SiegeMatch implements GameInstance {
         if (participant == null || participant.abilityId() == null || !session.isInPlay(player)) {
             return RerollResult.NOT_PARTICIPANT;
         }
-        if (phase != Phase.PREP || half != 1) {
+        if (phase != Phase.PREP) {
             return RerollResult.WRONG_PHASE;
         }
         if (rerollsLeft.getOrDefault(id, 0) <= 0) {
@@ -1090,6 +1232,117 @@ public final class SiegeMatch implements GameInstance {
                 : Sound.BLOCK_NOTE_BLOCK_BASS, 0.8f, 1.2f);
     }
 
+    // =================================================================== hooks for other features
+
+    /** The side of {@code player}, or null for a spectator. */
+    public LaneSites.@Nullable Side side(UUID player) {
+        int team = teamIndex(player);
+        return team < 0 ? null : sides[team];
+    }
+
+    /** The side team {@code team} (index in {@link #teams}) plays. */
+    public LaneSites.Side sideOf(int team) {
+        return sides[team];
+    }
+
+    /** The team (index in {@link #teams}) playing {@code side}. */
+    public int teamOf(LaneSites.Side side) {
+        return sides[0] == side ? 0 : 1;
+    }
+
+    /** The team playing {@code side}. */
+    public MatchTeam team(LaneSites.Side side) {
+        return teams.get(teamOf(side));
+    }
+
+    /** The map's places (spawns, shops, structures, lanes, objectives). */
+    public LaneSites sites() {
+        return layout().sites();
+    }
+
+    /**
+     * Gives {@code side} {@code points} (jungle, objectives, the dragon); {@code reason} is a short id for logs. In the
+     * overtime any points win the round. Only during the fight.
+     */
+    public void addScore(LaneSites.Side side, int points, String reason) {
+        addScore(side, points, reason, null);
+    }
+
+    /** {@link #addScore(LaneSites.Side, int, String)} with the player who earned it (MVP contribution). */
+    public void addScore(LaneSites.Side side, int points, String reason, @Nullable UUID contributor) {
+        if (phase != Phase.FIGHT || points == 0) {
+            return;
+        }
+        int team = teamOf(side);
+        score().addPoints(team, points, contributor);
+        session.plugin().getLogger().log(Level.FINE, () -> "siege score " + side + " +" + points + " (" + reason + ")");
+        scored(team);
+    }
+
+    /** Gives {@code player} experience (minions, jungle, the dragon). */
+    public void addXp(UUID player, int amount) {
+        if (progress != null && amount > 0) {
+            progress.grant(player, amount);
+        }
+    }
+
+    /** Experience for every member of {@code side} (in play or waiting to respawn). */
+    public void addTeamXp(LaneSites.Side side, int amount) {
+        if (progress != null && amount > 0) {
+            progress.teamXp(teamOf(side), amount);
+        }
+    }
+
+    /** The gold of {@code player} ({@link SiegeEconomy}; 0 until a gold feature installs one). */
+    public int gold(UUID player) {
+        return economy.gold(player);
+    }
+
+    /** Gives (negative: takes) gold through the installed {@link SiegeEconomy}. */
+    public void addGold(UUID player, int amount, String reason) {
+        economy.addGold(player, amount, reason);
+    }
+
+    public SiegeEconomy economy() {
+        return economy;
+    }
+
+    /** Installs the gold of this match (the gold/shop feature, from its {@link SiegeModule}). */
+    public void economy(SiegeEconomy economy) {
+        this.economy = economy;
+    }
+
+    public Guidance guidance() {
+        if (guidance == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return guidance;
+    }
+
+    public SiegeSounds sounds() {
+        if (sounds == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return sounds;
+    }
+
+    public DamageNumbers damageNumbers() {
+        if (damageNumbers == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return damageNumbers;
+    }
+
+    /** The lane systems (minions, jungle, gold, shop), or null if they could not start. */
+    public io.github.sx2xoox.mcpl.game.siege.arena.@Nullable SiegeSystems systems() {
+        return lanes == null ? null : lanes.systems();
+    }
+
+    /** The modules of this match (minions, jungle, ...). */
+    public List<SiegeModule> modules() {
+        return List.copyOf(modules);
+    }
+
     // =================================================================== queries
 
     public GameSession session() {
@@ -1116,36 +1369,29 @@ public final class SiegeMatch implements GameInstance {
         return round;
     }
 
-    public int half() {
-        return half;
-    }
-
+    /** True during the last minutes of a round ("마지막 3분"). */
     public boolean isClimax() {
         return climax;
     }
 
-    public boolean isSuddenDeath() {
-        return suddenDeath;
+    public boolean isOvertime() {
+        return overtime;
     }
 
-    public long halfTicks() {
-        return halfTicks;
-    }
-
-    long phaseTicks() {
-        return phaseTicks;
+    /** Ticks of the current round's fight clock (restarts for the overtime). */
+    public long fightTicks() {
+        return fightTicks;
     }
 
     long prepTicks() {
         return prepTicks;
     }
 
-    /** Ticks left of the current phase (fight, prep, half time, break). */
+    /** Ticks left of the current phase (fight, prep, break). */
     public long ticksLeft() {
         return switch (phase) {
             case PREP -> Math.max(0, prepTicks - phaseTicks);
-            case FIGHT -> Math.max(0, (suddenDeath ? settings.suddenDeathTicks() : settings.halfTicks()) - halfTicks);
-            case HALFTIME -> Math.max(0, settings.halftimeTicks() - phaseTicks);
+            case FIGHT -> Math.max(0, (overtime ? settings.overtimeTicks() : settings.roundTicks()) - fightTicks);
             case BREAK -> Math.max(0, settings.roundBreakTicks() - phaseTicks);
             case OVER -> 0;
         };
@@ -1165,21 +1411,7 @@ public final class SiegeMatch implements GameInstance {
         return progress;
     }
 
-    ObjectivePoints objectives() {
-        if (objectives == null) {
-            throw new IllegalStateException("The match has not started");
-        }
-        return objectives;
-    }
-
-    JungleCamps camps() {
-        if (camps == null) {
-            throw new IllegalStateException("The match has not started");
-        }
-        return camps;
-    }
-
-    /** The in-match level (1 … {@code levels.max}) of a player this half, 1 before the match started. */
+    /** The in-match level (1 … {@code levels.max}) of a player this round, 1 before the match started. */
     public int level(UUID player) {
         return progress == null ? 1 : progress.levels().level(player);
     }
@@ -1189,25 +1421,9 @@ public final class SiegeMatch implements GameInstance {
         return progress != null && progress.settings().levelsEnabled() ? level(player) : 0;
     }
 
-    /** The experience a player gathered this half. */
+    /** The experience a player gathered this round. */
     public int experience(UUID player) {
         return progress == null ? 0 : progress.levels().xp(player);
-    }
-
-    private void clearProgress() {
-        try {
-            if (objectives != null) {
-                objectives.clear();
-            }
-            if (camps != null) {
-                camps.stop();
-            }
-            if (progress != null) {
-                progress.clear();
-            }
-        } catch (RuntimeException e) {
-            session.plugin().getLogger().log(Level.WARNING, "Could not clear the siege objectives", e);
-        }
     }
 
     public SuperpowerMatch abilities() {
@@ -1217,7 +1433,7 @@ public final class SiegeMatch implements GameInstance {
         return abilities;
     }
 
-    public SiegeLayout layout() {
+    public LaneLayout layout() {
         if (layout == null) {
             throw new IllegalStateException("The match has not started");
         }
@@ -1228,20 +1444,33 @@ public final class SiegeMatch implements GameInstance {
         return List.copyOf(teams);
     }
 
+    /** Every structure of the round (towers and cores of both sides). */
     public List<Tower> towers() {
         return List.copyOf(towers);
     }
 
-    public int towersDown() {
-        return towersDown;
+    /** The structures of {@code side}. */
+    public List<Tower> towers(LaneSites.Side side) {
+        List<Tower> out = new ArrayList<>();
+        for (Tower tower : towers) {
+            if (tower.owner() == side) {
+                out.add(tower);
+            }
+        }
+        return out;
     }
 
-    /** 0 (A) attacks in the first half, 1 (B) in the second. */
-    public int attackingTeam() {
-        return half == 2 ? 1 : 0;
+    /** The core of {@code side}, or null between rounds. */
+    public @Nullable Tower core(LaneSites.Side side) {
+        for (Tower tower : towers) {
+            if (tower.owner() == side && tower.isCore()) {
+                return tower;
+            }
+        }
+        return null;
     }
 
-    /** 0 for team A, 1 for team B, -1 otherwise. */
+    /** The index of the player's team in {@link #teams}, or -1. */
     public int teamIndex(UUID player) {
         for (int i = 0; i < teams.size(); i++) {
             if (teams.get(i).contains(player)) {
@@ -1255,7 +1484,7 @@ public final class SiegeMatch implements GameInstance {
         return rerollsLeft.getOrDefault(player.getUniqueId(), 0);
     }
 
-    /** The tower whose hitbox is {@code entity}, or null. */
+    /** The structure whose hitbox is {@code entity}, or null. */
     public @Nullable Tower towerOf(@Nullable Entity entity) {
         if (entity == null) {
             return null;
@@ -1268,23 +1497,12 @@ public final class SiegeMatch implements GameInstance {
         return null;
     }
 
-    /** The first standing tower (the one the attackers can hit), or null. */
-    public @Nullable Tower attackableTower() {
-        for (Tower tower : towers) {
-            if (!tower.isDestroyed()) {
-                return tower;
-            }
-        }
-        return null;
-    }
-
-    /** Where a player (re)spawns right now. */
+    /** Where a player (re)spawns: their side's base. */
     public Location spawnFor(UUID player) {
         int team = teamIndex(player);
-        List<Location> spots = team == attackingTeam() ? layout().attackerSpawns()
-                : layout().defenderSpawns(towersDown);
+        LaneSites.Side side = team < 0 ? LaneSites.Side.BLUE : sides[team];
         int slot = Math.max(0, members(Math.max(0, team)).indexOf(player));
-        return spotFor(spots, slot);
+        return spotFor(layout().spawns(side), slot);
     }
 
     /**
@@ -1305,6 +1523,18 @@ public final class SiegeMatch implements GameInstance {
 
     List<UUID> members(int team) {
         return team < 0 || team >= teams.size() ? List.of() : new ArrayList<>(teams.get(team).members());
+    }
+
+    /** Online members of a team who are part of the session. */
+    List<Player> online(int team) {
+        List<Player> out = new ArrayList<>();
+        for (UUID member : members(team)) {
+            Player player = Bukkit.getPlayer(member);
+            if (player != null && session.isMember(player)) {
+                out.add(player);
+            }
+        }
+        return out;
     }
 
     private int aliveMembers(int team) {
@@ -1334,22 +1564,9 @@ public final class SiegeMatch implements GameInstance {
         return game.hub();
     }
 
-    /**
-     * A title for every viewer during play; the HUD holds its own titles (district names) back for a moment so they
-     * do not cover it.
-     */
+    /** A title for every viewer. */
     void title(Component title, Component subtitle) {
         session.title(title, subtitle);
-        if (hud != null) {
-            hud.titleShown(null);
-        }
-    }
-
-    /** {@code player} just got a title of its own (level up): the HUD holds its titles back for a moment. */
-    void titleShown(Player player) {
-        if (hud != null) {
-            hud.titleShown(player);
-        }
     }
 
     /** {@code player}'s health changed (their name plate follows). */
@@ -1371,11 +1588,11 @@ public final class SiegeMatch implements GameInstance {
         return solo;
     }
 
-    /** Ends the current half as if its time ran out (tests and admins). */
-    public void expireHalf() {
+    /** Ends the current round's clock as if its time ran out (tests and admins). */
+    public void expireRound() {
         if (phase == Phase.FIGHT) {
-            halfTicks = suddenDeath ? settings.suddenDeathTicks() : settings.halfTicks();
-            endHalf(HalfEnd.TIME);
+            fightTicks = overtime ? settings.overtimeTicks() : settings.roundTicks();
+            timeUp();
         }
     }
 }

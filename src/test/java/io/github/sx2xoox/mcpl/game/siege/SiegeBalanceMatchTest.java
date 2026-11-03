@@ -36,11 +36,11 @@ class SiegeBalanceMatchTest {
         h.registerTestAbilities();
         h.settings().set("ultimate.per-second", 0);
         siege = (SiegeGame) h.hub.games().game(SiegeGame.ID);
-        siege.sitesOverride(new FallbackSiegeSites((int) FlatWorld.SURFACE));
+        siege.sitesOverride(new FallbackLaneSites((int) FlatWorld.SURFACE));
         config = siege.config();
         config.set(SiegeSettings.ABILITY_POOL, List.of("dummy"));
         config.set(SiegeSettings.ROUND_PREP_SECONDS, 1);
-        config.set(SiegeSettings.HALF_PREP_SECONDS, 1);
+        config.set(SiegeSettings.ATTACK_DAMAGE, 0);
         config.set(SiegeSettings.SPAWN_ZONE_DAMAGE, 0);
         config.set(SiegeProgressSettings.XP_PASSIVE, 0);
     }

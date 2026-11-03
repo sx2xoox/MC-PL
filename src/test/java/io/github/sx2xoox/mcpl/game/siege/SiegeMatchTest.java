@@ -2,14 +2,13 @@ package io.github.sx2xoox.mcpl.game.siege;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -18,12 +17,10 @@ import java.util.Set;
 import java.util.UUID;
 
 import com.destroystokyo.paper.event.player.PlayerPostRespawnEvent;
-import io.github.sx2xoox.mcpl.core.game.GameResult;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.GameStartException;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
-import io.github.sx2xoox.mcpl.core.map.ArenaMap;
-import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchContext;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
@@ -33,16 +30,19 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** A 공성전 match on the fallback layout: towers, scoring, halves, rounds, respawns, team sizes and cleanup. */
+/**
+ * A 공성전 match on the fallback two-lane layout: sides, structures and shields, the core win, scoring, overtime,
+ * rounds, respawns, team sizes, modules and cleanup.
+ */
 class SiegeMatchTest {
 
     private MatchHarness h;
@@ -57,16 +57,14 @@ class SiegeMatchTest {
         h.settings().set("ultimate.per-second", 0);
         siege = (SiegeGame) h.hub.games().game(SiegeGame.ID);
         assertNotNull(siege, "공성전 is registered");
-        // The 협곡 요새 map is registered but not built in tests: play on the straight fallback layout.
-        siege.sitesOverride(new FallbackSiegeSites((int) FlatWorld.SURFACE));
+        siege.sitesOverride(new FallbackLaneSites((int) FlatWorld.SURFACE));
         config = siege.config();
         config.set(SiegeSettings.ABILITY_POOL, List.of("dummy"));
         config.set(SiegeSettings.ROUND_PREP_SECONDS, 1);
-        config.set(SiegeSettings.HALF_PREP_SECONDS, 1);
-        config.set(SiegeSettings.HALFTIME_SECONDS, 1);
         config.set(SiegeSettings.ROUND_BREAK_SECONDS, 1);
-        // No spawn camping damage unless a test wants it (the fallback spawns are close to the towers).
+        // No spawn camping damage nor tower shots unless a test wants them.
         config.set(SiegeSettings.SPAWN_ZONE_DAMAGE, 0);
+        config.set(SiegeSettings.ATTACK_DAMAGE, 0);
     }
 
     @AfterEach
@@ -86,13 +84,13 @@ class SiegeMatchTest {
         return untilFight(1);
     }
 
-    private SiegeMatch untilFight(int half) {
+    private SiegeMatch untilFight(int round) {
         h.tickUntil(() -> siege.currentMatch() != null && siege.currentMatch().phase() == SiegeMatch.Phase.FIGHT
-                && siege.currentMatch().half() == half, 2000, "half " + half + " to start");
+                && siege.currentMatch().round() == round, 2000, "round " + round + " to start");
         return siege.currentMatch();
     }
 
-    private static Player member(SiegeMatch match, int team) {
+    static Player member(SiegeMatch match, int team) {
         UUID id = match.teams().get(team).members().iterator().next();
         return match.session().hub().plugin().getServer().getPlayer(id);
     }
@@ -101,19 +99,24 @@ class SiegeMatchTest {
         return match.abilities().context();
     }
 
-    private static Tower tower(SiegeMatch match, String id) {
-        for (Tower tower : match.towers()) {
-            if (tower.id().equals(id)) {
+    static Tower structure(SiegeMatch match, LaneSites.Side owner, Tower.Kind kind,
+                           LaneSites.@org.jspecify.annotations.Nullable Lane lane) {
+        for (Tower tower : match.towers(owner)) {
+            if (tower.kind() == kind && (lane == null || tower.lane() == lane)) {
                 return tower;
             }
         }
-        throw new AssertionError("no tower " + id);
+        throw new AssertionError("no " + kind + " of " + owner + " on " + lane);
     }
 
     private static Mannequin hitbox(Tower tower) {
         Mannequin body = tower.hitbox();
         assertNotNull(body, tower.id() + " has a hitbox");
         return body;
+    }
+
+    private static LaneSites.Side enemy(LaneSites.Side side) {
+        return side == LaneSites.Side.BLUE ? LaneSites.Side.RED : LaneSites.Side.BLUE;
     }
 
     private void respawn(Player player) {
@@ -127,194 +130,197 @@ class SiegeMatchTest {
         return h.flatWorld().getEntities().stream().filter(type::isInstance).count();
     }
 
+    /** Destroys every tower of {@code side} (outer first), as {@code attacker}, leaving the core. */
+    private static void razeTowers(SiegeMatch match, LaneSites.Side side, Player attacker) {
+        for (Tower.Kind kind : List.of(Tower.Kind.OUTER, Tower.Kind.INNER)) {
+            for (LaneSites.Lane lane : LaneSites.Lane.values()) {
+                match.hitTower(structure(match, side, kind, lane), attacker, 1_000_000);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ tests
 
     @Test
-    void oneVersusOneTowersOrderShieldAndDamage() {
+    void sidesStructuresAndShields() {
         SiegeMatch match = start(2);
-        assertEquals(2, match.teams().size());
-        assertEquals(1, match.teams().get(0).size());
-        assertEquals(1, match.teams().get(1).size());
-        assertEquals(0, match.attackingTeam(), "A attacks in the first half");
-        Player attacker = member(match, 0);
-        Player defender = member(match, 1);
-        Participant participant = match.abilities().participant(attacker.getUniqueId());
+        Player a = member(match, 0);
+        Player b = member(match, 1);
+        LaneSites.Side sideA = match.side(a.getUniqueId());
+        LaneSites.Side sideB = match.side(b.getUniqueId());
+        assertNotNull(sideA);
+        assertNotNull(sideB);
+        assertNotEquals(sideA, sideB, "one side each");
+        assertSame(match.team(sideA), match.teams().get(0));
+        assertEquals(10, match.towers().size(), "2 towers per lane and a core, per side");
+        assertEquals(10, count(Mannequin.class), "one hitbox each");
+        assertEquals(0, a.getLocation().distance(match.spawnFor(a.getUniqueId())), 1.0E-6, "at the own base");
+        Participant participant = match.abilities().participant(a.getUniqueId());
         assertNotNull(participant);
         assertEquals("dummy", participant.abilityId());
         assertNotNull(participant.ability(), "bound in the fight");
 
-        Tower front = tower(match, "front");
-        Tower middle = tower(match, "middle");
-        assertFalse(front.isShielded());
-        assertTrue(middle.isShielded(), "only the front tower can be hit");
-        assertEquals(600, front.maxHealth(), 1.0E-9, "one attacker: half the configured health");
-        assertEquals(3, count(Mannequin.class), "one hitbox per tower");
-        assertTrue(count(BlockDisplay.class) >= 6, "pillars and crystals");
+        Tower outerTop = structure(match, sideB, Tower.Kind.OUTER, LaneSites.Lane.TOP);
+        Tower innerTop = structure(match, sideB, Tower.Kind.INNER, LaneSites.Lane.TOP);
+        Tower innerBottom = structure(match, sideB, Tower.Kind.INNER, LaneSites.Lane.BOTTOM);
+        Tower core = structure(match, sideB, Tower.Kind.CORE, null);
+        assertFalse(outerTop.isShielded());
+        assertTrue(innerTop.isShielded(), "the inner tower waits for its lane's outer tower");
+        assertTrue(core.isShielded());
+        assertEquals(750, outerTop.maxHealth(), 1.0E-9, "one enemy: half the configured health");
 
         MatchContext ctx = ctx(match);
-        assertTrue(ctx.isEnemy(attacker, hitbox(front)), "the front tower is the attackers' enemy");
-        assertFalse(ctx.isEnemy(defender, hitbox(front)), "never the defenders'");
-        assertFalse(ctx.isEnemy(attacker, hitbox(middle)), "a shielded tower is no target");
-        assertTrue(ctx.enemiesNear(attacker, front.base(), 3).contains(hitbox(front)));
+        assertTrue(ctx.isEnemy(a, hitbox(outerTop)), "the enemy's tower is a target");
+        assertFalse(ctx.isEnemy(b, hitbox(outerTop)), "never the owner's");
+        assertFalse(ctx.isEnemy(a, hitbox(innerTop)), "a shielded tower is no target");
+        ctx.damage(a, hitbox(outerTop), 50);
+        assertEquals(700, outerTop.health(), 1.0E-6, "ability damage hits the tower");
+        assertTrue(hitbox(outerTop).getHealth() > 0, "the hitbox itself is never hurt");
+        ctx.damage(b, hitbox(outerTop), 50);
+        assertEquals(700, outerTop.health(), 1.0E-6, "the owner cannot hurt its own tower");
+        match.hitTower(innerTop, a, 100);
+        assertEquals(innerTop.maxHealth(), innerTop.health(), 1.0E-6, "the shield holds");
 
-        ctx.damage(attacker, hitbox(front), 50);
-        assertEquals(550, front.health(), 1.0E-6, "ability damage hits the tower");
-        assertTrue(hitbox(front).getHealth() > 0, "the hitbox itself is never hurt");
-        ctx.damage(defender, hitbox(front), 50);
-        assertEquals(550, front.health(), 1.0E-6, "defenders cannot hurt their own tower");
-        match.hitTower(middle, attacker, 100);
-        assertEquals(middle.maxHealth(), middle.health(), 1.0E-6, "the shield holds");
-
-        defender.teleport(front.base().add(2, 0, 0));
-        assertEquals(0.2, match.defenderReduction(front), 1.0E-9);
-        ctx.damage(attacker, hitbox(front), 50);
-        assertEquals(510, front.health(), 1.0E-6, "a defender nearby: -20%");
-
-        Location oldSpawn = match.spawnFor(defender.getUniqueId());
-        ctx.damage(attacker, hitbox(front), 10_000);
-        assertTrue(front.isDestroyed());
-        assertNull(front.hitbox());
-        assertEquals(15, match.score().points(0), "front tower: +15");
-        assertFalse(middle.isShielded(), "the next tower opens");
-        assertTrue(ctx.isEnemy(attacker, hitbox(middle)));
-        Location newSpawn = match.spawnFor(defender.getUniqueId());
-        assertTrue(newSpawn.getZ() > oldSpawn.getZ(), "the defenders' spawn moves back");
-        assertEquals(match.layout().defenderSpawns(1).getFirst().getZ(), newSpawn.getZ(), 1.0E-9);
+        match.hitTower(outerTop, a, 10_000);
+        assertTrue(outerTop.isDestroyed());
+        assertNull(outerTop.hitbox());
+        assertEquals(8, match.score().points(0), "a tower: +8");
+        assertFalse(innerTop.isShielded(), "the lane's inner tower opens");
+        assertTrue(innerBottom.isShielded(), "the other lane is still closed");
+        assertTrue(core.isShielded());
+        match.hitTower(innerTop, a, 10_000);
+        assertTrue(core.isShielded(), "one inner tower still stands: the core keeps its shield");
+        match.hitTower(structure(match, sideB, Tower.Kind.OUTER, LaneSites.Lane.BOTTOM), a, 10_000);
+        match.hitTower(innerBottom, a, 10_000);
+        assertFalse(core.isShielded(), "both inner towers down: the core opens");
+        assertEquals(32, match.score().points(0));
+        assertEquals(4, match.score().towers(0));
+        assertTrue(match.session().isRunning());
+        assertEquals(SiegeMatch.Phase.FIGHT, match.phase(), "towers alone do not end the round");
     }
 
     @Test
-    void killsScoreAndPlayersRespawnWithProtection() {
-        config.set(SiegeSettings.RESPAWN_SECONDS, 2);
+    void destroyingTheCoreWinsTheRoundAtOnce() {
         SiegeMatch match = start(2);
-        Player attacker = member(match, 0);
-        Player defender = member(match, 1);
-        GameSession session = match.session();
-        defender.setNoDamageTicks(0);
-        ctx(match).damage(attacker, defender, 10_000);
-        assertTrue(defender.isDead());
-        assertEquals(2, match.score().points(0), "kill: +2");
-        respawn(defender);
-        assertTrue(session.isRespawning(defender.getUniqueId()));
-        assertEquals(GameMode.SPECTATOR, defender.getGameMode());
-        h.tickUntil(() -> session.isInPlay(defender), 100, "the respawn");
-        assertEquals(GameMode.ADVENTURE, defender.getGameMode());
-        Location spawn = match.spawnFor(defender.getUniqueId());
-        assertEquals(0, defender.getLocation().distance(spawn), 1.0E-6, "back at the team's spawn");
-        assertNotNull(match.abilities().participant(defender.getUniqueId()).ability(), "ability bound again");
-        assertTrue(match.isProtected(defender), "spawn protection");
-        double health = defender.getHealth();
-        ctx(match).damage(attacker, defender, 4);
-        assertEquals(health, defender.getHealth(), 1.0E-9, "protected players take no damage");
-        ctx(match).damage(defender, attacker, 1);
-        assertFalse(match.isProtected(defender), "attacking ends the protection");
-    }
-
-    @Test
-    void aPlayerWhoDiedBeforeHalfTimeComesBackOnTheNewSide() {
-        config.set(SiegeSettings.RESPAWN_SECONDS, 5);
-        SiegeMatch match = start(2);
-        Player attacker = member(match, 0);
-        Player defender = member(match, 1);
-        GameSession session = match.session();
-        defender.setNoDamageTicks(0);
-        ctx(match).damage(attacker, defender, 10_000);
-        respawn(defender);
-        defender.getInventory().clear();
-        match.expireHalf();
+        Player a = member(match, 0);
+        LaneSites.Side enemySide = enemy(match.side(a.getUniqueId()));
+        razeTowers(match, enemySide, a);
+        Tower core = structure(match, enemySide, Tower.Kind.CORE, null);
+        assertFalse(core.isShielded());
+        match.hitTower(core, a, 10_000);
+        assertEquals(1, match.score().roundWins(0), "the core: the round at once, whatever the time");
+        assertEquals(SiegeMatch.Phase.BREAK, match.phase());
+        assertTrue(match.towers().isEmpty(), "the structures are gone between rounds");
         untilFight(2);
-        h.tickUntil(() -> session.isInPlay(defender), 200, "the respawn");
-        assertEquals(0, defender.getLocation().distance(match.spawnFor(defender.getUniqueId())), 1.0E-6);
-        assertEquals(match.layout().attackerSpawns().getFirst().getZ(), defender.getLocation().getZ(), 1.0E-6,
-                "B attacks now: back at the attackers' spawn");
-        assertTrue(defender.getInventory().contains(org.bukkit.Material.IRON_SWORD), "the fresh kit of the half");
-        assertNotNull(match.abilities().participant(defender.getUniqueId()).ability());
+        assertEquals(10, match.towers().size(), "fresh structures for the next round");
+        assertEquals(0, match.score().points(0), "points start over");
     }
 
     @Test
-    void halfTimeSwapsSidesAndKeepsTheAbilities() {
+    void killsScoreAndPlayersRespawnAtTheirBaseWithProtection() {
+        config.set(SiegeSettings.RESPAWN_SECONDS, 2);
         SiegeMatch match = start(2);
         Player a = member(match, 0);
         Player b = member(match, 1);
-        String abilityA = match.abilities().participant(a.getUniqueId()).abilityId();
-        ctx(match).damage(a, hitbox(tower(match, "front")), 100);
-        match.abilities().setGauge(a, 50);
-        match.expireHalf();
-        assertEquals(SiegeMatch.Phase.HALFTIME, match.phase());
-        assertTrue(match.towers().isEmpty(), "towers are gone during half time");
-        assertNull(match.abilities().participant(a.getUniqueId()).ability(), "abilities revoked at half time");
-
-        untilFight(2);
-        assertEquals(1, match.attackingTeam(), "B attacks in the second half");
-        assertEquals(abilityA, match.abilities().participant(a.getUniqueId()).abilityId(), "same ability");
-        assertEquals(0, match.abilities().participant(a.getUniqueId()).gauge(), 1.0E-9, "gauge reset");
-        Tower front = tower(match, "front");
-        assertEquals(front.maxHealth(), front.health(), 1.0E-9, "towers restored");
-        assertTrue(ctx(match).isEnemy(b, hitbox(front)));
-        assertFalse(ctx(match).isEnemy(a, hitbox(front)));
-    }
-
-    @Test
-    void bestOfThreeEndsWithTheTeamThatWonTwoRounds() {
-        config.set(SiegeSettings.WIN_SCORE, 10);
-        SiegeMatch match = start(2);
         GameSession session = match.session();
-        MatchTeam teamA = match.teams().get(0);
+        b.teleport(new Location(h.flatWorld(), 0.5, FlatWorld.SURFACE, 0.5));
+        b.setNoDamageTicks(0);
+        ctx(match).damage(a, b, 10_000);
+        assertTrue(b.isDead());
+        assertEquals(2, match.score().points(0), "kill: +2");
+        respawn(b);
+        assertTrue(session.isRespawning(b.getUniqueId()));
+        assertEquals(GameMode.SPECTATOR, b.getGameMode());
+        h.tickUntil(() -> session.isInPlay(b), 100, "the respawn");
+        assertEquals(GameMode.ADVENTURE, b.getGameMode());
+        assertEquals(0, b.getLocation().distance(match.spawnFor(b.getUniqueId())), 1.0E-6, "back at the base");
+        assertEquals(match.layout().spawns(match.side(b.getUniqueId())).getFirst().getX(), b.getLocation().getX(),
+                1.0E-6);
+        assertNotNull(match.abilities().participant(b.getUniqueId()).ability(), "ability bound again");
+        assertTrue(match.isProtected(b), "spawn protection");
+        double health = b.getHealth();
+        ctx(match).damage(a, b, 4);
+        assertEquals(health, b.getHealth(), 1.0E-9, "protected players take no damage");
+        ctx(match).damage(b, a, 1);
+        assertFalse(match.isProtected(b), "attacking ends the protection");
+    }
+
+    @Test
+    void enemiesInABaseAreHurt() {
+        config.set(SiegeSettings.SPAWN_ZONE_DAMAGE, 4);
+        SiegeMatch match = start(2);
         Player a = member(match, 0);
-        ctx(match).damage(a, hitbox(tower(match, "front")), 10_000);
-        assertEquals(SiegeMatch.Phase.BREAK, match.phase(), "15 points >= 10: round won at once");
-        assertEquals(1, match.score().roundWins(0));
-        assertTrue(match.towers().isEmpty());
-
-        untilFight(1);
-        assertEquals(2, match.round());
-        assertEquals(0, match.score().points(0), "a new round starts at 0 points");
-        ctx(match).damage(a, hitbox(tower(match, "front")), 10_000);
-        assertFalse(session.isRunning(), "two rounds won: the match is over");
-        GameResult result = session.result();
-        assertNotNull(result);
-        assertSame(teamA, result.winningTeam());
-        assertEquals(a.getUniqueId(), result.mvp());
-
-        h.tickUntil(() -> h.hub.games().session() == null, 2000, "the session to close");
-        assertEquals(0, count(Mannequin.class), "no hitbox left");
-        assertEquals(0, count(BlockDisplay.class), "no tower display left");
+        Location enemyBase = match.layout().spawns(enemy(match.side(a.getUniqueId()))).getFirst();
+        a.teleport(enemyBase);
+        double before = a.getHealth();
+        h.ticks(25);
+        assertTrue(a.getHealth() < before, "spawn safety: the enemy base hurts");
     }
 
     @Test
-    void aTowerThatHoldsIsADefenceSuccess() {
-        config.set(SiegeSettings.DEFENCE_SECONDS, 10);
+    void towersShootEnemiesInRange() {
+        config.set(SiegeSettings.ATTACK_DAMAGE, 3);
         SiegeMatch match = start(2);
-        Tower front = tower(match, "front");
-        ctx(match).damage(member(match, 0), hitbox(front), 300);
-        double damaged = front.health();
-        h.ticks(10 * 20 + 20);
-        assertEquals(5, match.score().points(1), "defence success: +5 for the defenders");
-        assertTrue(front.health() > damaged, "the tower heals");
+        Player a = member(match, 0);
+        Tower outer = structure(match, enemy(match.side(a.getUniqueId())), Tower.Kind.OUTER, LaneSites.Lane.TOP);
+        a.teleport(outer.base().add(4, 0, 0));
+        double before = a.getHealth();
+        h.ticks(10);
+        assertTrue(a.getHealth() < before, "the tower shot");
+        a.teleport(match.spawnFor(a.getUniqueId()));
+        a.setHealth(20);
+        h.ticks(40);
+        assertEquals(20, a.getHealth(), 1.0E-9, "out of range: no shots");
     }
 
     @Test
-    void theClimaxStartsInTheLastMinutes() {
-        config.set(SiegeSettings.HALF_SECONDS, 60);
-        config.set(SiegeSettings.CLIMAX_SECONDS, 30);
+    void timeUpGoesToTheScoreThenToOvertime() {
         SiegeMatch match = start(2);
-        assertFalse(match.isClimax());
-        h.tickUntil(match::isClimax, 40 * 20, "the climax");
-        assertTrue(match.halfTicks() >= 30 * 20);
-        ctx(match).damage(member(match, 0), hitbox(tower(match, "front")), 10_000);
-        assertEquals(23, match.score().points(0), "15 x 1.5, rounded");
-    }
-
-    @Test
-    void aTieAfterTheSecondHalfGoesToSuddenDeath() {
-        SiegeMatch match = start(2);
-        match.expireHalf();
-        untilFight(2);
-        match.expireHalf();
-        assertTrue(match.isSuddenDeath(), "0 : 0, no towers, no kills");
+        Player a = member(match, 0);
+        LaneSites.Side sideA = match.side(a.getUniqueId());
+        match.expireRound();
+        assertTrue(match.isOvertime(), "all tied: overtime");
         assertEquals(SiegeMatch.Phase.FIGHT, match.phase());
-        ctx(match).damage(member(match, 1), hitbox(tower(match, "front")), 10_000);
-        assertEquals(SiegeMatch.Phase.BREAK, match.phase(), "the first score wins the round");
-        assertEquals(1, match.score().roundWins(1));
+        assertEquals(120 * 20, match.ticksLeft(), "2 minutes");
+        match.addScore(enemy(sideA), 1, "test");
+        assertEquals(1, match.score().roundWins(1), "the first point of the overtime wins");
+
+        untilFight(2);
+        match.addScore(sideA, 3, "test");
+        match.expireRound();
+        assertEquals(1, match.score().roundWins(0), "time up: more points win");
+        assertTrue(match.session().isRunning());
+    }
+
+    @Test
+    void aSilentOvertimeGoesToTheSturdierStructures() {
+        SiegeMatch match = start(2);
+        Player a = member(match, 0);
+        LaneSites.Side enemySide = enemy(match.side(a.getUniqueId()));
+        match.expireRound();
+        assertTrue(match.isOvertime());
+        // Damage without a kill or a destroyed tower: no points.
+        match.hitTower(structure(match, enemySide, Tower.Kind.OUTER, LaneSites.Lane.TOP), a, 100);
+        assertEquals(0, match.sturdierTeam(), "team A kept more structure health");
+        match.expireRound();
+        assertEquals(1, match.score().roundWins(0));
+    }
+
+    @Test
+    void bestOfThreeEndsWhenASideWonTwoRounds() {
+        SiegeMatch match = start(2);
+        Player a = member(match, 0);
+        LaneSites.Side sideA = match.side(a.getUniqueId());
+        match.addScore(sideA, 5, "test");
+        match.expireRound();
+        assertEquals(1, match.score().roundWins(0));
+        untilFight(2);
+        assertEquals(2, match.round());
+        match.addScore(sideA, 5, "test");
+        match.expireRound();
+        assertEquals(2, match.score().roundWins(0));
+        assertEquals(SiegeMatch.Phase.OVER, match.phase());
+        h.tickUntil(() -> h.hub.games().session() == null, 2000, "the session to close");
     }
 
     @Test
@@ -347,8 +353,10 @@ class SiegeMatchTest {
         int sizeB = match.teams().get(1).size();
         assertEquals(5, sizeA + sizeB);
         assertEquals(1, Math.abs(sizeA - sizeB), "2 against 3");
-        assertEquals(1200 * (0.25 + 0.25 * sizeA), tower(match, "front").maxHealth(), 1.0E-6,
-                "tower health follows the attacker count");
+        LaneSites.Side sideB = match.sideOf(1);
+        assertEquals(1500 * (0.25 + 0.25 * sizeA),
+                structure(match, sideB, Tower.Kind.OUTER, LaneSites.Lane.TOP).maxHealth(), 1.0E-6,
+                "structure health follows the enemy team's size");
         assertTeamsHaveUniqueAbilities(match);
     }
 
@@ -365,9 +373,8 @@ class SiegeMatchTest {
                 Location at = match.spawnFor(id);
                 spots.add(at.getBlockX() + "," + at.getBlockZ());
             }
-            assertEquals(5, spots.size(), "five players, five different spawn blocks (three map spots)");
+            assertEquals(5, spots.size(), "five players, five different spawn blocks");
         }
-        assertEquals(1200 * 1.5, tower(match, "front").maxHealth(), 1.0E-6);
     }
 
     private static void assertTeamsHaveUniqueAbilities(SiegeMatch match) {
@@ -381,38 +388,7 @@ class SiegeMatchTest {
         }
     }
 
-    @Test
-    void theSiegeMapIsTheDefaultAndMustBeBuiltFirst() {
-        siege.sitesOverride(null);
-        h.join(2);
-        assertThrows(GameStartException.class, () -> h.hub.games().start(siege, null),
-                "the registered 협곡 요새 is not built yet");
-        assertNull(h.hub.games().session());
-        ArenaMap map = h.hub.maps().map(SiegeGame.MAP_ID);
-        SiegeSites sites = assertInstanceOf(SiegeSites.class, map);
-        SiegeLayout layout = new SiegeLayout(sites, h.flatWorld(), 0, 0);
-        assertEquals(List.of("front", "middle", "core"),
-                sites.towers().stream().map(SiegeSites.Tower::id).toList());
-        assertTrue(layout.attackerSpawns().size() >= 3);
-        assertEquals(3, sites.defenderSpawns().size());
-    }
-
-    @Test
-    void abilityPoolCommand() {
-        TestPlayer admin = h.join("Admin");
-        admin.setOp(true);
-        assertTrue(h.server.dispatchCommand(admin, "게임 공성전 능력풀 추가 화염술사"));
-        assertTrue(siege.abilityPool().contains("pyro"));
-        assertTrue(h.server.dispatchCommand(admin, "게임 공성전 능력풀 제거 pyro"));
-        assertFalse(siege.abilityPool().contains("pyro"));
-        h.server.dispatchCommand(admin, "게임 공성전 능력풀 추가 없는능력");
-        assertEquals(List.of("dummy"), siege.abilityPool(), "unknown abilities are refused");
-        assertTrue(h.server.dispatchCommand(admin, "게임 공성전 능력풀 초기화"));
-        assertEquals(SiegeSettings.DEFAULT_POOL, siege.abilityPool());
-        assertTrue(h.server.dispatchCommand(admin, "mcpl siege pool list"));
-    }
-
-    /** One player may start it alone to try it: team B stays empty and only score and time end the rounds. */
+    /** One player may start it alone to try it: the other team stays empty and only time or the core end rounds. */
     @Test
     void aPlayerCanPlayItAlone() {
         SiegeMatch match = start(1);
@@ -420,30 +396,108 @@ class SiegeMatchTest {
         assertEquals(1, match.teams().get(0).size());
         assertEquals(0, match.teams().get(1).size(), "no bots: the other team stays empty");
         Player solo = member(match, 0);
-        Tower front = tower(match, "front");
-        assertEquals(600, front.maxHealth(), 1.0E-9, "towers scale for one attacker");
-        assertEquals(match.layout().attackerSpawns().getFirst().getX(), solo.getLocation().getX(), 1.0);
+        LaneSites.Side enemySide = enemy(match.side(solo.getUniqueId()));
+        assertEquals(750, structure(match, enemySide, Tower.Kind.OUTER, LaneSites.Lane.TOP).maxHealth(), 1.0E-9);
         h.ticks(100);
         assertTrue(match.session().isRunning(), "an empty team does not lose at once");
-        ctx(match).damage(solo, hitbox(front), 10_000);
-        assertEquals(15, match.score().points(0));
-
-        match.expireHalf();
+        match.hitTower(structure(match, enemySide, Tower.Kind.OUTER, LaneSites.Lane.TOP), solo, 10_000);
+        assertEquals(8, match.score().points(0));
+        match.expireRound();
+        assertEquals(1, match.score().roundWins(0), "the round ends on score and time");
         untilFight(2);
-        assertEquals(1, match.attackingTeam(), "the empty team attacks in the second half");
-        assertTrue(match.session().isRunning());
-        assertEquals(match.layout().defenderSpawns(0).getFirst().getX(), solo.getLocation().getX(), 1.0);
-        h.ticks(100);
-        match.expireHalf();
-        assertEquals(1, match.score().roundWins(0), "the round still ends on score and time");
-        assertTrue(match.session().isRunning());
+        razeTowers(match, enemySide, solo);
+        match.hitTower(structure(match, enemySide, Tower.Kind.CORE, null), solo, 10_000);
+        assertEquals(SiegeMatch.Phase.OVER, match.phase(), "two rounds won alone");
     }
 
     @Test
-    void stoppingMidHalfLeavesNothingBehind() {
+    void modulesPlugInThroughTheHooks() {
+        List<String> calls = new ArrayList<>();
+        Map<UUID, Integer> purse = new HashMap<>();
+        siege.addModule(match -> {
+            match.economy(new SiegeEconomy() {
+                @Override
+                public int gold(UUID player) {
+                    return purse.getOrDefault(player, 0);
+                }
+
+                @Override
+                public void addGold(UUID player, int amount, String reason) {
+                    purse.merge(player, amount, Integer::sum);
+                }
+            });
+            return new SiegeModule() {
+                @Override
+                public void roundStarted(int round) {
+                    calls.add("round " + round);
+                }
+
+                @Override
+                public void fightStarted() {
+                    calls.add("fight");
+                }
+
+                @Override
+                public void playerKilled(UUID victim, @org.jspecify.annotations.Nullable UUID killer,
+                                         List<UUID> assisters) {
+                    calls.add("kill");
+                    if (killer != null) {
+                        match.addGold(killer, 150, "kill");
+                    }
+                }
+
+                @Override
+                public void structureDestroyed(Tower tower, LaneSites.Side by,
+                                               @org.jspecify.annotations.Nullable UUID destroyer) {
+                    calls.add("tower " + tower.kind());
+                }
+
+                @Override
+                public void stop() {
+                    calls.add("stop");
+                }
+
+                @Override
+                public net.kyori.adventure.text.Component sidebarLine(Player viewer) {
+                    return net.kyori.adventure.text.Component.text("드래곤 2:00");
+                }
+            };
+        });
+        SiegeMatch match = start(2);
+        assertEquals(List.of("round 1", "fight"), calls);
+        Player a = member(match, 0);
+        Player b = member(match, 1);
+        b.setNoDamageTicks(0);
+        ctx(match).damage(a, b, 10_000);
+        assertTrue(calls.contains("kill"));
+        assertEquals(150, match.gold(a.getUniqueId()), "the installed economy holds the gold");
+        match.hitTower(structure(match, match.side(b.getUniqueId()), Tower.Kind.OUTER, LaneSites.Lane.TOP), a,
+                10_000);
+        assertTrue(calls.contains("tower OUTER"));
+        match.addScore(match.side(a.getUniqueId()), 3, "jungle", a.getUniqueId());
+        assertEquals(2 + 8 + 3, match.score().points(0));
+        match.addXp(a.getUniqueId(), 10);
+        assertTrue(match.experience(a.getUniqueId()) >= 10);
+        h.ticks(11);
+        List<String> lines = match.hud().lines(a).stream().map(SiegeMatchTest::plain).toList();
+        assertTrue(lines.size() <= 6, "at most six sidebar lines: " + lines);
+        assertTrue(lines.contains("드래곤 2:00"), "the module's objective line: " + lines);
+        assertTrue(lines.stream().anyMatch(line -> line.contains("150")), "the gold: " + lines);
+        assertTrue(h.server.dispatchCommand(h.server.getConsoleSender(), "게임 중지"));
+        h.tickUntil(() -> h.hub.games().session() == null, 2000, "the session to close");
+        assertTrue(calls.contains("stop"));
+    }
+
+    static String plain(net.kyori.adventure.text.Component component) {
+        return net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(component);
+    }
+
+    @Test
+    void stoppingMidRoundLeavesNothingBehind() {
         SiegeMatch match = start(2);
         assertTrue(count(Mannequin.class) > 0);
-        // The tower entities are not persistent: their chunks are held loaded (else they vanish when nobody is near).
+        assertTrue(count(TextDisplay.class) >= 10, "an overhead bar per structure");
+        // The structure entities are not persistent: their chunks are held loaded (else they vanish when nobody is near).
         for (Tower tower : match.towers()) {
             Location at = hitbox(tower).getLocation();
             assertTrue(h.flatWorld().hasChunkTicket(at.getBlockX() >> 4, at.getBlockZ() >> 4,
@@ -453,7 +507,7 @@ class SiegeMatchTest {
         h.tickUntil(() -> h.hub.games().session() == null, 2000, "the session to close");
         assertFalse(match.session().isRunning());
         assertEquals(0, count(Mannequin.class));
-        assertEquals(0, count(BlockDisplay.class));
-        assertEquals(0, h.flatWorld().chunkTickets(match.session().hub().plugin()), "the tower chunks are let go");
+        assertEquals(0, count(TextDisplay.class));
+        assertEquals(0, h.flatWorld().chunkTickets(match.session().hub().plugin()), "the chunks are let go");
     }
 }

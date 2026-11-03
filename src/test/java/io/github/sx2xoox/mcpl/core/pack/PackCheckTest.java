@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 
-import io.github.sx2xoox.mcpl.game.siege.FallbackSiegeSites;
+import io.github.sx2xoox.mcpl.game.siege.FallbackLaneSites;
 import io.github.sx2xoox.mcpl.game.siege.SiegeGame;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
@@ -153,7 +153,7 @@ class PackCheckTest {
         SiegeGame siege = (SiegeGame) h.hub.games().game(SiegeGame.ID);
         assertNotNull(siege);
         assertTrue(siege.usesResourcePack());
-        siege.sitesOverride(new FallbackSiegeSites((int) FlatWorld.SURFACE));
+        siege.sitesOverride(new FallbackLaneSites((int) FlatWorld.SURFACE));
         assertTrue(h.server.dispatchCommand(admin, "게임 시작 공성전"));
         assertNotNull(h.hub.games().session(), "the start is not blocked");
         List<String> lines = drain(admin);

@@ -6,8 +6,10 @@ import java.util.UUID;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
-import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
-import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.game.siege.OverheadBar;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
@@ -17,15 +19,37 @@ import org.bukkit.entity.Mannequin;
 import org.jspecify.annotations.Nullable;
 
 /**
- * One tower of a 공성전 half: its rules (health, shield, who hurt it, defence timer) and its parts: an invisible,
- * immovable {@link Mannequin} as the hitbox (melee and ability damage land on it and are turned into tower damage by
- * the game), the {@link TowerLook.Visual} and a boss bar. Created when a half starts, {@link #dispose() disposed}
- * when it ends.
+ * One structure of a 공성전 round, a lane tower or a core: its rules (health, shield, who hurt it, warnings) and its
+ * parts: an invisible, immovable {@link Mannequin} as the hitbox (melee and ability damage land on it and are turned
+ * into structure damage by the game), the {@link TowerLook.Visual} and an {@link OverheadBar}. Created when a round
+ * starts, {@link #dispose() disposed} when it ends.
  */
 public final class Tower {
 
-    private final SiegeSites.Tower site;
-    private final int index;
+    /** What the structure is. */
+    public enum Kind {
+        /** A lane's outer tower (stands first). */
+        OUTER(TowerLook.TOWER),
+        /** A lane's inner tower: shielded while the outer tower of its lane stands. */
+        INNER(TowerLook.TOWER),
+        /** The core: shielded while an inner tower of its side stands; destroying it wins the round. */
+        CORE(TowerLook.CORE);
+
+        private final String lookId;
+
+        Kind(String lookId) {
+            this.lookId = lookId;
+        }
+
+        public String lookId() {
+            return lookId;
+        }
+    }
+
+    private final LaneSites.Structure site;
+    private final LaneSites.Side owner;
+    private final LaneSites.@Nullable Lane lane;
+    private final Kind kind;
     private final Location base;
     private final double maxHealth;
     private double health;
@@ -33,17 +57,20 @@ public final class Tower {
     private boolean destroyed;
     private final Map<UUID, Double> damageBy = new HashMap<>();
     private long lastDamageTick = Long.MIN_VALUE / 2;
-    private long attackableSince = -1;
     private long lastWarningTick = Long.MIN_VALUE / 2;
+    private long nextAttackTick;
     /** Health quarter last announced (4 = full). */
     private int announcedQuarter = 4;
     private @Nullable Mannequin hitbox;
     private TowerLook.@Nullable Visual visual;
-    private @Nullable ManagedBossBar bar;
+    private @Nullable OverheadBar bar;
 
-    public Tower(SiegeSites.Tower site, int index, Location base, double maxHealth) {
+    public Tower(LaneSites.Structure site, LaneSites.Side owner, LaneSites.@Nullable Lane lane, Kind kind,
+                 Location base, double maxHealth) {
         this.site = site;
-        this.index = index;
+        this.owner = owner;
+        this.lane = lane;
+        this.kind = kind;
         this.base = base.clone();
         this.maxHealth = maxHealth;
         this.health = maxHealth;
@@ -51,15 +78,14 @@ public final class Tower {
 
     // ------------------------------------------------------------------ parts
 
-    /** Spawns the hitbox (tracked by the session) and the visual. */
-    public void spawn(GameSession session, TowerLook look, net.kyori.adventure.text.format.TextColor color,
-                      double hitboxScale) {
+    /** Spawns the visual, the hitbox (tracked by the session) and the overhead bar named {@code barName}. */
+    public void spawn(GameSession session, TowerLook look, TextColor color, double hitboxScale, Component barName) {
         World world = base.getWorld();
         if (world == null) {
             return;
         }
         try {
-            visual = look.spawn(base.clone(), site.id(), color);
+            visual = look.spawn(base.clone(), kind.lookId(), color);
         } catch (RuntimeException e) {
             session.plugin().getLogger().log(Level.WARNING, "The tower look failed to spawn " + site.id(), e);
         }
@@ -80,9 +106,12 @@ public final class Tower {
         } catch (RuntimeException e) {
             session.plugin().getLogger().log(Level.WARNING, "Could not spawn the hitbox of tower " + site.id(), e);
         }
+        bar = OverheadBar.at(session, base.clone().add(0, look.barHeight(kind.lookId()), 0), barName, color, 2f);
+        bar.health(health, maxHealth);
+        bar.shielded(shielded);
     }
 
-    /** Puts the hitbox back where it belongs (abilities may push or pull it) and keeps it at full health. */
+    /** Puts the hitbox back where it belongs (abilities may push or pull it) and keeps it from burning. */
     public void anchor() {
         Mannequin body = hitbox;
         if (body == null || !body.isValid()) {
@@ -94,15 +123,11 @@ public final class Tower {
         body.setFireTicks(0);
     }
 
-    public void bar(ManagedBossBar bar) {
-        this.bar = bar;
-    }
-
-    public @Nullable ManagedBossBar bar() {
+    public @Nullable OverheadBar bar() {
         return bar;
     }
 
-    /** Removes the hitbox and the visual (the boss bar belongs to the session). */
+    /** Removes the hitbox, the visual and the bar. */
     public void dispose() {
         Mannequin body = hitbox;
         hitbox = null;
@@ -114,23 +139,25 @@ public final class Tower {
         if (look != null) {
             look.remove();
         }
-        if (bar != null) {
-            bar.hideAll();
+        OverheadBar overhead = bar;
+        bar = null;
+        if (overhead != null) {
+            overhead.remove();
         }
     }
 
     // ------------------------------------------------------------------ rules
 
     /**
-     * Takes {@code amount} damage from {@code attacker}, reduced by {@code reduction} (0..1).
+     * Takes {@code amount} damage from {@code attacker} (null: a minion or the world).
      *
      * @return the health actually lost
      */
-    public double damage(double amount, double reduction, @Nullable UUID attacker, long tick) {
+    public double damage(double amount, @Nullable UUID attacker, long tick) {
         if (destroyed || shielded || !(amount > 0)) {
             return 0;
         }
-        double dealt = Math.min(health, amount * (1 - Math.max(0, Math.min(1, reduction))));
+        double dealt = Math.min(health, amount);
         health -= dealt;
         lastDamageTick = tick;
         if (attacker != null) {
@@ -151,11 +178,20 @@ public final class Tower {
             if (body != null) {
                 body.remove();
             }
+            OverheadBar overhead = bar;
+            bar = null;
+            if (overhead != null) {
+                overhead.remove();
+            }
+            return dealt;
+        }
+        if (bar != null) {
+            bar.health(health, maxHealth);
         }
         return dealt;
     }
 
-    /** Heals {@code amount} health points (never above the maximum, never a destroyed tower). */
+    /** Heals {@code amount} health points (never above the maximum, never a destroyed structure). */
     public void heal(double amount) {
         if (destroyed || !(amount > 0)) {
             return;
@@ -163,6 +199,9 @@ public final class Tower {
         health = Math.min(maxHealth, health + amount);
         if (visual != null) {
             visual.health(fraction());
+        }
+        if (bar != null) {
+            bar.health(health, maxHealth);
         }
         announcedQuarter = Math.max(announcedQuarter, quarter());
     }
@@ -175,20 +214,12 @@ public final class Tower {
         if (visual != null) {
             visual.shielded(shielded);
         }
+        if (bar != null) {
+            bar.shielded(shielded);
+        }
     }
 
-    /** Starts (or restarts) the defence timer: the tower became the one the attackers can hit. */
-    public void attackableFrom(long tick) {
-        attackableSince = tick;
-    }
-
-    public long attackableSince() {
-        return attackableSince;
-    }
-
-    /**
-     * The next health quarter crossed downwards (3 = 75%, 2 = 50%, 1 = 25%) since the last call, or 0.
-     */
+    /** The next health quarter crossed downwards (3 = 75%, 2 = 50%, 1 = 25%) since the last call, or 0. */
     public int takeQuarterCrossed() {
         int now = quarter();
         if (now < announcedQuarter && !destroyed) {
@@ -211,7 +242,17 @@ public final class Tower {
         return true;
     }
 
-    /** The attacker who dealt the most damage to this tower, or null. */
+    /** True if the structure may shoot at {@code tick}. */
+    public boolean canAttack(long tick) {
+        return tick >= nextAttackTick;
+    }
+
+    /** The structure shot at {@code tick}: the next shot comes {@code cooldown} ticks later. */
+    public void attacked(long tick, int cooldown) {
+        nextAttackTick = tick + cooldown;
+    }
+
+    /** The attacker who dealt the most damage to this structure, or null. */
     public @Nullable UUID topDamager() {
         UUID best = null;
         double most = 0;
@@ -226,7 +267,7 @@ public final class Tower {
 
     // ------------------------------------------------------------------ queries
 
-    public SiegeSites.Tower site() {
+    public LaneSites.Structure site() {
         return site;
     }
 
@@ -238,9 +279,22 @@ public final class Tower {
         return site.name();
     }
 
-    /** 0 front, 1 middle, 2 core. */
-    public int index() {
-        return index;
+    /** The side the structure belongs to (its enemies destroy it). */
+    public LaneSites.Side owner() {
+        return owner;
+    }
+
+    /** The lane of a tower, null for a core. */
+    public LaneSites.@Nullable Lane lane() {
+        return lane;
+    }
+
+    public Kind kind() {
+        return kind;
+    }
+
+    public boolean isCore() {
+        return kind == Kind.CORE;
     }
 
     public Location base() {
@@ -275,14 +329,19 @@ public final class Tower {
         return hitbox;
     }
 
-    /** True for this tower's live hitbox. */
+    /** True for this structure's live hitbox. */
     public boolean isHitbox(@Nullable Entity entity) {
         Mannequin body = hitbox;
         return entity != null && body != null && body.getUniqueId().equals(entity.getUniqueId());
     }
 
-    /** Horizontal distance check against the tower's radius (the defence zone). */
+    /** Horizontal distance check against the structure's radius. */
     public boolean isNear(Location location) {
+        return isWithin(location, site.radius());
+    }
+
+    /** True if {@code location} is within {@code range} blocks horizontally (and not far above or below). */
+    public boolean isWithin(Location location, double range) {
         World world = base.getWorld();
         if (world == null || !world.equals(location.getWorld())) {
             return false;
@@ -290,7 +349,6 @@ public final class Tower {
         double dx = location.getX() - base.getX();
         double dz = location.getZ() - base.getZ();
         double dy = location.getY() - base.getY();
-        double r = site.radius();
-        return dx * dx + dz * dz <= r * r && Math.abs(dy) <= Math.max(6, r);
+        return dx * dx + dz * dz <= range * range && Math.abs(dy) <= Math.max(8, range);
     }
 }

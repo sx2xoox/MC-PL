@@ -3,6 +3,8 @@ package io.github.sx2xoox.mcpl.game.siege;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Function;
+import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.arena.Arena;
@@ -14,7 +16,7 @@ import io.github.sx2xoox.mcpl.core.game.GameStartException;
 import io.github.sx2xoox.mcpl.core.game.MiniGame;
 import io.github.sx2xoox.mcpl.core.map.ArenaMap;
 import io.github.sx2xoox.mcpl.core.map.MapService;
-import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
@@ -28,22 +30,25 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.jspecify.annotations.Nullable;
 
 /**
- * 초능력 공성전 — two teams take turns attacking three towers with the 초능력전쟁 abilities, best of three rounds. See
- * {@code docs/siege.md}. The abilities run through a hosted {@link io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch}
+ * 초능력 공성전 — two sides (BLUE, RED) push two lanes of towers to the enemy core with the 초능력전쟁 abilities, best of
+ * three rounds. See {@code docs/siege.md}. The abilities run through a hosted
+ * {@link io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch}
  * ({@link io.github.sx2xoox.mcpl.game.superpower.runtime.MatchHost}); the map comes from the registered map with id
- * {@value #MAP_ID} (a {@link SiegeSites}), or a plain fallback layout around the hub's arena.
+ * {@value #MAP_ID} (a {@link LaneSites}), or a plain fallback layout around the hub's arena. Features such as minions,
+ * the jungle, gold and the shop plug in as {@link SiegeModule}s ({@link #addModule}).
  */
 public final class SiegeGame implements MiniGame {
 
     public static final String ID = "siege";
-    public static final String MAP_ID = "siege";
+    public static final String MAP_ID = "toykingdom";
     public static final String MESSAGES_FILE = "siege.yml";
 
     private final Hub hub;
     private final SuperpowerGame superpower;
     private final Messages messages;
     private TowerLook towerLook;
-    private @Nullable SiegeSites sitesOverride;
+    private @Nullable LaneSites sitesOverride;
+    private final List<Function<SiegeMatch, SiegeModule>> moduleFactories = new ArrayList<>();
     private @Nullable List<SettingsSection> settings;
     private @Nullable SiegeMatch current;
 
@@ -106,7 +111,6 @@ public final class SiegeGame implements MiniGame {
     public void configDefaults(ConfigurationSection defaults) {
         SiegeSettings.declareDefaults(defaults);
         SiegeProgressSettings.declareDefaults(defaults);
-        CampSettings.declareDefaults(defaults);
         SiegeBalanceSettings.declareDefaults(defaults);
     }
 
@@ -125,7 +129,7 @@ public final class SiegeGame implements MiniGame {
         }
         MapService maps = hub.maps();
         ArenaMap map = maps.map(MAP_ID);
-        if (!(map instanceof SiegeSites)) {
+        if (!(map instanceof LaneSites)) {
             return null;
         }
         World world = maps.world(map);
@@ -136,18 +140,39 @@ public final class SiegeGame implements MiniGame {
         return Arena.around(maps.center(map, world), map.playRadius());
     }
 
-    /** Where the towers and spawns are in the match's arena. */
-    SiegeLayout layoutFor(Arena arena) {
+    /** Where the structures, spawns and lanes are in the match's arena. */
+    LaneLayout layoutFor(Arena arena) {
         Location center = arena.center();
         if (sitesOverride != null) {
-            return new SiegeLayout(sitesOverride, arena.world(), center.getBlockX(), center.getBlockZ());
+            return new LaneLayout(sitesOverride, arena.world(), center.getBlockX(), center.getBlockZ());
         }
         ArenaMap map = hub.maps().map(MAP_ID);
-        if (map instanceof SiegeSites sites && arena.world().equals(hub.maps().world(map))) {
-            return new SiegeLayout(sites, arena.world(), 0, 0);
+        if (map instanceof LaneSites sites && arena.world().equals(hub.maps().world(map))) {
+            return new LaneLayout(sites, arena.world(), 0, 0);
         }
-        return new SiegeLayout(new FallbackSiegeSites(center.getBlockY()), arena.world(), center.getBlockX(),
+        return new LaneLayout(new FallbackLaneSites(center.getBlockY()), arena.world(), center.getBlockX(),
                 center.getBlockZ());
+    }
+
+    /**
+     * Plugs a feature into every match started from now on: {@code factory} makes the match's {@link SiegeModule} when
+     * the match starts (after the abilities, before the first round).
+     */
+    public void addModule(Function<SiegeMatch, SiegeModule> factory) {
+        moduleFactories.add(factory);
+    }
+
+    /** The modules of a starting match (a factory that fails is skipped and logged). */
+    List<SiegeModule> createModules(SiegeMatch match) {
+        List<SiegeModule> out = new ArrayList<>();
+        for (Function<SiegeMatch, SiegeModule> factory : moduleFactories) {
+            try {
+                out.add(factory.apply(match));
+            } catch (RuntimeException e) {
+                hub.plugin().getLogger().log(Level.WARNING, "A siege module could not start", e);
+            }
+        }
+        return out;
     }
 
     @Override
@@ -188,7 +213,10 @@ public final class SiegeGame implements MiniGame {
         return messages;
     }
 
-    /** How towers look (default: {@link ModelTowerLook}, vanilla blocks for players without the pack); used by matches started afterwards. */
+    /**
+     * How towers and cores look (default: {@link ModelTowerLook}, vanilla blocks for players without the pack); used by
+     * matches started afterwards.
+     */
     public TowerLook towerLook() {
         return towerLook;
     }
@@ -202,7 +230,7 @@ public final class SiegeGame implements MiniGame {
      * Plays the next matches on {@code sites} around the hub's arena center instead of the 공성전 map (tests, custom
      * layouts); null to go back to the map.
      */
-    public void sitesOverride(@Nullable SiegeSites sites) {
+    public void sitesOverride(@Nullable LaneSites sites) {
         this.sitesOverride = sites;
     }
 

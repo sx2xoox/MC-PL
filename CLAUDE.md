@@ -53,9 +53,12 @@ src/main/java/io/github/sx2xoox/mcpl/
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
     pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
                                PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model)
-  game/siege/                  초능력 공성전 (SiegeGame = the MiniGame, SiegeSettings = games.siege.*, SiegeMatch = flow, score,
-                               respawns; abilities run in a hosted SuperpowerMatch = runtime/MatchHost; map via
-                               core/map/siege/SiegeSites, FallbackSiegeSites in tests)
+  game/siege/                  초능력 공성전 v2 (SiegeGame = the MiniGame, SiegeSettings = games.siege.*, SiegeMatch = flow,
+                               score, structures, respawns + the hooks features use; abilities run in a hosted
+                               SuperpowerMatch = runtime/MatchHost; map via core/map/lanes/LaneSites → LaneLayout,
+                               FallbackLaneSites in tests; features plug in as SiegeModule (SiegeGame#addModule; the lane
+                               systems via the built-in LaneSystemsModule = arena/SiegeArena impl); reusable
+                               readability parts: OverheadBar, DamageNumbers, SiegeSounds, Guidance; gold = SiegeEconomy)
     balance/                   ability balance in 공성전 only: SiegeBalance(+Settings) = global factor × per-ability correction
                                (generated siege-balance.yml) × level, SiegePerks = level 3/6/9 param perks (capped),
                                SiegeModifiers = per-player skill damage/taken/cooldown for shop items and buffs;

@@ -14,7 +14,7 @@ import org.bukkit.configuration.MemoryConfiguration;
 
 /**
  * The 공성전 entries of the settings menu and {@code /게임 설정} ({@link SiegeGame#settings()}): the main numbers of
- * the match flow, respawns, towers, levels and objectives. Every other value is in {@code config.yml} → {@code games.siege}. Texts:
+ * the match flow, respawns, towers and levels. Every other value is in {@code config.yml} → {@code games.siege}. Texts:
  * {@code siege.yml} → {@code settings.*}.
  */
 final class SiegeSettingEntries {
@@ -37,22 +37,16 @@ final class SiegeSettingEntries {
         Setting rounds = whole("siege.rounds-to-win", List.of("공성전", "승리판수"), List.of("siege", "rounds"),
                 Material.TOTEM_OF_UNDYING, "settings.rounds-to-win", SiegeSettings.ROUNDS_TO_WIN, 1, 5, 1, 1,
                 Setting.Unit.COUNT);
-        Setting winScore = whole("siege.win-score", List.of("공성전", "목표점수"), List.of("siege", "win-score"),
-                Material.GOLD_INGOT, "settings.win-score", SiegeSettings.WIN_SCORE, 10, 1000, 10, 50,
-                Setting.Unit.COUNT);
-        Setting half = whole("siege.half", List.of("공성전", "반시간"), List.of("siege", "half"), Material.CLOCK,
-                "settings.half", SiegeSettings.HALF_SECONDS, 60, SiegeSettings.MAX_SECONDS, 30, 120,
-                Setting.Unit.SECONDS);
-        Setting halftime = whole("siege.halftime", List.of("공성전", "하프타임"), List.of("siege", "halftime"),
-                Material.HONEY_BOTTLE, "settings.halftime", SiegeSettings.HALFTIME_SECONDS, 0, 300, 5, 30,
+        Setting roundTime = whole("siege.round", List.of("공성전", "판시간"), List.of("siege", "round"),
+                Material.CLOCK, "settings.round", SiegeSettings.ROUND_SECONDS, 60, SiegeSettings.MAX_SECONDS, 60, 300,
                 Setting.Unit.SECONDS);
         Setting roundBreak = whole("siege.round-break", List.of("공성전", "쉬는시간"), List.of("siege", "break"),
                 Material.CAMPFIRE, "settings.round-break", SiegeSettings.ROUND_BREAK_SECONDS, 0, 600, 10, 60,
                 Setting.Unit.SECONDS);
         Setting rerolls = whole("siege.rerolls", List.of("공성전", "리롤"), List.of("siege", "rerolls"),
                 Material.ENDER_EYE, "settings.rerolls", SiegeSettings.REROLLS, 0, 10, 1, 3, Setting.Unit.TIMES);
-        Setting climax = whole("siege.climax", List.of("공성전", "총공세"), List.of("siege", "climax"),
-                Material.FIRE_CHARGE, "settings.climax", SiegeSettings.CLIMAX_SECONDS, 0, 900, 30, 60,
+        Setting overtime = whole("siege.overtime", List.of("공성전", "연장전"), List.of("siege", "overtime"),
+                Material.FIRE_CHARGE, "settings.overtime", SiegeSettings.OVERTIME_SECONDS, 10, 900, 10, 60,
                 Setting.Unit.SECONDS);
         Setting respawn = whole("siege.respawn", List.of("공성전", "부활"), List.of("siege", "respawn"),
                 Material.RESPAWN_ANCHOR, "settings.respawn", SiegeSettings.RESPAWN_SECONDS, 0, 60, 1, 5,
@@ -72,19 +66,13 @@ final class SiegeSettingEntries {
         Setting passiveXp = whole("siege.passive-xp", List.of("공성전", "기본경험치"), List.of("siege", "passive-xp"),
                 Material.GLOW_BERRIES, "settings.passive-xp", SiegeProgressSettings.XP_PASSIVE, 0, 20, 1, 5,
                 Setting.Unit.COUNT);
-        Setting nodeCapture = whole("siege.node-capture", List.of("공성전", "노드점령"), List.of("siege", "node-capture"),
-                Material.LODESTONE, "settings.node-capture", SiegeProgressSettings.NODE_CAPTURE, 1, 60, 1, 5,
-                Setting.Unit.SECONDS);
-        Setting coreInterval = whole("siege.core-interval", List.of("공성전", "코어주기"),
-                List.of("siege", "core-interval"), Material.BEACON, "settings.core-interval",
-                SiegeProgressSettings.MAJOR_INTERVAL, 30, 900, 30, 60, Setting.Unit.SECONDS);
         return List.of(
                 new SettingsSection("siege.match", Material.END_CRYSTAL, messages, "settings.section.match",
-                        List.of(rounds, winScore, half, halftime, roundBreak, rerolls)),
+                        List.of(rounds, roundTime, roundBreak, overtime, rerolls)),
                 new SettingsSection("siege.battle", Material.IRON_SWORD, messages, "settings.section.battle",
-                        List.of(climax, respawn, towerScale)),
+                        List.of(respawn, towerScale)),
                 new SettingsSection("siege.progress", Material.EXPERIENCE_BOTTLE, messages,
-                        "settings.section.progress", List.of(maxLevel, passiveXp, nodeCapture, coreInterval)));
+                        "settings.section.progress", List.of(maxLevel, passiveXp)));
     }
 
     private Setting whole(String id, List<String> korean, List<String> english, Material icon, String text,

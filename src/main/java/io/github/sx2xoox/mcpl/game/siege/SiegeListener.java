@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.siege;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchContext;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -11,8 +12,9 @@ import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 
 /**
- * Bukkit events of one 공성전 match: hits on tower hitboxes become tower damage (the hitbox itself is never hurt),
- * spawn protection, the hits that count for assists, and health changes for the name plates.
+ * Bukkit events of one 공성전 match: hits on structure hitboxes become structure damage (the hitbox itself is never
+ * hurt), spawn protection, the hits that count for assists, and health changes for the name plates and the floating
+ * numbers.
  */
 final class SiegeListener implements Listener {
 
@@ -58,22 +60,35 @@ final class SiegeListener implements Listener {
         }
         Player attacker = session.combat().resolveAttacker(event);
         if (attacker != null && session.isParticipant(attacker)) {
-            match.score().recordHit(attacker.getUniqueId(), victim.getUniqueId(), match.halfTicks());
+            match.score().recordHit(attacker.getUniqueId(), victim.getUniqueId(), session.tick());
         }
     }
 
-    /** Health changes redraw the player's name plate. */
+    /**
+     * Health changes redraw the player's name plate; the damage pops up as a number (yellow for ability damage),
+     * never for viewers from whom the player is concealed.
+     */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHealthLost(EntityDamageEvent event) {
         if (event.getEntity() instanceof Player player && session.isParticipant(player)) {
             match.healthChanged(player);
+            MatchContext ctx = match.abilities().context();
+            match.damageNumbers().show(player, event.getFinalDamage(), ctx.isAbilityDamage()
+                    ? DamageNumbers.Kind.ABILITY : DamageNumbers.Kind.NORMAL,
+                    viewer -> !ctx.isConcealedFrom(player, viewer));
         }
     }
 
+    /** Healing (not the slow natural regeneration) pops up as a green number. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHealthGained(EntityRegainHealthEvent event) {
         if (event.getEntity() instanceof Player player && session.isParticipant(player)) {
             match.healthChanged(player);
+            if (event.getRegainReason() != EntityRegainHealthEvent.RegainReason.SATIATED) {
+                MatchContext ctx = match.abilities().context();
+                match.damageNumbers().show(player, event.getAmount(), DamageNumbers.Kind.HEAL,
+                        viewer -> !ctx.isConcealedFrom(player, viewer));
+            }
         }
     }
 

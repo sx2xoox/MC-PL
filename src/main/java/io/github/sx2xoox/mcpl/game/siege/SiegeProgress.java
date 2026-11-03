@@ -6,11 +6,12 @@ import java.util.UUID;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
-import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
@@ -19,10 +20,9 @@ import org.bukkit.inventory.EquipmentSlotGroup;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 공성전 levels in play (docs/siege.md §12): hands out experience (passive, kills, assists, towers, defence,
- * objectives), shows level-ups (title, sound, particles, unlock lines), adds the per-level maximum health as an
- * attribute modifier and answers the hosted ability match's kit locks ({@link #activeLocked}, {@link #ultimateLocked},
- * {@link #canChargeGauge}).
+ * The 공성전 levels in play (docs/siege.md "레벨"): hands out experience (passive, kills, assists, towers, and whatever
+ * other features grant through {@link SiegeMatch#addXp}), shows level-ups (title, sound, particles) and adds the
+ * per-level maximum health as an attribute modifier. Levels never lock any part of the kit.
  */
 final class SiegeProgress {
 
@@ -50,8 +50,8 @@ final class SiegeProgress {
 
     // ------------------------------------------------------------------ flow
 
-    /** A new half: everyone back to level 1 without the level health (call before the players' reset). */
-    void newHalf() {
+    /** A new round: everyone back to level 1 without the level health (call before the players' reset). */
+    void newRound() {
         levels.reset();
         for (Player player : session.participants()) {
             applyHealth(player);
@@ -125,21 +125,21 @@ final class SiegeProgress {
         }
         Feedback.title(player, messages.get("level.up-title", Messages.tag("level", to)),
                 messages.get("level.up-subtitle", Messages.tag("level", to)), 3, 25, 8);
-        match.titleShown(player);
-        Feedback.play(player, Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.1f);
+        match.sounds().levelUp(player);
         if (session.isInPlay(player)) {
             player.getWorld().spawnParticle(Particle.TOTEM_OF_UNDYING, player.getLocation().add(0, 1, 0), 30,
                     0.4, 0.6, 0.4, 0.3);
         }
         SiegeProgressSettings s = settings();
-        if (from < s.activeLevel() && to >= s.activeLevel()) {
-            messages.send(player, "level.unlock-active");
-        }
-        if (from < s.ultimateLevel() && to >= s.ultimateLevel()) {
-            messages.send(player, "level.unlock-ultimate");
-        }
         if (s.bonusHealth(to) > s.bonusHealth(from)) {
             messages.send(player, "level.health", Messages.tag("hearts", formatHearts(s.bonusHealth(to))));
+        }
+        AbilityInfo info = match.abilityInfo(player.getUniqueId());
+        for (int level = from + 1; info != null && level <= to; level++) {
+            String perk = SiegePerks.describe(info.id(), level);
+            if (perk != null) {
+                messages.send(player, "level.perk", Messages.tag("perk", perk));
+            }
         }
     }
 
@@ -170,24 +170,6 @@ final class SiegeProgress {
     private static double maxHealth(Player player) {
         AttributeInstance max = player.getAttribute(Attribute.MAX_HEALTH);
         return max == null ? 20 : max.getValue();
-    }
-
-    // ------------------------------------------------------------------ kit locks
-
-    @Nullable Component activeLocked(Player player) {
-        UUID id = player.getUniqueId();
-        return levels.canUseActive(id) ? null : messages.get("level.active-locked",
-                Messages.tag("level", settings().activeLevel()), Messages.tag("now", levels.level(id)));
-    }
-
-    @Nullable Component ultimateLocked(Player player) {
-        UUID id = player.getUniqueId();
-        return levels.canUseUltimate(id) ? null : messages.get("level.ultimate-locked",
-                Messages.tag("level", settings().ultimateLevel()), Messages.tag("now", levels.level(id)));
-    }
-
-    boolean canChargeGauge(Player player) {
-        return levels.canUseUltimate(player.getUniqueId());
     }
 
     // ------------------------------------------------------------------ HUD

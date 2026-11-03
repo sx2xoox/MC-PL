@@ -4,39 +4,45 @@ import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Location;
 
 /**
- * How a 공성전 tower looks (see docs/siege.md §3). The game owns the tower's rules (health, hitbox, order, shield);
- * a look only draws it. The game falls back to a block-display look; with the MCPL resource pack a 3D model look is
- * used, which shows the vanilla look to viewers who do not have the pack loaded.
+ * How a 공성전 structure looks (see docs/siege.md "타워와 코어"). The game owns the rules (health, hitbox, shield); a
+ * look only draws it. Look ids: {@link #TOWER} (a lane tower, outer or inner) and {@link #CORE} (a side's core). A 3D model look shows a vanilla look to viewers who do not have the pack loaded.
  */
 public interface TowerLook {
 
+    /** Look id of a lane tower (outer or inner). */
+    String TOWER = "tower";
+    /** Look id of a side's core (넥서스). */
+    String CORE = "core";
+
     /**
-     * Spawns the visual of one tower standing on {@code base} (the crystal spot of {@code SiegeSites.Tower}).
+     * Spawns the visual of one structure standing on {@code base} (its feet spot, facing the enemy base).
      *
-     * @param towerId    {@code front}, {@code middle} or {@code core}
-     * @param teamColor  the defending team's colour
-     * @return the live visual; the game calls {@link Visual#remove()} when the half or the match ends
+     * @param towerId   {@link #TOWER} or {@link #CORE}
+     * @param teamColor the owning side's colour
+     * @return the live visual; the game calls {@link Visual#remove()} when the round or the match ends
      */
     Visual spawn(Location base, String towerId, TextColor teamColor);
 
     /**
-     * The hitbox (Mannequin scale) a tower of this look needs: a look with bigger towers scales the configured
+     * The hitbox (Mannequin scale) a structure of this look needs: a look with bigger towers scales the configured
      * {@code games.siege.towers.hitbox-scale} up so the hitbox fills the structure. Default: as configured.
-     *
-     * @param towerId    {@code front}, {@code middle} or {@code core}
-     * @param configured the configured hitbox scale
      */
     default double hitboxScale(String towerId, double configured) {
         return configured;
     }
 
-    /** One spawned tower visual. Every entity it creates is tracked and removed by {@link #remove()}. */
+    /** Height above the base (blocks) of the overhead health bar: just over the top of the structure. */
+    default double barHeight(String towerId) {
+        return 7;
+    }
+
+    /** One spawned visual. Every entity it creates is tracked and removed by {@link #remove()}. */
     interface Visual {
 
         /** Health left, 0..1 (cracks, damage stages). */
         void health(double fraction);
 
-        /** Whether the tower is protected because the tower in front of it still stands. */
+        /** Whether the structure is protected (the towers before it still stand). */
         void shielded(boolean shielded);
 
         /** Just took a hit (a short flash or shake). */
