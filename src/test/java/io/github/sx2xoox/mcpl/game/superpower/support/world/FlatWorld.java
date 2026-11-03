@@ -20,6 +20,7 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LightningStrike;
 import org.bukkit.event.entity.CreatureSpawnEvent;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
@@ -47,6 +48,9 @@ import org.mockbukkit.mockbukkit.world.WorldMock;
  * projectiles and fall damage are simulated separately by {@link WorldPhysics} (see {@link #physics()}).
  */
 public final class FlatWorld extends WorldMock {
+
+    /** Plugin chunk tickets held (MockBukkit does not implement them): chunk keys per plugin. */
+    private final Map<Plugin, Set<Long>> chunkTickets = new HashMap<>();
 
     /** Highest stone layer. */
     public static final int FLOOR_Y = 63;
@@ -314,5 +318,35 @@ public final class FlatWorld extends WorldMock {
         PaperRules.checkParticle(particle, data);
         super.spawnParticle(particle, receivers, source, x, y, z, count, offsetX, offsetY, offsetZ, speedX, speedY,
                 speedZ, data, force, randomizationType);
+    }
+
+    @Override
+    public boolean addPluginChunkTicket(int x, int z, Plugin plugin) {
+        return chunkTickets.computeIfAbsent(plugin, key -> new HashSet<>()).add(chunkKey(x, z));
+    }
+
+    @Override
+    public boolean removePluginChunkTicket(int x, int z, Plugin plugin) {
+        Set<Long> held = chunkTickets.get(plugin);
+        return held != null && held.remove(chunkKey(x, z));
+    }
+
+    @Override
+    public void removePluginChunkTickets(Plugin plugin) {
+        chunkTickets.remove(plugin);
+    }
+
+    /** True while {@code plugin} holds a chunk ticket on the chunk at {@code x, z} (chunk coordinates). */
+    public boolean hasChunkTicket(int x, int z, Plugin plugin) {
+        return chunkTickets.getOrDefault(plugin, Set.of()).contains(chunkKey(x, z));
+    }
+
+    /** How many chunk tickets {@code plugin} holds here. */
+    public int chunkTickets(Plugin plugin) {
+        return chunkTickets.getOrDefault(plugin, Set.of()).size();
+    }
+
+    private static long chunkKey(int x, int z) {
+        return ((long) x << 32) ^ (z & 0xFFFFFFFFL);
     }
 }

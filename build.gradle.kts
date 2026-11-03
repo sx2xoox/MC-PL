@@ -16,8 +16,11 @@ repositories {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
+    // the server's own netty (the resource pack served on the game port, core.pack.SamePortHost); Paper 26.3's version
+    compileOnly("io.netty:netty-transport:4.2.16.Final")
 
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
+    testImplementation("io.netty:netty-transport:4.2.16.Final")
     testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.3:$mockBukkitVersion")
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")

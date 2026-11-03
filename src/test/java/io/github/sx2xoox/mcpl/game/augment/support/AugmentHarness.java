@@ -17,6 +17,7 @@ import io.github.sx2xoox.mcpl.game.augment.AugmentGame;
 import io.github.sx2xoox.mcpl.game.augment.AugmentSettings;
 import io.github.sx2xoox.mcpl.game.augment.runtime.AugmentMatch;
 import io.github.sx2xoox.mcpl.game.augment.runtime.MatchPhase;
+import io.github.sx2xoox.mcpl.game.superpower.support.TestPack;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestServer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -45,6 +46,7 @@ public final class AugmentHarness implements AutoCloseable {
         lobby = new FlatWorld("world");
         server.addWorld(lobby);
         hub = MockBukkit.load(MCPLPlugin.class).hub();
+        TestPack.disable(hub);
         game = (AugmentGame) hub.games().game(AugmentGame.ID);
         worlds = new TestWorldProvider(server);
         hub.tempWorlds().provider(worlds);

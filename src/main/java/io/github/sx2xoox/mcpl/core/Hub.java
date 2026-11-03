@@ -10,6 +10,7 @@ import io.github.sx2xoox.mcpl.core.command.GameCommand;
 import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
 import io.github.sx2xoox.mcpl.core.map.MapService;
+import io.github.sx2xoox.mcpl.core.pack.PackCheck;
 import io.github.sx2xoox.mcpl.core.pack.ResourcePackService;
 import io.github.sx2xoox.mcpl.core.player.SnapshotStore;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
@@ -55,6 +56,7 @@ public final class Hub {
     private final SettingsEditor settings;
     private final SettingsMenuListener settingsListener;
     private final ResourcePackService resourcePacks;
+    private final PackCheck packCheck;
     private boolean enabled;
 
     public Hub(JavaPlugin plugin) {
@@ -74,6 +76,7 @@ public final class Hub {
         this.settings = new SettingsEditor(this);
         this.settingsListener = new SettingsMenuListener(this);
         this.resourcePacks = new ResourcePackService(plugin, config::resourcePack, messages);
+        this.packCheck = new PackCheck(plugin, resourcePacks, messages);
     }
 
     /**
@@ -124,6 +127,7 @@ public final class Hub {
         gameRules.shutdown();
         tempWorlds.shutdown();
         maps.disable();
+        packCheck.removeAll();
         resourcePacks.disable();
         HandlerList.unregisterAll(listener);
         HandlerList.unregisterAll(settingsListener);
@@ -150,6 +154,11 @@ public final class Hub {
     /** Sends the MCPL resource pack and knows who loaded it ({@code resource-pack.*}). */
     public ResourcePackService resourcePacks() {
         return resourcePacks;
+    }
+
+    /** {@code /게임 리소스팩}: pack status, the visual check, resending, the notice at a match start. */
+    public PackCheck packCheck() {
+        return packCheck;
     }
 
     public HubConfig config() {

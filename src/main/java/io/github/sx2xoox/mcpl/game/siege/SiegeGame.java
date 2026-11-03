@@ -84,9 +84,16 @@ public final class SiegeGame implements MiniGame {
         return messages.lines("game.description");
     }
 
+    /** The towers are 3D models of the MCPL pack: admins hear at the start who has not loaded it. */
+    @Override
+    public boolean usesResourcePack() {
+        return true;
+    }
+
+    /** One player may start it alone to try it out (the other team stays empty, see {@link SiegeMatch#isSolo}). */
     @Override
     public int minPlayers() {
-        return 2;
+        return 1;
     }
 
     @Override

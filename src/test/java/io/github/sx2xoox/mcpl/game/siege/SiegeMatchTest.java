@@ -412,14 +412,48 @@ class SiegeMatchTest {
         assertTrue(h.server.dispatchCommand(admin, "mcpl siege pool list"));
     }
 
+    /** One player may start it alone to try it: team B stays empty and only score and time end the rounds. */
+    @Test
+    void aPlayerCanPlayItAlone() {
+        SiegeMatch match = start(1);
+        assertTrue(match.isSolo());
+        assertEquals(1, match.teams().get(0).size());
+        assertEquals(0, match.teams().get(1).size(), "no bots: the other team stays empty");
+        Player solo = member(match, 0);
+        Tower front = tower(match, "front");
+        assertEquals(600, front.maxHealth(), 1.0E-9, "towers scale for one attacker");
+        assertEquals(match.layout().attackerSpawns().getFirst().getX(), solo.getLocation().getX(), 1.0);
+        h.ticks(100);
+        assertTrue(match.session().isRunning(), "an empty team does not lose at once");
+        ctx(match).damage(solo, hitbox(front), 10_000);
+        assertEquals(15, match.score().points(0));
+
+        match.expireHalf();
+        untilFight(2);
+        assertEquals(1, match.attackingTeam(), "the empty team attacks in the second half");
+        assertTrue(match.session().isRunning());
+        assertEquals(match.layout().defenderSpawns(0).getFirst().getX(), solo.getLocation().getX(), 1.0);
+        h.ticks(100);
+        match.expireHalf();
+        assertEquals(1, match.score().roundWins(0), "the round still ends on score and time");
+        assertTrue(match.session().isRunning());
+    }
+
     @Test
     void stoppingMidHalfLeavesNothingBehind() {
         SiegeMatch match = start(2);
         assertTrue(count(Mannequin.class) > 0);
+        // The tower entities are not persistent: their chunks are held loaded (else they vanish when nobody is near).
+        for (Tower tower : match.towers()) {
+            Location at = hitbox(tower).getLocation();
+            assertTrue(h.flatWorld().hasChunkTicket(at.getBlockX() >> 4, at.getBlockZ() >> 4,
+                    match.session().hub().plugin()), tower.id() + "'s chunk is held loaded");
+        }
         assertTrue(h.server.dispatchCommand(h.server.getConsoleSender(), "게임 중지"));
         h.tickUntil(() -> h.hub.games().session() == null, 2000, "the session to close");
         assertFalse(match.session().isRunning());
         assertEquals(0, count(Mannequin.class));
         assertEquals(0, count(BlockDisplay.class));
+        assertEquals(0, h.flatWorld().chunkTickets(match.session().hub().plugin()), "the tower chunks are let go");
     }
 }

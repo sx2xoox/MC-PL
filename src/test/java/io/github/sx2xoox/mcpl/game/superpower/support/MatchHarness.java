@@ -57,6 +57,7 @@ public final class MatchHarness implements AutoCloseable {
             server.addSimpleWorld(worldName);
         }
         hub = MockBukkit.load(MCPLPlugin.class).hub();
+        TestPack.disable(hub);
         game = (SuperpowerGame) hub.games().game(SuperpowerGame.ID);
         settings().set("selection.reveal-seconds", 1);
         settings().set("prep-seconds", 1);

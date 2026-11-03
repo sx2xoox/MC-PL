@@ -32,6 +32,7 @@ import org.bukkit.FireworkEffect;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Sound;
+import org.bukkit.World;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Entity;
@@ -78,6 +79,8 @@ public final class SiegeMatch implements GameInstance {
     private final List<Tower> towers = new ArrayList<>();
     private final Map<UUID, Long> protectedUntil = new HashMap<>();
     private final Map<UUID, Integer> rerollsLeft = new HashMap<>();
+    /** Chunks held loaded around the towers ({@link #holdTowerChunks}), as {@code x, z} pairs. */
+    private final List<int[]> heldChunks = new ArrayList<>();
     /** The half each player who is waiting to respawn died in ({@link #halfSerial}). */
     private final Map<UUID, Integer> diedInHalf = new HashMap<>();
     /** Counts every half begun, so a player who respawns after a half change gets the fresh start too. */
@@ -95,6 +98,8 @@ public final class SiegeMatch implements GameInstance {
     private boolean suddenDeath;
     private int lastCountdown;
     private boolean stopped;
+    /** A team started empty (one player trying the mode alone): an empty team does not lose the match. */
+    private boolean solo;
 
     public SiegeMatch(SiegeGame game, GameSession session) {
         this.game = game;
@@ -118,7 +123,9 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         teams.addAll(session.teams().subList(0, 2));
+        solo = teams.stream().anyMatch(team -> team.members().isEmpty());
         layout = game.layoutFor(session.arena());
+        holdTowerChunks();
         score = new SiegeScore(settings, this::teamIndex);
         SuperpowerMatch hosted = new SuperpowerMatch(game.superpower(), session, new Host());
         abilities = hosted;
@@ -201,6 +208,7 @@ public final class SiegeMatch implements GameInstance {
         stopped = true;
         try {
             disposeTowers();
+            releaseTowerChunks();
             if (abilities != null) {
                 abilities.stop();
             }
@@ -309,7 +317,7 @@ public final class SiegeMatch implements GameInstance {
             return;
         }
         for (int team = 0; team < 2; team++) {
-            if (aliveMembers(team) == 0) {
+            if (aliveMembers(team) == 0 && !(solo && teams.get(team).members().isEmpty())) {
                 session.broadcast(messages.prefixed("result.team-left", Messages.tag("team",
                         teams.get(team).displayName())));
                 finishMatch(1 - team, messages.get("result.reason-left"));
@@ -700,6 +708,38 @@ public final class SiegeMatch implements GameInstance {
             towers.add(tower);
         }
         refreshShields();
+    }
+
+    /**
+     * Keeps the chunks around every tower loaded for the whole match with plugin chunk tickets: the towers' entities are
+     * not persistent, so a tower chunk unloading (nobody near it, or not yet: towers spawn before the players arrive)
+     * would silently delete the hitbox and the visual.
+     */
+    private void holdTowerChunks() {
+        SiegeLayout placed = layout();
+        World world = placed.world();
+        for (var site : placed.sites().towers()) {
+            Location at = placed.at(site);
+            int reach = site.radius() + 2;
+            for (int cx = (at.getBlockX() - reach) >> 4; cx <= (at.getBlockX() + reach) >> 4; cx++) {
+                for (int cz = (at.getBlockZ() - reach) >> 4; cz <= (at.getBlockZ() + reach) >> 4; cz++) {
+                    if (world.addPluginChunkTicket(cx, cz, session.plugin())) {
+                        heldChunks.add(new int[] {cx, cz});
+                    }
+                }
+            }
+        }
+    }
+
+    private void releaseTowerChunks() {
+        SiegeLayout placed = layout;
+        if (placed == null) {
+            return;
+        }
+        for (int[] chunk : heldChunks) {
+            placed.world().removePluginChunkTicket(chunk[0], chunk[1], session.plugin());
+        }
+        heldChunks.clear();
     }
 
     private void disposeTowers() {
@@ -1114,6 +1154,11 @@ public final class SiegeMatch implements GameInstance {
     }
 
     // =================================================================== testing
+
+    /** A team started empty (started alone to try the mode): only score and time end the rounds. */
+    public boolean isSolo() {
+        return solo;
+    }
 
     /** Ends the current half as if its time ran out (tests and admins). */
     public void expireHalf() {

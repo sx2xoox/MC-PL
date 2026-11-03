@@ -1,5 +1,6 @@
 package io.github.sx2xoox.mcpl.game.superpower.support;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -24,6 +25,7 @@ import io.papermc.paper.entity.TeleportFlag;
 import io.papermc.paper.event.player.PlayerArmSwingEvent;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.resource.ResourcePackRequest;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Input;
@@ -101,6 +103,30 @@ public final class TestPlayer extends PlayerMock implements Hurtable, EntityView
     public TestPlayer(ServerMock server, String name) {
         super(server, name);
         VanillaAttributes.completePlayer(attributes);
+    }
+
+    /** Resource pack requests sent to this player (MockBukkit does not implement them). */
+    private final List<ResourcePackRequest> packRequests = new ArrayList<>();
+
+    @Override
+    public void sendResourcePacks(ResourcePackRequest request) {
+        packRequests.add(request);
+    }
+
+    @Override
+    public void removeResourcePacks(UUID id, UUID... others) {
+        // nothing is applied in a mock client
+    }
+
+    /** The address the player connected with (MockBukkit does not implement it). */
+    @Override
+    public InetSocketAddress getVirtualHost() {
+        return InetSocketAddress.createUnresolved("127.0.0.1", 25565);
+    }
+
+    /** Every resource pack request this player was sent, oldest first. */
+    public List<ResourcePackRequest> packRequests() {
+        return List.copyOf(packRequests);
     }
 
     /** Like the server: absorption is clamped to the {@link Attribute#MAX_ABSORPTION} attribute. */

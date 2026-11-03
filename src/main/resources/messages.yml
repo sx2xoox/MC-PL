@@ -29,6 +29,29 @@ error:
 # ── 리소스팩 (config.yml 의 resource-pack) ─────────────────────
 resource-pack:
   prompt: "<gradient:#ffb347:#ff5e62><bold>MCPL</bold></gradient> <white>공성전 타워 같은 3D 모델용 리소스팩입니다.</white>\n<gray>받지 않아도 플레이할 수 있습니다 (바닐라 블록 모습으로 대신 표시)."
+  status:
+    loaded: "<green>적용됨"
+    pending: "<yellow>받는 중"
+    declined: "<red>거절"
+    failed: "<red>실패"
+    none: "<gray>안 보냄"
+  mode:
+    off: "<gray>꺼짐 <dark_gray>(config.yml 의 resource-pack.enabled)"
+    same-port: "<white>접속 포트로 함께"
+    separate-port: "<white>별도 포트 <port>"
+    url: "<white>직접 올린 주소"
+  self: "<gray>내 리소스팩: <status> <dark_gray>· <gray>받는 주소 <white><url></white>"
+  self-off: "<gray>이 서버는 리소스팩을 보내지 않습니다 <dark_gray>(resource-pack.enabled: false)"
+  check-hint: "<gray>눈앞에 <white>10초</white> 동안 확인용 상자가 나타납니다: <green>초록 OK 상자</green>가 보이면 정상, <light_purple>보라·검정 체크무늬</light_purple>나 아무것도 안 보이면 리소스팩이 적용되지 않은 것입니다. <click:run_command:'/게임 리소스팩 다시받기'><hover:show_text:'<gray>클릭하여 다시 받기'><#ffb347>[다시 받기]</#ffb347></hover></click>"
+  check-label: "<white>리소스팩 확인</white>\n<green>초록 OK 상자</green><gray>가 보이면 정상</gray>\n<light_purple>보라·검정 체크무늬</light_purple><gray>나 빈 곳이면</gray>\n<red>리소스팩이 적용되지 않음</red>"
+  list-header: "<gray>리소스팩 <dark_gray>· <gray>방식 <mode> <dark_gray>· <gray>적용 <white><loaded></white>/<white><total></white>명"
+  list-entry: " <dark_gray>-</dark_gray> <white><player></white> <status> <dark_gray><url></dark_gray>"
+  list-empty: " <gray>접속한 플레이어가 없습니다."
+  resent-self: "<gray>리소스팩을 다시 보냈습니다. 받기를 누른 뒤 <white>/게임 리소스팩</white> 으로 확인하세요."
+  resent: "<gray>리소스팩을 다시 보냈습니다: <white><count></white>명"
+  resend-off: "<red>리소스팩 보내기가 꺼져 있습니다. <gray>(config.yml 의 resource-pack.enabled)"
+  unknown-player: "<red>'<white><input></white>' 플레이어를 찾을 수 없습니다."
+  missing-before-start: "<yellow>리소스팩이 적용되지 않은 참가자 <white><count></white>명: <white><players></white> <gray>(바닐라 블록 모습으로 보입니다) <click:run_command:'/게임 리소스팩'><hover:show_text:'<gray>클릭하여 상태 보기'><#ffb347>[/게임 리소스팩]</#ffb347></hover></click>"
 
 # ── 도움말 (/게임) ───────────────────────────────────────────
 help:

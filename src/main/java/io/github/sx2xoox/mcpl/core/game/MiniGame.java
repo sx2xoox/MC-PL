@@ -66,6 +66,14 @@ public interface MiniGame {
         return false;
     }
 
+    /**
+     * Whether this mode shows models of the MCPL resource pack: when it starts, admins are told which participants
+     * have not loaded the pack ({@code PackCheck#noticeMissing}).
+     */
+    default boolean usesResourcePack() {
+        return false;
+    }
+
     /** Whether the configured team size applies to this mode. False → always free-for-all. */
     default boolean supportsTeams() {
         return false;

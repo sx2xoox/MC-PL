@@ -213,6 +213,9 @@ public final class GameManager {
             throw new GameStartException(messages.prefixed("error.internal"), e);
         }
         hub.settings().refreshMenus(); // their status shows that changes now wait for the next match
+        if (game.usesResourcePack()) {
+            hub.packCheck().noticeMissing(eligible); // the countdown runs: who will see the vanilla looks
+        }
         return created;
     }
 

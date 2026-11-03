@@ -34,6 +34,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -54,6 +55,7 @@ import org.jspecify.annotations.Nullable;
  * /게임 경기장|arena [설정|set [반경] | 초기화|reset | 맵|map [맵 [다시짓기|rebuild | 이동|tp]]]     (admin)
  * /게임 설정|settings [목록|list | &lt;설정&gt; [값]]   (admin, see {@link SettingsCommand}; players get a menu)
  * /게임 리로드|reload                     (admin)
+ * /게임 리소스팩|resourcepack [확인|check | 다시받기|resend [플레이어|모두 (admin)]]
  * </pre>
  * plus whatever the registered mini-games add through {@link MiniGame#registerCommands}.
  */
@@ -166,6 +168,23 @@ public final class GameCommand {
         }
         for (String name : List.of("리로드", "reload")) {
             root.then(Commands.literal(name).requires(ADMIN).executes(ctx -> reload(ctx.getSource().getSender())));
+        }
+        for (String name : List.of("리소스팩", "resourcepack")) {
+            LiteralArgumentBuilder<CommandSourceStack> pack = Commands.literal(name)
+                    .executes(ctx -> packCheck(ctx.getSource().getSender()));
+            for (String check : List.of("확인", "check")) {
+                pack.then(Commands.literal(check).executes(ctx -> packCheck(ctx.getSource().getSender())));
+            }
+            for (String resend : List.of("다시받기", "resend")) {
+                String targetArg = resend.equals("resend") ? "player" : "대상";
+                pack.then(Commands.literal(resend)
+                        .executes(ctx -> packResend(ctx.getSource().getSender(), null))
+                        .then(Commands.argument(targetArg, StringArgumentType.greedyString()).requires(ADMIN)
+                                .suggests(this::suggestPackTargets)
+                                .executes(ctx -> packResend(ctx.getSource().getSender(),
+                                        StringArgumentType.getString(ctx, targetArg)))));
+            }
+            root.then(pack);
         }
 
         GameCommandRegistrar registrar = new GameCommandRegistrar() {
@@ -542,6 +561,58 @@ public final class GameCommand {
         hub.config().clearArena();
         messages().send(sender, "command.arena-reset", Messages.tag("radius", hub.config().arenaRadius()));
         return Command.SINGLE_SUCCESS;
+    }
+
+    private int packCheck(CommandSender sender) {
+        hub.packCheck().check(sender);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Resends the pack to the sender, or (admins) to {@code target}: a player name or 모두/all. */
+    private int packResend(CommandSender sender, @Nullable String target) {
+        if (!hub.resourcePacks().offered()) {
+            messages().send(sender, "resource-pack.resend-off");
+            return 0;
+        }
+        if (target == null) {
+            if (!(sender instanceof Player player)) {
+                messages().send(sender, "error.player-only");
+                return 0;
+            }
+            hub.packCheck().resend(List.of(player));
+            messages().send(sender, "resource-pack.resent-self");
+            return Command.SINGLE_SUCCESS;
+        }
+        List<Player> targets;
+        target = target.trim();
+        if (target.equals("모두") || target.equalsIgnoreCase("all")) {
+            targets = List.copyOf(Bukkit.getOnlinePlayers());
+        } else {
+            Player player = Bukkit.getPlayerExact(target);
+            if (player == null) {
+                messages().send(sender, "resource-pack.unknown-player", Messages.tag("input", target));
+                return 0;
+            }
+            targets = List.of(player);
+        }
+        int sent = hub.packCheck().resend(targets);
+        messages().send(sender, "resource-pack.resent", Messages.tag("count", sent));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private CompletableFuture<Suggestions> suggestPackTargets(CommandContext<CommandSourceStack> ctx,
+                                                              SuggestionsBuilder builder) {
+        String remaining = builder.getRemainingLowerCase();
+        List<String> options = new ArrayList<>(List.of("모두", "all"));
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            options.add(player.getName());
+        }
+        for (String option : options) {
+            if (option.toLowerCase(Locale.ROOT).startsWith(remaining)) {
+                builder.suggest(option);
+            }
+        }
+        return builder.buildFuture();
     }
 
     private int reload(CommandSender sender) {

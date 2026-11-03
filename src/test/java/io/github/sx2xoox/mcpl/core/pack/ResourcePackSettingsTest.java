@@ -14,19 +14,21 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 import org.junit.jupiter.api.Test;
 
-/** {@code resource-pack.*} parsing, the download URL and hash, and client statuses. */
+/** {@code resource-pack.*} parsing, the per-player download URL and hash, and client statuses. */
 class ResourcePackSettingsTest {
 
     @Test
-    void theShippedConfigLeavesThePackOff() throws IOException, InvalidConfigurationException {
+    void theShippedConfigSendsThePackFromTheGamePort() throws IOException, InvalidConfigurationException {
         YamlConfiguration config = new YamlConfiguration();
         try (InputStream in = getClass().getResourceAsStream("/config.yml")) {
             config.loadFromString(new String(in.readAllBytes(), StandardCharsets.UTF_8));
         }
         ResourcePackSettings settings = ResourcePackSettings.read(config.getConfigurationSection("resource-pack"));
-        assertFalse(settings.enabled());
+        assertTrue(settings.enabled(), "on by default: no setup needed");
+        assertEquals(ResourcePackSettings.Mode.SAME_PORT, settings.mode());
         assertFalse(settings.required());
         assertTrue(settings.selfHosted());
+        assertEquals("", settings.publicAddress());
         assertEquals(ResourcePackSettings.DEFAULT_PORT, settings.hostPort());
         assertEquals(ResourcePackSettings.AUTO, settings.sha1());
         assertEquals(ResourcePackSettings.DISABLED, ResourcePackSettings.read(null));
@@ -35,35 +37,69 @@ class ResourcePackSettingsTest {
     @Test
     void readsAndValidatesTheSection() {
         YamlConfiguration config = new YamlConfiguration();
-        config.set("resource-pack.enabled", true);
         config.set("resource-pack.url", "  https://example.com/MCPL-pack.zip ");
+        config.set("resource-pack.mode", "separate-port");
         config.set("resource-pack.host-port", 99999);
         config.set("resource-pack.sha1", " ABCDEF ");
         config.set("resource-pack.required", true);
         ResourcePackSettings settings = ResourcePackSettings.read(config.getConfigurationSection("resource-pack"));
-        assertTrue(settings.enabled());
+        assertTrue(settings.enabled(), "a missing enabled key means on");
         assertTrue(settings.required());
         assertFalse(settings.selfHosted());
+        assertEquals(ResourcePackSettings.Mode.SEPARATE_PORT, settings.mode());
         assertEquals(ResourcePackSettings.DEFAULT_PORT, settings.hostPort(), "an invalid port falls back");
-        assertEquals("https://example.com/MCPL-pack.zip", settings.downloadUrl("ignored.zip", ""));
+        assertEquals("https://example.com/MCPL-pack.zip",
+                settings.downloadUrl("ignored.zip", true, "mc.example.com", 25565, "", 25565));
         assertNull(settings.hashToSend("0123"), "not a 40-digit SHA-1: no hash check");
+        config.set("resource-pack.mode", "nonsense");
+        assertEquals(ResourcePackSettings.Mode.SAME_PORT,
+                ResourcePackSettings.read(config.getConfigurationSection("resource-pack")).mode());
+    }
+
+    private static ResourcePackSettings selfHosted(String publicAddress) {
+        return new ResourcePackSettings(true, ResourcePackSettings.Mode.SAME_PORT, "", 8164, publicAddress, "auto",
+                false);
     }
 
     @Test
-    void theBuiltInServerUrlNeedsAnAddress() {
-        ResourcePackSettings settings = new ResourcePackSettings(true, "", 8164, "", "auto", false);
-        assertNull(settings.downloadUrl("p.zip", ""), "no public address and no server-ip");
-        assertNull(settings.downloadUrl("p.zip", "0.0.0.0"));
-        assertEquals("http://10.0.0.5:8164/p.zip", settings.downloadUrl("p.zip", "10.0.0.5"));
-        ResourcePackSettings named = new ResourcePackSettings(true, "", 25599, "mc.example.com", "auto", false);
-        assertEquals("http://mc.example.com:25599/p.zip", named.downloadUrl("p.zip", "10.0.0.5"));
-        ResourcePackSettings v6 = new ResourcePackSettings(true, "", 8164, "2001:db8::1", "auto", false);
-        assertEquals("http://[2001:db8::1]:8164/p.zip", v6.downloadUrl("p.zip", ""));
+    void theGamePortUrlFollowsTheAddressThePlayerConnectedWith() {
+        ResourcePackSettings settings = selfHosted("");
+        assertEquals("http://127.0.0.1:25599/p.zip", settings.downloadUrl("p.zip", true, "127.0.0.1", 25599, "", 25599));
+        assertEquals("http://mc.example.com:25570/p.zip",
+                settings.downloadUrl("p.zip", true, "mc.example.com.", 25570, "", 25599),
+                "the port they typed (port forwarding), trailing DNS dot dropped");
+        assertEquals("http://mc.example.com:25599/p.zip",
+                settings.downloadUrl("p.zip", true, "mc.example.com\0FML3\0", 25565, "", 25599),
+                "25565 = typed without a port (SRV): the server's port; mod loader markers dropped");
+        assertEquals("http://10.0.0.5:25599/p.zip", settings.downloadUrl("p.zip", true, null, -1, "10.0.0.5", 25599),
+                "unknown connect address: server-ip");
+        assertNull(settings.downloadUrl("p.zip", true, null, -1, "", 25599), "no address at all");
+        assertNull(settings.downloadUrl("p.zip", true, "", 25599, "0.0.0.0", 25599));
+        assertEquals("http://[2001:db8::1]:25599/p.zip",
+                settings.downloadUrl("p.zip", true, "2001:db8::1", 25599, "", 25599));
+    }
+
+    @Test
+    void theSeparatePortAndAPublicAddressOverride() {
+        ResourcePackSettings settings = selfHosted("");
+        assertEquals("http://127.0.0.1:8164/p.zip", settings.downloadUrl("p.zip", false, "127.0.0.1", 25599, "", 25599),
+                "separate port: the connect host with host-port");
+        assertEquals("http://mc.example.com:25599/p.zip",
+                selfHosted("mc.example.com").downloadUrl("p.zip", true, "127.0.0.1", 25570, "", 25599));
+        assertEquals("http://mc.example.com:8164/p.zip",
+                selfHosted("mc.example.com").downloadUrl("p.zip", false, "127.0.0.1", 25570, "", 25599));
+        assertEquals("http://mc.example.com:30000/p.zip",
+                selfHosted("mc.example.com:30000").downloadUrl("p.zip", true, "127.0.0.1", 25570, "", 25599));
+        assertEquals("http://[2001:db8::1]:8164/p.zip",
+                selfHosted("2001:db8::1").downloadUrl("p.zip", false, null, -1, "", 25599));
         String sha1 = "a".repeat(40);
         assertEquals(sha1, settings.hashToSend(sha1), "auto = the bundled pack's hash");
-        assertNull(new ResourcePackSettings(true, "", 8164, "", "", false).hashToSend(sha1));
-        assertEquals("b".repeat(40),
-                new ResourcePackSettings(true, "", 8164, "", "B".repeat(40), false).hashToSend(sha1));
+        ResourcePackSettings noCheck = new ResourcePackSettings(true, ResourcePackSettings.Mode.SAME_PORT, "", 8164,
+                "", "", false);
+        assertNull(noCheck.hashToSend(sha1));
+        ResourcePackSettings fixed = new ResourcePackSettings(true, ResourcePackSettings.Mode.SAME_PORT, "", 8164, "",
+                "B".repeat(40), false);
+        assertEquals("b".repeat(40), fixed.hashToSend(sha1));
     }
 
     @Test

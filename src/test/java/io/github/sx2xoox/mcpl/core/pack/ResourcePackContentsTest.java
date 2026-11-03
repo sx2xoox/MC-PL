@@ -101,6 +101,7 @@ class ResourcePackContentsTest {
                 used.add(ModelTowerLook.body(tower, stage));
             }
         }
+        used.add(PackCheck.MODEL);
         for (ModelRef ref : used) {
             assertTrue(built.files().containsKey("assets/mcpl/items/" + ref.id() + ".json"), ref.id());
         }
