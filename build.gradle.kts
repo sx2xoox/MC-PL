@@ -34,12 +34,30 @@ tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.addAll(listOf("-Xlint:all", "-Xlint:-serial", "-Xlint:-processing", "-Xlint:-classfile"))
 }
 
+// MCPL 리소스팩: src/main/resourcepack-src (models/*.bbmodel from tools/assetgen, assets/ copied as-is) is converted
+// by core.pack.PackBuilder into build/resourcepack/MCPL-pack.zip, which is bundled into the plugin jar. The zip is
+// reproducible (sorted entries, fixed timestamps), so the same sources always give the same SHA-1 clients check.
+val resourcePackSource = layout.projectDirectory.dir("src/main/resourcepack-src")
+val resourcePackZip = layout.buildDirectory.file("resourcepack/MCPL-pack.zip")
+val resourcePack = tasks.register<JavaExec>("resourcePack") {
+    description = "Builds the MCPL resource pack (build/resourcepack/MCPL-pack.zip, also bundled into the plugin jar)."
+    group = "build"
+    classpath = sourceSets.main.get().output.classesDirs + configurations.compileClasspath.get()
+    mainClass = "io.github.sx2xoox.mcpl.core.pack.PackBuilder"
+    inputs.dir(resourcePackSource)
+    outputs.file(resourcePackZip)
+    args(resourcePackSource.asFile.path, resourcePackZip.get().asFile.path)
+}
+
 tasks.processResources {
     val props = mapOf("version" to project.version)
     inputs.properties(props)
     filteringCharset = Charsets.UTF_8.name()
     filesMatching("plugin.yml") {
         expand(props)
+    }
+    from(resourcePack) {
+        into("resourcepack")
     }
 }
 
