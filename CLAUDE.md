@@ -63,6 +63,10 @@ src/main/java/io/github/sx2xoox/mcpl/
                                (SiegeBalanceReport fails while stale)
     tower/                     Tower (rules + Mannequin hitbox) and looks (TowerLook contract; ModelTowerLook = 3D models +
                                per-viewer vanilla fallback)
+    arena/ minion/ jungle/     v2 lane systems (docs/siege-v2.md §2–§4) behind SiegeArena (what they need from the rules);
+    economy/ shop/ creature/   SiegeSystems = facade the match drives (+ MatchHost hooks), LaneModifiers = shared additive
+                               per-player modifiers; creature/CreatureLook = model seam (VanillaCreatureLook fallback,
+                               models mcpl:creature/<kind>); tests on lanes/TestLaneSites with a test SiegeArena
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
     abilities/                 one class per ability + BuiltinAbilities registration

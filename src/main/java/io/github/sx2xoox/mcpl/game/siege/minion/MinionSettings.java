@@ -1,0 +1,114 @@
+package io.github.sx2xoox.mcpl.game.siege.minion;
+
+import java.util.EnumMap;
+import java.util.Map;
+
+import org.bukkit.configuration.ConfigurationSection;
+
+/**
+ * The minions of 공성전 v2 ({@code games.siege.minions.*}; docs/siege-v2.md §2). Times in ticks, distances in blocks,
+ * health and damage in health points.
+ *
+ * @param enabled            minions spawn at all
+ * @param firstWaveTicks     from the start of the fight to the first wave
+ * @param intervalTicks      between waves
+ * @param melee              melee minions per wave and lane
+ * @param ranged             ranged minions per wave and lane
+ * @param playersPerExtra    one extra melee minion per this many players of the bigger team beyond the first
+ * @param maxExtra           most extra melee minions
+ * @param cannonEvery        a cannon joins every this many waves (0 = never)
+ * @param healthPerWave      extra health per wave already sent (0.02 = +2 % a wave)
+ * @param aggroRadius        minions fight enemies this close
+ * @param leash              minions never chase farther than this from the lane point they last reached
+ * @param waypointReach      a waypoint this close (horizontally) counts as reached
+ * @param stuckTicks         a minion that has not moved for this long re-paths; twice as long, it is put on its path
+ * @param xpRadius           enemies of a dying minion this close get its experience
+ * @param empoweredBonus     health and damage bonus of a team's minions while it holds the dragon buff
+ * @param stats              each kind's numbers
+ */
+public record MinionSettings(
+        boolean enabled,
+        int firstWaveTicks,
+        int intervalTicks,
+        int melee,
+        int ranged,
+        int playersPerExtra,
+        int maxExtra,
+        int cannonEvery,
+        double healthPerWave,
+        double aggroRadius,
+        double leash,
+        double waypointReach,
+        int stuckTicks,
+        double xpRadius,
+        double empoweredBonus,
+        Map<MinionKind, Stats> stats) {
+
+    public static final String PATH = "minions.";
+
+    /**
+     * The numbers of one minion kind.
+     *
+     * @param health      health
+     * @param damage      damage of a hit (on minions, players and structures)
+     * @param range       hit range
+     * @param attackTicks between hits
+     * @param speed       walking speed (pathfinder multiplier)
+     * @param scale       size
+     * @param xp          experience for nearby enemies when it dies
+     */
+    public record Stats(double health, double damage, double range, int attackTicks, double speed, double scale,
+            int xp) {
+    }
+
+    private static final Map<MinionKind, Stats> DEFAULTS = Map.of(
+            MinionKind.MELEE, new Stats(22, 2.5, 2.2, 20, 1.0, 1.0, 6),
+            MinionKind.RANGED, new Stats(15, 2.0, 7.0, 30, 1.0, 0.8, 6),
+            MinionKind.CANNON, new Stats(60, 5.0, 5.5, 40, 0.8, 0.6, 15));
+
+    public static MinionSettings read(ConfigurationSection config) {
+        Map<MinionKind, Stats> stats = new EnumMap<>(MinionKind.class);
+        for (MinionKind kind : MinionKind.values()) {
+            Stats d = DEFAULTS.get(kind);
+            String p = PATH + kind.key() + ".";
+            stats.put(kind, new Stats(
+                    config.getDouble(p + "health", d.health()),
+                    config.getDouble(p + "damage", d.damage()),
+                    config.getDouble(p + "range", d.range()),
+                    ticks(config.getDouble(p + "attack-seconds", d.attackTicks() / 20.0)),
+                    config.getDouble(p + "speed", d.speed()),
+                    config.getDouble(p + "scale", d.scale()),
+                    config.getInt(p + "xp", d.xp())));
+        }
+        return new MinionSettings(
+                config.getBoolean(PATH + "enabled", true),
+                ticks(config.getDouble(PATH + "first-wave-seconds", 20)),
+                Math.max(20, ticks(config.getDouble(PATH + "interval-seconds", 30))),
+                Math.max(0, config.getInt(PATH + "melee", 3)),
+                Math.max(0, config.getInt(PATH + "ranged", 2)),
+                Math.max(1, config.getInt(PATH + "players-per-extra", 3)),
+                Math.max(0, config.getInt(PATH + "max-extra", 2)),
+                Math.max(0, config.getInt(PATH + "cannon-every", 3)),
+                config.getDouble(PATH + "health-per-wave", 0.02),
+                config.getDouble(PATH + "aggro-radius", 7),
+                config.getDouble(PATH + "leash", 10),
+                config.getDouble(PATH + "waypoint-reach", 2),
+                Math.max(10, ticks(config.getDouble(PATH + "stuck-seconds", 3))),
+                config.getDouble(PATH + "xp-radius", 12),
+                config.getDouble(PATH + "empowered-bonus", 0.25),
+                stats);
+    }
+
+    public Stats stats(MinionKind kind) {
+        return stats.get(kind);
+    }
+
+    /** Extra melee minions per lane for a bigger team of {@code teamSize} players. */
+    public int extra(int teamSize) {
+        return Math.min(maxExtra, Math.max(0, teamSize - 1) / playersPerExtra);
+    }
+
+    static int ticks(double seconds) {
+        return (int) Math.round(seconds * 20);
+    }
+}

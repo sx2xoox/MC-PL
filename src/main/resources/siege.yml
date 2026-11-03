@@ -292,3 +292,156 @@ camp:
   epic-cleared-subtitle: "<yellow>팀 모두 +<xp> XP"
   xp-share: "<name> <yellow>+<xp> XP"
   xp-last-hit: "<name> <yellow>+<xp> XP</yellow> <gold>(막타 +<bonus>)"
+
+# ─────────────────────────────────────────────────────────────
+#  공성전 v2: 미니언, 정글, 골드, 상점 (docs/siege-v2.md §2–§4)
+# ─────────────────────────────────────────────────────────────
+
+minion:
+  name:
+    melee: "태엽 병정"
+    ranged: "장난감 궁수"
+    cannon: "장난감 대포"
+
+gold:
+  gain: "<gold>+<amount> 골드</gold> <gray><reason>"
+  reason:
+    minion: "미니언 막타"
+    kill: "처치"
+    assist: "도움"
+    jungle: "정글"
+    jungle-buff: "버프 몬스터"
+    capture: "점령"
+    dragon: "장난감 드래곤"
+    tower: "타워 파괴"
+
+jungle:
+  name:
+    jelly: "<green>젤리 무리"
+    mice: "<gray>태엽 쥐 떼"
+    teddy: "<#c8915a><bold>곰인형 대장"
+    rabbit: "<yellow><bold>시계 토끼"
+    fountain: "<light_purple>사탕 샘물"
+    telescope: "<aqua>망원경 탑"
+    dragon: "<gradient:#f472b6:#a78bfa><bold>장난감 드래곤"
+  mob:
+    jelly: "<green>젤리"
+    mice: "<gray>태엽 쥐"
+    teddy: "<#c8915a>곰인형 대장"
+    rabbit: "<yellow>시계 토끼"
+    dragon: "<light_purple>장난감 드래곤"
+  short:
+    dragon: "<light_purple>드래곤</light_purple>"
+    teddy: "<#c8915a>곰인형</#c8915a>"
+    rabbit: "<yellow>토끼</yellow>"
+  side:
+    blue: "<aqua>블루 팀</aqua>"
+    red: "<red>레드 팀</red>"
+  status-up: "<gray>때리면 덤벼요"
+  status-fighting: "<red>전투 중!"
+  status-down: "<gray>다시 나타남 <white><time>"
+  status-open: "<gray>안에 서 있으면 점령"
+  status-contested: "<yellow>경합 중!"
+  hud-up: "<name> <green>✔</green>"
+  hud-down: "<name> <white><time></white>"
+  dragon-spawned: "<name><gray> 이(가) 깨어났습니다! 쓰러뜨린 팀 모두 <gold>골드</gold>·<yellow>경험치</yellow>와 강화."
+  small-cleared: "<name><gray> 처치!"
+  taken:
+    teddy: "<team><gray> 의 <white><player></white> 이(가) <name> 처치! <red>공격 강화</red> 90초"
+    rabbit: "<team><gray> 의 <white><player></white> 이(가) <name> 처치! <yellow>쿨타임 감소</yellow> 90초"
+    fountain: "<team><gray> 이(가) <name> 점령! 팀 모두 <light_purple>회복</light_purple>"
+    telescope: "<team><gray> 이(가) <name> 점령! 그쪽 절반의 적이 <white>60초</white> 동안 보입니다"
+    dragon: "<team><gray> 의 <white><player></white> 이(가) <name> 처치! <gray>팀 모두 <gold>골드</gold>·<yellow>경험치</yellow>, 피해 +10%·미니언 강화"
+  buff:
+    teddy: "<red>곰인형의 힘! 공격 강화 <white><seconds>초"
+    rabbit: "<yellow>째깍째깍! 쿨타임 감소 <white><seconds>초"
+    dragon: "<light_purple>드래곤의 축복! 피해 +10% <white><seconds>초"
+
+shop:
+  title: "<dark_gray>태엽 상점"
+  terminal: "<gold><bold>상점</bold></gold>\n<gray>우클릭"
+  keeper: "태엽 상인"
+  gold: "<gold>골드 <white><balance></white>"
+  empty-slot: "<gray>빈 칸"
+  price: "<gold>가격 <white><price></white> 골드 <gray>· 클릭하여 구매"
+  price-short: "<red>가격 <white><price></white> 골드 <gray>(골드 부족)"
+  bought: "<green><item> 구매! <gray>남은 골드 <gold><balance>"
+  candy-used: "<light_purple>냠! <gray><seconds>초에 걸쳐 체력 <white><heal></white> 회복"
+  ward-placed: "<aqua>와드 설치! <gray><seconds>초 동안 주변 적이 보입니다"
+  recall-channel: "<aqua>귀환 중… <white><seconds>초</white> <gray>(맞으면 취소)"
+  recall-done: "<aqua>본진으로 귀환했습니다"
+  recall-stopped: "<gray>귀환을 멈췄습니다"
+  recall-interrupted: "<red>공격받아 귀환이 취소됐습니다"
+  refused:
+    not-playing: "<red>이 경기의 참가자가 아닙니다"
+    too-far: "<red>자기 본진 상점 <white><range>칸</white> 안에서만 살 수 있습니다"
+    owned: "<red>이미 가지고 있습니다"
+    stack-full: "<red>더 들 수 없습니다"
+    slots-full: "<red>아이템 칸(<white><slots>칸</white>)이 가득 찼습니다"
+    no-gold: "<red>골드가 부족합니다"
+  flag:
+    name: "<aqua>귀환 깃발"
+    lore:
+      - "<gray>우클릭: <white><seconds>초</white> 집중 후 본진으로"
+      - "<gray>맞으면 취소, 무한 사용"
+  category:
+    basic: "<white>기본"
+    attack: "<red>공격"
+    utility: "<yellow>유틸"
+    siege: "<gold>공성"
+    vision: "<aqua>시야"
+    survival: "<green>생존"
+  item:
+    candy:
+      name: "<light_purple>체력 사탕"
+      lore:
+        - "<gray>우클릭: 10초에 걸쳐 체력 8 회복"
+        - "<gray>3개 묶음, 소모품"
+    armor_1:
+      name: "<white>장난감 갑옷 I"
+      lore:
+        - "<gray>방어 +2, 스킬 피해 <green>-6%"
+    armor_2:
+      name: "<white>장난감 갑옷 II"
+      lore:
+        - "<gray>방어 +4, 스킬 피해 <green>-12%"
+        - "<dark_gray>낮은 단계를 가지고 있으면 차액만"
+    armor_3:
+      name: "<white>장난감 갑옷 III"
+      lore:
+        - "<gray>방어 +6, 스킬 피해 <green>-18%"
+        - "<dark_gray>낮은 단계를 가지고 있으면 차액만"
+    wooden_sword:
+      name: "<red>나무검"
+      lore:
+        - "<gray>평타 피해 +1.5"
+    steel_sword:
+      name: "<red>강철검"
+      lore:
+        - "<gray>평타 피해 +3"
+        - "<dark_gray>나무검이 있으면 차액만"
+    orb:
+      name: "<light_purple>마법 구슬"
+      lore:
+        - "<gray>스킬 피해 <red>+10%"
+    shoes:
+      name: "<yellow>태엽 신발"
+      lore:
+        - "<gray>이동 속도 +8% (중첩 불가)"
+    hourglass:
+      name: "<yellow>모래시계 장신구"
+      lore:
+        - "<gray>쿨타임 -10%"
+    hammer:
+      name: "<gold>망치 장갑"
+      lore:
+        - "<gray>타워·코어 피해 +20%"
+    ward:
+      name: "<aqua>망원경 와드"
+      lore:
+        - "<gray>우클릭: 설치 지점 12칸 안의 적이 90초 동안 빛남"
+        - "<gray>2개 묶음"
+    revive_clock:
+      name: "<green>부활 시계"
+      lore:
+        - "<gray>부활 시간 -2초"
