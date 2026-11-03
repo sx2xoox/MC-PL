@@ -30,6 +30,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.sx2xoox.mcpl.game.siege.SiegeSettings;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.BuiltinAbilities;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
@@ -110,12 +111,10 @@ class ResourcePackContentsTest {
         for (ModelRef ref : used) {
             assertTrue(built.files().containsKey("assets/mcpl/items/" + ref.id() + ".json"), ref.id());
         }
-        JsonObject heart = json("assets/mcpl/items/tower_core_heart.json").getAsJsonObject("model");
-        assertEquals("minecraft:dye", heart.getAsJsonArray("tints").get(0).getAsJsonObject().get("type")
-                .getAsString(), "the mainframe's heart takes the team colour");
-        assertFalse(json("assets/mcpl/items/tower_core_shield.json").getAsJsonObject("model").has("tints"));
-        // animated textures (the firewall's shimmer, blinking racks) ship their .mcmeta
-        assertTrue(built.files().keySet().stream().anyMatch(p -> p.endsWith("/energy.png.mcmeta")));
+        JsonObject crown = json("assets/mcpl/items/structure/core_crown.json").getAsJsonObject("model");
+        assertEquals("minecraft:dye", crown.getAsJsonArray("tints").get(0).getAsJsonObject().get("type")
+                .getAsString(), "the crown's gems take the team colour");
+        assertFalse(json("assets/mcpl/items/structure/core_shield.json").getAsJsonObject("model").has("tints"));
     }
 
     /** The display contexts every ability weapon sets (the shared preset of tools/assetgen weaponkit.py). */
@@ -220,6 +219,87 @@ class ResourcePackContentsTest {
             assertEquals(new TreeSet<>(AbilityWeaponModels.modeled()), cased, sword + " covers every weapon");
         }
         assertTrue(problems.isEmpty(), () -> String.join("\n", problems));
+    }
+
+    @Test
+    void everyCreatureAndLandmarkModelIsInThePack() {
+        List<String> problems = new ArrayList<>();
+        for (ModelRef ref : CreatureModels.models()) {
+            String item = "assets/mcpl/items/" + ref.id() + ".json";
+            if (!built.files().containsKey(item)) {
+                problems.add(ref.id() + ": no item definition (tools/assetgen/models/creatures.py / toys.py?)");
+            }
+        }
+        assertTrue(problems.isEmpty(), () -> String.join("\n", problems));
+        // minions take the team colour, jungle monsters keep their own
+        assertTrue(json("assets/mcpl/items/creature/soldier.json").getAsJsonObject("model").has("tints"));
+        assertFalse(json("assets/mcpl/items/creature/teddy.json").getAsJsonObject("model").has("tints"));
+        // every pack model of a creature or a toy building is one the game uses
+        Set<String> used = new TreeSet<>();
+        CreatureModels.models().forEach(r -> used.add(r.id()));
+        ModelTowerLook.models().forEach(r -> used.add(r.id()));
+        for (String path : built.files().keySet()) {
+            if (path.matches("assets/mcpl/items/(creature|structure)/.*\\.json")) {
+                String id = path.substring("assets/mcpl/items/".length()).replaceFirst("\\.json$", "");
+                assertTrue(used.contains(id), "a model nothing shows: " + id);
+            }
+        }
+    }
+
+    /**
+     * The soap-bubble film: the pack overrides the item core shader (vertex + fragment, including its own include),
+     * the bubble texture carries the shader's marker alpha everywhere, and leaving the shaders out
+     * ({@code resource-pack.shaders: false}) still gives a reproducible pack without them.
+     */
+    @Test
+    void theBubbleShaderAndItsMarkerShipAndCanBeLeftOut() throws IOException {
+        String fsh = text("assets/minecraft/shaders/core/item.fsh");
+        String vsh = text("assets/minecraft/shaders/core/item.vsh");
+        String include = text("assets/minecraft/shaders/include/mcpl_bubble.glsl");
+        assertTrue(fsh.contains("#include <minecraft:mcpl_bubble.glsl>"));
+        assertTrue(vsh.contains("out vec3 mcplNormal") && fsh.contains("in vec3 mcplNormal"));
+        for (String source : List.of(fsh, vsh)) {
+            for (String line : source.split("\n")) {
+                if (line.startsWith("#include")) {
+                    String name = line.replaceAll(".*<minecraft:([^>]+)>.*", "$1");
+                    assertTrue(built.files().containsKey("assets/minecraft/shaders/include/" + name)
+                            || VANILLA_INCLUDES.contains(name), "unresolved include " + name);
+                }
+            }
+        }
+        int marker = Integer.parseInt(include.replaceAll("(?s).*MCPL_BUBBLE_ALPHA = ([0-9]+)\\.0;.*", "$1"));
+        String bubbleTexture = built.files().keySet().stream()
+                .filter(p -> p.startsWith("assets/mcpl/textures/item/structure/core_shield/") && p.endsWith(".png"))
+                .findFirst().orElseThrow();
+        BufferedImage image = ImageIO.read(new ByteArrayInputStream(built.files().get(bubbleTexture)));
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                assertEquals(marker, image.getRGB(x, y) >>> 24, "bubble texel " + x + "," + y);
+            }
+        }
+
+        byte[] stripped = PackBuilder.withoutShaders(built.zip());
+        assertTrue(Arrays.equals(stripped, PackBuilder.withoutShaders(built.zip())), "reproducible");
+        Set<String> names = new TreeSet<>();
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(stripped))) {
+            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                names.add(entry.getName());
+            }
+        }
+        Set<String> expected = new TreeSet<>(built.files().keySet());
+        expected.removeIf(p -> p.startsWith(PackBuilder.SHADERS));
+        assertEquals(expected, names);
+        assertTrue(names.size() < built.files().size());
+    }
+
+    /** The 26.3 client's shader includes a pack shader may use without shipping them. */
+    private static final Set<String> VANILLA_INCLUDES = Set.of("light.glsl", "fog.glsl", "dynamictransforms.glsl",
+            "projection.glsl", "sample_lightmap.glsl", "globals.glsl", "oit.glsl");
+
+    private static String text(String path) {
+        byte[] data = built.files().get(path);
+        assertNotNull(data, path);
+        return new String(data, StandardCharsets.UTF_8);
     }
 
     @Test

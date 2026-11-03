@@ -18,6 +18,7 @@ import org.bukkit.entity.Arrow;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Interaction;
 import org.bukkit.entity.IronGolem;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
@@ -33,6 +34,7 @@ import org.jspecify.annotations.Nullable;
 import org.mockbukkit.mockbukkit.ServerMock;
 import org.mockbukkit.mockbukkit.entity.ArrowMock;
 import org.mockbukkit.mockbukkit.entity.BlockDisplayMock;
+import org.mockbukkit.mockbukkit.entity.InteractionMock;
 import org.mockbukkit.mockbukkit.entity.IronGolemMock;
 import org.mockbukkit.mockbukkit.entity.ItemDisplayMock;
 import org.mockbukkit.mockbukkit.entity.MannequinMock;
@@ -68,6 +70,7 @@ public final class MockEntities {
             ItemDisplay.class, TestItemDisplay.class,
             BlockDisplay.class, TestBlockDisplay.class,
             TextDisplay.class, TestTextDisplay.class,
+            Interaction.class, TestInteraction.class,
             Arrow.class, TestArrow.class,
             WanderingTrader.class, TestWanderingTrader.class);
 
@@ -689,6 +692,29 @@ public final class MockEntities {
     }
 
     // ------------------------------------------------------------------ displays and projectiles
+
+    /** An interaction (an invisible hitbox) with Paper's per-viewer default visibility. */
+    public static class TestInteraction extends InteractionMock {
+
+        private boolean visibleByDefault = true;
+
+        public TestInteraction(ServerMock server, UUID uuid) {
+            super(server, uuid);
+        }
+
+        @Override
+        public boolean isVisibleByDefault() {
+            return visibleByDefault;
+        }
+
+        @Override
+        public void setVisibleByDefault(boolean visible) {
+            if (visible != visibleByDefault) {
+                EntityViewer.defaultChanging(this);
+                visibleByDefault = visible;
+            }
+        }
+    }
 
     /** An item display with a billboard. */
     public static class TestItemDisplay extends ItemDisplayMock {

@@ -82,6 +82,7 @@ public final class ResourcePackService implements Listener, PackAudience {
     private final Map<UUID, Status> statuses = new HashMap<>();
     private final List<Consumer<Player>> listeners = new CopyOnWriteArrayList<>();
     private byte @Nullable [] zip;
+    private byte @Nullable [] noShaders;
     private String sha1 = "";
     private @Nullable PackHttpServer server;
     private int serverPort;
@@ -108,6 +109,7 @@ public final class ResourcePackService implements Listener, PackAudience {
                 plugin.getLogger().warning("The plugin jar has no " + BUNDLED + "; the resource pack is unavailable.");
             } else {
                 zip = in.readAllBytes();
+                noShaders = null;
                 sha1 = sha1(zip);
                 File copy = new File(plugin.getDataFolder(), "MCPL-pack.zip");
                 if (!copy.isFile() || !sha1(Files.readAllBytes(copy.toPath())).equals(sha1)) {
@@ -234,6 +236,21 @@ public final class ResourcePackService implements Listener, PackAudience {
         }
     }
 
+    /** The bundled pack without its shaders ({@code resource-pack.shaders: false}); cached, the bundle never changes. */
+    private byte[] withoutShaders(byte[] pack) {
+        byte[] stripped = noShaders;
+        if (stripped == null) {
+            try {
+                stripped = PackBuilder.withoutShaders(pack);
+            } catch (IOException e) {
+                plugin.getLogger().log(Level.WARNING, "Could not leave the shaders out of the resource pack", e);
+                stripped = pack;
+            }
+            noShaders = stripped;
+        }
+        return stripped;
+    }
+
     /** Starts/stops the hosting {@code wanted} asks for; what is offered then, or null if nothing is. */
     private @Nullable Offer makeOffer(ResourcePackSettings wanted) {
         byte[] pack = zip;
@@ -241,8 +258,13 @@ public final class ResourcePackService implements Listener, PackAudience {
             stopHosting();
             return null;
         }
-        String path = "mcpl-pack/" + sha1 + ".zip"; // a new pack is a new URL: no stale caches
-        String hash = Objects.requireNonNullElse(wanted.hashToSend(sha1), "");
+        String packSha1 = sha1;
+        if (!wanted.shaders()) {
+            pack = withoutShaders(pack);
+            packSha1 = sha1(pack);
+        }
+        String path = "mcpl-pack/" + packSha1 + ".zip"; // a new pack is a new URL: no stale caches
+        String hash = Objects.requireNonNullElse(wanted.hashToSend(packSha1), "");
         if (!wanted.selfHosted()) {
             stopHosting();
             try {

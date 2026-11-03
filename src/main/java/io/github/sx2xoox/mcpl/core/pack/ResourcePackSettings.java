@@ -17,9 +17,11 @@ import org.jspecify.annotations.Nullable;
  *                      connected with (their virtual host), then {@code server-ip}
  * @param sha1          the pack hash sent to clients: {@link #AUTO} = the bundled pack's, empty = none (no check)
  * @param required      clients must accept the pack (declining disconnects them)
+ * @param shaders       serve the pack's core shader overrides (the soap-bubble shield film); false serves the pack
+ *                      without {@code assets/minecraft/shaders/} (clients whose shaders break, shader mods)
  */
 public record ResourcePackSettings(boolean enabled, Mode mode, String url, int hostPort, String publicAddress,
-                                   String sha1, boolean required) {
+                                   String sha1, boolean required, boolean shaders) {
 
     /** Where the plugin serves the pack. */
     public enum Mode {
@@ -41,6 +43,12 @@ public record ResourcePackSettings(boolean enabled, Mode mode, String url, int h
     public static final ResourcePackSettings DISABLED =
             new ResourcePackSettings(false, Mode.SAME_PORT, "", DEFAULT_PORT, "", AUTO, false);
 
+    /** Settings that serve the shaders. */
+    public ResourcePackSettings(boolean enabled, Mode mode, String url, int hostPort, String publicAddress,
+                                String sha1, boolean required) {
+        this(enabled, mode, url, hostPort, publicAddress, sha1, required, true);
+    }
+
     public ResourcePackSettings {
         url = url.trim();
         publicAddress = publicAddress.trim();
@@ -60,7 +68,8 @@ public record ResourcePackSettings(boolean enabled, Mode mode, String url, int h
                 port < 1 || port > 65535 ? DEFAULT_PORT : port,
                 section.getString("public-address", ""),
                 section.getString("sha1", AUTO),
-                section.getBoolean("required", false));
+                section.getBoolean("required", false),
+                section.getBoolean("shaders", true));
     }
 
     /** The plugin serves the pack (no external URL configured). */

@@ -3,7 +3,6 @@ package io.github.sx2xoox.mcpl.game.siege.tower;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -36,8 +35,8 @@ import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockbukkit.mockbukkit.plugin.PluginMock;
 
 /**
- * The model look shows the multi-part tower models only to players with the pack and the vanilla box look to everyone
- * else (per-viewer visibility through the superpower test doubles, which model Paper's {@code setVisibleByDefault}).
+ * The model look shows the multi-part toy building models (watchtower, music-box core) only to players with the pack
+ * and the vanilla box look to everyone else (per-viewer visibility through the superpower test doubles, which model Paper's {@code setVisibleByDefault}).
  */
 class ModelTowerLookTest {
 
@@ -119,7 +118,7 @@ class ModelTowerLookTest {
     @Test
     void modelsForPackPlayersVanillaBlocksForTheRest() {
         ModelTowerLook.ModelVisual visual = spawn("front");
-        assertEquals(3, visual.models().size(), "gate body, barrier, shield");
+        assertEquals(4, visual.models().size(), "tower body, top, pennant, bubble");
         assertTrue(visual.fallback().size() > 10, "a vanilla silhouette of boxes");
         for (Display model : visual.models()) {
             assertFalse(model.isVisibleByDefault(), "a model is never sent to a player without the pack");
@@ -146,7 +145,7 @@ class ModelTowerLookTest {
 
     @Test
     void everyTowerIsAFewDisplays() {
-        for (String tower : List.of("front", "middle", "core")) {
+        for (String tower : List.of("outer", "inner", "core")) {
             ModelTowerLook.ModelVisual visual = spawn(tower);
             assertTrue(visual.models().size() <= 12, tower + ": " + visual.models().size() + " model displays");
             assertTrue(visual.fallback().size() <= 40, tower + ": " + visual.fallback().size() + " fallback boxes");
@@ -156,34 +155,47 @@ class ModelTowerLookTest {
 
     @Test
     void thePartsUseTheStageModelsInTheTeamColour() {
-        ModelTowerLook.ModelVisual visual = spawn("middle");
+        ModelTowerLook.ModelVisual visual = spawn("core");
         // (MockBukkit keeps no data components, so the model each part was given is checked instead)
-        assertEquals(Arrays.asList(ref("tower_middle_base_0"), ref("tower_middle_top_0"), ref("tower_middle_ring"),
-                ref("tower_middle_ring"), ref("tower_middle_core"), ref("tower_middle_shield")), visual.partModels());
+        assertEquals(Arrays.asList(ref("structure/core_body_0"), ref("structure/core_top_0"),
+                ref("structure/core_crown"), ref("structure/core_key"), ref("structure/core_shield")),
+                visual.partModels());
         assertEquals(Color.fromRGB(NamedTextColor.RED.value()), visual.tint());
 
         visual.health(0.9);
         assertEquals(0, visual.stage());
         visual.health(0.5);
         assertEquals(1, visual.stage());
-        assertEquals(ref("tower_middle_base_1"), visual.partModels().get(0));
-        assertEquals(ref("tower_middle_top_1"), visual.partModels().get(1));
+        assertEquals(ref("structure/core_body_1"), visual.partModels().get(0));
+        assertEquals(ref("structure/core_top_1"), visual.partModels().get(1));
         visual.health(0.1);
         assertEquals(2, visual.stage());
-        assertEquals(ref("tower_middle_top_2"), visual.partModels().get(1));
-        assertNull(visual.partModels().get(4), "the data core is knocked out with the top");
+        assertEquals(ref("structure/core_top_2"), visual.partModels().get(1));
+        assertEquals(ref("structure/core_crown"), visual.partModels().get(2), "the crown stays on until the fall");
         visual.health(1);
         assertEquals(0, visual.stage(), "repaired at half time");
-        assertEquals(ref("tower_middle_core"), visual.partModels().get(4));
 
         visual.destroyed();
         assertEquals(ModelTowerLook.RUIN, visual.stage());
         server.getScheduler().performTicks(20);
-        assertEquals(List.of(ref("tower_middle_base_3")), visual.partModels(), "only the ruin is left");
-        assertEquals(1, visual.models().size(), "the top collapsed, the rings and the core shattered");
+        assertEquals(List.of(ref("structure/core_body_3")), visual.partModels(), "only the ruin is left");
+        assertEquals(1, visual.models().size(), "the top collapsed, the crown, key and bubble are gone");
         visual.health(1);
         assertEquals(ModelTowerLook.RUIN, visual.stage(), "a ruin stays a ruin");
         visual.remove();
+    }
+
+    @Test
+    void laneTowersAreWatchtowersAndThePennantFallsAtHeavyDamage() {
+        ModelTowerLook.ModelVisual visual = spawn("top_outer");
+        assertEquals(ModelTowerLook.TOWER, visual.look());
+        assertEquals(Arrays.asList(ref("structure/tower_body_0"), ref("structure/tower_top_0"),
+                ref("structure/tower_flag"), ref("structure/tower_shield")), visual.partModels());
+        visual.health(0.2);
+        assertNull(visual.partModels().get(2), "the pennant is knocked off with the roof's tip");
+        visual.remove();
+        assertEquals(ModelTowerLook.CORE, ModelTowerLook.lookOf("blue_core"));
+        assertEquals(ModelTowerLook.TOWER, ModelTowerLook.lookOf("middle"));
     }
 
     @Test
@@ -192,14 +204,15 @@ class ModelTowerLookTest {
             assertTrue(Files.exists(Path.of("src/main/resourcepack-src/models", model.id() + ".bbmodel")),
                     model.id());
         }
-        assertTrue(ModelTowerLook.models().contains(ref("tower_core_heart")));
-        assertTrue(ModelTowerLook.models().contains(ref("tower_front_barrier_2")));
-        assertFalse(ModelTowerLook.models().contains(ref("tower_front_barrier_3")), "the barrier has no ruin");
+        assertTrue(ModelTowerLook.models().contains(ref("structure/core_crown")));
+        assertTrue(ModelTowerLook.models().contains(ref("structure/tower_top_2")));
+        assertFalse(ModelTowerLook.models().contains(ref("structure/tower_top_3")), "the top has no ruin");
+        assertEquals(4 + 3 + 2 + 4 + 3 + 3, ModelTowerLook.models().size());
     }
 
     @Test
     void theVanillaLookCracksAndFalls() {
-        for (String tower : List.of("front", "middle", "core")) {
+        for (String tower : List.of("outer", "core")) {
             ModelTowerLook.ModelVisual visual = spawn(tower);
             long intactBlocks = solidFallbackBlocks(visual);
             visual.health(0.2);
@@ -214,17 +227,16 @@ class ModelTowerLookTest {
 
     @Test
     void theFrontFacesTheBaseYaw() {
-        // yaw 90 faces -x: the gate's barrier (a thin plate across the gate) then runs along z
-        ModelTowerLook.ModelVisual visual = spawn("front", 90);
-        Material glass = ModelTowerLook.glassOf(visual.tint());
-        BlockDisplay barrier = visual.fallback().stream()
-                .filter(d -> d instanceof BlockDisplay b && b.getBlock().getMaterial() == glass)
+        // yaw 90 faces -x: the door (a thin plate on the front wall) then lies across x, on the -x side
+        ModelTowerLook.ModelVisual visual = spawn("outer", 90);
+        BlockDisplay door = visual.fallback().stream()
+                .filter(d -> d instanceof BlockDisplay b && b.getBlock().getMaterial() == Material.OAK_PLANKS)
                 .map(d -> (BlockDisplay) d)
-                .filter(b -> b.getTransformation().getTranslation().y < 1)
                 .findFirst().orElseThrow();
-        Vector3f across = new Vector3f(1, 0, 0).rotate(barrier.getTransformation().getLeftRotation());
+        Vector3f across = new Vector3f(1, 0, 0).rotate(door.getTransformation().getLeftRotation());
         assertEquals(0, across.x, 1e-4);
         assertEquals(1, Math.abs(across.z), 1e-4);
+        assertTrue(door.getTransformation().getTranslation().x < -1.9, "on the front, towards -x");
         visual.remove();
     }
 
@@ -264,14 +276,18 @@ class ModelTowerLookTest {
         assertEquals(1, ModelTowerLook.stage(0.6));
         assertEquals(2, ModelTowerLook.stage(0.3));
         assertEquals(2, ModelTowerLook.stage(0));
-        assertEquals(Material.RED_STAINED_GLASS, ModelTowerLook.glassOf(Color.fromRGB(0xB02E26)));
-        assertEquals(Material.BLUE_STAINED_GLASS, ModelTowerLook.glassOf(Color.fromRGB(0x3C44AA)));
+        assertEquals(Material.RED_CONCRETE, ModelTowerLook.coloured(Color.fromRGB(0xB02E26), "_CONCRETE",
+                Material.WHITE_CONCRETE));
+        assertEquals(Material.BLUE_WOOL, ModelTowerLook.coloured(Color.fromRGB(0x3C44AA), "_WOOL",
+                Material.WHITE_WOOL));
         ModelTowerLook look = new ModelTowerLook(plugin, audience);
         assertEquals(6, look.hitboxScale("front", 2.5), 1e-9);
-        assertEquals(7, look.hitboxScale("middle", 2.5), 1e-9);
-        assertEquals(8, look.hitboxScale("core", 2.5), 1e-9);
-        assertEquals(4, look.hitboxScale("core", 1.25), 1e-9, "follows the configured scale");
-        assertEquals(2.5, look.hitboxScale("gate", 2.5), 1e-9);
-        assertThrows(IllegalArgumentException.class, () -> spawn("gate"));
+        assertEquals(6, look.hitboxScale("bottom_inner", 2.5), 1e-9);
+        assertEquals(7, look.hitboxScale("core", 2.5), 1e-9);
+        assertEquals(3.5, look.hitboxScale("core", 1.25), 1e-9, "follows the configured scale");
+        // any id gets a look: the rules may name their towers freely
+        ModelTowerLook.ModelVisual visual = spawn("gate");
+        assertEquals(ModelTowerLook.TOWER, visual.look());
+        visual.remove();
     }
 }

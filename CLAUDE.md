@@ -62,11 +62,13 @@ src/main/java/io/github/sx2xoox/mcpl/
                                `./gradlew updateSiegeBalance` regenerates docs/siege-balance.md + siege-balance.yml
                                (SiegeBalanceReport fails while stale)
     tower/                     Tower (rules + Mannequin hitbox) and looks (TowerLook contract; ModelTowerLook = 3D models +
-                               per-viewer vanilla fallback)
+                               per-viewer vanilla fallback; v2 toy kingdom: look ids tower / core)
     arena/ minion/ jungle/     v2 lane systems (docs/siege-v2.md §2–§4) behind SiegeArena (what they need from the rules);
     economy/ shop/ creature/   SiegeSystems = facade the match drives (+ MatchHost hooks), LaneModifiers = shared additive
-                               per-player modifiers; creature/CreatureLook = model seam (VanillaCreatureLook fallback,
-                               models mcpl:creature/<kind>); tests on lanes/TestLaneSites with a test SiegeArena
+                               per-player modifiers; creature/CreatureLook spawns the vanilla body (VanillaCreatureLook),
+                               CreatureSkin dresses it (ModelCreatureLook: pack players see the toy model following the mob
+                               + an Interaction hitbox; landmarks), SkinnedCreatureLook = both; CreatureModels (kinds,
+                               parts, motions; tools/assetgen/models/creatures.py); tests on lanes/TestLaneSites
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
     abilities/                 one class per ability + BuiltinAbilities registration

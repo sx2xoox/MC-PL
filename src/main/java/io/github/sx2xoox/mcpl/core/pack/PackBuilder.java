@@ -1,5 +1,6 @@
 package io.github.sx2xoox.mcpl.core.pack;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -14,6 +15,7 @@ import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 import com.google.gson.Gson;
@@ -210,7 +212,28 @@ public final class PackBuilder {
         files.put(path, data);
     }
 
+    /** The folder of the pack's core shader overrides ({@code resource-pack.shaders: false} leaves it out). */
+    public static final String SHADERS = "assets/minecraft/shaders/";
+
+    /** {@code zip} (a built pack) without its shader overrides, again reproducible. */
+    public static byte[] withoutShaders(byte[] zip) throws IOException {
+        SortedMap<String, byte[]> kept = new TreeMap<>();
+        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip))) {
+            ZipEntry entry;
+            while ((entry = in.getNextEntry()) != null) {
+                if (!entry.isDirectory() && !entry.getName().startsWith(SHADERS)) {
+                    kept.put(entry.getName(), in.readAllBytes());
+                }
+            }
+        }
+        return zip(kept);
+    }
+
     private byte[] zip() throws IOException {
+        return zip(files);
+    }
+
+    private static byte[] zip(SortedMap<String, byte[]> files) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
             zip.setLevel(9);

@@ -94,6 +94,8 @@ resource-pack:
   sha1: auto
   # 꼭 받아야 접속할 수 있게 할지 (true 면 거절한 플레이어는 서버에서 나가게 됩니다)
   required: false
+  # 셰이더(공성전 비눗방울 보호막의 무지개빛)도 함께 보낼지. 화면이 깨지거나 셰이더 모드를 쓰는 사람이 많으면 false
+  shaders: true
 
 # 게임별 설정. 각 게임이 처음 등록될 때 기본값을 이곳에 추가합니다.
 # 예) games.superpower.* = 초능력전쟁 설정

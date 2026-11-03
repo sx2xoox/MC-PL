@@ -1,14 +1,15 @@
 # tools/assetgen
 
-Builds the MCPL resource pack's 3D models in code (ported from STSV): the 공성전 towers (`models/towers.py`) and the
-ability weapons (`models/weapons.py`). Output: `src/main/resourcepack-src/models/**/*.bbmodel` (committed; open them
-in Blockbench for a look). The Gradle `resourcePack` task turns them into the pack (`core.pack.PackBuilder`); a
+Builds the MCPL resource pack's 3D models in code (ported from STSV): the ability weapons (`models/weapons.py`) and
+the 공성전 v2 toy kingdom: buildings and capture landmarks (`models/toys.py` → `structure/*`) and creatures
+(`models/creatures.py` → `creature/*`). Output: `src/main/resourcepack-src/models/**/*.bbmodel` (committed; open
+them in Blockbench for a look). The Gradle `resourcePack` task turns them into the pack (`core.pack.PackBuilder`); a
 sub folder is part of the id, so `models/weapon/police.bbmodel` becomes the item model `mcpl:weapon/police`.
 
 ```
 python3 -I tools/assetgen/build.py                                       # rebuild every model
 cd tools/assetgen/render && npm install                                  # once, for previews (three.js)
-python3 -I tools/assetgen/build.py --render <dir> [--only weapons|towers]  # + preview PNGs
+python3 -I tools/assetgen/build.py --render <dir> [--only weapons|toys]  # + preview PNGs
 ```
 
 Previews need Node + Playwright (Chromium). In a cloud session:
@@ -17,7 +18,10 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 | file | what |
 |---|---|
 | `mcpl_assets/palette.py` | every colour: OKLCH ramps generated from (hue, chroma, lightness) — add a material here, never a raw RGB |
-| `mcpl_assets/textures.py` | tower textures (64 px) |
+| `mcpl_assets/textures.py` | the texture registry (`SURFACES`, `FRAME_TIME`, `TRANSLUCENT`), the v1 cyberpunk textures (unused) |
+| `mcpl_assets/toy_textures.py` | toy kingdom textures (`t_*`, 32 px) and their pastel ramps; `t_bubble` = the shader's marker alpha |
+| `mcpl_assets/toykit.py` | block-space builder for buildings / creatures: `rbox` (chamfered toy box), eyes, cheeks, slabs |
+| `toy_preview.py` | toy sheets: building stages + bubble, minions in both team colours, jungle, one sheet per creature, scale lineup |
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |
 | `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range) |
 | `mcpl_assets/weaponkit.py` | the weapon builder: weapon space, common parts, the shared `display` preset |
@@ -90,3 +94,20 @@ players without the pack, and every normal sword, look vanilla. The weapon also 
 so the upright weapon lies on the sword sprite's diagonal with the hand on the grip (first/third person, both hands),
 and GUI / ground / item-frame transforms fitted to the model's bounds. Weapons longer than the reference shrink in
 hand so all of them look about 1.1× a vanilla sword; `w.size` scales the hand poses only if a weapon really needs it.
+
+## 장난감 왕국 모델 (공성전 v2: buildings, landmarks, creatures)
+
+Design in **blocks** at real size with `toykit.Build` (feet / base at y = 0, the face towards **-z**), then
+`centred(name, scale, centre)` (one model at display scale `scale`, its centre `centre` blocks up: it may use x/z within
+±1.5·scale and y within centre ± 1.5·scale) or `slabs(...)` for buildings (12-block slabs at scale 4; keep stepped roof
+tiers ending exactly on y = 12, a box split there z-fights with its own chamfer arms). Register the model in `ALL` of
+`models/toys.py` / `models/creatures.py` and its display (scale, centre, motion) in `ModelTowerLook.SPECS` /
+`CreatureModels` (Java); `ModelTowerLookTest`, `ModelCreatureLookTest` and `ResourcePackContentsTest` fail while the
+two disagree. Previews: `--render <dir> --only toys`, look at `scale_lineup.png` next to the player.
+
+Style: chunky, rounded (`rbox` everywhere, chamfer ~1/8 of the size), friendly. Big heads and short legs, dot eyes with a
+white glint (`Build.eyes`), rosy cheeks (`Build.cheeks`), at most one or two identity props (a sabre, a pocket watch, a
+wind-up key). Materials are painted plastic, felt and wood in the pastel `t_*` ramps; gold and gems are the only shiny
+bits; nothing glows except syrup and gems. Faces and decals sit on the flat centre of a face (inside the chamfer) or
+they float. Team colour only through tinted `t_*_tint` textures (`tint=True`): uniforms, roofs, bands, pennants, lids.
+Damage is cute, never grim: cracks, sticking plasters, knocked-off roof tips, scattered toy blocks.
