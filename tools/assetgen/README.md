@@ -25,8 +25,12 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 
 ## 새 능력 무기 추가하는 법 (ability weapons)
 
-In 공성전 a player's sword shows the 3D weapon of their ability (`AbilityWeaponModels.model(id)` →
-`mcpl:weapon/<ability id>`; players without the pack keep the vanilla sword).
+In 공성전 a player's sword shows the 3D weapon of their ability. The sword keeps its vanilla item model (iron, diamond or
+netherite sword by difficulty) and carries `custom_model_data` strings `[<ability id>]`; `PackBuilder` overrides those
+three swords' item definitions (`assets/minecraft/items/<sword>.json`) with a `minecraft:select` on that string whose
+cases are every `models/weapon/<id>.bbmodel` (`mcpl:item/weapon/<id>`) and whose fallback is the vanilla sword. So
+players without the pack, and every normal sword, look vanilla. The weapon also keeps its own item definition
+`mcpl:weapon/<ability id>`.
 
 1. Read the ability's section in `docs/abilities.md` and pick what that job / ability would **naturally carry**:
    classic, readable, real-world or fantasy (a nightstick, a pickaxe, a forge hammer, a revolver with a bayonet, a
@@ -39,7 +43,8 @@ In 공성전 a player's sword shows the 3D weapon of their ability (`AbilityWeap
 4. `python3 -I tools/assetgen/build.py --render <dir> --only weapons`, look at `weapon_<id>.png` and
    `weapons_lineup.png`, iterate. Then `./gradlew resourcePack` (or `build`) and commit the `.bbmodel` with the code.
    `ResourcePackContentsTest` fails while an id in `MODELED` has no item definition / model / display preset in the
-   pack, or the pack has a weapon that `MODELED` does not list, or a 공성전 pool ability has none.
+   pack, or the pack has a weapon that `MODELED` does not list, or a 공성전 pool ability has none, or a sword override
+   does not select every weapon.
 
 ### Weapon space and proportions
 

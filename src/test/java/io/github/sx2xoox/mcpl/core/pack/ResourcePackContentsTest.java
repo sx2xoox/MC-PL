@@ -187,6 +187,41 @@ class ResourcePackContentsTest {
         }
     }
 
+    /**
+     * The ability sword keeps a vanilla item model for everyone; the pack's override of that sword selects the 3D weapon
+     * by {@code custom_model_data} string 0 (the ability id) and falls back to the vanilla sword model otherwise.
+     */
+    @Test
+    void theVanillaSwordsSelectEveryWeaponAndFallBackToVanilla() {
+        assertEquals(AbilityWeaponModels.SWORDS, PackBuilder.WEAPON_SWORDS);
+        List<String> problems = new ArrayList<>();
+        for (String sword : AbilityWeaponModels.SWORDS) {
+            JsonObject model = json("assets/minecraft/items/" + sword + ".json").getAsJsonObject("model");
+            assertEquals("minecraft:select", model.get("type").getAsString(), sword);
+            assertEquals("minecraft:custom_model_data", model.get("property").getAsString(), sword);
+            assertEquals(0, model.get("index").getAsInt(), sword);
+            JsonObject fallback = model.getAsJsonObject("fallback");
+            assertEquals("minecraft:model", fallback.get("type").getAsString(), sword);
+            assertEquals("minecraft:item/" + sword, fallback.get("model").getAsString(),
+                    sword + ": no custom_model_data string = the vanilla sword (as in the 26.3 client's definition)");
+            Set<String> cased = new TreeSet<>();
+            for (JsonElement element : model.getAsJsonArray("cases")) {
+                JsonObject c = element.getAsJsonObject();
+                String id = c.get("when").getAsString();
+                cased.add(id);
+                JsonObject weapon = json("assets/mcpl/items/weapon/" + id + ".json").getAsJsonObject("model");
+                if (!weapon.equals(c.getAsJsonObject("model"))) {
+                    problems.add(sword + " / " + id + ": the case is not the weapon's own item model");
+                }
+                if (!built.files().containsKey(modelPath(c.getAsJsonObject("model").get("model").getAsString()))) {
+                    problems.add(sword + " / " + id + ": missing model");
+                }
+            }
+            assertEquals(new TreeSet<>(AbilityWeaponModels.modeled()), cased, sword + " covers every weapon");
+        }
+        assertTrue(problems.isEmpty(), () -> String.join("\n", problems));
+    }
+
     @Test
     void theJarBundlesTheCurrentPack() throws IOException {
         SortedMap<String, byte[]> bundled = new TreeMap<>();

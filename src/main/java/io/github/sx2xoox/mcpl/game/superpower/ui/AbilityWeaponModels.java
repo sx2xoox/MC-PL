@@ -1,15 +1,17 @@
 package io.github.sx2xoox.mcpl.game.superpower.ui;
 
+import java.util.List;
 import java.util.Set;
 
 import org.bukkit.NamespacedKey;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 3D weapon models of the MCPL resource pack, one per ability ({@code mcpl:weapon/<ability id>}). The weapon is the
- * item a player fights and casts with (see docs/siege.md); players without the pack see the vanilla item instead, so
- * callers must only put the model on the item for viewers that have the pack ({@code PackAudience#hasPack}), or accept
- * the vanilla look when the pack is off.
+ * The 3D weapon models of the MCPL resource pack, one per ability ({@code mcpl:item/weapon/<ability id>}). The weapon is
+ * the item a player fights and casts with (see docs/siege.md). The item itself is the same for every viewer: a vanilla
+ * sword ({@link #SWORDS}, by difficulty: {@link AbilityItems#weaponModel}) with {@code custom_model_data} strings
+ * {@code [ability id]}; the pack overrides those swords' item definitions with a {@code minecraft:select} on that string
+ * (PackBuilder), so players with the pack see the 3D weapon and everyone else, and every other sword, the vanilla one.
  */
 public final class AbilityWeaponModels {
 
@@ -30,6 +32,12 @@ public final class AbilityWeaponModels {
             "ninja", "blade", "duelist", "archer", "sniper", "hunter", "lancer", "berserker", "guardian",
             "fighter", "pyro", "frost", "thunder", "aero", "earth");
 
+    /**
+     * The vanilla swords an ability weapon is drawn as; the pack overrides their item definitions
+     * (PackBuilder#WEAPON_SWORDS lists the same ones; ResourcePackContentsTest checks it).
+     */
+    public static final List<String> SWORDS = List.of("iron_sword", "diamond_sword", "netherite_sword");
+
     private AbilityWeaponModels() {
     }
 
@@ -38,7 +46,10 @@ public final class AbilityWeaponModels {
         return MODELED;
     }
 
-    /** The item model of {@code abilityId}'s weapon, or null when the pack has none for it. */
+    /**
+     * The pack's own item definition of {@code abilityId}'s weapon ({@code mcpl:weapon/<id>}, e.g. for displays), or
+     * null when the pack has none for it. Ability swords do not use it: they keep the vanilla item model (see above).
+     */
     public static @Nullable NamespacedKey model(String abilityId) {
         return MODELED.contains(abilityId) ? new NamespacedKey("mcpl", "weapon/" + abilityId) : null;
     }

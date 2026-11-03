@@ -16,7 +16,12 @@ import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.Scenario;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
+import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityWeaponModels;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.CustomModelData;
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
@@ -258,8 +263,20 @@ class SiegeHudTest {
         assertNotNull(sword);
         assertTrue(items.isAbilityItem(sword), "the sword is the ability item");
         assertEquals(Material.IRON_SWORD, sword.getType(), "it is the kit's sword");
-        assertEquals(Material.IRON_SWORD.getKey(), items.weaponModelOf(sword),
-                "without the pack: a vanilla sword by difficulty");
+        String id = items.abilityId(sword);
+        assertNotNull(id);
+        // MockBukkit's ItemStack#clone (inventory setItem) drops data components, so check the made weapon itself
+        AbilityInfo info = siege.superpower().registry().get(id).info();
+        ItemStack made = items.createWeapon(info, siege.superpower().abilities().snapshot().params(info),
+                ItemStack.of(Material.IRON_SWORD), siege.superpower().texts());
+        Key model = made.getData(DataComponentTypes.ITEM_MODEL);
+        assertNotNull(model);
+        assertEquals("minecraft", model.namespace(), "the item model stays a vanilla sword, for every viewer");
+        assertEquals(AbilityItems.weaponModel(info), model, "a vanilla sword by difficulty");
+        assertTrue(AbilityWeaponModels.SWORDS.contains(model.value()), "a sword the pack overrides: " + model);
+        CustomModelData cmd = made.getData(DataComponentTypes.CUSTOM_MODEL_DATA);
+        assertNotNull(cmd, "the pack selects the 3D weapon by custom_model_data");
+        assertEquals(List.of(id), cmd.strings(), "string 0 is the ability id");
         assertFalse(items.isAbilityItem(attacker.getInventory().getItem(AbilityItems.SLOT)), "no iron ingot");
         long swords = java.util.Arrays.stream(attacker.getInventory().getContents())
                 .filter(item -> item != null && Tag.ITEMS_SWORDS.isTagged(item.getType())).count();

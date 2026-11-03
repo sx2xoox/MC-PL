@@ -4,6 +4,7 @@ import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityParams;
 import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.CustomModelData;
 import io.papermc.paper.datacomponent.item.ItemLore;
 import io.papermc.paper.datacomponent.item.UseCooldown;
 import net.kyori.adventure.key.Key;
@@ -29,11 +30,9 @@ public final class AbilityItems {
 
     private final NamespacedKey marker;
     private final NamespacedKey cooldownGroup;
-    private final NamespacedKey weaponModel;
 
     public AbilityItems(Hub hub) {
         this.marker = hub.key("ability_item");
-        this.weaponModel = hub.key("ability_weapon_model");
         this.cooldownGroup = hub.key("ability");
     }
 
@@ -59,14 +58,18 @@ public final class AbilityItems {
 
     /**
      * The ability weapon (공성전): {@code base} (the kit's sword, so it hits like that sword) that also casts the
-     * ability, drawn with {@code model} ({@link #weaponModel}), named and described like the ability item, unbreakable,
-     * with the same cooldown group (the vanilla overlay shows the active skill's cooldown) and marker.
+     * ability, named and described like the ability item, unbreakable, with the same cooldown group (the vanilla overlay
+     * shows the active skill's cooldown) and marker. It looks the same for everyone: a vanilla sword by difficulty
+     * ({@link #weaponModel}) whose {@code custom_model_data} string is the ability id, which the MCPL pack's override of
+     * that sword's item definition turns into the 3D weapon ({@link AbilityWeaponModels}); without the pack (or for an
+     * ability without a weapon model) it falls back to the vanilla sword.
      */
-    public ItemStack createWeapon(AbilityInfo info, AbilityParams params, ItemStack base, Key model,
-                                  AbilityTexts texts) {
+    public ItemStack createWeapon(AbilityInfo info, AbilityParams params, ItemStack base, AbilityTexts texts) {
         ItemStack item = base.clone();
         item.setAmount(1);
-        item.setData(DataComponentTypes.ITEM_MODEL, model);
+        item.setData(DataComponentTypes.ITEM_MODEL, weaponModel(info));
+        item.setData(DataComponentTypes.CUSTOM_MODEL_DATA,
+                CustomModelData.customModelData().addString(info.id()).build());
         item.setData(DataComponentTypes.ITEM_NAME, AbilityTexts.boldName(info)
                 .decoration(TextDecoration.ITALIC, false));
         item.unsetData(DataComponentTypes.CUSTOM_NAME);
@@ -76,36 +79,20 @@ public final class AbilityItems {
                 UseCooldown.useCooldown(seconds).cooldownGroup(cooldownGroup).build());
         item.setData(DataComponentTypes.MAX_STACK_SIZE, 1);
         item.setData(DataComponentTypes.UNBREAKABLE);
-        item.editPersistentDataContainer(pdc -> {
-            pdc.set(marker, PersistentDataType.STRING, info.id());
-            pdc.set(weaponModel, PersistentDataType.STRING, model.asString());
-        });
+        item.editPersistentDataContainer(pdc -> pdc.set(marker, PersistentDataType.STRING, info.id()));
         return item;
     }
 
     /**
-     * The look of {@code info}'s weapon: its 3D model ({@link AbilityWeaponModels}) for a player who has the MCPL pack,
-     * otherwise a vanilla sword by difficulty (iron, diamond, netherite).
+     * The item model of {@code info}'s weapon: a vanilla sword by difficulty (iron, diamond, netherite), one of
+     * {@link AbilityWeaponModels#SWORDS} (the swords whose item definitions the pack overrides with the 3D weapons).
      */
-    public static Key weaponModel(AbilityInfo info, boolean hasPack) {
-        Key model = hasPack ? AbilityWeaponModels.model(info.id()) : null;
-        if (model != null) {
-            return model;
-        }
+    public static Key weaponModel(AbilityInfo info) {
         return switch (info.difficulty()) {
             case 1 -> Material.IRON_SWORD.getKey();
             case 2 -> Material.DIAMOND_SWORD.getKey();
             default -> Material.NETHERITE_SWORD.getKey();
         };
-    }
-
-    /** The model an ability weapon was made with ({@link #createWeapon}), or null. */
-    public @Nullable Key weaponModelOf(@Nullable ItemStack item) {
-        if (item == null || item.isEmpty()) {
-            return null;
-        }
-        String model = item.getPersistentDataContainer().get(weaponModel, PersistentDataType.STRING);
-        return model == null ? null : Key.key(model);
     }
 
     public boolean isAbilityItem(@Nullable ItemStack item) {

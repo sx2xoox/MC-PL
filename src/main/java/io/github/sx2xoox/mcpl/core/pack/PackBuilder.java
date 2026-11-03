@@ -36,6 +36,12 @@ import com.google.gson.JsonObject;
  * {@code item_model} data component ({@link ModelRef}) points at; a model with tinted faces gets one
  * {@code minecraft:dye} tint source (the item's {@code dyed_color}, e.g. a team colour). Plus {@code pack.mcmeta}.
  *
+ * <p>Ability weapons ({@code models/weapon/<ability id>.bbmodel}) are also reachable from the vanilla swords the ability
+ * sword is drawn as ({@link #WEAPON_SWORDS}): their item definitions {@code assets/minecraft/items/<sword>.json} are
+ * overridden with a {@code minecraft:select} on {@code custom_model_data} string 0 (the ability id the plugin puts on
+ * the sword) whose cases are the weapons and whose fallback is the vanilla sword model, so a sword without that string
+ * (every normal sword) and players without the pack look vanilla.
+ *
  * <p>The zip is reproducible (sorted entries, fixed timestamps), so the same sources always give the same SHA-1 and
  * clients only download it again when something changed.
  */
@@ -57,7 +63,17 @@ public final class PackBuilder {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static final LocalDateTime FIXED_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
 
+    /**
+     * The vanilla swords whose item definitions select the ability weapons (the swords AbilityItems#weaponModel draws
+     * an ability weapon as; AbilityWeaponModels.SWORDS lists the same ones).
+     */
+    public static final List<String> WEAPON_SWORDS = List.of("iron_sword", "diamond_sword", "netherite_sword");
+    /** The sub folder of {@code models/} that holds the ability weapons ({@code weapon/<ability id>}). */
+    static final String WEAPON_FOLDER = "weapon/";
+
     private final SortedMap<String, byte[]> files = new TreeMap<>();
+    /** Ability id → the weapon's item model ({@code model} object of its item definition), filled by convert. */
+    private final SortedMap<String, JsonObject> weapons = new TreeMap<>();
     private final List<String> warnings = new ArrayList<>();
 
     private PackBuilder() {
@@ -114,6 +130,37 @@ public final class PackBuilder {
                 }
             }
         }
+        if (!weapons.isEmpty()) {
+            for (String sword : WEAPON_SWORDS) {
+                json("assets/minecraft/items/" + sword + ".json", weaponSelect(sword, weapons));
+            }
+        }
+    }
+
+    /**
+     * The overridden item definition of vanilla {@code sword}: {@code custom_model_data} string 0 = ability id → that
+     * weapon's model, anything else → {@code minecraft:item/<sword>} (exactly the vanilla definition's model).
+     */
+    static JsonObject weaponSelect(String sword, SortedMap<String, JsonObject> weapons) {
+        JsonArray cases = new JsonArray();
+        for (Map.Entry<String, JsonObject> weapon : weapons.entrySet()) {
+            JsonObject c = new JsonObject();
+            c.addProperty("when", weapon.getKey());
+            c.add("model", weapon.getValue().deepCopy());
+            cases.add(c);
+        }
+        JsonObject fallback = new JsonObject();
+        fallback.addProperty("type", "minecraft:model");
+        fallback.addProperty("model", "minecraft:item/" + sword);
+        JsonObject select = new JsonObject();
+        select.addProperty("type", "minecraft:select");
+        select.addProperty("property", "minecraft:custom_model_data");
+        select.addProperty("index", 0);
+        select.add("cases", cases);
+        select.add("fallback", fallback);
+        JsonObject def = new JsonObject();
+        def.add("model", select);
+        return def;
     }
 
     /** {@code relative}: the path below {@code models/}; a sub folder becomes part of the id ({@code weapon/police}). */
@@ -125,7 +172,11 @@ public final class PackBuilder {
         for (Map.Entry<String, byte[]> t : r.textures().entrySet()) {
             put("assets/" + NAMESPACE + "/textures/item/" + id + "/" + t.getKey(), t.getValue());
         }
-        json("assets/" + NAMESPACE + "/items/" + id + ".json", itemDefinition(id, BBModelConverter.tintCount(r.model())));
+        JsonObject definition = itemDefinition(id, BBModelConverter.tintCount(r.model()));
+        json("assets/" + NAMESPACE + "/items/" + id + ".json", definition);
+        if (id.startsWith(WEAPON_FOLDER)) {
+            weapons.put(id.substring(WEAPON_FOLDER.length()), definition.getAsJsonObject("model"));
+        }
     }
 
     /** {@code {"model": {"type": "minecraft:model", "model": "mcpl:item/<id>", "tints": [dye...]}}}. */

@@ -39,7 +39,6 @@ import io.github.sx2xoox.mcpl.game.superpower.menu.ChoiceMenu;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityTexts;
 import io.github.sx2xoox.mcpl.game.superpower.ui.RevealAnimation;
-import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Difficulty;
@@ -1737,14 +1736,12 @@ public final class SuperpowerMatch implements GameInstance {
         }
         ItemStack current = inventory.getItem(abilitySlot);
         boolean weapon = isAbilityWeapon();
-        Key model = weapon ? AbilityItems.weaponModel(info, game.hub().resourcePacks().hasPack(player)) : null;
-        if (info.id().equals(items.abilityId(current))
-                && (model == null || model.equals(items.weaponModelOf(current)))) {
+        if (info.id().equals(items.abilityId(current))) {
             return;
         }
         ItemStack displaced = isEmpty(current) || items.isAbilityItem(current) ? null : current;
-        inventory.setItem(abilitySlot, model != null
-                ? items.createWeapon(info, params(info), weaponBase(), model, texts)
+        inventory.setItem(abilitySlot, weapon
+                ? items.createWeapon(info, params(info), weaponBase(), texts)
                 : items.create(info, params(info), settings.abilityItemMaterial(), texts));
         if (displaced != null) {
             for (ItemStack leftover : inventory.addItem(displaced).values()) {
