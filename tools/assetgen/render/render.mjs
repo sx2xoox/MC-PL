@@ -92,12 +92,24 @@ const views = M.views || [
   { x: 1000, y: 500, w: 600, h: 500, az: 95, el: 42, k: 2.9 },
 ];
 for (const v of views) {
-  const cam = new THREE.PerspectiveCamera(35, v.w / v.h, 0.1, 2000);
-  // a view may aim at its own target (one object of a sheet) from a fixed distance
+  // ortho: half height of an orthographic view (inventory icons); fov: vertical field of view (default 35)
+  const cam = v.ortho
+    ? new THREE.OrthographicCamera(-v.ortho * v.w / v.h, v.ortho * v.w / v.h, v.ortho, -v.ortho, 0.01, 2000)
+    : new THREE.PerspectiveCamera(v.fov || 35, v.w / v.h, 0.01, 2000);
+  // a view may aim at its own target (one object of a sheet) from a fixed distance, or sit at an explicit eye
   const c = v.target ? new THREE.Vector3(...v.target) : center;
-  const az = v.az * Math.PI / 180, el = v.el * Math.PI / 180, d = v.dist || radius * v.k;
-  cam.position.set(c.x + Math.sin(az) * Math.cos(el) * d, c.y + Math.sin(el) * d, c.z - Math.cos(az) * Math.cos(el) * d);
+  if (v.eye) {
+    cam.position.set(...v.eye);
+  } else {
+    const az = v.az * Math.PI / 180, el = v.el * Math.PI / 180, d = v.dist || radius * v.k;
+    cam.position.set(c.x + Math.sin(az) * Math.cos(el) * d, c.y + Math.sin(el) * d, c.z - Math.cos(az) * Math.cos(el) * d);
+  }
   cam.lookAt(c);
+  if (v.background) {
+    renderer.setClearColor(new THREE.Color(v.background));
+  } else {
+    renderer.setClearColor(0x1b1d22);
+  }
   renderer.setViewport(v.x, H - v.y - v.h, v.w, v.h);
   renderer.setScissor(v.x, H - v.y - v.h, v.w, v.h);
   renderer.setScissorTest(true);

@@ -13,10 +13,20 @@ import org.jspecify.annotations.Nullable;
  */
 public final class AbilityWeaponModels {
 
-    /** Ability ids that have a weapon model in the pack. Filled as models are added (tools/assetgen/models). */
-    static final Set<String> MODELED = Set.of();
+    /**
+     * Ability ids that have a weapon model in the pack ({@code tools/assetgen/models/weapons.py} WEAPONS; see
+     * tools/assetgen/README.md "새 능력 무기 추가하는 법"). AbilityWeaponModelsTest checks each one is in the pack.
+     */
+    static final Set<String> MODELED = Set.of(
+            // 공성전 default pool
+            "police", "miner", "blacksmith", "gunslinger", "chef");
 
     private AbilityWeaponModels() {
+    }
+
+    /** Every ability id that has a weapon model. */
+    public static Set<String> modeled() {
+        return MODELED;
     }
 
     /** The item model of {@code abilityId}'s weapon, or null when the pack has none for it. */

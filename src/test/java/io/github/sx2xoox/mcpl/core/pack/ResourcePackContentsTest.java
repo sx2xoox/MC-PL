@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.core.pack;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
@@ -15,8 +16,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -25,9 +28,15 @@ import javax.imageio.ImageIO;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.sx2xoox.mcpl.game.siege.SiegeSettings;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.BuiltinAbilities;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
+import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityWeaponModels;
+import org.bukkit.NamespacedKey;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockbukkit.mockbukkit.MockBukkit;
 
 /**
  * The MCPL resource pack built from {@code src/main/resourcepack-src}: valid JSON everywhere, every item model and
@@ -106,6 +115,70 @@ class ResourcePackContentsTest {
         assertFalse(json("assets/mcpl/items/tower_core_shield.json").getAsJsonObject("model").has("tints"));
         // animated textures (the firewall's shimmer, blinking racks) ship their .mcmeta
         assertTrue(built.files().keySet().stream().anyMatch(p -> p.endsWith("/energy.png.mcmeta")));
+    }
+
+    /** The display contexts every ability weapon sets (the shared preset of tools/assetgen weaponkit.py). */
+    private static final List<String> WEAPON_DISPLAYS = List.of("firstperson_righthand", "firstperson_lefthand",
+            "thirdperson_righthand", "thirdperson_lefthand", "gui", "ground", "fixed");
+
+    @Test
+    void everyAbilityWeaponIsInThePack() {
+        List<String> problems = new ArrayList<>();
+        for (String id : AbilityWeaponModels.modeled()) {
+            NamespacedKey key = AbilityWeaponModels.model(id);
+            assertNotNull(key, id);
+            String item = "assets/" + key.getNamespace() + "/items/" + key.getKey() + ".json";
+            if (!built.files().containsKey(item)) {
+                problems.add(id + ": no item definition " + item + " (tools/assetgen/models/weapons.py WEAPONS?)");
+                continue;
+            }
+            String model = modelPath(json(item).getAsJsonObject("model").get("model").getAsString());
+            if (!built.files().containsKey(model)) {
+                problems.add(id + ": no model " + model);
+                continue;
+            }
+            JsonObject m = json(model);
+            JsonObject display = m.has("display") ? m.getAsJsonObject("display") : new JsonObject();
+            for (String ctx : WEAPON_DISPLAYS) {
+                if (!display.has(ctx)) {
+                    problems.add(id + ": no '" + ctx + "' display transform (use weaponkit's Weapon.finish())");
+                }
+            }
+            if (m.getAsJsonObject("textures").isEmpty() || m.getAsJsonArray("elements").isEmpty()) {
+                problems.add(id + ": empty model");
+            }
+        }
+        assertTrue(problems.isEmpty(), () -> String.join("\n", problems));
+    }
+
+    @Test
+    void everyWeaponInThePackIsRegisteredForARealAbility() {
+        Set<String> inPack = new TreeSet<>();
+        for (String path : built.files().keySet()) {
+            if (path.startsWith("assets/mcpl/items/weapon/")) {
+                inPack.add(path.substring("assets/mcpl/items/weapon/".length()).replaceFirst("\\.json$", ""));
+            }
+        }
+        assertEquals(new TreeSet<>(AbilityWeaponModels.modeled()), inPack,
+                "AbilityWeaponModels.MODELED must list exactly the weapons in the pack");
+        MockBukkit.mock(); // some abilities build block data in their static setup
+        try {
+            AbilityRegistry registry = new AbilityRegistry();
+            BuiltinAbilities.registerAll(registry);
+            for (String id : AbilityWeaponModels.modeled()) {
+                assertNotNull(registry.get(id), "weapon for an unknown ability id: " + id);
+            }
+        } finally {
+            MockBukkit.unmock();
+        }
+        assertNull(AbilityWeaponModels.model("no_such_ability"));
+    }
+
+    @Test
+    void everySiegePoolAbilityHasAWeapon() {
+        for (String id : SiegeSettings.DEFAULT_POOL) {
+            assertTrue(AbilityWeaponModels.modeled().contains(id), id);
+        }
     }
 
     @Test

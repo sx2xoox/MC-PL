@@ -27,7 +27,8 @@ import com.google.gson.JsonObject;
  *
  * <p>Source layout:
  * <pre>
- *   models/&lt;id&gt;.bbmodel   Blockbench models (made by tools/assetgen or by hand), converted by {@link BBModelConverter}
+ *   models/&lt;id&gt;.bbmodel   Blockbench models (made by tools/assetgen or by hand), converted by {@link BBModelConverter};
+ *                          sub folders are part of the id (models/weapon/police.bbmodel = mcpl:weapon/police)
  *   assets/...             copied as-is
  * </pre>
  * Output, per model: {@code assets/mcpl/models/item/<id>.json}, its textures under
@@ -107,16 +108,17 @@ public final class PackBuilder {
         }
         Path models = source.resolve("models");
         if (Files.isDirectory(models)) {
-            try (Stream<Path> s = Files.list(models)) {
+            try (Stream<Path> s = Files.walk(models)) {
                 for (Path p : s.filter(f -> f.toString().endsWith(".bbmodel")).sorted().toList()) {
-                    convert(p);
+                    convert(p, slash(models.relativize(p)));
                 }
             }
         }
     }
 
-    private void convert(Path file) throws IOException {
-        String id = BBModelConverter.sanitize(file.getFileName().toString().replaceFirst("\\.bbmodel$", ""));
+    /** {@code relative}: the path below {@code models/}; a sub folder becomes part of the id ({@code weapon/police}). */
+    private void convert(Path file, String relative) throws IOException {
+        String id = BBModelConverter.sanitize(relative.replaceFirst("\\.bbmodel$", ""));
         BBModelConverter.Result r = BBModelConverter.convert(file, NAMESPACE + ":item/" + id);
         r.warnings().forEach(w -> warnings.add(file.getFileName() + ": " + w));
         json("assets/" + NAMESPACE + "/models/item/" + id + ".json", r.model());
