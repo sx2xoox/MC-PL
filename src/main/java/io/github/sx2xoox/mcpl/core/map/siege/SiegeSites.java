@@ -10,13 +10,13 @@ import java.util.List;
  */
 public interface SiegeSites {
 
-    /** Where the attackers (re)spawn: three spots side by side, facing the defenders' side. */
+    /** Where the attackers (re)spawn: at least three spots side by side, facing the defenders' side. */
     List<Spot> attackerSpawns();
 
     /**
      * Where the defenders (re)spawn, by the number of towers already destroyed: {@code get(0)} while all three stand,
      * {@code get(1)} after the front tower fell (further back), {@code get(2)} after the middle one fell (next to the
-     * core). Three spots each.
+     * core). At least three spots each.
      */
     List<List<Spot>> defenderSpawns();
 

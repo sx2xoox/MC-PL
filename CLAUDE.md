@@ -8,7 +8,7 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 
 - Java 25, Paper API 26.3 (`compileOnly`), Gradle wrapper (`./gradlew build`). Tests: JUnit 6 + MockBukkit v26.3.
 - `./gradlew runServer` starts a local Paper 26.3 test server (needs internet access to PaperMC).
-- Maps: `./gradlew renderMaps [-Pzone=<zone>]` writes PNG previews to `build/map-previews/`; `CitadelMapTest` audits
+- Maps: `./gradlew renderMaps [-Pmap=<id>] [-Pzone=<zone>]` writes PNG previews to `build/map-previews/`; `CitadelMapTest` audits
   walkability (every standable place reachable, no stranded pits) and blocks (no floating sand, spilling water, lava).
   Bump `ArenaMap#version` whenever a map's blocks change, so servers rebuild it.
 - `docs/abilities.md` is generated from every `AbilityInfo`; after changing ability names, descriptions or params run
@@ -29,6 +29,8 @@ src/main/java/io/github/sx2xoox/mcpl/
   core/                        game hub shared by all modes (sessions, rotation, snapshots, arena, UI, commands)
     map/                       battle maps built in code into void worlds (MapCanvas/BlockSpec, MapService, /게임 경기장 맵)
       citadel/                 폐허의 성채: CitadelLayout (the plan) + one MapZone class per zone
+      siege/                   협곡 요새 (공성전 map): SiegeSites (the contract the siege game reads), SiegeLayout (the
+                               plan), SiegeMap + one MapZone per part (camp, river, gate, court, keep); SiegeMapTest
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)

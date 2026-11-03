@@ -81,7 +81,8 @@ tasks.register<Test>("updateAugmentDocs") {
 }
 
 tasks.register<Test>("renderMaps") {
-    description = "Renders preview images of the battle maps to build/map-previews (-Pzone=<name> for one zone)."
+    description = "Renders preview images of the battle maps to build/map-previews (-Pmap=<id> for one map, " +
+        "-Pzone=<name> for one zone)."
     group = "documentation"
     useJUnitPlatform()
     testClassesDirs = sourceSets.test.get().output.classesDirs
@@ -91,6 +92,7 @@ tasks.register<Test>("renderMaps") {
     }
     systemProperty("mcpl.renderMaps", "true")
     systemProperty("mcpl.renderZone", (project.findProperty("zone") ?: "").toString())
+    systemProperty("mcpl.renderMap", (project.findProperty("map") ?: "").toString())
     maxHeapSize = "2g"
     outputs.upToDateWhen { false }
 }
