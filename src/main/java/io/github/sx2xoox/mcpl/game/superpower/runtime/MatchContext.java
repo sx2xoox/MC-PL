@@ -228,6 +228,10 @@ public final class MatchContext implements AbilityContext {
             // Practice training dummies are everyone's enemy.
             return living.isValid();
         }
+        if (match.isHostTarget(entity)) {
+            // A hosting mode's targets (공성전 towers): the host decides whose enemy they are.
+            return living.isValid() && match.isHostEnemy(owner, entity);
+        }
         Summon summon = summons.get(entity.getUniqueId());
         if (summon == null || !living.isValid() || summon.owner().equals(ownerId)) {
             return false;
@@ -304,7 +308,7 @@ public final class MatchContext implements AbilityContext {
     private record Ranked(LivingEntity entity, double distance) {
     }
 
-    /** Alive participants, live summons and practice dummies: everything that can ever be an enemy. */
+    /** Alive participants, live summons, practice dummies and host targets: everything that can ever be an enemy. */
     private List<LivingEntity> candidates() {
         List<LivingEntity> all = new ArrayList<>(session.alivePlayers());
         for (Summon summon : summons.values()) {

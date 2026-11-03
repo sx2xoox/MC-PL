@@ -40,7 +40,11 @@ src/main/java/io/github/sx2xoox/mcpl/
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
     pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
                                PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model)
-  game/siege/tower/            공성전 tower looks (TowerLook contract; ModelTowerLook = 3D models + per-viewer vanilla fallback)
+  game/siege/                  초능력 공성전 (SiegeGame = the MiniGame, SiegeSettings = games.siege.*, SiegeMatch = flow, score,
+                               respawns; abilities run in a hosted SuperpowerMatch = runtime/MatchHost; map via
+                               core/map/siege/SiegeSites, FallbackSiegeSites in tests)
+    tower/                     Tower (rules + Mannequin hitbox) and looks (TowerLook contract; ModelTowerLook = 3D models +
+                               per-viewer vanilla fallback)
   game/superpower/             초능력전쟁 (SuperpowerGame = the MiniGame, SuperpowerSettings = games.superpower.*)
     ability/                   ability API contract (Ability, AbilityContext, AbilityInfo, AbilityParams, ...)
     abilities/                 one class per ability + BuiltinAbilities registration

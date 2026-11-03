@@ -8,6 +8,7 @@ import io.github.sx2xoox.mcpl.core.map.citadel.CitadelMap;
 import io.github.sx2xoox.mcpl.core.map.siege.SiegeMap;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.augment.AugmentGame;
+import io.github.sx2xoox.mcpl.game.siege.SiegeGame;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -39,6 +40,8 @@ public class MCPLPlugin extends JavaPlugin {
         games.register(superpower);
         // 능력 연습 (solo practice of the superpower abilities); not in the default rotation.
         games.register(superpower.practice());
+        // 초능력 공성전: two teams attack and defend three towers with the superpower abilities.
+        games.register(new SiegeGame(hub, superpower));
         // 증강 야생전: a fresh survival world per match with LoL/TFT-style augments.
         AugmentGame augment = new AugmentGame(hub);
         games.register(augment);

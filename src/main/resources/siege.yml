@@ -1,0 +1,190 @@
+# ─────────────────────────────────────────────────────────────
+#  초능력 공성전 메시지 (MiniMessage 형식: https://docs.advntr.dev/minimessage/format)
+#  prefix 를 지정하지 않으면 messages.yml 의 prefix 를 그대로 씁니다.
+#  이 파일에 없는 키는 플러그인에 내장된 기본 문구를 사용합니다. 수정 후 /게임 리로드
+# ─────────────────────────────────────────────────────────────
+
+game:
+  name: "<gradient:#f59e0b:#ef4444><bold>초능력 공성전</bold></gradient>"
+  description:
+    - "두 팀이 번갈아 공격과 수비를 하며 타워 3개를 부수는 팀전 (3판 2선승)."
+    - "초능력전쟁의 능력을 쓰고, 죽어도 잠시 뒤 부활합니다. 판마다 능력을 새로 뽑습니다."
+    - "<click:suggest_command:'/게임 공성전'><hover:show_text:'<gray>클릭하여 입력'><white>/게임 공성전</white></hover></click> <gray>점수 · 리롤 · 능력풀"
+
+start:
+  map-not-built: "<red>공성전 맵이 아직 지어지지 않았습니다. <white>/게임 경기장 맵 <id></white> 로 먼저 지어 주세요."
+  no-teams: "공성전은 두 팀이 필요합니다"
+  no-abilities: "공성전에 쓸 수 있는 능력이 없습니다"
+
+score:
+  kill-points: "<gold>+<points>점 <gray>(처치)"
+  assist-points: "<gold>+<points>점 <gray>(도움)"
+  bounty-on: "<gold>💰 현상금!</gold> <player><gray> 님이 <white><streak>연속 처치</white> 중입니다. 처치하면 <gold>+<points>점</gold>!"
+  bounty-claimed: "<gold>💰 현상금 획득!</gold> <killer><gray> 님이 <white><streak>연속 처치</white> 중이던 <victim><gray> 님을 잡았습니다 <gold>+<points>점"
+
+result:
+  team-left: "<team><gray> 이(가) 모두 나갔습니다."
+  reason-left: "상대 팀이 모두 나감"
+  reason-score: "<score>점 먼저 달성"
+  reason-time: "시간 종료 (점수 → 파괴한 타워 → 처치 순)"
+  reason-sudden-death: "연장전에서 먼저 득점"
+  reason-sudden-death-held: "연장전 수비 성공"
+  reason-rounds: "판 스코어 <a> : <b>"
+
+reroll:
+  announce: "<gray>준비 시간에 <white>웅크리고 능력 아이템 우클릭</white>(또는 <white>/게임 공성전 리롤</white>)으로 능력을 <white><count>번</white> 다시 뽑을 수 있습니다."
+  hint: "<gray>웅크리고 우클릭하면 능력 리롤 (<white><count>번</white> 남음)"
+  done: "<green>능력을 다시 뽑았습니다. <gray>(남은 리롤 <white><count></white>번)"
+  not-participant: "<red>이 경기의 참가자가 아닙니다."
+  wrong-phase: "<red>리롤은 판 시작 준비 시간에만 할 수 있습니다."
+  none-left: "<red>이번 판의 리롤을 모두 썼습니다."
+  no-options: "<red>뽑을 수 있는 다른 능력이 없습니다."
+
+pool:
+  unknown-warning: "<yellow>공성전 능력풀에 없거나 꺼진 능력이 있어 건너뜁니다: <white><ids>"
+  filled-warning: "<yellow>공성전 능력풀이 한 팀 인원(<count>명)보다 작아 켜진 다른 능력으로 채웠습니다. <white>/게임 공성전 능력풀 추가</white>"
+  list: "<gray>공성전 능력풀 (<white><count></white>개): <abilities>"
+  list-empty: "<gray>공성전 능력풀이 비어 있어 켜진 모든 능력이 나옵니다."
+  unknown-entry: "<red><id>(알 수 없음)</red>"
+  unknown: "<red>'<input>' 능력을 찾을 수 없습니다."
+  already: "<red><ability><red> 은(는) 이미 능력풀에 있습니다."
+  added: "<green><ability><green> 을(를) 공성전 능력풀에 추가했습니다. <gray>(<count>개, 다음 판부터)"
+  disabled-warning: "<yellow><ability><yellow> 은(는) abilities.yml 에서 꺼져 있어 켤 때까지 나오지 않습니다."
+  not-in-pool: "<red>'<input>' 은(는) 능력풀에 없습니다."
+  removed: "<green><ability><green> 을(를) 공성전 능력풀에서 뺐습니다. <gray>(<count>개)"
+  reset: "<green>공성전 능력풀을 기본값으로 되돌렸습니다. <gray>(<count>개)"
+
+half:
+  first: "전반"
+  second: "후반"
+  title: "<gold><bold><round>판 <half>"
+  subtitle: "<team><gray> 공격"
+  started: "<gold><round>판 <half></gold><gray> — 공격 <attackers><gray>, 수비 <defenders>"
+
+prep:
+  countdown: "<yellow><bold><seconds>"
+
+fight:
+  title: "<red><bold>공성 시작!"
+  subtitle: "<gray>타워를 부수거나 지켜 내세요"
+
+tower:
+  shielded: "<aqua>🛡 보호막: 앞 타워를 먼저 부숴야 합니다"
+  under-attack: "<red>⚠ <tower> 공격받는 중! <white><percent>%"
+  health-announce: "<gray><tower><gray> 체력 <red><percent>%</red> 남음"
+  destroyed-title: "<red><bold><tower> 파괴!"
+  destroyed-subtitle: "<team><gray> <gold>+<points>점"
+  destroyed: "<red>💥 <tower> 파괴!</red> <player><gray> (<team><gray>) <gold>+<points>점"
+  next: "<gray>이제 <white><tower></white>을(를) 공격할 수 있습니다. 수비 부활 지점이 뒤로 물러납니다."
+  defended: "<green>🛡 방어 성공!</green> <team><gray> 이(가) <white><tower></white>을(를) 지켜 냈습니다 <gold>+<points>점</gold><gray>, 타워 체력 회복"
+
+climax:
+  title: "<red><bold>총공세!"
+  subtitle: "<gray>타워 점수 <gold>×<multiplier></gold> · 부활 <white><seconds>초</white> 빨라짐"
+  announce: "<red><bold>총공세!</bold></red><gray> 이 반의 남은 시간 동안 타워 파괴 점수 <gold>×<multiplier></gold>, 양 팀 부활 대기 <white><seconds>초</white> 감소"
+
+spawn:
+  zone-warning: "<red>적 부활 지점입니다! 나가세요"
+  protection-ended: "<gray>부활 보호가 풀렸습니다"
+
+halftime:
+  title: "<gold><bold>하프타임"
+  subtitle: "<white><a></white><gray> : </gray><white><b></white>"
+  time: "<gray>전반 종료. <white><seconds>초</white> 뒤 공수를 바꿔 후반을 시작합니다. 체력·쿨타임·게이지 초기화, 타워 복구."
+  core: "<gray>코어 파괴로 전반 종료! <white><seconds>초</white> 뒤 공수를 바꿔 후반을 시작합니다."
+
+sudden-death:
+  title: "<red><bold>연장전"
+  subtitle: "<gray>먼저 점수를 내는 팀이 승리 (<white><seconds>초</white>)"
+  announce: "<red>동점! 연장전 <white><seconds>초</white>:</red><gray> 먼저 점수를 내는 팀이 이 판을 가져갑니다. 아무도 못 내면 수비팀 승리."
+
+round:
+  won-title: "<team><gold><bold> 판 승리!"
+  won-subtitle: "<white><a></white><gray> : </gray><white><b></white>"
+  won: "<gold><round>판</gold><gray> 승리: <team><gray> (<reason>) — <white><a> : <b>"
+  mvp: "<gold>⭐ 이번 판 MVP:</gold> <player><gray> (기여 <white><points></white>점)"
+  break: "<gray>판 스코어 <white><a> : <b></white>. <white><seconds>초</white> 뒤 다음 판을 시작합니다 (능력을 새로 뽑습니다)."
+
+hud:
+  bossbar: "<phase><gray> · </gray><white><time></white><gray> · 공격 </gray><attackers>"
+  tower: "<white><tower></white><gray> ❤ </gray><red><health></red><gray>/<max>"
+  tower-shielded: "<gray>🛡 <tower> ❤ <health>/<max>"
+  phase-prep: "<yellow><round>판 <half> 준비"
+  phase-fight: "<gold><round>판 <half>"
+  phase-climax: "<red><bold><round>판 <half> 총공세"
+  phase-sudden-death: "<red><bold><round>판 연장전"
+  phase-halftime: "<aqua><round>판 하프타임"
+  phase-break: "<aqua><round>판 준비 중"
+  phase-over: "<gray>경기 종료"
+  score: "<team_a> <white><bold><a></bold></white><gray> : </gray><white><bold><b></bold></white> <team_b><gray> /<goal>"
+  rounds: "<gray>판 </gray><gold><a></gold><gray> : </gray><gold><b></gold>"
+  phase: "<phase> <white><time>"
+  attackers: "<gray>공격 </gray><team>"
+  climax: "<red><bold>🔥 총공세"
+  ability: "<gray>능력 </gray><ability>"
+  kd: "<gray>킬/데스 </gray><white><kills></white><gray>/</gray><white><deaths>"
+  rerolls: "<gray>리롤 <white><count></white>번 (웅크리고 우클릭)"
+  spectating: "<gray>관전 중"
+
+command:
+  help:
+    - "<gold>── 초능력 공성전 ──"
+    - "<white>/게임 공성전 점수</white> <gray>지금 점수"
+    - "<white>/게임 공성전 리롤</white> <gray>판 시작 준비 시간에 능력 다시 뽑기"
+  help-admin:
+    - "<white>/게임 공성전 능력풀 [목록|추가|제거|초기화] [능력]</white> <gray>공성전에서 나오는 능력"
+  usage-pool: "<red>사용법: /게임 공성전 능력풀 <추가|제거> <능력>"
+  player-only: "<red>플레이어만 쓸 수 있습니다."
+  no-match: "<red>진행 중인 공성전이 없습니다."
+  status: "<gold><round>판</gold><gray> — <team_a> <white><a></white> : <white><b></white> <team_b><gray> (판 <white><rounds_a> : <rounds_b></white>)"
+
+settings:
+  section:
+    match:
+      name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>진행"
+      lore:
+        - "<gray>판 수, 목표 점수, 반 길이, 쉬는 시간, 리롤"
+    battle:
+      name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>전투"
+      lore:
+        - "<gray>총공세, 부활, 타워 체력"
+  rounds-to-win:
+    name: "승리 판 수"
+    lore:
+      - "<gray>이 판 수를 먼저 이긴 팀이 우승합니다 (2 = 3판 2선승)."
+  win-score:
+    name: "판 목표 점수"
+    lore:
+      - "<gray>전반+후반 합계로 이 점수를 먼저 낸 팀이 바로 판을 이깁니다."
+  half:
+    name: "전반·후반 길이"
+    lore:
+      - "<gray>각 반의 시간. 끝나면 공수를 바꿉니다."
+  halftime:
+    name: "하프타임"
+    lore:
+      - "<gray>전반과 후반 사이 쉬는 시간"
+  round-break:
+    name: "판 사이 쉬는 시간"
+    lore:
+      - "<gray>판이 끝나고 다음 판까지의 시간"
+  rerolls:
+    name: "판마다 리롤"
+    lore:
+      - "<gray>판 시작 준비 시간에 능력을 다시 뽑을 수 있는 횟수"
+    zero: "<red>리롤 없음"
+  climax:
+    name: "총공세 시간"
+    lore:
+      - "<gray>각 반의 마지막 이 시간 동안 타워 점수가 늘고 부활이 빨라집니다."
+    zero: "<red>총공세 없음"
+  respawn:
+    name: "부활 대기"
+    lore:
+      - "<gray>기본 부활 대기 시간. 그 반에서 많이 죽을수록 길어집니다."
+    zero: "<aqua>바로 부활"
+  tower-per-attacker:
+    name: "공격팀 1명당 타워 체력"
+    lore:
+      - "<gray>타워 체력 = 설정 체력 × (기본 비율 + 이 값 × 공격팀 인원)"
+      - "<gray>인원이 많을수록 타워가 단단해집니다."
