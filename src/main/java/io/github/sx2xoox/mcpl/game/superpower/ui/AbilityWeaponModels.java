@@ -19,7 +19,10 @@ public final class AbilityWeaponModels {
      */
     static final Set<String> MODELED = Set.of(
             // 공성전 default pool
-            "police", "miner", "blacksmith", "gunslinger", "chef");
+            "police", "miner", "blacksmith", "gunslinger", "chef",
+            // element, spirit and support abilities (weapons_b2.py)
+            "hydro", "magma", "light", "shadow", "vampire", "reaper", "necromancer", "demon", "phoenix", "dragon",
+            "werewolf", "dokkaebi", "healer", "bard", "alchemist");
 
     private AbilityWeaponModels() {
     }

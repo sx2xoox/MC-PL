@@ -166,3 +166,5 @@ WEAPONS = {
     "gunslinger": gunslinger,
     "chef": chef,
 }
+from models import weapons_b2  # noqa: E402  (batch 2: element, spirit and support abilities)
+WEAPONS.update(weapons_b2.WEAPONS)

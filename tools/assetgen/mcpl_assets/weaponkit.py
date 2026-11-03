@@ -164,6 +164,58 @@ class Weapon:
             self.both_flats(f"{name}{n}", (x0, y, z), (x1, y + pitch / 2, z + 0.25), tex, **kw)
         return self
 
+    def taper(self, name, y0, y1, w0, w1, d0, d1, tex, steps=3, x=0.0, **kw):
+        """A shaft / head that narrows (or widens) from w0 x d0 at y0 to w1 x d1 at y1 in `steps` stacked boxes."""
+        h = (y1 - y0) / steps
+        for n in range(steps):
+            t = n / max(1, steps - 1)
+            self.centred(f"{name}_{n}", y0 + n * h, y0 + (n + 1) * h, w0 + (w1 - w0) * t, d0 + (d1 - d0) * t, tex,
+                         x=x, **kw)
+        return self
+
+    def bar(self, name, start, angle, length, width, depth, tex, z=0.0, offset=0.0, **kw):
+        """
+        A straight bar in the x/y plane from `start` (x, y) heading `angle` degrees (counter-clockwise from +x, any
+        multiple of 22.5), `width` across and `depth` deep (centred on z). offset shifts it sideways (+ = to the
+        bar's left). Returns the end point, so bars chain into curves (horns, claws, a scythe blade).
+        """
+        assert angle % 22.5 == 0, f"{name}: bar angles go in 22.5 degree steps"
+        a = (angle + 180) % 360 - 180
+        base = round(a / 90) * 90
+        rem = a - base
+        rad = math.radians(a)
+        sx = start[0] - math.sin(rad) * offset      # shifted along the bar's left normal
+        sy = start[1] + math.cos(rad) * offset
+        hw = width / 2
+        if base == 0:
+            frm, to = (sx, sy - hw), (sx + length, sy + hw)
+        elif base in (180, -180):
+            frm, to = (sx - length, sy - hw), (sx, sy + hw)
+        elif base == 90:
+            frm, to = (sx - hw, sy), (sx + hw, sy + length)
+        else:
+            frm, to = (sx - hw, sy - length), (sx + hw, sy)
+        rotation = ("z", rem, (sx, sy, z)) if rem else None
+        self.box(name, (frm[0], frm[1], z - depth / 2), (to[0], to[1], z + depth / 2), tex, rotation=rotation, **kw)
+        return start[0] + math.cos(rad) * length, start[1] + math.sin(rad) * length
+
+    def curve(self, name, start, path, width, depth, tex, z=0.0, offset=0.0, overlap=0.0, **kw):
+        """
+        Bars chained along `path` = [(angle, length), ...] from `start`; width may be one number or one per bar (a
+        tapering horn or claw). overlap starts each later bar that much further back so the bends close.
+        Returns the list of joint points (start ... end).
+        """
+        points = [start]
+        p = start
+        for n, (angle, length) in enumerate(path):
+            w = width[n] if isinstance(width, (list, tuple)) else width
+            back = overlap if n else 0.0
+            rad = math.radians(angle)
+            q = (p[0] - math.cos(rad) * back, p[1] - math.sin(rad) * back)
+            p = self.bar(f"{name}_{n}", q, angle, length + back, w, depth, tex, z=z, offset=offset, **kw)
+            points.append(p)
+        return points
+
     # --- output ------------------------------------------------------------------------------------
 
     def finish(self):
