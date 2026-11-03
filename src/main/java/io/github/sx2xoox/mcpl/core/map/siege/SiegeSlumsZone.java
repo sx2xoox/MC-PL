@@ -36,7 +36,7 @@ final class SiegeSlumsZone implements MapZone {
         // The landmark pair: a capsule hotel and a club tower, joined over the avenue.
         SiegeKit.building(canvas, random, new SiegeKit.Building(-128, -43, -114, -11, 4, true, N | S));
         SiegeKit.building(canvas, random, new SiegeKit.Building(-128, 11, -114, 41, 4, true, N | S));
-        SiegeStreets.skybridge(canvas, -121, -11, 11, "MAGENTA");
+        SiegeStreets.skybridge(canvas, -121, -11, 11, SiegeWayfinding.accent(name()));
         // The rest of the blocks.
         SiegeStreets.block(canvas, random, -95, -43, -83, -11, N | S, 2, 4, 0.6);
         SiegeStreets.block(canvas, random, -95, 11, -83, 41, N | S, 2, 4, 0.6);
@@ -54,8 +54,10 @@ final class SiegeSlumsZone implements MapZone {
             SiegeStreets.stall(canvas, random, x + 2, SiegeLayout.MAIN_HALF, -1);
         }
         BiPredicate<Integer, Integer> keep = SiegeZones::keepFree;
-        SiegeStreets.streetAlongX(canvas, random, -128, -83, -SiegeLayout.MAIN_HALF, SiegeLayout.MAIN_HALF, keep);
-        SiegeStreets.streetAlongX(canvas, random, -128, -83, SiegeLayout.NORTH_Z1, SiegeLayout.NORTH_Z2, keep);
+        SiegeStreets.streetAlongX(canvas, random, -128, -83, -SiegeLayout.MAIN_HALF, SiegeLayout.MAIN_HALF,
+                SiegeWayfinding.MAIN, keep);
+        SiegeStreets.streetAlongX(canvas, random, -128, -83, SiegeLayout.NORTH_Z1, SiegeLayout.NORTH_Z2,
+                SiegeWayfinding.NORTH, keep);
         SiegeStreets.streetAlongZ(canvas, random, -104, -96, -88, 88, keep);
     }
 
@@ -76,15 +78,9 @@ final class SiegeSlumsZone implements MapZone {
         SiegeKit.car(canvas, random, -138, 14, true);
         SiegeKit.crates(canvas, random, -132, -6, G + 1);
         SiegeKit.crates(canvas, random, -132, 6, G + 1);
-        // Neon arrows on the ground pointing east.
-        for (int x = -146; x <= -134; x += 4) {
-            canvas.set(x, G, 0, SiegeKit.glow("CYAN"));
-            canvas.set(x - 1, G, -1, SiegeKit.glow("CYAN"));
-            canvas.set(x - 1, G, 1, SiegeKit.glow("CYAN"));
-        }
-        // A wall board for the attackers at the west skyline.
-        SiegeKit.lamp(canvas, -142, -12, 0, 1, "CYAN");
-        SiegeKit.lamp(canvas, -142, 12, 0, -1, "CYAN");
+        // Lamps in the main avenue's colour where it starts (the lanes' strips and arrows lead out of the camp).
+        SiegeKit.lamp(canvas, -142, -12, 0, 1, SiegeWayfinding.MAIN);
+        SiegeKit.lamp(canvas, -142, 12, 0, -1, SiegeWayfinding.MAIN);
     }
 
     /** A shipping container (3 wide, 7 long, 3 high), {@code stack} high, along z. */

@@ -114,7 +114,7 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
 
     @Override
     public int version() {
-        return 2;
+        return 3;
     }
 
     @Override
@@ -152,6 +152,11 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
         }
         highway(canvas);
         monorail(canvas);
+        SiegeWayfinding.build(canvas);
+        SiegeWayfinding.objectiveRings(canvas, OBJECTIVES);
+        for (Tower tower : TOWERS) {
+            towerRing(canvas, tower);
+        }
         for (Tower tower : TOWERS) {
             clearPlatform(canvas, tower);
         }
@@ -272,7 +277,7 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
             for (int z : new int[] {SiegeLayout.CANAL_Z1 - 1, SiegeLayout.CANAL_Z2 + 1}) {
                 for (int y = floor + 1; y < G; y++) {
                     canvas.set(x, y, z, y == floor + 3 && Math.floorMod(x, 4) != 0
-                            ? BlockSpec.of(Material.VERDANT_FROGLIGHT) : BlockSpec.of(Material.DEEPSLATE_TILES));
+                            ? SiegeKit.glow(SiegeWayfinding.CANAL) : BlockSpec.of(Material.DEEPSLATE_TILES));
                 }
                 if (!bridge && !nextToCrossing(x)) {
                     canvas.set(x, G + 1, z, BlockSpec.of(Material.IRON_BARS));
@@ -528,6 +533,21 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
     }
 
     // ------------------------------------------------------------------ platforms
+
+    /** A ring of light in the district's colour just outside the platform: where the tower's defence zone ends. */
+    private static void towerRing(MapCanvas canvas, Tower tower) {
+        String colour = SiegeWayfinding.accentAt(tower.x(), tower.z());
+        int r = tower.radius() + 1;
+        for (int dx = -r - 1; dx <= r + 1; dx++) {
+            for (int dz = -r - 1; dz <= r + 1; dz++) {
+                if ((int) Math.round(Math.hypot(dx, dz)) != r) {
+                    continue;
+                }
+                canvas.set(tower.x() + dx, tower.y() - 1, tower.z() + dz, SiegeKit.glass(colour));
+                canvas.set(tower.x() + dx, tower.y() - 2, tower.z() + dz, SiegeKit.glow(colour));
+            }
+        }
+    }
 
     /** The tower platform: nothing but the floor within the radius, high above, for the model and the fight. */
     private static void clearPlatform(MapCanvas canvas, Tower tower) {

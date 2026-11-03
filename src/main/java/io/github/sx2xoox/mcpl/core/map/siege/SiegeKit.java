@@ -63,37 +63,31 @@ final class SiegeKit {
     /** Asphalt of the roads. */
     static BlockSpec asphalt(Random random) {
         int roll = random.nextInt(100);
-        if (roll < 60) {
-            return of(Material.BLACK_CONCRETE);
+        if (roll < 70) {
+            return of(Material.GRAY_CONCRETE);
         }
-        if (roll < 80) {
-            return of(Material.POLISHED_BLACKSTONE);
+        if (roll < 90) {
+            return of(Material.POLISHED_DEEPSLATE);
         }
-        if (roll < 92) {
-            return of(Material.BLACKSTONE);
-        }
-        return of(Material.GRAY_CONCRETE);
+        return of(Material.POLISHED_BLACKSTONE);
     }
 
     /** Pavement of sidewalks and plazas. */
     static BlockSpec pavement(Random random) {
         int roll = random.nextInt(100);
-        if (roll < 45) {
-            return of(Material.GRAY_CONCRETE);
-        }
-        if (roll < 70) {
-            return of(Material.POLISHED_ANDESITE);
-        }
-        if (roll < 85) {
+        if (roll < 55) {
             return of(Material.LIGHT_GRAY_CONCRETE);
         }
-        return of(Material.POLISHED_DEEPSLATE);
+        if (roll < 85) {
+            return of(Material.POLISHED_ANDESITE);
+        }
+        return of(Material.SMOOTH_STONE);
     }
 
     /** Worn ground of the slums and the underpass. */
     static BlockSpec grime(Random random) {
-        return pick(random, Material.BLACK_CONCRETE, Material.BLACKSTONE, Material.COBBLED_DEEPSLATE,
-                Material.GRAY_CONCRETE, Material.POLISHED_BLACKSTONE, Material.TUFF, Material.DEEPSLATE_TILES);
+        return pick(random, Material.GRAY_CONCRETE, Material.GRAY_CONCRETE, Material.POLISHED_ANDESITE,
+                Material.COBBLED_DEEPSLATE, Material.POLISHED_DEEPSLATE, Material.TUFF, Material.DEEPSLATE_TILES);
     }
 
     /** Hidden structure under the surface. */
@@ -151,8 +145,13 @@ final class SiegeKit {
         }
     }
 
+    /** A building whose neon is mostly its district's accent colour ({@link SiegeWayfinding#accent}). */
     static void building(MapCanvas canvas, Random random, Building b) {
-        building(canvas, random, b, facade(random));
+        Facade look = facade(random);
+        if (random.nextInt(3) != 0) {
+            look = new Facade(look.wall(), look.trim(), look.window(), SiegeWayfinding.accentAt(b.cx(), b.cz()));
+        }
+        building(canvas, random, b, look);
     }
 
     static void building(MapCanvas canvas, Random random, Building b, Facade look) {
@@ -214,6 +213,10 @@ final class SiegeKit {
             return storey % 2 == 1 ? glow(look.neon()) : of(look.trim());
         }
         if (row == 3) {
+            if (storey == 0 && Math.floorMod(along, 4) == 2 && along > 0 && along < length) {
+                // Shop lights over the street.
+                return glow(look.neon());
+            }
             return storey % 2 == 0 ? concrete(look.neon()) : of(look.wall());
         }
         if (row == 0) {

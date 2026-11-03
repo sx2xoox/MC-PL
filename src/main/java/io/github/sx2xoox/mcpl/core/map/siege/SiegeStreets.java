@@ -112,12 +112,11 @@ final class SiegeStreets {
     }
 
     /**
-     * Cover along a street that runs along x between {@code z1} and {@code z2} (sidewalks included): lamps on both
-     * curbs, and every 7-10 blocks a car, a barrier, crates or a vending machine.
+     * Cover along a street that runs along x between {@code z1} and {@code z2} (sidewalks included): lamps in the
+     * lane's colour on both curbs, and every 7-10 blocks a car, a barrier, crates or a vending machine.
      */
-    static void streetAlongX(MapCanvas canvas, Random random, int x1, int x2, int z1, int z2,
+    static void streetAlongX(MapCanvas canvas, Random random, int x1, int x2, int z1, int z2, String lampColour,
                              java.util.function.BiPredicate<Integer, Integer> keepFree) {
-        String lampColour = SiegeKit.neon(random);
         for (int x = x1 + 3; x <= x2 - 3; x += 12) {
             if (!keepFree.test(x, z1) && free(canvas, x, z1)) {
                 SiegeKit.lamp(canvas, x, z1, 0, 1, lampColour);

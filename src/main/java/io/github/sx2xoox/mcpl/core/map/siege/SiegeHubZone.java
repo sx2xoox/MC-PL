@@ -55,8 +55,10 @@ final class SiegeHubZone implements MapZone {
         SiegeStreets.block(canvas, random, -9, 59, 24, 88, N, 3, 6, 0.5);
         SiegeStreets.block(canvas, random, 36, 59, 63, 88, N, 3, 6, 0.5);
         BiPredicate<Integer, Integer> keep = (x, z) -> SiegeZones.keepFree(x, z) || underRing(x, z);
-        SiegeStreets.streetAlongX(canvas, random, -10, 71, -SiegeLayout.MAIN_HALF, SiegeLayout.MAIN_HALF, keep);
-        SiegeStreets.streetAlongX(canvas, random, -10, 71, SiegeLayout.NORTH_Z1, SiegeLayout.NORTH_Z2, keep);
+        SiegeStreets.streetAlongX(canvas, random, -10, 71, -SiegeLayout.MAIN_HALF, SiegeLayout.MAIN_HALF,
+                SiegeWayfinding.MAIN, keep);
+        SiegeStreets.streetAlongX(canvas, random, -10, 71, SiegeLayout.NORTH_Z1, SiegeLayout.NORTH_Z2,
+                SiegeWayfinding.NORTH, keep);
         SiegeStreets.streetAlongZ(canvas, random, 26, 34, -88, -24, keep);
         SiegeStreets.streetAlongZ(canvas, random, 26, 34, 24, 88, keep);
         SiegeStreets.streetAlongZ(canvas, random, 64, 71, -88, 88, keep);
@@ -74,7 +76,9 @@ final class SiegeHubZone implements MapZone {
             double angle = Math.PI / 8 + a * Math.PI / 4;
             int px = CX + (int) Math.round(13 * Math.cos(angle));
             int pz = (int) Math.round(13 * Math.sin(angle));
-            SiegeKit.pylon(canvas, px - (px > CX ? 0 : 1), pz - (pz > 0 ? 0 : 1), G + 1, 13, "CYAN");
+            // Every other pylon rises high above the roofs: the middle tower's landmark.
+            SiegeKit.pylon(canvas, px - (px > CX ? 0 : 1), pz - (pz > 0 ? 0 : 1), G + 1, a % 2 == 0 ? 13 : 34,
+                    "CYAN");
         }
     }
 

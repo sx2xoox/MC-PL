@@ -30,6 +30,9 @@ class SiegeMapTest {
     /** Around a tower the lanes may merge (platform plus a ring to fight in). */
     private static final int MEET_RADIUS = SiegeLayout.TOWER_RADIUS + 8;
 
+    /** Share of the reachable ground places with block light 8 or more. */
+    private static final double MIN_LIT_SHARE = 0.95;
+
     private static SiegeMap map;
     private static MapCanvas canvas;
     private static MapAudit audit;
@@ -156,6 +159,37 @@ class SiegeMapTest {
     @Test
     void everyBlockHasItsSupport() {
         assertTrue(blockFindings.isEmpty(), "blocks placed wrong:\n" + String.join("\n", blockFindings));
+    }
+
+    @Test
+    void theStreetsAreLitAtNight() {
+        MapLight light = new MapLight(canvas);
+        int total = 0;
+        int lit8 = 0;
+        int lit10 = 0;
+        Map<String, int[]> parts = new java.util.TreeMap<>();
+        for (MapAudit.Node node : reachable) {
+            if (node.y() > ground(node.x(), node.z()) + 2) {
+                continue;
+            }
+            int level = light.at(node.x(), node.y(), node.z());
+            int[] part = parts.computeIfAbsent(SiegeLayout.partOf(node.x(), node.z()), k -> new int[2]);
+            total++;
+            part[0]++;
+            if (level >= 8) {
+                lit8++;
+                part[1]++;
+            }
+            if (level >= 10) {
+                lit10++;
+            }
+        }
+        double share = (double) lit8 / total;
+        System.out.printf("[siege] light: %d ground places, %.1f%% at >= 8, %.1f%% at >= 10%n", total, 100.0 * share,
+                100.0 * lit10 / total);
+        parts.forEach((name, p) -> System.out.printf("[siege] light %s: %.1f%% at >= 8 (%d)%n", name,
+                100.0 * p[1] / p[0], p[0]));
+        assertTrue(share >= MIN_LIT_SHARE, "most of the ground is lit at night: " + share);
     }
 
     @Test

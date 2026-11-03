@@ -97,6 +97,37 @@ public final class MapPreview {
         return canvas.minY() - 1;
     }
 
+    // ------------------------------------------------------------------ elevation
+
+    /**
+     * Street view looking east (+x) from {@code fromX}: for every column {@code z} and height, the first block met
+     * within {@code depth} blocks, darker with distance; {@code scale} pixels per block. North is left.
+     */
+    public BufferedImage elevationEast(int fromX, int depth, int minZ, int maxZ, int minY, int maxY, int scale) {
+        int width = (maxZ - minZ + 1) * scale;
+        int height = (maxY - minY + 1) * scale;
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(night ? new Color(12, 10, 26) : new Color(150, 190, 235));
+        g.fillRect(0, 0, width, height);
+        for (int z = minZ; z <= maxZ; z++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int x = fromX; x < fromX + depth; x++) {
+                    BlockSpec spec = canvas.get(x, y, z);
+                    if (spec == null || spec.isAir()) {
+                        continue;
+                    }
+                    double fade = 1.0 - 0.6 * (x - fromX) / depth;
+                    g.setColor(shadeColor(color(spec.material()), fade * light(x, y, z, spec)));
+                    g.fillRect((z - minZ) * scale, (maxY - y) * scale, scale, scale);
+                    break;
+                }
+            }
+        }
+        g.dispose();
+        return image;
+    }
+
     // ------------------------------------------------------------------ isometric
 
     /**

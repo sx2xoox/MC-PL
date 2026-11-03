@@ -80,11 +80,6 @@ final class SiegeHqZone implements MapZone {
                 canvas.set(x, P + 1, z, BlockSpec.of(Material.POLISHED_BLACKSTONE_WALL));
             }
         }
-        // The corporate billboards on the west face, either side of the stairs.
-        for (int sign : new int[] {-1, 1}) {
-            int a1 = sign < 0 ? -48 : 18;
-            SiegeKit.board(canvas, random, a1, G + 4, X1, 31, 9, false, -1, "CYAN", "LIGHT_BLUE");
-        }
     }
 
     private static BlockSpec podiumFace(int x, int y, int z) {
@@ -94,7 +89,7 @@ final class SiegeHqZone implements MapZone {
             return BlockSpec.of(Material.POLISHED_BLACKSTONE_BRICKS);
         }
         if (row == 5 || row == 10) {
-            return Math.floorMod(along, 2) == 0 ? SiegeKit.glow(row == 5 ? "MAGENTA" : "CYAN")
+            return Math.floorMod(along, 2) == 0 ? SiegeKit.glow(row == 5 ? "MAGENTA" : "PURPLE")
                     : BlockSpec.of(Material.BLACK_CONCRETE);
         }
         if (row == 4 || row == 9 || row == 14 || Math.floorMod(along, 5) == 0) {
@@ -107,7 +102,7 @@ final class SiegeHqZone implements MapZone {
         double d = Math.hypot(x - CORE, z);
         int ring = (int) Math.round(d);
         if (ring == 11 || ring == 16) {
-            return BlockSpec.of(Material.CYAN_CONCRETE);
+            return BlockSpec.of(Material.PURPLE_CONCRETE);
         }
         if (ring <= 10) {
             return ring % 3 == 0 ? BlockSpec.of(Material.POLISHED_DEEPSLATE) : BlockSpec.of(Material.WHITE_CONCRETE);
@@ -136,7 +131,8 @@ final class SiegeHqZone implements MapZone {
             }
             for (int z : new int[] {-h - 1, h + 1}) {
                 canvas.fill(x, G + 1, z, x, top, z, BlockSpec.of(Material.POLISHED_BLACKSTONE_BRICKS));
-                canvas.set(x, top + 1, z, i % 2 == 0 ? SiegeKit.glow("CYAN") : BlockSpec.of(Material.BLACK_CONCRETE));
+                canvas.set(x, top + 1, z, i % 2 == 0 ? SiegeKit.glow(SiegeWayfinding.MAIN)
+                        : SiegeKit.concrete(SiegeWayfinding.MAIN));
             }
         }
     }
@@ -158,13 +154,13 @@ final class SiegeHqZone implements MapZone {
                 if (slab) {
                     canvas.set(x, full + 1, z, Blocks.slab(Material.SMOOTH_STONE_SLAB));
                 } else if (z == (z1 + z2) / 2 && Math.floorMod(x, 4) == 0) {
-                    canvas.set(x, full, z, BlockSpec.of(Material.YELLOW_CONCRETE));
+                    canvas.set(x, full, z, SiegeKit.glow(SiegeWayfinding.NORTH));
                 }
             }
             // Parapet on the outer edge, a neon strip on its face.
             canvas.set(x, surface + 1, z1 - 1 + 1, BlockSpec.of(Material.POLISHED_BLACKSTONE_WALL));
             if (surface > G + 2) {
-                canvas.set(x, surface - 1, z1, SiegeKit.glow("YELLOW"));
+                canvas.set(x, surface - 1, z1, SiegeKit.glow(SiegeWayfinding.NORTH));
             }
         }
         for (int z = z1; z <= z2; z++) {
@@ -190,13 +186,13 @@ final class SiegeHqZone implements MapZone {
                 boolean corner = (x == x1 || x == x2) && (z == z1 || z == z2);
                 if (wall) {
                     for (int y = G + 1; y < roof; y++) {
-                        canvas.set(x, y, z, corner ? (y % 3 == 0 ? SiegeKit.glow("LIME")
+                        canvas.set(x, y, z, corner ? (y % 3 == 0 ? SiegeKit.glow(SiegeWayfinding.CANAL)
                                 : BlockSpec.of(Material.POLISHED_BLACKSTONE))
                                 : y % 5 == 0 ? BlockSpec.of(Material.POLISHED_DEEPSLATE)
-                                : BlockSpec.of(Material.LIME_STAINED_GLASS_PANE));
+                                : SiegeKit.pane(SiegeWayfinding.CANAL));
                     }
                 }
-                canvas.set(x, roof, z, wall ? BlockSpec.of(Material.LIME_CONCRETE)
+                canvas.set(x, roof, z, wall ? SiegeKit.concrete(SiegeWayfinding.CANAL)
                         : BlockSpec.of(Material.BLACK_STAINED_GLASS));
             }
         }
@@ -305,7 +301,8 @@ final class SiegeHqZone implements MapZone {
             }
             int px = CORE + (int) Math.round(17 * Math.cos(centre));
             int pz = (int) Math.round(17 * Math.sin(centre));
-            SiegeKit.pylon(canvas, px, pz, P + 1, 18, a % 2 == 0 ? "MAGENTA" : "CYAN");
+            // Tall enough to be seen over the roofs from the hub.
+            SiegeKit.pylon(canvas, px, pz, P + 1, 30, SiegeWayfinding.accent("hq"));
         }
     }
 
@@ -392,14 +389,14 @@ final class SiegeHqZone implements MapZone {
         }
         for (int sign : new int[] {-1, 1}) {
             SiegeKit.planter(canvas, random, 80, sign * 16 - 1, 84, sign * 16 + 1, G + 1);
-            SiegeKit.lamp(canvas, 74, sign * 13, 0, -sign, "CYAN");
-            SiegeKit.lamp(canvas, 88, sign * 13, 0, -sign, "CYAN");
+            SiegeKit.lamp(canvas, 74, sign * 13, 0, -sign, SiegeWayfinding.MAIN);
+            SiegeKit.lamp(canvas, 88, sign * 13, 0, -sign, SiegeWayfinding.MAIN);
         }
         BiPredicate<Integer, Integer> keep = (x, z) -> SiegeZones.keepFree(x, z) || x >= X1 - 1
                 && Math.abs(z) <= PZ + 10 || z <= SiegeLayout.RAMP_Z1 + 0 && x >= SiegeLayout.RAMP_X1 - 2
                 || Math.abs(z) <= 18 && x >= 70;
         SiegeStreets.streetAlongZ(canvas, random, 73, 90, -73, 88, keep);
-        SiegeStreets.streetAlongX(canvas, random, 108, 160, 62, 72, keep);
-        SiegeStreets.streetAlongX(canvas, random, 136, 160, -73, -62, keep);
+        SiegeStreets.streetAlongX(canvas, random, 108, 160, 62, 72, SiegeWayfinding.CANAL, keep);
+        SiegeStreets.streetAlongX(canvas, random, 136, 160, -73, -62, SiegeWayfinding.NORTH, keep);
     }
 }
