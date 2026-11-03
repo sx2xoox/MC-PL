@@ -22,13 +22,13 @@ import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
 
 /**
- * 협곡 요새 is playable as a siege map: both sides can walk everywhere and back, every spawn spot and tower platform is
+ * 네온 시티 is playable as a siege map: both sides can walk everywhere and back, every spawn spot and tower platform is
  * usable, each tower can be reached along three separate lanes, and no block misbehaves.
  */
 class SiegeMapTest {
 
     /** Around a tower the lanes may merge (platform plus a ring to fight in). */
-    private static final int MEET_RADIUS = SiegeLayout.TOWER_RADIUS + 6;
+    private static final int MEET_RADIUS = SiegeLayout.TOWER_RADIUS + 8;
 
     private static SiegeMap map;
     private static MapCanvas canvas;
@@ -36,6 +36,7 @@ class SiegeMapTest {
     private static MapAudit.Report report;
     private static Map<Long, MapAudit.Node> nodes;
     private static Set<MapAudit.Node> reachable;
+    private static List<String> blockFindings;
 
     @BeforeAll
     static void build() {
@@ -44,16 +45,18 @@ class SiegeMapTest {
         canvas = map.render();
         SiegeSites.Spot start = map.attackerSpawns().getFirst();
         // The audit area is a circle: make it cover the whole strip.
-        int radius = (int) Math.ceil(Math.hypot(map.buildRadius(), SiegeLayout.HALF_WIDTH));
+        int radius = (int) Math.ceil(Math.hypot(SiegeLayout.EAST_END, SiegeLayout.SIDE));
         audit = new MapAudit(canvas, radius, SiegeLayout::partOf);
-        // (from an open column of the camp: the audit starts on the highest place of its column)
-        report = audit.run(SiegeLayout.CAMP_FRONT - 2, 0);
+        // (from an open column next to the spawn: the audit starts on the highest place of its column)
+        report = audit.run(SiegeLayout.START_EAST - 2, 4);
+        blockFindings = new MapBlockChecks(canvas, SiegeLayout::partOf).run();
         nodes = new HashMap<>();
         for (MapAudit.Node node : audit.nodes()) {
             nodes.put(key(node.x(), node.y(), node.z()), node);
         }
         reachable = flood(List.of(node(start)), (x, z) -> true);
         System.out.println("[siege] " + canvas.blockCount() + " blocks; " + report.summary());
+        blockFindings.forEach(f -> System.out.println("[siege] block: " + f));
     }
 
     @AfterAll
@@ -96,7 +99,7 @@ class SiegeMapTest {
     void theTowerPlatformsAreOpenAndReachable() {
         for (SiegeSites.Tower tower : map.towers()) {
             int r = tower.radius();
-            assertTrue(r >= 5 && r <= 7, "platform radius " + r);
+            assertEquals(10, r, "platform radius");
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (dx * dx + dz * dz > r * r) {
@@ -107,7 +110,7 @@ class SiegeMapTest {
                     BlockSpec floor = canvas.get(x, tower.y() - 1, z);
                     assertTrue(floor != null && MapBlocks.isStandable(floor), tower.id() + ": floor at " + x + ","
                             + z);
-                    for (int y = tower.y(); y <= tower.y() + 10; y++) {
+                    for (int y = tower.y(); y <= tower.y() + SiegeLayout.TOWER_CLEARANCE; y++) {
                         assertTrue(!canvas.isSolid(x, y, z), tower.id() + ": the platform is open at " + x + ","
                                 + y + "," + z + " (" + canvas.get(x, y, z) + ")");
                     }
@@ -122,7 +125,7 @@ class SiegeMapTest {
     void everyGroundPlaceCanBeReachedAndLeft() {
         assertTrue(report.problems().isEmpty(), "no floating sand, spilling water, lava or fire:\n"
                 + report.summary());
-        // Places nobody can reach are only allowed up high (roofs, merlons, crates, tree tops, the cliffs).
+        // Places nobody can reach are only allowed up high (sealed upper storeys, roofs, the skyline).
         List<MapAudit.Node> low = new ArrayList<>();
         for (MapAudit.Node node : audit.nodes()) {
             if (!reachable.contains(node) && SiegeLayout.isInterior(node.x(), node.z())
@@ -130,12 +133,24 @@ class SiegeMapTest {
                 low.add(node);
             }
         }
-        assertTrue(low.size() <= 20, "ground places cut off: " + low.size() + " e.g. "
+        assertTrue(low.size() <= 40, "ground places cut off: " + low.size() + " e.g. "
                 + low.subList(0, Math.min(10, low.size())));
         assertTrue(report.strandedShare() <= 0.002, "no pits you cannot leave:\n" + report.summary());
         for (MapAudit.Component part : report.stranded()) {
             assertTrue(part.size() <= 12, "no pit larger than 12 places:\n" + report.summary());
         }
+    }
+
+    @Test
+    void everyBlockHasItsSupport() {
+        assertTrue(blockFindings.isEmpty(), "blocks placed wrong:\n" + String.join("\n", blockFindings));
+    }
+
+    @Test
+    void theMapIsMuchLargerThanTheOldGorgeAndFitsItsBudget() {
+        assertTrue(SiegeLayout.EAST_END - SiegeLayout.WEST_END >= 300, "about 320 blocks long");
+        assertTrue(2 * SiegeLayout.SIDE >= 170, "about 180 blocks wide");
+        assertTrue(canvas.blockCount() < 4_000_000, "the map stays under 4M blocks: " + canvas.blockCount());
     }
 
     @Test
@@ -158,7 +173,7 @@ class SiegeMapTest {
             SiegeSites.Tower target = towers.get(t);
             for (int lane = 0; lane < 3; lane++) {
                 BiPredicate<Integer, Integer> band = bands.get(lane);
-                BiPredicate<Integer, Integer> allowed = (x, z) -> x <= SiegeLayout.CAMP_FRONT
+                BiPredicate<Integer, Integer> allowed = (x, z) -> x <= SiegeLayout.START_EAST
                         || band.test(x, z) || near(passed, x, z) || near(List.of(target), x, z);
                 Set<MapAudit.Node> seen = flood(List.of(node(map.attackerSpawns().getFirst())), allowed);
                 assertTrue(seen.contains(nodes.get(key(target.x(), target.y(), target.z()))),
@@ -172,7 +187,7 @@ class SiegeMapTest {
         SiegeSites.Tower core = map.towers().getLast();
         int steps = distance(node(map.attackerSpawns().getFirst()), nodes.get(key(core.x(), core.y(), core.z())));
         System.out.println("[siege] attackers' spawn to the core: " + steps + " blocks");
-        assertTrue(steps >= 120 && steps <= 175, "spawn to core is " + steps + " blocks");
+        assertTrue(steps >= 260 && steps <= 360, "spawn to core is " + steps + " blocks");
     }
 
     // ------------------------------------------------------------------ helpers

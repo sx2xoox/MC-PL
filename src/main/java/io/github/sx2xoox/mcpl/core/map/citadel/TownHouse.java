@@ -358,7 +358,7 @@ final class TownHouse {
         }
     }
 
-    /** A flower box (a trapdoor with flowers) under a ground-floor window. */
+    /** A flower box (a trapdoor with potted flowers: plants would pop off a trapdoor) under a ground-floor window. */
     private void flowerBox(TownPainter p, BlockFace side, int offset) {
         int[] out = step(side);
         int[] c = wallCell(side, offset);
@@ -366,8 +366,9 @@ final class TownHouse {
         int bz = c[1] + out[1];
         if (!p.isSolid(bx, G + 1, bz) && !p.isSolid(bx, G + 2, bz)) {
             p.set(bx, G + 1, bz, Blocks.trapdoor(style.trapdoor(), side.getOppositeFace(), true, false));
-            p.set(bx, G + 2, bz, p.pick(Material.POPPY, Material.DANDELION, Material.CORNFLOWER,
-                    Material.AZURE_BLUET, Material.RED_TULIP, Material.ALLIUM));
+            p.set(bx, G + 2, bz, p.pick(Material.POTTED_POPPY, Material.POTTED_DANDELION,
+                    Material.POTTED_CORNFLOWER, Material.POTTED_AZURE_BLUET, Material.POTTED_RED_TULIP,
+                    Material.POTTED_ALLIUM));
         }
     }
 

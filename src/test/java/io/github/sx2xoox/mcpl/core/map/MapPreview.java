@@ -27,6 +27,9 @@ public final class MapPreview {
 
     private final MapCanvas canvas;
 
+    /** Night look: dark sky, dim blocks, light sources (and what sits next to them) glow. */
+    public static boolean night;
+
     public MapPreview(MapCanvas canvas) {
         this.canvas = canvas;
     }
@@ -43,7 +46,7 @@ public final class MapPreview {
         int height = (maxZ - minZ + 1) * scale;
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = image.createGraphics();
-        g.setColor(new Color(18, 20, 28));
+        g.setColor(night ? new Color(8, 8, 16) : new Color(18, 20, 28));
         g.fillRect(0, 0, width, height);
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
@@ -64,7 +67,8 @@ public final class MapPreview {
                 shade = Math.max(0.55, Math.min(1.35, shade));
                 // Height tint: higher blocks a little lighter.
                 double height01 = (top - 60) / 40.0;
-                Color c = shadeColor(base, shade + Math.max(-0.15, Math.min(0.25, height01 * 0.25)));
+                Color c = shadeColor(base, (shade + Math.max(-0.15, Math.min(0.25, height01 * 0.25)))
+                        * light(x, top, z, spec));
                 g.setColor(c);
                 g.fillRect((x - minX) * scale, (z - minZ) * scale, scale, scale);
             }
@@ -111,7 +115,7 @@ public final class MapPreview {
         int height = (spanX + spanZ) * quarter + yRange * blockHeight + tile;
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = image.createGraphics();
-        g.setColor(new Color(150, 190, 235));
+        g.setColor(night ? new Color(12, 10, 26) : new Color(150, 190, 235));
         g.fillRect(0, 0, width, height);
         // Painter's order: from the back (low x+z) to the front, bottom up.
         List<int[]> blocks = new ArrayList<>();
@@ -141,7 +145,7 @@ public final class MapPreview {
             int y = b[1];
             int z = b[2];
             BlockSpec spec = canvas.get(x, y, z);
-            Color base = color(spec.material());
+            Color base = shadeColor(color(spec.material()), light(x, y, z, spec));
             int lx = x - minX;
             int lz = z - minZ;
             int sx = originX + (lx - lz) * half;
@@ -161,6 +165,32 @@ public final class MapPreview {
         }
         g.dispose();
         return image;
+    }
+
+    /** Brightness factor of a block in the night look (1 by day). */
+    private double light(int x, int y, int z, BlockSpec spec) {
+        if (!night) {
+            return 1.0;
+        }
+        if (emissive(spec)) {
+            return 1.25;
+        }
+        int[][] sides = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (int[] d : sides) {
+            BlockSpec next = canvas.get(x + d[0], y + d[1], z + d[2]);
+            if (next != null && emissive(next)) {
+                return 0.85;
+            }
+        }
+        return 0.42;
+    }
+
+    private static boolean emissive(BlockSpec spec) {
+        String n = spec.material().name();
+        return n.equals("SEA_LANTERN") || n.endsWith("FROGLIGHT") || n.equals("GLOWSTONE") || n.equals("SHROOMLIGHT")
+                || n.endsWith("LANTERN") || n.equals("END_ROD") || n.contains("TORCH") || n.endsWith("_BULB")
+                || n.equals("REDSTONE_BLOCK") || n.equals("MAGMA_BLOCK") || n.equals("CRYING_OBSIDIAN")
+                || n.equals("BEACON") || n.equals("REDSTONE_LAMP");
     }
 
     private boolean exposed(int x, int y, int z) {
@@ -200,6 +230,10 @@ public final class MapPreview {
             return exact;
         }
         String s = n.toLowerCase(Locale.ROOT);
+        Color dyed = dyed(s);
+        if (dyed != null) {
+            return dyed;
+        }
         if (s.contains("leaves")) {
             return s.contains("birch") ? new Color(110, 150, 70) : s.contains("spruce") ? new Color(60, 95, 60)
                     : s.contains("dark_oak") ? new Color(55, 100, 35) : s.contains("cherry") ? new Color(230, 160, 190)
@@ -341,8 +375,42 @@ public final class MapPreview {
         return new Color(160, 150, 140);
     }
 
+    private static final String[] DYES = {"light_blue", "light_gray", "white", "orange", "magenta", "yellow", "lime",
+        "pink", "gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+    private static final int[][] DYE_RGB = {{58, 175, 217}, {142, 142, 134}, {233, 236, 236}, {240, 118, 19},
+        {189, 68, 179}, {248, 197, 39}, {112, 185, 25}, {237, 141, 172}, {62, 68, 71}, {21, 137, 145},
+        {121, 42, 172}, {53, 57, 157}, {114, 71, 40}, {84, 109, 27}, {160, 39, 34}, {20, 21, 25}};
+
+    /** Colours of dyed concrete, glass, wool, terracotta and carpets. */
+    private static Color dyed(String s) {
+        if (!(s.endsWith("_concrete") || s.contains("stained_glass") || s.endsWith("_wool") || s.endsWith("_carpet")
+                || s.endsWith("_terracotta") && !s.contains("glazed") || s.endsWith("_concrete_powder"))) {
+            return null;
+        }
+        for (int i = 0; i < DYES.length; i++) {
+            if (s.startsWith(DYES[i] + "_")) {
+                int[] c = DYE_RGB[i];
+                double f = s.endsWith("_terracotta") ? 0.6 : 1.0;
+                return new Color((int) (c[0] * f), (int) (c[1] * f), (int) (c[2] * f));
+            }
+        }
+        return null;
+    }
+
     private static Color exact(String name) {
         return switch (name) {
+            case "SEA_LANTERN" -> new Color(200, 240, 235);
+            case "PEARLESCENT_FROGLIGHT" -> new Color(245, 140, 230);
+            case "VERDANT_FROGLIGHT" -> new Color(170, 245, 140);
+            case "OCHRE_FROGLIGHT" -> new Color(250, 225, 120);
+            case "END_ROD" -> new Color(250, 245, 235);
+            case "TINTED_GLASS" -> new Color(40, 34, 46);
+            case "REDSTONE_BLOCK" -> new Color(220, 30, 20);
+            case "IRON_BLOCK" -> new Color(205, 205, 210);
+            case "POLISHED_BLACKSTONE", "POLISHED_BLACKSTONE_BRICKS", "BLACKSTONE",
+                 "CRACKED_POLISHED_BLACKSTONE_BRICKS" -> new Color(45, 40, 48);
+            case "TUFF", "TUFF_BRICKS" -> new Color(108, 110, 102);
+            case "SMOOTH_BASALT" -> new Color(72, 72, 78);
             case "GRASS_BLOCK" -> new Color(98, 150, 62);
             case "DIRT_PATH" -> new Color(148, 122, 70);
             case "COARSE_DIRT" -> new Color(120, 88, 60);

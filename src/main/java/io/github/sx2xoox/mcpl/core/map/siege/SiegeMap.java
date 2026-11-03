@@ -1,5 +1,6 @@
 package io.github.sx2xoox.mcpl.core.map.siege;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -8,57 +9,52 @@ import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.Blocks;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
 import io.github.sx2xoox.mcpl.core.map.MapZone;
-import org.bukkit.Axis;
 import org.bukkit.Material;
 import org.bukkit.block.BlockFace;
 
 /**
- * 협곡 요새, the 초능력 공성전 map (docs/siege.md §5): a gorge about 175 x 80 blocks between high cliffs. The attackers
- * start in a walled camp at the west end, cross a siege field and a river gorge, break through the outer wall to the
- * 성문 탑, through the inner wall to the 중앙 탑 and up onto the keep plateau to the 코어. Three lanes (main road,
- * north flank, south flank) meet at every tower and split again; see {@link SiegeLayout} for the plan.
+ * 네온 시티, the 초능력 공성전 map (docs/siege.md §6): one district of a neon megacity at night, about 320 x 177 blocks
+ * inside a ring of skyscrapers. The attackers start under an elevated highway in the west and push through the neon
+ * slums, the corporate firewall (방화벽 게이트), the data hub (데이터 허브) and up onto the podium of the megacorp
+ * headquarters (메인프레임). Three lanes (main avenue, north street, sunken canal) meet at every tower and split again;
+ * cross streets, alleys, enterable buildings and glass skybridges connect them. See {@link SiegeLayout} for the plan.
  *
- * <p>The map builds the ground and the cliffs, lets every zone build its own columns on a restricted canvas, then adds
- * what crosses zones (the tunnel of the south flank) and clears the tower platforms last, so nothing ever stands on
- * them.
+ * <p>The map builds the ground, the canal and the skyline, lets every zone build its own columns on a restricted
+ * canvas, then adds what spans zones (the highway, the monorail) and clears the tower platforms last.
  */
 public final class SiegeMap implements ArenaMap, SiegeSites {
 
+    private static final int G = SiegeLayout.GROUND_Y;
+
     private final List<MapZone> zones = List.of(
-            new SiegeCampZone(),
-            new SiegeRiverZone(),
-            new SiegeGateZone(),
-            new SiegeCourtZone(),
-            new SiegeKeepZone());
+            new SiegeSlumsZone(),
+            new SiegeFirewallZone(),
+            new SiegeHubZone(),
+            new SiegeHqZone());
 
     private static final List<Tower> TOWERS = List.of(
-            new Tower("front", "성문 탑", SiegeLayout.FRONT_X, SiegeLayout.GROUND_Y + 1, 0, SiegeLayout.TOWER_RADIUS),
-            new Tower("middle", "중앙 탑", SiegeLayout.MIDDLE_X, SiegeLayout.GROUND_Y + 1, 0,
-                    SiegeLayout.TOWER_RADIUS),
-            new Tower("core", "코어", SiegeLayout.CORE_X, SiegeLayout.PLATEAU_Y + 1, 0, SiegeLayout.TOWER_RADIUS));
+            new Tower("front", "방화벽 게이트", SiegeLayout.FRONT_X, G + 1, 0, SiegeLayout.TOWER_RADIUS),
+            new Tower("middle", "데이터 허브", SiegeLayout.MIDDLE_X, G + 1, 0, SiegeLayout.TOWER_RADIUS),
+            new Tower("core", "메인프레임", SiegeLayout.CORE_X, SiegeLayout.PODIUM_Y + 1, 0,
+                    SiegeLayout.TOWER_RADIUS));
 
-    private static final List<Spot> ATTACKERS = grid(new int[] {-81, -78}, new int[] {-6, -2, 2, 6},
-            SiegeLayout.GROUND_Y + 1, SiegeLayout.FRONT_X, 0);
+    private static final List<Spot> ATTACKERS = grid(new int[] {-152, -148}, new int[] {-6, -2, 2, 6}, G + 1,
+            SiegeLayout.FRONT_X, 0);
 
     private static final List<List<Spot>> DEFENDERS = List.of(
-            grid(new int[] {16, 18, 20}, new int[] {10, 12, 14}, SiegeLayout.GROUND_Y + 1, SiegeLayout.FRONT_X, 0)
-                    .stream().filter(s -> !(s.x() == 18 && s.z() == 12)).toList(),
-            grid(new int[] {46, 48, 50, 52}, new int[] {-29, -26}, SiegeLayout.GROUND_Y + 1, SiegeLayout.MIDDLE_X, 0),
-            grid(new int[] {82, 84}, new int[] {-3, -1, 1, 3}, SiegeLayout.PLATEAU_Y + 1, SiegeLayout.CORE_X, 0));
+            grid(new int[] {-32, -27}, new int[] {17, 21, 25, 29}, G + 1, SiegeLayout.FRONT_X, 0),
+            grid(new int[] {55, 59}, new int[] {-35, -31, -27, -23}, G + 1, SiegeLayout.MIDDLE_X, 0),
+            grid(new int[] {142, 146}, new int[] {-6, -2, 2, 6}, SiegeLayout.PODIUM_Y + 1, SiegeLayout.CORE_X, 0));
 
     /** Spawn spots on a grid (every combination of {@code xs} and {@code zs}), all looking at one place. */
     private static List<Spot> grid(int[] xs, int[] zs, int y, int lookX, int lookZ) {
-        List<Spot> spots = new java.util.ArrayList<>();
+        List<Spot> spots = new ArrayList<>();
         for (int x : xs) {
             for (int z : zs) {
-                spots.add(spot(x, y, z, lookX, lookZ));
+                spots.add(new Spot(x, y, z, SiegeLayout.yaw(x + 0.5, z + 0.5, lookX + 0.5, lookZ + 0.5)));
             }
         }
         return List.copyOf(spots);
-    }
-
-    private static Spot spot(int x, int y, int z, int lookX, int lookZ) {
-        return new Spot(x, y, z, SiegeLayout.yaw(x + 0.5, z + 0.5, lookX + 0.5, lookZ + 0.5));
     }
 
     @Override
@@ -68,12 +64,13 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
 
     @Override
     public String displayName() {
-        return "협곡 요새";
+        return "네온 시티";
     }
 
     @Override
     public String description() {
-        return "강이 흐르는 협곡 끝의 요새: 성문 탑, 중앙 탑, 코어를 향해 큰길과 좌우 우회로가 이어지는 공성전 전용 맵";
+        return "밤의 네온 메가시티: 고가 하부에서 슬럼, 방화벽 게이트, 데이터 허브를 지나 메가코프 본사의 메인프레임까지 "
+                + "큰길·북쪽 거리·지하 수로 세 갈래와 건물·구름다리로 이어지는 공성전 전용 맵";
     }
 
     @Override
@@ -88,7 +85,7 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
 
     @Override
     public int groundY() {
-        return SiegeLayout.GROUND_Y;
+        return G;
     }
 
     @Override
@@ -103,12 +100,12 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
 
     @Override
     public long seed() {
-        return 0x51E6E5L;
+        return 0x4E30C17L;
     }
 
     @Override
     public int version() {
-        return 1;
+        return 2;
     }
 
     @Override
@@ -134,161 +131,391 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
     @Override
     public void build(MapCanvas canvas) {
         ground(canvas);
+        canal(canvas);
+        skyline(canvas);
         for (MapZone zone : zones) {
             zone.build(canvas.restrictTo(zone::contains, zone.name()));
         }
-        tunnel(canvas);
+        highway(canvas);
+        monorail(canvas);
         for (Tower tower : TOWERS) {
             clearPlatform(canvas, tower);
         }
-        flora(canvas);
     }
 
-    // ------------------------------------------------------------------ ground and cliffs
+    // ------------------------------------------------------------------ ground
 
     private static void ground(MapCanvas canvas) {
         Random random = canvas.random("ground");
         int r = SiegeLayout.BUILD_RADIUS;
         int w = SiegeLayout.HALF_WIDTH;
-        int bottom = SiegeLayout.MIN_Y + 4;
         for (int x = -r; x <= r; x++) {
             for (int z = -w; z <= w; z++) {
-                if (SiegeLayout.isInterior(x, z)) {
-                    int top = SiegeLayout.ground(x, z);
-                    for (int y = bottom; y <= top - 4; y++) {
-                        canvas.set(x, y, z, SiegeKit.rock(random, y));
-                    }
-                    canvas.fill(x, top - 3, z, x, top - 1, z, BlockSpec.of(Material.DIRT));
-                    canvas.set(x, top, z, random.nextInt(14) == 0 ? BlockSpec.of(Material.COARSE_DIRT)
-                            : BlockSpec.of(Material.GRASS_BLOCK));
+                for (int y = G - 6; y < G; y++) {
+                    canvas.set(x, y, z, SiegeKit.fill(random));
+                }
+                canvas.set(x, G, z, surface(random, x, z));
+            }
+        }
+    }
+
+    /** The top block of the street at a column. */
+    private static BlockSpec surface(Random random, int x, int z) {
+        if (!SiegeLayout.isInterior(x, z)) {
+            return BlockSpec.of(Material.POLISHED_BLACKSTONE);
+        }
+        if (SiegeLayout.inPlaza(x, z)) {
+            int cx = x < 0 ? SiegeLayout.FRONT_X : SiegeLayout.MIDDLE_X;
+            double d = Math.hypot(x - cx, z);
+            int ring = (int) Math.round(d);
+            if (ring == 11 || ring == 15) {
+                return BlockSpec.of(x < 0 ? Material.MAGENTA_CONCRETE : Material.CYAN_CONCRETE);
+            }
+            if (ring == 13) {
+                return BlockSpec.of(Material.POLISHED_BLACKSTONE_BRICKS);
+            }
+            if (ring <= 10) {
+                return ring % 3 == 0 ? BlockSpec.of(Material.POLISHED_DEEPSLATE)
+                        : BlockSpec.of(Material.GRAY_CONCRETE);
+            }
+            return SiegeKit.pavement(random);
+        }
+        if (x <= SiegeLayout.START_EAST || x < SiegeLayout.WALL_X1 && !road(x, z)) {
+            return random.nextInt(40) == 0 ? BlockSpec.of(Material.LIGHT_BLUE_STAINED_GLASS) : SiegeKit.grime(random);
+        }
+        if (road(x, z)) {
+            // Lane markings.
+            if (Math.abs(z) <= SiegeLayout.MAIN_HALF) {
+                if (z == 0 && Math.floorMod(x, 8) < 4) {
+                    return BlockSpec.of(Material.YELLOW_CONCRETE);
+                }
+                if (Math.abs(z) == 4 && Math.floorMod(x, 6) < 3) {
+                    return BlockSpec.of(Material.WHITE_CONCRETE);
+                }
+            }
+            if (random.nextInt(60) == 0) {
+                return BlockSpec.of(Material.LIGHT_BLUE_STAINED_GLASS);
+            }
+            return SiegeKit.asphalt(random);
+        }
+        return SiegeKit.pavement(random);
+    }
+
+    /** Asphalt (roads) as opposed to sidewalks, plazas and the ground under buildings. */
+    private static boolean road(int x, int z) {
+        if (Math.abs(z) <= SiegeLayout.MAIN_HALF - 3 && x < SiegeLayout.STAIRS_X1) {
+            return true;
+        }
+        if (z >= SiegeLayout.NORTH_Z1 + 3 && z <= SiegeLayout.NORTH_Z2 - 3) {
+            return true;
+        }
+        for (int[] street : SiegeLayout.CROSS_STREETS) {
+            if (x >= street[0] + 2 && x <= street[1] - 2) {
+                return true;
+            }
+        }
+        return Math.abs(x - SiegeLayout.FRONT_X) <= 2 || Math.abs(x - SiegeLayout.MIDDLE_X) <= 2;
+    }
+
+    // ------------------------------------------------------------------ the canal
+
+    /** Cross streets over the canal: bridges at street level with stairs down next to them (x ranges). */
+    static final int[][] CANAL_CROSSINGS = {{-104, -96}, {-54, -46}, {-20, -12}, {26, 34}, {64, 72}};
+
+    /**
+     * The sunken canal of the south lane: six blocks below the street, a water channel along it, railings on the
+     * ledges, stairs down at the west end, next to every crossing and up at the east end.
+     */
+    private static void canal(MapCanvas canvas) {
+        Random random = canvas.random("canal");
+        int floor = SiegeLayout.CANAL_Y;
+        for (int x = SiegeLayout.CANAL_X1; x <= SiegeLayout.CANAL_X2; x++) {
+            boolean bridge = crossing(x);
+            for (int z = SiegeLayout.CANAL_Z1; z <= SiegeLayout.CANAL_Z2; z++) {
+                for (int y = floor + 1; y <= G - (bridge ? 1 : 0); y++) {
+                    canvas.clear(x, y, z);
+                }
+                if (bridge) {
+                    canvas.set(x, G, z, z == SiegeLayout.CANAL_Z1 || z == SiegeLayout.CANAL_Z2
+                            ? BlockSpec.of(Material.POLISHED_BLACKSTONE) : SiegeKit.asphalt(random));
+                    canvas.set(x, G - 1, z, Math.floorMod(x, 3) == 0
+                            ? BlockSpec.of(Material.SEA_LANTERN) : BlockSpec.of(Material.POLISHED_DEEPSLATE));
+                }
+                boolean channel = z >= SiegeLayout.CHANNEL_Z1 && z <= SiegeLayout.CHANNEL_Z2
+                        && x >= SiegeLayout.CANAL_X1 + 7 && x <= SiegeLayout.CANAL_X2 - 10;
+                if (channel) {
+                    canvas.set(x, floor, z, BlockSpec.of(Material.WATER));
+                    canvas.set(x, floor - 1, z, BlockSpec.of(Material.DARK_PRISMARINE));
                 } else {
-                    int top = SiegeLayout.cliffTop(x, z);
-                    for (int y = bottom; y < top; y++) {
-                        canvas.set(x, y, z, SiegeKit.rock(random, y));
-                    }
-                    int roll = random.nextInt(10);
-                    canvas.set(x, top, z, BlockSpec.of(roll < 6 ? Material.GRASS_BLOCK : roll < 8 ? Material.PODZOL
-                            : Material.COARSE_DIRT));
+                    canvas.set(x, floor, z, z == SiegeLayout.CHANNEL_Z1 - 1 || z == SiegeLayout.CHANNEL_Z2 + 1
+                            ? BlockSpec.of(Material.WAXED_OXIDIZED_CUT_COPPER) : SiegeKit.grime(random));
+                }
+                for (int y = floor - 3; y < floor - (channel ? 1 : 0); y++) {
+                    canvas.set(x, y, z, SiegeKit.fill(random));
+                }
+            }
+            // The canal walls: dark tiles with a neon strip, railings on the ledges.
+            for (int z : new int[] {SiegeLayout.CANAL_Z1 - 1, SiegeLayout.CANAL_Z2 + 1}) {
+                for (int y = floor + 1; y < G; y++) {
+                    canvas.set(x, y, z, y == floor + 3 && Math.floorMod(x, 4) != 0
+                            ? BlockSpec.of(Material.VERDANT_FROGLIGHT) : BlockSpec.of(Material.DEEPSLATE_TILES));
+                }
+                if (!bridge && !nextToCrossing(x)) {
+                    canvas.set(x, G + 1, z, BlockSpec.of(Material.IRON_BARS));
                 }
             }
         }
-        // Mossy ledges and trees along the cliff tops, well back from the valley.
-        Random trees = canvas.random("cliff-trees");
-        for (int x = -r + 1; x < r; x++) {
-            for (int z = -w + 1; z < w; z++) {
-                if (SiegeLayout.isInterior(x, z) || nearInterior(x, z, 4) || trees.nextInt(30) != 0) {
-                    continue;
+        // Stairs down from the attackers' start (west end), up at the east end.
+        for (int i = 0; i < 6; i++) {
+            int x = SiegeLayout.CANAL_X1 - 6 + i;
+            for (int z = SiegeLayout.CANAL_Z1; z <= SiegeLayout.CANAL_Z2; z++) {
+                for (int y = floor + 1; y <= G; y++) {
+                    canvas.clear(x, y, z);
                 }
-                int top = SiegeLayout.cliffTop(x, z);
-                if (top + 12 > SiegeLayout.MAX_Y) {
-                    continue;
-                }
-                SiegeKit.spruce(canvas, x, top, z, 6 + trees.nextInt(4), trees);
+                canvas.fill(x, floor - 2, z, x, G - 2 - i, z, SiegeKit.fill(random));
+                canvas.set(x, G - 1 - i, z, Blocks.stairs(Material.POLISHED_BLACKSTONE_BRICK_STAIRS, BlockFace.WEST));
+            }
+            for (int z : new int[] {SiegeLayout.CANAL_Z1 - 1, SiegeLayout.CANAL_Z2 + 1}) {
+                canvas.fill(x, floor + 1, z, x, G, z, BlockSpec.of(Material.DEEPSLATE_TILES));
+                canvas.set(x, G + 1, z, BlockSpec.of(Material.IRON_BARS));
             }
         }
-        // Rock texture on the cliff faces: protruding blocks would make steps, so only swap materials.
-        for (int x = -r; x <= r; x++) {
-            for (int z = -w; z <= w; z++) {
-                if (SiegeLayout.isInterior(x, z) || !nearInterior(x, z, 1)) {
-                    continue;
-                }
-                int top = SiegeLayout.cliffTop(x, z);
-                for (int y = SiegeLayout.GROUND_Y + 1; y < top; y++) {
-                    if (random.nextInt(7) == 0) {
-                        canvas.set(x, y, z, BlockSpec.of(random.nextBoolean() ? Material.MOSSY_COBBLESTONE
-                                : Material.COBBLESTONE));
-                    }
+        for (int i = 0; i < 5; i++) {
+            int z = SiegeLayout.CANAL_Z2 - 4 + i;
+            for (int x = SiegeLayout.CANAL_X2 - 4; x <= SiegeLayout.CANAL_X2; x++) {
+                canvas.fill(x, floor, z, x, floor + i, z, SiegeKit.fill(random));
+                canvas.set(x, floor + 1 + i, z, Blocks.stairs(Material.POLISHED_BLACKSTONE_BRICK_STAIRS,
+                        BlockFace.SOUTH));
+            }
+        }
+        for (int x = SiegeLayout.CANAL_X2 - 4; x <= SiegeLayout.CANAL_X2; x++) {
+            canvas.clear(x, G + 1, SiegeLayout.CANAL_Z2 + 1);
+        }
+        // Stairs down next to every crossing (on its east side, from the north ledge).
+        for (int[] crossing : CANAL_CROSSINGS) {
+            for (int x = crossing[1] + 1; x <= crossing[1] + 3; x++) {
+                for (int i = 0; i < 5; i++) {
+                    int z = SiegeLayout.CANAL_Z1 + i;
+                    canvas.fill(x, floor + 1, z, x, G - 2 - i, z, SiegeKit.fill(random));
+                    canvas.set(x, G - 1 - i, z, Blocks.stairs(Material.POLISHED_BLACKSTONE_BRICK_STAIRS,
+                            BlockFace.NORTH));
                 }
             }
         }
     }
 
-    /** True if an interior column lies within {@code distance} (square) of a cliff column. */
-    static boolean nearInterior(int x, int z, int distance) {
-        for (int dx = -distance; dx <= distance; dx++) {
-            for (int dz = -distance; dz <= distance; dz++) {
-                if (SiegeLayout.isInterior(x + dx, z + dz)) {
-                    return true;
-                }
+    static boolean crossing(int x) {
+        for (int[] crossing : CANAL_CROSSINGS) {
+            if (x >= crossing[0] && x <= crossing[1]) {
+                return true;
             }
         }
         return false;
     }
 
-    // ------------------------------------------------------------------ the south tunnel
-
-    /**
-     * The smugglers' tunnel of the south flank: from the ford landing on the east bank of the gorge, under the
-     * killing ground and the outer wall, up a stairwell into the outer bailey next to the 성문 탑.
-     */
-    private static void tunnel(MapCanvas canvas) {
-        Random random = canvas.random("tunnel");
-        int floor = SiegeLayout.TUNNEL_FLOOR;
-        int z1 = SiegeLayout.FORD_Z - 1;
-        int z2 = SiegeLayout.FORD_Z + 1;
-        int start = SiegeRiverZone.eastLandingX2() + 1;
-        int stairStart = -9;
-        for (int x = start; x < stairStart; x++) {
-            for (int z = z1 - 1; z <= z2 + 1; z++) {
-                boolean wall = z < z1 || z > z2;
-                canvas.set(x, floor, z, wall ? SiegeKit.rubble(random) : SiegeKit.pick(random, Material.COBBLESTONE,
-                        Material.GRAVEL, Material.COARSE_DIRT, Material.STONE_BRICKS));
-                for (int y = floor + 1; y <= floor + 3; y++) {
-                    if (wall) {
-                        canvas.set(x, y, z, random.nextInt(4) == 0 ? SiegeKit.rock(random, y)
-                                : SiegeKit.masonry(random));
-                    } else {
-                        canvas.clear(x, y, z);
-                    }
-                }
-                canvas.set(x, floor + 4, z, Math.floorMod(x, 5) == 0 ? BlockSpec.of(Material.SHROOMLIGHT)
-                        : BlockSpec.of(Material.SPRUCE_PLANKS));
-            }
-            // Mine props every four blocks: posts and a beam.
-            if (Math.floorMod(x, 4) == 2) {
-                for (int y = floor + 1; y <= floor + 3; y++) {
-                    canvas.set(x, y, z1 - 1, Blocks.log(Material.SPRUCE_LOG, Axis.Y));
-                    canvas.set(x, y, z2 + 1, Blocks.log(Material.SPRUCE_LOG, Axis.Y));
-                }
-                canvas.fill(x, floor + 4, z1 - 1, x, floor + 4, z2 + 1, Blocks.log(Material.SPRUCE_LOG, Axis.Z));
-            }
-            if (Math.floorMod(x, 8) == 4) {
-                canvas.set(x, floor + 2, z1, Blocks.wallTorch(false, BlockFace.SOUTH));
+    private static boolean nextToCrossing(int x) {
+        for (int[] crossing : CANAL_CROSSINGS) {
+            if (x > crossing[1] && x <= crossing[1] + 3) {
+                return true;
             }
         }
-        // The stairwell: six steps up to the bailey floor, open to the sky, with a low wall around.
-        int ground = SiegeLayout.GROUND_Y;
-        for (int i = 0; i <= 5; i++) {
-            int x = stairStart + i;
-            int top = floor + 1 + i;
-            for (int z = z1; z <= z2; z++) {
-                canvas.fill(x, floor, z, x, top - 1, z, SiegeKit.masonry(random));
-                canvas.set(x, top, z, i == 5 ? SiegeKit.masonry(random)
-                        : Blocks.stairs(Material.STONE_BRICK_STAIRS, BlockFace.EAST));
-                for (int y = top + 1; y <= ground + 3; y++) {
-                    canvas.clear(x, y, z);
-                }
-            }
-            for (int z : new int[] {z1 - 1, z2 + 1}) {
-                canvas.fill(x, floor, z, x, ground, z, SiegeKit.masonry(random));
-                canvas.set(x, ground + 1, z, i % 2 == 0 ? BlockSpec.of(Material.STONE_BRICK_WALL)
-                        : BlockSpec.of(Material.COBBLESTONE_WALL));
-                canvas.clear(x, ground + 2, z);
-                canvas.clear(x, ground + 3, z);
-            }
-        }
-        // The back of the stairwell, over the tunnel mouth.
-        for (int z = z1 - 1; z <= z2 + 1; z++) {
-            canvas.fill(stairStart - 1, floor + 4, z, stairStart - 1, ground, z, SiegeKit.masonry(random));
-            canvas.set(stairStart - 1, ground + 1, z, BlockSpec.of(Material.STONE_BRICK_WALL));
-        }
-        canvas.set(stairStart - 1, ground + 2, z1 - 1, Blocks.lantern(false, false));
-        canvas.set(stairStart - 1, ground + 2, z2 + 1, Blocks.lantern(false, false));
+        return false;
     }
 
-    // ------------------------------------------------------------------ platforms and plants
+    // ------------------------------------------------------------------ the skyline
 
-    /** The tower platform: nothing but the floor within the radius, for the crystal and the fight around it. */
+    /**
+     * The ring of skyscrapers around the district: hollow towers 36-58 blocks high with lit windows, neon edges and
+     * billboards facing inwards. Nobody can climb them; they are the map's border.
+     */
+    private static void skyline(MapCanvas canvas) {
+        Random random = canvas.random("skyline");
+        int r = SiegeLayout.BUILD_RADIUS;
+        int w = SiegeLayout.HALF_WIDTH;
+        int side = SiegeLayout.SIDE;
+        int east = SiegeLayout.EAST_END;
+        // North and south rows (along x), then west and east rows (along z).
+        for (int sign : new int[] {-1, 1}) {
+            int x = -r;
+            while (x <= r) {
+                int len = Math.min(r - x + 1, 12 + random.nextInt(16));
+                int zIn = sign * (side + 1);
+                int zOut = sign * w;
+                tower(canvas, random, x, Math.min(zIn, zOut), x + len - 1, Math.max(zIn, zOut),
+                        sign < 0 ? BlockFace.SOUTH : BlockFace.NORTH);
+                x += len;
+            }
+            int z = -side;
+            while (z <= side) {
+                int len = Math.min(side - z + 1, 12 + random.nextInt(16));
+                int xIn = sign * (east + 1);
+                int xOut = sign * r;
+                tower(canvas, random, Math.min(xIn, xOut), z, Math.max(xIn, xOut), z + len - 1,
+                        sign < 0 ? BlockFace.EAST : BlockFace.WEST);
+                z += len;
+            }
+        }
+    }
+
+    private static void tower(MapCanvas canvas, Random random, int x1, int z1, int x2, int z2, BlockFace inward) {
+        SiegeKit.Facade look = SiegeKit.facade(random);
+        int top = G + 36 + random.nextInt(23);
+        top = Math.min(top, SiegeLayout.MAX_Y - 3);
+        for (int x = x1; x <= x2; x++) {
+            for (int z = z1; z <= z2; z++) {
+                boolean shell = x == x1 || x == x2 || z == z1 || z == z2;
+                if (!shell) {
+                    canvas.set(x, top, z, BlockSpec.of(Material.POLISHED_BLACKSTONE));
+                    continue;
+                }
+                boolean corner = (x == x1 || x == x2) && (z == z1 || z == z2);
+                boolean face = inward == BlockFace.SOUTH && z == z2 || inward == BlockFace.NORTH && z == z1
+                        || inward == BlockFace.EAST && x == x2 || inward == BlockFace.WEST && x == x1;
+                int along = inward.getModZ() != 0 ? x - x1 : z - z1;
+                for (int y = G + 1; y <= top; y++) {
+                    BlockSpec spec;
+                    if (corner) {
+                        spec = face && y % 2 == 0 ? SiegeKit.glow(look.neon()) : BlockSpec.of(look.trim());
+                    } else if (!face) {
+                        spec = BlockSpec.of(look.wall());
+                    } else if (y <= G + 4) {
+                        spec = y == G + 4 ? SiegeKit.concrete(look.neon()) : BlockSpec.of(look.wall());
+                    } else if (Math.floorMod(y - G, 4) == 0) {
+                        spec = BlockSpec.of(look.trim());
+                    } else if (Math.floorMod(along, 3) == 0) {
+                        spec = BlockSpec.of(look.wall());
+                    } else {
+                        int roll = random.nextInt(14);
+                        spec = roll == 0 ? BlockSpec.of(Material.OCHRE_FROGLIGHT) : roll == 1
+                                ? BlockSpec.of(Material.SEA_LANTERN) : roll == 2 ? SiegeKit.glass(look.neon())
+                                : BlockSpec.of(look.window());
+                    }
+                    canvas.set(x, y, z, spec);
+                }
+                canvas.set(x, top + 1, z, Blocks.slab(Material.POLISHED_BLACKSTONE_SLAB));
+            }
+        }
+        // A big billboard on some inner faces.
+        int len = inward.getModZ() != 0 ? x2 - x1 + 1 : z2 - z1 + 1;
+        if (len >= 14 && random.nextInt(3) == 0) {
+            int width = len - 4;
+            int height = 7 + random.nextInt(5);
+            int y1 = G + 14 + random.nextInt(Math.max(1, top - G - height - 18));
+            if (inward.getModZ() != 0) {
+                int c = inward == BlockFace.SOUTH ? z2 : z1;
+                SiegeKit.board(canvas, random, x1 + 2, y1, c - inward.getModZ(), width, height, true,
+                        inward.getModZ(), SiegeKit.neon(random), SiegeKit.neon(random));
+            } else {
+                int c = inward == BlockFace.EAST ? x2 : x1;
+                SiegeKit.board(canvas, random, z1 + 2, y1, c - inward.getModX(), width, height, false,
+                        inward.getModX(), SiegeKit.neon(random), SiegeKit.neon(random));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ highway and monorail
+
+    /** The elevated highway over the attackers' spawn, on pairs of pillars. */
+    private static void highway(MapCanvas canvas) {
+        Random random = canvas.random("highway");
+        int x1 = -152;
+        int x2 = -138;
+        int deck = G + 16;
+        int side = SiegeLayout.SIDE;
+        for (int x = x1; x <= x2; x++) {
+            for (int z = -side; z <= side; z++) {
+                canvas.set(x, deck - 1, z, Math.floorMod(z, 6) == 0 && (x == x1 + 3 || x == x2 - 3)
+                        ? BlockSpec.of(Material.SEA_LANTERN) : BlockSpec.of(Material.POLISHED_DEEPSLATE));
+                boolean edge = x == x1 || x == x2;
+                canvas.set(x, deck, z, edge ? BlockSpec.of(Material.GRAY_CONCRETE) : x == (x1 + x2) / 2
+                        && Math.floorMod(z, 6) < 3 ? BlockSpec.of(Material.YELLOW_CONCRETE) : SiegeKit.asphalt(random));
+                if (edge) {
+                    canvas.set(x, deck + 1, z, BlockSpec.of(Material.ANDESITE_WALL));
+                }
+            }
+            // Neon fascia along the deck.
+            canvas.set(x, deck - 1, -side, SiegeKit.glow("MAGENTA"));
+        }
+        for (int z = -side; z <= side; z++) {
+            canvas.set(x1 - 1, deck - 1, z, Math.floorMod(z, 2) == 0 ? SiegeKit.glow("MAGENTA")
+                    : BlockSpec.of(Material.BLACK_CONCRETE));
+            canvas.set(x2 + 1, deck - 1, z, Math.floorMod(z, 2) == 0 ? SiegeKit.glow("CYAN")
+                    : BlockSpec.of(Material.BLACK_CONCRETE));
+        }
+        for (int z = -side + 6; z <= side - 6; z += 20) {
+            if (Math.abs(z) <= SiegeLayout.MAIN_HALF + 2 || z >= SiegeLayout.CANAL_Z1 - 3
+                    && z <= SiegeLayout.CANAL_Z2 + 3) {
+                continue;
+            }
+            for (int px : new int[] {x1 + 2, x2 - 3}) {
+                for (int y = G + 1; y < deck - 1; y++) {
+                    canvas.fill(px, y, z, px + 1, y, z + 1, y % 4 == 0 ? SiegeKit.glow("CYAN")
+                            : BlockSpec.of(Material.GRAY_CONCRETE));
+                }
+            }
+        }
+        // Wrecks and a gantry sign on the deck.
+        SiegeKit.car(canvas, random, x1 + 3, -30, false);
+        SiegeKit.car(canvas, random, x1 + 8, 20, false);
+        for (int z = -14; z <= 14; z++) {
+            canvas.set(x2 + 1, deck + 1, z, BlockSpec.of(Material.BLACK_CONCRETE));
+        }
+    }
+
+    /** The monorail over the main avenue: a beam on pillars from the west skyline to a station on the podium. */
+    private static void monorail(MapCanvas canvas) {
+        int y = G + 26;
+        int end = 104;
+        for (int x = SiegeLayout.WEST_END; x <= end; x++) {
+            for (int z = -1; z <= 0; z++) {
+                canvas.set(x, y, z, BlockSpec.of(Material.POLISHED_BLACKSTONE));
+                canvas.set(x, y - 1, z, Math.floorMod(x, 4) == 0 ? SiegeKit.glow("CYAN")
+                        : BlockSpec.of(Material.BLACK_CONCRETE));
+            }
+            canvas.set(x, y + 1, -1, BlockSpec.of(Material.IRON_BARS));
+            canvas.set(x, y + 1, 0, BlockSpec.of(Material.IRON_BARS));
+        }
+        for (int px : new int[] {-144, -112, -84, -24, 4, 60}) {
+            for (int yy = G + 1; yy < y - 1; yy++) {
+                for (int dx = 0; dx <= 1; dx++) {
+                    for (int z = -1; z <= 0; z++) {
+                        canvas.set(px + dx, yy, z, yy % 5 == 0 ? SiegeKit.glow("PURPLE")
+                                : BlockSpec.of(Material.GRAY_CONCRETE));
+                    }
+                }
+            }
+        }
+        // The station on the podium: legs, a platform roof with a sign.
+        int py = SiegeLayout.PODIUM_Y;
+        for (int lx : new int[] {98, 104}) {
+            for (int lz : new int[] {-4, 3}) {
+                for (int yy = py + 1; yy < y - 1; yy++) {
+                    canvas.set(lx, yy, lz, BlockSpec.of(Material.POLISHED_BLACKSTONE_BRICKS));
+                }
+            }
+        }
+        for (int x = 98; x <= 104; x++) {
+            for (int z = -4; z <= 3; z++) {
+                canvas.set(x, y - 1, z, BlockSpec.of(Material.POLISHED_DEEPSLATE));
+                canvas.set(x, y + 4, z, z == -4 || z == 3 ? SiegeKit.concrete("CYAN")
+                        : BlockSpec.of(Material.BLACK_STAINED_GLASS));
+            }
+        }
+        // A train parked over the firewall district.
+        for (int x = -40; x <= -20; x++) {
+            for (int z = -2; z <= 1; z++) {
+                for (int yy = y + 1; yy <= y + 3; yy++) {
+                    boolean window = yy == y + 2;
+                    canvas.set(x, yy, z, window ? BlockSpec.of(Material.CYAN_STAINED_GLASS)
+                            : yy == y + 1 ? SiegeKit.glow("MAGENTA") : BlockSpec.of(Material.WHITE_CONCRETE));
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ platforms
+
+    /** The tower platform: nothing but the floor within the radius, high above, for the model and the fight. */
     private static void clearPlatform(MapCanvas canvas, Tower tower) {
         int r = tower.radius();
         double limit = (r + 0.5) * (r + 0.5);
@@ -297,30 +524,12 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
                 if (dx * dx + dz * dz > limit) {
                     continue;
                 }
-                for (int y = tower.y(); y <= tower.y() + 14 && y <= SiegeLayout.MAX_Y; y++) {
+                for (int y = tower.y(); y <= tower.y() + SiegeLayout.TOWER_CLEARANCE; y++) {
                     if (canvas.get(tower.x() + dx, y, tower.z() + dz) != null) {
                         canvas.clear(tower.x() + dx, y, tower.z() + dz);
                     }
                 }
             }
         }
-    }
-
-    private static void flora(MapCanvas canvas) {
-        Random random = canvas.random("flora");
-        int r = SiegeLayout.BUILD_RADIUS;
-        int w = SiegeLayout.HALF_WIDTH;
-        // On the valley floor (not on the tower platforms), and some on the cliff tops.
-        MapCanvas valley = canvas.restrictTo((x, z) -> {
-            for (Tower tower : TOWERS) {
-                int dx = x - tower.x();
-                int dz = z - tower.z();
-                if (dx * dx + dz * dz <= (tower.radius() + 1) * (tower.radius() + 1)) {
-                    return false;
-                }
-            }
-            return true;
-        }, "flora");
-        SiegeKit.meadow(valley, -r, -w, r, w, 0.11, random);
     }
 }

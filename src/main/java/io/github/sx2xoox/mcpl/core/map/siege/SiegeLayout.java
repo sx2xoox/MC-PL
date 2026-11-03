@@ -1,143 +1,190 @@
 package io.github.sx2xoox.mcpl.core.map.siege;
 
 /**
- * The plan of 협곡 요새 (see {@link SiegeMap}): one long gorge, about 175 x 80 blocks between cliffs, read along
- * {@code x} from the attackers' camp in the west to the defenders' keep in the east.
+ * The plan of 네온 시티 (see {@link SiegeMap}): one district of a neon megacity at night, about 320 x 177 blocks of
+ * play area inside a ring of skyscrapers, read along {@code x} from the attackers' underpass in the west to the
+ * megacorp headquarters in the east.
  *
  * <pre>
- *   x  -86 .. -66   attackers' camp (walled yard, 3 exits)          ground 64
- *   x  -66 .. -42   siege field (hamlet ruins north, quarry south)  ground 64-66
- *   x  -42 .. -28   the river gorge: stone bridge (main), rope bridge (north), ford + tunnel (south)
- *   x  -28 .. -15   killing ground before the outer wall
- *   x  -14 .. -11   outer wall: gatehouse (main), breach (north), tunnel under it (south)
- *   x  -10 .. 25    outer bailey: 성문 탑 at x 2, guardhouse (defender spawn 0), barracks
- *   x   26 .. 29    inner wall: gate (main), wall-walk (north), postern (south)
- *   x   30 .. 59    inner courtyard: 중앙 탑 at x 42, chapel (defender spawn 1), orchard
- *   x   60 .. 88    keep plateau (ground 69): square keep with 코어 at x 74, three doors, defender spawn 2
+ *   x -160 .. -129   고가 하부: the attackers' spawn under an elevated highway                      street y 64
+ *   x -128 ..  -79   네온 슬럼: market avenue, capsule blocks, the sunken canal starts
+ *   x  -78 ..  -74   방화벽: the corporate perimeter wall (gate on the avenue, breach north, culvert south)
+ *   x  -73 ..  -11   방화벽 구역: 방화벽 게이트 plaza at x -50, checkpoint (defender spawn 0)
+ *   x  -10 ..   71   데이터 허브: round plaza at x 30 under a ring walkway, server farm (defender spawn 1)
+ *   x   72 ..  160   메가코프 본사: forecourt, grand stairs up to the podium (roof y 80), 메인프레임 at x 120,
+ *                    the HQ skyscraper (lobby = defender spawn 2)
  * </pre>
  *
- * The three lanes run in bands: north {@code z <= -12}, main {@code |z| <= 8}, south {@code z >= 12}; they meet at
- * every tower platform and split again behind it.
+ * Streets running along {@code x}: the main avenue ({@code |z| <= 10}), the north street ({@code z -56..-44}) and the
+ * sunken canal ({@code z 44..56}, floor y 58). Cross streets run along {@code z} at the plazas and at
+ * {@link #CROSS_STREETS}. Between them lie the city blocks with the buildings. Storeys are 5 blocks: floors at
+ * y 64, 69, 74 (the skybridge level), 79, 84...
  */
 public final class SiegeLayout {
 
     private SiegeLayout() {
     }
 
-    /** Top of the valley floor; players stand at 65. */
+    /** Top of the street; players stand at 65. */
     public static final int GROUND_Y = 64;
-    /** Top of the keep plateau. */
-    public static final int PLATEAU_Y = 69;
-    public static final int MIN_Y = 46;
-    public static final int MAX_Y = 100;
-    /** Half the canvas: the cliffs reach out to here. */
-    public static final int BUILD_RADIUS = 92;
-    /** The canvas edge on z (the map is a strip; columns beyond stay void). */
-    public static final int HALF_WIDTH = 44;
+    /** Top of the sunken canal's floor. */
+    public static final int CANAL_Y = 58;
+    /** Top of the headquarters podium (the core's floor). */
+    public static final int PODIUM_Y = 80;
+    /** Height of one storey. */
+    public static final int STOREY = 5;
+    /** Floor of the skybridges and the ring walkway (the third storey's floor). */
+    public static final int BRIDGE_Y = GROUND_Y + 2 * STOREY;
+    public static final int MIN_Y = 50;
+    public static final int MAX_Y = 126;
+    /** Half the canvas (x reaches out to here). */
+    public static final int BUILD_RADIUS = 168;
+    /** Outer edge of the skyline ring on z. */
+    public static final int HALF_WIDTH = 96;
 
-    /** Valley interior bounds before the cliff's ragged face. */
-    public static final int WEST_END = -86;
-    public static final int EAST_END = 90;
-    public static final int SIDE = 39;
+    /** The play area (inside the skyline ring). */
+    public static final int WEST_END = -160;
+    public static final int EAST_END = 160;
+    public static final int SIDE = 88;
 
-    // ------------------------------------------------------------------ the parts along x
+    // ------------------------------------------------------------------ streets
 
-    public static final int CAMP_FRONT = -66;
-    public static final int OUTER_WALL_WEST = -14;
-    public static final int OUTER_WALL_EAST = -11;
-    public static final int INNER_WALL_WEST = 26;
-    public static final int INNER_WALL_EAST = 29;
-    public static final int PLATEAU_EDGE = 60;
-    /** Top block of both curtain walls (the wall-walk floor). */
-    public static final int WALL_TOP = 72;
+    /** Main avenue: {@code |z| <= MAIN_HALF}. */
+    public static final int MAIN_HALF = 10;
+    /** North street. */
+    public static final int NORTH_Z1 = -56;
+    public static final int NORTH_Z2 = -44;
+    /** The sunken canal (the floor is {@link #CANAL_Y}); ledges at ground level run along both sides. */
+    public static final int CANAL_Z1 = 44;
+    public static final int CANAL_Z2 = 56;
+    public static final int CANAL_X1 = -127;
+    public static final int CANAL_X2 = 86;
+    /** The canal's water channel (one block deep). */
+    public static final int CHANNEL_Z1 = 52;
+    public static final int CHANNEL_Z2 = 54;
+    /** Cross streets (x ranges, inclusive) besides the two plazas. */
+    public static final int[][] CROSS_STREETS = {{-104, -96}, {-20, -12}, {64, 72}};
 
-    /** Lane bands (z). */
-    public static final int LANE_MAIN = 8;
-    public static final int LANE_FLANK = 12;
+    /** Inner and outer city blocks (z ranges). */
+    public static final int INNER_NORTH_Z1 = -43;
+    public static final int INNER_NORTH_Z2 = -11;
+    public static final int INNER_SOUTH_Z1 = 11;
+    public static final int INNER_SOUTH_Z2 = 41;
+    public static final int OUTER_NORTH_Z2 = -57;
+    public static final int OUTER_SOUTH_Z1 = 59;
 
-    // ------------------------------------------------------------------ the river gorge
+    /** Lane bands of the audit: main {@code |z| <= LANE_MAIN}, flanks {@code |z| >= LANE_FLANK}. */
+    public static final int LANE_MAIN = 12;
+    public static final int LANE_FLANK = 16;
 
-    /** Water surface (top water block) of the river in the gorge. */
-    public static final int WATER_TOP = 58;
-    /** River bed (top solid block under the water). */
-    public static final int RIVER_BED = 54;
-    /** Half width of the gorge. */
-    public static final int GORGE_HALF = 5;
-    /** Rope bridge (north) and ford (south) crossings. */
-    public static final int ROPE_BRIDGE_Z = -28;
-    public static final int FORD_Z = 26;
-    /** Floor (top block) of the tunnel under the killing ground and the outer wall. */
-    public static final int TUNNEL_FLOOR = 58;
+    // ------------------------------------------------------------------ sections
 
-    /** Centre line of the gorge at {@code z} (it winds a little). */
-    public static int gorgeX(int z) {
-        return (int) Math.round(-35 + 2.0 * Math.sin(z / 9.0));
-    }
-
-    public static boolean inGorge(int x, int z) {
-        return Math.abs(x - gorgeX(z)) <= GORGE_HALF && isInterior(x, z);
-    }
+    /** East end of the attackers' start area (everything west of it is theirs). */
+    public static final int START_EAST = -129;
+    /** West edge of the firewall zone (a strip of street in front of the wall belongs to it). */
+    public static final int FIREWALL_WEST = -82;
+    public static final int WALL_X1 = -78;
+    public static final int WALL_X2 = -74;
+    /** Top block of the firewall wall. */
+    public static final int WALL_TOP = 80;
+    public static final int HUB_WEST = -10;
+    public static final int HQ_WEST = 72;
 
     // ------------------------------------------------------------------ fixed places
 
-    /** Tower platforms: centre column and the platform radius kept free. */
-    public static final int FRONT_X = 2;
-    public static final int MIDDLE_X = 42;
-    public static final int CORE_X = 74;
-    public static final int TOWER_RADIUS = 6;
+    public static final int FRONT_X = -50;
+    public static final int MIDDLE_X = 30;
+    public static final int CORE_X = 120;
+    /** Radius of the open, flat tower platforms. */
+    public static final int TOWER_RADIUS = 10;
+    /** Blocks above the crystal kept free for the tower model. */
+    public static final int TOWER_CLEARANCE = 22;
+    /** Radius of the round plazas around the front and middle towers. */
+    public static final int PLAZA_RADIUS = 16;
 
-    /** The breach in the outer wall (north lane), centre z. */
-    public static final int BREACH_Z = -26;
-    /** The postern in the inner wall (south lane). */
-    public static final int POSTERN_Z = 20;
-    /** The guardhouse behind the front tower (defender spawn 0): inner x 15..21, z 9..15. */
-    public static final int GUARD_X1 = 14;
-    public static final int GUARD_X2 = 22;
-    public static final int GUARD_Z1 = 8;
-    public static final int GUARD_Z2 = 16;
-    /** The chapel north of the courtyard (defender spawn 1): inner x 45..52, z -31..-23. */
-    public static final int CHAPEL_X1 = 44;
-    public static final int CHAPEL_X2 = 53;
-    public static final int CHAPEL_Z1 = -32;
-    public static final int CHAPEL_Z2 = -22;
-    /** The stairs up to the keep plateau: main, north and south (z of their middle). */
-    public static final int STAIR_NORTH_Z = -17;
-    public static final int STAIR_SOUTH_Z = 17;
-    /** The keep: walls two blocks thick around x 63..85, z -12..12. */
-    public static final int KEEP_X1 = 61;
-    public static final int KEEP_X2 = 87;
-    public static final int KEEP_Z = 14;
-    /** Top block of the keep walls (its wall-walk floor). */
-    public static final int KEEP_TOP = 79;
+    /** The grand stairs up to the podium: one step per x, from x 76 (y 65) to x 91 (y 80). */
+    public static final int STAIRS_X1 = 76;
+    /** The headquarters podium. */
+    public static final int PODIUM_X1 = 92;
+    public static final int PODIUM_Z = 60;
+    /** The skyscraper on the podium (its lobby is defender spawn 2). */
+    public static final int SKY_X1 = 138;
+    public static final int SKY_X2 = 158;
+    public static final int SKY_Z = 22;
+    /** North parking ramp along the podium: z range and x range (rising east). */
+    public static final int RAMP_Z1 = -68;
+    public static final int RAMP_Z2 = -62;
+    public static final int RAMP_X1 = 94;
+    /** South stair tower next to the podium. */
+    public static final int STAIR_TOWER_X1 = 98;
+    public static final int STAIR_TOWER_X2 = 106;
+    public static final int STAIR_TOWER_Z1 = 61;
+    public static final int STAIR_TOWER_Z2 = 69;
 
-    // ------------------------------------------------------------------ cliffs and ground
+    /** Checkpoint (defender spawn 0), server farm (defender spawn 1). */
+    public static final int CHECKPOINT_X1 = -36;
+    public static final int CHECKPOINT_X2 = -22;
+    public static final int CHECKPOINT_Z1 = 14;
+    public static final int CHECKPOINT_Z2 = 30;
+    public static final int FARM_X1 = 51;
+    public static final int FARM_X2 = 63;
+    public static final int FARM_Z1 = -40;
+    public static final int FARM_Z2 = -18;
 
-    /** True for the valley floor (everything inside the cliffs). */
+    // ------------------------------------------------------------------ predicates
+
+    /** True for the play area (everything inside the skyline ring). */
     public static boolean isInterior(int x, int z) {
-        return z <= SIDE - jag(x, 17) && -z <= SIDE - jag(x, 11) && x >= WEST_END + jag(z, 23) && x <= EAST_END - jag(z, 37);
+        return x >= WEST_END && x <= EAST_END && Math.abs(z) <= SIDE;
     }
 
-    /** How far the cliff face juts in (0..2) at {@code t} along it. */
-    static int jag(int t, int salt) {
-        double v = Math.sin(t / 4.3 + salt) + 0.6 * Math.sin(t / 1.7 + salt * 3.1);
-        return v > 0.9 ? 2 : v > 0.1 ? 1 : 0;
+    public static boolean inCanal(int x, int z) {
+        return x >= CANAL_X1 && x <= CANAL_X2 && z >= CANAL_Z1 && z <= CANAL_Z2;
     }
 
-    /** Height of the cliff top at a cliff column. */
-    public static int cliffTop(int x, int z) {
-        double v = Math.sin(x / 7.0 + z * 0.3) + Math.sin(x / 13.0 - z / 5.0) + 0.5 * Math.sin((x + z) / 3.1);
-        return 84 + (int) Math.round(v * 1.8);
+    /** True on the podium of the headquarters (its roof is {@link #PODIUM_Y}). */
+    public static boolean onPodium(int x, int z) {
+        return x >= PODIUM_X1 && x <= EAST_END && Math.abs(z) <= PODIUM_Z;
     }
 
-    /** Top of the natural ground of an interior column (before buildings). */
-    public static int ground(int x, int z) {
-        if (x >= PLATEAU_EDGE) {
-            return PLATEAU_Y;
+    /** True inside the open plaza of the front or middle tower. */
+    public static boolean inPlaza(int x, int z) {
+        return near(x, z, FRONT_X, 0, PLAZA_RADIUS) || near(x, z, MIDDLE_X, 0, PLAZA_RADIUS);
+    }
+
+    static boolean near(int x, int z, int cx, int cz, int radius) {
+        int dx = x - cx;
+        int dz = z - cz;
+        return dx * dx + dz * dz <= radius * radius;
+    }
+
+    /** True on a street (avenue, north street, cross streets, canal and its ledges, plazas, forecourt). */
+    public static boolean isStreet(int x, int z) {
+        if (!isInterior(x, z)) {
+            return false;
         }
-        // Gentle rises in the siege field, kept off the main road and the camp.
-        if (x > CAMP_FRONT + 2 && x < -44 && Math.abs(z) > 6) {
-            double v = Math.sin(x / 6.0) * Math.cos(z / 7.0) + 0.7 * Math.sin((x - z) / 9.0);
-            return GROUND_Y + Math.max(0, (int) Math.round(v));
+        if (x <= START_EAST || x >= HQ_WEST && !onPodium(x, z) || inPlaza(x, z)) {
+            return true;
+        }
+        if (Math.abs(z) <= MAIN_HALF || z >= NORTH_Z1 && z <= NORTH_Z2
+                || z >= CANAL_Z1 - 2 && z <= CANAL_Z2 + 2) {
+            return true;
+        }
+        for (int[] street : CROSS_STREETS) {
+            if (x >= street[0] && x <= street[1]) {
+                return true;
+            }
+        }
+        return Math.abs(x - FRONT_X) <= 4 || Math.abs(x - MIDDLE_X) <= 4;
+    }
+
+    /** Top of the floor of a column before buildings (the street, the canal or the podium). */
+    public static int ground(int x, int z) {
+        if (onPodium(x, z)) {
+            return PODIUM_Y;
+        }
+        if (inCanal(x, z)) {
+            return CANAL_Y;
         }
         return GROUND_Y;
     }
@@ -150,20 +197,17 @@ public final class SiegeLayout {
     /** Which part of the map a column belongs to (zones, previews and audit reports). */
     public static String partOf(int x, int z) {
         if (!isInterior(x, z)) {
-            return "cliffs";
+            return "skyline";
         }
-        if (x < -44) {
-            return "camp";
+        if (x < FIREWALL_WEST) {
+            return "slums";
         }
-        if (x < -17) {
-            return "river";
+        if (x < HUB_WEST) {
+            return "firewall";
         }
-        if (x < 25) {
-            return "gate";
+        if (x < HQ_WEST) {
+            return "hub";
         }
-        if (x < PLATEAU_EDGE) {
-            return "court";
-        }
-        return "keep";
+        return "hq";
     }
 }

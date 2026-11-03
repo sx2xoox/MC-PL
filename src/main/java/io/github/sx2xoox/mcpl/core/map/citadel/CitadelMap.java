@@ -80,7 +80,7 @@ public final class CitadelMap implements ArenaMap {
 
     @Override
     public int version() {
-        return 2;
+        return 3;
     }
 
     /** The zones in build order (exposed for tests and previews). */

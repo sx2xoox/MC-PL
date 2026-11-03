@@ -16,6 +16,7 @@ class CitadelMapTest {
     private static CitadelMap map;
     private static MapCanvas canvas;
     private static MapAudit.Report report;
+    private static java.util.List<String> blockFindings;
 
     @BeforeAll
     static void build() {
@@ -24,6 +25,8 @@ class CitadelMapTest {
         canvas = map.render();
         report = new MapAudit(canvas, map.playRadius(), CitadelMapTest::zoneOf).run(0, 0);
         System.out.println("[citadel] " + canvas.blockCount() + " blocks; " + report.summary());
+        blockFindings = new MapBlockChecks(canvas, CitadelMapTest::zoneOf).run();
+        blockFindings.forEach(f -> System.out.println("[citadel] block: " + f));
     }
 
     @AfterAll

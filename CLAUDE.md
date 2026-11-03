@@ -9,7 +9,9 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 - Java 25, Paper API 26.3 (`compileOnly`), Gradle wrapper (`./gradlew build`). Tests: JUnit 6 + MockBukkit v26.3.
 - `./gradlew runServer` starts a local Paper 26.3 test server (needs internet access to PaperMC).
 - Maps: `./gradlew renderMaps [-Pmap=<id>] [-Pzone=<zone>]` writes PNG previews to `build/map-previews/`; `CitadelMapTest` audits
-  walkability (every standable place reachable, no stranded pits) and blocks (no floating sand, spilling water, lava).
+  walkability (every standable place reachable, no stranded pits) and blocks (no floating sand, spilling water, lava);
+  `MapBlockChecks` audits block support (lanterns, torches, ladders, signs, plants, doors, chains, whole trees) and
+  `SiegeMapTest` asserts it is clean (the citadel's findings are only printed).
   Bump `ArenaMap#version` whenever a map's blocks change, so servers rebuild it.
 - `docs/abilities.md` is generated from every `AbilityInfo`; after changing ability names, descriptions or params run
   `./gradlew updateAbilityDocs` (`AbilityDocsTest` fails while it is stale). New abilities need a docs section there.
@@ -35,8 +37,9 @@ src/main/java/io/github/sx2xoox/mcpl/
   core/                        game hub shared by all modes (sessions, rotation, snapshots, arena, UI, commands)
     map/                       battle maps built in code into void worlds (MapCanvas/BlockSpec, MapService, /게임 경기장 맵)
       citadel/                 폐허의 성채: CitadelLayout (the plan) + one MapZone class per zone
-      siege/                   협곡 요새 (공성전 map): SiegeSites (the contract the siege game reads), SiegeLayout (the
-                               plan), SiegeMap + one MapZone per part (camp, river, gate, court, keep); SiegeMapTest
+      siege/                   네온 시티 (공성전 map, cyberpunk): SiegeSites (the contract the siege game reads), SiegeLayout
+                               (the plan), SiegeKit/SiegeStreets (buildings, props), SiegeMap + one MapZone per part
+                               (slums, firewall, hub, hq); SiegeMapTest (+ MapBlockChecks: block support audits)
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
     pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
                                PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model)

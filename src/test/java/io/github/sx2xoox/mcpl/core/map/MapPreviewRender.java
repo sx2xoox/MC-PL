@@ -36,10 +36,11 @@ class MapPreviewRender {
                 SiegeMap map = new SiegeMap();
                 int r = map.buildRadius();
                 int w = SiegeLayout.HALF_WIDTH;
-                // The isometric view leaves out the cliffs in front (south and east), so the valley can be seen.
-                render(map, map.zones(), zoneName, out, -r, -w, r, w, 0, 8,
-                        (x, z) -> SiegeLayout.isInterior(x, z) || z < 0 && x < SiegeLayout.EAST_END - 4
-                                || x < SiegeLayout.WEST_END + 4 && z < SiegeLayout.SIDE);
+                // The isometric view leaves out the skyline in front (south and east), so the district can be seen.
+                MapPreview.night = true;
+                render(map, map.zones(), zoneName, out, -r, -w, r, w, 0, 6,
+                        (x, z) -> z <= SiegeLayout.SIDE && x <= SiegeLayout.EAST_END);
+                MapPreview.night = false;
             }
         } finally {
             MockBukkit.unmock();
