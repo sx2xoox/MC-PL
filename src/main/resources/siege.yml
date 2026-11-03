@@ -106,6 +106,9 @@ round:
   break: "<gray>판 스코어 <white><a> : <b></white>. <white><seconds>초</white> 뒤 다음 판을 시작합니다 (능력을 새로 뽑습니다)."
 
 hud:
+  level: "<yellow>레벨 <white><level></white> <gray>(<xp>/<next> XP)"
+  level-max: "<yellow>레벨 <white><level></white> <gold>MAX"
+  objective: "<light_purple><name></light_purple><gray>: <status>"
   bossbar: "<phase><gray> · </gray><white><time></white><gray> · 공격 </gray><attackers>"
   tower: "<white><tower></white><gray> ❤ </gray><red><health></red><gray>/<max>"
   tower-shielded: "<gray>🛡 <tower> ❤ <health>/<max>"
@@ -148,6 +151,10 @@ settings:
       name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>전투"
       lore:
         - "<gray>총공세, 부활, 타워 체력"
+    progress:
+      name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>레벨·오브젝트"
+      lore:
+        - "<gray>최대 레벨, 기본 경험치, 데이터 노드, 오버클럭 코어"
   rounds-to-win:
     name: "승리 판 수"
     lore:
@@ -188,3 +195,47 @@ settings:
     lore:
       - "<gray>타워 체력 = 설정 체력 × (기본 비율 + 이 값 × 공격팀 인원)"
       - "<gray>인원이 많을수록 타워가 단단해집니다."
+  max-level:
+    name: "최대 레벨"
+    lore:
+      - "<gray>반마다 1레벨에서 시작해 이 레벨까지 오릅니다."
+      - "<gray>레벨이 오르면 액티브·궁극기가 열리고 최대 체력이 늘어납니다."
+  passive-xp:
+    name: "기본 경험치 (초당)"
+    lore:
+      - "<gray>싸우는 동안 1초마다 모두가 받는 경험치"
+    zero: "<red>없음"
+  node-capture:
+    name: "데이터 노드 점령 시간"
+    lore:
+      - "<gray>한 팀만 노드 안에 이 시간 동안 있으면 점령합니다."
+  core-interval:
+    name: "오버클럭 코어 주기"
+    lore:
+      - "<gray>오버클럭 코어가 점령된 뒤 다시 나타나기까지의 시간"
+
+level:
+  up-title: "<gradient:#facc15:#f97316><bold>LEVEL UP!</bold></gradient>"
+  up-subtitle: "<yellow>레벨 <white><level></white>"
+  unlock-active: "<green>⚡ 액티브 해금!</green> <gray>이제 능력 아이템 우클릭으로 액티브를 쓸 수 있습니다."
+  unlock-ultimate: "<light_purple>★ 궁극기 해금!</light_purple> <gray>게이지가 차기 시작합니다. 가득 차면 <white>F</white>."
+  health: "<red>❤</red> <gray>레벨 보너스: 최대 체력 <white>+<hearts>칸</white>"
+  active-locked: "<red>액티브는 레벨 <white><level></white>부터 <gray>(지금 레벨 <now>)"
+  ultimate-locked: "<red>궁극기는 레벨 <white><level></white>부터 <gray>(지금 레벨 <now>)"
+
+objective:
+  label-node: "<aqua><bold><name></bold></aqua>\n<status>"
+  label-core: "<gradient:#a855f7:#ec4899><bold><name></bold></gradient>\n<status>"
+  status-neutral: "<white>점령 가능"
+  status-contested: "<red><bold>경합 중!"
+  status-capturing: "<team> <gray>점령 중 <white><percent>%"
+  status-closed: "<gray>열리기까지 <white><time>"
+  node-open: "<aqua><name></aqua><gray> 이(가) 다시 열렸습니다."
+  node-captured: "<team><gray> 이(가) <aqua><name></aqua> 점령! <yellow>팀 모두 +<xp> XP</yellow> <gray>· 신속"
+  core-soon: "<light_purple><name></light_purple><gray> 이(가) <white><seconds>초</white> 뒤 맵 가운데에 나타납니다!"
+  core-title: "<gradient:#a855f7:#ec4899><bold><name> 출현!</bold></gradient>"
+  core-subtitle: "<gray>맵 가운데를 점령하면 팀 모두 <yellow>+<xp> XP"
+  core-open: "<light_purple><bold><name></bold></light_purple><gray> 이(가) 나타났습니다! 점령한 팀 모두 <yellow>+<xp> XP</yellow><gray>와 저항·재생."
+  core-captured: "<team><gray> 이(가) <light_purple><name></light_purple> 점령! <yellow>팀 모두 +<xp> XP</yellow> <gray>· 저항·재생"
+  core-captured-title: "<team> <light_purple>코어 점령!"
+  core-captured-subtitle: "<yellow>팀 모두 +<xp> XP"

@@ -17,11 +17,12 @@ import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Player;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The 공성전 HUD: a shared timer boss bar (round, half, time, red during the 총공세), one boss bar per tower (health,
  * shield) and a private sidebar per viewer: {@code A팀 12 : 9 B팀}, the round score (●○), the phase and time left,
- * who attacks, the attackable tower's health, and the viewer's own ability and kills/deaths.
+ * who attacks, the attackable tower's health, the 오버클럭 코어, and the viewer's own ability, kills/deaths and level.
  */
 final class SiegeHud {
 
@@ -148,12 +149,16 @@ final class SiegeHud {
         if (match.isClimax()) {
             lines.add(messages.get("hud.climax"));
         }
+        if (match.phase() == SiegeMatch.Phase.FIGHT) {
+            addIfPresent(lines, match.objectives().hudLine());
+        }
         UUID id = viewer.getUniqueId();
         if (match.teamIndex(id) >= 0) {
             lines.add(Component.empty());
             lines.add(messages.get("hud.ability", Messages.tag("ability", match.abilityName(id))));
             lines.add(messages.get("hud.kd", Messages.tag("kills", session.stats().of(id).kills()),
                     Messages.tag("deaths", session.stats().of(id).deaths())));
+            addIfPresent(lines, match.progress().hudLine(id));
             if (match.phase() == SiegeMatch.Phase.PREP && match.half() == 1 && match.rerollsLeft(viewer) > 0) {
                 lines.add(messages.get("hud.rerolls", Messages.tag("count", match.rerollsLeft(viewer))));
             }
@@ -162,6 +167,12 @@ final class SiegeHud {
             lines.add(messages.get("hud.spectating"));
         }
         return lines;
+    }
+
+    private static void addIfPresent(List<Component> lines, @Nullable Component line) {
+        if (line != null) {
+            lines.add(line);
+        }
     }
 
     private String dots(int wins) {

@@ -1183,6 +1183,11 @@ public final class SuperpowerMatch implements GameInstance {
         if (ability == null || phase != MatchPhase.FIGHT || !session.isInPlay(player)) {
             return ActivationResult.fail("not in the fight");
         }
+        Component locked = host == null ? null : host.activeLocked(player);
+        if (locked != null) {
+            deny(player, locked);
+            return ActivationResult.fail("locked");
+        }
         long now = fightTicks;
         if (participant.isSilenced(now)) {
             deny(player, messages.get("input.silenced",
@@ -1227,6 +1232,11 @@ public final class SuperpowerMatch implements GameInstance {
         Ability ability = participant == null ? null : participant.ability;
         if (ability == null || phase != MatchPhase.FIGHT || !session.isInPlay(player)) {
             return ActivationResult.fail("not in the fight");
+        }
+        Component locked = host == null ? null : host.ultimateLocked(player);
+        if (locked != null) {
+            deny(player, locked);
+            return ActivationResult.fail("locked");
         }
         long now = fightTicks;
         if (participant.isSilenced(now)) {
@@ -1440,6 +1450,10 @@ public final class SuperpowerMatch implements GameInstance {
     }
 
     private void addEarnedGauge(Participant participant, double amount) {
+        Player player = host == null ? null : participant.player();
+        if (player != null && !host.canChargeGauge(player)) {
+            return;
+        }
         if (!participant.isGaugeLocked(fightTicks)) {
             addGauge(participant, amount);
         }

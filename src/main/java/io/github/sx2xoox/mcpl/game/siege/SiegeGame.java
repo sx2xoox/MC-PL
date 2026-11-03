@@ -104,6 +104,7 @@ public final class SiegeGame implements MiniGame {
     @Override
     public void configDefaults(ConfigurationSection defaults) {
         SiegeSettings.declareDefaults(defaults);
+        SiegeProgressSettings.declareDefaults(defaults);
     }
 
     @Override

@@ -7,7 +7,8 @@ import io.github.sx2xoox.mcpl.core.map.siege.SiegeSites;
 /**
  * A plain straight layout used when no 공성전 map is registered (and by the tests): attackers at {@code z = -36},
  * the towers on the {@code z} axis (front {@code -5}, middle {@code 12}, core {@code 28}) and the defenders behind
- * each tower. Every spot stands at {@code feetY}; {@link SiegeLayout} places it around the hub's arena center.
+ * each tower, two data nodes beside the front tower and the big objective in front of it. Every spot stands at
+ * {@code feetY}; {@link SiegeLayout} places it around the hub's arena center.
  */
 public final class FallbackSiegeSites implements SiegeSites {
 
@@ -32,6 +33,13 @@ public final class FallbackSiegeSites implements SiegeSites {
         return List.of(new Tower("front", "성문 탑", 0, feetY, -5, 6),
                 new Tower("middle", "중앙 탑", 0, feetY, 12, 6),
                 new Tower("core", "코어", 0, feetY, 28, 6));
+    }
+
+    @Override
+    public List<Objective> objectives() {
+        return List.of(new Objective("north", "북쪽 데이터 노드", -14, feetY, 4, 3, false),
+                new Objective("canal", "수로 데이터 노드", 14, feetY, 4, 3, false),
+                new Objective("center", "오버클럭 코어", 0, feetY, -20, 4, true));
     }
 
     private List<Spot> row(int z, float yaw) {

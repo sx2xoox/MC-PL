@@ -46,6 +46,15 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
             grid(new int[] {55, 59}, new int[] {-35, -31, -27, -23}, G + 1, SiegeLayout.MIDDLE_X, 0),
             grid(new int[] {142, 146}, new int[] {-6, -2, 2, 6}, SiegeLayout.PODIUM_Y + 1, SiegeLayout.CORE_X, 0));
 
+    /**
+     * Neutral objectives on the cross street between the firewall and the hub: a data node on the north street and one
+     * down in the canal, and the big objective on the avenue crossing between them.
+     */
+    private static final List<Objective> OBJECTIVES = List.of(
+            new Objective("north", "북쪽 데이터 노드", -16, G + 1, -50, 4, false),
+            new Objective("canal", "수로 데이터 노드", -16, SiegeLayout.CANAL_Y + 1, 48, 4, false),
+            new Objective("center", "오버클럭 코어", -16, G + 1, 0, 5, true));
+
     /** Spawn spots on a grid (every combination of {@code xs} and {@code zs}), all looking at one place. */
     private static List<Spot> grid(int[] xs, int[] zs, int y, int lookX, int lookZ) {
         List<Spot> spots = new ArrayList<>();
@@ -121,6 +130,11 @@ public final class SiegeMap implements ArenaMap, SiegeSites {
     @Override
     public List<Tower> towers() {
         return TOWERS;
+    }
+
+    @Override
+    public List<Objective> objectives() {
+        return OBJECTIVES;
     }
 
     /** The zones in build order (exposed for tests and previews). */

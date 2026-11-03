@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.superpower.runtime;
 import java.util.List;
 
 import io.github.sx2xoox.mcpl.core.game.DeathOutcome;
+import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -20,6 +21,8 @@ import org.jspecify.annotations.Nullable;
  *     abilities ({@link SuperpowerMatch#hostAssign}) and starts a fight ({@link SuperpowerMatch#hostBeginFight});
  *     {@link SuperpowerMatch#hostEndFight} revokes them again (half time, between rounds);</li>
  *     <li>asks the host what a death means ({@link #onDeath}) and rebinds the ability on respawn (gauge kept);</li>
+ *     <li>lets the host lock parts of the kit (e.g. 공성전 levels: {@link #activeLocked}, {@link #ultimateLocked},
+ *     {@link #canChargeGauge}); passives always run;</li>
  *     <li>treats the host's {@link #extraTargets() extra targets} as enemies where the host says so (e.g. the towers of
  *     the defending team are enemies of the attackers only), so {@code AbilityContext#damage}, {@code enemiesNear}
  *     and {@code findTarget} reach them.</li>
@@ -65,5 +68,26 @@ public interface MatchHost {
     /** Whether the host's target {@code entity} is an enemy of {@code owner}. */
     default boolean isExtraEnemy(Player owner, Entity entity) {
         return false;
+    }
+
+    /**
+     * Why {@code player} may not use the active skill right now (shown in the action bar), or null if it may. Checked
+     * after the fight and before silence and cooldown.
+     */
+    default @Nullable Component activeLocked(Player player) {
+        return null;
+    }
+
+    /** Why {@code player} may not use the ultimate right now, or null if it may. Checked before the gauge. */
+    default @Nullable Component ultimateLocked(Player player) {
+        return null;
+    }
+
+    /**
+     * Whether the ultimate gauge of {@code player} fills by playing (time, damage). Explicit grants (items, commands)
+     * are not asked.
+     */
+    default boolean canChargeGauge(Player player) {
+        return true;
     }
 }

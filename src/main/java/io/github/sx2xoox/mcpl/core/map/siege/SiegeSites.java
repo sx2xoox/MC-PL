@@ -24,6 +24,14 @@ public interface SiegeSites {
     List<Tower> towers();
 
     /**
+     * Neutral objectives (docs/siege.md §12): capture points either team can take for experience. Optional: a map
+     * without them plays without objectives. {@link Objective#major()} marks the big timed objective.
+     */
+    default List<Objective> objectives() {
+        return List.of();
+    }
+
+    /**
      * A standing place: the block the feet are in, and the direction to face.
      *
      * @param yaw Minecraft yaw in degrees (0 = +z)
@@ -40,5 +48,16 @@ public interface SiegeSites {
      * @param radius blocks around the crystal that count as "near the tower" (defence bonus, capture)
      */
     record Tower(String id, String name, int x, int y, int z, int radius) {
+    }
+
+    /**
+     * A capture point: players standing within {@code radius} blocks (horizontally, a few blocks up or down) of
+     * {@code x, y, z} capture it. The map keeps the centre a free standing place.
+     *
+     * @param id     stable id ({@code north}, {@code canal}, {@code center})
+     * @param name   Korean name shown to players ("북쪽 데이터 노드")
+     * @param major  the big neutral objective that appears on a timer (otherwise a small data node)
+     */
+    record Objective(String id, String name, int x, int y, int z, int radius, boolean major) {
     }
 }

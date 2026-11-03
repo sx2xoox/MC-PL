@@ -122,6 +122,18 @@ class SiegeMapTest {
     }
 
     @Test
+    void theObjectivesStandOnReachableGround() {
+        assertEquals(List.of("north", "canal", "center"),
+                map.objectives().stream().map(SiegeSites.Objective::id).toList());
+        assertEquals(1, map.objectives().stream().filter(SiegeSites.Objective::major).count(), "one big objective");
+        for (SiegeSites.Objective objective : map.objectives()) {
+            MapAudit.Node node = nodes.get(key(objective.x(), objective.y(), objective.z()));
+            assertNotNull(node, "a player can stand at the centre of " + objective.id());
+            assertTrue(reachable.contains(node), objective.id() + " can be reached");
+        }
+    }
+
+    @Test
     void everyGroundPlaceCanBeReachedAndLeft() {
         assertTrue(report.problems().isEmpty(), "no floating sand, spilling water, lava or fire:\n"
                 + report.summary());

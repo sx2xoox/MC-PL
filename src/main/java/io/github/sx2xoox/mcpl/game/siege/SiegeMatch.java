@@ -75,6 +75,9 @@ public final class SiegeMatch implements GameInstance {
     private @Nullable SiegeLayout layout;
     private @Nullable SiegeScore score;
     private @Nullable SiegeHud hud;
+    /** Levels and experience ({@link SiegeProgress}) and the neutral objectives ({@link ObjectivePoints}). */
+    private @Nullable SiegeProgress progress;
+    private @Nullable ObjectivePoints objectives;
     private final List<MatchTeam> teams = new ArrayList<>();
     private final List<Tower> towers = new ArrayList<>();
     private final Map<UUID, Long> protectedUntil = new HashMap<>();
@@ -127,6 +130,8 @@ public final class SiegeMatch implements GameInstance {
         layout = game.layoutFor(session.arena());
         holdTowerChunks();
         score = new SiegeScore(settings, this::teamIndex);
+        progress = new SiegeProgress(this, SiegeProgressSettings.read(session.gameConfig()));
+        objectives = new ObjectivePoints(this, progress);
         SuperpowerMatch hosted = new SuperpowerMatch(game.superpower(), session, new Host());
         abilities = hosted;
         hosted.start();
@@ -208,6 +213,7 @@ public final class SiegeMatch implements GameInstance {
         stopped = true;
         try {
             disposeTowers();
+            clearProgress();
             releaseTowerChunks();
             if (abilities != null) {
                 abilities.stop();
@@ -255,6 +261,21 @@ public final class SiegeMatch implements GameInstance {
         public boolean isExtraEnemy(Player owner, Entity entity) {
             return isTowerEnemy(owner, entity);
         }
+
+        @Override
+        public @Nullable Component activeLocked(Player player) {
+            return progress == null ? null : progress.activeLocked(player);
+        }
+
+        @Override
+        public @Nullable Component ultimateLocked(Player player) {
+            return progress == null ? null : progress.ultimateLocked(player);
+        }
+
+        @Override
+        public boolean canChargeGauge(Player player) {
+            return progress == null || progress.canChargeGauge(player);
+        }
     }
 
     private DeathOutcome hostDeath(Player victim, @Nullable Player killer) {
@@ -265,6 +286,10 @@ public final class SiegeMatch implements GameInstance {
         if (fighting) {
             int before = killer == null ? 0 : points.streak(killer.getUniqueId());
             SiegeScore.Kill kill = points.kill(id, killer == null ? null : killer.getUniqueId(), halfTicks);
+            if (killer != null && teamIndex(killer.getUniqueId()) >= 0
+                    && teamIndex(killer.getUniqueId()) != teamIndex(id)) {
+                progress().kill(killer.getUniqueId(), kill.assisters());
+            }
             if (killer != null && kill.points() > 0) {
                 killer.sendActionBar(messages.get("score.kill-points", Messages.tag("points", kill.points())));
                 if (kill.bounty()) {
@@ -304,6 +329,7 @@ public final class SiegeMatch implements GameInstance {
             // Died before the half (or round) changed: the kit and health reset the others got at the change.
             abilities().hostResetPlayer(player);
         }
+        progress().respawned(player);
         if (phase == Phase.FIGHT) {
             protectedUntil.put(player.getUniqueId(), halfTicks + settings.protectionTicks());
         }
@@ -419,6 +445,8 @@ public final class SiegeMatch implements GameInstance {
         halfTicks = 0;
         protectedUntil.clear();
         score().newHalf();
+        objectives().clear();
+        progress().newHalf();
         disposeTowers();
         createTowers();
         int attackers = attackingTeam();
@@ -481,6 +509,7 @@ public final class SiegeMatch implements GameInstance {
         rerollsLeft.replaceAll((id, left) -> 0);
         abilities().hostBeginFight();
         refreshShields();
+        objectives().beginFight();
         session.title(messages.get("fight.title"), messages.get("fight.subtitle"));
         session.playSound(Sound.ENTITY_ENDER_DRAGON_GROWL, 0.5f, 1.2f);
     }
@@ -514,6 +543,11 @@ public final class SiegeMatch implements GameInstance {
         long now = halfTicks;
         protectedUntil.entrySet().removeIf(entry -> entry.getValue() <= now);
         spawnZoneDamage();
+        progress().second();
+        objectives().second(now);
+        if (phase != Phase.FIGHT) {
+            return;
+        }
         Tower current = attackableTower();
         if (current == null) {
             return;
@@ -540,6 +574,7 @@ public final class SiegeMatch implements GameInstance {
                 }
             }
             int points = score().defenceSuccess(defenders, credited);
+            progress().teamXp(defenders, progress().settings().xpDefence());
             current.heal(current.maxHealth() * settings.defenceHeal());
             current.attackableFrom(now);
             session.broadcast(messages.prefixed("tower.defended", Messages.tag("team",
@@ -625,6 +660,7 @@ public final class SiegeMatch implements GameInstance {
         if (half == 1) {
             abilities().hostEndFight();
             disposeTowers();
+            objectives().clear();
             phase = Phase.HALFTIME;
             phaseTicks = 0;
             session.title(messages.get("halftime.title"), messages.get("halftime.subtitle",
@@ -659,6 +695,7 @@ public final class SiegeMatch implements GameInstance {
         SiegeScore points = score();
         abilities().hostEndFight();
         disposeTowers();
+        objectives().clear();
         points.roundWon(team);
         MatchTeam winner = teams.get(team);
         UUID mvp = points.roundMvp();
@@ -829,6 +866,7 @@ public final class SiegeMatch implements GameInstance {
         int team = attackingTeam();
         int points = score().towerDestroyed(team, tower.id(), climax, tower.topDamager());
         towersDown++;
+        progress().teamXp(team, progress().settings().xpTowerDestroyed());
         session.title(messages.get("tower.destroyed-title", Messages.tag("tower", tower.name())),
                 messages.get("tower.destroyed-subtitle", Messages.tag("team", teams.get(team).displayName()),
                         Messages.tag("points", points)));
@@ -1028,6 +1066,43 @@ public final class SiegeMatch implements GameInstance {
             throw new IllegalStateException("The match has not started");
         }
         return score;
+    }
+
+    SiegeProgress progress() {
+        if (progress == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return progress;
+    }
+
+    ObjectivePoints objectives() {
+        if (objectives == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return objectives;
+    }
+
+    /** The in-match level (1 … {@code levels.max}) of a player this half, 1 before the match started. */
+    public int level(UUID player) {
+        return progress == null ? 1 : progress.levels().level(player);
+    }
+
+    /** The experience a player gathered this half. */
+    public int experience(UUID player) {
+        return progress == null ? 0 : progress.levels().xp(player);
+    }
+
+    private void clearProgress() {
+        try {
+            if (objectives != null) {
+                objectives.clear();
+            }
+            if (progress != null) {
+                progress.clear();
+            }
+        } catch (RuntimeException e) {
+            session.plugin().getLogger().log(Level.WARNING, "Could not clear the siege objectives", e);
+        }
     }
 
     public SuperpowerMatch abilities() {

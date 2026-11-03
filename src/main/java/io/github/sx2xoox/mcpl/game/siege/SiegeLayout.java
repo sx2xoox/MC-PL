@@ -48,6 +48,11 @@ public final class SiegeLayout {
         return new Location(world, originX + tower.x() + 0.5, tower.y(), originZ + tower.z() + 0.5, 90f, 0f);
     }
 
+    /** The centre of a neutral objective (the standing place in its middle). */
+    public Location at(SiegeSites.Objective objective) {
+        return new Location(world, originX + objective.x() + 0.5, objective.y(), originZ + objective.z() + 0.5);
+    }
+
     public List<Location> attackerSpawns() {
         return all(sites.attackerSpawns());
     }
