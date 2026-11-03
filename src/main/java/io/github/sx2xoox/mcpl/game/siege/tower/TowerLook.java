@@ -19,6 +19,17 @@ public interface TowerLook {
      */
     Visual spawn(Location base, String towerId, TextColor teamColor);
 
+    /**
+     * The hitbox (Mannequin scale) a tower of this look needs: a look with bigger towers scales the configured
+     * {@code games.siege.towers.hitbox-scale} up so the hitbox fills the structure. Default: as configured.
+     *
+     * @param towerId    {@code front}, {@code middle} or {@code core}
+     * @param configured the configured hitbox scale
+     */
+    default double hitboxScale(String towerId, double configured) {
+        return configured;
+    }
+
     /** One spawned tower visual. Every entity it creates is tracked and removed by {@link #remove()}. */
     interface Visual {
 

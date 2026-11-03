@@ -90,25 +90,22 @@ class ResourcePackContentsTest {
             }
         }
         assertTrue(problems.isEmpty(), () -> String.join("\n", problems));
-        assertTrue(items >= 14, "towers: 3 × 4 stages + crystal + shield");
+        assertTrue(items >= ModelTowerLook.models().size(), "every tower part");
     }
 
     @Test
     void everyModelTheTowerLookUsesIsInThePack() {
-        List<ModelRef> used = new ArrayList<>(List.of(ModelTowerLook.CRYSTAL, ModelTowerLook.SHIELD));
-        for (String tower : List.of("front", "middle", "core")) {
-            for (int stage = 0; stage <= ModelTowerLook.RUIN; stage++) {
-                used.add(ModelTowerLook.body(tower, stage));
-            }
-        }
+        List<ModelRef> used = new ArrayList<>(ModelTowerLook.models());
         used.add(PackCheck.MODEL);
         for (ModelRef ref : used) {
             assertTrue(built.files().containsKey("assets/mcpl/items/" + ref.id() + ".json"), ref.id());
         }
-        JsonObject crystal = json("assets/mcpl/items/tower_crystal.json").getAsJsonObject("model");
-        assertEquals("minecraft:dye", crystal.getAsJsonArray("tints").get(0).getAsJsonObject().get("type")
-                .getAsString(), "the crystal takes the team colour");
-        assertFalse(json("assets/mcpl/items/tower_shield.json").getAsJsonObject("model").has("tints"));
+        JsonObject heart = json("assets/mcpl/items/tower_core_heart.json").getAsJsonObject("model");
+        assertEquals("minecraft:dye", heart.getAsJsonArray("tints").get(0).getAsJsonObject().get("type")
+                .getAsString(), "the mainframe's heart takes the team colour");
+        assertFalse(json("assets/mcpl/items/tower_core_shield.json").getAsJsonObject("model").has("tints"));
+        // animated textures (the firewall's shimmer, blinking racks) ship their .mcmeta
+        assertTrue(built.files().keySet().stream().anyMatch(p -> p.endsWith("/energy.png.mcmeta")));
     }
 
     @Test

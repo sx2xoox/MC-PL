@@ -179,9 +179,9 @@ class Model:
         return auto_uv(f, e["from"], e["to"])
 
     @staticmethod
-    def _png(tex):
+    def _png(tex, first_frame=False):
         buf = io.BytesIO()
-        T.get(tex).save(buf, "PNG", optimize=True)
+        (T.first_frame(tex) if first_frame else T.get(tex)).save(buf, "PNG", optimize=True)
         return buf.getvalue()
 
     def to_bbmodel(self) -> dict:
@@ -189,11 +189,12 @@ class Model:
         idx = {t: i for i, t in enumerate(tex_names)}
         textures = []
         for i, t in enumerate(tex_names):
+            image = T.get(t)
             textures.append({
                 "path": "", "name": f"{t}.png", "folder": "item", "namespace": "",
-                "id": str(i), "width": T.S, "height": T.S, "uv_width": 16, "uv_height": 16,
+                "id": str(i), "width": image.width, "height": image.height, "uv_width": 16, "uv_height": 16,
                 "particle": i == 0, "render_mode": "default", "render_sides": "auto",
-                "frame_time": 1, "frame_order_type": "loop", "frame_order": "", "frame_interpolate": False,
+                "frame_time": T.FRAME_TIME.get(t, 1), "frame_order_type": "loop", "frame_order": "", "frame_interpolate": False,
                 "visible": True, "internal": True, "saved": False,
                 "uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{self.name}/tex/{t}")),
                 "relative_path": "",
@@ -244,7 +245,7 @@ class Model:
     def to_preview(self, tint=None) -> dict:
         """tint: (r, g, b) multiplied onto tinted faces, like the game's dye tint."""
         return {
-            "textures": {t: "data:image/png;base64," + base64.b64encode(self._png(t)).decode()
+            "textures": {t: "data:image/png;base64," + base64.b64encode(self._png(t, True)).decode()
                          for t in self.textures_used()},
             "elements": [{
                 "from": e["from"], "to": e["to"], "glow": e["glow"],

@@ -76,10 +76,10 @@ for (const el of M.elements) {
   }
 }
 if (M.ground) {
-  // a flat grass-coloured ground plate under the scene: [x1, y, z1, x2, z2]
+  // a flat ground plate under the scene: [x1, y, z1, x2, z2] (grass green unless groundColor is given)
   const [x1, y, z1, x2, z2] = M.ground;
   const g = new THREE.PlaneGeometry(x2 - x1, z2 - z1);
-  const plane = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x4a5a3a }));
+  const plane = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: new THREE.Color(M.groundColor || '#4a5a3a') }));
   plane.rotation.x = -Math.PI / 2;
   plane.position.set((x1 + x2) / 2, y - 0.02, (z1 + z2) / 2);
   scene.add(plane);

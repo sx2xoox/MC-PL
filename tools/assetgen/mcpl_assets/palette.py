@@ -38,11 +38,11 @@ MATERIALS = {
     "leather":     (55, 0.060, 0.36, 0.20, 4, False),
     "gold":        (92, 0.160, 0.78, 0.32, 4, True),
     "fire":        ((28, 100), 0.170, 0.62, 0.70, 6, True),
-    # --- MCPL castle (공성전 towers) ---------------------------------------------------------------
-    "castle":      (78, 0.016, 0.60, 0.30, 5, False),   # warm grey ashlar, a touch lighter than vanilla stone bricks
-    "castle_dark": (70, 0.020, 0.40, 0.18, 4, False),   # plinths, deep joints, rubble shadows
-    "slate":       (255, 0.030, 0.44, 0.24, 4, False),  # roof tiles
-    "moss":        (128, 0.070, 0.46, 0.18, 3, False),  # ruin overgrowth
+        # --- MCPL cyberpunk (공성전 towers) -----------------------------------------------------------
+    "gunmetal":    (255, 0.018, 0.36, 0.26, 5, False),  # hull plates: dark blue-grey armour
+    "glass_dark":  (232, 0.045, 0.33, 0.20, 4, False),  # dark smart glass
+    "hazard":      (88, 0.150, 0.78, 0.18, 3, True),    # warning stripes
+    "amber":       (62, 0.170, 0.76, 0.30, 3, True),    # warning lamps
     # tintable parts are drawn in near-white greys: the minecraft:dye tint multiplies them with the team colour
     "tint":        (85, 0.004, 0.80, 0.36, 5, False),
     "shield":      (215, 0.080, 0.86, 0.16, 3, True),   # pale energy bubble (drawn translucent)
