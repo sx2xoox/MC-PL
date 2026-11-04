@@ -25,6 +25,7 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param xpRadius           enemies of a dying minion this close get its experience
  * @param empoweredBonus     health and damage bonus of a team's minions while it holds the dragon buff
  * @param stats              each kind's numbers
+ * @param formation          how a wave keeps its lines ({@code minions.formation.*})
  */
 public record MinionSettings(
         boolean enabled,
@@ -42,7 +43,8 @@ public record MinionSettings(
         int stuckTicks,
         double xpRadius,
         double empoweredBonus,
-        Map<MinionKind, Stats> stats) {
+        Map<MinionKind, Stats> stats,
+        Formation.Settings formation) {
 
     public static final String PATH = "minions.";
 
@@ -96,7 +98,27 @@ public record MinionSettings(
                 Math.max(10, ticks(config.getDouble(PATH + "stuck-seconds", 3))),
                 config.getDouble(PATH + "xp-radius", 12),
                 config.getDouble(PATH + "empowered-bonus", 0.25),
-                stats);
+                stats,
+                formation(config));
+    }
+
+    private static Formation.Settings formation(ConfigurationSection config) {
+        Formation.Settings d = Formation.Settings.DEFAULTS;
+        String p = PATH + "formation.";
+        return new Formation.Settings(
+                Math.max(0.5, config.getDouble(p + "row-spacing", d.rowSpacing())),
+                Math.max(0.5, config.getDouble(p + "file-spacing", d.fileSpacing())),
+                Math.max(1, config.getInt(p + "per-row", d.perRow())),
+                Math.max(0, config.getDouble(p + "max-lateral", d.maxLateral())),
+                Math.max(1, config.getDouble(p + "lookahead", d.lookahead())),
+                Math.max(0, config.getDouble(p + "pace-slack", d.paceSlack())),
+                Math.clamp(config.getDouble(p + "slow-factor", d.slowFactor()), 0.1, 1),
+                Math.clamp(config.getDouble(p + "catch-up-factor", d.catchUpFactor()), 1, 2),
+                Math.max(0.5, config.getDouble(p + "melee-stand", d.meleeStand())),
+                Math.max(0, config.getDouble(p + "ranged-margin", d.rangedMargin())),
+                Math.max(0, config.getDouble(p + "lateral-weight", d.lateralWeight())),
+                Math.max(0, config.getDouble(p + "crowd-penalty", d.crowdPenalty())),
+                config.getBoolean(p + "knockback", d.knockback()));
     }
 
     public Stats stats(MinionKind kind) {

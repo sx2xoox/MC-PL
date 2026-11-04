@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.siege.minion;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,6 +19,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
+import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
@@ -41,11 +43,13 @@ import org.jspecify.annotations.Nullable;
 /**
  * The minion waves of 공성전 v2 (docs/siege-v2.md §2). Every {@link MinionSettings#intervalTicks()} each side sends a
  * wave down both lanes from its base: melee and ranged minions (one more melee per few players), a cannon every few
- * waves. Minions walk {@link LaneSites#lanePath} (BLUE as given, RED reversed) with the pathfinder, re-path when
- * stuck and are put back on the path when that does not help; they fight the nearest enemy minion, else an enemy
+ * waves. Minions walk {@link LaneSites#lanePath} (BLUE as given, RED reversed) with the pathfinder in a formation
+ * ({@link Formation}: melee rows in front, the ranged row and the cannon behind, each on its own file), re-path when
+ * stuck and are put back on the path when that does not help; they fight an enemy minion (the one facing their file
+ * that the fewest allies fight; melee from just in front of it, ranged from the end of their range), else an enemy
  * tower or core in reach ({@link SiegeArena#structures}), else an enemy player or bot, and never chase farther than
  * {@link MinionSettings#leash()} from the lane. Vanilla AI is off: they target nothing by themselves and hurt only
- * through their own hits.
+ * through their own hits; their bodies do not push each other and their hits do not knock each other back.
  *
  * <p>The player who lands the killing blow gets the minion's gold ({@link Gold#settings()}); enemies of the minion
  * nearby share its experience. Minions are tracked by the match, their lanes' chunks are held loaded, and
@@ -84,6 +88,12 @@ public final class MinionWaves implements Listener {
         private final LaneSites.Lane lane;
         private final List<Location> path;
         private final double damage;
+        private final Wave group;
+        /** Lane progress where it was last seen ({@link Formation.Frame#progress()}). */
+        private double progress;
+        private double movingSpeed;
+        /** A ranged minion stepping back behind its front line while it shoots. */
+        private boolean backing;
         private int next = 1;
         private @Nullable LivingEntity target;
         private long nextAttack;
@@ -97,8 +107,9 @@ public final class MinionWaves implements Listener {
         private boolean healthDirty = true;
 
         private Minion(Mob body, MinionKind kind, LaneSites.Side side, LaneSites.Lane lane, List<Location> path,
-                double damage) {
+                double damage, Wave group) {
             this.body = body;
+            this.group = group;
             this.kind = kind;
             this.side = side;
             this.lane = lane;
@@ -147,6 +158,19 @@ public final class MinionWaves implements Listener {
         }
     }
 
+    /** The minions spawned together on a lane: they march and fight in one formation ({@link Formation}). */
+    private static final class Wave {
+        private final Formation.Lane geo;
+        private final List<Minion> members = new ArrayList<>();
+        private long formedAt = -1;
+        private Map<Integer, Formation.Slot> slots = Map.of();
+        private double front = Double.NaN;
+
+        private Wave(Formation.Lane geo) {
+            this.geo = geo;
+        }
+    }
+
     // ------------------------------------------------------------------ flow
 
     /** The fight of a round begins: the first wave comes after {@link MinionSettings#firstWaveTicks()}. */
@@ -175,6 +199,7 @@ public final class MinionWaves implements Listener {
             }
             look.tick(minion.body, minion.kind.creature());
             mover.tick(minion.body);
+            arrive(minion);
             if ((now + minion.body.getEntityId()) % 5 == 0) {
                 think(minion);
             }
@@ -221,28 +246,33 @@ public final class MinionWaves implements Listener {
                 if (path.size() < 2) {
                     continue;
                 }
-                for (int i = 0; i < kinds.size(); i++) {
-                    spawn(kinds.get(i), side, lane, path, i, kinds.size());
-                }
+                spawnGroup(kinds, side, lane, path);
             }
         }
     }
 
-    private void spawn(MinionKind kind, LaneSites.Side side, LaneSites.Lane lane, List<Location> path, int index,
-            int count) {
-        Location start = path.getFirst();
-        Vector forward = path.get(1).toVector().subtract(start.toVector()).setY(0);
-        if (forward.lengthSquared() < 1.0E-6) {
-            forward = new Vector(side == LaneSites.Side.BLUE ? 1 : -1, 0, 0);
+    /** A new wave on a lane, in its formation: melee rows in front, the ranged row and the cannon behind. */
+    private void spawnGroup(List<MinionKind> kinds, LaneSites.Side side, LaneSites.Lane lane, List<Location> path) {
+        Formation.Lane geo = geometry(path);
+        Formation.Settings formation = settings.formation();
+        List<Formation.Member> placed = new ArrayList<>();
+        for (int i = 0; i < kinds.size(); i++) {
+            placed.add(new Formation.Member(i, kinds.get(i), new Formation.Frame(0, 0)));
         }
-        forward.normalize();
-        Vector across = new Vector(-forward.getZ(), 0, forward.getX());
-        // Two ranks: the melee in front, the ranged and the cannon behind.
-        int row = index % 3;
-        int rank = index / 3;
-        Location at = start.clone().add(across.clone().multiply((row - 1) * 1.2))
-                .add(forward.clone().multiply(-1.4 * rank));
-        at.setDirection(forward);
+        Map<Integer, Formation.Slot> slots = Formation.assign(placed, formation);
+        Wave group = new Wave(geo);
+        Vector forward = flat(geo.direction(0));
+        for (int i = 0; i < kinds.size(); i++) {
+            Formation.Slot slot = slots.get(i);
+            Formation.Vec spot = geo.at(-slot.row() * formation.rowSpacing(), slot.lateral());
+            Location at = new Location(path.getFirst().getWorld(), spot.x(), path.getFirst().getY(), spot.z());
+            at.setDirection(forward);
+            spawn(kinds.get(i), side, lane, path, group, at);
+        }
+    }
+
+    private void spawn(MinionKind kind, LaneSites.Side side, LaneSites.Lane lane, List<Location> path, Wave group,
+            Location at) {
         MinionSettings.Stats stats = settings.stats(kind);
         double bonus = 1 + Math.max(0, wave - 1) * settings.healthPerWave() + (empowered(side)
                 ? settings.empoweredBonus() : 0);
@@ -250,13 +280,35 @@ public final class MinionWaves implements Listener {
         double damage = stats.damage() * (empowered(side) ? 1 + settings.empoweredBonus() : 1);
         Component name = arena.messages().get("minion.name." + kind.key()).color(colour(side));
         try {
-            Mob body = look.spawn(kind.creature(), side, at, mob -> Creatures.prepare(mob, name, health,
-                    stats.scale(), settings.aggroRadius() + 8));
+            Mob body = look.spawn(kind.creature(), side, at, mob -> {
+                Creatures.prepare(mob, name, health, stats.scale(), settings.aggroRadius() + 8);
+                // Bodies do not shove each other out of the lines (the formation keeps them apart).
+                mob.setCollidable(false);
+            });
             arena.track(body);
-            minions.put(body, new Minion(body, kind, side, lane, path, damage));
+            Minion minion = new Minion(body, kind, side, lane, path, damage, group);
+            minion.progress = group.geo.frame(vec(body.getLocation()), Double.NaN, 0).progress();
+            group.members.add(minion);
+            minions.put(body, minion);
         } catch (RuntimeException e) {
             arena.plugin().getLogger().log(Level.WARNING, "Could not spawn a " + kind + " minion", e);
         }
+    }
+
+    private static Formation.Lane geometry(List<Location> path) {
+        List<Formation.Vec> points = new ArrayList<>();
+        for (Location point : path) {
+            points.add(vec(point));
+        }
+        return new Formation.Lane(points);
+    }
+
+    private static Formation.Vec vec(Location at) {
+        return new Formation.Vec(at.getX(), at.getZ());
+    }
+
+    private static Vector flat(Formation.Vec direction) {
+        return new Vector(direction.x(), 0, direction.z());
     }
 
     /** The waypoints of a lane in a side's walking order, as world locations. */
@@ -273,56 +325,165 @@ public final class MinionWaves implements Listener {
 
     // ------------------------------------------------------------------ behaviour
 
+    /** Blocks of lane progress around a minion's last progress in which its place is looked for. */
+    private static final double FRAME_WINDOW = 16;
+
+    /** Brings a wave's formation up to date (once a tick): who is left, their rows and files, the front line. */
+    private void form(Wave group) {
+        if (group.formedAt == now) {
+            return;
+        }
+        group.formedAt = now;
+        group.members.removeIf(m -> minions.get(m.body) != m || !m.body.isValid() || m.body.isDead());
+        List<Formation.Member> members = new ArrayList<>();
+        List<Formation.Member> marching = new ArrayList<>();
+        for (Minion member : group.members) {
+            Formation.Frame frame = group.geo.frame(vec(member.body.getLocation()), member.progress, FRAME_WINDOW);
+            member.progress = frame.progress();
+            Formation.Member seen = new Formation.Member(member.body.getEntityId(), member.kind, frame);
+            members.add(seen);
+            if (member.target == null) {
+                marching.add(seen);
+            }
+        }
+        group.slots = Formation.assign(members, settings.formation());
+        group.front = Formation.front(marching, group.slots, settings.formation());
+    }
+
+    private Formation.Slot slot(Minion minion) {
+        Formation.Slot slot = minion.group.slots.get(minion.body.getEntityId());
+        return slot != null ? slot : new Formation.Slot(0, 0);
+    }
+
     private void think(Minion minion) {
         if (!arena.isFighting()) {
             mover.stop(minion.body);
             return;
         }
+        form(minion.group);
+        Formation.Slot slot = slot(minion);
         MinionSettings.Stats stats = settings.stats(minion.kind);
         LivingEntity target = minion.target;
         if (target != null && !keep(minion, target)) {
             target = null;
         }
         if (target == null) {
-            target = findTarget(minion);
+            target = findTarget(minion, slot);
         }
         minion.target = target;
         Location at = minion.body.getLocation();
         if (target != null) {
-            double reach = stats.range() + (arena.isStructure(target) ? target.getWidth() / 2 : 0);
-            if (Creatures.flatDistanceSquared(at, target.getLocation()) <= reach * reach) {
-                mover.stop(minion.body);
-                Creatures.face(minion.body, target.getLocation());
+            Formation.@Nullable Frame stand = stand(minion, target, slot, stats);
+            if (inReach(minion, target)) {
                 if (now >= minion.nextAttack) {
                     minion.nextAttack = now + stats.attackTicks();
                     strike(minion, target);
                 }
+                if (stand != null && minion.kind.ranged()
+                        && minion.progress - stand.progress() > settings.formation().rangedMargin() + 0.5) {
+                    // A ranged minion caught up in the front line steps back to shoot from behind it.
+                    minion.backing = true;
+                    goTo(minion, place(minion, stand, at), stats.speed());
+                } else {
+                    minion.backing = false;
+                    mover.stop(minion.body);
+                    minion.movingTo = null;
+                    Creatures.face(minion.body, target.getLocation());
+                }
             } else {
-                mover.moveTo(minion.body, target.getLocation(), stats.speed());
+                minion.backing = false;
+                goTo(minion, engage(minion, target, stand, at), stats.speed());
             }
             minion.lastCheck = at;
             minion.checkedAt = now;
             minion.stuck = 0;
-            minion.movingTo = null;
             return;
         }
-        walk(minion, stats, at);
+        walk(minion, stats, at, slot);
     }
 
-    /** Follows the lane: the next waypoint, re-pathing when stuck. */
-    private void walk(Minion minion, MinionSettings.Stats stats, Location at) {
-        double reach = settings.waypointReach();
-        while (minion.next < minion.path.size()
-                && (Creatures.flatDistanceSquared(at, minion.path.get(minion.next)) <= reach * reach
-                || passed(minion, at))) {
-            minion.next++;
+    /** Whether a minion's target is within its hit range (a structure's half width more). */
+    private boolean inReach(Minion minion, LivingEntity target) {
+        double reach = settings.stats(minion.kind).range() + (arena.isStructure(target) ? target.getWidth() / 2 : 0);
+        return Creatures.flatDistanceSquared(minion.body.getLocation(), target.getLocation()) <= reach * reach;
+    }
+
+    /**
+     * Between thinks: a minion walking up to its target stops the tick it gets in reach (it would walk into the enemy's
+     * line, or two minions walking at each other would pass through each other).
+     */
+    private void arrive(Minion minion) {
+        LivingEntity target = minion.target;
+        if (target == null || minion.movingTo == null || minion.backing || !target.isValid() || target.isDead()
+                || !target.getWorld().equals(minion.body.getWorld()) || !inReach(minion, target)) {
+            return;
         }
+        mover.stop(minion.body);
+        minion.movingTo = null;
+        Creatures.face(minion.body, target.getLocation());
+    }
+
+    private void goTo(Minion minion, Location goal, double speed) {
+        if (minion.movingTo == null || Creatures.flatDistanceSquared(goal, minion.movingTo) > 0.25
+                || now - minion.movedAt >= 20) {
+            minion.movingTo = goal;
+            minion.movedAt = now;
+            mover.moveTo(minion.body, goal, speed);
+        }
+    }
+
+    /**
+     * Where (in its lane's frame) a minion fights {@code target} from: for an enemy minion or a structure its stand
+     * point ({@link Formation#standPoint}: melee in front of it, ranged at range, on the minion's own file); null for
+     * an enemy player or bot (chased).
+     */
+    private Formation.@Nullable Frame stand(Minion minion, LivingEntity target, Formation.Slot slot,
+            MinionSettings.Stats stats) {
+        boolean structure = arena.isStructure(target);
+        if (!structure && minionOf(target) == null) {
+            return null;
+        }
+        Formation.Frame frame = minion.group.geo.frame(vec(target.getLocation()), minion.progress, FRAME_WINDOW);
+        return Formation.standPoint(frame, structure ? target.getWidth() / 2 : 0, slot.lateral(), stats.range(),
+                minion.kind.ranged(), settings.formation());
+    }
+
+    private Location place(Minion minion, Formation.Frame frame, Location at) {
+        Formation.Vec spot = minion.group.geo.at(frame.progress(), frame.lateral());
+        return new Location(at.getWorld(), spot.x(), at.getY(), spot.z());
+    }
+
+    /**
+     * Where a minion goes to fight a target out of its reach: its stand point, or right at the target for one that is
+     * chased or once the stand point does not reach (the ground rounds where it stands).
+     */
+    private Location engage(Minion minion, LivingEntity target, Formation.@Nullable Frame stand, Location at) {
+        Location there = target.getLocation();
+        if (stand == null) {
+            return there;
+        }
+        Location goal = place(minion, stand, there);
+        return Creatures.flatDistanceSquared(at, goal) < 1.0 ? there : goal;
+    }
+
+    /**
+     * Marches along the lane in formation: towards the lane point a little ahead on its file, slowing down or
+     * hurrying to keep its row's place behind the wave's front; re-paths when stuck.
+     */
+    private void walk(Minion minion, MinionSettings.Stats stats, Location at, Formation.Slot slot) {
+        Formation.Lane geo = minion.group.geo;
+        Formation.Settings formation = settings.formation();
+        minion.next = Math.max(minion.next, geo.nextWaypoint(minion.progress, settings.waypointReach()));
         if (minion.next >= minion.path.size()) {
             // At the enemy base: stand there and fight whatever comes.
             mover.stop(minion.body);
+            minion.movingTo = null;
             return;
         }
-        Location goal = minion.path.get(minion.next);
+        double lateral = Math.clamp(slot.lateral(), -formation.maxLateral(), formation.maxLateral());
+        double ahead = Math.min(geo.length(), minion.progress + formation.lookahead());
+        Formation.Vec spot = geo.at(ahead, lateral);
+        Location goal = new Location(at.getWorld(), spot.x(), height(minion.path, geo, ahead), spot.z());
         if (now - minion.checkedAt >= 20) {
             if (at.distanceSquared(minion.lastCheck) < 0.25) {
                 minion.stuck += (int) (now - minion.checkedAt);
@@ -333,8 +494,11 @@ public final class MinionWaves implements Listener {
             minion.checkedAt = now;
         }
         if (minion.stuck >= settings.stuckTicks() * 2) {
-            // Re-pathing did not get it out: put it on its path.
-            minion.body.teleport(goal.clone().setDirection(goal.toVector().subtract(at.toVector()).setY(0)));
+            // Re-pathing did not get it out: put it on its path (its file at the next waypoint).
+            Formation.Vec put = geo.at(geo.walked(minion.next), lateral);
+            Location waypoint = minion.path.get(minion.next);
+            Location to = new Location(at.getWorld(), put.x(), waypoint.getY(), put.z());
+            minion.body.teleport(to.setDirection(to.toVector().subtract(at.toVector()).setY(0)));
             minion.stuck = 0;
             minion.lastCheck = minion.body.getLocation();
             minion.movingTo = null;
@@ -345,24 +509,26 @@ public final class MinionWaves implements Listener {
             mover.stop(minion.body);
             minion.repathedAt = now;
         }
-        if (repath || !goal.equals(minion.movingTo) || now - minion.movedAt >= 40) {
+        double speed = stats.speed() * Formation.pace(minion.progress, slot.row(), minion.group.front, formation);
+        if (repath || minion.movingTo == null || Creatures.flatDistanceSquared(goal, minion.movingTo) > 0.25
+                || speed != minion.movingSpeed || now - minion.movedAt >= 40) {
             minion.movingTo = goal;
+            minion.movingSpeed = speed;
             minion.movedAt = now;
-            mover.moveTo(minion.body, goal, stats.speed());
+            mover.moveTo(minion.body, goal, speed);
         }
     }
 
-    /**
-     * Whether a fight carried the minion past its next waypoint: it is nearer the one after than that waypoint is
-     * (it should not walk back).
-     */
-    private static boolean passed(Minion minion, Location at) {
-        if (minion.next + 1 >= minion.path.size()) {
-            return false;
+    /** The lane's height at {@code progress}: between the heights of the waypoints around it. */
+    private static double height(List<Location> path, Formation.Lane geo, double progress) {
+        for (int i = 1; i < path.size(); i++) {
+            if (progress <= geo.walked(i) || i == path.size() - 1) {
+                double span = geo.walked(i) - geo.walked(i - 1);
+                double t = span < 1.0E-9 ? 1 : Math.clamp((progress - geo.walked(i - 1)) / span, 0, 1);
+                return path.get(i - 1).getY() + (path.get(i).getY() - path.get(i - 1).getY()) * t;
+            }
         }
-        Location next = minion.path.get(minion.next);
-        Location after = minion.path.get(minion.next + 1);
-        return Creatures.flatDistanceSquared(at, after) < Creatures.flatDistanceSquared(next, after);
+        return path.getLast().getY();
     }
 
     private boolean keep(Minion minion, LivingEntity target) {
@@ -387,12 +553,15 @@ public final class MinionWaves implements Listener {
                 && Creatures.flatDistanceSquared(target.getLocation(), minion.body.getLocation()) <= chase * chase;
     }
 
-    /** The nearest enemy minion, else a structure in reach, else the nearest enemy player (all within the leash). */
-    private @Nullable LivingEntity findTarget(Minion minion) {
+    /**
+     * An enemy minion (the one facing the minion's file that the fewest allies already fight, {@link Formation#pick}),
+     * else a structure in reach, else the nearest enemy player (all within the leash).
+     */
+    private @Nullable LivingEntity findTarget(Minion minion, Formation.Slot slot) {
         Location at = minion.body.getLocation();
         double radius = settings.aggroRadius();
-        LivingEntity minionTarget = nearestMinion(enemy(minion.side), at, radius);
-        if (minionTarget != null && inLeash(minion, minionTarget)) {
+        LivingEntity minionTarget = facingMinion(minion, slot, at, radius);
+        if (minionTarget != null) {
             return minionTarget;
         }
         LivingEntity best = null;
@@ -419,6 +588,35 @@ public final class MinionWaves implements Listener {
             }
         }
         return best;
+    }
+
+    /** The enemy minion within {@code radius} a minion should fight ({@link Formation#pick}), or null. */
+    private @Nullable LivingEntity facingMinion(Minion minion, Formation.Slot slot, Location at, double radius) {
+        Map<Mob, Integer> fightersOn = new HashMap<>();
+        List<Minion> enemies = new ArrayList<>();
+        for (Minion other : minions.values()) {
+            if (other.side == minion.side) {
+                if (other.target instanceof Mob fought && other != minion) {
+                    fightersOn.merge(fought, 1, Integer::sum);
+                }
+            } else if (other.body.isValid() && !other.body.isDead() && other.body.getWorld().equals(at.getWorld())
+                    && Creatures.flatDistanceSquared(at, other.body.getLocation()) <= radius * radius
+                    && inLeash(minion, other.body)) {
+                enemies.add(other);
+            }
+        }
+        if (enemies.isEmpty()) {
+            return null;
+        }
+        List<Formation.Candidate> candidates = new ArrayList<>();
+        for (Minion enemy : enemies) {
+            Location there = enemy.body.getLocation();
+            candidates.add(new Formation.Candidate(enemy.body.getEntityId(),
+                    minion.group.geo.frame(vec(there), minion.progress, FRAME_WINDOW),
+                    Math.sqrt(Creatures.flatDistanceSquared(at, there)), fightersOn.getOrDefault(enemy.body, 0)));
+        }
+        int chosen = Formation.pick(slot.lateral(), candidates, settings.formation());
+        return chosen < 0 ? null : enemies.get(chosen).body;
     }
 
     private boolean inLeash(Minion minion, LivingEntity target) {
@@ -512,6 +710,17 @@ public final class MinionWaves implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onTarget(EntityTargetEvent event) {
         if (minionOf(event.getEntity()) != null) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * A minion's hit does not knock another minion back (vanilla would, and the lines would fall apart); players' and
+     * bots' hits and abilities still push minions as they push anything.
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onKnockback(EntityKnockbackEvent event) {
+        if (striking && !settings.formation().knockback() && minionOf(event.getEntity()) != null) {
             event.setCancelled(true);
         }
     }
