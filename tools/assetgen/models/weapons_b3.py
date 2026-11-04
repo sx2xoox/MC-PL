@@ -317,7 +317,8 @@ def spider():
                   rotation=("z", rise * side, (x0, y, 0)))
             r = math.radians(rise)
             kx, ky = x0 + side * 3.0 * math.cos(r), y + 3.0 * math.sin(r)
-            w.box(f"shin_{tag}{k}", (kx - 0.3125, ky - 3.0, -0.3125), (kx + 0.3125, ky, 0.3125), "w_chitin",
+            sd = 0.3125 - 0.0625 * k     # the two shins cross: the lower one a step thinner
+            w.box(f"shin_{tag}{k}", (kx - 0.3125, ky - 3.0, -sd), (kx + 0.3125, ky, sd), "w_chitin",
                   rotation=("z", 22.5 * side, (kx, ky, 0)))
     # the blade: a jointed, bristly spider leg ending in a steel claw
     w.group("leg")
@@ -355,9 +356,9 @@ def pirate():
     w.blade("blade", 8.0, 17.0, -1.25, 2.5, 0.75, edge_tex="w_steel_edge", edge_w=0.625)
     w.box("spine", (-1.5, 8.0, -0.5), (-1.25, 17.0, 0.5), "w_iron")
     bend = ("z", 22.5, (2.75, 16.5, 0))
-    w.box("upper", (-1.25, 16.5, -0.375), (2.125, 23.5, 0.375), "w_steel", rotation=bend)
+    w.box("upper", (-1.25, 16.5, -0.4375), (2.125, 23.5, 0.4375), "w_steel", rotation=bend)
     w.box("upper_edge", (2.125, 16.5, -0.25), (2.75, 23.5, 0.25), "w_steel_edge", rotation=bend)
-    w.box("upper_spine", (-1.5, 16.5, -0.5), (-1.25, 22.5, 0.5), "w_iron", rotation=bend)
+    w.box("upper_spine", (-1.5, 16.5, -0.5625), (-1.25, 22.5, 0.5625), "w_iron", rotation=bend)
     w.box("clip", (-1.0, 23.5, -0.25), (2.75, 24.5, 0.25), "w_steel_edge", rotation=bend)
     w.box("point", (0.5, 24.5, -0.25), (2.75, 25.75, 0.25), "w_steel_edge", rotation=bend)
     return w.finish()
@@ -416,16 +417,16 @@ def farmer():
               rotation=("z", ang, (x, 4.5, 1.25)))
         w.box(f"ear{n}", (x - 0.375, 9.5, 1.0), (x + 0.375, 11.75, 1.5), "w_gold",
               rotation=("z", ang, (x, 4.5, 1.25)))
-    w.collar("tie", 5.0, 2.75, 2.75, 0.75, "w_rope")
+    w.collar("tie", 5.0, 2.875, 2.875, 0.75, "w_rope")
     # the sickle (nat): a crescent blade rising from the ferrule and hooking back, honed on its inner curve
     w.group("blade")
     w.centred("tang", 10.5, 11.75, 1.5, 1.0, "w_iron")
     path = [(90, 2.0), (67.5, 3.0), (90, 2.5), (112.5, 2.75), (135, 2.75), (157.5, 2.5), (180, 2.25), (202.5, 2.0),
             (225, 1.75)]
     widths = [2.0, 2.25, 2.25, 2.25, 2.0, 1.75, 1.5, 1.125, 0.75]
-    points = w.curve("blade", (0.0, 11.75), path, widths, 0.75, "w_steel", overlap=0.375)
-    w.curve("edge", points[2], path[2:7], 0.5, 0.5, "w_steel_edge", offset=1.25, overlap=0.375)
-    w.curve("spine", points[3], path[3:6], 0.5, 1.0, "w_iron", offset=-1.0, overlap=0.375)
+    points = w.curve("blade", (0.0, 11.75), path, widths, 0.75, "w_steel")
+    w.curve("edge", points[2], path[2:7], 0.5, 0.5, "w_steel_edge", offset=1.25)
+    w.curve("spine", points[3], path[3:6], 0.5, 1.0, "w_iron", offset=-1.0)
     return w.finish()
 
 

@@ -38,7 +38,7 @@ def ninja():
     w.box("tang", (0.875, 11.0, -0.5), (2.0, 14.0, 0.5), "w_iron_dark")
     w.box("blade_root", (2.0, 11.5, -0.375), (6.0, 14.0, 0.375), "w_iron_dark")
     w.box("blade_edge", (2.0, 10.875, -0.25), (6.0, 11.5, 0.25), "w_steel_edge")
-    w.strut("blade_mid", (5.5, 12.5), (8.75, 11.0), 2.5, 0.75, "w_iron_dark", extend=0.5)
+    w.strut("blade_mid", (5.5, 12.5), (8.75, 11.0), 2.5, 0.875, "w_iron_dark", extend=0.5)
     w.strut("blade_mid_edge", (5.75, 11.5), (8.25, 10.25), 0.625, 0.5, "w_steel_edge", extend=0.25)
     w.strut("blade_hook", (8.75, 11.5), (9.75, 8.25), 1.875, 0.75, "w_iron_dark", extend=0.5)
     w.strut("blade_hook_edge", (8.0, 10.25), (8.5, 8.75), 0.5, 0.5, "w_steel_edge", extend=0.25)
@@ -57,7 +57,7 @@ def ninja():
     for n, sx in enumerate((1, -1)):
         z = 0.125 if n else -0.125
         w.strut(f"star{n}", (-2.0 * sx, cy - 2.0), (2.0 * sx, cy + 2.0), 1.75, 0.25, "w_steel", z=z)
-        w.strut(f"star_tip{n}", (-2.75 * sx, cy - 2.75), (2.75 * sx, cy + 2.75), 0.75, 0.25, "w_steel_edge", z=z)
+        w.strut(f"star_tip{n}", (-2.75 * sx, cy - 2.75), (2.75 * sx, cy + 2.75), 0.75, 0.125, "w_steel_edge", z=z)
     w.box("star_hub", (-0.75, -12.5, -0.375), (0.75, -11.0, 0.375), "w_iron_dark")
     return w.finish()
 
@@ -126,7 +126,7 @@ def archer():
         y = 1.5 + sign * 13.25
         w.strut(f"tip_{tag}", (2.75, 1.5 + sign * 14.5), (2.0, 1.5 + sign * 16.25), 1.0, 1.25, "w_antler",
                 extend=0.25)
-        w.box(f"nock_{tag}", (2.5, y + sign * 0.5 - 0.375, -0.75), (3.5, y + sign * 0.5 + 0.375, 0.75), "w_antler")
+        w.box(f"nock_{tag}", (2.5, y + sign * 0.5 - 0.375, -0.8125), (3.5, y + sign * 0.5 + 0.375, 0.8125), "w_antler")
     # the string, nock to nock
     w.group("string")
     w.box("string", (3.5, -11.25, -0.125), (3.75, 14.25, 0.125), "w_paper")
@@ -403,7 +403,7 @@ def aero():
         w.strut(f"panel_in{n}", (pivot[0] + dx * 3.5, pivot[1] + dy * 3.5), (pivot[0] + dx * 7.0, pivot[1] + dy * 7.0),
                 2.25, 0.25, "w_paper", z=z)
         w.strut(f"panel_out{n}", (pivot[0] + dx * 7.0, pivot[1] + dy * 7.0),
-                (pivot[0] + dx * 10.5, pivot[1] + dy * 10.5), 3.75, 0.25, tex, z=z)
+                (pivot[0] + dx * 10.5, pivot[1] + dy * 10.5), 3.75, 0.25, tex, z=z, ends=(0.0, -0.0625))
         outer = n in (0, len(angles) - 1)
         w.strut(f"rib{n}", (pivot[0] + dx * 1.0, pivot[1] + dy * 1.0), (pivot[0] + dx * 10.5, pivot[1] + dy * 10.5),
                 0.75 if outer else 0.375, 1.0 if outer else 0.75, "w_lacquer")

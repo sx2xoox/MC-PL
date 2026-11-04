@@ -152,9 +152,10 @@ class Model:
         self.elements = []
         self._group = "root"
         self.display = {}
-        # also check turned elements for z-fighting (_turned_overlaps): on for the map props (models/props.py),
-        # which are made of turned bars; the older families still have a few such overlaps to clean up first
-        self.check_turned = False
+        # also check turned elements for z-fighting (_turned_overlaps): on for every model family (weapons,
+        # buildings, creatures, map props); chained turned bars stagger their depth (weaponkit.curve / polyline,
+        # props.arc_xy) so their joints share no face plane
+        self.check_turned = True
 
     def group(self, name: str):
         self._group = name

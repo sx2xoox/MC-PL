@@ -203,8 +203,8 @@ def reaper():
     # the blade: a long curve of dark iron sweeping out and down towards +x, its honed edge on the inside
     w.group("blade")
     path = [(0, 3.0), (-22.5, 3.0), (-45, 2.75), (-67.5, 2.5), (-90, 1.5)]
-    w.curve("blade", (0.5, 24.75), path, (2.75, 2.25, 1.75, 1.25, 0.75), 0.75, "w_iron_dark", overlap=0.5)
-    w.curve("edge", (0.75, 24.75), [(0, 2.875)] + path[1:], 0.625, 0.5, "w_steel_edge", offset=-1.375, overlap=0.5)
+    w.curve("blade", (0.5, 24.75), path, (2.75, 2.25, 1.75, 1.25, 0.75), 0.75, "w_iron_dark")
+    w.curve("edge", (0.75, 24.75), [(0, 2.875)] + path[1:], 0.625, 0.5, "w_steel_edge", offset=-1.375)
     w.box("blade_heel", (-0.875, 24.0, -0.5), (0.75, 26.0, 0.5), "w_iron_dark")
     return w.finish()
 
@@ -259,7 +259,7 @@ def demon():
         path = [(-22.5, 1.75), (22.5, 1.5), (67.5, 1.75), (90, 1.5), (112.5, 1.0)]
         if side < 0:
             path = [(180 - a, l) for a, l in path]
-        w.curve(f"horn_{tag}", (side * 1.75, 6.0), path, (1.5, 1.25, 1.0, 0.75, 0.5), 1.0, "w_horn", overlap=0.375)
+        w.curve(f"horn_{tag}", (side * 1.75, 6.0), path, (1.5, 1.25, 1.0, 0.75, 0.5), 1.0, "w_horn")
     # the blade: wide blackened iron with serrated edges and a soul-fire vein down the middle
     w.group("blade")
     w.centred("blade_0", 7.0, 17.0, 3.0, 1.0, "w_iron_dark")
@@ -291,7 +291,7 @@ def phoenix():
         for n, (a, length, width, y) in enumerate(((67.5, 4.5, 0.875, 6.5), (45, 5.5, 1.0, 6.25),
                                                     (22.5, 4.25, 1.0, 6.0))):
             ang = a if side > 0 else 180 - a
-            w.bar(f"feather_{tag}{n}", (side * 1.25, y), ang, length, width, 0.5 + 0.125 * (n % 2), "w_feather")
+            w.bar(f"feather_{tag}{n}", (side * 1.25, y), ang, length, width, 0.625 - 0.125 * (n % 2), "w_feather")
     # the blade: one great feather, a gold quill up its middle, flame licking along its outer edge
     w.group("feather")
     w.centred("vane_0", 7.0, 10.0, 2.5, 0.75, "w_feather")
@@ -327,8 +327,7 @@ def dragon():
     w.box("teeth", (2.25, 15.75, -1.0), (4.25, 16.5, 1.0), "w_bone")
     w.both_flats("eye", (0.5, 16.5, 1.75), (1.375, 17.25, 1.875), "w_breath", glow=True)
     w.box("brow", (0.0, 17.25, -1.875), (1.875, 17.75, 1.875), "w_scales")
-    w.curve("horn", (-1.25, 17.5), [(157.5, 2.5), (-157.5, 2.0), (-135, 1.5)], (1.25, 1.0, 0.625), 1.25, "w_bone",
-            overlap=0.25)
+    w.curve("horn", (-1.25, 17.5), [(157.5, 2.5), (-157.5, 2.0), (-135, 1.5)], (1.25, 1.0, 0.625), 1.25, "w_bone")
     w.box("mane", (-2.75, 13.75, -1.25), (-2.0, 16.75, 1.25), "w_scales")
     # the blade: a broad, sweeping 언월도 blade growing from the jaws, a notched back, edge on +x
     w.group("blade")
@@ -366,8 +365,7 @@ def werewolf():
         top = 14.0 + (0.5 if n == 1 else 0)
         w.centred(f"claw_root{n}", 13.75, top + 1.0, 1.5, 1.5, "w_horn", x=x)
         w.curve(f"claw{n}", (x, top + 0.75), [(90, 4.5 + (1.0 if n == 1 else 0)), (67.5, 3.0), (45, 2.0),
-                                              (22.5, 1.5)], (1.25, 1.0, 0.75, 0.5), 1.0 - n * 0.0, "w_bone",
-                overlap=0.25)
+                                              (22.5, 1.5)], (1.25, 1.0, 0.75, 0.5), 1.0 + 0.25 * (n == 1), "w_bone")
     return w.finish()
 
 
@@ -422,9 +420,9 @@ def healer():
     # two living branches part and close again round a glowing crystal
     w.group("branches")
     w.curve("branch_r", (0.5, 16.5), [(45, 2.5), (90, 4.0), (135, 2.0), (157.5, 1.0)], (1.25, 1.0, 1.0, 0.75), 1.25,
-            "w_birch", overlap=0.375)
+            "w_birch")
     w.curve("branch_l", (-0.5, 16.5), [(135, 2.5), (90, 4.0), (45, 2.0), (22.5, 1.0)], (1.25, 1.0, 1.0, 0.75), 1.25,
-            "w_birch", overlap=0.375)
+            "w_birch", phase=1)     # the two tips cross: out of step
     w.box("crystal_0", (-1.0, 18.0, -1.0), (1.0, 19.0, 1.0), "w_crystal", glow=True)
     w.box("crystal_1", (-1.5, 19.0, -1.25), (1.5, 22.0, 1.25), "w_crystal", glow=True)
     w.box("crystal_2", (-1.0, 22.0, -1.0), (1.0, 23.0, 1.0), "w_crystal", glow=True)

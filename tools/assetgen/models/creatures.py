@@ -95,8 +95,10 @@ def archer():
     # the bow in the left hand (-x), upright
     x0, x1 = -0.42, -0.36
     b.box("bow_grip", (x0, 0.4, -0.13), (x1, 0.56, -0.07), "t_wood")
-    b.box("bow_top", (x0, 0.56, -0.12), (x1, 0.92, -0.08), "t_wood", rotation=("x", 22.5, (-0.39, 0.56, -0.1)))
-    b.box("bow_bottom", (x0, 0.04, -0.12), (x1, 0.4, -0.08), "t_wood", rotation=("x", -22.5, (-0.39, 0.4, -0.1)))
+    # the limbs a hair slimmer than the grip they leave: no shared side plane where they overlap
+    lx0, lx1 = x0 + 0.005, x1 - 0.005
+    b.box("bow_top", (lx0, 0.56, -0.12), (lx1, 0.92, -0.08), "t_wood", rotation=("x", 22.5, (-0.39, 0.56, -0.1)))
+    b.box("bow_bottom", (lx0, 0.04, -0.12), (lx1, 0.4, -0.08), "t_wood", rotation=("x", -22.5, (-0.39, 0.4, -0.1)))
     b.box("bow_string", (-0.395, 0.1, 0.02), (-0.385, 0.86, 0.03), "t_white")
     # the quiver on the back with three arrows
     b.rbox("quiver", (0.02, 0.5, 0.17), (0.2, 0.9, 0.29), "t_caramel", 0.03)

@@ -67,6 +67,20 @@ def business_side(rotation):
     return euler_xyz(rot_xyz(*rotation) @ rot_xyz(0, 180, 0))
 
 
+STAGGER = 0.0625      # depth step between overlapping turned neighbours (curve, polyline, octagon): no shared plane
+
+
+def _turn(a, b):
+    """The signed turn (degrees, counter-clockwise +) from heading a to heading b."""
+    return (b - a + 180) % 360 - 180
+
+
+def _snapped(p0, p1):
+    """The heading (degrees from +x, counter-clockwise) of a strut from p0 to p1 once snapped to 22.5 degrees."""
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    return round(math.degrees(math.atan2(dy, dx)) / 22.5) * 22.5
+
+
 def _r(v):
     return [round(float(n), 3) + 0.0 for n in v]
 
@@ -220,20 +234,36 @@ class Weapon:
         self.box(name, (frm[0], frm[1], z - depth / 2), (to[0], to[1], z + depth / 2), tex, rotation=rotation, **kw)
         return start[0] + math.cos(rad) * length, start[1] + math.sin(rad) * length
 
-    def curve(self, name, start, path, width, depth, tex, z=0.0, offset=0.0, overlap=0.0, **kw):
+    def curve(self, name, start, path, width, depth, tex, z=0.0, offset=0.0, stagger=STAGGER, cycle=2, phase=0,
+              **kw):
         """
         Bars chained along `path` = [(angle, length), ...] from `start`; width may be one number or one per bar (a
-        tapering horn or claw). overlap starts each later bar that much further back so the bends close.
-        Returns the list of joint points (start ... end).
+        tapering horn or claw). The joints are mitred: each bar runs on past its joint just far enough
+        ((width / 2) * tan(turn / 2)) that its outer corner lands on the bend's bisector, where the neighbour's outer
+        corner is, so nothing sticks out and the bend has no notch; an `offset` bar follows the offset line's own
+        joints. Neighbours step their depth by `stagger` on both flats (in `cycle`s: 3 when a sharp bend lets bar k's
+        inner corner reach bar k + 2) so the wedge where they overlap shares no face plane (no z-fighting); `phase`
+        shifts the cycle (two curves that meet). Returns the list of joint points (start ... end).
         """
         points = [start]
         p = start
+        n_bars = len(path)
+        turns = [_turn(path[n][0], path[n + 1][0]) for n in range(n_bars - 1)]
         for n, (angle, length) in enumerate(path):
             w = width[n] if isinstance(width, (list, tuple)) else width
-            back = overlap if n else 0.0
             rad = math.radians(angle)
-            q = (p[0] - math.cos(rad) * back, p[1] - math.sin(rad) * back)
-            p = self.bar(f"{name}_{n}", q, angle, length + back, w, depth, tex, z=z, offset=offset, **kw)
+            a = 0.0
+            b = 0.0
+            if n:
+                t = math.radians(turns[n - 1]) / 2
+                a = offset * math.tan(t) - w / 2 * abs(math.tan(t))
+            if n < n_bars - 1:
+                t = math.radians(turns[n]) / 2
+                b = -offset * math.tan(t) + w / 2 * abs(math.tan(t))
+            q = (p[0] + math.cos(rad) * a, p[1] + math.sin(rad) * a)
+            e = stagger * ((n + phase) % cycle)
+            self.bar(f"{name}_{n}", q, angle, length + b - a, w, depth + 2 * e, tex, z=z, offset=offset, **kw)
+            p = (p[0] + math.cos(rad) * length, p[1] + math.sin(rad) * length)
             points.append(p)
         return points
 
@@ -250,10 +280,12 @@ class Weapon:
                 self.box(f"{name}{i}", (cx - half, ya, z0), (cx + half, ya + row, z1), tex, **kw)
         return self
 
-    def octagon(self, name, cx, cy, r, bar, z, tex, **kw):
+    def octagon(self, name, cx, cy, r, bar, z, tex, stagger=STAGGER, **kw):
         """An octagonal ring in the x/y plane (a halo, an orbit, a dial rim): eight bars `bar` wide whose outer
-        edges are r from (cx, cy), z = half its depth. The four diagonal bars are turned 45 degrees about z."""
-        a = r * math.tan(math.radians(22.5)) + bar * 0.2     # half a side, a little overlap at the corners
+        edges are r from (cx, cy), z = half its depth. Each bar is exactly as long as its outer side, so the outer
+        corners meet (nothing sticks out); the four diagonal bars are turned 45 degrees about z and are `stagger`
+        deeper on both flats, so the corner wedges the bars share have no common face plane."""
+        a = r * math.tan(math.radians(22.5))     # half the outer side
         c = r - bar / 2
         for k in range(8):
             t = math.radians(45 * k)
@@ -265,20 +297,29 @@ class Weapon:
                     self.box(f"{name}{k}", (x - a, y - bar / 2, -z), (x + a, y + bar / 2, z), tex, **kw)
             else:
                 angle = -45 if k in (1, 5) else 45
-                self.box(f"{name}{k}", (x - a, y - bar / 2, -z), (x + a, y + bar / 2, z), tex,
+                self.box(f"{name}{k}", (x - a, y - bar / 2, -z - stagger), (x + a, y + bar / 2, z + stagger), tex,
                          rotation=("z", angle, (x, y, 0)), **kw)
-    def strut(self, name, p0, p1, w, d, tex, z=0.0, extend=0.0, **kw):
+        return self
+
+    def strut(self, name, p0, p1, w, d, tex, z=0.0, extend=0.0, ends=None, **kw):
         """
         A bar from (x, y) point p0 to p1 in the weapon's broad plane, `w` wide and `d` deep, centred on depth z. Item
         models only turn elements in 22.5 degree steps, so the bar's direction snaps to the nearest step (any of
-        0..180); `extend` lengthens both ends (overlap at the joints of a bent chain: a bow limb, a sickle, a bolt).
-        Returns the snapped angle from +y (degrees, positive towards +x).
+        0..180); `extend` lengthens both ends (a little reach past the points), `ends` = (at p0, at p1) lengthens each
+        end on its own (polyline's mitred joints). Returns the snapped angle from +y (degrees, positive towards +x).
         """
+        e0, e1 = ends if ends is not None else (extend, extend)
         dx, dy = p1[0] - p0[0], p1[1] - p0[1]
-        length = math.hypot(dx, dy) + 2 * extend
-        mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+        dist = math.hypot(dx, dy)
+        length = dist + e0 + e1
         a = (math.degrees(math.atan2(dx, dy)) + 90) % 180 - 90
         a = round(a / 22.5) * 22.5
+        # the middle moves along the bar's own (snapped) direction when the two ends grow by different amounts
+        ux, uy = math.sin(math.radians(a)), math.cos(math.radians(a))
+        if ux * dx + uy * dy < 0:
+            ux, uy = -ux, -uy
+        k = (e1 - e0) / 2
+        mx, my = (p0[0] + p1[0]) / 2 + ux * k, (p0[1] + p1[1]) / 2 + uy * k
         if abs(a) <= 45:
             frm, to, angle = (mx - w / 2, my - length / 2, z - d / 2), (mx + w / 2, my + length / 2, z + d / 2), -a
         else:
@@ -289,11 +330,18 @@ class Weapon:
         self.box(name, frm, to, tex, rotation=rotation, **kw)
         return a
 
-    def polyline(self, name, points, w, d, tex, z=0.0, extend=None, **kw):
-        """Struts through consecutive (x, y) points (a curved limb, blade or bolt); joints overlap by w/2."""
+    def polyline(self, name, points, w, d, tex, z=0.0, extend=None, stagger=STAGGER, cycle=2, **kw):
+        """Struts through consecutive (x, y) points (a curved limb, blade or bolt). The joints are mitred on the
+        snapped directions (each strut runs on (w / 2) * tan(turn / 2), so the outer corners meet on the bisector) and
+        neighbours step their depth by `stagger` (in `cycle`s) so their overlap shares no face plane; the two free
+        ends reach `extend` past the end points (w / 2 unless given)."""
+        free = w / 2 if extend is None else extend
+        dirs = [_snapped(points[n], points[n + 1]) for n in range(len(points) - 1)]
         for n in range(len(points) - 1):
-            self.strut(f"{name}{n}", points[n], points[n + 1], w, d, tex, z=z,
-                       extend=w / 2 if extend is None else extend, **kw)
+            e0 = free if n == 0 else w / 2 * abs(math.tan(math.radians(_turn(dirs[n - 1], dirs[n])) / 2))
+            e1 = free if n == len(points) - 2 else w / 2 * abs(math.tan(math.radians(_turn(dirs[n], dirs[n + 1])) / 2))
+            e = stagger * (n % cycle)
+            self.strut(f"{name}{n}", points[n], points[n + 1], w, d + 2 * e, tex, z=z, ends=(e0, e1), **kw)
         return self
 
     # --- output ------------------------------------------------------------------------------------

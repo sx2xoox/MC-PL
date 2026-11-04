@@ -28,7 +28,7 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 | `prop_preview.py` | 장난감 왕국 map props (`models/props.py` → `prop/*`): one sheet per prop (+ the block prop it replaces with `--blocks <dump.json>`), lineup, block-vs-model grid |
 | `attack_preview.py` | creature attack GIFs from `models/creature_attacks.json` (the game's poses; `./gradlew updateCreatureAttacks`) |
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |
-| `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range; `check_turned` = z-fighting of turned faces too, on for the map props) |
+| `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range; `check_turned` = z-fighting of turned faces too, on for every model) |
 | `mcpl_assets/weaponkit.py` | the weapon builder: weapon space, common parts, the shared `display` preset |
 | `sidebar_panel.py` | 공성전 sidebar panel glyphs (font `mcpl:sidebar` + `textures/font/sidebar/*.png`, run it after a change; `--preview <dir>`: vanilla vs panel). Numbers shared with `core/ui/SidebarPanel` (`SidebarPanelTest`) |
 | `weapon_preview.py` | weapon sheets: icon (+16/32 px), first person, third person, ground, item frame |
@@ -70,6 +70,10 @@ players without the pack, and every normal sword, look vanilla. The weapon also 
 - The hand holds `(0, GRIP_Y = 1.5, 0)`: grip about y −2..6, pommel below, the weapon's "head" from y ~16 up.
   Reference length 26 units (y −4..26); keep x within −7..7 (a few units more for a spike), z within −3..3.
 - Thickness: blades 0.75–1.25, shafts 1.75–3, heads 4–5.5. Details (rivets, badges, bands) are at least 0.125–0.25 thick.
+- Bent parts: chain bars with `curve` / `polyline` (mitred joints: the outer corners meet, nothing sticks out; neighbours
+  step their depth by `STAGGER` so they never share a face plane) and rings with `octagon`. Two separate parts that
+  cross (two claws, two branches, a strip over a bar) differ in depth by at least `STAGGER`, or the checks refuse the
+  z-fighting.
 - Silhouette first: the weapon must read at 16 px in the inventory (the sheet shows 16/32 px icons). One big,
   characteristic shape plus one or two identity details beats many small greebles.
 

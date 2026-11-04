@@ -22,7 +22,7 @@ Kept in sync with ModelTowerLook.SPECS / CreatureModels (Java).
 import math
 
 from mcpl_assets import toy_textures  # noqa: F401  (registers the t_* textures)
-from mcpl_assets.toykit import Build
+from mcpl_assets.toykit import EPS, Build
 
 STAGES = 4
 BODY = 4                # display scale of building slabs and the core's key
@@ -36,7 +36,8 @@ def _wall(stage):
 
 
 def _plaster(b, name, x, y, z, along="z", size=0.9):
-    """A sticking plaster (an X of two thin strips) on a wall whose surface is at z (front) or x (side)."""
+    """A sticking plaster (an X of two thin strips) on a wall whose surface is at z (front) or x (side). Keep it on
+    the flat wall, clear of door and window frames: its outer strip is as deep as a frame (z-fighting)."""
     h = size / 2
     t = 0.0625
     if along == "z":
@@ -131,7 +132,7 @@ def tower_body(stage):
             y = 0.02 + n * 0.55
             b.box(f"fallen_roof_{n}", (3.0 - half * 0.6, y, -1.0 - half * 0.6), (3.0 + half * 0.6, y + 0.55,
                   -1.0 + half * 0.6), "t_roof_tint", tint=True, rotation=("y", 22.5, (3.0, y, -1.0)))
-        _plaster(b, "plaster", -1.0, 1.9, -2.0)
+        _plaster(b, "plaster", -1.25, 1.9, -2.0, size=0.62)
         _toy_blocks(b, stage, TOWER_BLOCKS)
         return b
     b.rbox("wall", (-2, 0.75, -2), (2, 8.5, 2), wall, 0.375, bottom=False, top=False)
@@ -156,7 +157,7 @@ def tower_body(stage):
         # the top of the roof knocked off: a jagged rim of shingles
         b.box("roof_chip", (-1.0, top, -0.6), (0.2, top + 0.35, 0.8), "t_roof_tint", tint=True)
     if stage >= 1:
-        _plaster(b, "plaster", 1.15, 2.2, -2.0)
+        _plaster(b, "plaster", 1.25, 2.2, -2.0, size=0.62)
     if stage >= 2:
         _plaster(b, "plaster_2", -1.2, 6.9, -2.0)
         _plaster(b, "plaster_3", 2.0, 2.4, 0.8, along="x")
@@ -165,7 +166,7 @@ def tower_body(stage):
     return b
 
 
-TOWER_BLOCKS = [(-3.9, -2.6, 0.7, 22.5), (3.2, 1.9, 0.6, 0), (-1.0, -4.0, 0.55, 45), (2.6, -3.6, 0.8, 22.5),
+TOWER_BLOCKS = [(-3.9, -2.6, 0.7, 22.5), (3.2, 1.9, 0.6, 0), (-1.0, -4.0, 0.55, 45), (2.6, -4.4, 0.8, 22.5),
                 (-3.6, 2.4, 0.6, 0), (1.0, 3.3, 0.5, 45)]
 
 
@@ -255,7 +256,7 @@ def core_body(stage):
         b.rbox("turret_stub", (3.2, 6.8, 2.8), (6.0, 8.4, 5.6), wall, 0.4, bottom=False)
         b.box("spire_tip", (-6.2, 0.02, 9.0), (-4.8, 1.4, 10.4), "t_roof_tint", tint=True,
               rotation=("y", 22.5, (-5.5, 0.7, 9.7)))
-        _plaster(b, "plaster", -4.0, 4.2, -7.0, size=1.8)
+        _plaster(b, "plaster", -4.85, 4.2, -7.0, size=1.8)
         _toy_blocks(b, stage, CORE_BLOCKS)
         return b
     b.rbox("lid", (-7.5, 6.5, -7.5), (7.5, 7.5, 7.5), "t_paint_tint", 0.5, bottom=False, tint=True)
@@ -297,9 +298,9 @@ def core_body(stage):
         b.box(f"turret_ball_{n}", (cx - 0.3, y, cz - 0.3), (cx + 0.3, y + 0.6, cz + 0.3), "t_gold")
     if stage >= 1:
         _plaster(b, "plaster", -5.2, 3.9, -7.0, size=1.6)
-        _plaster(b, "plaster_2", 1.6, 9.6, -3.5, size=1.4)
+        _plaster(b, "plaster_2", 2.05, 9.6, -3.5, size=1.4)
     if stage >= 2:
-        _plaster(b, "plaster_3", 3.5, 12.0, -1.2, along="x", size=1.4)
+        _plaster(b, "plaster_3", 3.5, 12.0, -1.6, along="x", size=1.4)
         b.box("hole", (-2.6, 9.6, -3.5625), (-1.6, 10.6, -3.5), "t_navy", faces={"south": None})
     _toy_blocks(b, stage, CORE_BLOCKS)
     return b
@@ -386,7 +387,9 @@ KEY_CENTRE = 4.0
 
 def bubble(rx, height, tiers=9, sink=0.5):
     """A soap-bubble dome: stacked octagonal rings of thin film plates following an ellipse (rx wide, `height`
-    tall above the ground, starting `sink` blocks below it)."""
+    tall above the ground, starting `sink` blocks below it). Each plate is exactly as long as its ring's outer side, so
+    neighbours meet corner to corner on the outside (no corner sticks out); the turned diagonal plates reach EPS
+    further up and down, so the small wedge where neighbours overlap shares no top or bottom face plane."""
     b = Build()
     t = 0.0625
     prof = []
@@ -400,7 +403,7 @@ def bubble(rx, height, tiers=9, sink=0.5):
             b.box(f"cap_{n}", (-r0 * 0.75, y0 + t, -r0 * 0.75), (r0 * 0.75, y0 + 2 * t, r0 * 0.75), "t_bubble",
                   glow=True)
             break
-        side = 2 * r * math.tan(math.pi / 8) + 0.02
+        side = 2 * (r + t / 2) * math.tan(math.pi / 8)
         for k in range(8):
             ang = k * 45
             cx, cz = r * math.sin(math.radians(ang)), -r * math.cos(math.radians(ang))
@@ -413,8 +416,8 @@ def bubble(rx, height, tiers=9, sink=0.5):
                       glow=True)
             else:
                 angle = -45 if k in (1, 5) else 45
-                b.box(f"r{n}_{k}", (cx - side / 2, y[0], cz - t / 2), (cx + side / 2, y[1], cz + t / 2), "t_bubble",
-                      glow=True, rotation=("y", angle, (cx, (y0 + y1) / 2, cz)))
+                b.box(f"r{n}_{k}", (cx - side / 2, y[0] - EPS, cz - t / 2), (cx + side / 2, y[1] + EPS, cz + t / 2),
+                      "t_bubble", glow=True, rotation=("y", angle, (cx, (y0 + y1) / 2, cz)))
         # the ledge to the next (narrower) ring
         if n + 1 < tiers:
             nr = (prof[n + 1][1] + prof[min(tiers, n + 2)][1]) / 2
