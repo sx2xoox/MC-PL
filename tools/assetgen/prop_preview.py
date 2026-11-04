@@ -96,7 +96,7 @@ SIZE = {"lollipop": (7, 12), "candy_cane": (3, 8), "train": (12, 6), "windup_car
         "cotton_tree": (7, 8.5), "crayon_box": (4, 6), "marble_jar": (5, 5.2), "block_stack": (9, 7),
         "toy_box": (12, 7), "toy_box_pink": (4.5, 6), "toy_box_sky": (4.5, 6.5), "toy_box_yellow": (3.5, 8),
         "jelly": (4, 4.8), "cheese": (5, 8), "rabbit_watch": (14, 9.5), "sand_castle": (4, 4),
-        "sand_bucket": (5, 3.5), "sand_spade": (2, 4.2)}
+        "sand_bucket": (5, 3.5), "sand_spade": (2, 4.2), "sponge_bush": (5.5, 4.5)}
 PLACED = [pid for pid in SIZE if pid in props.PROPS]
 PENDING = [pid for pid in SIZE if pid in props.PENDING]
 

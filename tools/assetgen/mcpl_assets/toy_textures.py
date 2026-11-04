@@ -51,6 +51,7 @@ add_ramps({
     "t_sand":     (75, 0.055, 0.84, 0.18, 4, False),   # sandbox sand: castles, buckets
     "t_cheese":   (82, 0.130, 0.86, 0.18, 4, False),   # the clockwork mice's cheese
     "t_lemon":    (100, 0.165, 0.86, 0.16, 4, False),  # bright toy yellow: the spade, the bucket's handle
+    "t_sponge":   (98, 0.125, 0.78, 0.32, 5, False),   # sponge bushes (a damp underside one step down, t_sponge_damp)
 })
 
 # the marble jar's glass: every pixel this alpha (not the soap film's marker)
@@ -313,6 +314,43 @@ def sand():
     return im
 
 
+def _sponge(base, seed):
+    """Sponge: mustard-yellow foam full of pores, round holes of one to three pixels (two steps darker at the bottom
+    of a hole, one at its rim), a few lighter crumbs; tileable."""
+    rnd = random.Random(seed)
+    im = _new()
+    px = im.load()
+    level = [[base] * W for _ in range(W)]
+    for y in range(W):
+        for x in range(W):
+            if rnd.random() < 0.04:
+                level[y][x] = base + 1
+    for _ in range(38):
+        cx, cy = rnd.randrange(W), rnd.randrange(W)
+        r = rnd.choice((0.6, 0.9, 1.2, 1.6))
+        for dy in range(-2, 3):
+            for dx in range(-2, 3):
+                d = math.hypot(dx, dy)
+                x, y = (cx + dx) % W, (cy + dy) % W
+                if d <= r - 0.6:
+                    level[y][x] = base - 2
+                elif d <= r:
+                    level[y][x] = min(level[y][x], base - 1)
+    for y in range(W):
+        for x in range(W):
+            px[x, y] = ramp("t_sponge", level[y][x])
+    return im
+
+
+def sponge():
+    return _sponge(3, 74)
+
+
+def sponge_damp():
+    """The damp underside of a sponge bush (like a wet sponge block): the same foam one step darker."""
+    return _sponge(1, 75)
+
+
 def glass():
     """Clear toy glass (the marble jar): a pale sky film at GLASS_ALPHA, a white glint stripe down every 16 px."""
     im = _new()
@@ -373,6 +411,8 @@ SURFACES = {
     "t_jelly_lime": jelly_lime,
     "t_sand": sand,
     "t_glass": glass,
+    "t_sponge": sponge,
+    "t_sponge_damp": sponge_damp,
     "t_cheese": plastic("t_cheese", 2, 122),
     "t_cheese_hole": plastic("t_cheese", 0, 123),
     "t_lemon": plastic("t_lemon", 2, 124),

@@ -38,9 +38,8 @@ class ToyKingdomMapTest {
 
     /**
      * Most distinct block types (materials) a zone may use: the floorboards, the three mints of the play mat's puzzle
-     * tiles and a handful of toy colours (the lanes two more: the damp shade of the sponge bushes and the brighter
-     * brick of the road). The jungle has three more (a rug per camp, its soft toys: cotton candy, jelly, and the glass
-     * of the marble jar).
+     * tiles and a handful of toy colours (the lanes one more: the brighter brick of the road). The jungle has three
+     * more (a rug per camp, its soft toys: cotton candy, jelly, and the glass of the marble jar).
      */
     private static final int PALETTE_BUDGET = 12;
     private static final int JUNGLE_PALETTE_BUDGET = 13;

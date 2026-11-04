@@ -15,14 +15,14 @@ import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
 
 /**
  * One lane: the coloured brick road with white edges on the play mat, a round plaza in the road's colour for every
- * tower (ringed in the owner's colour), a few round sponge bushes on the verges; its toys are models ({@link #props}):
+ * tower (ringed in the owner's colour); its toys are models ({@link #props}): a few round sponge bushes on the verges,
  * a pair of candy canes at each plaza, a row of lollipop lamps along the outer verge and one big toy on it in the
  * middle (a toy train by the TOP lane, a wind-up car by the BOTTOM lane).
  */
 final class ToyLaneZone implements MapZone {
 
-    /** Sponge bushes on the verges, in quarter coordinates of the BLUE half's TOP lane: {ax along, side, radius}. */
-    private static final double[][] BUSHES = {{14, 1, 2.2}, {50, -1, 2}, {54, 1, 2.4}};
+    /** Sponge bushes on the verges, in quarter coordinates of the BLUE half's TOP lane: {ax along, side}. */
+    private static final double[][] BUSHES = {{14, 1}, {50, -1}, {54, 1}};
     /** Lollipop lamps on the outer verge (towards the edge), at these {@code |x|} of the lane's centre line. */
     private static final int[] LAMPS = {8, 19, 41, 60};
     /** How far a lamp stands from the lane's centre line (clear of the road, its white edge and the minions). */
@@ -62,12 +62,14 @@ final class ToyLaneZone implements MapZone {
         }
         for (Side side : Side.values()) {
             Quarter q = Quarter.of(side, lane);
-            for (double[] bush : BUSHES) {
-                double[] p = ToyLayout.curveAt(bush[0]);
-                double[] n = normalAt(bush[0]);
-                double off = 7 * bush[1];
-                ToyKit.ball(canvas, q, (int) Math.round(p[0] + n[0] * off), (int) Math.round(-(p[1] + n[1] * off)),
-                        bush[2], ToyKit.SPONGE);
+            for (int[] bush : bushes()) {
+                // The bush is a model (props): an invisible footing where its body stood, three by three, two high.
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        q.place(canvas, bush[0] + dx, G + 1, bush[1] + dz, ToyKit.FOOTING);
+                        q.place(canvas, bush[0] + dx, G + 2, bush[1] + dz, ToyKit.FOOTING);
+                    }
+                }
             }
             for (int[] lamp : lamps()) {
                 // The lamp itself is a model (props); its light stays where the glowing sweet is.
@@ -86,6 +88,18 @@ final class ToyLaneZone implements MapZone {
         ToyKit.scatter(canvas, this);
     }
 
+    /** The sponge bushes of a quarter (quarter coordinates): {ax, az} of the middle block. */
+    private static List<int[]> bushes() {
+        List<int[]> out = new ArrayList<>();
+        for (double[] bush : BUSHES) {
+            double[] p = ToyLayout.curveAt(bush[0]);
+            double[] n = normalAt(bush[0]);
+            double off = 7 * bush[1];
+            out.add(new int[] {(int) Math.round(p[0] + n[0] * off), (int) Math.round(-(p[1] + n[1] * off))});
+        }
+        return out;
+    }
+
     /** The lollipop lamps of a quarter (quarter coordinates): {ax, az, 1 if the sweet faces along z}. */
     private static List<int[]> lamps() {
         List<int[]> out = new ArrayList<>();
@@ -100,14 +114,21 @@ final class ToyLaneZone implements MapZone {
     }
 
     /**
-     * The lane's model props ({@code models/props.py}) in every quarter: the lollipop lamps; two candy canes on the
-     * inner side of each tower plaza (towards the jungle), like a gate into the tower's ring, their hooks bent towards
-     * the tower; on the outer verge between the two middle lamps a toy train on its track (TOP) or a wind-up car with
-     * its key turning (BOTTOM), both heading for the river.
+     * The lane's model props ({@code models/props.py}) in every quarter: the sponge bushes on the verges, their buds
+     * turned along x (alternately towards the river and the base, so neighbours differ); the lollipop lamps; two candy
+     * canes on the inner side of each tower plaza (towards the jungle), like a gate into the tower's ring, their hooks
+     * bent towards the tower; on the outer verge between the two middle lamps a toy train on its track (TOP) or a
+     * wind-up car with its key turning (BOTTOM), both heading for the river.
      */
     static void props(Lane lane, List<LaneSites.ModelProp> out) {
         for (Side side : Side.values()) {
             Quarter q = Quarter.of(side, lane);
+            List<int[]> bushes = bushes();
+            for (int i = 0; i < bushes.size(); i++) {
+                int[] bush = bushes.get(i);
+                out.add(q.prop("sponge_bush", bush[0] + 0.5, G + 1, bush[1] + 0.5, q.yaw(i % 2 == 0 ? -1 : 1, 0),
+                        PropMotion.STILL));
+            }
             for (int[] lamp : lamps()) {
                 out.add(q.prop("lollipop", lamp[0] + 0.5, G + 1, lamp[1] + 0.5, lamp[2] == 1 ? q.yaw(0, -1)
                         : q.yaw(1, 0), PropMotion.STILL));

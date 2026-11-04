@@ -32,6 +32,11 @@ The second batch:
   모래성 / 양동이 / 삽 (sand_castle, sand_bucket, sand_spade)  by the dragon's sandbox (castle and spade stand on the
                                sand, one block below the ground)
 
+The third batch:
+
+  스펀지 덤불 (sponge_bush)    a round bush of porous sponge on the lane verges: a soft stepped dome, a darker damp
+                               underside, a little bud at its front, pink five-petal flowers on top
+
 Every model is designed in blocks at real size, base at y = 0 (the ground's top; for the floating boat and duck the
 water's surface), front towards -z (vehicles head -z), then shown at the display scale / centre of PROPS (kept in
 sync with the Java side once the map places them).
@@ -1280,6 +1285,61 @@ def sand_spade():
 
 
 # ------------------------------------------------------------------------------------------------
+# 스펀지 덤불 (sponge bush): a squashed round bush of soft sponge on the lane verges, pink blossoms on top
+# ------------------------------------------------------------------------------------------------
+
+def _blossom(b, name, x, y, z, turn):
+    """A little pink flower lying on a flat top at height y: five round rose petals round a butter middle."""
+    for k in range(5):
+        ang = math.radians(turn + k * 72)
+        px, pz = x + 0.22 * math.cos(ang), z + 0.22 * math.sin(ang)
+        lift = EPS * k
+        cyl(b, f"{name}_petal_{k}", (px, pz), 0.2, y + lift, y + 0.08 + lift, ("t_rose", "t_pink")[k % 2], sides=8)
+    cyl(b, f"{name}_mid", (x, z), 0.13, y + 5 * EPS, y + 0.13, "t_butter", sides=8)
+
+
+def _sponge_dome(b, name, cx, cz, cy, rx, ry, step, bottom=0.0, damp_below=0.0, lift=0.0):
+    """A squashed ball of sponge (`rx` across, `ry` up, its middle at `cy`) cut flat at `bottom`: round 16-gon slices
+    `step` high, a soft stepped dome like the voxel ball it replaces. Slices up to `damp_below` are the damp underside.
+    `lift` makes the first slice that much taller, so the slice planes stay off another dome's. Returns every slice's
+    (top, radius), bottom first: the terraces the flowers sit on."""
+    out = []
+    y0, k, top = bottom, 0, cy + ry
+    while y0 < top - 0.05:
+        y1 = min(top, y0 + step + (lift if k == 0 else 0))
+        mid = (y0 + y1) / 2 - cy
+        r = rx * math.sqrt(max(0.0, 1 - (mid / ry) ** 2)) * 1.04
+        tex = "t_sponge_damp" if y1 <= damp_below + 1e-6 else "t_sponge"
+        cyl(b, f"{name}_{k}", (cx, cz), r, y0 + (EPS if k else 0), y1, tex, sides=16)
+        out.append((y1, r))
+        y0, k = y1, k + 1
+    return out
+
+
+# the bush's flowers on its top terraces: (terrace from the top, angle about y with 0 = +x and 270 = the front),
+# mirror symmetric (angle a and 180 - a) so the bush is the same in the mirrored quarters
+SPONGE_FLOWERS = ((0, 0), (1, 270), (1, 30), (1, 150), (2, 90), (2, 210), (2, 330), (3, 0), (3, 180))
+SPONGE_BUD = (0, -2.15)
+
+
+def sponge_bush():
+    """The verge's sponge bush (the block bush: a squashed ball of sponge on a wet-sponge underside, pink carpet
+    blossoms on top): a soft stepped dome of porous sponge, darker damp foam where it sits on the mat, a little bud
+    of sponge at its front (the map turns the bushes, so they differ), pink five-petal flowers on the top terraces."""
+    b = Build()
+    main = _sponge_dome(b, "body", 0, 0, 1.9, 2.45, 2.1, 0.3, damp_below=0.91)
+    bx, bz = SPONGE_BUD
+    _sponge_dome(b, "bud", bx, bz, 0.5, 0.8, 0.75, 0.25, bottom=2 * EPS, damp_below=0.27, lift=0.07)
+    # each flower tucked against the step above its terrace (it overhangs a narrow terrace less)
+    for n, (k, ang) in enumerate(SPONGE_FLOWERS):
+        y, _ = main[-1 - k]
+        rr = main[-k][1] + 0.25 if k else 0.0
+        _blossom(b, f"flower_{n}", rr * math.cos(math.radians(ang)), y + DECAL_LIFT, rr * math.sin(math.radians(ang)),
+                 n * 29)
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
 # registry: model id -> (builder, display scale, centre blocks above the base)
 # ------------------------------------------------------------------------------------------------
 
@@ -1310,6 +1370,7 @@ PROPS = {
     "sand_castle": (sand_castle, 2, 2.0),
     "sand_bucket": (sand_bucket, 2, 2.0),
     "sand_spade": (sand_spade, 2, 2.5),
+    "sponge_bush": (sponge_bush, 2, 2.5),
 }
 
 # made but not on the map yet: moved into PROPS (and the Java PropModels table) when the map places them

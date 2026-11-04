@@ -42,7 +42,8 @@ public final class PropModels {
             Map.entry("prop/rabbit_watch_hands", new Display(2, 5.6)),
             Map.entry("prop/sand_castle", new Display(2, 2.0)),
             Map.entry("prop/sand_bucket", new Display(2, 2.0)),
-            Map.entry("prop/sand_spade", new Display(2, 2.5)));
+            Map.entry("prop/sand_spade", new Display(2, 2.5)),
+            Map.entry("prop/sponge_bush", new Display(2, 2.5)));
 
     private PropModels() {
     }

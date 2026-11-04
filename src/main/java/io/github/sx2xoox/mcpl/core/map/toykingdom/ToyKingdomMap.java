@@ -95,7 +95,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int version() {
-        return 9;
+        return 10;
     }
 
     /** The zones in build order (exposed for tests and previews). */

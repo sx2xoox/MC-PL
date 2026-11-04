@@ -16,8 +16,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The blocks of 장난감 왕국 and the shared pieces: the floor of every column (a mint play mat of big tiles on wooden
- * floorboards) and the toy props (toy brick walls, cotton candy and sponge balls, toy blocks; the bigger toys are
- * resource-pack models, {@link Quarter#prop}). Props are placed in quarter coordinates ({@code ax, az >= 0}) through a
+ * floorboards) and the toy props (toy brick walls, toy blocks; the bigger toys are resource-pack models,
+ * {@link Quarter#prop}). Props are placed in quarter coordinates ({@code ax, az >= 0}) through a
  * {@link Quarter}, so both halves (and both lanes) are mirror images; shaped detail blocks (stairs, slabs, trapdoors,
  * buttons, banners) go through {@link Quarter#place}, which mirrors their facing too. The detail blocks are a second
  * tone of the toy colours (cherry = pink, quartz = white, bamboo = yellow, birch = the floorboards, red nether brick =
@@ -47,13 +47,8 @@ final class ToyKit {
     static final BlockSpec RED = BlockSpec.of(Material.RED_CONCRETE);
     static final BlockSpec SAND = BlockSpec.of(Material.SAND);
     static final BlockSpec WATER = BlockSpec.of(Material.WATER);
-    /** Soft toys: sponge. */
-    static final BlockSpec SPONGE = BlockSpec.of(Material.SPONGE);
     /** The glowing sweet in the middle of a lollipop lamp (and the clock's hour marks). */
     static final BlockSpec GLOW = BlockSpec.of(Material.PEARLESCENT_FROGLIGHT);
-
-    /** The shade of a sponge bush (its underside). */
-    static final BlockSpec SPONGE_SHADE = BlockSpec.of(Material.WET_SPONGE);
 
     // Detail blocks: the second tone of each toy colour, for slopes, rims and rounded corners.
     static final Material WHITE_STAIRS = Material.QUARTZ_STAIRS;
@@ -67,7 +62,7 @@ final class ToyKit {
     /** A thin white stick that glows (a ballerina's leg, the fountain's sparkle). */
     static final BlockSpec STICK = BlockSpec.of(Material.END_ROD).facing(BlockFace.UP);
     static final BlockSpec LANTERN_HANGING = BlockSpec.of(Material.LANTERN).hanging(true);
-    /** Pink blossoms on a bush or topiary (a carpet: it holds on any block). */
+    /** Pink blossoms on a topiary (a carpet: it holds on any block). */
     static final BlockSpec BLOSSOM = BlockSpec.of(Material.PINK_CARPET);
 
     /** The colours of toy bricks, in turn. */
@@ -601,11 +596,6 @@ final class ToyKit {
         }
     }
 
-    /** A small deterministic scatter in quarter coordinates (so every quarter gets the same). */
-    static boolean speckle(int ax, int y, int az, int oneIn) {
-        return Math.floorMod(ax * 7 + az * 13 + y * 5 + ax * az, oneIn) == 0;
-    }
-
     // ------------------------------------------------------------------ props
 
     /**
@@ -636,33 +626,6 @@ final class ToyKit {
                     continue;
                 }
                 brick(canvas, q.x(ax), q.z(az), d <= radius - 1 ? 3 : 2, colour);
-            }
-        }
-    }
-
-    /**
-     * A soft round toy resting on the ground (a squashed ball), of cotton candy or sponge. A sponge bush is two-tone
-     * (a damp, darker underside) with a few pink blossoms on top.
-     */
-    static void ball(MapCanvas canvas, Quarter q, int ax, int az, double radius, BlockSpec spec) {
-        int r = (int) Math.ceil(radius);
-        double height = radius * 0.9;
-        boolean sponge = spec.equals(SPONGE);
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) {
-                int top = -1;
-                for (int dy = 0; dy <= r * 2; dy++) {
-                    double ny = (dy + 0.5 - height) / height;
-                    double nx = dx / (radius + 0.25);
-                    double nz = dz / (radius + 0.25);
-                    if (nx * nx + ny * ny + nz * nz <= 1) {
-                        q.set(canvas, ax + dx, G + 1 + dy, az + dz, sponge && dy == 0 ? SPONGE_SHADE : spec);
-                        top = dy;
-                    }
-                }
-                if (sponge && top >= 1 && speckle(ax + dx, 0, az + dz, 3)) {
-                    q.place(canvas, ax + dx, G + 2 + top, az + dz, BLOSSOM);
-                }
             }
         }
     }
