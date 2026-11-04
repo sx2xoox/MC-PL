@@ -67,7 +67,7 @@ public final class ToyLayout {
     public static final int GATE_HALF = 3;
     /**
      * The two spawn mats beside the stage, right inside the lane gates ({@code |x|} SPAWN_AX1..SPAWN_AX2,
-     * {@code |z|} SPAWN_Z1..SPAWN_Z2), and the shop stall at the back of the courtyard behind the core.
+     * {@code |z|} SPAWN_Z1..SPAWN_Z2).
      */
     public static final int SPAWN_AX1 = 85;
     public static final int SPAWN_AX2 = 93;
@@ -76,8 +76,29 @@ public final class ToyLayout {
     /** The spawn spots on each mat ({@code |x|}, {@code |z|}). */
     public static final int[] SPAWN_SPOT_AX = {86, 91};
     public static final int[] SPAWN_SPOT_AZ = {13, 15};
-    public static final int SHOP_AX = 91;
-    public static final int SHOP_Z = 0;
+    /**
+     * The shop stall stands against the side wall on each team's left as it faces the enemy (BLUE looks to +x, so its
+     * left is −z; RED looks to −x, its left is +z), between the front turret and the lane gate: the shopkeeper behind
+     * the counter at ({@code SHOP_AX}, {@code SHOP_AZ}), the stall over {@code |x|} SHOP_AX1..SHOP_AX2 and
+     * {@code |z|} SHOP_Z1..CASTLE_HALF_Z - 2. The castle is therefore point symmetric here, not mirror symmetric.
+     */
+    public static final int SHOP_AX = 73;
+    public static final int SHOP_AZ = 14;
+    public static final int SHOP_AX1 = 70;
+    public static final int SHOP_AX2 = 76;
+    public static final int SHOP_Z1 = 12;
+
+    /** The sign of the z of a side's left (BLUE −z, RED +z): where its shop stands. */
+    public static int left(Side side) {
+        return sign(side);
+    }
+
+    /** True for the columns of a shop stall (either side's). */
+    public static boolean inShopStall(int x, int z) {
+        int ax = Math.abs(x);
+        return ax >= SHOP_AX1 && ax <= SHOP_AX2 && Integer.signum(z) == left(sideOf(x)) && Math.abs(z) >= SHOP_Z1
+                && Math.abs(z) <= CASTLE_HALF_Z - 2;
+    }
     /** The checkered half disc in front of the front gate (centred on the wall at {@code z = 0}). */
     public static final double FRONT_PLAZA_RADIUS = 7.5;
 
@@ -134,14 +155,69 @@ public final class ToyLayout {
         return Math.abs(x) <= CLIFF_HALF_X && outline(x, z) > -CLIFF_INSET;
     }
 
-    /** True for the striped warning row along a drop's edge. */
+    /**
+     * The holes in the play mat of the middle corridor (castle front gate to the dragon's sandbox), like missing pieces
+     * of a toy puzzle: on each half a triangle pointing at the sandbox, an upside down one pointing back at the castle
+     * and a long diagonal strip, open to the void like the lane drops. In BLUE half coordinates ({@code |x|}, signed
+     * {@code z}); RED mirrors x. They keep {@link #HOLE_DRAGON_GAP} from the dragon's leash, away from the camps'
+     * leashes, the lanes and the castles, with room to walk around every one.
+     */
+    static final double[][] HOLE_TRIANGLE = {{22, -6}, {28, -8.5}, {28, -3.5}};
+    static final double[][] HOLE_INVERTED = {{31, 2.5}, {31, 7.5}, {37, 5}};
+    /** The strip: from one end to the other ({@code |x|, z}), and its half width. */
+    static final double[] HOLE_STRIP = {40, -4, 45, -9};
+    static final double HOLE_STRIP_HALF = 1.2;
+    /** Blocks between the dragon's leash (20 around the centre) and the nearest hole. */
+    public static final int HOLE_DRAGON_GAP = 1;
+
+    /** True for the columns of a hole in the middle (no blocks at all in the column). */
+    public static boolean inHole(int x, int z) {
+        int ax = Math.abs(x);
+        if (ax < 20 || ax > 48 || Math.abs(z) > 12) {
+            return false;
+        }
+        return inTriangle(ax, z, HOLE_TRIANGLE) || inTriangle(ax, z, HOLE_INVERTED) || inStrip(ax, z);
+    }
+
+    private static boolean inTriangle(double px, double pz, double[][] t) {
+        double d1 = cross(t[0], t[1], px, pz);
+        double d2 = cross(t[1], t[2], px, pz);
+        double d3 = cross(t[2], t[0], px, pz);
+        boolean negative = d1 < 0 || d2 < 0 || d3 < 0;
+        boolean positive = d1 > 0 || d2 > 0 || d3 > 0;
+        return !(negative && positive);
+    }
+
+    private static double cross(double[] a, double[] b, double px, double pz) {
+        return (b[0] - a[0]) * (pz - a[1]) - (b[1] - a[1]) * (px - a[0]);
+    }
+
+    private static boolean inStrip(double px, double pz) {
+        double[] s = HOLE_STRIP;
+        double dx = s[2] - s[0];
+        double dz = s[3] - s[1];
+        double len = Math.hypot(dx, dz);
+        double along = ((px - s[0]) * dx + (pz - s[1]) * dz) / len;
+        double across = Math.abs((px - s[0]) * dz - (pz - s[1]) * dx) / len;
+        return along >= -0.5 && along <= len + 0.5 && across <= HOLE_STRIP_HALF;
+    }
+
+    /** True for every column open to the void: the lane drops and the holes in the middle. */
+    public static boolean inDrop(int x, int z) {
+        return inCliff(x, z) || inHole(x, z);
+    }
+
+    /** True for the striped warning row along the edge of a drop or a hole. */
     public static boolean onCliffEdge(int x, int z) {
-        if (Math.abs(x) > CLIFF_HALF_X + 1 || inCliff(x, z)) {
+        int ax = Math.abs(x);
+        boolean nearCliff = ax <= CLIFF_HALF_X + 1;
+        boolean nearHole = ax >= 19 && ax <= 49 && Math.abs(z) <= 13;
+        if (!nearCliff && !nearHole || inDrop(x, z)) {
             return false;
         }
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                if (inCliff(x + dx, z + dz)) {
+                if (inDrop(x + dx, z + dz)) {
                     return true;
                 }
             }

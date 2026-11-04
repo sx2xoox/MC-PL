@@ -19,8 +19,9 @@ import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
  *
  * <p>Inside: the core's stage in the middle (a white plate with a pastel ring, open {@link ToyLayout#CORE_RADIUS}
  * around and {@link ToyLayout#CORE_CLEARANCE} up) between four candy pillars, carpets in the team colour from the
- * three gates to the stage, a spawn mat inside each lane gate, the shop stall at the back behind the core, two flower
- * boxes inside the front gate and a checker of floorboards and white tiles.
+ * three gates to the stage, a spawn mat inside each lane gate, the shop stall against the side wall on the team's left
+ * (as it faces the enemy) between the front turret and the lane gate, two flower boxes inside the front gate and a
+ * checker of floorboards and white tiles.
  */
 final class ToyCastleZone implements MapZone {
 
@@ -76,7 +77,7 @@ final class ToyCastleZone implements MapZone {
                 pillar(canvas, q, ax, PILLAR_AZ);
             }
         }
-        shop(canvas, new Quarter(sx, 1));
+        shop(canvas, new Quarter(sx, ToyLayout.left(side)));
         // The castle's back wall stands against the kingdom's toy wall: the strip between them is toy wall too.
         for (int ax = ToyLayout.CASTLE_BACK + 1; ax <= r; ax++) {
             for (int z = -ToyLayout.CASTLE_ZONE_HALF_Z; z <= ToyLayout.CASTLE_ZONE_HALF_Z; z++) {
@@ -252,25 +253,26 @@ final class ToyCastleZone implements MapZone {
     }
 
     /**
-     * The shop stall behind the core: a white counter under a striped awning held by two white posts behind it, a
-     * scallop over the front and a yellow coin on top; the shopkeeper's spot in front.
+     * The shop stall against the side wall on the team's left: a white counter facing the courtyard, the shopkeeper's
+     * spot behind it, a striped awning held by two white posts against the wall, a sign in the team colour on the wall
+     * and a yellow coin on top.
      */
     private void shop(MapCanvas canvas, Quarter q) {
-        int counter = ToyLayout.SHOP_AX + 2;
-        int z1 = ToyLayout.SHOP_Z - 2;
-        int z2 = ToyLayout.SHOP_Z + 2;
-        for (int az = z1; az <= z2; az++) {
-            canvas.set(q.x(counter), G + 1, az, ToyKit.WHITE);
-            for (int ax = counter - 1; ax <= ToyLayout.CASTLE_BACK - 2; ax++) {
-                canvas.set(q.x(ax), G + 4, az, Math.floorMod(az, 2) == 0 ? ToyKit.WHITE : ToyKit.strong(side));
-            }
+        int back = ToyLayout.CASTLE_HALF_Z - 2;
+        for (int ax = ToyLayout.SHOP_AX1 + 1; ax <= ToyLayout.SHOP_AX2 - 1; ax++) {
+            q.set(canvas, ax, G + 1, ToyLayout.SHOP_Z1, ToyKit.WHITE);
         }
-        for (int az : new int[] {z1, z2}) {
+        for (int ax : new int[] {ToyLayout.SHOP_AX1, ToyLayout.SHOP_AX2}) {
             for (int y = G + 1; y <= G + 3; y++) {
-                canvas.set(q.x(counter + 1), y, az, ToyKit.WHITE);
+                q.set(canvas, ax, y, back, ToyKit.WHITE);
             }
         }
-        canvas.set(q.x(counter - 1), G + 3, ToyLayout.SHOP_Z, ToyKit.strong(side));
-        canvas.set(q.x(counter), G + 5, ToyLayout.SHOP_Z, ToyKit.YELLOW);
+        for (int ax = ToyLayout.SHOP_AX1; ax <= ToyLayout.SHOP_AX2; ax++) {
+            for (int az = ToyLayout.SHOP_Z1; az <= back; az++) {
+                q.set(canvas, ax, G + 4, az, Math.floorMod(ax, 2) == 0 ? ToyKit.WHITE : ToyKit.strong(side));
+            }
+        }
+        q.set(canvas, ToyLayout.SHOP_AX, G + 3, back, ToyKit.strong(side));
+        q.set(canvas, ToyLayout.SHOP_AX, G + 5, ToyLayout.SHOP_AZ, ToyKit.YELLOW);
     }
 }

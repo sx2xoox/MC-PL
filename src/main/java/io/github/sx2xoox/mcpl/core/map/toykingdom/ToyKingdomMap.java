@@ -15,7 +15,9 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
  * the kingdom, two towers per side on each; the jungle between the lanes has six objective clearings per side, the
  * river runs along the middle and the toy dragon's sandbox sits in the exact centre. The kingdom is a play mat on a
  * wooden floor under a glass dome with a giant clock on top, like a toy world kept in a snow globe; in the middle of
- * each lane the mat ends in a drop into the void beyond the outer verge. See {@link ToyLayout} for the plan.
+ * each lane the mat ends in a drop into the void beyond the outer verge, and three toy-piece holes (a triangle, an
+ * upside down one, a long strip) on each half of the middle corridor fall into it too. See {@link ToyLayout} for the
+ * plan.
  */
 public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
@@ -91,7 +93,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int version() {
-        return 2;
+        return 3;
     }
 
     /** The zones in build order (exposed for tests and previews). */
@@ -124,8 +126,10 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public Spot shop(Side side) {
-        // Facing the counter at the back of the castle.
-        return new Spot(ToyLayout.sign(side) * ToyLayout.SHOP_AX, G + 1, ToyLayout.SHOP_Z, side == Side.BLUE ? 90 : -90);
+        // The shopkeeper behind the counter on the team's left, facing the courtyard (the core's stage).
+        int x = ToyLayout.sign(side) * ToyLayout.SHOP_AX;
+        int z = ToyLayout.left(side) * ToyLayout.SHOP_AZ;
+        return new Spot(x, G + 1, z, ToyLayout.yaw(x, z, ToyLayout.sign(side) * ToyLayout.CORE_AX, 0));
     }
 
     @Override

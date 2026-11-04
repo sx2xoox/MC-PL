@@ -130,12 +130,24 @@ class ToyKingdomMapTest {
         }
         for (Side side : Side.values()) {
             LaneSites.Spot shop = map.shop(side);
+            // The shop stands in the courtyard on the team's left as it faces the enemy (BLUE -z, RED +z).
+            assertTrue(ToyLayout.inCourtyard(shop.x(), shop.z()), side + " shop in the courtyard: " + shop);
+            assertEquals(side == Side.BLUE ? -1 : 1, Integer.signum(shop.z()), side + " shop on the team's left");
+            // The shopkeeper faces the courtyard: the core's stage lies ahead of it.
+            LaneSites.Structure core = map.core(side);
+            double yaw = Math.toRadians(shop.yaw());
+            double ahead = -Math.sin(yaw) * (core.x() - shop.x()) + Math.cos(yaw) * (core.z() - shop.z());
+            assertTrue(ahead > 0.9 * Math.hypot(core.x() - shop.x(), core.z() - shop.z()),
+                    side + " shopkeeper faces the courtyard: yaw " + shop.yaw());
+            double nearest = Double.MAX_VALUE;
             for (LaneSites.Spot spawn : map.spawns(side)) {
-                assertTrue(Math.hypot(spawn.x() - shop.x(), spawn.z() - shop.z()) <= 16,
-                        "the shop is next to the spawn " + spawn);
+                double d = Math.hypot(spawn.x() - shop.x(), spawn.z() - shop.z());
+                nearest = Math.min(nearest, d);
+                assertTrue(d <= 36, "the shop is in the castle of the spawn " + spawn);
                 float expected = side == Side.BLUE ? -90 : 90;
                 assertEquals(expected, spawn.yaw(), 0.01, "spawns face the enemy base");
             }
+            assertTrue(nearest <= 16, side + " shop near its spawn mat: " + nearest);
         }
     }
 
@@ -285,12 +297,15 @@ class ToyKingdomMapTest {
     void theDropsStayAwayFromThePathsAndAreMarked() {
         int r = map.buildRadius();
         int drops = 0;
+        int holes = 0;
         for (int x = -r; x <= r; x++) {
             for (int z = -r; z <= r; z++) {
-                if (!ToyLayout.inCliff(x, z) || !ToyLayout.isInterior(x, z)) {
+                if (!ToyLayout.inDrop(x, z) || !ToyLayout.isInterior(x, z)) {
                     continue;
                 }
                 drops++;
+                boolean hole = ToyLayout.inHole(x, z);
+                holes += hole ? 1 : 0;
                 for (int y = canvas.minY(); y <= canvas.maxY(); y++) {
                     BlockSpec spec = canvas.get(x, y, z);
                     assertTrue(spec == null || spec.isAir() || ToyLayout.inDomeShell(x, y, z),
@@ -304,17 +319,30 @@ class ToyKingdomMapTest {
                 }
                 for (Side side : Side.values()) {
                     for (LaneSites.Objective o : map.objectives(side)) {
-                        assertTrue(Math.hypot(x - o.x(), z - o.z()) > o.radius() + 16, o.id() + at);
+                        // A hole in the middle keeps out of the camp's leash (jelly/mice 12, teddy/rabbit 14).
+                        double keep = hole ? Math.max(o.radius() + 4, campLeash(o.kind())) + 1 : o.radius() + 16;
+                        assertTrue(Math.hypot(x - o.x(), z - o.z()) > keep, o.id() + at);
                     }
                     for (LaneSites.Spot spot : map.spawns(side)) {
-                        assertTrue(Math.hypot(x - spot.x(), z - spot.z()) > 40, "a spawn" + at);
+                        assertTrue(Math.hypot(x - spot.x(), z - spot.z()) > (hole ? 30 : 40), "a spawn" + at);
                     }
-                    assertTrue(Math.hypot(x - map.shop(side).x(), z - map.shop(side).z()) > 40, "the shop" + at);
+                    assertTrue(Math.hypot(x - map.shop(side).x(), z - map.shop(side).z()) > (hole ? 20 : 40),
+                            "the shop" + at);
                 }
-                assertTrue(Math.hypot(x, z) > map.epic().radius() + 24, "the dragon" + at);
+                if (hole) {
+                    // Outside the dragon's leash (20), the castle zones and the front plazas.
+                    assertTrue(Math.hypot(x, z) > DRAGON_LEASH + ToyLayout.HOLE_DRAGON_GAP, "the dragon" + at);
+                    assertEquals("jungle", ToyLayout.partOf(x, z), "holes only in the jungle corridor" + at);
+                    assertTrue(Math.abs(x) < ToyLayout.CASTLE_FRONT - ToyLayout.FRONT_PLAZA_RADIUS - 5,
+                            "the castle's front plaza" + at);
+                } else {
+                    assertTrue(Math.hypot(x, z) > map.epic().radius() + 24, "the dragon" + at);
+                }
             }
         }
         assertTrue(drops > 0, "the map has drops");
+        assertTrue(holes > 0, "the middle has holes");
+        System.out.println("[toykingdom] drops: " + drops + " columns, holes in the middle: " + holes);
         // Every walkable column at the edge of a drop is striped red and white.
         for (MapAudit.Node node : reachable) {
             if (!ToyLayout.onCliffEdge(node.x(), node.z()) || !ToyLayout.isInterior(node.x(), node.z())) {
@@ -410,8 +438,9 @@ class ToyKingdomMapTest {
         }
         assertMirrored(map.core(Side.BLUE).x(), map.core(Side.BLUE).z(), map.core(Side.RED).x(),
                 map.core(Side.RED).z(), "core");
+        // The shops stand on each team's left: point symmetric, not mirrored.
         assertMirrored(map.shop(Side.BLUE).x(), map.shop(Side.BLUE).z(), map.shop(Side.RED).x(),
-                map.shop(Side.RED).z(), "shop");
+                -map.shop(Side.RED).z(), "shop (point symmetric)");
         for (int i = 0; i < map.spawns(Side.BLUE).size(); i++) {
             LaneSites.Spot b = map.spawns(Side.BLUE).get(i);
             LaneSites.Spot r = map.spawns(Side.RED).get(i);
@@ -426,12 +455,21 @@ class ToyKingdomMapTest {
             assertMirrored(b.x(), b.z(), r.x(), r.z(), kind.name());
             assertEquals(b.radius(), r.radius(), kind + " radius");
         }
-        // The blocks: every solid block has a solid mirror image (team colours may differ).
+        // The blocks: every solid block has a solid mirror image (team colours may differ); the shop stalls are point
+        // symmetric instead.
         int r = map.buildRadius();
         int mismatches = 0;
         String example = "";
         for (int x = -r; x <= r; x++) {
             for (int z = -r; z <= r; z++) {
+                if (ToyLayout.inShopStall(x, z) || ToyLayout.inShopStall(-x, z)) {
+                    for (int y = canvas.minY(); y <= canvas.maxY(); y++) {
+                        if (canvas.isSolid(x, y, z) != canvas.isSolid(-x, y, -z) && mismatches++ == 0) {
+                            example = x + "," + y + "," + z + " (shop)";
+                        }
+                    }
+                    continue;
+                }
                 for (int y = canvas.minY(); y <= canvas.maxY(); y++) {
                     if (canvas.isSolid(x, y, z) != canvas.isSolid(-x, y, z)) {
                         if (mismatches++ == 0) {
@@ -472,6 +510,18 @@ class ToyKingdomMapTest {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** The dragon's leash (games.siege.jungle defaults): the holes in the middle keep out of it. */
+    private static final double DRAGON_LEASH = 20;
+
+    /** A camp's leash (games.siege.jungle defaults): jelly and mice 12, teddy and rabbit 14, the others none. */
+    private static double campLeash(ObjectiveKind kind) {
+        return switch (kind) {
+            case JELLY, MICE -> 12;
+            case TEDDY, RABBIT -> 14;
+            default -> 0;
+        };
+    }
 
     private static void assertMirrored(int bx, int bz, int rx, int rz, String what) {
         assertTrue(Math.abs(bx + rx) <= 1 && Math.abs(bz - rz) <= 1,

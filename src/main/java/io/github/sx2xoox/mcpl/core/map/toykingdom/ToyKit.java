@@ -66,7 +66,7 @@ final class ToyKit {
     /** Builds the ground of one column: floorboards under a top block chosen by the plan (nothing over a drop). */
     static void ground(MapCanvas canvas, int x, int z) {
         double out = ToyLayout.outline(x, z);
-        if (out > ToyLayout.HEDGE_WIDTH + ToyLayout.APRON_WIDTH || ToyLayout.inCliff(x, z)) {
+        if (out > ToyLayout.HEDGE_WIDTH + ToyLayout.APRON_WIDTH || ToyLayout.inDrop(x, z)) {
             return;
         }
         for (int y = G - 3; y < G; y++) {
