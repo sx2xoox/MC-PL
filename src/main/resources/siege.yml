@@ -32,7 +32,7 @@ result:
   reason-rounds: "판 스코어 <a> : <b>"
 
 reroll:
-  announce: "<gray>준비 시간에 <white>웅크리고 검 우클릭</white>(또는 <white>/게임 리롤</white>)으로 능력을 <white><count>번</white> 다시 뽑을 수 있습니다."
+  announce: "<gray>리롤 <white><count>번</white> <dark_gray>(웅크리고 검 우클릭)"
   hint: "<white>웅크리고 우클릭</white><gray>하면 능력 리롤 (<white><count>번</white> 남음)"
   done: "<green>능력을 다시 뽑았습니다. <gray>(남은 리롤 <white><count></white>번)"
   not-participant: "<red>이 경기의 참가자가 아닙니다."
@@ -57,12 +57,12 @@ pool:
 round:
   title: "<gold><bold><round>판"
   subtitle: "<gray>판 스코어 <white><a> : <b>"
-  started: "<gold><round>판</gold><gray> 시작! 제한 시간 <white><minutes>분</white>, 상대 <white>코어</white>를 부수면 바로 승리."
+  started: "<gold><round>판</gold><gray> 시작!"
   won-title: "<team><gold><bold> 판 승리!"
   won-subtitle: "<white><a></white><gray> : </gray><white><b></white>"
   won: "<gold><round>판</gold><gray> 승리: <team><gray> (<reason>) — <white><a> : <b>"
   mvp: "<gold>⭐ 이번 판 MVP:</gold> <player><gray> (기여 <white><points></white>점)"
-  break: "<gray>판 스코어 <white><a> : <b></white>. <white><seconds>초</white> 뒤 다음 판을 시작합니다 (능력을 새로 뽑습니다)."
+  break: "<gray>판 스코어 <white><a> : <b></white> · 다음 판 <white><seconds>초"
 
 prep:
   countdown: "<yellow><bold><seconds>"
@@ -77,17 +77,17 @@ climax:
 
 overtime:
   title: "<red><bold>연장전"
-  subtitle: "<gray>먼저 점수를 내는 팀이 승리 (<white><seconds>초</white>)"
-  announce: "<red>완전 동점! 연장전 <white><seconds>초</white>:</red><gray> 먼저 점수를 내는 팀이 이 판을 가져갑니다. 아무도 못 내면 건물 체력이 더 많이 남은 팀이 승리."
+  subtitle: "<gray>먼저 점수 내는 팀 승리"
+  announce: "<red>동점! 연장전 <white><seconds>초</white></red><gray> · 먼저 점수 내는 팀 승리"
 
 spawn:
-  zone-warning: "<red><bold>적 본진!</bold></red> <gray>당장 나가세요 (계속 피해)"
+  zone-warning: "<red><bold>적 본진!</bold>"
   protection-ended: "<gray>부활 보호가 풀렸습니다"
 
 structure:
   bar-name: "<team> <white><name>"
-  shielded: "<aqua>🛡 보호막</aqua><gray> — 이 라인의 <white>바깥 타워</white>부터 부수세요"
-  core-shielded: "<aqua>🛡 보호막</aqua><gray> — 상대 <white>안쪽 타워</white>를 모두 부숴야 코어를 칠 수 있습니다"
+  shielded: "<aqua>🛡 보호막</aqua><gray> · 바깥 타워 먼저"
+  core-shielded: "<aqua>🛡 보호막</aqua><gray> · 안쪽 타워 먼저"
   under-attack: "<red><bold>⚠ 우리 <name> 공격받는 중!</bold></red> <white><percent>%"
   health-warning: "<red>⚠ 우리 <name> 체력 <white><percent>%</white>!"
   destroyed-title: "<red><bold><name> 파괴!"
@@ -96,27 +96,22 @@ structure:
 
 guide:
   line: "<gold><bold>▶ 지금 할 일</bold></gold> <dark_gray>│</dark_gray> <line>"
-  prep: "<gray>곧 시작합니다! 검 우클릭 = 액티브, <white>F</white> = 궁극기"
+  prep: "<gray>검 우클릭 <white>액티브</white> · <white>F</white> 궁극기"
   prep-reroll: "<white>웅크리고 검 우클릭</white><gray>으로 능력 리롤 (<white><count>번</white>)"
   respawning: "<gray>본진에서 곧 부활합니다"
   tower: "<white><name></white><gray> 부수기 <dark_gray>·</dark_gray> <white><distance>m"
-  core: "<gold><bold>코어</bold></gold><gray>를 부수면 승리! <dark_gray>·</dark_gray> <white><distance>m"
-  break: "<gray>잠시 쉬는 시간, 다음 판에 능력을 새로 뽑습니다"
+  core: "<gold><bold>코어</bold></gold><gray> 부수기 <dark_gray>·</dark_gray> <white><distance>m"
+  break: "<gray>쉬는 시간"
 
 tutorial:
   title-1: "<aqua><bold>라인을 밀어라"
-  subtitle-1: "<gray>위·아래 두 라인, 바깥 타워부터 부숴야 안쪽이 열립니다"
+  subtitle-1: "<gray>바깥 타워 → 안쪽 타워"
   title-2: "<gold><bold>코어를 부수면 승리"
-  subtitle-2: "<gray>안쪽 타워를 모두 부수면 상대 코어의 보호막이 꺼집니다"
-  title-3: "<yellow><bold>점수로도 이긴다"
-  subtitle-3: "<gray>20분이 끝나면 점수 높은 팀 승리 · 죽어도 본진에서 부활"
+  subtitle-2: "<gray>안쪽 타워가 모두 무너지면 코어 보호막이 꺼짐"
+  title-3: "<yellow><bold>20분 점수전"
+  subtitle-3: "<gray>처치 +2 · 타워 +8 · 3판 2선승"
   summary:
-    - "<gold>── 공성전 규칙 ──"
-    - "<gray>• 우리 팀은 <white>본진 성</white>에서 시작합니다. <white>위·아래 두 라인</white>에 팀마다 타워 2개, 본진에 <white>코어</white> 1개."
-    - "<gray>• <white>바깥 타워</white>가 서 있으면 그 라인의 안쪽 타워는 <aqua>보호막</aqua>, <white>안쪽 타워</white>가 하나라도 서 있으면 코어도 보호막."
-    - "<gray>• <white>상대 코어 파괴 = 즉시 판 승리.</white> 아니면 <white>20분</white> 뒤 점수가 높은 팀 승리 (처치 +2, 도움 +1, 타워 +8)."
-    - "<gray>• 죽으면 잠시 뒤 본진에서 부활하고 3초 동안 무적. 능력은 처음부터 모두 씁니다 (레벨은 강화만)."
-    - "<gray>• 검 <white>우클릭</white> = 액티브, <white>F</white> = 궁극기. 화면 아래 <gold>▶ 지금 할 일</gold>을 따라가세요. <white>3판 2선승.</white>"
+    - "<gray>검 우클릭 <white>액티브</white> · <white>F</white> 궁극기 · 좌클릭 <white>평타</white>"
 
 hud:
   bossbar: "<phase><gray> · </gray><white><time>"
@@ -230,7 +225,7 @@ settings:
 level:
   up-title: "<gradient:#facc15:#f97316><bold>LEVEL UP!</bold></gradient>"
   up-subtitle: "<yellow>레벨 <white><level></white>"
-  health: "<red>❤</red> <gray>레벨 보너스: 최대 체력 <white>+<hearts>칸</white>"
+  health: "<red>❤ +<hearts>"
   perk: "<light_purple>✦ 추가 효과</light_purple> <white><perk>"
 
 minion:
@@ -273,21 +268,19 @@ jungle:
   side:
     blue: "<aqua>블루 팀</aqua>"
     red: "<red>레드 팀</red>"
-  status-up: "<gray>때리면 덤벼요"
   status-fighting: "<red>전투 중!"
   status-down: "<gray>다시 나타남 <white><time>"
-  status-open: "<gray>안에 서 있으면 점령"
   status-contested: "<yellow>경합 중!"
   hud-up: "<name> <green>✔</green>"
   hud-down: "<name> <white><time></white>"
-  dragon-spawned: "<name><gray> 이(가) 깨어났습니다! 쓰러뜨린 팀 모두 <gold>골드</gold>·<yellow>경험치</yellow>와 강화."
+  dragon-spawned: "<name><gray> 등장!"
   small-cleared: "<name><gray> 처치!"
   taken:
-    teddy: "<team><gray> 의 <white><player></white> 이(가) <name> 처치! <red>공격 강화</red> 90초"
-    rabbit: "<team><gray> 의 <white><player></white> 이(가) <name> 처치! <yellow>쿨타임 감소</yellow> 90초"
-    fountain: "<team><gray> 이(가) <name> 점령! 팀 모두 <light_purple>회복</light_purple>"
-    telescope: "<team><gray> 이(가) <name> 점령! 그쪽 절반의 적이 <white>60초</white> 동안 보입니다"
-    dragon: "<team><gray> 의 <white><player></white> 이(가) <name> 처치! <gray>팀 모두 <gold>골드</gold>·<yellow>경험치</yellow>, 피해 +10%·미니언 강화"
+    teddy: "<team><gray> <white><player></white> · <name> 처치"
+    rabbit: "<team><gray> <white><player></white> · <name> 처치"
+    fountain: "<team><gray> · <name> 점령"
+    telescope: "<team><gray> · <name> 점령"
+    dragon: "<team><gray> <white><player></white> · <name> 처치"
   buff:
     teddy: "<red>곰인형의 힘! 공격 강화 <white><seconds>초"
     rabbit: "<yellow>째깍째깍! 쿨타임 감소 <white><seconds>초"
@@ -295,19 +288,19 @@ jungle:
 
 shop:
   title: "<dark_gray>태엽 상점"
-  terminal: "<gold><bold>상점</bold></gold>\n<gray>우클릭"
+  terminal: "<gold><bold>상점"
   keeper: "태엽 상인"
   gold: "<gold>골드 <white><balance></white>"
   empty-slot: "<gray>빈 칸"
-  price: "<gold>가격 <white><price></white> 골드 <gray>· 클릭하여 구매"
-  price-short: "<red>가격 <white><price></white> 골드 <gray>(골드 부족)"
+  price: "<gold><price> 골드"
+  price-short: "<red><price> 골드"
   bought: "<green><item> 구매! <gray>남은 골드 <gold><balance>"
-  candy-used: "<light_purple>냠! <gray><seconds>초에 걸쳐 체력 <white><heal></white> 회복"
-  ward-placed: "<aqua>와드 설치! <gray><seconds>초 동안 주변 적이 보입니다"
-  recall-channel: "<aqua>귀환 중… <white><seconds>초</white> <gray>(맞으면 취소)"
-  recall-done: "<aqua>본진으로 귀환했습니다"
-  recall-stopped: "<gray>귀환을 멈췄습니다"
-  recall-interrupted: "<red>공격받아 귀환이 취소됐습니다"
+  candy-used: "<light_purple>+<heal> ❤"
+  ward-placed: "<aqua>와드 설치"
+  recall-channel: "<aqua>귀환 <white><seconds>초"
+  recall-done: "<aqua>귀환"
+  recall-stopped: "<gray>귀환 취소"
+  recall-interrupted: "<red>귀환 취소"
   refused:
     not-playing: "<red>이 경기의 참가자가 아닙니다"
     too-far: "<red>자기 본진 상점 <white><range>칸</white> 안에서만 살 수 있습니다"
@@ -318,8 +311,7 @@ shop:
   flag:
     name: "<aqua>귀환 깃발"
     lore:
-      - "<gray>우클릭: <white><seconds>초</white> 집중 후 본진으로"
-      - "<gray>맞으면 취소, 무한 사용"
+      - "<gray><white><seconds>초</white> 뒤 본진으로"
   category:
     basic: "<white>기본"
     attack: "<red>공격"
@@ -341,12 +333,10 @@ shop:
       name: "<white>장난감 갑옷 II"
       lore:
         - "<gray>방어 +4, 스킬 피해 <green>-12%"
-        - "<dark_gray>낮은 단계를 가지고 있으면 차액만"
     armor_3:
       name: "<white>장난감 갑옷 III"
       lore:
         - "<gray>방어 +6, 스킬 피해 <green>-18%"
-        - "<dark_gray>낮은 단계를 가지고 있으면 차액만"
     wooden_sword:
       name: "<red>나무검"
       lore:
@@ -355,7 +345,6 @@ shop:
       name: "<red>강철검"
       lore:
         - "<gray>평타 피해 +3"
-        - "<dark_gray>나무검이 있으면 차액만"
     orb:
       name: "<light_purple>마법 구슬"
       lore:
@@ -363,7 +352,7 @@ shop:
     shoes:
       name: "<yellow>태엽 신발"
       lore:
-        - "<gray>이동 속도 +8% (중첩 불가)"
+        - "<gray>이동 속도 +8%"
     hourglass:
       name: "<yellow>모래시계 장신구"
       lore:

@@ -997,7 +997,8 @@ public final class JungleObjectives implements Listener {
         return online == null ? "?" : online.getName();
     }
 
-    private Component status(Site site) {
+    /** The label's second line, or null when there is nothing worth saying (an idle camp, an empty point). */
+    private @Nullable Component status(Site site) {
         if (!site.up) {
             return messages.get("jungle.status-down",
                     Messages.tag("time", Format.clock((Math.max(0, site.upAt - now) + 19) / 20)));
@@ -1007,19 +1008,21 @@ public final class JungleObjectives implements Listener {
                 return messages.get("jungle.status-contested");
             }
             if (site.capturer == null) {
-                return messages.get("jungle.status-open");
+                return null;
             }
             int filled = (int) Math.round(site.fraction() * 10);
             TextColor colour = MinionWaves.colour(site.capturer);
             return Component.text("|".repeat(filled), colour)
                     .append(Component.text("|".repeat(10 - filled), NamedTextColor.DARK_GRAY));
         }
-        return messages.get(site.aggro ? "jungle.status-fighting" : "jungle.status-up");
+        return site.aggro ? messages.get("jungle.status-fighting") : null;
     }
 
     /** Spawns or refreshes the label over a site: its name and its state or respawn timer. */
     private void label(Site site) {
-        Component text = Component.join(JoinConfiguration.newlines(), siteName(site), status(site));
+        Component status = status(site);
+        Component text = status == null ? siteName(site)
+                : Component.join(JoinConfiguration.newlines(), siteName(site), status);
         try {
             TextDisplay label = site.label;
             if (label == null || !label.isValid()) {

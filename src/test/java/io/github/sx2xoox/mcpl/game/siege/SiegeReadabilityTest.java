@@ -257,9 +257,8 @@ class SiegeReadabilityTest {
         }
         h.tickUntil(() -> siege.currentMatch() != null && siege.currentMatch().round() == 1, 400, "the round");
         List<String> lines = chat(players.getFirst());
-        assertTrue(lines.stream().anyMatch(line -> line.contains("공성전 규칙")), String.join("\n", lines));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("코어 파괴 = 즉시 판 승리")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("지금 할 일")), "the summary points at the guide");
+        assertTrue(lines.stream().anyMatch(line -> line.contains("궁극기") && line.contains("평타")),
+                String.join("\n", lines));
     }
 
     // ------------------------------------------------------------------ sounds
