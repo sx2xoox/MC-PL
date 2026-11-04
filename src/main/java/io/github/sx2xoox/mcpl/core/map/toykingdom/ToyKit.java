@@ -47,17 +47,13 @@ final class ToyKit {
     static final BlockSpec RED = BlockSpec.of(Material.RED_CONCRETE);
     static final BlockSpec SAND = BlockSpec.of(Material.SAND);
     static final BlockSpec WATER = BlockSpec.of(Material.WATER);
-    static final BlockSpec JELLY = BlockSpec.of(Material.SLIME_BLOCK);
-    /** Soft toys: cotton candy (pink wool) and sponge. */
-    static final BlockSpec COTTON = BlockSpec.of(Material.PINK_WOOL);
+    /** Soft toys: sponge. */
     static final BlockSpec SPONGE = BlockSpec.of(Material.SPONGE);
     /** The glowing sweet in the middle of a lollipop lamp (and the clock's hour marks). */
     static final BlockSpec GLOW = BlockSpec.of(Material.PEARLESCENT_FROGLIGHT);
 
     /** The shade of a sponge bush (its underside). */
     static final BlockSpec SPONGE_SHADE = BlockSpec.of(Material.WET_SPONGE);
-    /** Glass (the marble jar). */
-    static final BlockSpec GLASS = BlockSpec.of(Material.GLASS);
 
     // Detail blocks: the second tone of each toy colour, for slopes, rims and rounded corners.
     static final Material WHITE_STAIRS = Material.QUARTZ_STAIRS;
@@ -66,14 +62,11 @@ final class ToyKit {
     static final Material RED_STAIRS = Material.RED_NETHER_BRICK_STAIRS;
     static final Material WOOD_STAIRS = Material.BIRCH_STAIRS;
     static final BlockSpec WHITE_SLAB = BlockSpec.of(Material.QUARTZ_SLAB).slab(Slab.Type.BOTTOM);
-    static final BlockSpec WOOD_SLAB = BlockSpec.of(Material.BIRCH_SLAB).slab(Slab.Type.BOTTOM);
     static final BlockSpec WOOD_SLAB_TOP = BlockSpec.of(Material.BIRCH_SLAB).slab(Slab.Type.TOP);
     static final BlockSpec FENCE = BlockSpec.of(Material.BIRCH_FENCE);
-    /** A thin white stick that glows (lollipop and cotton candy sticks, a ballerina's leg). */
+    /** A thin white stick that glows (a ballerina's leg, the fountain's sparkle). */
     static final BlockSpec STICK = BlockSpec.of(Material.END_ROD).facing(BlockFace.UP);
-    static final BlockSpec CHAIN = BlockSpec.of(Material.IRON_CHAIN);
     static final BlockSpec LANTERN_HANGING = BlockSpec.of(Material.LANTERN).hanging(true);
-    static final BlockSpec CREAM = BlockSpec.of(Material.WHITE_CARPET);
     /** Pink blossoms on a bush or topiary (a carpet: it holds on any block). */
     static final BlockSpec BLOSSOM = BlockSpec.of(Material.PINK_CARPET);
 
@@ -436,6 +429,14 @@ final class ToyKit {
 
     /** Invisible footing under a model prop (a minimal hitbox where its blocks used to stand). */
     static final BlockSpec FOOTING = BlockSpec.of(Material.BARRIER);
+    /** The footing where it stands in water (the river): waterlogged, so the water stays. */
+    static final BlockSpec FOOTING_WET = FOOTING.waterlogged(true);
+
+    /** Sets a footing (quarter coordinates), waterlogged where it takes the place of water. */
+    static void footing(MapCanvas canvas, Quarter q, int ax, int y, int az) {
+        BlockSpec there = canvas.get(q.x(ax), y, q.z(az));
+        q.set(canvas, ax, y, az, there != null && there.material() == Material.WATER ? FOOTING_WET : FOOTING);
+    }
     /** An invisible light where a model prop glows (a lollipop lamp's sweet). */
     static final BlockSpec PROP_LIGHT = BlockSpec.of(Material.LIGHT);
 
@@ -667,39 +668,6 @@ final class ToyKit {
     }
 
     /**
-     * A cotton candy tree: a thin white stick of {@code stick} blocks and a cotton ball of {@code radius} on it, high
-     * enough to walk under; three tones of fluff (a deeper pink underside, pink, white tufts on top).
-     */
-    static void cottonCandy(MapCanvas canvas, Quarter q, int ax, int az, int stick, double radius) {
-        for (int i = 1; i <= stick; i++) {
-            q.place(canvas, ax, G + i, az, STICK);
-        }
-        int r = (int) Math.ceil(radius);
-        int cy = G + stick + r;
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) {
-                for (int dy = -r; dy <= r; dy++) {
-                    if (!inFluff(dx, dy, dz, radius)) {
-                        continue;
-                    }
-                    BlockSpec spec = COTTON;
-                    if (!inFluff(dx, dy - 1, dz, radius)) {
-                        spec = PINK;
-                    } else if (dy >= 1 && !inFluff(dx, dy + 1, dz, radius) && speckle(ax + dx, dy, az + dz, 3)) {
-                        spec = WHITE;
-                    }
-                    q.set(canvas, ax + dx, cy + dy, az + dz, spec);
-                }
-            }
-        }
-    }
-
-    private static boolean inFluff(int dx, int dy, int dz, double radius) {
-        double ny = dy / (radius * 0.8);
-        return dx * dx / (radius * radius) + dz * dz / (radius * radius) + ny * ny <= 1;
-    }
-
-    /**
      * A toy building block (an alphabet block): a cube of {@code size} with its low corner at {@code ax, y, az}; from
      * size 3 a white frame along its edges (the top edges bevelled) and a panel of a second colour on top.
      */
@@ -745,29 +713,6 @@ final class ToyKit {
         return YELLOW;
     }
 
-    /**
-     * A triangular toy block (a roof prism) {@code w} wide and {@code d} deep with its low corner at {@code ax, y, az}:
-     * the ridge runs along z, the slopes are stairs of the colour's second tone.
-     */
-    static void prism(MapCanvas canvas, Quarter q, int ax, int y, int az, int w, int d, BlockSpec colour) {
-        Material step = stairsOf(colour);
-        for (int layer = 0; layer * 2 < w; layer++) {
-            int from = ax + layer;
-            int to = ax + w - 1 - layer;
-            for (int x = from; x <= to; x++) {
-                for (int k = 0; k < d; k++) {
-                    BlockSpec spec = colour;
-                    if (step != null && x == from && x != to) {
-                        spec = stairs(step, BlockFace.EAST, false);
-                    } else if (step != null && x == to && x != from) {
-                        spec = stairs(step, BlockFace.WEST, false);
-                    }
-                    q.place(canvas, x, y + layer, az + k, spec);
-                }
-            }
-        }
-    }
-
     /** A box of {@code sx} by {@code sy} by {@code sz} blocks with its low corner at {@code ax, y, az}. */
     static void box(MapCanvas canvas, Quarter q, int ax, int y, int az, int sx, int sy, int sz, BlockSpec spec) {
         for (int dx = 0; dx < sx; dx++) {
@@ -777,47 +722,6 @@ final class ToyKit {
                 }
             }
         }
-    }
-
-    /**
-     * A toy box: an open chest of {@code colour}, {@code sx} by {@code sz} and {@code height} high, white corner posts
-     * and rim, full of toys (a few peeking out), its lid standing open along the back ({@code +az}) and a yellow latch
-     * on the front.
-     */
-    static void toyBox(MapCanvas canvas, Quarter q, int ax, int az, int sx, int sz, int height, BlockSpec colour) {
-        int top = G + height;
-        for (int dx = 0; dx < sx; dx++) {
-            for (int dz = 0; dz < sz; dz++) {
-                boolean ex = dx == 0 || dx == sx - 1;
-                boolean ez = dz == 0 || dz == sz - 1;
-                for (int y = G + 1; y <= top; y++) {
-                    BlockSpec spec;
-                    if (ex && ez || (ex || ez) && y == top) {
-                        spec = WHITE;
-                    } else if (ex || ez || y < top) {
-                        spec = colour;
-                    } else {
-                        // The toys inside, just below the rim.
-                        spec = speckle(ax + dx, y, az + dz, 2) ? YELLOW : SKY;
-                    }
-                    q.set(canvas, ax + dx, y, az + dz, spec);
-                }
-            }
-        }
-        q.set(canvas, ax + 1, top + 1, az + 1, YELLOW);
-        if (sx > 3) {
-            q.set(canvas, ax + sx - 2, top + 1, az + sz - 2, SKY);
-        }
-        // The lid, swung open against the back rim.
-        BlockSpec lid = BlockSpec.of(trapdoorOf(colour)).facing(BlockFace.NORTH).open(true)
-                .half(Bisected.Half.BOTTOM);
-        for (int dx = 0; dx < sx; dx++) {
-            for (int i = 1; i <= Math.min(2, sz - 1); i++) {
-                q.place(canvas, ax + dx, top + i, az + sz - 1, lid);
-            }
-        }
-        // The latch: a yellow button on the front of the rim.
-        q.place(canvas, ax + sx / 2, top, az - 1, BlockSpec.of(Material.BAMBOO_BUTTON).facing(BlockFace.NORTH));
     }
 
     /** Distance from a point to a segment. */

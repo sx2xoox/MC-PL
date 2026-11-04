@@ -545,6 +545,30 @@ class ToyKingdomMapTest {
     }
 
     @Test
+    void theWaterStaysUnderTheFloatingToys() {
+        // A footing in the river (the boats, the ducks) is waterlogged: the water shows on its column, no dry hole.
+        List<String> dry = new ArrayList<>();
+        int[] wet = new int[1];
+        canvas.forEach((x, y, z, spec) -> {
+            if (spec.material() != Material.BARRIER) {
+                return;
+            }
+            boolean byWater = false;
+            for (int[] d : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                var side = canvas.get(x + d[0], y, z + d[1]);
+                byWater |= side != null && (side.material() == Material.WATER || side.waterlogged() == Boolean.TRUE);
+            }
+            if (spec.waterlogged() == Boolean.TRUE) {
+                wet[0]++;
+            } else if (byWater) {
+                dry.add(x + "," + y + "," + z);
+            }
+        });
+        assertTrue(dry.isEmpty(), "dry footings in the water: " + dry);
+        assertTrue(wet[0] >= 20, "the boats' and ducks' footings are waterlogged: " + wet[0]);
+    }
+
+    @Test
     void bothHalvesAreMirrorImages() {
         for (Lane lane : Lane.values()) {
             List<LaneSites.Structure> blue = map.towers(Side.BLUE, lane);

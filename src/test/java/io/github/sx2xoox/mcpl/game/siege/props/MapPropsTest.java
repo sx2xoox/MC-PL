@@ -180,8 +180,11 @@ class MapPropsTest {
             if (Math.abs(p.x() - 0.5) < 1e-9) {
                 continue; // on the middle line (river)
             }
-            // the other half has the same prop at the mirror image (x -> 1 - x)
-            boolean mirrored = props.stream().anyMatch(o -> o.model().equals(p.model())
+            // the other half has the same prop at the mirror image (x -> 1 - x); a handed model has a mirrored twin
+            String twin = p.model().endsWith("_mirror") ? p.model().substring(0, p.model().length() - 7)
+                    : p.model() + "_mirror";
+            boolean mirrored = props.stream().anyMatch(o -> (o.model().equals(p.model())
+                    || o.model().equals(twin) && PropModels.display(twin) != null)
                     && Math.abs(o.x() - (1 - p.x())) < 1e-9 && Math.abs(o.z() - p.z()) < 1e-9);
             assertTrue(mirrored, "no mirror image of " + p);
         }

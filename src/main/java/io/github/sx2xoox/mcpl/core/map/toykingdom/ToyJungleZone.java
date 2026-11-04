@@ -3,13 +3,13 @@ package io.github.sx2xoox.mcpl.core.map.toykingdom;
 import static io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.G;
 
 import java.util.List;
-import java.util.Map;
 
 import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
 import io.github.sx2xoox.mcpl.core.map.MapZone;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Lane;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.PropMotion;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
 import org.bukkit.Material;
@@ -24,8 +24,10 @@ import org.bukkit.block.BlockFace;
  * fountain on a light blue one (사탕 샘물) and a telescope tower on a light blue one (망원경 탑). Piles of toy boxes and
  * cotton candy trees fill the corners in between (with a box of crayons on the TOP side and a jar of marbles on the
  * BOTTOM side), and giant toys stand in the far corner pockets beyond the lanes' bends (a stack of alphabet blocks by
- * the TOP lane, a spinning top model by the BOTTOM lane, {@link #props}). The props are shaped with stairs, slabs and
- * other detail blocks in a second tone of their colours ({@link ToyKit}).
+ * the TOP lane, a spinning top by the BOTTOM lane). Most toys are models ({@link #props}, {@code models/props.py}) on
+ * invisible footings where their bulk stands (two blocks high, so nobody walks through or hops onto them); the fountain
+ * and the telescope tower stay blocks, shaped with stairs, slabs and other detail blocks in a second tone of their
+ * colours ({@link ToyKit}).
  */
 final class ToyJungleZone implements MapZone {
 
@@ -38,8 +40,8 @@ final class ToyJungleZone implements MapZone {
     };
     private static final BlockSpec[] WALL_COLOURS = {ToyKit.YELLOW, ToyKit.PINK, ToyKit.SKY, ToyKit.SKY};
 
-    /** Cotton candy trees in quarter coordinates: {ax, az, radius}. */
-    static final double[][] TREES = {{10, 17, 3}};
+    /** Cotton candy trees (models, walked under) in quarter coordinates: {ax, az} of the stick. */
+    static final int[][] TREES = {{10, 17}};
 
     /** Rug radius and its white ring. */
     private static final double RUG = 6.5;
@@ -79,9 +81,6 @@ final class ToyJungleZone implements MapZone {
                     double[] w = WALLS[i];
                     ToyKit.wall(canvas, q, w[0], w[1], w[2], w[3], w[4], WALL_COLOURS[i]);
                 }
-                for (double[] t : TREES) {
-                    ToyKit.cottonCandy(canvas, q, (int) t[0], (int) t[1], 2, t[2]);
-                }
                 boxPiles(canvas, q);
             }
             blockStack(canvas, top);
@@ -92,8 +91,8 @@ final class ToyJungleZone implements MapZone {
             cheese(canvas, bottom);
             rabbitEars(canvas, bottom);
             telescope(canvas, bottom);
-            crayonBox(canvas, top, SMALL_TOY_AX - 1, SMALL_TOY_AZ - 1);
-            marbleJar(canvas, bottom, SMALL_TOY_AX, SMALL_TOY_AZ);
+            crayonBox(canvas, top);
+            marbleJar(canvas, bottom);
         }
         ToyKit.scatter(canvas, this);
     }
@@ -128,115 +127,79 @@ final class ToyJungleZone implements MapZone {
         }
     }
 
+    /** A footing of {@code sx} by {@code sz} columns, {@code height} high, low corner {@code ax, az}. */
+    private static void footing(MapCanvas canvas, Quarter q, int ax, int az, int sx, int sz, int height) {
+        for (int dx = 0; dx < sx; dx++) {
+            for (int dz = 0; dz < sz; dz++) {
+                for (int y = G + 1; y <= G + height; y++) {
+                    ToyKit.footing(canvas, q, ax + dx, y, az + dz);
+                }
+            }
+        }
+    }
+
+    /** A round footing two high: the columns within {@code radius} of the block {@code cx, cz}. */
+    private static void roundFooting(MapCanvas canvas, Quarter q, int cx, int cz, double radius) {
+        int r = (int) Math.ceil(radius);
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
+                if (Math.hypot(dx, dz) <= radius) {
+                    footing(canvas, q, cx + dx, cz + dz, 1, 1, 2);
+                }
+            }
+        }
+    }
+
     /**
      * Piles of toy boxes in the corners between the clearings (paths run between them): one between the corridor and
-     * the 곰인형/토끼 clearing, one beyond the 젤리/쥐 clearing.
+     * the 곰인형/토끼 clearing, one beyond the 젤리/쥐 clearing. The open chests are models; a little yellow toy block
+     * stays a block.
      */
     private static void boxPiles(MapCanvas canvas, Quarter q) {
-        ToyKit.toyBox(canvas, q, 28, 16, 4, 3, 3, ToyKit.PINK);
+        footing(canvas, q, PINK_BOX[0], PINK_BOX[1], 4, 3, 2);
         ToyKit.toyBlock(canvas, q, 33, G + 1, 17, 2, ToyKit.YELLOW);
-        ToyKit.toyBox(canvas, q, 54, 31, 4, 4, 3, ToyKit.SKY);
-        ToyKit.toyBox(canvas, q, 58, 30, 3, 3, 5, ToyKit.YELLOW);
+        footing(canvas, q, SKY_BOX[0], SKY_BOX[1], 4, 4, 2);
+        footing(canvas, q, YELLOW_BOX[0], YELLOW_BOX[1], 3, 3, 2);
     }
 
-    /** 젤리 무리: three wobbly jelly puddings around the clearing. */
+    /** The open toy chests of the piles (low corners in quarter coordinates). */
+    private static final int[] PINK_BOX = {28, 16};
+    private static final int[] SKY_BOX = {54, 31};
+    private static final int[] YELLOW_BOX = {58, 30};
+
+    /** 젤리 무리: three wobbly jelly puddings around the clearing (low corners of their 3 x 3). */
+    private static final int[][] JELLIES = {{57, 20}, {55, 27}, {58, 15}};
+
     private static void jellies(MapCanvas canvas, Quarter q) {
-        jelly(canvas, q, 57, 20);
-        jelly(canvas, q, 55, 27);
-        jelly(canvas, q, 58, 15);
-    }
-
-    /**
-     * A jelly pudding: a 3 x 3 slime cube rounded on top (a cross), whipped cream draped over the corners and the
-     * cross, and a cherry (a lit red candle) in the middle.
-     */
-    private static void jelly(MapCanvas canvas, Quarter q, int ax, int az) {
-        for (int dx = 0; dx <= 2; dx++) {
-            for (int dz = 0; dz <= 2; dz++) {
-                q.set(canvas, ax + dx, G + 1, az + dz, ToyKit.JELLY);
-                q.set(canvas, ax + dx, G + 2, az + dz, ToyKit.JELLY);
-                boolean corner = dx != 1 && dz != 1;
-                if (corner) {
-                    q.place(canvas, ax + dx, G + 3, az + dz, ToyKit.CREAM);
-                } else {
-                    q.set(canvas, ax + dx, G + 3, az + dz, ToyKit.JELLY);
-                    if (dx != dz) {
-                        q.place(canvas, ax + dx, G + 4, az + dz, ToyKit.CREAM);
-                    }
-                }
-            }
+        for (int[] j : JELLIES) {
+            roundFooting(canvas, q, j[0] + 1, j[1] + 1, 1);
         }
-        q.place(canvas, ax + 1, G + 4, az + 1, BlockSpec.of(Material.RED_CANDLE).lit(true));
     }
 
-    /**
-     * 태엽 쥐 떼: a big cheese wedge at the clearing's castle side, its slope smoothed with stairs and two holes in its
-     * sides, the mice's wind-up key stuck in the top.
-     */
+    /** 태엽 쥐 떼: the cheese wedge (its high end and the wind-up key at {@code CHEESE_AX}), rising towards +ax. */
+    private static final int CHEESE_AX = 60;
+    private static final int CHEESE_AZ = 22;
+
     private static void cheese(MapCanvas canvas, Quarter q) {
-        int[] heights = {1, 2, 3, 3};
-        for (int i = 0; i < heights.length; i++) {
-            int ax = 57 + i;
-            for (int az = 19; az <= 25; az++) {
-                for (int y = G + 1; y <= G + heights[i]; y++) {
-                    boolean hole = ax == 59 && y == G + 2 && az == 19 || ax == 60 && y == G + 2 && az == 25
-                            || ax == 60 && y == G + 1 && az == 21;
-                    if (hole) {
-                        continue;
-                    }
-                    boolean slope = y == G + heights[i] && heights[i] < heights[heights.length - 1];
-                    q.place(canvas, ax, y, az, slope
-                            ? ToyKit.stairs(ToyKit.YELLOW_STAIRS, BlockFace.EAST, false) : ToyKit.YELLOW);
-                }
-            }
-        }
-        windUpKey(canvas, q, 60, 22, G + 4);
+        footing(canvas, q, CHEESE_AX - 3, CHEESE_AZ - 3, 1, 7, 1);
+        footing(canvas, q, CHEESE_AX - 2, CHEESE_AZ - 3, 3, 7, 2);
     }
 
-    /** The bow of the mice's wind-up key: two rounded pink rings either side of the white stem. */
-    private static final String[] KEY_BOW = {"PPPWPPP", "P.PPP.P", "PPP.PPP"};
+    /** 곰인형 대장: the teddy's big toy chest (7 x 3) and the two toy blocks stacked beside it (2 x 2). */
+    private static final int TEDDY_BOX_AX = 31;
+    private static final int TEDDY_BOX_AZ = 34;
 
-    /**
-     * The wind-up key of the clockwork mice, stuck in the top of the cheese: a white stem and a pink bow of two rings,
-     * facing the clearing.
-     */
-    private static void windUpKey(MapCanvas canvas, Quarter q, int ax, int az, int y) {
-        q.set(canvas, ax, y, az, ToyKit.WHITE);
-        q.set(canvas, ax, y + 1, az, ToyKit.WHITE);
-        ToyKit.plane(canvas, q, false, az - 3, ax, y + 2, KEY_BOW, true,
-                Map.of('P', ToyKit.PINK, 'W', ToyKit.WHITE));
-    }
-
-    /**
-     * 곰인형 대장: the teddy's big toy box behind the clearing (pink with a white rim and a white heart, its lid open,
-     * toy blocks peeking out) and a stack of two toy blocks beside it.
-     */
     private static void toyBox(MapCanvas canvas, Quarter q) {
-        ToyKit.toyBox(canvas, q, 31, 34, 7, 3, 4, ToyKit.PINK);
-        // A white heart on its front.
-        ToyKit.plane(canvas, q, true, 32, 34, G + 1, new String[] {"..W..", ".WWW.", ".W.W."}, false,
-                Map.of('W', ToyKit.WHITE));
-        ToyKit.toyBlock(canvas, q, 39, G + 1, 35, 2, ToyKit.SKY);
-        ToyKit.toyBlock(canvas, q, 39, G + 3, 35, 2, ToyKit.YELLOW);
+        footing(canvas, q, TEDDY_BOX_AX, TEDDY_BOX_AZ, 7, 3, 2);
+        footing(canvas, q, TEDDY_BOX_AX + 8, TEDDY_BOX_AZ + 1, 2, 2, 2);
     }
 
-    /** The rabbit's ears, bottom row first: white with a pink inside, the tips leaning outwards (BOTTOM side). */
-    private static final String[] EAR_RIGHT = {"WWW.", "WPW.", "WPW.", "WPW.", "WPW.", ".WPW", ".WPW", "..W."};
-    private static final String[] EAR_LEFT = {".WWW", ".WPW", ".WPW", ".WPW", ".WPW", "WPW.", "WPW.", ".W.."};
-    /** The pocket watch: a yellow rim, a white face, red hands at ten past twelve, a crown on top. */
-    private static final String[] WATCH = {".YYY.", "YWWWY", "YWRRY", "YWRWY", ".YYY.", "..Y.."};
+    /** 시계 토끼: the rabbit's ears either side of the watch (the watch hangs high enough to walk under). */
+    private static final int RABBIT_AZ = 36;
 
-    /**
-     * 시계 토끼: two tall rabbit ears (white with a pink inside, rounded, the tips leaning outwards) standing up behind
-     * the clearing, and the rabbit's round pocket watch between them, high enough to walk under.
-     */
     private static void rabbitEars(MapCanvas canvas, Quarter q) {
-        Map<Character, BlockSpec> ear = Map.of('W', ToyKit.WHITE, 'P', ToyKit.PINK);
-        ToyKit.plane(canvas, q, true, 28, 36, G + 1, EAR_LEFT, true, ear);
-        ToyKit.plane(canvas, q, true, 37, 36, G + 1, EAR_RIGHT, true, ear);
-        ToyKit.plane(canvas, q, true, 32, 36, G + 4, WATCH, true,
-                Map.of('Y', ToyKit.YELLOW, 'W', ToyKit.WHITE, 'R', ToyKit.RED));
-        q.set(canvas, 34, G + 10, 36, ToyKit.CHAIN);
+        footing(canvas, q, 29, RABBIT_AZ, 2, 1, 2);
+        footing(canvas, q, 38, RABBIT_AZ, 2, 1, 2);
     }
 
     /**
@@ -313,62 +276,14 @@ final class ToyJungleZone implements MapZone {
         q.place(canvas, cx + 2, G + 10, cz + 2, BlockSpec.of(Material.RED_WALL_BANNER).facing(BlockFace.EAST));
     }
 
-    /**
-     * A box of crayons on the floor (a yellow box with a white band), four crayons of different lengths standing in it,
-     * their tips sharpened (candles of their colour).
-     */
-    private static void crayonBox(MapCanvas canvas, Quarter q, int ax, int az) {
-        for (int dx = 0; dx <= 2; dx++) {
-            for (int dz = 0; dz <= 2; dz++) {
-                q.set(canvas, ax + dx, G + 1, az + dz, ToyKit.YELLOW);
-                q.set(canvas, ax + dx, G + 2, az + dz, ToyKit.WHITE);
-            }
-        }
-        crayon(canvas, q, ax, az, 2, ToyKit.RED, Material.RED_CANDLE);
-        crayon(canvas, q, ax + 1, az + 1, 3, ToyKit.SKY, Material.LIGHT_BLUE_CANDLE);
-        crayon(canvas, q, ax + 2, az + 2, 1, ToyKit.PINK, Material.PINK_CANDLE);
-        crayon(canvas, q, ax, az + 2, 2, ToyKit.MAT_TILE, Material.LIME_CANDLE);
+    /** The box of crayons (TOP): its box on a 3 x 2 footing. */
+    private static void crayonBox(MapCanvas canvas, Quarter q) {
+        footing(canvas, q, SMALL_TOY_AX - 1, SMALL_TOY_AZ - 1, 3, 2, 2);
     }
 
-    private static void crayon(MapCanvas canvas, Quarter q, int ax, int az, int length, BlockSpec colour,
-                               Material tip) {
-        for (int i = 1; i <= length; i++) {
-            q.set(canvas, ax, G + 2 + i, az, colour);
-        }
-        q.place(canvas, ax, G + 3 + length, az, BlockSpec.of(tip));
-    }
-
-    /**
-     * A jar of marbles: a round glass jar with a narrow neck and a wooden lid, the marbles (toy colours) piled up
-     * inside.
-     */
-    private static void marbleJar(MapCanvas canvas, Quarter q, int cx, int cz) {
-        BlockSpec[] marbles = {ToyKit.PINK, ToyKit.SKY, ToyKit.YELLOW, ToyKit.RED};
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dz = -2; dz <= 2; dz++) {
-                double d = Math.hypot(dx, dz);
-                if (d > 2.3) {
-                    continue;
-                }
-                for (int y = G + 1; y <= G + 3; y++) {
-                    BlockSpec spec;
-                    if (d > 1.5) {
-                        spec = ToyKit.GLASS;
-                    } else if (y < G + 3 || ToyKit.speckle(cx + dx, y, cz + dz, 2)) {
-                        spec = marbles[Math.floorMod((cx + dx) * 3 + (cz + dz) * 5 + y, marbles.length)];
-                    } else {
-                        continue;
-                    }
-                    q.set(canvas, cx + dx, y, cz + dz, spec);
-                }
-                if (d <= 1.5) {
-                    if (d > 0) {
-                        q.set(canvas, cx + dx, G + 4, cz + dz, ToyKit.GLASS);
-                    }
-                    q.place(canvas, cx + dx, G + 5, cz + dz, ToyKit.WOOD_SLAB);
-                }
-            }
-        }
+    /** The jar of marbles (BOTTOM): a round footing under the jar. */
+    private static void marbleJar(MapCanvas canvas, Quarter q) {
+        roundFooting(canvas, q, SMALL_TOY_AX, SMALL_TOY_AZ, 2);
     }
 
     /** Where a corner toy stands (quarter coordinates): in the corner pocket beyond a lane's bend, on its diagonal. */
@@ -377,17 +292,10 @@ final class ToyJungleZone implements MapZone {
     private static final int CORNER_AZ = ToyLayout.HALF_Z - ToyLayout.CORNER
             + (int) Math.round((ToyLayout.CORNER - 5.0) / Math.sqrt(2));
 
-    /**
-     * Two big alphabet blocks (yellow with red letters, light blue with yellow letters; white bevelled frames) side by
-     * side along the wall and a red triangle block on top of both.
-     */
+    /** The stack of alphabet blocks (TOP): footings under its two big blocks, corner to corner on the diagonal. */
     private static void blockStack(MapCanvas canvas, Quarter q) {
-        int ax = CORNER_AX;
-        int az = CORNER_AZ;
-        ToyKit.toyBlock(canvas, q, ax - 4, G + 1, az, 4, ToyKit.YELLOW);
-        ToyKit.toyBlock(canvas, q, ax, G + 1, az - 4, 4, ToyKit.SKY);
-        ToyKit.box(canvas, q, ax - 2, G + 5, az - 2, 3, 1, 3, ToyKit.RED);
-        ToyKit.prism(canvas, q, ax - 2, G + 6, az - 2, 3, 3, ToyKit.RED);
+        footing(canvas, q, CORNER_AX - 4, CORNER_AZ, 4, 4, 2);
+        footing(canvas, q, CORNER_AX, CORNER_AZ - 4, 4, 4, 2);
     }
 
     /**
@@ -398,19 +306,61 @@ final class ToyJungleZone implements MapZone {
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 if (Math.hypot(dx, dz) <= 1.6) {
-                    q.set(canvas, CORNER_AX + dx, G + 1, CORNER_AZ + dz, ToyKit.FOOTING);
-                    q.set(canvas, CORNER_AX + dx, G + 2, CORNER_AZ + dz, ToyKit.FOOTING);
+                    ToyKit.footing(canvas, q, CORNER_AX + dx, G + 1, CORNER_AZ + dz);
+                    ToyKit.footing(canvas, q, CORNER_AX + dx, G + 2, CORNER_AZ + dz);
                 }
             }
         }
     }
 
-    /** The jungle's model props: the big spinning top (white, yellow, red and blue bands) slowly spinning (BOTTOM). */
+    /** True in a quarter that is a mirror image of the models' own frame (they can only be turned, not mirrored). */
+    private static boolean reflected(Quarter q) {
+        return q.sx() * q.sz() < 0;
+    }
+
+    /**
+     * The jungle's model props ({@code models/props.py}): in every quarter the cotton candy tree and the piles' open toy
+     * chests; TOP: the jelly puddings, the teddy's toy chest (its stacked blocks towards +ax: the mirrored model in a
+     * mirrored quarter), the box of crayons and the stack of alphabet blocks (turned a quarter in a mirrored quarter, so
+     * its blocks still stand on their footings); BOTTOM: the cheese with the mice's wind-up key spinning in it (rising
+     * towards +ax, its front turned round in a mirrored quarter), the rabbit's ears with the pocket watch (its hands tick
+     * round), the jar of marbles and the big spinning top. Fronts face the clearings ({@code -az}).
+     */
     static void props(List<LaneSites.ModelProp> out) {
         for (Side side : Side.values()) {
-            Quarter q = Quarter.of(side, Lane.BOTTOM);
-            out.add(q.prop("spinning_top", CORNER_AX + 0.5, G + 1, CORNER_AZ + 0.5, q.yaw(-1, -1),
-                    LaneSites.PropMotion.SPIN));
+            for (Lane lane : Lane.values()) {
+                Quarter q = Quarter.of(side, lane);
+                float front = q.yaw(0, -1);
+                for (int[] t : TREES) {
+                    out.add(q.prop("cotton_tree", t[0] + 0.5, G + 1, t[1] + 0.5, front, PropMotion.STILL));
+                }
+                out.add(q.prop("toy_box_pink", PINK_BOX[0] + 2, G + 1, PINK_BOX[1] + 1.5, front, PropMotion.STILL));
+                out.add(q.prop("toy_box_sky", SKY_BOX[0] + 2, G + 1, SKY_BOX[1] + 2, front, PropMotion.STILL));
+                out.add(q.prop("toy_box_yellow", YELLOW_BOX[0] + 1.5, G + 1, YELLOW_BOX[1] + 1.5, front,
+                        PropMotion.STILL));
+            }
+            Quarter top = Quarter.of(side, Lane.TOP);
+            float topFront = top.yaw(0, -1);
+            for (int[] j : JELLIES) {
+                out.add(top.prop("jelly", j[0] + 1.5, G + 1, j[1] + 1.5, topFront, PropMotion.STILL));
+            }
+            out.add(top.prop(reflected(top) ? "toy_box_mirror" : "toy_box", TEDDY_BOX_AX + 3.5, G + 1,
+                    TEDDY_BOX_AZ + 1.5, topFront, PropMotion.STILL));
+            out.add(top.prop("crayon_box", SMALL_TOY_AX + 0.5, G + 1, SMALL_TOY_AZ, topFront, PropMotion.STILL));
+            out.add(top.prop("block_stack", CORNER_AX, G + 1, CORNER_AZ, reflected(top) ? top.yaw(1, 0) : topFront,
+                    PropMotion.STILL));
+
+            Quarter bottom = Quarter.of(side, Lane.BOTTOM);
+            float bottomFront = bottom.yaw(0, -1);
+            float cheeseFront = reflected(bottom) ? bottom.yaw(0, 1) : bottomFront;
+            out.add(bottom.prop("cheese", CHEESE_AX + 0.5, G + 1, CHEESE_AZ + 0.5, cheeseFront, PropMotion.STILL));
+            out.add(bottom.prop("cheese_key", CHEESE_AX + 0.5, G + 1, CHEESE_AZ + 0.5, cheeseFront, PropMotion.SPIN));
+            out.add(bottom.prop("rabbit_watch", 34.5, G + 1, RABBIT_AZ + 0.5, bottomFront, PropMotion.STILL));
+            out.add(bottom.prop("rabbit_watch_hands", 34.5, G + 1, RABBIT_AZ + 0.5, bottomFront, PropMotion.KEY));
+            out.add(bottom.prop("marble_jar", SMALL_TOY_AX + 0.5, G + 1, SMALL_TOY_AZ + 0.5, bottomFront,
+                    PropMotion.STILL));
+            out.add(bottom.prop("spinning_top", CORNER_AX + 0.5, G + 1, CORNER_AZ + 0.5, bottom.yaw(-1, -1),
+                    PropMotion.SPIN));
         }
     }
 }

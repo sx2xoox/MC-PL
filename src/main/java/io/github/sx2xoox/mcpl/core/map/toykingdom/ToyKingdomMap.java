@@ -95,7 +95,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int version() {
-        return 8;
+        return 9;
     }
 
     /** The zones in build order (exposed for tests and previews). */
@@ -183,7 +183,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
         return out;
     }
 
-    /** The toys shown as models (lollipop lamps, candy canes, train, car, spinning top, boats, ducks, rainbows). */
+    /** The toys shown as models (the lanes' toys, the jungle's toys and camp landmarks, the river's toys). */
     private static final List<ModelProp> PROPS = props();
 
     private static List<ModelProp> props() {

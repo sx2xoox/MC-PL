@@ -16,14 +16,15 @@ a model prop. Pack players only (no vanilla fallback): the block prop's place ke
   오리 배 (duck)               a big rubber duck floating on the river, in a little sailor cap
   무지개 (rainbow)             a five-band rainbow arching over the river between two sleepy puffy clouds
 
-The second batch (PENDING: made, not placed on the map yet):
+The second batch:
 
   솜사탕 나무 (cotton_tree)    a candy-striped stick under a cloud of pink fluff with white tufts
   크레용 상자 (crayon_box)     a yellow box with a white band, seven sharpened crayons, one lying in front
   구슬 병 (marble_jar)         a clear glass jar (t_glass) full of marbles, a wooden lid, a ribbon bow, a label
   알파벳 블록 더미 (block_stack) two big lettered blocks, a green bridge with a red triangle block, a cylinder, a ball
   장난감 상자 (toy_box, toy_box_pink / _sky / _yellow)  open toy chests (lid up, toys peeking out); the teddy's big
-                               one with two stacked blocks beside it
+                               one with two stacked blocks beside it (toy_box_mirror: beside its other end, for the
+                               mirrored quarters)
   젤리 푸딩 (jelly)            a fluted lime jelly on a plate, whipped cream and a cherry
   치즈 (cheese)                a cheese wedge with holes; the mice's wind-up key (cheese_key) spins in its top
   토끼 귀와 회중시계 (rabbit_watch)  two rabbit ears with a gold pocket watch hung between them; its hands
@@ -829,7 +830,7 @@ def block_stack():
 # a gold latch, a decal on the front, toys peeking out
 # ------------------------------------------------------------------------------------------------
 
-def _toy_chest(b, w, d, h, tex, decal="star", toys=True):
+def _toy_chest(b, w, d, h, tex, decal="star", toys=True, lean=22.5):
     hw, hd = w / 2, d / 2
     t = 0.22
     # feet, walls, a felt floor just under the toys
@@ -852,7 +853,7 @@ def _toy_chest(b, w, d, h, tex, decal="star", toys=True):
     b.mirror("rim_side", (-hw - 0.04, h - 0.22 + EPS, -hd + 0.38), (-hw + t + 0.04, h - EPS, hd - 0.38), "t_white")
     # the lid standing open behind, leaning back a little, a white edge and the decal on its inside
     lt = 0.2
-    lid_rot = ("x", 22.5, (0, h, hd))
+    lid_rot = ("x", lean, (0, h, hd))
     b.box("lid", (-hw, h, hd - lt), (hw, h + d, hd), tex, rotation=lid_rot)
     b.box("lid_edge", (-hw + 0.25, h + d - 0.2, hd - lt - 0.04), (hw - 0.25, h + d - 0.04, hd - lt), "t_white",
           rotation=lid_rot)
@@ -890,18 +891,25 @@ def _toy_chest(b, w, d, h, tex, decal="star", toys=True):
         cyl(b, "toy_drum_band", (-1.0, hd - 0.85), 0.63, top + 0.1, top + 0.25, "t_gold")
 
 
-def toy_box():
-    """곰인형 대장's big pink toy chest (7 x 3, 4 high, a white heart) and two toy blocks stacked beside it."""
+def toy_box(hand=1):
+    """곰인형 대장's big pink toy chest (7 x 3, 4 high, a white heart) and two toy blocks stacked beside it, on its +x
+    side (hand -1: on its -x side, for a mirrored quarter: a model can be turned, not mirrored)."""
     b = Build()
-    _toy_chest(b, 7.0, 3.0, 4.0, "t_pink", "heart")
-    _alphabet_block(b, "stack_low", 4.0, -0.4, 2.0, "t_sky", "t_butter", {"-z": "A", "+x": "B"})
+    _toy_chest(b, 7.0, 3.0, 4.0, "t_pink", "heart", lean=0)  # upright: a candy cane stands behind it
+    out = "+x" if hand > 0 else "-x"
+    x0 = 4.5 if hand > 0 else -6.5
+    _alphabet_block(b, "stack_low", x0, -0.5, 2.0, "t_sky", "t_butter", {"-z": "A", out: "B"})
     y0 = 2.0 + EPS * 3
     stack = Build()
-    _alphabet_block(stack, "stack_high", 4.05, -0.35, 1.9, "t_butter", "t_cherry", {"-z": "B", "+x": "C", "+y": "1"})
+    _alphabet_block(stack, "stack_high", x0 + 0.05, -0.45, 1.9, "t_butter", "t_cherry", {"-z": "B", out: "C", "+y": "1"})
     for name, frm, to, tex, kw in stack.boxes:
         b.box(name, (frm[0], frm[1] + y0, frm[2]), (to[0], to[1] + y0, to[2]), tex,
-              rotation=("y", 22.5, (5.0, y0 + 0.95, 0.6)))
+              rotation=("y", 22.5 * hand, (x0 + 1.0, y0 + 0.95, 0.5)))
     return b
+
+
+def toy_box_mirror():
+    return toy_box(-1)
 
 
 def toy_box_pink():
@@ -1198,16 +1206,12 @@ PROPS = {
     "boat": (boat, 3, 4.0),
     "duck": (duck, 2, 1.5),
     "rainbow": (rainbow, 5, 4.0),
-}
-
-# made but not on the map yet (the second batch, waiting for the user's look): moved into PROPS (and the Java
-# PropModels table) when the map places them
-PENDING = {
     "cotton_tree": (cotton_tree, 3, 4.5),
     "crayon_box": (crayon_box, 3, 4.5),
     "marble_jar": (marble_jar, 2, 3.0),
     "block_stack": (block_stack, 4, 4.0),
     "toy_box": (toy_box, 5, 4.5),
+    "toy_box_mirror": (toy_box_mirror, 5, 4.5),
     "toy_box_pink": (toy_box_pink, 3, 4.5),
     "toy_box_sky": (toy_box_sky, 3, 4.5),
     "toy_box_yellow": (toy_box_yellow, 3, 4.5),
@@ -1220,6 +1224,9 @@ PENDING = {
     "sand_bucket": (sand_bucket, 2, 2.0),
     "sand_spade": (sand_spade, 2, 2.5),
 }
+
+# made but not on the map yet: moved into PROPS (and the Java PropModels table) when the map places them
+PENDING = {}
 
 DISPLAY = {**PROPS, **PENDING}
 

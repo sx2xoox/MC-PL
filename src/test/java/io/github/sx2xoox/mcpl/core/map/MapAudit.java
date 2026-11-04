@@ -338,7 +338,7 @@ public final class MapAudit {
                             + zoneOf.apply(x, z) + "]");
                 }
             }
-            if (material == Material.WATER && spills(x, y, z)) {
+            if ((material == Material.WATER || spec.waterlogged() == Boolean.TRUE) && spills(x, y, z)) {
                 if (counts[1]++ < 5) {
                     problems.add("water can spill at " + x + "," + y + "," + z + " [" + zoneOf.apply(x, z) + "]");
                 }

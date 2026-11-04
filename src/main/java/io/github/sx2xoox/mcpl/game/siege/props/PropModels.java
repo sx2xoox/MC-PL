@@ -16,16 +16,33 @@ public final class PropModels {
     public record Display(float scale, double centre) {
     }
 
-    static final Map<String, Display> DISPLAYS = Map.of(
-            "prop/lollipop", new Display(4, 6.0),
-            "prop/candy_cane", new Display(3, 4.5),
-            "prop/train", new Display(4, 6.0),
-            "prop/windup_car", new Display(3, 4.5),
-            "prop/windup_car_key", new Display(3, 1.25),
-            "prop/spinning_top", new Display(4, 6.0),
-            "prop/boat", new Display(3, 4.0),
-            "prop/duck", new Display(2, 1.5),
-            "prop/rainbow", new Display(5, 4.0));
+    static final Map<String, Display> DISPLAYS = Map.ofEntries(
+            Map.entry("prop/lollipop", new Display(4, 6.0)),
+            Map.entry("prop/candy_cane", new Display(3, 4.5)),
+            Map.entry("prop/train", new Display(4, 6.0)),
+            Map.entry("prop/windup_car", new Display(3, 4.5)),
+            Map.entry("prop/windup_car_key", new Display(3, 1.25)),
+            Map.entry("prop/spinning_top", new Display(4, 6.0)),
+            Map.entry("prop/boat", new Display(3, 4.0)),
+            Map.entry("prop/duck", new Display(2, 1.5)),
+            Map.entry("prop/rainbow", new Display(5, 4.0)),
+            Map.entry("prop/cotton_tree", new Display(3, 4.5)),
+            Map.entry("prop/crayon_box", new Display(3, 4.5)),
+            Map.entry("prop/marble_jar", new Display(2, 3.0)),
+            Map.entry("prop/block_stack", new Display(4, 4.0)),
+            Map.entry("prop/toy_box", new Display(5, 4.5)),
+            Map.entry("prop/toy_box_mirror", new Display(5, 4.5)),
+            Map.entry("prop/toy_box_pink", new Display(3, 4.5)),
+            Map.entry("prop/toy_box_sky", new Display(3, 4.5)),
+            Map.entry("prop/toy_box_yellow", new Display(3, 4.5)),
+            Map.entry("prop/jelly", new Display(2, 2.5)),
+            Map.entry("prop/cheese", new Display(3, 4.5)),
+            Map.entry("prop/cheese_key", new Display(3, 4.5)),
+            Map.entry("prop/rabbit_watch", new Display(5, 5.0)),
+            Map.entry("prop/rabbit_watch_hands", new Display(2, 5.6)),
+            Map.entry("prop/sand_castle", new Display(2, 2.0)),
+            Map.entry("prop/sand_bucket", new Display(2, 2.0)),
+            Map.entry("prop/sand_spade", new Display(2, 2.5)));
 
     private PropModels() {
     }
