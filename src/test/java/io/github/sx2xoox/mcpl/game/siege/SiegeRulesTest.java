@@ -170,4 +170,15 @@ class SiegeRulesTest {
         assertEquals(enabled, all.ids(), "an empty list means every enabled ability");
         assertFalse(all.filledUp());
     }
+
+    @Test
+    void aSavedFirstFiveJobPoolBecomesTheCurrentDefault() {
+        MemoryConfiguration old = new MemoryConfiguration();
+        old.set(SiegeSettings.ABILITY_POOL, List.of("police", "miner", "blacksmith", "gunslinger", "chef"));
+        assertEquals(SiegeSettings.DEFAULT_POOL, SiegeSettings.read(old).abilityPool());
+
+        MemoryConfiguration custom = new MemoryConfiguration();
+        custom.set(SiegeSettings.ABILITY_POOL, List.of("police", "miner"));
+        assertEquals(List.of("police", "miner"), SiegeSettings.read(custom).abilityPool());
+    }
 }

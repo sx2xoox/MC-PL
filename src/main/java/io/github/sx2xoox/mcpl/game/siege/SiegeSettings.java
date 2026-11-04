@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.siege;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import org.bukkit.configuration.ConfigurationSection;
@@ -95,6 +96,9 @@ public record SiegeSettings(
             "engineer", "hacker", "mech", "bomber", "gravity", "magnet", "chrono", "blink", "speedster", "venom",
             "spider", "pirate", "angler", "farmer", "batter");
 
+    /** The first default pool (five jobs): a config still holding exactly it predates the 50 and gets the new default. */
+    static final Set<String> FIRST_DEFAULT_POOL = Set.of("police", "miner", "blacksmith", "gunslinger", "chef");
+
     /** Reads the live section; values out of range are clamped, missing ones use the defaults. */
     public static SiegeSettings read(ConfigurationSection c) {
         List<String> pool = new ArrayList<>();
@@ -103,6 +107,10 @@ public record SiegeSettings(
             if (!trimmed.isEmpty() && !pool.contains(trimmed)) {
                 pool.add(trimmed);
             }
+        }
+        if (pool.size() == FIRST_DEFAULT_POOL.size() && FIRST_DEFAULT_POOL.containsAll(pool)) {
+            pool.clear();
+            pool.addAll(DEFAULT_POOL);
         }
         return new SiegeSettings(
                 clamp(c.getInt(ROUNDS_TO_WIN, 2), 1, 5),
