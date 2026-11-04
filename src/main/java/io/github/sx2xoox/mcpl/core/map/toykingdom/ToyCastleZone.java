@@ -87,6 +87,7 @@ final class ToyCastleZone implements MapZone {
             }
         }
         shop(canvas, new Quarter(sx, ToyLayout.left(side)));
+        ToyKit.scatter(canvas, this);
         // The castle's back wall stands against the kingdom's toy wall: the strip between them is toy wall too.
         for (int ax = ToyLayout.CASTLE_BACK + 1; ax <= r; ax++) {
             for (int z = -ToyLayout.CASTLE_ZONE_HALF_Z; z <= ToyLayout.CASTLE_ZONE_HALF_Z; z++) {
@@ -139,7 +140,36 @@ final class ToyCastleZone implements MapZone {
                 if (outer && along % 2 == 0) {
                     q.set(canvas, ax, top + 1, az, ToyKit.WHITE);
                 }
+                if (outer && !gate && ax != back) {
+                    cornice(canvas, q, sideWall ? ax : ax - 1, sideWall ? az + 1 : az, sideWall, along);
+                }
             }
+        }
+    }
+
+    /**
+     * The cornice outside a wall's top: a white overhang (upside down quartz stairs) under the band all along, and
+     * below it a white corbel on every other block, so the flat pastel wall gets a shadow line and a rhythm. Not over
+     * the gates, the turrets or the road at the lane gates.
+     */
+    private void cornice(MapCanvas canvas, Quarter q, int ax, int az, boolean sideWall, int along) {
+        int top = G + ToyLayout.WALL_HEIGHT;
+        if (!contains(q.x(ax), q.z(az))) {
+            return;
+        }
+        for (int t : new int[] {ToyLayout.CASTLE_FRONT + 1, ToyLayout.CASTLE_BACK - 1}) {
+            if (Math.hypot(ax - t, az - (ToyLayout.CASTLE_HALF_Z - 1)) <= 4.3) {
+                return;
+            }
+        }
+        if (sideWall && Math.abs(ax - ToyLayout.GATE_AX) <= ToyLayout.GATE_HALF + 2
+                || !sideWall && az <= ToyLayout.GATE_HALF + 4) {
+            return;
+        }
+        BlockFace in = sideWall ? BlockFace.NORTH : BlockFace.EAST;
+        q.place(canvas, ax, top - 1, az, ToyKit.stairs(ToyKit.WHITE_STAIRS, in, true));
+        if (along % 2 == 1) {
+            q.place(canvas, ax, top - 2, az, ToyKit.stairs(ToyKit.WHITE_STAIRS, in, true));
         }
     }
 
@@ -185,18 +215,37 @@ final class ToyCastleZone implements MapZone {
                 if (d > radius) {
                     continue;
                 }
-                // Two-block windows on the four sides, in the team colour.
+                // Two-block windows on the four sides, in the team colour; those looking out of the castle are set
+                // one block deep with a warm light inside, a white sill under them.
                 boolean window = Math.abs(dx) + Math.abs(dz) == 3 && (dx == 0 || dz == 0);
+                boolean outward = window && !ToyLayout.inCastle(q.x(cax + dx * 4 / 3), q.z(caz + dz * 4 / 3));
+                boolean behind = Math.abs(dx) + Math.abs(dz) == 2 && (dx == 0 || dz == 0)
+                        && !ToyLayout.inCastle(q.x(cax + dx * 2), q.z(caz + dz * 2));
                 for (int y = G + 1; y <= top; y++) {
-                    BlockSpec spec = y == top ? ToyKit.WHITE
-                            : y == G + 1 || window && y >= G + WINDOW_Y && y <= G + WINDOW_Y + 1 ? strong
+                    boolean pane = y >= G + WINDOW_Y && y <= G + WINDOW_Y + 1;
+                    BlockSpec spec = y == top || y == G + WINDOW_Y - 1 && outward ? ToyKit.WHITE
+                            : y == G + 1 || window && pane ? strong
+                            : behind && pane ? ToyKit.GLOW
                             : ToyKit.pastel(side);
+                    if (outward && pane) {
+                        continue;
+                    }
                     q.set(canvas, cax + dx, y, caz + dz, spec);
                 }
                 // The cone: one ring narrower per layer.
                 int layers = (int) Math.floor(radius + 0.8 - d) + 1;
                 for (int i = 1; i <= layers; i++) {
                     q.set(canvas, cax + dx, top + i, caz + dz, strong);
+                }
+            }
+        }
+        // The cone's eaves overhang the white band by a block, with a white trim under the overhang.
+        for (int dx = -5; dx <= 5; dx++) {
+            for (int dz = -5; dz <= 5; dz++) {
+                double d = Math.hypot(dx, dz);
+                if (d > radius && d <= radius + 1.1 && contains(q.x(cax + dx), q.z(caz + dz))) {
+                    q.set(canvas, cax + dx, top + 1, caz + dz, strong);
+                    q.place(canvas, cax + dx, top, caz + dz, ToyKit.bevel(ToyKit.WHITE_STAIRS, dx, dz, true));
                 }
             }
         }

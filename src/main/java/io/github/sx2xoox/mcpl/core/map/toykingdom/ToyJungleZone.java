@@ -93,6 +93,7 @@ final class ToyJungleZone implements MapZone {
             crayonBox(canvas, top, SMALL_TOY_AX - 1, SMALL_TOY_AZ - 1);
             marbleJar(canvas, bottom, SMALL_TOY_AX, SMALL_TOY_AZ);
         }
+        ToyKit.scatter(canvas, this);
     }
 
     /** Where the small toys stand (crayons TOP, marbles BOTTOM): between the corridor's cotton tree and box pile. */
@@ -109,6 +110,18 @@ final class ToyJungleZone implements MapZone {
                     continue;
                 }
                 q.set(canvas, cx + dx, G, cz + dz, d > RUG - 2 && d <= RUG - 1 ? ToyKit.WHITE : colour);
+            }
+        }
+        // A dotted white stitch around the rug where it lies on the mat.
+        for (int dx = -r - 1; dx <= r + 1; dx++) {
+            for (int dz = -r - 1; dz <= r + 1; dz++) {
+                double d = Math.hypot(dx, dz);
+                int x = q.x(cx + dx);
+                int z = q.z(cz + dz);
+                if (d > RUG && d <= RUG + 1 && contains(x, z) && ToyKit.isMat(canvas.get(x, G, z))
+                        && ToyKit.stitch(x, z)) {
+                    canvas.set(x, G, z, ToyKit.WHITE);
+                }
             }
         }
     }

@@ -101,6 +101,11 @@ final class ToyHallZone implements MapZone {
             // Foundations: the floorboards reach the plinth; only the back wall goes down to their bottom.
             return back && h >= -3 ? CREAM : null;
         }
+        if (h == 4 && d <= ToyLayout.HEDGE_WIDTH - 1 && spot.kind() == Kind.BAY
+                && Math.abs(Math.abs(spot.offset()) - 4) < 0.5) {
+            // Lanterns on the toy brick wall, a pair in every bay: the seam between the kingdom and the hall glows.
+            return LANTERN;
+        }
         if (spot.kind() == Kind.PILLAR && d <= ToyHall.PILLAR_BACK) {
             return pillar(spot.offset(), d, h);
         }
@@ -159,16 +164,30 @@ final class ToyHallZone implements MapZone {
                 return even ? LANTERN : null;
             }
             if (h == deck - 1 && h > 3 && spot.kind() != Kind.PILLAR) {
-                return (Math.abs(x) + Math.abs(z)) % 4 == 0 ? HANGING : null;
+                // Lanterns hang under the deck's nose every four blocks, a crimson corbel halfway between them.
+                int beat = (Math.abs(x) + Math.abs(z)) % 4;
+                return beat == 0 ? HANGING : beat == 2 ? corbel(x, z) : null;
             }
         }
         return null;
     }
 
+    /** An upside down crimson stair under a deck's nose, its tall side towards the hall's wall. */
+    private static BlockSpec corbel(int x, int z) {
+        return ToyKit.stairs(ToyHall.CORBEL, ToyBorderZone.outward(x, z), true);
+    }
+
     // ------------------------------------------------------------------ banners
 
-    /** The banners' gear: a 5 x 5 sun-like gear, from the top row (G = gold, . = cloth). */
-    private static final String[] BANNER_GEAR = {"G.G.G", ".GGG.", "GG.GG", ".GGG.", "G.G.G"};
+    /**
+     * The banners' emblems, 5 x 5 from the top row (G = gold, . = cloth), in turn along the wall: a sun-like gear, a
+     * clock at three o'clock and a wind-up key.
+     */
+    private static final String[][] BANNER_EMBLEMS = {
+        {"G.G.G", ".GGG.", "GG.GG", ".GGG.", "G.G.G"},
+        {".GGG.", "G.G.G", "G.GGG", "G...G", ".GGG."},
+        {"GG.GG", "G.G.G", "GG.GG", "..G..", "..GG."},
+    };
     private static final int BANNER_ROWS = 9;
 
     /** True for the columns and tier of a bay's banner (gallery 1 in even bays, gallery 2 in odd bays). */
@@ -191,11 +210,22 @@ final class ToyHallZone implements MapZone {
         if (row == 0) {
             return GOLD;
         }
+        // The tail: a notch, a swallowtail or a point, in turn.
+        int cut = spot.index() / 2 % 3;
         if (row == BANNER_ROWS - 1) {
-            return col == 2 ? null : CLOTH;
+            boolean open = cut == 0 ? col == 2 : cut == 1 ? Math.abs(col - 2) <= 1 : col == 0 || col == 4;
+            return open ? null : CLOTH;
         }
-        if (row >= 2 && row < 2 + BANNER_GEAR.length && col >= 0 && col < 5) {
-            return BANNER_GEAR[row - 2].charAt(col) == 'G' ? GOLD : CLOTH;
+        if (row == BANNER_ROWS - 2 && cut == 1 && col == 2) {
+            return null;
+        }
+        if (row == BANNER_ROWS - 2) {
+            // A gold fringe band above the tail.
+            return col % 2 == 0 ? GOLD : CLOTH;
+        }
+        String[] emblem = BANNER_EMBLEMS[spot.index() % BANNER_EMBLEMS.length];
+        if (row >= 2 && row < 2 + emblem.length && col >= 0 && col < 5) {
+            return emblem[row - 2].charAt(col) == 'G' ? GOLD : CLOTH;
         }
         return CLOTH;
     }
@@ -214,17 +244,18 @@ final class ToyHallZone implements MapZone {
         if (h >= WALL_TOP - 2) {
             return front && h == WALL_TOP - 1 ? LIGHT : GOLD;
         }
-        for (int deck : DECKS) {
+        for (int i = 0; i < DECKS.length; i++) {
+            int deck = DECKS[i];
             if (h == deck) {
                 return GOLD;
             }
             if (Math.abs(h - deck) == 1) {
                 return WINE;
             }
-            // A crimson inset on the front of each storey with a gold boss in it.
+            // A crimson inset on the front of each storey with a gold boss in it (a lamp on the middle storey).
             if (d <= ToyHall.PILLAR_FRONT + 1 && h > deck && h - deck >= 3 && h - deck <= 9
                     && Math.abs(offset) <= 1.2) {
-                return Math.abs(offset) <= 0.5 && h - deck == 6 ? GOLD : WINE;
+                return Math.abs(offset) <= 0.5 && h - deck == 6 ? (i == 1 ? LIGHT : GOLD) : WINE;
             }
         }
         return h <= 2 ? WINE : COLUMN;
@@ -240,7 +271,8 @@ final class ToyHallZone implements MapZone {
         double off = spot.offset();
         double panel = h <= PANEL_SPRING ? Math.abs(off) : Math.hypot(off, h - PANEL_SPRING);
         if (h < 2 || panel > 4.5) {
-            return CREAM;
+            // A crimson course just over the toy brick wall and a gold one under the deck, between the arches.
+            return h == 4 ? WINE : h == 10 && panel > 5.5 ? GOLD : CREAM;
         }
         if (panel > 3.5) {
             return GOLD;
@@ -286,7 +318,9 @@ final class ToyHallZone implements MapZone {
                 int sill = DECKS[g] + 2;
                 double dist = window(spot.offset(), h - sill);
                 if (dist <= 0) {
-                    return null;
+                    // A gold mullion and transom set one block back from the inner face: four panes with depth.
+                    boolean mullion = Math.abs(spot.offset()) <= 0.5 || h - sill == 5;
+                    return mullion && !inside ? GOLD : null;
                 }
                 if (dist <= 1 && inside) {
                     boolean key = Math.abs(spot.offset()) < 0.5 && h > sill + 5;
@@ -426,7 +460,11 @@ final class ToyHallZone implements MapZone {
         }
         boolean big = bay.kind() != Kind.BAY;
         double off = bay.offset();
-        BlockSpec gear = ToyHall.gear(off, m - (big ? VAULT_GEAR + 2 : VAULT_GEAR), big ? 9.5 : 4, big ? 8 : 4);
+        // The bays' gears differ in turn (pitch and spokes), so the coffers do not repeat one stamp.
+        int turn = bay.index() % 3;
+        double pitch = big ? 9.5 : turn == 1 ? 4.8 : turn == 2 ? 3.4 : 4;
+        int spokes = big ? 8 : turn == 1 ? 6 : turn == 2 ? 3 : 4;
+        BlockSpec gear = ToyHall.gear(off, m - (big ? VAULT_GEAR + 2 : VAULT_GEAR), pitch, spokes);
         if (gear != null) {
             return gear;
         }

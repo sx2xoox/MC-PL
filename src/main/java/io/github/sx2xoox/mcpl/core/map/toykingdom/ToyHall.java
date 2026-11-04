@@ -232,6 +232,8 @@ public final class ToyHall {
     /** Crimson: bands, deck noses, the galleries' back walls, blind arches, the clock's numeral ring and hands. */
     static final BlockSpec WINE = BlockSpec.of(Material.RED_NETHER_BRICKS);
     static final BlockSpec RAIL = BlockSpec.of(Material.RED_NETHER_BRICK_WALL);
+    /** The corbels under the decks' noses. */
+    static final Material CORBEL = Material.RED_NETHER_BRICK_STAIRS;
     static final BlockSpec GOLD = BlockSpec.of(Material.GOLD_BLOCK);
     static final BlockSpec DARK_GOLD = BlockSpec.of(Material.RAW_GOLD_BLOCK);
     /** The golden light blocks (gear hubs, keystones, pillar lamps, the clock's five minute marks). */

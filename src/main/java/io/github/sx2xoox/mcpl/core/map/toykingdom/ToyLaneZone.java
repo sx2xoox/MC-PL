@@ -87,6 +87,7 @@ final class ToyLaneZone implements MapZone {
                 windUpCar(canvas, q);
             }
         }
+        ToyKit.scatter(canvas, this);
     }
 
     /**

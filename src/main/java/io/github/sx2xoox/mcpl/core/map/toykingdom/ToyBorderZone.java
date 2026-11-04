@@ -33,10 +33,25 @@ final class ToyBorderZone implements MapZone {
                 ToyKit.ground(canvas, x, z);
                 double out = ToyLayout.outline(x, z);
                 if (out <= ToyLayout.HEDGE_WIDTH && !ToyLayout.inCliff(x, z)) {
-                    ToyKit.brick(canvas, x, z, out <= ToyLayout.HEDGE_WIDTH - 1 ? 3 : 2, colour(x, z));
+                    boolean rim = out > ToyLayout.HEDGE_WIDTH - 1;
+                    ToyKit.brick(canvas, x, z, rim ? 2 : 3, colour(x, z));
+                    if (rim) {
+                        // A crimson cove on the lower outer row joins the toy wall to the hall's plinth behind it.
+                        canvas.set(x, ToyKit.G + 3, z, ToyKit.stairs(ToyKit.RED_STAIRS, outward(x, z), false));
+                    }
                 }
             }
         }
+    }
+
+    /** The horizontal face pointing away from the kingdom at a column (by the outline's slope). */
+    static org.bukkit.block.BlockFace outward(int x, int z) {
+        double gx = ToyLayout.outline(x + 1, z) - ToyLayout.outline(x - 1, z);
+        double gz = ToyLayout.outline(x, z + 1) - ToyLayout.outline(x, z - 1);
+        if (Math.abs(gx) >= Math.abs(gz)) {
+            return gx > 0 ? org.bukkit.block.BlockFace.EAST : org.bukkit.block.BlockFace.WEST;
+        }
+        return gz > 0 ? org.bukkit.block.BlockFace.SOUTH : org.bukkit.block.BlockFace.NORTH;
     }
 
     /** The colour of the toy block wall at a column: 3 x 3 cells of the toy colours. */

@@ -703,7 +703,8 @@ public final class MapPreview {
         for (int i = 0; i < DYES.length; i++) {
             if (s.startsWith(DYES[i] + "_")) {
                 int[] c = DYE_RGB[i];
-                double f = s.endsWith("_terracotta") ? 0.6 : 1.0;
+                // Concrete is a little deeper than wool or carpet of the same dye (as in the game).
+                double f = s.endsWith("_terracotta") ? 0.6 : s.endsWith("_concrete") ? 0.88 : 1.0;
                 return new Color((int) (c[0] * f), (int) (c[1] * f), (int) (c[2] * f));
             }
         }

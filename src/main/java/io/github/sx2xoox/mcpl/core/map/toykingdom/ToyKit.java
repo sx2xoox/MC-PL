@@ -29,9 +29,13 @@ final class ToyKit {
 
     static final int G = ToyLayout.GROUND_Y;
 
-    /** The play mat: big tiles of two mints. */
+    /** The play mat: big interlocking puzzle tiles of two mints, now and then a tile of a bluer mint. */
     static final BlockSpec MAT = BlockSpec.of(Material.LIME_WOOL);
     static final BlockSpec MAT_TILE = BlockSpec.of(Material.LIME_CONCRETE);
+    static final BlockSpec MAT_ODD = BlockSpec.of(Material.OXIDIZED_COPPER);
+    /** The second tone of each brick road (a brighter brick here and there). */
+    static final BlockSpec YELLOW_BRICK = BlockSpec.of(Material.YELLOW_WOOL);
+    static final BlockSpec SKY_BRICK = BlockSpec.of(Material.LIGHT_BLUE_WOOL);
     /** Wooden floorboards: the room's floor around the mat, under it, the courtyards and the sandbox frame. */
     static final BlockSpec WOOD = BlockSpec.of(Material.BIRCH_PLANKS);
     static final BlockSpec WHITE = BlockSpec.of(Material.WHITE_CONCRETE);
@@ -91,9 +95,99 @@ final class ToyKit {
 
     // ------------------------------------------------------------------ ground
 
-    /** The play mat at a column: 4 x 4 tiles of two mints. */
+    /** The puzzle tiles of the play mat: 7 x 7, centred on the middle so both halves mirror. */
+    static final int TILE = 7;
+
+    /**
+     * The play mat at a column: 7 x 7 puzzle tiles of two mints (checkered, about one in seven of the bluer mint) that
+     * interlock: on every edge one tile pushes a knob (a one block neck and a three block head) into its neighbour, so
+     * the seams read as a foam puzzle mat. Mirror symmetric across x.
+     */
     static BlockSpec mat(int x, int z) {
-        return Math.floorMod(Math.floorDiv(x, 4) + Math.floorDiv(z, 4), 2) == 0 ? MAT : MAT_TILE;
+        int h = TILE / 2;
+        int tx = Math.floorDiv(x + h, TILE);
+        int tz = Math.floorDiv(z + h, TILE);
+        int u = x + h - tx * TILE;
+        int v = z + h - tz * TILE;
+        int last = TILE - 1;
+        if (knob(u, v) && xKnobInto(tx - 1, tx, tz) == tx) {
+            return tile(tx - 1, tz);
+        }
+        if (knob(last - u, v) && xKnobInto(tx, tx + 1, tz) == tx) {
+            return tile(tx + 1, tz);
+        }
+        if (knob(v, u) && zKnobInto(tz - 1, tz, tx) == tz) {
+            return tile(tx, tz - 1);
+        }
+        if (knob(last - v, u) && zKnobInto(tz, tz + 1, tx) == tz) {
+            return tile(tx, tz + 1);
+        }
+        return tile(tx, tz);
+    }
+
+    /** True for the knob's place {@code depth} blocks in from a tile edge, {@code across} along it. */
+    private static boolean knob(int depth, int across) {
+        int mid = TILE / 2;
+        return depth == 0 && across == mid || depth == 1 && Math.abs(across - mid) <= 1;
+    }
+
+    /** The tile an x edge's knob points into: away from the middle on even rows, towards it on odd rows. */
+    private static int xKnobInto(int a, int b, int tz) {
+        int far = Math.abs(b) > Math.abs(a) ? b : a;
+        int near = far == a ? b : a;
+        return Math.floorMod(tz, 2) == 0 ? far : near;
+    }
+
+    /** The tile a z edge's knob points into. */
+    private static int zKnobInto(int a, int b, int tx) {
+        return Math.floorMod(Math.abs(tx) + a, 2) == 0 ? b : a;
+    }
+
+    /** The colour of a whole puzzle tile. */
+    private static BlockSpec tile(int tx, int tz) {
+        int hash = Math.abs(tx) * 0x9E3779B1 ^ tz * 0x85EBCA6B;
+        hash ^= hash >>> 13;
+        hash *= 0xC2B2AE35;
+        hash ^= hash >>> 16;
+        if (Math.floorMod(hash, 7) == 0) {
+            return MAT_ODD;
+        }
+        return Math.floorMod(tx + tz, 2) == 0 ? MAT : MAT_TILE;
+    }
+
+    /** True for a column of plain play mat (any of its tones). */
+    static boolean isMat(@Nullable BlockSpec spec) {
+        return spec != null && (spec.equals(MAT) || spec.equals(MAT_TILE) || spec.equals(MAT_ODD));
+    }
+
+    /**
+     * A brick of a road at a column: bricks two long in running bond, about two in five of the road's brighter tone, so
+     * the road reads as laid bricks rather than paint.
+     */
+    static BlockSpec roadBrick(Lane lane, int x, int z) {
+        int ax = Math.abs(x);
+        int brick = Math.floorDiv(ax + Math.floorMod(z, 2), 2);
+        boolean bright = Math.floorMod(brick * 7 + z * 3 + brick * z, 5) < 2;
+        return bright ? (lane == Lane.TOP ? YELLOW_BRICK : SKY_BRICK) : road(lane);
+    }
+
+    /** A dotted white stitch (every third block) along the seams of the mat beside a road or a ring. */
+    static boolean stitch(int x, int z) {
+        return Math.floorMod(Math.abs(x) + Math.abs(z), 3) == 0;
+    }
+
+    /** The angle (0..1 of a turn) of a column around the nearest tower of its lane half. */
+    static double towerAngle(int x, int z) {
+        int ax = Math.abs(x);
+        int az = Math.abs(z);
+        int[] best = ToyLayout.TOWERS[0];
+        for (int[] t : ToyLayout.TOWERS) {
+            if (Math.hypot(ax - t[0], az + t[1]) < Math.hypot(ax - best[0], az + best[1])) {
+                best = t;
+            }
+        }
+        double a = Math.atan2(az + best[1], ax - best[0]) / (2 * Math.PI);
+        return a - Math.floor(a);
     }
 
     /** Builds the ground of one column: floorboards under a top block chosen by the plan (nothing over a drop). */
@@ -133,25 +227,47 @@ final class ToyKit {
             return;
         }
         if (centre <= ToyLayout.PIT_FRAME) {
-            canvas.set(x, G, z, WOOD);
+            // The sandbox's frame: wooden boards, painted in the toy colours by turns around the ring.
+            double turn = Math.atan2(z, ax) / (2 * Math.PI) + 0.5;
+            int board = (int) Math.floor(turn * 20);
+            canvas.set(x, G, z, board % 2 == 0 ? WOOD : TOY_COLOURS[board / 2 % TOY_COLOURS.length]);
             return;
         }
-        if (ToyLayout.river(x, z) <= ToyLayout.RIVER_HALF) {
+        double river = ToyLayout.river(x, z);
+        if (river <= ToyLayout.RIVER_HALF) {
             canvas.set(x, G - 1, z, SAND);
             canvas.set(x, G, z, WATER);
             return;
         }
+        if (river <= ToyLayout.RIVER_HALF + 1) {
+            // The bank: an edging of toy bricks, two blocks of each colour in turn along the water.
+            canvas.set(x, G, z, TOY_COLOURS[Math.floorMod(Math.floorDiv(Math.abs(z), 2), TOY_COLOURS.length)]);
+            return;
+        }
         Lane lane = ToyLayout.laneOf(z);
+        int az = Math.abs(z);
+        if (Math.abs(ax - ToyLayout.GATE_AX) <= ToyLayout.ROAD_HALF && az > ToyLayout.CASTLE_HALF_Z
+                && az <= ToyLayout.CASTLE_HALF_Z + 3) {
+            // A doormat before each lane gate: the road's colour checkered with the owner's on both sides of the
+            // road's middle.
+            boolean check = Math.abs(ax - ToyLayout.GATE_AX) > 1 && Math.floorMod(ax + az, 2) == 0;
+            canvas.set(x, G, z, check ? strong(side) : roadBrick(lane, x, z));
+            return;
+        }
         double tower = ToyLayout.towerDistance(x, z);
         double d = ToyLayout.laneDistance(lane, x, z);
         BlockSpec top;
         if (tower <= ToyLayout.TOWER_RADIUS + 0.5) {
-            top = road(lane);
+            // The plaza: bricks with a dashed ring in the owner's colour where the tower's base will stand.
+            boolean dash = tower > 5.5 && tower <= 6.5 && Math.floorMod((int) Math.floor(towerAngle(x, z) * 24), 2) == 0;
+            top = dash ? strong(side) : roadBrick(lane, x, z);
         } else if (tower <= ToyLayout.RING_OUTER) {
             top = strong(side);
         } else if (d <= ToyLayout.ROAD_HALF) {
-            top = road(lane);
+            top = roadBrick(lane, x, z);
         } else if (d <= ToyLayout.EDGE_HALF) {
+            top = WHITE;
+        } else if ((d <= ToyLayout.EDGE_HALF + 1 || tower <= ToyLayout.RING_OUTER + 1) && stitch(x, z)) {
             top = WHITE;
         } else {
             top = mat(x, z);
@@ -193,9 +309,76 @@ final class ToyKit {
         if (ToyLayout.inSpawnMat(x, z, true)) {
             return strong(side);
         }
+        if (ax == ToyLayout.CASTLE_FRONT + 2 || ax == ToyLayout.CASTLE_BACK - 2
+                || az == ToyLayout.CASTLE_HALF_Z - 2) {
+            // A skirting of the pastel along the foot of the walls frames the checker.
+            return pastel(side);
+        }
         return Math.floorMod(Math.floorDiv(ax, 2) + Math.floorDiv(z, 2), 2) == 0 ? WOOD : WHITE;
     }
 
+
+    // ------------------------------------------------------------------ toys left on the mat
+
+    /** The camps' centres on the BLUE half ({@code |x|, z}) and their rugs' colours (see {@link ToyJungleZone}). */
+    static final int[][] CAMPS = {{52, -22}, {34, -28}, {16, -26}, {52, 22}, {34, 28}, {16, 26}};
+    static final BlockSpec[] CAMP_COLOURS = {PINK, YELLOW, SKY, YELLOW, PINK, SKY};
+    /** The camps' rugs: radius (see {@link ToyJungleZone}) and how far their confetti spreads beyond it. */
+    static final double CAMP_RUG = 6.5;
+    static final double CAMP_CONFETTI = 11;
+    static final BlockSpec[] CARPETS = {BlockSpec.of(Material.PINK_CARPET), BlockSpec.of(Material.YELLOW_CARPET),
+        BlockSpec.of(Material.LIGHT_BLUE_CARPET), BlockSpec.of(Material.WHITE_CARPET)};
+
+    /**
+     * Little toy pieces left lying flat on the play mat after the props are built: a carpet square in a toy colour
+     * here and there, and around every camp a sprinkle of confetti in its rug's colour, so the camp's theme spills onto
+     * the mat. Only on free plain mat, well off the roads, the tower rings and the camps' rugs (all flat, nothing to
+     * trip over). Mirror symmetric across x.
+     */
+    static void scatter(MapCanvas canvas, int x, int z) {
+        if (!isMat(canvas.get(x, G, z)) || !isAir(canvas.get(x, G + 1, z)) || !isAir(canvas.get(x, G + 2, z))) {
+            return;
+        }
+        if (ToyLayout.laneDistance(ToyLayout.laneOf(z), x, z) <= ToyLayout.EDGE_HALF + 2.5
+                || ToyLayout.towerDistance(x, z) <= ToyLayout.RING_OUTER + 2.5) {
+            return;
+        }
+        int ax = Math.abs(x);
+        int hash = Math.floorMod(ax * 92821 + z * 68917 + ax * z * 31 + (ax ^ z) * 13, 9973);
+        for (int i = 0; i < CAMPS.length; i++) {
+            double d = Math.hypot(ax - CAMPS[i][0], z - CAMPS[i][1]);
+            if (d <= CAMP_RUG + 1) {
+                return;
+            }
+            if (d <= CAMP_CONFETTI && hash % 9 == 0) {
+                canvas.set(x, G + 1, z, CARPETS[colourIndex(CAMP_COLOURS[i])]);
+                return;
+            }
+        }
+        if (hash % 83 == 0) {
+            canvas.set(x, G + 1, z, CARPETS[hash / 83 % CARPETS.length]);
+        }
+    }
+
+    private static int colourIndex(BlockSpec colour) {
+        return colour.equals(PINK) ? 0 : colour.equals(YELLOW) ? 1 : colour.equals(SKY) ? 2 : 3;
+    }
+
+    private static boolean isAir(@Nullable BlockSpec spec) {
+        return spec == null || spec.isAir();
+    }
+
+    /** {@link #scatter} over every column of a zone. */
+    static void scatter(MapCanvas canvas, io.github.sx2xoox.mcpl.core.map.MapZone zone) {
+        int r = ToyLayout.BUILD_RADIUS;
+        for (int x = -r; x <= r; x++) {
+            for (int z = -ToyLayout.HALF_Z; z <= ToyLayout.HALF_Z; z++) {
+                if (zone.contains(x, z)) {
+                    scatter(canvas, x, z);
+                }
+            }
+        }
+    }
 
     // ------------------------------------------------------------------ quarters
 

@@ -46,6 +46,13 @@ final class ToyRiverZone implements MapZone {
         rainbow(canvas, middle);
         boat(canvas, -BOAT_Z);
         boat(canvas, BOAT_Z);
+        for (int s : new int[] {-1, 1}) {
+            duck(canvas, new Quarter(1, s));
+            bucket(canvas, new Quarter(s, -1));
+            sandCastle(canvas, new Quarter(s, -1));
+            shovel(canvas, new Quarter(s, 1));
+        }
+        ToyKit.scatter(canvas, this);
     }
 
     /** Where the toy sailing boats lie at anchor (centre of the hull, |z|). */
@@ -79,6 +86,68 @@ final class ToyRiverZone implements MapZone {
         ToyKit.plane(canvas, q, false, az - 3, 0, G + 3, SAIL, true,
                 Map.of('W', ToyKit.WHITE, 'R', ToyKit.RED, 'F', ToyKit.FENCE));
         q.place(canvas, 0, G + 6, az + 1, BlockSpec.of(Material.RED_WALL_BANNER).facing(BlockFace.SOUTH));
+    }
+
+    /** Where the rubber ducks swim (|z| of the head), between the rainbow and the lane. */
+    private static final int DUCK_Z = 33;
+
+    /**
+     * A yellow rubber duck floating in the river (a quarter of it, x = 0 its middle): a body three long with stubby
+     * wings, the head at the front with a little beak (a button) and a tail sticking up at the back.
+     */
+    private static void duck(MapCanvas canvas, Quarter q) {
+        int az = DUCK_Z;
+        for (int dz = 0; dz <= 2; dz++) {
+            q.set(canvas, 0, G, az + dz, ToyKit.YELLOW);
+        }
+        for (int x : new int[] {-1, 1}) {
+            q.set(canvas, x, G, az + 1, ToyKit.YELLOW);
+        }
+        q.set(canvas, 0, G + 1, az, ToyKit.YELLOW);
+        q.place(canvas, 0, G + 1, az - 1, BlockSpec.of(Material.BAMBOO_BUTTON).facing(BlockFace.NORTH));
+        q.place(canvas, 0, G + 1, az + 2, ToyKit.stairs(ToyKit.YELLOW_STAIRS, BlockFace.SOUTH, false));
+    }
+
+    /**
+     * A toy sand bucket by the sandbox (quarter coordinates): light blue with a white rim, full of sand, a little sand
+     * spilled beside it.
+     */
+    private static void bucket(MapCanvas canvas, Quarter q) {
+        int ax = 11;
+        int az = 9;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                q.set(canvas, ax + dx, G + 1, az + dz, ToyKit.SKY);
+                q.set(canvas, ax + dx, G + 2, az + dz, dx == 0 && dz == 0 ? ToyKit.SAND : ToyKit.WHITE);
+            }
+        }
+        q.set(canvas, ax - 2, G + 1, az + 2, ToyKit.SAND);
+        q.set(canvas, ax - 1, G + 1, az + 2, ToyKit.SAND);
+    }
+
+    /**
+     * A little sand castle on the sandbox's rim, just outside the dragon's ring (quarter coordinates): three towers of
+     * sand, the middle one two high with a red candle for a flag.
+     */
+    private static void sandCastle(MapCanvas canvas, Quarter q) {
+        q.set(canvas, 7, G, 8, ToyKit.SAND);
+        q.set(canvas, 7, G + 1, 8, ToyKit.SAND);
+        q.place(canvas, 7, G + 2, 8, BlockSpec.of(Material.RED_CANDLE).lit(true));
+        q.set(canvas, 6, G, 9, ToyKit.SAND);
+        q.set(canvas, 8, G, 7, ToyKit.SAND);
+    }
+
+    /**
+     * A toy spade stuck in the sandbox's sand outside the dragon's ring: a yellow blade half buried, a deep red handle
+     * and a red grip.
+     */
+    private static void shovel(MapCanvas canvas, Quarter q) {
+        int ax = 7;
+        int az = 8;
+        q.set(canvas, ax, G, az, ToyKit.YELLOW);
+        q.set(canvas, ax, G + 1, az, BlockSpec.of(Material.RED_NETHER_BRICK_WALL));
+        q.set(canvas, ax, G + 2, az, BlockSpec.of(Material.RED_NETHER_BRICK_WALL));
+        q.set(canvas, ax, G + 3, az, ToyKit.RED);
     }
 
     /** Outer radius of the rainbow (its feet stand on the banks, inside the river zone). */

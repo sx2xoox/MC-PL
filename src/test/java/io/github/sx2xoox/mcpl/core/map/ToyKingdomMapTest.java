@@ -37,19 +37,21 @@ import org.mockbukkit.mockbukkit.MockBukkit;
 class ToyKingdomMapTest {
 
     /**
-     * Most distinct block types (materials) a zone may use: the floorboards, the two mints of the play mat and a
-     * handful of toy colours (the lanes one more: the damp shade of the sponge bushes). The jungle has three more (a
-     * rug per camp, its soft toys: cotton candy, jelly, and the glass of the marble jar).
+     * Most distinct block types (materials) a zone may use: the floorboards, the three mints of the play mat's puzzle
+     * tiles and a handful of toy colours (the lanes two more: the damp shade of the sponge bushes and the brighter
+     * brick of the road). The jungle has three more (a rug per camp, its soft toys: cotton candy, jelly, and the glass
+     * of the marble jar).
      */
-    private static final int PALETTE_BUDGET = 10;
-    private static final int JUNGLE_PALETTE_BUDGET = 12;
+    private static final int PALETTE_BUDGET = 12;
+    private static final int JUNGLE_PALETTE_BUDGET = 13;
     /**
      * Detail blocks shape the props (stairs, slabs, fences, trapdoors, buttons, chains, lanterns, candles, carpets,
      * banners, pots, rods) and are counted apart: they add shapes in a second tone of the toy colours (quartz,
-     * cherry, bamboo, birch, red nether brick) and small trinkets, not new colours.
+     * cherry, bamboo, birch, red nether brick) and small trinkets, not new colours. Three more than the props need:
+     * the flat toy pieces and camp confetti left on the mat are carpets in all four toy colours.
      */
-    private static final int DETAIL_BUDGET = 18;
-    private static final int MAP_DETAIL_BUDGET = 28;
+    private static final int DETAIL_BUDGET = 21;
+    private static final int MAP_DETAIL_BUDGET = 31;
     /**
      * The clockwork hall around the kingdom is architecture, not a play area: cream (walls, pillars), crimson (bricks,
      * rails, banners), gold (two golds, light blocks, lanterns, chains) and the glass of the vault and the clock (three
@@ -292,8 +294,10 @@ class ToyKingdomMapTest {
     void theLanesAreClearlyColoured() {
         for (Lane lane : Lane.values()) {
             Material road = lane == Lane.TOP ? Material.YELLOW_CONCRETE : Material.LIGHT_BLUE_CONCRETE;
+            // Its bricks come in two tones of the road's colour (concrete and the brighter wool).
+            Material brick = lane == Lane.TOP ? Material.YELLOW_WOOL : Material.LIGHT_BLUE_WOOL;
             // The road, or where it crosses the team coloured ring around a tower plaza.
-            Set<Material> allowed = Set.of(road, Material.BLUE_CONCRETE, Material.RED_CONCRETE);
+            Set<Material> allowed = Set.of(road, brick, Material.BLUE_CONCRETE, Material.RED_CONCRETE);
             int onRoad = 0;
             int outside = 0;
             List<LaneSites.Point> path = map.lanePath(lane);
@@ -310,7 +314,7 @@ class ToyKingdomMapTest {
                     BlockSpec floor = canvas.get(x, a.y() - 1, z);
                     assertNotNull(floor, lane + " floor under " + x + "," + z);
                     assertTrue(allowed.contains(floor.material()), lane + " road under " + x + "," + z + ": " + floor);
-                    onRoad += floor.material() == road ? 1 : 0;
+                    onRoad += floor.material() == road || floor.material() == brick ? 1 : 0;
                 }
             }
             assertTrue(onRoad >= outside * 0.9, lane + ": " + onRoad + " of " + outside + " places on the road");
