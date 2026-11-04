@@ -1,25 +1,29 @@
 #ifndef MCPL_GRADE_GLSL
 #define MCPL_GRADE_GLSL
 
-// MCPL 장난감 왕국 colour grade (docs/siege-v2.md §7.2): softer pastel saturation, slightly lifted lilac shadows and
-// warm cream highlights, applied to the lit colour of the world (terrain, block entities, entities, items, particles,
-// sky, clouds) before the fog. On while the served shader preset defines MCPL_COLOR_GRADE (include/mcpl_preset.glsl,
+// MCPL 장난감 왕국 colour grade (docs/siege-v2.md §7.2): gently softened saturation, a touch more contrast, slightly
+// lifted plum shadows and warm golden-hour highlights (pastel arena stays soft, the gold/crimson clockwork hall reads
+// warm and rich), applied to the lit colour of the world (terrain, block entities, entities, items, particles, sky,
+// clouds) before the fog. On while the served shader preset defines MCPL_COLOR_GRADE (include/mcpl_preset.glsl,
 // written by the plugin: resource-pack.shaders, /게임 셰이더); the GUI, its items and every text stay untouched.
 // tools/assetgen/grade_preview.py applies the same formula to map renders for before/after previews: keep them equal.
 
 #include <minecraft:fog.glsl>
 #include <minecraft:mcpl_preset.glsl>
 
-const float MCPL_GRADE_SATURATION = 0.9;    // < 1: softer colours
-const float MCPL_GRADE_LIFT = 0.055;        // lifts the shadows (most at black)
-const float MCPL_GRADE_BRIGHTEN = 0.08;     // lightens the mid tones (pastel)
-const vec3 MCPL_GRADE_SHADOW_TINT = vec3(0.012, 0.004, 0.024);   // a hint of lilac in the dark
-const vec3 MCPL_GRADE_HIGHLIGHT = vec3(1.03, 1.012, 0.975);      // warm cream highlights
+const float MCPL_GRADE_SATURATION = 0.95;   // < 1: slightly softer colours (gold and crimson stay rich)
+const float MCPL_GRADE_CONTRAST = 0.12;     // blends towards an S-curve: a little more depth
+const float MCPL_GRADE_LIFT = 0.05;         // lifts the shadows (most at black)
+const float MCPL_GRADE_BRIGHTEN = 0.07;     // lightens the mid tones (pastel)
+const vec3 MCPL_GRADE_SHADOW_TINT = vec3(0.016, 0.002, 0.014);   // a hint of plum in the dark
+const vec3 MCPL_GRADE_HIGHLIGHT = vec3(1.04, 1.01, 0.96);        // warm golden-hour highlights
 
 vec3 mcpl_grade(vec3 original) {
     vec3 c = max(original, vec3(0.0));
     float luma = dot(min(c, vec3(1.0)), vec3(0.2126, 0.7152, 0.0722));
     c = mix(vec3(luma), c, MCPL_GRADE_SATURATION);
+    vec3 unit = min(c, vec3(1.0));
+    c += MCPL_GRADE_CONTRAST * (unit * unit * (3.0 - 2.0 * unit) - unit);
     vec3 dark = vec3(1.0) - min(c, vec3(1.0));
     c += MCPL_GRADE_LIFT * dark * dark;
     c += MCPL_GRADE_BRIGHTEN * min(c, vec3(1.0)) * dark;

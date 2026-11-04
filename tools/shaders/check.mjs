@@ -34,7 +34,7 @@ if (!existsSync(join(VANILLA, 'core/terrain.fsh'))) {
 }
 
 // the MCPL feature macros (core/pack/ShaderPreset.Feature): every combination
-const FEATURES = ['MCPL_BUBBLE', 'MCPL_COLOR_GRADE'];
+const FEATURES = ['MCPL_BUBBLE', 'MCPL_COLOR_GRADE', 'MCPL_WARM_LIGHT'];
 const COMBOS = [];
 for (let mask = 0; mask < 1 << FEATURES.length; mask++) {
   COMBOS.push(FEATURES.filter((_, i) => mask & (1 << i)));
@@ -63,6 +63,7 @@ const VARIANTS = {
   particle: [{}, ...OIT_PASSES],
   sky: [{}],
   clouds: [{}, ...OIT_PASSES],
+  lightmap: [{}],
 };
 
 function source(rel, roots, files) {
@@ -106,14 +107,16 @@ function toEs(text, stage, defines, roots, files) {
   body = body.replace(/differenceCoefficientA \* waveletSignA/g, 'differenceCoefficientA * float(waveletSignA)');
   body = body.replace(/shouldSampleA \? averageAbsorbance : 0;/g, 'shouldSampleA ? averageAbsorbance : 0.0;');
   body = body.replace(/depthMeasuredInBins >= OIT_NUMBER_OF_DEPTH_BINS/g, 'depthMeasuredInBins >= float(OIT_NUMBER_OF_DEPTH_BINS)');
+  body = body.replace(/floor\((texCoord\.[xy]) \* 16\) \/ 15;/g, 'floor($1 * 16.0) / 15.0;');
   body = body.replace(/Position \+ \(ChunkPosition - CameraBlockPos\)/g, 'Position + vec3(ChunkPosition - CameraBlockPos)');
   const defs = Object.entries(defines).map(([k, v]) => `#define ${k} ${v}`).join('\n');
   return `#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n${defs}\n${body}`;
 }
 
-// core shaders whose vanilla vertex shader cannot be ES (clouds read a buffer texture): a stub that feeds the
-// fragment inputs instead (their vertex shader is vanilla's, only the fragment shader is ours)
-const STUB_VERTEX = new Set(['clouds']);
+// core shaders whose vanilla vertex shader cannot be ES (clouds read a buffer texture; lightmap is drawn by
+// screenquad.vsh with gl_VertexIndex): a stub that feeds the fragment inputs instead (their vertex shader is vanilla's,
+// only the fragment shader is ours)
+const STUB_VERTEX = new Set(['clouds', 'lightmap']);
 function stubVertex(fragmentEs) {
   const outs = [...fragmentEs.matchAll(/^\s*in\s+(\w+)\s+(\w+)\s*;/gm)].map(m => ({ type: m[1], name: m[2] }));
   return '#version 300 es\nprecision highp float;\n' + outs.map(o => `out ${o.type} ${o.name};\n`).join('')

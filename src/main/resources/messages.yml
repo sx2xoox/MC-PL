@@ -63,7 +63,7 @@ shader:
   off-name: "꺼짐"
   off-description: "셰이더 없이 (화면이 깨지거나 셰이더 모드를 쓸 때)"
   presets:
-    toy-kingdom: "장난감 왕국: 늘 켜진 파스텔 색감 + 비눗방울 보호막 (글자·HUD 색은 그대로)"
+    toy-kingdom: "장난감 왕국: 늘 켜진 파스텔·금빛 색감 + 따뜻한 랜턴 빛 + 비눗방울 보호막 (글자·HUD 색은 그대로)"
     bubble: "비눗방울 보호막만 (세상 색감은 바닐라 그대로)"
   changed: "<gray>셰이더를 <white><preset></white>(으)로 바꿨습니다. 접속 중인 <white><count></white>명에게 리소스팩을 다시 보냈습니다."
   changed-not-offered: "<gray>셰이더를 <white><preset></white>(으)로 바꿨습니다. <dark_gray>(리소스팩 보내기가 꺼져 있어 켜면 적용됩니다)"

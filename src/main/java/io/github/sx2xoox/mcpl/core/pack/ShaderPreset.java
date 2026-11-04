@@ -18,8 +18,11 @@ import org.jspecify.annotations.Nullable;
  */
 public enum ShaderPreset {
 
-    /** 장난감 왕국 (공성전 v2): the pastel colour grade everywhere in the world + the soap-bubble shield film. */
-    TOY_KINGDOM("toy-kingdom", "장난감왕국", EnumSet.of(Feature.COLOR_GRADE, Feature.BUBBLE)),
+    /**
+     * 장난감 왕국 (공성전 v2): the pastel / golden-hour colour grade everywhere in the world, slightly warmer block light
+     * and the soap-bubble shield film.
+     */
+    TOY_KINGDOM("toy-kingdom", "장난감왕국", EnumSet.of(Feature.COLOR_GRADE, Feature.WARM_LIGHT, Feature.BUBBLE)),
     /** Only the soap-bubble shield film: the world keeps its vanilla colours. */
     BUBBLE_ONLY("bubble", "보호막만", EnumSet.of(Feature.BUBBLE));
 
@@ -37,7 +40,9 @@ public enum ShaderPreset {
         BUBBLE("MCPL_BUBBLE", List.of("core/item.fsh")),
         /** The 장난감 왕국 colour grade of the world (include/mcpl_grade.glsl). */
         COLOR_GRADE("MCPL_COLOR_GRADE", List.of("core/terrain.fsh", "core/block.fsh", "core/entity.fsh",
-                "core/item.fsh", "core/particle.fsh", "core/sky.fsh", "core/clouds.fsh"));
+                "core/item.fsh", "core/particle.fsh", "core/sky.fsh", "core/clouds.fsh")),
+        /** Block light (lanterns, torches) a little warmer in the lightmap; level 15 (the GUI) stays vanilla. */
+        WARM_LIGHT("MCPL_WARM_LIGHT", List.of("core/lightmap.fsh"));
 
         private final String macro;
         private final List<String> shaders;

@@ -14,11 +14,12 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 # include/mcpl_grade.glsl
-SATURATION = 0.9
-LIFT = 0.055
-SHADOW_TINT = np.array([0.012, 0.004, 0.024])
-HIGHLIGHT = np.array([1.03, 1.012, 0.975])
-BRIGHTEN = 0.08
+SATURATION = 0.95
+CONTRAST = 0.12
+LIFT = 0.05
+SHADOW_TINT = np.array([0.016, 0.002, 0.014])
+HIGHLIGHT = np.array([1.04, 1.01, 0.96])
+BRIGHTEN = 0.07
 LUMA = np.array([0.2126, 0.7152, 0.0722])
 
 
@@ -33,6 +34,8 @@ def grade(rgb):
     c = np.maximum(original, 0.0)
     luma = (np.minimum(c, 1.0) * LUMA).sum(axis=-1, keepdims=True)
     c = luma + (c - luma) * SATURATION
+    unit = np.minimum(c, 1.0)
+    c = c + CONTRAST * (unit * unit * (3.0 - 2.0 * unit) - unit)
     dark = 1.0 - np.minimum(c, 1.0)
     c = c + LIFT * dark * dark
     c = c + BRIGHTEN * np.minimum(c, 1.0) * dark
@@ -66,6 +69,8 @@ SWATCHES = [
     ("day sky", (0x78, 0xa7, 0xff)), ("oak", (0xa2, 0x82, 0x4e)), ("red team", (0xb0, 0x2e, 0x26)),
     ("blue team", (0x3c, 0x44, 0xaa)), ("skin", (0xc6, 0x8e, 0x6b)), ("gold", (0xf5, 0xc5, 0x2c)),
     ("pastel pink", (0xf4, 0xb6, 0xc8)), ("cream", (0xf6, 0xec, 0xd4)), ("snow", (0xf8, 0xfd, 0xfd)),
+    ("mint mat", (0x9f, 0xe2, 0xc6)), ("quartz", (0xec, 0xe6, 0xdc)), ("crimson", (0x8c, 0x2a, 0x3a)),
+    ("deep purple", (0x4a, 0x2a, 0x5e)), ("lantern lit", (0xe8, 0xa8, 0x5a)), ("amber glass", (0xd0, 0x8a, 0x30)),
     ("shade", (0x3a, 0x3a, 0x40)), ("cave", (0x14, 0x14, 0x18)), ("night", (0x02, 0x03, 0x08)),
 ]
 

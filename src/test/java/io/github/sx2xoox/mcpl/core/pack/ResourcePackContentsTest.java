@@ -368,7 +368,7 @@ class ResourcePackContentsTest {
         String grade = text("assets/minecraft/shaders/include/mcpl_grade.glsl");
         assertTrue(grade.contains("#ifdef MCPL_COLOR_GRADE") && grade.contains("FogRenderDistanceEnd < 1.0e30"));
         String preview = Files.readString(Path.of("tools/assetgen/grade_preview.py"));
-        for (String constant : List.of("SATURATION", "LIFT", "BRIGHTEN", "SHADOW_TINT", "HIGHLIGHT")) {
+        for (String constant : List.of("SATURATION", "CONTRAST", "LIFT", "BRIGHTEN", "SHADOW_TINT", "HIGHLIGHT")) {
             String shader = grade.replaceAll("(?s).*const \\w+ MCPL_GRADE_" + constant + " = (?:vec3\\()?([0-9., ]+)\\)?;.*",
                     "$1");
             String python = preview.replaceAll("(?s).*\\n" + constant + " = (?:np\\.array\\(\\[)?([0-9., ]+)\\]?\\)?\\n.*",
