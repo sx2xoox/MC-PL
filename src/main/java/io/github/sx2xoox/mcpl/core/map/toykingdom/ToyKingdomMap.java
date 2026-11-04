@@ -93,7 +93,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int version() {
-        return 3;
+        return 4;
     }
 
     /** The zones in build order (exposed for tests and previews). */
@@ -114,12 +114,10 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
     public List<Spot> spawns(Side side) {
         int sx = ToyLayout.sign(side);
         float yaw = side == Side.BLUE ? -90 : 90;
+        int sz = ToyLayout.left(side);
         List<Spot> spots = new ArrayList<>();
-        for (int ax : ToyLayout.SPAWN_SPOT_AX) {
-            int[] az = ToyLayout.SPAWN_SPOT_AZ;
-            for (int z : new int[] {-az[1], -az[0], az[0], az[1]}) {
-                spots.add(new Spot(sx * ax, G + 1, z, yaw));
-            }
+        for (int[] spot : ToyLayout.SPAWN_SPOTS) {
+            spots.add(new Spot(sx * spot[0], G + 1, sz * spot[1], yaw));
         }
         return spots;
     }

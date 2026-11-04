@@ -19,9 +19,9 @@ import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
  *
  * <p>Inside: the core's stage in the middle (a white plate with a pastel ring, open {@link ToyLayout#CORE_RADIUS}
  * around and {@link ToyLayout#CORE_CLEARANCE} up) between four candy pillars, carpets in the team colour from the
- * three gates to the stage, a spawn mat inside each lane gate, the shop stall against the side wall on the team's left
- * (as it faces the enemy) between the front turret and the lane gate, two flower boxes inside the front gate and a
- * checker of floorboards and white tiles.
+ * three gates to the stage, the shop stall against the side wall on the team's left (as it faces the enemy) between
+ * the front turret and the lane gate with the spawn mat before it (in the front corner, inside the front gate), two
+ * flower boxes inside the front gate and a checker of floorboards and white tiles.
  */
 final class ToyCastleZone implements MapZone {
 

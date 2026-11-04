@@ -128,7 +128,7 @@ final class ToyKit {
 
     /**
      * The courtyard floor: the core's stage (a white plate with a pastel ring, rimmed in the team colour and white),
-     * carpets in the team colour from the gates to the stage, the spawn mats (pastel, white spots, a team coloured
+     * carpets in the team colour from the gates to the stage, the spawn mat (pastel, white spots, a team coloured
      * frame) and a checker of floorboards and white tiles everywhere else.
      */
     private static BlockSpec castleFloor(Side side, int ax, int z) {
@@ -149,25 +149,20 @@ final class ToyKit {
         if (frontCarpet || laneCarpet) {
             return strong(side);
         }
-        if (ax >= ToyLayout.SPAWN_AX1 && ax <= ToyLayout.SPAWN_AX2 && az >= ToyLayout.SPAWN_Z1
-                && az <= ToyLayout.SPAWN_Z2) {
-            boolean spot = contains(ToyLayout.SPAWN_SPOT_AX, ax) && contains(ToyLayout.SPAWN_SPOT_AZ, az);
+        int x = ToyLayout.sign(side) * ax;
+        if (ToyLayout.inSpawnMat(x, z, false)) {
+            boolean spot = false;
+            for (int[] s : ToyLayout.SPAWN_SPOTS) {
+                spot |= s[0] == ax && s[1] == az;
+            }
             return spot ? WHITE : pastel(side);
         }
-        if (ax >= ToyLayout.SPAWN_AX1 - 1 && ax <= ToyLayout.SPAWN_AX2 + 1 && az >= ToyLayout.SPAWN_Z1 - 1) {
+        if (ToyLayout.inSpawnMat(x, z, true)) {
             return strong(side);
         }
         return Math.floorMod(Math.floorDiv(ax, 2) + Math.floorDiv(z, 2), 2) == 0 ? WOOD : WHITE;
     }
 
-    private static boolean contains(int[] values, int value) {
-        for (int v : values) {
-            if (v == value) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     // ------------------------------------------------------------------ quarters
 

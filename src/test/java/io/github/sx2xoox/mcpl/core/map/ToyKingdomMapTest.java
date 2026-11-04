@@ -139,15 +139,23 @@ class ToyKingdomMapTest {
             double ahead = -Math.sin(yaw) * (core.x() - shop.x()) + Math.cos(yaw) * (core.z() - shop.z());
             assertTrue(ahead > 0.9 * Math.hypot(core.x() - shop.x(), core.z() - shop.z()),
                     side + " shopkeeper faces the courtyard: yaw " + shop.yaw());
-            double nearest = Double.MAX_VALUE;
-            for (LaneSites.Spot spawn : map.spawns(side)) {
+            List<LaneSites.Spot> spawns = map.spawns(side);
+            for (LaneSites.Spot spawn : spawns) {
+                // Every spawn lies within the shop's range (8) of the shopkeeper, on the team's left like the shop.
                 double d = Math.hypot(spawn.x() - shop.x(), spawn.z() - shop.z());
-                nearest = Math.min(nearest, d);
-                assertTrue(d <= 36, "the shop is in the castle of the spawn " + spawn);
+                assertTrue(d <= 8, side + " spawn " + spawn + " within the shop range: " + d);
+                assertEquals(Integer.signum(shop.z()), Integer.signum(spawn.z()), "spawn beside the shop " + spawn);
+                assertTrue(ToyLayout.inCourtyard(spawn.x(), spawn.z()), "spawn in the courtyard " + spawn);
+                // Off the core's stage (its rim) and so off the core's walls (within its radius).
+                assertTrue(Math.hypot(spawn.x() - core.x(), spawn.z() - core.z()) > ToyLayout.CORE_RADIUS + 2.5,
+                        "spawn off the core's stage " + spawn);
                 float expected = side == Side.BLUE ? -90 : 90;
                 assertEquals(expected, spawn.yaw(), 0.01, "spawns face the enemy base");
+                for (LaneSites.Spot other : spawns) {
+                    double apart = Math.hypot(spawn.x() - other.x(), spawn.z() - other.z());
+                    assertTrue(spawn == other || apart >= 1.5, "spawns " + spawn + " and " + other + " apart");
+                }
             }
-            assertTrue(nearest <= 16, side + " shop near its spawn mat: " + nearest);
         }
     }
 
@@ -323,8 +331,9 @@ class ToyKingdomMapTest {
                         double keep = hole ? Math.max(o.radius() + 4, campLeash(o.kind())) + 1 : o.radius() + 16;
                         assertTrue(Math.hypot(x - o.x(), z - o.z()) > keep, o.id() + at);
                     }
+                    // The spawn mat stands beside the shop inside the front gate: the same distance as the shop.
                     for (LaneSites.Spot spot : map.spawns(side)) {
-                        assertTrue(Math.hypot(x - spot.x(), z - spot.z()) > (hole ? 30 : 40), "a spawn" + at);
+                        assertTrue(Math.hypot(x - spot.x(), z - spot.z()) > (hole ? 20 : 40), "a spawn" + at);
                     }
                     assertTrue(Math.hypot(x - map.shop(side).x(), z - map.shop(side).z()) > (hole ? 20 : 40),
                             "the shop" + at);
@@ -444,7 +453,8 @@ class ToyKingdomMapTest {
         for (int i = 0; i < map.spawns(Side.BLUE).size(); i++) {
             LaneSites.Spot b = map.spawns(Side.BLUE).get(i);
             LaneSites.Spot r = map.spawns(Side.RED).get(i);
-            assertMirrored(b.x(), b.z(), r.x(), r.z(), "spawn " + i);
+            // The spawn mat stands beside the shop on each team's left: point symmetric too.
+            assertMirrored(b.x(), b.z(), r.x(), -r.z(), "spawn " + i + " (point symmetric)");
         }
         for (ObjectiveKind kind : ObjectiveKind.values()) {
             if (kind == ObjectiveKind.DRAGON) {

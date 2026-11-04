@@ -66,16 +66,18 @@ public final class ToyLayout {
     public static final int GATE_AX = 80;
     public static final int GATE_HALF = 3;
     /**
-     * The two spawn mats beside the stage, right inside the lane gates ({@code |x|} SPAWN_AX1..SPAWN_AX2,
-     * {@code |z|} SPAWN_Z1..SPAWN_Z2).
+     * The spawn mat in the front corner of the courtyard on each team's left, beside the shop stall and inside the front
+     * gate ({@code |x|} SPAWN_AX1..SPAWN_AX2, {@code |z|} SPAWN_Z1..SPAWN_Z2 on the side's {@link #left}): every spawn
+     * spot lies within the shop's range (8) of the shopkeeper, off the core's stage and its pillars. Point symmetric
+     * like the shop.
      */
-    public static final int SPAWN_AX1 = 85;
-    public static final int SPAWN_AX2 = 93;
-    public static final int SPAWN_Z1 = 12;
-    public static final int SPAWN_Z2 = 16;
-    /** The spawn spots on each mat ({@code |x|}, {@code |z|}). */
-    public static final int[] SPAWN_SPOT_AX = {86, 91};
-    public static final int[] SPAWN_SPOT_AZ = {13, 15};
+    public static final int SPAWN_AX1 = 66;
+    public static final int SPAWN_AX2 = 70;
+    public static final int SPAWN_Z1 = 8;
+    public static final int SPAWN_Z2 = 14;
+    /** The spawn spots on the mat ({@code |x|}, {@code |z|} on the side's left), two blocks apart. */
+    public static final int[][] SPAWN_SPOTS = {{68, 11}, {66, 11}, {70, 11}, {68, 9}, {68, 13}, {66, 13},
+        {70, 9}, {70, 13}};
     /**
      * The shop stall stands against the side wall on each team's left as it faces the enemy (BLUE looks to +x, so its
      * left is −z; RED looks to −x, its left is +z), between the front turret and the lane gate: the shopkeeper behind
@@ -91,6 +93,15 @@ public final class ToyLayout {
     /** The sign of the z of a side's left (BLUE −z, RED +z): where its shop stands. */
     public static int left(Side side) {
         return sign(side);
+    }
+
+    /** True for the columns of a spawn mat (either side's; {@code frame} widens it by its one-block frame). */
+    public static boolean inSpawnMat(int x, int z, boolean frame) {
+        int ax = Math.abs(x);
+        int az = Math.abs(z);
+        int f = frame ? 1 : 0;
+        return Integer.signum(z) == left(sideOf(x)) && ax >= SPAWN_AX1 - f && ax <= SPAWN_AX2 + f
+                && az >= SPAWN_Z1 - f && az <= SPAWN_Z2 + f;
     }
 
     /** True for the columns of a shop stall (either side's). */
