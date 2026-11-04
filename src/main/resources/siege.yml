@@ -57,7 +57,7 @@ pool:
 round:
   title: "<gold><bold><round>라운드"
   subtitle: "<gray>라운드 스코어 <white><a> : <b>"
-  started: "<gold><round>라운드</gold><gray> 시작!"
+  started: "<gold><round>라운드</gold><gray> 시작"
   won-title: "<team><gold><bold> 라운드 승리!"
   won-subtitle: "<white><a></white><gray> : </gray><white><b></white>"
   won: "<gold><round>라운드</gold><gray> 승리: <team><gray> (<reason>) — <white><a> : <b>"
@@ -81,13 +81,13 @@ overtime:
   announce: "<red>동점! 연장전 <white><seconds>초</white></red><gray> · 먼저 점수 내는 팀 승리"
 
 spawn:
-  zone-warning: "<red><bold>적 본진!</bold>"
+  zone-warning: "<red>적 본진에 진입해 피해를 입습니다."
   protection-ended: "<gray>부활 보호가 풀렸습니다"
 
 structure:
   bar-name: "<team> <white><name>"
-  shielded: "<aqua>🛡 보호막</aqua><gray> · 바깥 타워 먼저"
-  core-shielded: "<aqua>🛡 보호막</aqua><gray> · 안쪽 타워 먼저"
+  shielded: "<gray>바깥 타워를 먼저 파괴하세요."
+  core-shielded: "<gray>안쪽 타워를 먼저 파괴하세요."
   under-attack: "<red><bold>⚠ 우리 <name> 공격받는 중!</bold></red> <white><percent>%"
   health-warning: "<red>⚠ 우리 <name> 체력 <white><percent>%</white>!"
   destroyed-title: "<red><bold><name> 파괴!"
@@ -265,11 +265,9 @@ jungle:
   status-contested: "<yellow>경합 중!"
   hud-up: "<name> <green>등장</green>"
   hud-down: "<name> <white><time></white>"
-  dragon-spawned: "<name><gray> 등장!"
+  dragon-spawned: "<gray>드래곤이 생성되었습니다."
   small-cleared: "<name><gray> 처치!"
   taken:
-    teddy: "<team><gray> <white><player></white> · <name> 처치"
-    rabbit: "<team><gray> <white><player></white> · <name> 처치"
     fountain: "<team><gray> · <name> 점령"
     telescope: "<team><gray> · <name> 점령"
     dragon: "<team><gray> <white><player></white> · <name> 처치"

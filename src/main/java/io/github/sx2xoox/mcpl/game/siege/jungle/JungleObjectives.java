@@ -670,6 +670,9 @@ public final class JungleObjectives implements Listener {
                     }
                 }
             }
+            case TEDDY, RABBIT -> {
+                // no chat line for the buff monsters: the buff itself says it to whoever got it
+            }
             default -> arena.broadcast(messages.prefixed("jungle.taken." + key(site.kind()),
                     Messages.tag("team", team), Messages.tag("player", who), Messages.tag("name", siteName(site))));
         }
