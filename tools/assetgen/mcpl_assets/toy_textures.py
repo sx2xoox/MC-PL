@@ -14,6 +14,7 @@ Soap bubble (t_bubble): every pixel has alpha BUBBLE_ALPHA, the marker the pack'
 iridescent film (assets/minecraft/shaders/core/item.fsh); without the shaders it still reads as a pale rainbow film.
 """
 
+import functools
 import math
 import random
 
@@ -405,3 +406,82 @@ SURFACES = {
 T.SURFACES.update(SURFACES)
 T.TRANSLUCENT.add("t_bubble")
 T.TRANSLUCENT.add("t_glass")
+
+
+# ------------------------------------------------------------------------------------------------
+# round end plates (models/props.py `cyl`): one flat face cut to a polygon instead of eight crossing bar ends
+# ------------------------------------------------------------------------------------------------
+
+def polygon_cover(sides, size):
+    """The pixels of a size x size texture that a regular `sides`-gon touches: the polygon fills the texture with its
+    flat sides on the texture's edges (apothem = half the texture). A pixel counts when any part of it is inside, so a
+    plate cut to this always covers the polygon (never a pinhole into the bar), at most one pixel more."""
+    return _cover(sides, size)
+
+
+@functools.lru_cache(maxsize=None)
+def _cover(sides, size):
+    # the pixel square (half side h) reaches past the side with normal n by h * (|nx| + |ny|) beyond its middle
+    h = 1 / size
+    sides_n = [(math.cos(2 * math.pi * k / sides), math.sin(2 * math.pi * k / sides)) for k in range(sides)]
+    reach = [(nx, ny, 1 + h * (abs(nx) + abs(ny)) - 1e-9) for nx, ny in sides_n]
+    keep = set()
+    for j in range(size):
+        cy = -1 + (2 * j + 1) / size
+        for i in range(size):
+            cx = -1 + (2 * i + 1) / size
+            if all(cx * nx + cy * ny < lim for nx, ny, lim in reach):
+                keep.add((i, j))
+    return frozenset(keep)
+
+
+def painted_cap(name, sides, size, colour):
+    """Registers a polygon end plate whose pixels come from colour(i, j, u, v) (pixel, and u, v in -1..1 from the
+    middle; v up the texture) and returns its name. Pixels outside the polygon are clear."""
+    if name not in T.SURFACES:
+        def draw():
+            im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            px = im.load()
+            for i, j in polygon_cover(sides, size):
+                u, v = -1 + (2 * i + 1) / size, 1 - (2 * j + 1) / size
+                px[i, j] = colour(i, j, u, v)
+            return im
+        T.SURFACES[name] = draw
+    return name
+
+
+def sampler(tex):
+    """Pixel lookup (x, y) -> colour in `tex`, tiled, the texture loaded on first use."""
+    state = []
+
+    def at(x, y):
+        if not state:
+            im = T.first_frame(tex)
+            state.extend((im.load(), im.width, im.height))
+        px, w, h = state
+        return px[x % w, y % h]
+    return at
+
+
+def cap(tex, sides, width):
+    """The end plate of a round bar `width` blocks across in `tex`: the texture cut to the polygon. The cut is fine
+    (CAP_CUT pixels per block, so the plate's edge follows the round wall), the texture's own pixels keep about the
+    toy textures' size (CAP_DENSITY per block)."""
+    size = 16
+    while size < min(CAP_MAX, width * CAP_CUT):
+        size *= 2
+    k = width * CAP_DENSITY / size      # texture pixels per plate pixel
+
+    at = sampler(tex)
+
+    def colour(i, j, u, v):
+        return at(int(i * k), int(j * k))
+    name = painted_cap(f"{tex}_cap{sides}_{round(width * 100)}", sides, size, colour)
+    if tex in T.TRANSLUCENT:
+        T.TRANSLUCENT.add(name)
+    return name
+
+
+CAP_DENSITY = 10     # texture pixels per block on an end plate (the toy textures show 6-16 at the props' scales)
+CAP_CUT = 64         # plate pixels per block along its cut edge (1/64 block: the edge follows the round wall)
+CAP_MAX = 512

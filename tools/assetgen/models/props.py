@@ -35,48 +35,77 @@ The second batch:
 Every model is designed in blocks at real size, base at y = 0 (the ground's top; for the floating boat and duck the
 water's surface), front towards -z (vehicles head -z), then shown at the display scale / centre of PROPS (kept in
 sync with the Java side once the map places them).
+
+Round parts without the overlap mess: a round bar (cyl) is turned bars for its wall only, each end one flat plate whose
+texture is cut to the polygon (toy_textures.cap; the lollipop paints its swirl on it), and painted dots are such
+plates too (dot_y); arcs (arc_xy) and hollow walls (tube) meet corner to corner instead of overlapping by a margin;
+stripes on bent or many-sided parts are painted part by part (red, white) rather than a striped texture that breaks
+up at every turned face. Every prop model also runs Model._turned_overlaps: turned faces must not z-fight either.
 """
 
 import math
 
-from mcpl_assets import toy_textures  # noqa: F401  (registers the t_* textures)
+from mcpl_assets import toy_textures  # registers the t_* textures
 from mcpl_assets.toykit import EPS, Build
 
 def _rot(axis, angle, origin):
     return {"rotation": (axis, angle, origin)} if angle else {}
 
 
-def cyl(b, name, centre, r, a0, a1, tex, axis="y", sides=16, **kw):
+def cyl(b, name, centre, r, a0, a1, tex, axis="y", sides=16, ends=(True, True), cap_tex=None, **kw):
     """A round bar (a regular 8- or 16-gon, `r` to its corners) along `axis` from a0 to a1, centred on `centre` (the
     two other coordinates, in x, y, z order): the union of bars through the middle, one per side pair, each as long as
-    the polygon is wide and as wide as one side. Their ends are staggered so no two caps share a plane."""
+    the polygon is wide and as wide as one side, which make the round wall. The bars have no end faces (eight crossing
+    ends on one plane flicker and show their seams): each end is one flat plate cut to the polygon by its texture
+    (toy_textures.cap; `cap_tex` = an own painted plate, toy_textures.painted_cap). `ends` = (a0 end, a1 end): leave
+    out an end that sits inside something else."""
     ap = r * math.cos(math.pi / sides)
     half_side = ap * math.tan(math.pi / sides)
     step = 360 / sides
     count = sides // 2
-    e = min(EPS / 3, (a1 - a0) / (4 * count))
+    end_faces = {"y": ("down", "up"), "x": ("west", "east"), "z": ("north", "south")}[axis]
+    faces = dict(kw.pop("faces", None) or {})
+    cu, cv = centre
     for i in range(count):
-        phi = i * step
-        lo, hi = a0 + i * e, a1 - i * e
-        mid = (lo + hi) / 2
-        t = _norm(phi)
-        if -45 <= t <= 45:
+        t = _norm(i * step)
+        along_u = -45 <= t <= 45
+        if along_u:
             du, dv, angle = ap, half_side, t
         else:
             du, dv, angle = half_side, ap, _norm(t - 90)
-        # (u, v) is the cross-section plane: (x, z) about y, (y, z) about x, (x, y) about z; the angle turns u to v
-        cu, cv = centre
+        # (u, v) is the cross-section plane: (x, z) about y, (y, z) about x, (x, y) about z; the angle turns u to v.
+        # A bar's long sides are inside the polygon: no faces (their edges would draw seams across the ends)
+        inner = _INNER[axis][0 if along_u else 1]
+        bar_faces = {**faces, end_faces[0]: None, end_faces[1]: None, inner[0]: None, inner[1]: None}
+        mid = (a0 + a1) / 2
         if axis == "y":
-            # a turn about y takes +x towards -z, so v = -z
-            frm, to = (cu - du, lo, cv - dv), (cu + du, hi, cv + dv)
+            frm, to = (cu - du, a0, cv - dv), (cu + du, a1, cv + dv)
             rot = _rot("y", angle, (cu, mid, cv))
         elif axis == "x":
-            frm, to = (lo, cu - du, cv - dv), (hi, cu + du, cv + dv)
+            frm, to = (a0, cu - du, cv - dv), (a1, cu + du, cv + dv)
             rot = _rot("x", angle, (mid, cu, cv))
         else:
-            frm, to = (cu - du, cv - dv, lo), (cu + du, cv + dv, hi)
+            frm, to = (cu - du, cv - dv, a0), (cu + du, cv + dv, a1)
             rot = _rot("z", angle, (cu, cv, mid))
-        b.box(f"{name}_{i}", frm, to, tex, **kw, **rot)
+        b.box(f"{name}_{i}", frm, to, tex, faces=bar_faces, **kw, **rot)
+    plate = cap_tex or toy_textures.cap(tex, sides, round(2 * ap, 2))
+    for end, (a, face) in enumerate(zip((a0, a1), end_faces)):
+        if not ends[end]:
+            continue
+        if axis == "y":
+            frm, to = (cu - ap, a, cv - ap), (cu + ap, a, cv + ap)
+        elif axis == "x":
+            frm, to = (a, cu - ap, cv - ap), (a, cu + ap, cv + ap)
+        else:
+            frm, to = (cu - ap, cv - ap, a), (cu + ap, cv + ap, a)
+        b.box(f"{name}_end{end}", frm, to, plate, faces={f: (plate if f == face else None) for f in FACE_NAMES},
+              full_uv=(face,), **kw)
+
+
+FACE_NAMES = ("north", "east", "south", "west", "up", "down")
+# the inside faces of a round bar's bars about each axis: (bar long along u, bar long along v)
+_INNER = {"y": (("north", "south"), ("east", "west")), "x": (("north", "south"), ("up", "down")),
+          "z": (("up", "down"), ("east", "west"))}
 
 
 def _norm(angle):
@@ -99,18 +128,39 @@ def bar_xy(b, name, c, direction, length, half_w, z0, z1, tex, **kw):
     b.box(name, frm, to, tex, **kw, **_rot("z", angle, (x, y, (z0 + z1) / 2)))
 
 
-def arc_xy(b, name, c, radius, first, last, half_w, z0, z1, tex, overlap=1.15, stagger=True, **kw):
+def arc_xy(b, name, c, radius, first, last, half_w, z0, z1, tex, stagger=True, **kw):
     """An arc of bars around c in the x-y plane: one bar per 22.5 degrees, bisectors from `first` to `last` degrees
-    (multiples of 22.5, either direction). Neighbours alternate their depth by EPS (no shared front planes)."""
+    (multiples of 22.5, either direction), `radius` to the bars' middle line. Each bar is exactly as long as its
+    sector's outer chord, so neighbours meet corner to corner on the outside (no corner sticks out, no notch) and
+    their inner corners stay inside the neighbour. Neighbours step their depth by EPS (the small wedge where they
+    overlap has no shared front plane): in twos, or in threes for a thick arc whose inner corners reach past the
+    neighbour's middle to the next bar. `tex` may be a sequence: bar k takes tex[k % len(tex)] (painted stripes)."""
     step = 22.5 if last >= first else -22.5
     n = int(round((last - first) / step)) + 1
-    length = 2 * (radius + half_w) * math.tan(math.radians(11.25)) * overlap
+    length = 2 * (radius + half_w) * math.tan(math.radians(11.25))
+    cycle = 3 if math.degrees(math.atan2(length / 2, radius - half_w)) > 22.5 else 2
+    assert not (cycle == 3 and n == 16), f"{name}: a closed ring this thick cannot stagger its bars"
     for k in range(n):
         phi = first + k * step
         x = c[0] + radius * math.cos(math.radians(phi))
         y = c[1] + radius * math.sin(math.radians(phi))
-        e = EPS if stagger and k % 2 else 0
-        bar_xy(b, f"{name}_{k}", (x, y), phi + 90, length, half_w, z0 - e, z1 + e, tex, **kw)
+        e = EPS * (k % cycle) if stagger else 0
+        t = tex if isinstance(tex, str) else tex[k % len(tex)]
+        bar_xy(b, f"{name}_{k}", (x, y), phi + 90, length, half_w, z0 - e, z1 + e, t, **kw)
+
+
+def nudge(b, name, d):
+    """Moves the box `name` by d = (dx, dy, dz) (its turn's origin too): takes one of two crossing boxes off the
+    plane they share."""
+    for i, (n, frm, to, tex, kw) in enumerate(b.boxes):
+        if n == name:
+            kw = dict(kw)
+            if kw.get("rotation"):
+                axis, angle, origin = kw["rotation"]
+                kw["rotation"] = (axis, angle, tuple(o + v for o, v in zip(origin, d)))
+            b.boxes[i] = (n, tuple(a + v for a, v in zip(frm, d)), tuple(a + v for a, v in zip(to, d)), tex, kw)
+            return
+    raise KeyError(name)
 
 
 def puff(b, name, c, size, tex="t_white"):
@@ -125,22 +175,40 @@ def puff(b, name, c, size, tex="t_white"):
 # ------------------------------------------------------------------------------------------------
 
 LOLLIPOP_Y = 8.6        # the sweet's middle above the ground
+SWEET_R = 3.3
+
+
+def _swirl(r, sides=16):
+    """The lollipop's face: two red and two white bands winding out from a butter middle (a band pair every block
+    outwards, like the rings it replaces), a red rim; the toy textures' own pixels (t_cherry, t_white)."""
+    ap = r * math.cos(math.pi / sides)
+    size = toy_textures.CAP_MAX
+    k = 2 * ap * toy_textures.CAP_DENSITY / size
+    tex = {n: toy_textures.sampler(n) for n in ("t_cherry", "t_white", "t_butter")}
+
+    def colour(i, j, u, v):
+        rr = math.hypot(u, v) * ap
+        if rr < 0.85:
+            name = "t_butter"
+        elif rr > ap - 0.3:
+            name = "t_cherry"
+        else:
+            phase = (2 * math.atan2(v, u) / (2 * math.pi) + rr / 1.0) % 1
+            name = "t_cherry" if phase < 0.5 else "t_white"
+        return tex[name](int(i * k), int(j * k))
+    return toy_textures.painted_cap(f"t_swirl{sides}_{round(r * 100)}", sides, size, colour)
 
 
 def lollipop():
     b = Build()
     cyl(b, "foot", (0, 0), 0.75, 0, 0.3, "t_white")
     cyl(b, "foot_top", (0, 0), 0.45, 0.3, 0.55, "t_white")
-    cyl(b, "stick", (0, 0), 0.17, 0.55, LOLLIPOP_Y - 2.6, "t_white", sides=8)
-    # the sweet: a thick disc, the swirl as rings of alternating colour standing a hair proud of each other, their
-    # middles drifting round so the rings read as a spiral
+    cyl(b, "stick", (0, 0), 0.17, 0.55, LOLLIPOP_Y - 2.6, "t_white", sides=8, ends=(True, False))
+    # the sweet: one thick disc with the red-and-white swirl painted on both faces (one plate each, no stacked
+    # rings), a lit butter bead standing out of its middle
     y = LOLLIPOP_Y
-    rings = ((3.3, "t_cherry", 0.0, 0.0), (2.8, "t_white", 0.12, 0.05), (2.3, "t_cherry", 0.02, 0.16),
-             (1.8, "t_white", -0.1, 0.08), (1.3, "t_cherry", -0.04, -0.06), (0.8, "t_butter", 0.03, 0.0))
-    for n, (r, tex, dx, dy) in enumerate(rings):
-        half = 0.42 + n * 0.06
-        glow = tex == "t_butter"
-        cyl(b, f"sweet_{n}", (dx, y + dy), r, -half, half, tex, axis="z", glow=glow)
+    cyl(b, "sweet", (0, y), SWEET_R, -0.48, 0.48, "t_cherry", axis="z", cap_tex=_swirl(SWEET_R))
+    cyl(b, "sweet_light", (0, y), 0.8, -0.66, 0.66, "t_butter", axis="z", glow=True)
     # a ribbon bow under the sweet: a knot and two loops tilted outwards, two short tails
     by = LOLLIPOP_Y - 3.75
     b.box("bow_knot", (-0.24, by - 0.2, -0.24), (0.24, by + 0.2, 0.24), "t_rose")
@@ -160,13 +228,18 @@ def candy_cane():
     cyl(b, "icing", (0, 0), 0.75, 0, 0.22, "t_white")
     cyl(b, "icing_top", (0, 0), 0.5, 0.22, 0.38, "t_white")
     top = 5.8
-    cyl(b, "post", (0, 0), 0.42, 0.3, top, "t_candy_red", sides=8)
-    # the hook: round over the top towards +x and down again, a rounded tip
+    # the post in red and white bands like the hook's (a striped texture breaks up at every face of the octagon)
+    bands = 10
+    for n in range(bands):
+        y0, y1 = 0.3 + (top - 0.3) * n / bands, 0.3 + (top - 0.3) * (n + 1) / bands
+        cyl(b, f"post_{n}", (0, 0), 0.42, y0, y1, ("t_white", "t_cherry")[n % 2], sides=8, ends=(False, False))
+    # the hook: round over the top towards +x and down again, a rounded tip; the stripes are painted bar by bar
+    # (red, white) so they follow the curve instead of crossing it at every bar's own angle
     r = 1.05
-    arc_xy(b, "hook", (r, top), r, 180, -22.5, 0.4, -0.4, 0.4, "t_candy_red", overlap=1.3)
+    arc_xy(b, "hook", (r, top), r, 180, -22.5, 0.4, -0.4, 0.4, ("t_cherry", "t_white"))
     tip_x = r + r * math.cos(math.radians(-22.5))
     tip_y = top + r * math.sin(math.radians(-22.5))
-    b.rbox("tip", (tip_x - 0.36, tip_y - 0.62, -0.36), (tip_x + 0.36, tip_y - 0.1, 0.36), "t_candy_red", 0.12,
+    b.rbox("tip", (tip_x - 0.36, tip_y - 0.62, -0.36), (tip_x + 0.36, tip_y - 0.1, 0.36), "t_cherry", 0.12,
            top=False)
     # a green ribbon bow round the post
     by = 4.2
@@ -175,6 +248,7 @@ def candy_cane():
              rotation=("z", -22.5, (-0.4, by, -0.5)))
     b.mirror("ribbon_tail", (-0.32, by - 0.8, -0.56), (-0.12, by - 0.1, -0.47), "t_lime",
              rotation=("z", 22.5, (-0.12, by - 0.1, -0.5)))
+    nudge(b, "ribbon_tail_r", (0, 0, -EPS))
     return b
 
 
@@ -416,7 +490,7 @@ def boat():
     for n, (y0, y1, hw, zf, zb, tex) in enumerate(layers):
         b.rbox(f"hull_{n}", (-hw, y0, zf), (hw, y1, zb), tex, min(0.35, hw * 0.35), top=False, bottom=n == 0)
         side = hw * math.sqrt(2)
-        e = EPS * (n + 1)
+        e = EPS * (n + 1.5)
         b.box(f"bow_{n}", (-side / 2, y0 + e, zf - side / 2), (side / 2, y1 - e, zf + side / 2), tex,
               rotation=("y", 45, (0, (y0 + y1) / 2, zf)))
     b.box("deck", (-1.18, 1.0, -1.8), (1.18, 1.06, 2.5), "t_wood")
@@ -549,10 +623,11 @@ def rainbow():
 
 def tube(b, name, centre, r, y0, y1, thick, tex, sides=16, **kw):
     """A hollow round wall (a regular `sides`-gon, `r` to its corners, `thick` deep) around y from y0 to y1: one
-    panel per side, turned about y, a little wider than a side so the corners close; neighbours stagger their ends."""
+    panel per side, turned about y, exactly one side wide on the outside, so neighbours meet corner to corner (no
+    corner sticks out) and their inner corners overlap inside the wall; neighbours stagger their ends."""
     cx, cz = centre
     ap = r * math.cos(math.pi / sides)
-    hs = (ap + thick) * math.tan(math.pi / sides) + 0.02
+    hs = ap * math.tan(math.pi / sides)
     for k in range(sides):
         phi = k * 360 / sides
         q = int(round(phi / 90)) % 4
@@ -627,12 +702,17 @@ def sphere(b, name, c, r, tex, slices=5, sides=16):
         cyl(b, f"{name}_{k}", (x, z), rr, y0 + (EPS if k else 0), y1, tex, sides=sides)
 
 
-def dot_y(b, name, cx, y, cz, r, depth, tex, **kw):
-    """An octagonal flat dot on a top face at height y (three boxes), e.g. holes in the cheese."""
-    a, d = r * 0.414, r * 0.707
-    b.box(name + "_a", (cx - r, y, cz - a), (cx + r, y + depth, cz + a), tex, **kw)
-    b.box(name + "_b", (cx - a, y, cz - r), (cx + a, y + depth + EPS, cz + r), tex, **kw)
-    b.box(name + "_c", (cx - d, y, cz - d), (cx + d, y + depth + 2 * EPS, cz + d), tex, **kw)
+DECAL_LIFT = 1 / 128    # a painted dot's plate floats this far off its face (no shared plane, no visible gap)
+
+
+def dot_y(b, name, cx, y, cz, r, tex, sides=16, **kw):
+    """A round flat dot painted on a top face at height y, e.g. holes in the cheese: one plate cut to a `sides`-gon
+    by its texture (where three crossing boxes stacked their corners)."""
+    ap = r * math.cos(math.pi / sides)
+    plate = toy_textures.cap(tex, sides, round(2 * ap, 2))
+    y += DECAL_LIFT
+    b.box(name, (cx - ap, y, cz - ap), (cx + ap, y, cz + ap), plate,
+          faces={f: (plate if f == "up" else None) for f in FACE_NAMES}, full_uv=("up",), **kw)
 
 
 def dot_z(b, name, cx, cy, z, r, depth, tex):
@@ -647,7 +727,10 @@ def dot_z(b, name, cx, cy, z, r, depth, tex):
 def cotton_tree():
     b = Build()
     cyl(b, "foot", (0, 0), 0.6, 0, 0.16, "t_white")
-    cyl(b, "stick", (0, 0), 0.22, 0.16, 3.4, "t_candy", sides=8)
+    # the stick in rose and white bands (a striped texture breaks up at every face of the octagon)
+    for n in range(6):
+        y0, y1 = 0.16 + (3.4 - 0.16) * n / 6, 0.16 + (3.4 - 0.16) * (n + 1) / 6
+        cyl(b, f"stick_{n}", (0, 0), 0.22, y0, y1, ("t_rose", "t_snow")[n % 2], sides=8, ends=(False, False))
     # the fluff: a round core, a ring of puffs, a deeper pink underside, white tufts on top
     b.rbox("core", (-2.3, 2.95, -2.3), (2.3, 6.85, 2.3), "t_pink", 1.0)
     for k in range(8):
@@ -733,11 +816,12 @@ MARBLES = ("t_cherry", "t_sky", "t_butter", "t_rose", "t_mint", "t_cobalt", "t_l
 
 
 def _marble(b, name, x, y, z, tex, s=0.62):
-    """A marble: a chamfered cube with its corners filled in (reads round at any angle)."""
+    """A marble: a full-width middle and a narrower core through it, top to bottom (a stepped ball: two boxes that
+    share no plane, where a chamfered cube with a corner filler poked lumps and slivers out)."""
     h = s / 2
-    b.rbox(name, (x - h, y, z - h), (x + h, y + s, z + h), tex, 0.18)
-    c = h * 0.72
-    b.box(name + "_c", (x - c, y + h - c, z - c), (x + c, y + h + c, z + c), tex)
+    c = h * 0.62
+    b.box(name, (x - h, y + s * 0.2, z - h), (x + h, y + s * 0.8, z + h), tex)
+    b.box(name + "_core", (x - c, y, z - c), (x + c, y + s, z + c), tex)
 
 
 def marble_jar():
@@ -755,7 +839,7 @@ def marble_jar():
             for i in range(count):
                 ang = math.radians(i * 360 / count + layer * 11.25 + rr * 7)
                 x, z = rr * math.cos(ang), rr * math.sin(ang)
-                _marble(b, f"marble_{layer}_{k}", x, y, z, MARBLES[(k * 3 + layer) % len(MARBLES)])
+                _marble(b, f"marble_{layer}_{k}", x, y + (k % 4) * EPS / 2, z, MARBLES[(k * 3 + layer) % len(MARBLES)])
                 k += 1
     _marble(b, "marble_top", 0.05, 3.15, -0.08, "t_cherry")
     # the wooden lid with a knob, a ribbon round the neck with a bow in front
@@ -767,15 +851,16 @@ def marble_jar():
     b.box("bow_knot", (-0.2, by - 0.17, bz - 0.2), (0.2, by + 0.17, bz), "t_rose")
     b.mirror("bow_loop", (-0.85, by - 0.24, bz - 0.14), (-0.18, by + 0.24, bz - 0.04), "t_rose",
              rotation=("z", -22.5, (-0.18, by, bz)))
-    b.mirror("bow_tail", (-0.38, by - 0.8, bz - 0.12), (-0.18, by - 0.12, bz - 0.04), "t_rose",
+    b.mirror("bow_tail", (-0.38, by - 0.8, bz - 0.12 - EPS), (-0.18, by - 0.12, bz - 0.04 - EPS), "t_rose",
              rotation=("z", 22.5, (-0.18, by - 0.12, bz)))
+    nudge(b, "bow_tail_r", (0, 0, -EPS))
     # a white label on the front with a pink heart
     ap = JAR_R * math.cos(math.pi / 16)
     b.box("label", (-0.62, 1.35, -ap - 0.03), (0.62, 2.45, -ap), "t_white")
     glyph(b, "label_heart", "heart", "-z", (0, 1.9, -ap - 0.03), 0.16, 0.03, "t_rose")
     # spilled marbles
     for n, (x, z, tex) in enumerate(((2.55, -1.15, "t_sky"), (2.0, -2.35, "t_cherry"), (-2.6, 1.5, "t_butter"))):
-        _marble(b, f"spilled_{n}", x, 0, z, tex)
+        _marble(b, f"spilled_{n}", x, EPS / 2, z, tex)     # off the jar foot's ground plane
     return b
 
 
@@ -991,9 +1076,9 @@ def cheese():
           rotation=rot)
     # holes: on the slope (in its own frame), on the top, on the sides and the high end
     for n, (u, z, r) in enumerate(((-1.0, -1.6, 0.36), (-2.1, 0.9, 0.42), (-0.7, 2.3, 0.27), (-2.5, -2.6, 0.25))):
-        dot_y(b, f"slope_hole_{n}", -1.3 + u, CHEESE_TOP, z, r, 0.03, "t_cheese_hole", rotation=rot)
+        dot_y(b, f"slope_hole_{n}", -1.3 + u, CHEESE_TOP, z, r, "t_cheese_hole", rotation=rot)
     for n, (x, z, r) in enumerate(((-0.45, 1.5, 0.36), (-0.75, -2.4, 0.26), (0.1, -1.0, 0.2))):
-        dot_y(b, f"top_hole_{n}", x, CHEESE_TOP, z, r, 0.03, "t_cheese_hole")
+        dot_y(b, f"top_hole_{n}", x, CHEESE_TOP, z, r, "t_cheese_hole")
     sides = (("front", zf, -1, ((-2.75, 0.45, 0.27), (-0.55, 2.25, 0.42), (-1.55, 1.15, 0.33), (0.15, 0.6, 0.24))),
              ("back", zb, 1, ((-2.3, 0.5, 0.3), (-0.4, 1.4, 0.38), (-0.95, 2.5, 0.24), (-3.0, 0.4, 0.2))))
     for side, z, s, holes in sides:
@@ -1042,7 +1127,8 @@ def _ear(b, name, s):
     b.rbox(name + "_tip", (x - 1.0 + EPS, EAR_BEND - 0.1, -0.55 + EPS), (x + 1.0 - EPS, 7.9, 0.55 - EPS), "t_fur", 0.45,
            top=False, bottom=False, rotation=rot)
     b.rbox(name + "_cap", (x - 0.78, 7.75, -0.47), (x + 0.78, 8.55, 0.47), "t_fur", 0.4, bottom=False, rotation=rot)
-    b.box(name + "_inner_tip", (x - 0.55, EAR_BEND - 0.1, -0.6), (x + 0.55, 7.75, -0.55 + EPS), "t_pink", rotation=rot)
+    b.box(name + "_inner_tip", (x - 0.55, EAR_BEND - 0.1, -0.6 - EPS), (x + 0.55, 7.75, -0.55 + EPS), "t_pink",
+          rotation=rot)
     b.box(name + "_inner_top", (x - 0.38, 7.75 - EPS, -0.52), (x + 0.38, 8.15, -0.47 + EPS), "t_pink", rotation=rot)
     # a fluffy root in the grass
     b.rbox(name + "_root", (x - 1.25, 0, -0.65), (x + 1.25, 0.55, 0.65), "t_fur", 0.22, bottom=False)
@@ -1167,9 +1253,9 @@ def sand_bucket():
     ap = 1.3 * math.cos(math.pi / 16)
     glyph(b, "star", "star", "-z", (0, 0.75, -ap), 0.09, 0.03, "t_white")
     # a little spilled sand beside it
-    cyl(b, "spill_0", (-1.75, 1.75), 0.7, 0, 0.2, "t_sand")
-    cyl(b, "spill_0_top", (-1.7, 1.7), 0.42, 0.2, 0.36, "t_sand", sides=8)
-    cyl(b, "spill_1", (-0.85, 2.3), 0.42, 0, 0.14, "t_sand", sides=8)
+    cyl(b, "spill_0", (-1.9, 1.75), 0.7, 0, 0.2, "t_sand")
+    cyl(b, "spill_0_top", (-1.85, 1.7), 0.42, 0.2, 0.36, "t_sand", sides=8)
+    cyl(b, "spill_1", (-0.75, 2.35), 0.42, 0, 0.14, "t_sand", sides=8)
     return b
 
 
@@ -1187,7 +1273,8 @@ def sand_spade():
     cyl(b, "shaft", (0, 0), 0.13, 1.45, 3.55, "t_cherry", sides=8)
     cyl(b, "band", (0, 0), 0.16, 3.25, 3.4, "t_white", sides=8)
     for s in (-1, 1):
-        bar_xy(b, f"grip_side_{s}", (s * 0.2, 3.77), 90 - 45 * s, 0.66, 0.07, -0.08, 0.08, "t_cherry")
+        bar_xy(b, f"grip_side_{s}", (s * 0.2, 3.77), 90 - 45 * s, 0.66, 0.07, -0.08 - EPS * (s > 0),
+               0.08 + EPS * (s > 0), "t_cherry")
     cyl(b, "grip", (4.05, 0), 0.13, -0.5, 0.5, "t_cherry", axis="x", sides=8)
     return b
 
@@ -1230,5 +1317,11 @@ PENDING = {}
 
 DISPLAY = {**PROPS, **PENDING}
 
-ALL = {f"prop/{k}": (lambda fn, sc, c, k: lambda: fn().centred(f"prop/{k}", sc, c))(fn, sc, c, k)
+def _model(fn, scale, centre, name):
+    m = fn().centred(name, scale, centre)
+    m.check_turned = True       # turned bars must not z-fight either (Model._turned_overlaps)
+    return m
+
+
+ALL = {f"prop/{k}": (lambda fn, sc, c, k: lambda: _model(fn, sc, c, f"prop/{k}"))(fn, sc, c, k)
        for k, (fn, sc, c) in DISPLAY.items()}

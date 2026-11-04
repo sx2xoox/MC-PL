@@ -21,14 +21,14 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 |---|---|
 | `mcpl_assets/palette.py` | every colour: OKLCH ramps generated from (hue, chroma, lightness) — add a material here, never a raw RGB |
 | `mcpl_assets/textures.py` | the texture registry (`SURFACES`, `FRAME_TIME`, `TRANSLUCENT`), the v1 cyberpunk textures (unused) |
-| `mcpl_assets/toy_textures.py` | toy kingdom textures (`t_*`, 32 px) and their pastel ramps; `t_bubble` = the shader's marker alpha |
+| `mcpl_assets/toy_textures.py` | toy kingdom textures (`t_*`, 32 px) and their pastel ramps; `t_bubble` = the shader's marker alpha; `cap` / `painted_cap` = round end plates (a texture cut to a polygon, for `props.cyl`) |
 | `mcpl_assets/toykit.py` | block-space builder for buildings / creatures: `rbox` (chamfered toy box), eyes, cheeks, slabs |
 | `grade_preview.py` | the pack shader's colour grade (`include/mcpl_grade.glsl`, same numbers) applied to renders: before/after + swatches |
 | `toy_preview.py` | toy sheets: building stages + bubble, minions in both team colours, jungle, one sheet per creature, scale lineup |
 | `prop_preview.py` | 장난감 왕국 map props (`models/props.py` → `prop/*`): one sheet per prop (+ the block prop it replaces with `--blocks <dump.json>`), lineup, block-vs-model grid |
 | `attack_preview.py` | creature attack GIFs from `models/creature_attacks.json` (the game's poses; `./gradlew updateCreatureAttacks`) |
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |
-| `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range) |
+| `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range; `check_turned` = z-fighting of turned faces too, on for the map props) |
 | `mcpl_assets/weaponkit.py` | the weapon builder: weapon space, common parts, the shared `display` preset |
 | `sidebar_panel.py` | 공성전 sidebar panel glyphs (font `mcpl:sidebar` + `textures/font/sidebar/*.png`, run it after a change; `--preview <dir>`: vanilla vs panel). Numbers shared with `core/ui/SidebarPanel` (`SidebarPanelTest`) |
 | `weapon_preview.py` | weapon sheets: icon (+16/32 px), first person, third person, ground, item frame |
