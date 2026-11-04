@@ -14,10 +14,10 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
  * road, −z) and the BOTTOM lane (light blue brick road, +z) bend out from the castles' lane gates along the edge of
  * the kingdom, two towers per side on each; the jungle between the lanes has six objective clearings per side, the
  * river runs along the middle and the toy dragon's sandbox sits in the exact centre. The kingdom is a play mat on a
- * wooden floor under a glass dome with a giant clock on top, like a toy world kept in a snow globe; in the middle of
- * each lane the mat ends in a drop into the void beyond the outer verge, and three toy-piece holes (a triangle, an
- * upside down one, a long strip) on each half of the middle corridor fall into it too. See {@link ToyLayout} for the
- * plan.
+ * wooden floor, a toy left in a huge clockwork hall: tiers of crimson and gold arcades all around and a giant golden
+ * clock among meshing gears on the ceiling ({@link ToyHall}); in the middle of each lane the mat ends in a drop into
+ * the void under the hall's gate arch, and three toy-piece holes (a triangle, an upside down one, a long strip) on each
+ * half of the middle corridor fall into it too. See {@link ToyLayout} for the plan.
  */
 public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
@@ -31,7 +31,8 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
             new ToyLaneZone(Lane.BOTTOM),
             new ToyJungleZone(),
             new ToyRiverZone(),
-            new ToyDomeZone());
+            new ToyHallZone(),
+            new ToyClockZone());
 
     /** The objective sites of the BLUE half: kind, Korean name, x, z, radius (RED mirrors x). */
     private record Site(ObjectiveKind kind, String name, int x, int z, int radius) {
@@ -63,7 +64,8 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int playRadius() {
-        return ToyLayout.BUILD_RADIUS - 2;
+        // The arena circle of the matches (as before the hall: the kingdom's ends plus a few blocks).
+        return ToyLayout.HALF_X + 6;
     }
 
     @Override
@@ -93,7 +95,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int version() {
-        return 5;
+        return 6;
     }
 
     /** The zones in build order (exposed for tests and previews). */

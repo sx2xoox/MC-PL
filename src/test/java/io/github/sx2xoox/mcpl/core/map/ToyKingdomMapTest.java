@@ -20,6 +20,7 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Lane;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.ObjectiveKind;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
+import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyHall;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKingdomMap;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyLayout;
 import org.bukkit.Material;
@@ -49,6 +50,13 @@ class ToyKingdomMapTest {
      */
     private static final int DETAIL_BUDGET = 18;
     private static final int MAP_DETAIL_BUDGET = 28;
+    /**
+     * The clockwork hall around the kingdom is architecture, not a play area: cream (walls, pillars), crimson (bricks,
+     * rails, banners), gold (two golds, light blocks, lanterns, chains) and the glass of the vault and the clock (three
+     * colours), plus the team colours of the clock hands' tips. Its budget is separate (details included) so the
+     * kingdom stays calm.
+     */
+    private static final int HALL_PALETTE_BUDGET = 16;
 
     private static ToyKingdomMap map;
     private static MapCanvas canvas;
@@ -324,8 +332,8 @@ class ToyKingdomMapTest {
                 holes += hole ? 1 : 0;
                 for (int y = canvas.minY(); y <= canvas.maxY(); y++) {
                     BlockSpec spec = canvas.get(x, y, z);
-                    assertTrue(spec == null || spec.isAir() || ToyLayout.inDomeShell(x, y, z),
-                            "nothing in a drop below the dome at " + x + "," + y + "," + z);
+                    assertTrue(spec == null || spec.isAir() || y - ToyLayout.GROUND_Y >= ToyHall.KINGDOM_TOP,
+                            "nothing in a drop below the hall's ceiling at " + x + "," + y + "," + z);
                 }
                 String at = " near the drop at " + x + "," + z;
                 assertTrue(ToyLayout.laneDistance(ToyLayout.laneOf(z), x, z) >= ToyLayout.EDGE_HALF + 5,
@@ -372,29 +380,117 @@ class ToyKingdomMapTest {
     }
 
     @Test
-    void theDomeIsGlassSoTheKingdomStaysBright() {
+    void theHallClosesOverTheKingdom() {
         int r = map.buildRadius();
-        int shell = 0;
+        int g = ToyLayout.GROUND_Y;
         for (int x = -r; x <= r; x++) {
             for (int z = -r; z <= r; z++) {
-                for (int y = ToyLayout.GROUND_Y + 1; y <= canvas.maxY(); y++) {
-                    if (!ToyLayout.inDomeShell(x, y, z)) {
-                        continue;
+                int vault = ToyHall.vaultHeight(x, z);
+                if (vault < 0) {
+                    for (int y = canvas.minY(); y <= canvas.maxY(); y++) {
+                        assertFalse(canvas.isSolid(x, y, z), "beyond the hall's back wall at " + x + "," + y + "," + z);
                     }
-                    shell++;
-                    BlockSpec spec = canvas.get(x, y, z);
-                    assertNotNull(spec, "the dome is closed at " + x + "," + y + "," + z);
-                    if (!spec.material().name().contains("GLASS")) {
-                        assertTrue(Math.hypot(x, z) <= ToyLayout.CLOCK_RADIUS, "only the clock is not glass: "
-                                + spec + " at " + x + "," + y + "," + z);
+                    continue;
+                }
+                assertTrue(canvas.isSolid(x, g + vault, z), "the roof is closed at " + x + "," + (g + vault) + "," + z);
+                for (int y = g + vault + 1; y <= canvas.maxY(); y++) {
+                    assertFalse(canvas.isSolid(x, y, z), "on top of the roof at " + x + "," + y + "," + z);
+                }
+                if (ToyLayout.inCliff(x, z) && !ToyLayout.isInterior(x, z)) {
+                    // The gate over a lane drop: open from the void up to its arch.
+                    for (int y = canvas.minY(); y <= g + 8; y++) {
+                        assertFalse(canvas.isSolid(x, y, z), "the gate over the drop is open at " + x + "," + y + ","
+                                + z);
                     }
                 }
             }
         }
-        System.out.println("[toykingdom] dome shell: " + shell + " blocks");
-        // Nothing of the kingdom pokes through the glass.
-        canvas.forEach((x, y, z, spec) -> assertTrue(y <= ToyLayout.GROUND_Y || ToyLayout.inDomeShell(x, y, z)
-                || ToyLayout.insideDome(x, y, z), "outside the dome: " + spec + " at " + x + "," + y + "," + z));
+        // The plinth behind the toy brick wall stands at least 12 high all around (except over the drops).
+        for (int x = -r; x <= r; x++) {
+            for (int z = -r; z <= r; z++) {
+                double d = ToyLayout.outline(x, z);
+                if (d <= 2.5 || d > 3.5 || ToyLayout.inCliff(x, z)) {
+                    continue;
+                }
+                for (int y = g + 1; y <= g + ToyHall.DECKS[0]; y++) {
+                    assertTrue(canvas.isSolid(x, y, z), "the plinth is closed at " + x + "," + y + "," + z);
+                }
+            }
+        }
+    }
+
+    @Test
+    void theCeilingKeepsTheKingdomBright() {
+        // Glass lets the sky light through; under an opaque block of the ceiling (the clock's numeral ring, the gears,
+        // the hands, the ribs) the sky light at the floor drops by one per block to the nearest open column.
+        int r = map.buildRadius();
+        int size = 2 * r + 1;
+        int[] dist = new int[size * size];
+        java.util.Arrays.fill(dist, Integer.MAX_VALUE);
+        ArrayDeque<int[]> queue = new ArrayDeque<>();
+        int shaded = 0;
+        for (int x = -r; x <= r; x++) {
+            for (int z = -r; z <= r; z++) {
+                boolean shade = false;
+                for (int y = ToyLayout.GROUND_Y + ToyHall.KINGDOM_TOP; y <= canvas.maxY() && !shade; y++) {
+                    BlockSpec spec = canvas.get(x, y, z);
+                    shade = spec != null && MapBlocks.isFullCube(spec) && !spec.material().name().contains("GLASS");
+                }
+                shaded += shade ? 1 : 0;
+                if (!shade) {
+                    dist[(x + r) * size + z + r] = 0;
+                    queue.add(new int[] {x, z});
+                }
+            }
+        }
+        int[][] steps = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        while (!queue.isEmpty()) {
+            int[] at = queue.poll();
+            int here = dist[(at[0] + r) * size + at[1] + r];
+            for (int[] s : steps) {
+                int nx = at[0] + s[0];
+                int nz = at[1] + s[1];
+                if (Math.abs(nx) > r || Math.abs(nz) > r || dist[(nx + r) * size + nz + r] <= here + 1) {
+                    continue;
+                }
+                dist[(nx + r) * size + nz + r] = here + 1;
+                queue.add(new int[] {nx, nz});
+            }
+        }
+        int worst = 0;
+        String darkest = "";
+        for (int x = -r; x <= r; x++) {
+            for (int z = -r; z <= r; z++) {
+                int here = dist[(x + r) * size + z + r];
+                if (ToyLayout.isInterior(x, z) && here > worst) {
+                    worst = here;
+                    darkest = x + "," + z;
+                }
+            }
+        }
+        System.out.println("[toykingdom] ceiling: " + shaded + " shaded columns, darkest floor sky light "
+                + (15 - worst) + " at " + darkest);
+        assertTrue(worst <= 4, "the floor gets sky light 11 or more everywhere, the darkest has " + (15 - worst)
+                + " at " + darkest);
+    }
+
+    @Test
+    void theHallIsLitWithLanterns() {
+        int[] lanterns = {0};
+        int[] lights = {0};
+        canvas.forEach((x, y, z, spec) -> {
+            if (!ToyHall.isHall(x, y, z)) {
+                return;
+            }
+            if (spec.material() == Material.LANTERN) {
+                lanterns[0]++;
+            } else if (MapLight.emission(spec.material()) > 0) {
+                lights[0]++;
+            }
+        });
+        System.out.println("[toykingdom] hall: " + lanterns[0] + " lanterns, " + lights[0] + " light blocks");
+        assertTrue(lanterns[0] >= 1000, "rows of lanterns on every balcony: " + lanterns[0]);
+        assertTrue(lights[0] >= 300, "light blocks in the pillars, windows, vault and clock: " + lights[0]);
     }
 
     @Test
@@ -504,9 +600,12 @@ class ToyKingdomMapTest {
     void eachZoneKeepsToAFewBlockTypes() {
         Map<String, Set<Material>> palettes = new TreeMap<>();
         Map<String, Set<Material>> details = new TreeMap<>();
-        canvas.forEach((x, y, z, spec) -> (isDetail(spec.material()) ? details : palettes)
-                .computeIfAbsent(ToyLayout.inDomeShell(x, y, z) ? "dome" : ToyLayout.partOf(x, z),
-                        k -> new TreeSet<>()).add(spec.material()));
+        canvas.forEach((x, y, z, spec) -> {
+            boolean hall = ToyHall.isHall(x, y, z);
+            (!hall && isDetail(spec.material()) ? details : palettes)
+                    .computeIfAbsent(hall ? "hall" : ToyLayout.partOf(x, z), k -> new TreeSet<>())
+                    .add(spec.material());
+        });
         details.forEach((zone, palette) -> {
             System.out.println("[toykingdom] details " + zone + " (" + palette.size() + "): " + palette);
             assertTrue(palette.size() <= DETAIL_BUDGET, zone + " uses " + palette.size() + " detail blocks: "
@@ -519,13 +618,19 @@ class ToyKingdomMapTest {
         palettes.forEach((zone, palette) -> System.out.println("[toykingdom] palette " + zone + " (" + palette.size()
                 + "): " + palette));
         assertEquals(Set.of("border", "blue-castle", "red-castle", "top-lane", "bottom-lane", "jungle", "river",
-                "dome"), palettes.keySet());
-        palettes.forEach((zone, palette) -> assertTrue(palette.size() <= (zone.equals("jungle")
-                ? JUNGLE_PALETTE_BUDGET : PALETTE_BUDGET),
-                zone + " uses " + palette.size() + " block types: " + palette));
-        Set<Material> all = new TreeSet<>();
-        palettes.values().forEach(all::addAll);
-        assertTrue(all.size() <= 21, "the whole map uses " + all.size() + " block types: " + all);
+                "hall"), palettes.keySet());
+        palettes.forEach((zone, palette) -> assertTrue(palette.size() <= switch (zone) {
+            case "jungle" -> JUNGLE_PALETTE_BUDGET;
+            case "hall" -> HALL_PALETTE_BUDGET;
+            default -> PALETTE_BUDGET;
+        }, zone + " uses " + palette.size() + " block types: " + palette));
+        Set<Material> kingdom = new TreeSet<>();
+        palettes.forEach((zone, palette) -> {
+            if (!zone.equals("hall")) {
+                kingdom.addAll(palette);
+            }
+        });
+        assertTrue(kingdom.size() <= 21, "the kingdom uses " + kingdom.size() + " block types: " + kingdom);
     }
 
     /** A block that shapes a prop rather than colouring it (see {@link #DETAIL_BUDGET}); glass and water are not. */
@@ -538,7 +643,8 @@ class ToyKingdomMapTest {
     void theMapHasTheRightSize() {
         assertTrue(2 * ToyLayout.HALF_X >= 190 && 2 * ToyLayout.HALF_X <= 210, "about 200 blocks long");
         assertTrue(2 * ToyLayout.HALF_Z >= 110 && 2 * ToyLayout.HALF_Z <= 130, "about 120 blocks wide");
-        assertTrue(canvas.blockCount() < 400_000, "a light map: " + canvas.blockCount());
+        // The kingdom is about 130 000 blocks, the hall around and over it about as much again.
+        assertTrue(canvas.blockCount() < 700_000, "a light map: " + canvas.blockCount());
         int steps = distance(node(map.spawns(Side.BLUE).getFirst()), node(map.spawns(Side.RED).getFirst()));
         System.out.println("[toykingdom] BLUE spawn to RED spawn: " + steps + " blocks");
         assertTrue(steps >= 150 && steps <= 230, "base to base is " + steps + " blocks");

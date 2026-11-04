@@ -33,9 +33,9 @@ public final class ToyLayout {
     /** Top of the ground everywhere (the dragon's sandbox and the river are one lower). */
     public static final int GROUND_Y = 64;
     public static final int MIN_Y = GROUND_Y - 5;
-    public static final int MAX_Y = GROUND_Y + 66;
-    /** Blocks the map builds on each side of the centre (the canvas). */
-    public static final int BUILD_RADIUS = 106;
+    public static final int MAX_Y = GROUND_Y + ToyHall.TOP + 1;
+    /** Blocks the map builds on each side of the centre (the canvas): the hall's back wall reaches |x| = 109. */
+    public static final int BUILD_RADIUS = 110;
 
     // ------------------------------------------------------------------ outline
 
@@ -43,7 +43,10 @@ public final class ToyLayout {
     public static final int HALF_X = 98;
     public static final int HALF_Z = 60;
     public static final int CORNER = 18;
-    /** The hedge around the walkable area, then a strip of lawn, then nothing. */
+    /**
+     * The toy brick wall around the walkable area, then a strip of floorboards under the clockwork hall's plinth (see
+     * {@link ToyHall}).
+     */
     public static final double HEDGE_WIDTH = 2.5;
     public static final double APRON_WIDTH = 6.5;
 
@@ -161,7 +164,7 @@ public final class ToyLayout {
     /** The cliff starts this far inside the outline (the verge is 5.5 blocks wide there). */
     public static final double CLIFF_INSET = 2;
 
-    /** True for the columns of a drop (no blocks at all in the column, up to the dome). */
+    /** True for the columns of a drop (no blocks at all in the column, up to the hall's ceiling or gate arch). */
     public static boolean inCliff(int x, int z) {
         return Math.abs(x) <= CLIFF_HALF_X && outline(x, z) > -CLIFF_INSET;
     }
@@ -234,40 +237,6 @@ public final class ToyLayout {
             }
         }
         return false;
-    }
-
-    // ------------------------------------------------------------------ the glass dome
-
-    /**
-     * The glass dome over the kingdom, like a snow globe: its foot stands on the outer edge of the floor (the outline
-     * plus {@code DOME_FOOT}); across the map its section is a half superellipse ({@code u^3 + h^2 <= 1}) of
-     * {@code DOME_HALF_WIDTH} by {@code DOME_HEIGHT}, so it rises steeply at the edge and is flat and high over the
-     * middle (high enough over the cores' stages).
-     */
-    public static final double DOME_FOOT = HEDGE_WIDTH + 0.5;
-    public static final double DOME_HALF_WIDTH = HALF_Z + DOME_FOOT;
-    public static final int DOME_HEIGHT = 62;
-    /** The clock face on the top of the dome, centred over the dragon. */
-    public static final double CLOCK_RADIUS = 21.5;
-
-    /** True inside the dome (the air and everything under the glass), for {@code y} above the ground. */
-    public static boolean insideDome(int x, int y, int z) {
-        double inset = DOME_FOOT - outline(x, z);
-        if (inset < 0) {
-            return false;
-        }
-        double u = Math.max(0, DOME_HALF_WIDTH - inset) / DOME_HALF_WIDTH;
-        double h = (y - GROUND_Y) / (double) DOME_HEIGHT;
-        return u * u * u + h * h < 1;
-    }
-
-    /** True for the blocks of the dome's shell: inside, next to the outside (never on or under the ground). */
-    public static boolean inDomeShell(int x, int y, int z) {
-        if (y <= GROUND_Y || !insideDome(x, y, z)) {
-            return false;
-        }
-        return !insideDome(x + 1, y, z) || !insideDome(x - 1, y, z) || !insideDome(x, y + 1, z)
-                || !insideDome(x, y, z + 1) || !insideDome(x, y, z - 1);
     }
 
     // ------------------------------------------------------------------ outline helpers

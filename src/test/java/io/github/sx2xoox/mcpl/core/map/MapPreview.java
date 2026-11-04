@@ -198,6 +198,285 @@ public final class MapPreview {
         return image;
     }
 
+    // ------------------------------------------------------------------ perspective
+
+    /** A camera for {@link #perspective}: eye position, yaw (0 = looking +z, 90 = looking −x), pitch (up > 0), fov. */
+    public record Camera(double x, double y, double z, double yaw, double pitch, double fov) {
+    }
+
+    private short[] grid;
+    private List<BlockSpec> gridPalette;
+    private int[] skyTop;
+    private MapLight blockLight;
+
+    /**
+     * A perspective picture of the map from {@code camera} ({@code fov} degrees across the width), close to what a
+     * player sees: rays through the blocks (2 x 2 per pixel), glass tints what lies behind it, faces are shaded by their
+     * direction, places under the open sky are brighter, block light (lanterns, light blocks) warms what is near it,
+     * light sources glow. Lanterns, chains, walls and fences have their smaller shapes. The sky is a day gradient (blue
+     * overhead, pink at the horizon), the void below the horizon a dusk violet.
+     */
+    public BufferedImage perspective(Camera camera, int width, int height) {
+        prepareGrid();
+        double yaw = Math.toRadians(camera.yaw());
+        double pitch = Math.toRadians(camera.pitch());
+        double[] f = {-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)};
+        double[] right = {-Math.cos(yaw), 0, -Math.sin(yaw)};
+        double[] up = cross(right, f);
+        double tan = Math.tan(Math.toRadians(camera.fov()) / 2);
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        int samples = 2;
+        java.util.stream.IntStream.range(0, height).parallel().forEach(j -> {
+            for (int i = 0; i < width; i++) {
+                double[] sum = new double[3];
+                for (int sy = 0; sy < samples; sy++) {
+                    for (int sx = 0; sx < samples; sx++) {
+                        double px = (2 * (i + (sx + 0.5) / samples) / width - 1) * tan;
+                        double py = (1 - 2 * (j + (sy + 0.5) / samples) / height) * tan * height / width;
+                        double[] dir = {f[0] + px * right[0] + py * up[0], f[1] + px * right[1] + py * up[1],
+                            f[2] + px * right[2] + py * up[2]};
+                        double len = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+                        double[] c = trace(camera.x(), camera.y(), camera.z(), dir[0] / len, dir[1] / len,
+                                dir[2] / len);
+                        sum[0] += c[0];
+                        sum[1] += c[1];
+                        sum[2] += c[2];
+                    }
+                }
+                int n = samples * samples;
+                int rgb = (clamp(sum[0] / n) << 16) | (clamp(sum[1] / n) << 8) | clamp(sum[2] / n);
+                synchronized (image) {
+                    image.setRGB(i, j, rgb);
+                }
+            }
+        });
+        return image;
+    }
+
+    private static double[] cross(double[] a, double[] b) {
+        return new double[] {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    }
+
+    private void prepareGrid() {
+        if (grid != null) {
+            return;
+        }
+        int r = canvas.radius();
+        int size = 2 * r + 1;
+        int ys = canvas.maxY() - canvas.minY() + 1;
+        grid = new short[size * size * ys];
+        gridPalette = new ArrayList<>();
+        gridPalette.add(null);
+        java.util.Map<BlockSpec, Short> index = new java.util.HashMap<>();
+        skyTop = new int[size * size];
+        java.util.Arrays.fill(skyTop, Integer.MIN_VALUE);
+        canvas.forEach((x, y, z, spec) -> {
+            Short id = index.get(spec);
+            if (id == null) {
+                id = (short) gridPalette.size();
+                gridPalette.add(spec);
+                index.put(spec, id);
+            }
+            grid[cell(x, y, z)] = id;
+            if (!spec.material().name().contains("GLASS")) {
+                int column = (x + r) * size + z + r;
+                skyTop[column] = Math.max(skyTop[column], y);
+            }
+        });
+        blockLight = new MapLight(canvas);
+    }
+
+    private int cell(int x, int y, int z) {
+        int r = canvas.radius();
+        int size = 2 * r + 1;
+        int ys = canvas.maxY() - canvas.minY() + 1;
+        return ((x + r) * size + (z + r)) * ys + (y - canvas.minY());
+    }
+
+    private BlockSpec block(int x, int y, int z) {
+        int r = canvas.radius();
+        if (Math.abs(x) > r || Math.abs(z) > r || y < canvas.minY() || y > canvas.maxY()) {
+            return null;
+        }
+        return gridPalette.get(grid[cell(x, y, z)]);
+    }
+
+    /** The colour (0..255 per channel) seen along a ray. */
+    private double[] trace(double ox, double oy, double oz, double dx, double dy, double dz) {
+        int x = (int) Math.floor(ox);
+        int y = (int) Math.floor(oy);
+        int z = (int) Math.floor(oz);
+        int stepX = dx > 0 ? 1 : -1;
+        int stepY = dy > 0 ? 1 : -1;
+        int stepZ = dz > 0 ? 1 : -1;
+        double tDeltaX = Math.abs(1 / dx);
+        double tDeltaY = Math.abs(1 / dy);
+        double tDeltaZ = Math.abs(1 / dz);
+        double tMaxX = (dx > 0 ? x + 1 - ox : ox - x) * tDeltaX;
+        double tMaxY = (dy > 0 ? y + 1 - oy : oy - y) * tDeltaY;
+        double tMaxZ = (dz > 0 ? z + 1 - oz : oz - z) * tDeltaZ;
+        double[] colour = {0, 0, 0};
+        double transmit = 1;
+        double t = 0;
+        int axis = -1;
+        BlockSpec lastGlass = null;
+        int r = canvas.radius();
+        while (t < 700 && transmit > 0.02) {
+            BlockSpec spec = block(x, y, z);
+            if (spec != null && !spec.isAir()) {
+                String n = spec.material().name();
+                if (n.contains("GLASS")) {
+                    if (spec != lastGlass) {
+                        Color c = color(spec.material());
+                        double alpha = n.contains("STAINED") ? 0.42 : 0.12;
+                        double lit = skyLitCell(x, y + 1, z) ? 1.05 : 0.8;
+                        colour[0] += transmit * alpha * c.getRed() * lit;
+                        colour[1] += transmit * alpha * c.getGreen() * lit;
+                        colour[2] += transmit * alpha * c.getBlue() * lit;
+                        transmit *= 1 - alpha;
+                    }
+                    lastGlass = spec;
+                } else {
+                    lastGlass = null;
+                    int face = shapeHit(spec, x, y, z, ox, oy, oz, dx, dy, dz, t, axis);
+                    if (face >= -1) {
+                        double[] c = shade(spec, x, y, z, face, dx, dy, dz, t);
+                        colour[0] += transmit * c[0];
+                        colour[1] += transmit * c[1];
+                        colour[2] += transmit * c[2];
+                        return colour;
+                    }
+                }
+            } else {
+                lastGlass = null;
+            }
+            if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+                x += stepX;
+                t = tMaxX;
+                tMaxX += tDeltaX;
+                axis = 0;
+            } else if (tMaxY < tMaxZ) {
+                y += stepY;
+                t = tMaxY;
+                tMaxY += tDeltaY;
+                axis = 1;
+            } else {
+                z += stepZ;
+                t = tMaxZ;
+                tMaxZ += tDeltaZ;
+                axis = 2;
+            }
+            if (Math.abs(x) > r + 2 && (x > 0) == (dx > 0) || Math.abs(z) > r + 2 && (z > 0) == (dz > 0)
+                    || y > canvas.maxY() + 2 && dy > 0 || y < canvas.minY() - 2 && dy < 0) {
+                break;
+            }
+        }
+        double[] sky = sky(dy);
+        colour[0] += transmit * sky[0];
+        colour[1] += transmit * sky[1];
+        colour[2] += transmit * sky[2];
+        return colour;
+    }
+
+    private static double[] sky(double dy) {
+        if (dy < 0) {
+            double k = Math.min(1, -dy * 3);
+            return new double[] {lerp(235, 60, k), lerp(185, 40, k), lerp(200, 90, k)};
+        }
+        double k = Math.pow(Math.min(1, dy), 0.6);
+        return new double[] {lerp(245, 95, k), lerp(185, 150, k), lerp(200, 230, k)};
+    }
+
+    private static double lerp(double a, double b, double k) {
+        return a + (b - a) * k;
+    }
+
+    /**
+     * The axis of the face where a ray meets a block's shape inside its cell, or {@code -2} when it misses (lanterns,
+     * chains, walls and fences are smaller than their cell; everything else fills it).
+     */
+    private static int shapeHit(BlockSpec spec, int x, int y, int z, double ox, double oy, double oz, double dx,
+                                double dy, double dz, double t, int axis) {
+        String n = spec.material().name();
+        double[] box;
+        if (n.equals("LANTERN") || n.equals("SOUL_LANTERN")) {
+            box = spec.hanging() == Boolean.TRUE ? new double[] {0.31, 0.06, 0.31, 0.69, 0.62, 0.69}
+                    : new double[] {0.31, 0, 0.31, 0.69, 0.56, 0.69};
+        } else if (n.endsWith("CHAIN")) {
+            box = new double[] {0.42, 0, 0.42, 0.58, 1, 0.58};
+        } else if (n.endsWith("_WALL") || n.endsWith("_FENCE")) {
+            box = new double[] {0.22, 0, 0.22, 0.78, 1, 0.78};
+        } else {
+            return axis;
+        }
+        double tmin = -1e9;
+        double tmax = 1e9;
+        int hitAxis = axis;
+        double[] o = {ox - x, oy - y, oz - z};
+        double[] d = {dx, dy, dz};
+        for (int a = 0; a < 3; a++) {
+            if (Math.abs(d[a]) < 1e-12) {
+                if (o[a] < box[a] || o[a] > box[a + 3]) {
+                    return -2;
+                }
+                continue;
+            }
+            double t1 = (box[a] - o[a]) / d[a];
+            double t2 = (box[a + 3] - o[a]) / d[a];
+            double near = Math.min(t1, t2);
+            if (near > tmin) {
+                tmin = near;
+                hitAxis = a;
+            }
+            tmax = Math.min(tmax, Math.max(t1, t2));
+        }
+        return tmax >= Math.max(tmin, t - 1e-9) ? hitAxis : -2;
+    }
+
+    /** The colour of a block's face seen from a ray (the face by the axis the ray entered through). */
+    private double[] shade(BlockSpec spec, int x, int y, int z, int axis, double dx, double dy, double dz, double t) {
+        Color base = color(spec.material());
+        double[] c = {base.getRed(), base.getGreen(), base.getBlue()};
+        // The cell in front of the face, where the light comes from.
+        int fx = x - (axis == 0 ? (dx > 0 ? 1 : -1) : 0);
+        int fy = y - (axis == 1 ? (dy > 0 ? 1 : -1) : 0);
+        int fz = z - (axis == 2 ? (dz > 0 ? 1 : -1) : 0);
+        double face = switch (axis) {
+            case 1 -> dy < 0 ? 1.0 : 0.66;
+            case 0 -> 0.86;
+            case 2 -> 0.76;
+            default -> 0.9;
+        };
+        double result;
+        double warm = 0;
+        if (MapLight.emission(spec.material()) > 0) {
+            result = 1.35;
+        } else {
+            double ambient = skyLitCell(fx, fy, fz) ? 1.0 : 0.6;
+            double block = blockLight.at(fx, fy, fz) / 15.0;
+            result = face * Math.max(ambient, 0.42 + 0.62 * block);
+            warm = block * block * 0.35;
+        }
+        double fog = 1 - Math.exp(-t / 520);
+        double[] out = new double[3];
+        double[] warmTint = {255, 190, 110};
+        double[] haze = {225, 190, 205};
+        for (int i = 0; i < 3; i++) {
+            double v = c[i] * result + warmTint[i] * warm * 0.5;
+            out[i] = v * (1 - fog) + haze[i] * fog;
+        }
+        return out;
+    }
+
+    /** True if a cell sees the sky straight up (nothing but glass and air above it). */
+    private boolean skyLitCell(int x, int y, int z) {
+        int r = canvas.radius();
+        if (Math.abs(x) > r || Math.abs(z) > r) {
+            return true;
+        }
+        return y > skyTop[(x + r) * (2 * r + 1) + z + r];
+    }
+
     /** Brightness factor of a block in the night look (1 by day). */
     private double light(int x, int y, int z, BlockSpec spec) {
         if (!night) {
@@ -437,6 +716,12 @@ public final class MapPreview {
             case "PEARLESCENT_FROGLIGHT" -> new Color(245, 140, 230);
             case "VERDANT_FROGLIGHT" -> new Color(170, 245, 140);
             case "OCHRE_FROGLIGHT" -> new Color(250, 225, 120);
+            case "GOLD_BLOCK" -> new Color(246, 208, 61);
+            case "RAW_GOLD_BLOCK" -> new Color(200, 150, 45);
+            case "RED_NETHER_BRICKS", "RED_NETHER_BRICK_WALL", "RED_NETHER_BRICK_STAIRS",
+                 "RED_NETHER_BRICK_SLAB" -> new Color(100, 22, 28);
+            case "SMOOTH_SANDSTONE" -> new Color(224, 212, 165);
+            case "QUARTZ_PILLAR" -> new Color(236, 230, 222);
             case "END_ROD" -> new Color(250, 245, 235);
             case "TINTED_GLASS" -> new Color(40, 34, 46);
             case "REDSTONE_BLOCK" -> new Color(220, 30, 20);

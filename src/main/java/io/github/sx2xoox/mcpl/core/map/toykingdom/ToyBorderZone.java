@@ -6,9 +6,9 @@ import io.github.sx2xoox.mcpl.core.map.MapZone;
 
 /**
  * The edge of the kingdom: a wall of toy blocks (3 x 3 cells in pink, yellow, light blue and white, three high, two at
- * its outer rim) all around the walkable area, the foot of the glass dome standing on its rim, and the wooden
- * floorboards of the room beyond, outside the dome. In the middle of each lane the wall and the floor are cut away
- * (the drops, see {@link ToyLayout#inCliff}).
+ * its outer rim) all around the walkable area, and the wooden floorboards beyond it under the clockwork hall's plinth
+ * (the hall's pillars stand on the toy blocks, see {@link ToyHallZone}). In the middle of each lane the wall and the
+ * floor are cut away (the drops, see {@link ToyLayout#inCliff}).
  */
 final class ToyBorderZone implements MapZone {
 

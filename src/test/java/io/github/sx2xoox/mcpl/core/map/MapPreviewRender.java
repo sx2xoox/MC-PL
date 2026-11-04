@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.core.map;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BiPredicate;
 
 import io.github.sx2xoox.mcpl.core.map.citadel.CitadelMap;
@@ -52,16 +53,16 @@ class MapPreviewRender {
                 SiegeGuideMap.write(map, canvas, new File(out, "siege-guide.png"));
             }
             if (only.isEmpty() || only.equals("toykingdom")) {
-                // The kingdom under its glass dome (the views would show only glass), then the dome itself.
+                // The kingdom without the clockwork hall around and over it (the views would show only the ceiling),
+                // then the hall: outside, and seen from the kingdom's floor.
                 ToyKingdomMap map = new ToyKingdomMap();
                 int r = map.buildRadius();
-                ArenaMap open = new WithoutZone(map, map.zones(), "dome");
-                List<MapZone> zones = map.zones().stream().filter(z -> !z.name().equals("dome")).toList();
+                Set<String> hall = Set.of("hall", "clock");
+                ArenaMap open = new WithoutZones(map, map.zones(), hall);
+                List<MapZone> zones = map.zones().stream().filter(z -> !hall.contains(z.name())).toList();
                 MapCanvas canvas = render(open, zones, zoneName, out, -r, -68, r, 68, 0, 6, (x, z) -> true);
                 ToyKingdomGuideMap.write(map, canvas, new File(out, "toykingdom-guide.png"));
-                MapPreview domed = new MapPreview(map.render());
-                MapPreview.write(domed.isometric(-r, -r, r, r, 6, (x, z) -> true),
-                        new File(out, "toykingdom-dome-iso.png"));
+                ToyHallViews.write(map.render(), out);
             }
         } finally {
             MockBukkit.unmock();
@@ -110,8 +111,8 @@ class MapPreviewRender {
         return new int[] {minX - 2, minZ - 2, maxX + 2, maxZ + 2};
     }
 
-    /** A map built without one of its zones (for previews of what lies under a roof). */
-    private record WithoutZone(ArenaMap map, List<MapZone> zones, String left) implements ArenaMap {
+    /** A map built without some of its zones (for previews of what lies under a roof). */
+    private record WithoutZones(ArenaMap map, List<MapZone> zones, Set<String> left) implements ArenaMap {
 
         @Override
         public String id() {
@@ -166,7 +167,7 @@ class MapPreviewRender {
         @Override
         public void build(MapCanvas canvas) {
             for (MapZone zone : zones) {
-                if (!zone.name().equals(left)) {
+                if (!left.contains(zone.name())) {
                     zone.build(canvas.restrictTo(zone::contains, zone.name()));
                 }
             }
