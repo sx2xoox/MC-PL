@@ -54,6 +54,24 @@ resource-pack:
   unknown-player: "<red>'<white><input></white>' 플레이어를 찾을 수 없습니다."
   missing-before-start: "<yellow>리소스팩이 적용되지 않은 참가자 <white><count></white>명: <white><players></white> <gray>(바닐라 블록 모습으로 보입니다) <click:run_command:'/게임 리소스팩'><hover:show_text:'<gray>클릭하여 상태 보기'><#ffb347>[/게임 리소스팩]</#ffb347></hover></click>"
 
+# ── 셰이더 (/게임 셰이더, config.yml 의 resource-pack.shaders) ──────
+shader:
+  status: "<gray>리소스팩 셰이더: <white><current></white> <dark_gray>· <gray>종류를 클릭하면 바뀌고 접속 중인 모두에게 리소스팩을 다시 보냅니다"
+  entry: " <dark_gray>-</dark_gray> <name> <gray><description></gray><mark>"
+  current-mark: " <green>◀ 지금"
+  hover: "<gray>클릭: <white><command>"
+  off-name: "꺼짐"
+  off-description: "셰이더 없이 (화면이 깨지거나 셰이더 모드를 쓸 때)"
+  presets:
+    toy-kingdom: "장난감 왕국: 늘 켜진 파스텔 색감 + 비눗방울 보호막 (글자·HUD 색은 그대로)"
+    bubble: "비눗방울 보호막만 (세상 색감은 바닐라 그대로)"
+  changed: "<gray>셰이더를 <white><preset></white>(으)로 바꿨습니다. 접속 중인 <white><count></white>명에게 리소스팩을 다시 보냈습니다."
+  changed-not-offered: "<gray>셰이더를 <white><preset></white>(으)로 바꿨습니다. <dark_gray>(리소스팩 보내기가 꺼져 있어 켜면 적용됩니다)"
+  turned-off: "<gray>셰이더를 껐습니다. 접속 중인 <white><count></white>명에게 셰이더 없는 리소스팩을 다시 보냈습니다."
+  turned-off-not-offered: "<gray>셰이더를 껐습니다. <dark_gray>(리소스팩 보내기가 꺼져 있어 켜면 적용됩니다)"
+  unchanged: "<gray>이미 <white><preset></white> 입니다."
+  external-url: "<yellow>resource-pack.url 로 직접 올린 팩을 보내는 중이라 셰이더 설정이 그 팩에는 적용되지 않습니다."
+
 # ── 도움말 (/게임, /게임 도움말) ─────────────────────────────
 # 분류(sections)마다 play(모두) 줄과 admin(관리자) 줄이 있습니다. 관리자가 아니면 admin 줄은 보이지 않고,
 # 보여 줄 줄이 없는 분류는 제목도 나오지 않습니다.
@@ -127,6 +145,7 @@ help:
       admin:
         - " <cmd:'/게임 설정'> <dark_gray>·</dark_gray> <cmd:'/게임 설정 목록':'목록'> <dark_gray>-</dark_gray> <gray>설정 메뉴 (팀 인원, 상자, 자기장 …), 현재 값과 명령어"
         - " <cmd:'/게임 리로드'> <dark_gray>-</dark_gray> <gray>설정 다시 불러오기"
+        - " <cmd:'/게임 셰이더 ':'/게임 셰이더 [종류|끄기]'> <dark_gray>-</dark_gray> <gray>리소스팩 셰이더 (장난감왕국 색감 …), 바꾸면 모두에게 다시 보냄"
 
 # ── 목록 (/게임 목록) ────────────────────────────────────────
 list:

@@ -33,6 +33,12 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
   vanilla). Ability weapons (`mcpl:item/weapon/<ability id>`, selected on the iron/diamond/netherite sword by
   `custom_model_data` string 0 = ability id): `tools/assetgen/models/weapons.py` + `weaponkit.py`, listed in
   `AbilityWeaponModels.MODELED`; how-to and style guide in `tools/assetgen/README.md`.
+- Pack shaders (`src/main/resourcepack-src/assets/minecraft/shaders`, docs/siege-v2.md §7.2) are 26.3 vanilla core shaders
+  + one MCPL line/include; they are served as a shader preset (`core/pack/ShaderPreset`: name → features → files,
+  `resource-pack.shaders`, `/게임 셰이더`), each feature behind its macro in the generated `include/mcpl_preset.glsl`.
+  Never override text/GUI shaders. After changing one run `node tools/shaders/check.mjs <26.3 client shaders dir>`
+  (WebGL2 compile of every variant); the colour grade's numbers live in `include/mcpl_grade.glsl` and
+  `tools/assetgen/grade_preview.py` alike (`ResourcePackContentsTest` compares them).
 - Sandboxed cloud sessions cannot reach `repo.papermc.io`; a locally built Paper API is published to `~/.m2` and
   `~/.gradle/gradle.properties` + `~/.gradle/init.d/` redirect the build to it. Do not commit those overrides.
 - Paper API sources for reference (when available): `/home/user/papermc/paper/paper-api/src/main/java`. Check a
@@ -57,7 +63,8 @@ src/main/java/io/github/sx2xoox/mcpl/
                                (border, castles, lanes, jungle, river); ToyKingdomMapTest (sites, paths, symmetry, palette)
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
     pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
-                               PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model)
+                               PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model),
+                               ShaderPreset (shader presets; PackBuilder#withShaders builds each preset's pack variant)
   game/siege/                  초능력 공성전 v2 (SiegeGame = the MiniGame, SiegeSettings = games.siege.*, SiegeMatch = flow,
                                score, structures, respawns + the hooks features use; abilities run in a hosted
                                SuperpowerMatch = runtime/MatchHost; map via core/map/lanes/LaneSites → LaneLayout,

@@ -5,13 +5,16 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.jspecify.annotations.Nullable;
 
 /**
- * A tiny HTTP server that serves the bundled resource pack at one path ({@code resource-pack.host-port}). It runs on
- * its own daemon threads and only hands out bytes it was given: it never touches Bukkit.
+ * A tiny HTTP server that serves the resource pack at one path ({@code resource-pack.host-port}): whatever
+ * {@code served} gives now, so a new pack (another shader preset) needs no restart. It runs on its own daemon threads
+ * and only hands out bytes it was given: it never touches Bukkit.
  */
 final class PackHttpServer {
 
@@ -23,29 +26,30 @@ final class PackHttpServer {
         this.executor = executor;
     }
 
-    /** Starts serving {@code zip} at {@code /<path>} on every interface, port {@code port}. */
-    static PackHttpServer start(int port, String path, byte[] zip) throws IOException {
+    /** Starts serving {@code served} (its zip at its path) on every interface, port {@code port}. */
+    static PackHttpServer start(int port, Supplier<SamePortHost.@Nullable Served> served) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
             Thread thread = new Thread(runnable, "MCPL-pack-http");
             thread.setDaemon(true);
             return thread;
         });
-        String wanted = "/" + path;
-        server.createContext("/", exchange -> handle(exchange, wanted, zip));
+        server.createContext("/", exchange -> handle(exchange, served.get()));
         server.setExecutor(executor);
         server.start();
         return new PackHttpServer(server, executor);
     }
 
-    private static void handle(HttpExchange exchange, String wanted, byte[] zip) throws IOException {
+    private static void handle(HttpExchange exchange, SamePortHost.@Nullable Served served) throws IOException {
         try (exchange) {
             String method = exchange.getRequestMethod();
             boolean head = method.equals("HEAD");
-            if (!exchange.getRequestURI().getPath().equals(wanted) || !(head || method.equals("GET"))) {
+            if (served == null || !exchange.getRequestURI().getPath().equals(served.path())
+                    || !(head || method.equals("GET"))) {
                 exchange.sendResponseHeaders(404, -1);
                 return;
             }
+            byte[] zip = served.zip();
             exchange.getResponseHeaders().set("Content-Type", "application/zip");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
             exchange.sendResponseHeaders(200, head ? -1 : zip.length);

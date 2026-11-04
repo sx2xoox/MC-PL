@@ -2,7 +2,9 @@
 #extension GL_ARB_separate_shader_objects : require
 
 // Vanilla 26.3 core/item.fsh + MCPL: texels at the soap-bubble marker alpha (include/mcpl_bubble.glsl) are drawn as
-// an iridescent film, in the colour passes and the OIT alpha pass alike. Every other texel is unchanged.
+// an iridescent film, in the colour passes and the OIT alpha pass alike, and the 장난감 왕국 colour grade
+// (include/mcpl_grade.glsl) goes on the lit colour before the fog; each only when the served shader preset turns
+// it on. Everything else is unchanged.
 
 #ifdef GLINT
 #include <minecraft:globals.glsl>
@@ -11,6 +13,7 @@
 #include <minecraft:dynamictransforms.glsl>
 #include <minecraft:oit.glsl>
 #include <minecraft:mcpl_bubble.glsl>
+#include <minecraft:mcpl_grade.glsl>
 
 uniform sampler2D Sampler0;
 
@@ -48,6 +51,8 @@ vec4 calculateFinalColor(vec4 color) {
     // Matches BlendFuntion.GLINT
     color.rgb += glintColor.rgb * glintColor.rgb;
     #endif
+
+    color = mcpl_world_grade(color);
 
     #ifdef OIT_ACCUMULATE
     color = sampleColorForAccumulation(color);

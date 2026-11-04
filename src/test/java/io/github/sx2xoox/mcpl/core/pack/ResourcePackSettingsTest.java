@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.player.PlayerResourcePackStatusEvent;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 /** {@code resource-pack.*} parsing, the per-player download URL and hash, and client statuses. */
@@ -31,6 +32,7 @@ class ResourcePackSettingsTest {
         assertEquals("", settings.publicAddress());
         assertEquals(ResourcePackSettings.DEFAULT_PORT, settings.hostPort());
         assertEquals(ResourcePackSettings.AUTO, settings.sha1());
+        assertEquals(ShaderPreset.TOY_KINGDOM, settings.shaders(), "the 장난감 왕국 shaders, always on");
         assertEquals(ResourcePackSettings.DISABLED, ResourcePackSettings.read(null));
     }
 
@@ -54,6 +56,40 @@ class ResourcePackSettingsTest {
         config.set("resource-pack.mode", "nonsense");
         assertEquals(ResourcePackSettings.Mode.SAME_PORT,
                 ResourcePackSettings.read(config.getConfigurationSection("resource-pack")).mode());
+    }
+
+    /** {@code resource-pack.shaders}: a preset id or Korean name, off, or the old boolean; anything else = default. */
+    @Test
+    void readsTheShaderPresetAndTheOldBoolean() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("resource-pack.enabled", true);
+        assertEquals(ShaderPreset.DEFAULT, shaders(config), "missing = the default preset");
+        config.set("resource-pack.shaders", true);
+        assertEquals(ShaderPreset.TOY_KINGDOM, shaders(config), "the old true");
+        config.set("resource-pack.shaders", false);
+        assertNull(shaders(config), "the old false");
+        config.set("resource-pack.shaders", "off");
+        assertNull(shaders(config));
+        config.set("resource-pack.shaders", "끄기");
+        assertNull(shaders(config));
+        config.set("resource-pack.shaders", "bubble");
+        assertEquals(ShaderPreset.BUBBLE_ONLY, shaders(config));
+        config.set("resource-pack.shaders", " Toy_Kingdom ");
+        assertEquals(ShaderPreset.TOY_KINGDOM, shaders(config));
+        config.set("resource-pack.shaders", "장난감 왕국");
+        assertEquals(ShaderPreset.TOY_KINGDOM, shaders(config));
+        config.set("resource-pack.shaders", "nonsense");
+        assertEquals(ShaderPreset.DEFAULT, shaders(config));
+        assertTrue(ShaderPreset.parse("nonsense") instanceof ShaderPreset.Choice.Unknown);
+        for (ShaderPreset preset : ShaderPreset.values()) {
+            assertEquals(new ShaderPreset.Choice.On(preset), ShaderPreset.parse(preset.id()));
+            assertEquals(new ShaderPreset.Choice.On(preset), ShaderPreset.parse(preset.koreanName()));
+            assertEquals(preset, selfHosted("").withShaders(preset).shaders());
+        }
+    }
+
+    private static @Nullable ShaderPreset shaders(YamlConfiguration config) {
+        return ResourcePackSettings.read(config.getConfigurationSection("resource-pack")).shaders();
     }
 
     private static ResourcePackSettings selfHosted(String publicAddress) {

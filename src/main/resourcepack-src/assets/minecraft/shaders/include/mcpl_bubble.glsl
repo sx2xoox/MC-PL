@@ -4,12 +4,19 @@
 // MCPL 공성전 v2: the soap-bubble shield film (docs/siege-v2.md §7). The bubble models' texture (tools/assetgen
 // t_bubble) has every pixel at alpha 77/255: that alpha is the marker, nothing else in the game uses it. The film is
 // drawn from the view angle only (no time uniform: the OIT alpha pass has no Globals), so it shimmers as you move.
-// Served only with resource-pack.shaders: true; without the shaders the baked pastel bands of the texture show.
+// On while the served shader preset defines MCPL_BUBBLE (include/mcpl_preset.glsl, written by the plugin:
+// resource-pack.shaders, /게임 셰이더); without it the baked pastel bands of the texture show.
+
+#include <minecraft:mcpl_preset.glsl>
 
 const float MCPL_BUBBLE_ALPHA = 77.0;
 
 bool mcpl_is_bubble(float alpha) {
+    #ifdef MCPL_BUBBLE
     return abs(alpha * 255.0 - MCPL_BUBBLE_ALPHA) < 0.6;
+    #else
+    return false;
+    #endif
 }
 
 vec3 mcpl_rainbow(float t) {

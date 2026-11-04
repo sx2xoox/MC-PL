@@ -16,6 +16,7 @@ import io.github.sx2xoox.mcpl.MCPLPlugin;
 import io.github.sx2xoox.mcpl.core.command.GameCommand;
 import io.github.sx2xoox.mcpl.core.command.MovedCommands;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
+import io.github.sx2xoox.mcpl.core.pack.ShaderPreset;
 import io.github.sx2xoox.mcpl.game.augment.AugmentPracticeGame;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerPracticeGame;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -253,6 +254,32 @@ class CommandLayoutTest {
         assertTrue(text(user).contains("알 수 없는 명령어"));
     }
 
+    @Test
+    void shaderPresetsAreChosenByNameAndSaved() {
+        assertEquals(ShaderPreset.TOY_KINGDOM, hub.config().resourcePack().shaders(), "on by default");
+        drain(admin);
+        server.dispatchCommand(admin, "게임 셰이더");
+        String status = text(admin);
+        assertTrue(status.contains("장난감왕국") && status.contains("보호막만") && status.contains("끄기"), status);
+        assertTrue(status.contains("◀ 지금"), status);
+
+        server.dispatchCommand(admin, "게임 셰이더 끄기");
+        assertNull(hub.config().resourcePack().shaders());
+        assertEquals("off", hub.plugin().getConfig().getString("resource-pack.shaders"), "saved to config.yml");
+        assertTrue(text(admin).contains("셰이더를 껐습니다"));
+        server.dispatchCommand(admin, "mcpl shader bubble");
+        assertEquals(ShaderPreset.BUBBLE_ONLY, hub.config().resourcePack().shaders());
+        server.dispatchCommand(admin, "게임 셰이더 장난감왕국");
+        assertEquals(ShaderPreset.TOY_KINGDOM, hub.config().resourcePack().shaders());
+        assertEquals("toy-kingdom", hub.plugin().getConfig().getString("resource-pack.shaders"));
+        drain(admin);
+        server.dispatchCommand(admin, "게임 셰이더 장난감왕국");
+        assertTrue(text(admin).contains("이미"));
+
+        server.dispatchCommand(user, "게임 셰이더 끄기");
+        assertEquals(ShaderPreset.TOY_KINGDOM, hub.config().resourcePack().shaders(), "shaders are for admins");
+    }
+
     // ------------------------------------------------------------------ tab completion
 
     @Test
@@ -287,10 +314,14 @@ class CommandLayoutTest {
         assertTrue(complete(admin, "게임 연습 ").containsAll(List.of("허수아비", "바꾸기", "충전", "쿨타임", "받기",
                 "빼기", "카드", "다음단계", "대전")));
         assertTrue(complete(admin, "게임 맵 ").containsAll(List.of("여기", "해제")));
+        assertTrue(root.contains("셰이더"), root.toString());
+        assertTrue(complete(admin, "게임 셰이더 ").containsAll(List.of("장난감왕국", "보호막만", "끄기")));
+        assertTrue(complete(admin, "게임 shader ").containsAll(List.of("toy-kingdom", "bubble", "off")));
 
         List<String> forUser = complete(user, "게임 ");
         assertFalse(forUser.contains("맵"), forUser.toString());
         assertFalse(forUser.contains("중지"), forUser.toString());
+        assertFalse(forUser.contains("셰이더"), forUser.toString());
         assertFalse(complete(user, "게임 시작 ").contains("공성전"));
         assertFalse(complete(user, "게임 연습 ").contains("쿨타임"));
     }
@@ -308,6 +339,7 @@ class CommandLayoutTest {
         }
         assertTrue(adminHelp.contains("/게임 시작 증강 봇전 [수] [난이도]"), adminHelp);
         assertTrue(adminHelp.contains("/게임 시작 공성전 봇전 [팀당 인원] [난이도]"), adminHelp);
+        assertTrue(adminHelp.contains("/게임 셰이더 [종류|끄기]"), adminHelp);
         assertFalse(adminHelp.contains("<cmd"), "every command tag rendered:\n" + adminHelp);
         assertFalse(adminHelp.contains("missing"), adminHelp);
         for (String old : List.of("/게임 경기장", "/게임 능력 연습", "/게임 증강 연습", "/게임 증강 봇전", "/게임 능력 리롤")) {

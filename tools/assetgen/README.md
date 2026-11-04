@@ -11,6 +11,7 @@ python3 -I tools/assetgen/build.py                                       # rebui
 cd tools/assetgen/render && npm install                                  # once, for previews (three.js)
 python3 -I tools/assetgen/build.py --render <dir> [--only weapons|toys]  # + preview PNGs
 python3 -I tools/assetgen/attack_preview.py <dir> [kind ...]             # creature attack GIFs (Pillow)
+python3 -I tools/assetgen/grade_preview.py <dir> [image.png ...]         # 장난감 왕국 colour grade before/after
 ```
 
 Previews need Node + Playwright (Chromium). In a cloud session:
@@ -22,6 +23,7 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 | `mcpl_assets/textures.py` | the texture registry (`SURFACES`, `FRAME_TIME`, `TRANSLUCENT`), the v1 cyberpunk textures (unused) |
 | `mcpl_assets/toy_textures.py` | toy kingdom textures (`t_*`, 32 px) and their pastel ramps; `t_bubble` = the shader's marker alpha |
 | `mcpl_assets/toykit.py` | block-space builder for buildings / creatures: `rbox` (chamfered toy box), eyes, cheeks, slabs |
+| `grade_preview.py` | the pack shader's colour grade (`include/mcpl_grade.glsl`, same numbers) applied to renders: before/after + swatches |
 | `toy_preview.py` | toy sheets: building stages + bubble, minions in both team colours, jungle, one sheet per creature, scale lineup |
 | `attack_preview.py` | creature attack GIFs from `models/creature_attacks.json` (the game's poses; `./gradlew updateCreatureAttacks`) |
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |

@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -278,23 +279,117 @@ class ResourcePackContentsTest {
             }
         }
 
-        byte[] stripped = PackBuilder.withoutShaders(built.zip());
-        assertTrue(Arrays.equals(stripped, PackBuilder.withoutShaders(built.zip())), "reproducible");
-        Set<String> names = new TreeSet<>();
-        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(stripped))) {
-            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
-                names.add(entry.getName());
-            }
-        }
+        byte[] stripped = PackBuilder.withShaders(built.zip(), null);
+        assertTrue(Arrays.equals(stripped, PackBuilder.withShaders(built.zip(), null)), "reproducible");
+        SortedMap<String, byte[]> names = unzip(stripped);
         Set<String> expected = new TreeSet<>(built.files().keySet());
         expected.removeIf(p -> p.startsWith(PackBuilder.SHADERS));
-        assertEquals(expected, names);
+        assertEquals(expected, names.keySet());
         assertTrue(names.size() < built.files().size());
+    }
+
+    /**
+     * The shader presets ({@code resource-pack.shaders}, {@code /게임 셰이더}): each variant is reproducible, carries
+     * only its features' shaders with every include they need resolved, defines exactly its features' macros, and keeps
+     * every other file as is; the bundled pack is the default preset's variant; off has no shader at all.
+     */
+    @Test
+    void everyShaderPresetIsAReproducibleVariantWithItsOwnShaders() throws IOException {
+        assertTrue(Arrays.equals(built.zip(), PackBuilder.withShaders(built.zip(), ShaderPreset.DEFAULT)),
+                "the bundle is the default preset's variant");
+        assertEquals(ShaderPreset.presetInclude(ShaderPreset.DEFAULT), text(ShaderPreset.PRESET_INCLUDE));
+        Set<String> hashes = new HashSet<>();
+        hashes.add(ResourcePackService.sha1(PackBuilder.withShaders(built.zip(), null)));
+        SortedMap<String, byte[]> others = new TreeMap<>(built.files());
+        others.keySet().removeIf(p -> p.startsWith(PackBuilder.SHADERS));
+        for (ShaderPreset preset : ShaderPreset.values()) {
+            byte[] variant = PackBuilder.withShaders(built.zip(), preset);
+            assertTrue(Arrays.equals(variant, PackBuilder.withShaders(built.zip(), preset)), preset + " reproducible");
+            assertTrue(hashes.add(ResourcePackService.sha1(variant)), preset + " has its own hash");
+            SortedMap<String, byte[]> files = unzip(variant);
+            for (Map.Entry<String, byte[]> other : others.entrySet()) {
+                assertTrue(Arrays.equals(other.getValue(), files.get(other.getKey())), preset + " " + other.getKey());
+            }
+            Set<String> shaders = new TreeSet<>(files.keySet());
+            shaders.removeIf(p -> !p.startsWith(PackBuilder.SHADERS));
+            for (String core : preset.files()) {
+                assertTrue(shaders.contains(PackBuilder.SHADERS + core), preset + " ships " + core);
+            }
+            assertTrue(shaders.contains(ShaderPreset.PRESET_INCLUDE), preset.toString());
+            String presetInclude = new String(files.get(ShaderPreset.PRESET_INCLUDE), StandardCharsets.UTF_8);
+            for (ShaderPreset.Feature feature : ShaderPreset.Feature.values()) {
+                assertEquals(preset.features().contains(feature), presetInclude.contains("#define " + feature.macro()
+                        + "\n"), preset + " " + feature);
+            }
+            for (String path : shaders) {
+                String source = new String(files.get(path), StandardCharsets.UTF_8);
+                for (String line : source.split("\n")) {
+                    if (line.trim().startsWith("#include")) {
+                        String name = line.replaceAll(".*<minecraft:([^>]+)>.*", "$1");
+                        assertTrue(files.containsKey(PackBuilder.SHADERS + "include/" + name)
+                                || VANILLA_INCLUDES.contains(name), preset + ": " + path + " includes " + name);
+                    }
+                }
+                if (path.endsWith(".fsh") && source.contains("in vec3 mcplNormal")) {
+                    String vsh = path.replaceFirst("\\.fsh$", ".vsh");
+                    assertTrue(files.containsKey(vsh) && new String(files.get(vsh), StandardCharsets.UTF_8)
+                            .contains("out vec3 mcplNormal"), preset + ": " + vsh + " feeds " + path);
+                }
+            }
+            boolean grade = preset.features().contains(ShaderPreset.Feature.COLOR_GRADE);
+            assertEquals(grade, shaders.contains(PackBuilder.SHADERS + "core/terrain.fsh"), preset.toString());
+        }
+    }
+
+    /**
+     * The colour grade: every core shader of the feature includes the grade and calls it once on the lit colour, and
+     * nothing that draws text or the GUI is overridden (the grade also skips GUI items: the empty fog).
+     */
+    @Test
+    void theColorGradeCoversTheWorldAndLeavesTextAndTheGuiAlone() throws IOException {
+        String grade = text("assets/minecraft/shaders/include/mcpl_grade.glsl");
+        assertTrue(grade.contains("#ifdef MCPL_COLOR_GRADE") && grade.contains("FogRenderDistanceEnd < 1.0e30"));
+        String preview = Files.readString(Path.of("tools/assetgen/grade_preview.py"));
+        for (String constant : List.of("SATURATION", "LIFT", "BRIGHTEN", "SHADOW_TINT", "HIGHLIGHT")) {
+            String shader = grade.replaceAll("(?s).*const \\w+ MCPL_GRADE_" + constant + " = (?:vec3\\()?([0-9., ]+)\\)?;.*",
+                    "$1");
+            String python = preview.replaceAll("(?s).*\\n" + constant + " = (?:np\\.array\\(\\[)?([0-9., ]+)\\]?\\)?\\n.*",
+                    "$1");
+            assertEquals(shader.trim(), python.trim(), "grade_preview.py uses the shader's " + constant);
+        }
+        for (String core : ShaderPreset.Feature.COLOR_GRADE.shaders()) {
+            String source = text(PackBuilder.SHADERS + core);
+            assertTrue(source.contains("#include <minecraft:mcpl_grade.glsl>"), core);
+            assertEquals(1, source.split("mcpl_world_grade\\(", -1).length - 1, core + " grades once");
+            assertTrue(source.indexOf("#include <minecraft:fog.glsl>")
+                    < source.indexOf("#include <minecraft:mcpl_grade.glsl>"), core);
+            int call = source.indexOf("mcpl_world_grade(");
+            int accumulate = source.indexOf("sampleColorForAccumulation(");
+            assertTrue(accumulate < 0 || call < accumulate, core + ": graded before OIT premultiplies");
+        }
+        for (String path : built.files().keySet()) {
+            if (path.startsWith(PackBuilder.SHADERS + "core/")) {
+                String name = path.substring((PackBuilder.SHADERS + "core/").length());
+                assertFalse(name.matches("(text|gui|position_tex_color|position_color|position_tex|panorama)\\..*"),
+                        "text and GUI shaders keep their colours: " + name);
+            }
+        }
+    }
+
+    private static SortedMap<String, byte[]> unzip(byte[] zip) throws IOException {
+        SortedMap<String, byte[]> files = new TreeMap<>();
+        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip))) {
+            for (ZipEntry entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
+                files.put(entry.getName(), in.readAllBytes());
+            }
+        }
+        return files;
     }
 
     /** The 26.3 client's shader includes a pack shader may use without shipping them. */
     private static final Set<String> VANILLA_INCLUDES = Set.of("light.glsl", "fog.glsl", "dynamictransforms.glsl",
-            "projection.glsl", "sample_lightmap.glsl", "globals.glsl", "oit.glsl");
+            "projection.glsl", "sample_lightmap.glsl", "globals.glsl", "oit.glsl", "texture_sampling.glsl",
+            "terrainglobals.glsl", "chunksection.glsl", "matrix.glsl");
 
     private static String text(String path) {
         byte[] data = built.files().get(path);

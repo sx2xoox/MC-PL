@@ -82,12 +82,13 @@ public final class ResourcePackService implements Listener, PackAudience {
     private final Map<UUID, Status> statuses = new HashMap<>();
     private final List<Consumer<Player>> listeners = new CopyOnWriteArrayList<>();
     private byte @Nullable [] zip;
-    private byte @Nullable [] noShaders;
+    /** The served variants of the bundled pack by shader preset id ({@code off} = none), see {@link #variant}. */
+    private final Map<String, byte[]> variants = new HashMap<>();
     private String sha1 = "";
     private @Nullable PackHttpServer server;
     private int serverPort;
     private @Nullable SamePortHost samePort;
-    /** What the game-port host serves (read on netty threads). */
+    /** What the built-in hosts serve (read on netty and HTTP server threads). */
     private volatile SamePortHost.@Nullable Served served;
     /** What is offered (null = nothing); the download URL is per player (see {@link #send}). */
     private @Nullable Offer offer;
@@ -109,7 +110,7 @@ public final class ResourcePackService implements Listener, PackAudience {
                 plugin.getLogger().warning("The plugin jar has no " + BUNDLED + "; the resource pack is unavailable.");
             } else {
                 zip = in.readAllBytes();
-                noShaders = null;
+                variants.clear();
                 sha1 = sha1(zip);
                 File copy = new File(plugin.getDataFolder(), "MCPL-pack.zip");
                 if (!copy.isFile() || !sha1(Files.readAllBytes(copy.toPath())).equals(sha1)) {
@@ -236,19 +237,24 @@ public final class ResourcePackService implements Listener, PackAudience {
         }
     }
 
-    /** The bundled pack without its shaders ({@code resource-pack.shaders: false}); cached, the bundle never changes. */
-    private byte[] withoutShaders(byte[] pack) {
-        byte[] stripped = noShaders;
-        if (stripped == null) {
+    /**
+     * The bundled pack as served with {@code preset} ({@code resource-pack.shaders}, null = no shaders): only that
+     * preset's shader files ({@link PackBuilder#withShaders}); cached per preset, the bundle never changes.
+     */
+    private byte[] variant(byte[] pack, @Nullable ShaderPreset preset) {
+        String key = preset == null ? "off" : preset.id();
+        byte[] built = variants.get(key);
+        if (built == null) {
             try {
-                stripped = PackBuilder.withoutShaders(pack);
+                built = PackBuilder.withShaders(pack, preset);
             } catch (IOException e) {
-                plugin.getLogger().log(Level.WARNING, "Could not leave the shaders out of the resource pack", e);
-                stripped = pack;
+                plugin.getLogger().log(Level.WARNING, "Could not build the resource pack for the shader preset "
+                        + key, e);
+                built = pack;
             }
-            noShaders = stripped;
+            variants.put(key, built);
         }
-        return stripped;
+        return built;
     }
 
     /** Starts/stops the hosting {@code wanted} asks for; what is offered then, or null if nothing is. */
@@ -258,11 +264,8 @@ public final class ResourcePackService implements Listener, PackAudience {
             stopHosting();
             return null;
         }
-        String packSha1 = sha1;
-        if (!wanted.shaders()) {
-            pack = withoutShaders(pack);
-            packSha1 = sha1(pack);
-        }
+        pack = variant(pack, wanted.shaders());
+        String packSha1 = sha1(pack);
         String path = "mcpl-pack/" + packSha1 + ".zip"; // a new pack is a new URL: no stale caches
         String hash = Objects.requireNonNullElse(wanted.hashToSend(packSha1), "");
         if (!wanted.selfHosted()) {
@@ -286,7 +289,7 @@ public final class ResourcePackService implements Listener, PackAudience {
         }
         if (server == null) {
             try {
-                server = PackHttpServer.start(wanted.hostPort(), path, pack);
+                server = PackHttpServer.start(wanted.hostPort(), () -> served);
                 serverPort = wanted.hostPort();
                 plugin.getLogger().info("Serving the resource pack on port " + wanted.hostPort()
                         + " (resource-pack.host-port)");

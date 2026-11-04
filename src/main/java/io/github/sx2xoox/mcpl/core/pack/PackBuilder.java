@@ -7,12 +7,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
+import java.util.SortedSet;
 import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -22,6 +28,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Builds the MCPL resource pack from its source folder ({@code src/main/resourcepack-src}); run at build time by the
@@ -137,6 +144,11 @@ public final class PackBuilder {
                 json("assets/minecraft/items/" + sword + ".json", weaponSelect(sword, weapons));
             }
         }
+        if (files.keySet().stream().anyMatch(p -> p.startsWith(SHADERS))) {
+            // the bundled pack is the default preset's variant; the plugin serves the others (withShaders)
+            put(ShaderPreset.PRESET_INCLUDE, ShaderPreset.presetInclude(ShaderPreset.DEFAULT)
+                    .getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     /**
@@ -212,21 +224,67 @@ public final class PackBuilder {
         files.put(path, data);
     }
 
-    /** The folder of the pack's core shader overrides ({@code resource-pack.shaders: false} leaves it out). */
+    /** The folder of the pack's core shader overrides (only a shader preset's files of it are served). */
     public static final String SHADERS = "assets/minecraft/shaders/";
 
-    /** {@code zip} (a built pack) without its shader overrides, again reproducible. */
-    public static byte[] withoutShaders(byte[] zip) throws IOException {
-        SortedMap<String, byte[]> kept = new TreeMap<>();
+    private static final Pattern INCLUDE = Pattern.compile("^\\s*#include\\s+<minecraft:([^>]+)>", Pattern.MULTILINE);
+
+    /**
+     * {@code zip} (a built pack) as served with {@code preset}: everything outside {@link #SHADERS}, plus the preset's
+     * core shaders ({@link ShaderPreset#files}), the vertex shaders paired with them, the pack's includes they need
+     * (transitively) and a fresh {@link ShaderPreset#PRESET_INCLUDE}; with no preset ({@code null}) no shader at all.
+     * Reproducible: the same pack and preset always give the same bytes.
+     */
+    public static byte[] withShaders(byte[] zip, @Nullable ShaderPreset preset) throws IOException {
+        SortedMap<String, byte[]> all = new TreeMap<>();
         try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip))) {
             ZipEntry entry;
             while ((entry = in.getNextEntry()) != null) {
-                if (!entry.isDirectory() && !entry.getName().startsWith(SHADERS)) {
-                    kept.put(entry.getName(), in.readAllBytes());
+                if (!entry.isDirectory()) {
+                    all.put(entry.getName(), in.readAllBytes());
                 }
             }
         }
+        SortedMap<String, byte[]> kept = new TreeMap<>();
+        for (Map.Entry<String, byte[]> file : all.entrySet()) {
+            if (!file.getKey().startsWith(SHADERS)) {
+                kept.put(file.getKey(), file.getValue());
+            }
+        }
+        if (preset != null) {
+            all.put(ShaderPreset.PRESET_INCLUDE, ShaderPreset.presetInclude(preset).getBytes(StandardCharsets.UTF_8));
+            for (String shader : shaderFiles(all, preset)) {
+                kept.put(shader, all.get(shader));
+            }
+        }
         return zip(kept);
+    }
+
+    /**
+     * The shader files (full paths) {@code preset} needs from {@code pack}: its core shaders that the pack has, the
+     * vertex shaders paired with them and every include of the pack they reach (the vanilla ones are the client's).
+     */
+    static SortedSet<String> shaderFiles(Map<String, byte[]> pack, ShaderPreset preset) {
+        SortedSet<String> needed = new TreeSet<>();
+        Deque<String> todo = new ArrayDeque<>();
+        for (String core : preset.files()) {
+            todo.add(SHADERS + core);
+            if (core.endsWith(".fsh")) {
+                todo.add(SHADERS + core.substring(0, core.length() - ".fsh".length()) + ".vsh");
+            }
+        }
+        while (!todo.isEmpty()) {
+            String path = todo.poll();
+            byte[] data = pack.get(path);
+            if (data == null || !needed.add(path)) {
+                continue;
+            }
+            Matcher include = INCLUDE.matcher(new String(data, StandardCharsets.UTF_8));
+            while (include.find()) {
+                todo.add(SHADERS + "include/" + include.group(1));
+            }
+        }
+        return needed;
     }
 
     private byte[] zip() throws IOException {

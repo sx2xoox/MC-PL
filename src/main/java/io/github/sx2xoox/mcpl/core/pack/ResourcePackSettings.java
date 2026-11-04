@@ -17,11 +17,12 @@ import org.jspecify.annotations.Nullable;
  *                      connected with (their virtual host), then {@code server-ip}
  * @param sha1          the pack hash sent to clients: {@link #AUTO} = the bundled pack's, empty = none (no check)
  * @param required      clients must accept the pack (declining disconnects them)
- * @param shaders       serve the pack's core shader overrides (the soap-bubble shield film); false serves the pack
- *                      without {@code assets/minecraft/shaders/} (clients whose shaders break, shader mods)
+ * @param shaders       the shader preset served with the pack ({@code resource-pack.shaders}: {@code toy-kingdom}, ...;
+ *                      {@code true} = {@link ShaderPreset#DEFAULT}); null = off, the pack without any
+ *                      {@code assets/minecraft/shaders/} (clients whose shaders break, shader mods)
  */
 public record ResourcePackSettings(boolean enabled, Mode mode, String url, int hostPort, String publicAddress,
-                                   String sha1, boolean required, boolean shaders) {
+                                   String sha1, boolean required, @Nullable ShaderPreset shaders) {
 
     /** Where the plugin serves the pack. */
     public enum Mode {
@@ -43,10 +44,27 @@ public record ResourcePackSettings(boolean enabled, Mode mode, String url, int h
     public static final ResourcePackSettings DISABLED =
             new ResourcePackSettings(false, Mode.SAME_PORT, "", DEFAULT_PORT, "", AUTO, false);
 
-    /** Settings that serve the shaders. */
+    /** Settings that serve the default shader preset. */
     public ResourcePackSettings(boolean enabled, Mode mode, String url, int hostPort, String publicAddress,
                                 String sha1, boolean required) {
-        this(enabled, mode, url, hostPort, publicAddress, sha1, required, true);
+        this(enabled, mode, url, hostPort, publicAddress, sha1, required, ShaderPreset.DEFAULT);
+    }
+
+    /** These settings with another shader preset (null = off). */
+    public ResourcePackSettings withShaders(@Nullable ShaderPreset preset) {
+        return new ResourcePackSettings(enabled, mode, url, hostPort, publicAddress, sha1, required, preset);
+    }
+
+    /**
+     * {@code resource-pack.shaders}: a preset id ({@code toy-kingdom}) or Korean name, {@code off}, or the old boolean
+     * ({@code true} = {@link ShaderPreset#DEFAULT}, {@code false} = off); missing or unknown = the default.
+     */
+    public static @Nullable ShaderPreset readShaders(@Nullable Object value) {
+        return switch (ShaderPreset.parse(value)) {
+            case ShaderPreset.Choice.On on -> on.preset();
+            case ShaderPreset.Choice.Off off -> null;
+            case ShaderPreset.Choice.Unknown unknown -> ShaderPreset.DEFAULT;
+        };
     }
 
     public ResourcePackSettings {
@@ -69,7 +87,7 @@ public record ResourcePackSettings(boolean enabled, Mode mode, String url, int h
                 section.getString("public-address", ""),
                 section.getString("sha1", AUTO),
                 section.getBoolean("required", false),
-                section.getBoolean("shaders", true));
+                readShaders(section.get("shaders")));
     }
 
     /** The plugin serves the pack (no external URL configured). */

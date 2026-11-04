@@ -33,6 +33,7 @@ import io.github.sx2xoox.mcpl.core.game.MiniGame;
 import io.github.sx2xoox.mcpl.core.game.Rotation;
 import io.github.sx2xoox.mcpl.core.map.ArenaMap;
 import io.github.sx2xoox.mcpl.core.map.MapService;
+import io.github.sx2xoox.mcpl.core.pack.ShaderPreset;
 import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -66,6 +67,7 @@ import org.jspecify.annotations.Nullable;
  *                                                     from the modes)
  * /게임 맵|map [&lt;맵&gt; [이동|tp | 다시짓기|rebuild] | 여기|here [반경] | 해제|clear]   (admin) battle maps, arena
  * /게임 설정|settings · 리로드|reload · 리소스팩|resourcepack [확인|check | 다시받기|resend [플레이어|모두]]
+ * /게임 셰이더|shader [장난감왕국|toy-kingdom | 보호막만|bubble | 끄기|off]   (admin) the pack's shader preset
  * </pre>
  * plus the mode nodes ({@code /게임 능력 …}) and options the registered mini-games add through
  * {@link MiniGame#registerCommands}. Old forms ({@code /게임 능력 연습}, {@code /게임 경기장 …}) still work: words that
@@ -182,6 +184,9 @@ public final class GameCommand {
         }
         for (String name : List.of("리소스팩", "resourcepack")) {
             root.then(packNode(name));
+        }
+        for (String name : List.of("셰이더", "shader")) {
+            root.then(shaderNode(name));
         }
 
         // ---- what the modes add
@@ -326,6 +331,20 @@ public final class GameCommand {
                                     StringArgumentType.getString(ctx, targetArg)))));
         }
         return pack;
+    }
+
+    /** {@code /게임 셰이더 [종류|끄기]} (admin): the shader preset served with the pack; English twins by id. */
+    private LiteralArgumentBuilder<CommandSourceStack> shaderNode(String name) {
+        boolean english = name.equals("shader");
+        LiteralArgumentBuilder<CommandSourceStack> shader = Commands.literal(name).requires(ADMIN)
+                .executes(ctx -> shaderStatus(ctx.getSource().getSender()));
+        for (ShaderPreset preset : ShaderPreset.values()) {
+            shader.then(Commands.literal(english ? preset.id() : preset.koreanName())
+                    .executes(ctx -> shaderUse(ctx.getSource().getSender(), preset)));
+        }
+        shader.then(Commands.literal(english ? "off" : "끄기")
+                .executes(ctx -> shaderUse(ctx.getSource().getSender(), null)));
+        return shader;
     }
 
     // ------------------------------------------------------------------ old forms (hidden)
@@ -915,6 +934,57 @@ public final class GameCommand {
         }
         int sent = hub.packCheck().resend(targets);
         messages().send(sender, "resource-pack.resent", Messages.tag("count", sent));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** {@code /게임 셰이더}: the served preset and every choice, each clickable. */
+    private int shaderStatus(CommandSender sender) {
+        ShaderPreset current = hub.config().resourcePack().shaders();
+        messages().send(sender, "shader.status", Messages.tag("current", current == null
+                ? messages().get("shader.off-name") : Component.text(current.koreanName())));
+        for (ShaderPreset preset : ShaderPreset.values()) {
+            shaderEntry(sender, preset.koreanName(), messages().get(preset.messageKey()), preset == current);
+        }
+        shaderEntry(sender, "끄기", messages().get("shader.off-description"), current == null);
+        if (!hub.config().resourcePack().selfHosted()) {
+            messages().send(sender, "shader.external-url");
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private void shaderEntry(CommandSender sender, String word, Component description, boolean current) {
+        String command = "/" + ROOT + " 셰이더 " + word;
+        Component name = Component.text(word, NamedTextColor.WHITE)
+                .clickEvent(ClickEvent.runCommand(command))
+                .hoverEvent(HoverEvent.showText(messages().get("shader.hover", Messages.tag("command", command))));
+        messages().send(sender, "shader.entry", Messages.tag("name", name), Messages.tag("description", description),
+                Messages.tag("mark", current ? messages().get("shader.current-mark") : Component.empty()));
+    }
+
+    /** {@code /게임 셰이더 <종류|끄기>}: saves the preset (null = off) and sends everyone online the new pack. */
+    private int shaderUse(CommandSender sender, @Nullable ShaderPreset preset) {
+        Component name = preset == null ? messages().get("shader.off-name") : Component.text(preset.koreanName());
+        if (hub.config().resourcePack().shaders() == preset) {
+            messages().send(sender, "shader.unchanged", Messages.tag("preset", name));
+            return Command.SINGLE_SUCCESS;
+        }
+        if (configLocked(sender)) {
+            return 0;
+        }
+        hub.config().setResourcePackShaders(preset);
+        hub.resourcePacks().reload();
+        hub.plugin().getLogger().info(sender.getName() + " set resource-pack.shaders to "
+                + (preset == null ? "off" : preset.id()) + " (/게임 셰이더)");
+        String key = preset == null ? "shader.turned-off" : "shader.changed";
+        if (hub.resourcePacks().offered()) {
+            messages().send(sender, key, Messages.tag("preset", name),
+                    Messages.tag("count", Bukkit.getOnlinePlayers().size()));
+        } else {
+            messages().send(sender, key + "-not-offered", Messages.tag("preset", name));
+        }
+        if (!hub.config().resourcePack().selfHosted()) {
+            messages().send(sender, "shader.external-url");
+        }
         return Command.SINGLE_SUCCESS;
     }
 

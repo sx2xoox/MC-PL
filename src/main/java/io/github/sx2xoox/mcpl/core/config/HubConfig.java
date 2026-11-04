@@ -15,6 +15,7 @@ import java.util.function.Consumer;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.pack.ResourcePackSettings;
+import io.github.sx2xoox.mcpl.core.pack.ShaderPreset;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -299,6 +300,11 @@ public final class HubConfig {
         arenaRadius = clamp(config.getInt("arena.radius", 60), MIN_RADIUS, MAX_RADIUS);
 
         resourcePack = ResourcePackSettings.read(config.getConfigurationSection("resource-pack"));
+        if (ShaderPreset.parse(config.get("resource-pack.shaders")) instanceof ShaderPreset.Choice.Unknown unknown) {
+            plugin.getLogger().warning("Unknown resource-pack.shaders '" + unknown.input() + "'; using "
+                    + ShaderPreset.DEFAULT.id() + " (off, or one of: " + String.join(", ",
+                    Arrays.stream(ShaderPreset.values()).map(ShaderPreset::id).toList()) + ")");
+        }
 
         ConfigurationSection protectionSection = config.getConfigurationSection("protection");
         protection = protectionSection == null ? ProtectionSettings.ALL : ProtectionSettings.read(protectionSection);
@@ -477,6 +483,16 @@ public final class HubConfig {
     /** The {@code resource-pack.*} settings (who is sent the MCPL resource pack and from where). */
     public ResourcePackSettings resourcePack() {
         return resourcePack;
+    }
+
+    /**
+     * {@code /게임 셰이더 <종류>}: the shader preset served with the pack (null = off), saved as
+     * {@code resource-pack.shaders}; {@code ResourcePackService#reload} then sends the new pack.
+     */
+    public void setResourcePackShaders(@Nullable ShaderPreset preset) {
+        resourcePack = resourcePack.withShaders(preset);
+        raw().set("resource-pack.shaders", preset == null ? "off" : preset.id());
+        save();
     }
 
     public ProtectionSettings protection() {
