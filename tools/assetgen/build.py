@@ -23,7 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from mcpl_assets.palette import PALETTE  # noqa: E402
-from models import creatures, toy_armor, toys, weapons  # noqa: E402
+from models import creatures, props, toy_armor, toys, weapons  # noqa: E402
 import armor_preview  # noqa: E402
 import toy_preview  # noqa: E402
 import weapon_preview  # noqa: E402
@@ -72,7 +72,8 @@ def main():
 
     toy_models = dict(toys.ALL)
     toy_models.update(creatures.ALL)
-    for folder in ("structure", "creature"):
+    toy_models.update(props.ALL)
+    for folder in ("structure", "creature", "prop"):
         (MODELS / folder).mkdir(exist_ok=True)
         _clean(MODELS / folder, set(toy_models))
     built = {}

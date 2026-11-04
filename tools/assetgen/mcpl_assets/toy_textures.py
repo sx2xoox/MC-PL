@@ -44,6 +44,9 @@ add_ramps({
     "t_navy":     (265, 0.070, 0.42, 0.18, 4, False),  # soldier trousers, dark glass
     "t_lime":     (130, 0.090, 0.80, 0.20, 4, False),  # archer, leaves
     "t_grape":    (305, 0.090, 0.66, 0.22, 4, False),  # rabbit waistcoat, dragon belly spots
+    "t_cherry":   (24, 0.150, 0.60, 0.22, 4, False),   # toy red: candy swirls, train, car, boat hull
+    "t_cobalt":   (258, 0.110, 0.58, 0.20, 4, False),  # toy blue: the train's cab, the top's band
+    "t_orange":   (58, 0.140, 0.76, 0.18, 4, False),   # the duck's beak and feet
 })
 
 
@@ -217,6 +220,16 @@ def candy():
     return im
 
 
+def candy_red():
+    """Map-prop candy stripes: cherry red and white diagonals 8 px wide (bolder than t_candy for big props)."""
+    im = _new()
+    px = im.load()
+    for y in range(W):
+        for x in range(W):
+            px[x, y] = ramp("t_cherry", 2) if ((x + y) // 8) % 2 else ramp("t_snow", 3)
+    return im
+
+
 def bandage():
     """A sticking plaster (cute damage): beige with a row of air holes."""
     im = _new()
@@ -324,6 +337,10 @@ SURFACES = {
     "t_navy": plastic("t_navy", 2, 109),
     "t_lime": plastic("t_lime", 2, 110),
     "t_grape": plastic("t_grape", 2, 111),
+    "t_cherry": plastic("t_cherry", 2, 119),
+    "t_cobalt": plastic("t_cobalt", 2, 120),
+    "t_orange": plastic("t_orange", 2, 121),
+    "t_candy_red": candy_red,
     "t_lilac": plastic("t_lilac", 2, 112),
     "t_caramel": plastic("t_caramel", 2, 114),
     "t_cream": plastic("t_cream", 2, 115),

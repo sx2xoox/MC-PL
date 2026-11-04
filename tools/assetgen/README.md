@@ -25,6 +25,7 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 | `mcpl_assets/toykit.py` | block-space builder for buildings / creatures: `rbox` (chamfered toy box), eyes, cheeks, slabs |
 | `grade_preview.py` | the pack shader's colour grade (`include/mcpl_grade.glsl`, same numbers) applied to renders: before/after + swatches |
 | `toy_preview.py` | toy sheets: building stages + bubble, minions in both team colours, jungle, one sheet per creature, scale lineup |
+| `prop_preview.py` | 장난감 왕국 map props (`models/props.py` → `prop/*`): one sheet per prop (+ the block prop it replaces with `--blocks <dump.json>`), lineup, block-vs-model grid |
 | `attack_preview.py` | creature attack GIFs from `models/creature_attacks.json` (the game's poses; `./gradlew updateCreatureAttacks`) |
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |
 | `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range) |
@@ -116,3 +117,9 @@ wind-up key). Materials are painted plastic, felt and wood in the pastel `t_*` r
 bits; nothing glows except syrup and gems. Faces and decals sit on the flat centre of a face (inside the chamfer) or
 they float. Team colour only through tinted `t_*_tint` textures (`tint=True`): uniforms, roofs, bands, pennants, lids.
 Damage is cute, never grim: cracks, sticking plasters, knocked-off roof tips, scattered toy blocks.
+
+Map props (`models/props.py`, item models `mcpl:prop/<id>`): the 3D versions of the map's block props (lollipop lamp,
+candy cane, toy train, wind-up car + its key, spinning top, flag boat, rubber duck, rainbow), same block-space rules
+(base y = 0, the water's surface for floating props; front / heading -z), display scale and centre in `PROPS`. Round
+parts use `cyl` (a regular 8/16-gon as a union of bars through the middle; never overlapping rotated squares, whose
+union is a star). Previews: `python3 -I tools/assetgen/prop_preview.py <dir> [--blocks <dump.json>]`.
