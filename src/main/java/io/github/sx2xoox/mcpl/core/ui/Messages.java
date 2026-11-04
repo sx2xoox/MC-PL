@@ -55,17 +55,23 @@ public final class Messages {
         this.parent = parent;
     }
 
-    /** (Re)loads the file, writing the bundled default copy to the data folder on first run. */
+    /**
+     * (Re)loads the file, writing the bundled default copy to the data folder on first run.
+     *
+     * <p>Plugin updates change the bundled text, but a file written by an older version would keep showing the old
+     * lines forever. So the bundled copy each file was written from is kept in {@code .bundled/}: a line the owner
+     * never changed (still equal to that copy) follows the new bundled text, and a file nobody edited is replaced by
+     * the new one. A file from before this bookkeeping is backed up to {@code <name>.old} and replaced.
+     */
     public void load() {
         File file = new File(plugin.getDataFolder(), fileName);
+        File snapshot = new File(new File(plugin.getDataFolder(), ".bundled"), fileName);
         try (InputStream stream = plugin.getResource(fileName)) {
             if (stream != null) {
-                try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
-                    defaults = YamlConfiguration.loadConfiguration(reader);
-                }
-                if (!file.exists()) {
-                    plugin.saveResource(fileName, false);
-                }
+                byte[] bundled = stream.readAllBytes();
+                defaults = YamlConfiguration.loadConfiguration(
+                        new InputStreamReader(new java.io.ByteArrayInputStream(bundled), StandardCharsets.UTF_8));
+                upgrade(file, snapshot, bundled);
             }
         } catch (Exception e) {
             plugin.getLogger().log(Level.WARNING, "Could not read bundled " + fileName, e);
@@ -79,6 +85,59 @@ public final class Messages {
         } else {
             prefix = Component.empty();
         }
+    }
+
+    /**
+     * Brings the owner's file up to the bundled text (see {@link #load()}).
+     */
+    private void upgrade(File file, File snapshot, byte[] bundled) throws java.io.IOException {
+        if (!file.exists()) {
+            write(file, bundled);
+        } else if (!snapshot.exists()) {
+            if (!java.util.Arrays.equals(java.nio.file.Files.readAllBytes(file.toPath()), bundled)) {
+                File backup = new File(file.getParentFile(), fileName + ".old");
+                java.nio.file.Files.copy(file.toPath(), backup.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                write(file, bundled);
+                plugin.getLogger().info(fileName + " was replaced by this version's text (the old file is kept as "
+                        + backup.getName() + ")");
+            }
+        } else {
+            byte[] previous = java.nio.file.Files.readAllBytes(snapshot.toPath());
+            if (!java.util.Arrays.equals(previous, bundled)) {
+                YamlConfiguration owner = YamlConfiguration.loadConfiguration(file);
+                YamlConfiguration before = YamlConfiguration.loadConfiguration(
+                        new InputStreamReader(new java.io.ByteArrayInputStream(previous), StandardCharsets.UTF_8));
+                YamlConfiguration changed = new YamlConfiguration();
+                for (String key : owner.getKeys(true)) {
+                    if (!owner.isConfigurationSection(key)
+                            && !java.util.Objects.equals(owner.get(key), before.get(key))) {
+                        changed.set(key, owner.get(key));
+                    }
+                }
+                if (changed.getKeys(true).isEmpty()) {
+                    write(file, bundled);
+                } else {
+                    YamlConfiguration merged = YamlConfiguration.loadConfiguration(
+                            new InputStreamReader(new java.io.ByteArrayInputStream(bundled), StandardCharsets.UTF_8));
+                    for (String key : changed.getKeys(true)) {
+                        if (!changed.isConfigurationSection(key)) {
+                            merged.set(key, changed.get(key));
+                        }
+                    }
+                    merged.save(file);
+                    plugin.getLogger().info(fileName + ": updated to this version's text, keeping the lines edited "
+                            + "on this server");
+                }
+            }
+        }
+        snapshot.getParentFile().mkdirs();
+        write(snapshot, bundled);
+    }
+
+    private static void write(File file, byte[] content) throws java.io.IOException {
+        file.getParentFile().mkdirs();
+        java.nio.file.Files.write(file.toPath(), content);
     }
 
     /** The colored prefix put in front of chat messages. */
