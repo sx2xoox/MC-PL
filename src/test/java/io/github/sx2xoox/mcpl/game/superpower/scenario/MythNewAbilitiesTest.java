@@ -1264,7 +1264,9 @@ class MythNewAbilitiesTest {
 
     @Test
     void minotaurRushStopsAtRealWallsAndLeavesThemStanding() {
-        try (Scenario s = Scenario.ffa("minotaur")) {
+        // one ring only: the walls between bigger rings are random and may stand where the real wall is put (a block
+        // written over a labyrinth wall is smashed by the rush and put back to air)
+        try (Scenario s = Scenario.builder("minotaur").param("maze_radius", 3).start()) {
             s.place(s.enemy, 9.5, -9.5, 0);
             s.place(s.enemy2, -9.5, -9.5, 0);
             s.assertSucceeded(s.ultimate(), "미궁");

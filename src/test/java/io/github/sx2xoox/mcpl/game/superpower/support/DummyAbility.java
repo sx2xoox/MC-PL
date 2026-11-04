@@ -21,9 +21,31 @@ public final class DummyAbility extends Ability {
             .ultimateNotStandalone()
             .build();
 
+    /**
+     * A second, identical neutral ability. A team of two needs two different abilities (one per player); with only
+     * {@link #INFO} in a pool the match fills the gap with a random real ability, whose passive then interferes.
+     */
+    public static final AbilityInfo TWIN_INFO = AbilityInfo.builder("dummy_twin", "허수아비 쌍둥이", Material.HAY_BLOCK)
+            .color(TextColor.color(0xC8B070))
+            .passive("허수아비", "아무 일도 하지 않습니다.")
+            .active("허수아비", "아무 일도 하지 않습니다.", 30)
+            .ultimate("허수아비", "아무 일도 하지 않습니다.")
+            .ultimateNotStandalone()
+            .build();
+
+    private final AbilityInfo info;
+
+    public DummyAbility() {
+        this(INFO);
+    }
+
+    public DummyAbility(AbilityInfo info) {
+        this.info = info;
+    }
+
     @Override
     public AbilityInfo info() {
-        return INFO;
+        return info;
     }
 
     @Override

@@ -15,7 +15,9 @@ import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings.Feel;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttacks;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
+import io.github.sx2xoox.mcpl.game.superpower.support.DummyAbility;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -32,6 +34,7 @@ import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.EquipmentSlotGroup;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,12 +58,14 @@ class BasicAttackMatchTest {
     @BeforeEach
     void setUp() {
         h = MatchHarness.flat();
-        h.registerDummy();
+        // two neutral abilities: a pool smaller than a team (two players) is filled with random real abilities, whose
+        // passives would hurt the attacker or dodge the hit at random
+        h.registerDummies();
         h.settings().set("ultimate.per-second", 0);
         siege = (SiegeGame) h.hub.games().game(SiegeGame.ID);
         siege.sitesOverride(new FallbackLaneSites((int) FlatWorld.SURFACE));
         config = siege.config();
-        config.set(SiegeSettings.ABILITY_POOL, List.of("dummy"));
+        config.set(SiegeSettings.ABILITY_POOL, List.of(DummyAbility.INFO.id(), DummyAbility.TWIN_INFO.id()));
         config.set(SiegeSettings.ROUND_PREP_SECONDS, 1);
         config.set(SiegeSettings.ATTACK_DAMAGE, 0);
         config.set(SiegeSettings.SPAWN_ZONE_DAMAGE, 0);
@@ -87,19 +92,40 @@ class BasicAttackMatchTest {
         return siege.currentMatch();
     }
 
-    /** Attacker, enemy and (with 3 players) an ally of the attacker. */
+    /**
+     * Attacker (the one holding {@code dummy}, whose basic attack the tests configure), enemy and (with 3 players) an
+     * ally of the attacker.
+     */
     private record Cast(Player attacker, Player enemy, Player ally) {
     }
 
     private Cast cast(SiegeMatch match) {
         List<Player> big = members(match.teams().get(0));
         List<Player> small = members(match.teams().get(1));
-        if (big.size() < small.size()) {
+        if (big.size() < small.size() || big.size() == small.size() && dummyOf(match, big) == null) {
             List<Player> swap = big;
             big = small;
             small = swap;
         }
-        return new Cast(big.get(0), small.get(0), big.size() > 1 ? big.get(1) : null);
+        Player attacker = dummyOf(match, big);
+        assertNotNull(attacker, "the bigger team holds the configured dummy");
+        Player ally = null;
+        for (Player player : big) {
+            if (!player.equals(attacker)) {
+                ally = player;
+            }
+        }
+        return new Cast(attacker, small.get(0), ally);
+    }
+
+    private static @Nullable Player dummyOf(SiegeMatch match, List<Player> team) {
+        for (Player player : team) {
+            Participant participant = match.abilities().participant(player.getUniqueId());
+            if (participant != null && DummyAbility.INFO.id().equals(participant.abilityId())) {
+                return player;
+            }
+        }
+        return null;
     }
 
     private List<Player> members(MatchTeam team) {

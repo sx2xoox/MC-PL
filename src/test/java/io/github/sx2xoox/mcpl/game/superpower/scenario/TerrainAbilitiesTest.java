@@ -2,8 +2,11 @@ package io.github.sx2xoox.mcpl.game.superpower.scenario;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 import io.github.sx2xoox.mcpl.core.config.BlockDamageScope;
@@ -211,9 +214,17 @@ class TerrainAbilitiesTest {
         }
     }
 
+    /**
+     * A labyrinth of one ring only (radius 3): its walls are random (openings, the walls between rings), so a bigger
+     * one may stand where a test puts its real walls (a block written over a labyrinth wall is put back to air).
+     */
+    private static Scenario smallLabyrinth() {
+        return breaking("minotaur").param("maze_radius", 3).start();
+    }
+
     @Test
     void minotaurRushTunnelsThroughRealWalls() {
-        try (Scenario s = breaking("minotaur").start()) {
+        try (Scenario s = smallLabyrinth()) {
             s.place(s.enemy, 9.5, -9.5, 0);
             s.place(s.enemy2, -9.5, -9.5, 0);
             s.assertSucceeded(s.ultimate(), "미궁");
@@ -305,7 +316,7 @@ class TerrainAbilitiesTest {
     /** Charging off a floor of bottom slabs digs no trench: the tunnel runs over the slabs, not through them. */
     @Test
     void minotaurRushFromASlabFloorKeepsTheFloor() {
-        try (Scenario s = breaking("minotaur").start()) {
+        try (Scenario s = smallLabyrinth()) {
             for (int x = -1; x <= 8; x++) {
                 for (int z = -1; z <= 1; z++) {
                     s.world.setBlock(x, Y, z, Material.STONE_SLAB);
@@ -336,6 +347,54 @@ class TerrainAbilitiesTest {
                     }
                 }
                 t.world.setBlock(5, Y + 1, 0, Material.AIR);
+            });
+        }
+    }
+
+    /**
+     * A labyrinth wall standing on a step (a real block) goes before the tunnel cuts the step: a real block holding up
+     * a temporary one never breaks, so the rush used to stop at such a step.
+     */
+    @Test
+    void minotaurRushTunnelsThroughAStepUnderALabyrinthWall() {
+        try (Scenario s = smallLabyrinth()) {
+            List<int[]> steps = new ArrayList<>();
+            for (int x = -4; x <= 4; x++) {
+                for (int z = -4; z <= 4; z++) {
+                    double r = Math.hypot(x, z);
+                    if (r >= 2.5 && r < 3.5) { // the cells of the first ring around the owner at (0.5, 0.5)
+                        s.world.setBlock(x, Y, z, Material.STONE_BRICKS);
+                        steps.add(new int[] {x, z});
+                    }
+                }
+            }
+            s.place(s.enemy, 9.5, -9.5, 0);
+            s.place(s.enemy2, -9.5, -9.5, 0);
+            s.assertSucceeded(s.ultimate(), "미궁");
+            s.ticks(25);
+            // three openings can never take all four cells straight ahead of the axes: one holds a wall on its step
+            int[][] axes = {{3, 0, 270}, {0, 3, 0}, {-3, 0, 90}, {0, -3, 180}};
+            int[] axis = null;
+            for (int[] candidate : axes) {
+                if (!s.world.getBlockAt(candidate[0], Y + 1, candidate[1]).getType().isAir()) {
+                    axis = candidate;
+                    break;
+                }
+            }
+            assertNotNull(axis, "a labyrinth wall stands on a step straight ahead of an axis");
+            assertEquals(Material.STONE_BRICKS, s.world.getBlockAt(axis[0], Y, axis[1]).getType(), "on the step");
+            face(s.owner, axis[2]);
+            Location start = s.owner.getLocation();
+            s.assertSucceeded(s.active(), "미궁 돌진 at the step");
+            s.ticks(20);
+            assertTrue(s.world.getBlockAt(axis[0], Y, axis[1]).getType().isAir(), "the step under the wall broke");
+            assertTrue(s.world.getBlockAt(axis[0], Y + 1, axis[1]).getType().isAir(), "and the wall on it");
+            assertTrue(s.owner.getLocation().distance(start) > 4, "the bull charged on through");
+            s.ticks(s.paramTicks("maze_duration"));
+            finishRestored(s, t -> {
+                for (int[] step : steps) {
+                    t.world.setBlock(step[0], Y, step[1], Material.AIR);
+                }
             });
         }
     }

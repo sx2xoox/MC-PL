@@ -119,6 +119,17 @@ public final class MatchHarness implements AutoCloseable {
         game.abilities().load(game.registry());
     }
 
+    /**
+     * Adds {@link DummyAbility} and its twin ({@link DummyAbility#TWIN_INFO}): two neutral abilities, so a team of two
+     * gets only neutral abilities (a 공성전 pool smaller than a team is filled with random real abilities).
+     */
+    public void registerDummies() {
+        if (game.registry().get(DummyAbility.TWIN_INFO.id()) == null) {
+            game.registry().register(DummyAbility.TWIN_INFO, () -> new DummyAbility(DummyAbility.TWIN_INFO));
+        }
+        registerDummy();
+    }
+
     /** Overrides one ability param in {@code abilities.yml} (read by the next match). */
     public void setParam(String abilityId, String key, double value) {
         File file = game.abilities().file();

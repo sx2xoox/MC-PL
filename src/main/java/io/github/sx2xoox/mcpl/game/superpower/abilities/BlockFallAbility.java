@@ -878,9 +878,9 @@ public final class BlockFallAbility extends Ability {
             double bestScore = Double.NEGATIVE_INFINITY;
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dz == 0 || piece.contains(key(ex + dx, 0, ez + dz))
-                            || !world.getBlockAt(ex + dx, land, ez + dz).isPassable()
-                            || !world.getBlockAt(ex + dx, land + 1, ez + dz).isPassable()) {
+                    // A corner is only a way out past two open sides: a body never squeezes between two blocks.
+                    if (dx == 0 && dz == 0 || !open(piece, ex + dx, ez + dz)
+                            || dx != 0 && dz != 0 && (!open(piece, ex + dx, ez) || !open(piece, ex, ez + dz))) {
                         continue;
                     }
                     Vector way = new Vector(ex + dx + 0.5 - at.getX(), 0, ez + dz + 0.5 - at.getZ());
@@ -896,6 +896,12 @@ public final class BlockFallAbility extends Ability {
                 }
             }
             return best;
+        }
+
+        /** True if a body may stand in column ({@code x}, {@code z}) next to the landed piece. */
+        private boolean open(Set<Long> piece, int x, int z) {
+            return !piece.contains(key(x, 0, z)) && world.getBlockAt(x, land, z).isPassable()
+                    && world.getBlockAt(x, land + 1, z).isPassable();
         }
 
         /** Blocks that had someone in their way go in as soon as the space is free (for a short while). */

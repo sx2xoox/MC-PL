@@ -843,6 +843,9 @@ public final class MinotaurAbility extends Ability {
                 double along = back + d;
                 if (along > tunnelled && tunnelled < tunnelEnd) {
                     double end = Math.min(tunnelEnd, along);
+                    // The labyrinth's walls on what this cut takes go first: a real block holding up a temporary one
+                    // never breaks, so a labyrinth wall standing on a step would stop the rush at the step.
+                    labyrinth.smash(from, direction, end - back + tunnelRadius(width), start.getY());
                     Location line = start.clone().add(direction.clone().multiply(tunnelled));
                     line.setY(feet + RUSH_TUNNEL_HEIGHT);
                     ctx().breakBlocksAlong(owner, line, line.clone().add(direction.clone().multiply(end - tunnelled)),
@@ -1274,15 +1277,17 @@ public final class MinotaurAbility extends Ability {
         }
 
         /**
-         * Opens one wall block: it is put back to what it replaced (only if it is still ours: nothing else replaced
-         * it; the temporary block service restores the same data again when the labyrinth expires), with a burst of
-         * grit and, when {@code smashed} by the rush, a chunk of rubble flying on along {@code direction}.
+         * Opens one wall block: it is put back to what it replaced and stops being a temporary block (only if it is
+         * still ours: nothing else replaced it), with a burst of grit and, when {@code smashed} by the rush, a chunk of
+         * rubble flying on along {@code direction}.
          */
         private Location open(Placed wall, Vector direction, boolean smashed) {
             Block block = wall.block();
             BlockData shown = block.getBlockData();
-            if (shown.getMaterial() == WALL || shown.getMaterial() == MOSSY_WALL
-                    || shown.getMaterial() == CRACKED_WALL || shown.getMaterial() == GATE_POST) {
+            if ((shown.getMaterial() == WALL || shown.getMaterial() == MOSSY_WALL
+                    || shown.getMaterial() == CRACKED_WALL || shown.getMaterial() == GATE_POST)
+                    && !ctx().restoreTempBlock(block)) {
+                // the match is closing: shown open, the temporary block service restores the same data
                 block.setBlockData(wall.original(), false);
             }
             Location middle = block.getLocation().add(0.5, 0.5, 0.5);

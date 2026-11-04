@@ -144,6 +144,9 @@ class AugmentMatchTest {
 
     @Test
     void pvpIsOffWhileFarmingAndOnInTheFight() {
+        // no augment round: an unpicked offer is granted at random (iron_body, thick_skin, sharp_edge, ... change the
+        // damage below)
+        h.noRounds();
         List<TestPlayer> players = h.join(2);
         TestPlayer a = players.get(0);
         TestPlayer b = players.get(1);
