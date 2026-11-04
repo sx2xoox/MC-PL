@@ -37,10 +37,18 @@ class ToyKingdomMapTest {
 
     /**
      * Most distinct block types (materials) a zone may use: the floorboards, the two mints of the play mat and a
-     * handful of toy colours. The jungle has two more (a rug per camp and its soft toys: cotton candy, jelly).
+     * handful of toy colours (the lanes one more: the damp shade of the sponge bushes). The jungle has three more (a
+     * rug per camp, its soft toys: cotton candy, jelly, and the glass of the marble jar).
      */
-    private static final int PALETTE_BUDGET = 9;
-    private static final int JUNGLE_PALETTE_BUDGET = 11;
+    private static final int PALETTE_BUDGET = 10;
+    private static final int JUNGLE_PALETTE_BUDGET = 12;
+    /**
+     * Detail blocks shape the props (stairs, slabs, fences, trapdoors, buttons, chains, lanterns, candles, carpets,
+     * banners, pots, rods) and are counted apart: they add shapes in a second tone of the toy colours (quartz,
+     * cherry, bamboo, birch, red nether brick) and small trinkets, not new colours.
+     */
+    private static final int DETAIL_BUDGET = 18;
+    private static final int MAP_DETAIL_BUDGET = 28;
 
     private static ToyKingdomMap map;
     private static MapCanvas canvas;
@@ -495,8 +503,19 @@ class ToyKingdomMapTest {
     @Test
     void eachZoneKeepsToAFewBlockTypes() {
         Map<String, Set<Material>> palettes = new TreeMap<>();
-        canvas.forEach((x, y, z, spec) -> palettes.computeIfAbsent(ToyLayout.inDomeShell(x, y, z) ? "dome"
-                : ToyLayout.partOf(x, z), k -> new TreeSet<>()).add(spec.material()));
+        Map<String, Set<Material>> details = new TreeMap<>();
+        canvas.forEach((x, y, z, spec) -> (isDetail(spec.material()) ? details : palettes)
+                .computeIfAbsent(ToyLayout.inDomeShell(x, y, z) ? "dome" : ToyLayout.partOf(x, z),
+                        k -> new TreeSet<>()).add(spec.material()));
+        details.forEach((zone, palette) -> {
+            System.out.println("[toykingdom] details " + zone + " (" + palette.size() + "): " + palette);
+            assertTrue(palette.size() <= DETAIL_BUDGET, zone + " uses " + palette.size() + " detail blocks: "
+                    + palette);
+        });
+        Set<Material> allDetails = new TreeSet<>();
+        details.values().forEach(allDetails::addAll);
+        assertTrue(allDetails.size() <= MAP_DETAIL_BUDGET, "the whole map uses " + allDetails.size()
+                + " detail blocks: " + allDetails);
         palettes.forEach((zone, palette) -> System.out.println("[toykingdom] palette " + zone + " (" + palette.size()
                 + "): " + palette));
         assertEquals(Set.of("border", "blue-castle", "red-castle", "top-lane", "bottom-lane", "jungle", "river",
@@ -506,7 +525,13 @@ class ToyKingdomMapTest {
                 zone + " uses " + palette.size() + " block types: " + palette));
         Set<Material> all = new TreeSet<>();
         palettes.values().forEach(all::addAll);
-        assertTrue(all.size() <= 20, "the whole map uses " + all.size() + " block types: " + all);
+        assertTrue(all.size() <= 21, "the whole map uses " + all.size() + " block types: " + all);
+    }
+
+    /** A block that shapes a prop rather than colouring it (see {@link #DETAIL_BUDGET}); glass and water are not. */
+    private static boolean isDetail(Material material) {
+        return !MapBlocks.isFullCubeMaterial(material) && !MapBlocks.isFluid(material)
+                && !material.name().contains("GLASS");
     }
 
     @Test

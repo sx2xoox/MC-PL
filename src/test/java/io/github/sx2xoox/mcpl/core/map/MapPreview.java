@@ -323,6 +323,9 @@ public final class MapPreview {
         if (s.contains("mangrove")) {
             return new Color(118, 55, 50);
         }
+        if (s.contains("bamboo")) {
+            return new Color(222, 196, 92);
+        }
         if (s.contains("cherry")) {
             return new Color(225, 180, 175);
         }
@@ -458,6 +461,7 @@ public final class MapPreview {
             case "BIRCH_LOG", "BIRCH_WOOD" -> new Color(215, 210, 200);
             case "HAY_BLOCK" -> new Color(200, 170, 40);
             case "SPONGE" -> new Color(205, 195, 85);
+            case "WET_SPONGE" -> new Color(170, 172, 64);
             case "TERRACOTTA" -> new Color(150, 92, 66);
             case "CLAY" -> new Color(160, 166, 178);
             case "MUD" -> new Color(60, 55, 60);

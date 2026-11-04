@@ -2,12 +2,17 @@ package io.github.sx2xoox.mcpl.core.map.toykingdom;
 
 import static io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.G;
 
+import java.util.Map;
+
 import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
 import io.github.sx2xoox.mcpl.core.map.MapZone;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Lane;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
+import org.bukkit.Material;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.Bisected;
 
 /**
  * A side's toy castle (BLUE: light blue walls and blue roofs, RED: pink walls and red roofs) around the core.
@@ -21,7 +26,7 @@ import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
  * around and {@link ToyLayout#CORE_CLEARANCE} up) between four candy pillars, carpets in the team colour from the
  * three gates to the stage, the shop stall against the side wall on the team's left (as it faces the enemy) between
  * the front turret and the lane gate with the spawn mat before it (in the front corner, inside the front gate), two
- * flower boxes inside the front gate and a checker of floorboards and white tiles.
+ * flower boxes inside the front gate, a music box in each back corner and a checker of floorboards and white tiles.
  */
 final class ToyCastleZone implements MapZone {
 
@@ -34,6 +39,9 @@ final class ToyCastleZone implements MapZone {
     /** The flower boxes inside the front gate. */
     private static final int PLANTER_AX = ToyLayout.CASTLE_FRONT + 3;
     private static final int PLANTER_AZ = 5;
+    /** The music boxes in the back corners of the courtyard (their low corner, 4 x 3). */
+    private static final int MUSIC_BOX_AX = 85;
+    private static final int MUSIC_BOX_AZ = 13;
     /** A heart, bottom row first. */
     private static final String[] HEART = {"..X..", ".XXX.", "XXXXX", ".X.X."};
 
@@ -71,8 +79,9 @@ final class ToyCastleZone implements MapZone {
             for (int ax : new int[] {ToyLayout.CASTLE_FRONT + 1, ToyLayout.CASTLE_BACK - 1}) {
                 turret(canvas, q, ax, ToyLayout.CASTLE_HALF_Z - 1);
             }
-            soldier(canvas, q, ToyLayout.CASTLE_FRONT - 2, ToyLayout.GATE_HALF + 2);
+            soldier(canvas, q, ToyLayout.CASTLE_FRONT - 1, ToyLayout.GATE_HALF + 2);
             planter(canvas, q, PLANTER_AX, PLANTER_AZ);
+            musicBox(canvas, q, MUSIC_BOX_AX, MUSIC_BOX_AZ);
             for (int ax : PILLAR_AX) {
                 pillar(canvas, q, ax, PILLAR_AZ);
             }
@@ -191,71 +200,121 @@ final class ToyCastleZone implements MapZone {
                 }
             }
         }
-        // A yellow pennant on the tip of the cone, flying away from the middle of the map.
+        // A yellow pennant on a pole on the tip of the cone, flying away from the middle of the map.
         int tip = top + (int) Math.floor(radius + 0.8) + 1;
         for (int y = tip + 1; y <= tip + 3; y++) {
-            q.set(canvas, cax, y, caz, ToyKit.WHITE);
+            q.set(canvas, cax, y, caz, ToyKit.FENCE);
         }
-        for (int i = 1; i <= 2; i++) {
-            q.set(canvas, cax + i, tip + 3, caz, ToyKit.YELLOW);
-        }
-        q.set(canvas, cax + 1, tip + 2, caz, ToyKit.YELLOW);
+        q.place(canvas, cax + 1, tip + 3, caz, BlockSpec.of(Material.YELLOW_WALL_BANNER).facing(BlockFace.EAST));
     }
 
     /**
-     * A candy pillar by the stage: 2 x 2, striped in the team colour and white, a yellow cap and glowing sweets on top
-     * (they light the stage at night).
+     * A candy pillar by the stage: 2 x 2, spiral striped in the team colour and white, a yellow band, four glowing
+     * sweets (they light the stage at night) and a yellow wrapper twisted to a point on top.
      */
     private void pillar(MapCanvas canvas, Quarter q, int ax, int az) {
-        for (int dx = 0; dx <= 1; dx++) {
-            for (int dz = 0; dz <= 1; dz++) {
-                for (int i = 1; i <= PILLAR_HEIGHT; i++) {
-                    BlockSpec spec = i == PILLAR_HEIGHT ? ToyKit.YELLOW
-                            : (i - 1) / 2 % 2 == 0 ? ToyKit.strong(side) : ToyKit.WHITE;
-                    q.set(canvas, ax + dx, G + i, az + dz, spec);
-                }
+        int[][] around = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        for (int k = 0; k < around.length; k++) {
+            int dx = around[k][0];
+            int dz = around[k][1];
+            for (int i = 1; i < PILLAR_HEIGHT; i++) {
+                BlockSpec spec = (i + k) / 2 % 2 == 0 ? ToyKit.strong(side) : ToyKit.WHITE;
+                q.set(canvas, ax + dx, G + i, az + dz, spec);
             }
+            q.set(canvas, ax + dx, G + PILLAR_HEIGHT, az + dz, ToyKit.YELLOW);
+            q.set(canvas, ax + dx, G + PILLAR_HEIGHT + 1, az + dz, ToyKit.GLOW);
+            q.place(canvas, ax + dx, G + PILLAR_HEIGHT + 2, az + dz,
+                    ToyKit.bevel(ToyKit.YELLOW_STAIRS, dx - 0.5, dz - 0.5, false));
         }
-        q.set(canvas, ax, G + PILLAR_HEIGHT + 1, az, ToyKit.GLOW);
-        q.set(canvas, ax + 1, G + PILLAR_HEIGHT + 1, az + 1, ToyKit.GLOW);
-        q.set(canvas, ax + 1, G + PILLAR_HEIGHT + 1, az, ToyKit.YELLOW);
-        q.set(canvas, ax, G + PILLAR_HEIGHT + 1, az + 1, ToyKit.YELLOW);
     }
 
-    /** A flower box: a white box with a round mint topiary growing out of it. */
+    /**
+     * A flower box: a white box with a bevelled quartz rim and a round mint topiary growing out of it, pink blossoms
+     * on it.
+     */
     private static void planter(MapCanvas canvas, Quarter q, int ax, int az) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
                 boolean rim = dx != 0 || dz != 0;
                 q.set(canvas, ax + dx, G + 1, az + dz, rim ? ToyKit.WHITE : ToyKit.MAT);
-                if (dx == 0 || dz == 0) {
-                    q.set(canvas, ax + dx, G + 2, az + dz, ToyKit.MAT);
+                if (rim) {
+                    q.place(canvas, ax + dx, G + 2, az + dz, dx != 0 && dz != 0 ? ToyKit.WHITE_SLAB
+                            : ToyKit.bevel(ToyKit.WHITE_STAIRS, -dx, -dz, false));
                 }
             }
         }
-        q.set(canvas, ax, G + 3, az, ToyKit.MAT);
+        q.set(canvas, ax, G + 2, az, ToyKit.MAT);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 || dz == 0) {
+                    q.set(canvas, ax + dx, G + 3, az + dz, ToyKit.MAT);
+                    if (dx != 0 || dz != 0) {
+                        q.place(canvas, ax + dx, G + 4, az + dz, ToyKit.BLOSSOM);
+                    }
+                }
+            }
+        }
+        q.set(canvas, ax, G + 4, az, ToyKit.MAT);
+        q.place(canvas, ax, G + 5, az, ToyKit.BLOSSOM);
     }
 
     /**
-     * A wooden toy soldier on guard beside the front gate: white trousers, a coat and a tall busby in the side's strong
-     * colour, a birch face, arms at its sides.
+     * A wooden toy soldier on guard against the wall beside the front gate, facing out: boots and a coat in the side's
+     * strong colour, white trousers, a yellow buckle, button and epaulettes, birch hands and face, a tall busby with a
+     * yellow plume and a rifle with a shining bayonet held upright in front of the outer hand.
      */
     private void soldier(MapCanvas canvas, Quarter q, int ax, int az) {
         BlockSpec coat = ToyKit.strong(side);
-        BlockSpec[] column = {ToyKit.WHITE, ToyKit.WHITE, coat, coat, ToyKit.WOOD, coat, coat};
-        for (int i = 0; i < column.length; i++) {
-            q.set(canvas, ax, G + 1 + i, az, column[i]);
+        q.set(canvas, ax, G + 1, az - 1, coat);
+        q.set(canvas, ax, G + 1, az + 1, coat);
+        for (int dz = -1; dz <= 1; dz++) {
+            q.set(canvas, ax, G + 2, az + dz, ToyKit.WHITE);
+            q.set(canvas, ax, G + 3, az + dz, dz == 0 ? ToyKit.YELLOW : coat);
+            q.set(canvas, ax, G + 4, az + dz, coat);
+            q.set(canvas, ax, G + 5, az + dz, coat);
         }
         for (int s : new int[] {-1, 1}) {
-            q.set(canvas, ax, G + 3, az + s, coat);
-            q.set(canvas, ax, G + 4, az + s, coat);
+            q.set(canvas, ax, G + 3, az + 2 * s, ToyKit.WOOD);
+            q.set(canvas, ax, G + 4, az + 2 * s, coat);
+            q.set(canvas, ax, G + 5, az + 2 * s, ToyKit.YELLOW);
         }
+        q.set(canvas, ax, G + 6, az, ToyKit.WOOD);
+        q.set(canvas, ax, G + 7, az, coat);
+        q.set(canvas, ax, G + 8, az, coat);
+        q.place(canvas, ax, G + 9, az, BlockSpec.of(Material.YELLOW_CANDLE));
+        q.place(canvas, ax - 1, G + 4, az, BlockSpec.of(Material.BAMBOO_BUTTON).facing(BlockFace.WEST));
+        for (int y = G + 2; y <= G + 5; y++) {
+            q.set(canvas, ax - 1, y, az + 2, ToyKit.FENCE);
+        }
+        q.place(canvas, ax - 1, G + 6, az + 2, ToyKit.STICK);
+    }
+
+    /**
+     * A music box in a back corner of the courtyard: a box in the team colour with a white rim, its lid standing open
+     * along the back, a little ballerina (a glowing leg, a pink tutu, a birch head) on a white turntable and a crank on
+     * its side.
+     */
+    private void musicBox(MapCanvas canvas, Quarter q, int ax, int az) {
+        for (int dx = 0; dx < 4; dx++) {
+            for (int dz = 0; dz < 3; dz++) {
+                boolean edge = dx == 0 || dx == 3 || dz == 0 || dz == 2;
+                q.set(canvas, ax + dx, G + 1, az + dz, ToyKit.strong(side));
+                q.set(canvas, ax + dx, G + 2, az + dz, edge ? ToyKit.WHITE : ToyKit.pastel(side));
+            }
+            q.place(canvas, ax + dx, G + 3, az + 2, BlockSpec.of(Material.BIRCH_TRAPDOOR).facing(BlockFace.NORTH)
+                    .open(true).half(Bisected.Half.BOTTOM));
+        }
+        q.place(canvas, ax + 2, G + 3, az + 1, BlockSpec.of(Material.WHITE_CARPET));
+        q.place(canvas, ax + 1, G + 3, az + 1, ToyKit.STICK);
+        q.set(canvas, ax + 1, G + 4, az + 1, ToyKit.PINK);
+        q.set(canvas, ax + 1, G + 5, az + 1, ToyKit.WOOD);
+        q.place(canvas, ax - 1, G + 2, az + 1, BlockSpec.of(Material.LEVER).facing(BlockFace.WEST));
     }
 
     /**
      * The shop stall against the side wall on the team's left: a white counter facing the courtyard, the shopkeeper's
-     * spot behind it, a striped awning held by two white posts against the wall, a sign in the team colour on the wall
-     * and a yellow coin on top.
+     * spot behind it, a striped awning held by two white posts against the wall (a valance along its front, two lamps
+     * hanging under it), wares on the counter, a sign in the team colour on the wall and a big round coin on top.
      */
     private void shop(MapCanvas canvas, Quarter q) {
         int back = ToyLayout.CASTLE_HALF_Z - 2;
@@ -273,6 +332,21 @@ final class ToyCastleZone implements MapZone {
             }
         }
         q.set(canvas, ToyLayout.SHOP_AX, G + 3, back, ToyKit.strong(side));
-        q.set(canvas, ToyLayout.SHOP_AX, G + 5, ToyLayout.SHOP_AZ, ToyKit.YELLOW);
+        // A valance under the awning's front edge and two lamps hanging inside.
+        BlockSpec valance = BlockSpec.of(ToyKit.trapdoorOf(ToyKit.strong(side))).facing(BlockFace.SOUTH).open(true)
+                .half(Bisected.Half.TOP);
+        for (int ax = ToyLayout.SHOP_AX1; ax <= ToyLayout.SHOP_AX2; ax++) {
+            q.place(canvas, ax, G + 3, ToyLayout.SHOP_Z1, valance);
+        }
+        q.place(canvas, ToyLayout.SHOP_AX1 + 1, G + 3, ToyLayout.SHOP_AZ, ToyKit.LANTERN_HANGING);
+        q.place(canvas, ToyLayout.SHOP_AX2 - 1, G + 3, ToyLayout.SHOP_AZ, ToyKit.LANTERN_HANGING);
+        // Wares on the counter: a cake, a candle in the team colour, a potted tulip.
+        q.place(canvas, ToyLayout.SHOP_AX1 + 1, G + 2, ToyLayout.SHOP_Z1, BlockSpec.of(Material.CAKE));
+        q.place(canvas, ToyLayout.SHOP_AX1 + 2, G + 2, ToyLayout.SHOP_Z1,
+                BlockSpec.of(side == Side.BLUE ? Material.BLUE_CANDLE : Material.RED_CANDLE).lit(true));
+        q.place(canvas, ToyLayout.SHOP_AX2 - 1, G + 2, ToyLayout.SHOP_Z1, BlockSpec.of(Material.POTTED_PINK_TULIP));
+        // A big gold coin on the awning, its edge rounded, a white shine in the middle.
+        ToyKit.plane(canvas, q, true, ToyLayout.SHOP_AX - 1, ToyLayout.SHOP_AZ, G + 5,
+                new String[] {"YYY", "YWY", "YYY"}, true, Map.of('Y', ToyKit.YELLOW, 'W', ToyKit.WHITE));
     }
 }

@@ -2,12 +2,16 @@ package io.github.sx2xoox.mcpl.core.map.toykingdom;
 
 import static io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.G;
 
+import java.util.Map;
+
 import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
 import io.github.sx2xoox.mcpl.core.map.MapZone;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Lane;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
+import org.bukkit.Material;
+import org.bukkit.block.BlockFace;
 
 /**
  * The jungle between the lanes, a toy room on the play mat: a few long walls of toy bricks shape a middle corridor
@@ -16,8 +20,10 @@ import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
  * area: jelly cubes on a pink rug (젤리 무리), a cheese wedge with a wind-up key on a yellow one (태엽 쥐 떼), a big toy
  * box on a yellow one (곰인형 대장), rabbit ears with a pocket watch between them on a pink one (시계 토끼), a candy
  * fountain on a light blue one (사탕 샘물) and a telescope tower on a light blue one (망원경 탑). Piles of toy boxes and
- * cotton candy trees fill the corners in between, and giant toys stand in the far corner pockets beyond the lanes'
- * bends (a stack of toy blocks by the TOP lane, a spinning top by the BOTTOM lane).
+ * cotton candy trees fill the corners in between (with a box of crayons on the TOP side and a jar of marbles on the
+ * BOTTOM side), and giant toys stand in the far corner pockets beyond the lanes' bends (a stack of alphabet blocks by
+ * the TOP lane, a spinning top by the BOTTOM lane). The props are shaped with stairs, slabs and other detail blocks in
+ * a second tone of their colours ({@link ToyKit}).
  */
 final class ToyJungleZone implements MapZone {
 
@@ -84,8 +90,14 @@ final class ToyJungleZone implements MapZone {
             cheese(canvas, bottom);
             rabbitEars(canvas, bottom);
             telescope(canvas, bottom);
+            crayonBox(canvas, top, SMALL_TOY_AX - 1, SMALL_TOY_AZ - 1);
+            marbleJar(canvas, bottom, SMALL_TOY_AX, SMALL_TOY_AZ);
         }
     }
+
+    /** Where the small toys stand (crayons TOP, marbles BOTTOM): between the corridor's cotton tree and box pile. */
+    private static final int SMALL_TOY_AX = 21;
+    private static final int SMALL_TOY_AZ = 16;
 
     /** A camp's round rug in its colour with a white ring, flat in the floor. */
     private void rug(MapCanvas canvas, Quarter q, int cx, int cz, BlockSpec colour) {
@@ -112,14 +124,40 @@ final class ToyJungleZone implements MapZone {
         ToyKit.toyBox(canvas, q, 58, 30, 3, 3, 5, ToyKit.YELLOW);
     }
 
-    /** 젤리 무리: three wobbly jelly cubes around the clearing. */
+    /** 젤리 무리: three wobbly jelly puddings around the clearing. */
     private static void jellies(MapCanvas canvas, Quarter q) {
-        ToyKit.toyBlock(canvas, q, 57, G + 1, 20, 3, ToyKit.JELLY);
-        ToyKit.toyBlock(canvas, q, 55, G + 1, 27, 3, ToyKit.JELLY);
-        ToyKit.toyBlock(canvas, q, 58, G + 1, 15, 3, ToyKit.JELLY);
+        jelly(canvas, q, 57, 20);
+        jelly(canvas, q, 55, 27);
+        jelly(canvas, q, 58, 15);
     }
 
-    /** 태엽 쥐 떼: a big cheese wedge (stepped, with two holes) at the clearing's castle side. */
+    /**
+     * A jelly pudding: a 3 x 3 slime cube rounded on top (a cross), whipped cream draped over the corners and the
+     * cross, and a cherry (a lit red candle) in the middle.
+     */
+    private static void jelly(MapCanvas canvas, Quarter q, int ax, int az) {
+        for (int dx = 0; dx <= 2; dx++) {
+            for (int dz = 0; dz <= 2; dz++) {
+                q.set(canvas, ax + dx, G + 1, az + dz, ToyKit.JELLY);
+                q.set(canvas, ax + dx, G + 2, az + dz, ToyKit.JELLY);
+                boolean corner = dx != 1 && dz != 1;
+                if (corner) {
+                    q.place(canvas, ax + dx, G + 3, az + dz, ToyKit.CREAM);
+                } else {
+                    q.set(canvas, ax + dx, G + 3, az + dz, ToyKit.JELLY);
+                    if (dx != dz) {
+                        q.place(canvas, ax + dx, G + 4, az + dz, ToyKit.CREAM);
+                    }
+                }
+            }
+        }
+        q.place(canvas, ax + 1, G + 4, az + 1, BlockSpec.of(Material.RED_CANDLE).lit(true));
+    }
+
+    /**
+     * 태엽 쥐 떼: a big cheese wedge at the clearing's castle side, its slope smoothed with stairs and two holes in its
+     * sides, the mice's wind-up key stuck in the top.
+     */
     private static void cheese(MapCanvas canvas, Quarter q) {
         int[] heights = {1, 2, 3, 3};
         for (int i = 0; i < heights.length; i++) {
@@ -128,14 +166,20 @@ final class ToyJungleZone implements MapZone {
                 for (int y = G + 1; y <= G + heights[i]; y++) {
                     boolean hole = ax == 59 && y == G + 2 && az == 19 || ax == 60 && y == G + 2 && az == 25
                             || ax == 60 && y == G + 1 && az == 21;
-                    if (!hole) {
-                        q.set(canvas, ax, y, az, ToyKit.YELLOW);
+                    if (hole) {
+                        continue;
                     }
+                    boolean slope = y == G + heights[i] && heights[i] < heights[heights.length - 1];
+                    q.place(canvas, ax, y, az, slope
+                            ? ToyKit.stairs(ToyKit.YELLOW_STAIRS, BlockFace.EAST, false) : ToyKit.YELLOW);
                 }
             }
         }
         windUpKey(canvas, q, 60, 22, G + 4);
     }
+
+    /** The bow of the mice's wind-up key: two rounded pink rings either side of the white stem. */
+    private static final String[] KEY_BOW = {"PPPWPPP", "P.PPP.P", "PPP.PPP"};
 
     /**
      * The wind-up key of the clockwork mice, stuck in the top of the cheese: a white stem and a pink bow of two rings,
@@ -144,88 +188,172 @@ final class ToyJungleZone implements MapZone {
     private static void windUpKey(MapCanvas canvas, Quarter q, int ax, int az, int y) {
         q.set(canvas, ax, y, az, ToyKit.WHITE);
         q.set(canvas, ax, y + 1, az, ToyKit.WHITE);
-        for (int s : new int[] {-1, 1}) {
-            int c = az + 2 * s;
-            for (int dz = -1; dz <= 1; dz++) {
-                for (int dy = 0; dy <= 2; dy++) {
-                    if (dz != 0 || dy != 1) {
-                        q.set(canvas, ax, y + 2 + dy, c + dz, ToyKit.PINK);
-                    }
-                }
-            }
-        }
-        q.set(canvas, ax, y + 3, az, ToyKit.PINK);
+        ToyKit.plane(canvas, q, false, az - 3, ax, y + 2, KEY_BOW, true,
+                Map.of('P', ToyKit.PINK, 'W', ToyKit.WHITE));
     }
 
     /**
-     * 곰인형 대장: the teddy's big toy box behind the clearing (pink with a white rim, toy blocks peeking out) and a
-     * stack of two toy blocks beside it.
+     * 곰인형 대장: the teddy's big toy box behind the clearing (pink with a white rim and a white heart, its lid open,
+     * toy blocks peeking out) and a stack of two toy blocks beside it.
      */
     private static void toyBox(MapCanvas canvas, Quarter q) {
         ToyKit.toyBox(canvas, q, 31, 34, 7, 3, 4, ToyKit.PINK);
+        // A white heart on its front.
+        ToyKit.plane(canvas, q, true, 32, 34, G + 1, new String[] {"..W..", ".WWW.", ".W.W."}, false,
+                Map.of('W', ToyKit.WHITE));
         ToyKit.toyBlock(canvas, q, 39, G + 1, 35, 2, ToyKit.SKY);
         ToyKit.toyBlock(canvas, q, 39, G + 3, 35, 2, ToyKit.YELLOW);
     }
 
-    /** 시계 토끼: two tall rabbit ears (white with a pink inside) standing up behind the clearing. */
+    /** The rabbit's ears, bottom row first: white with a pink inside, the tips leaning outwards (BOTTOM side). */
+    private static final String[] EAR_RIGHT = {"WWW.", "WPW.", "WPW.", "WPW.", "WPW.", ".WPW", ".WPW", "..W."};
+    private static final String[] EAR_LEFT = {".WWW", ".WPW", ".WPW", ".WPW", ".WPW", "WPW.", "WPW.", ".W.."};
+    /** The pocket watch: a yellow rim, a white face, red hands at ten past twelve, a crown on top. */
+    private static final String[] WATCH = {".YYY.", "YWWWY", "YWRRY", "YWRWY", ".YYY.", "..Y.."};
+
+    /**
+     * 시계 토끼: two tall rabbit ears (white with a pink inside, rounded, the tips leaning outwards) standing up behind
+     * the clearing, and the rabbit's round pocket watch between them, high enough to walk under.
+     */
     private static void rabbitEars(MapCanvas canvas, Quarter q) {
-        for (int centre : new int[] {31, 37}) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int height = dx == 0 ? 7 : 6;
-                for (int i = 1; i <= height; i++) {
-                    boolean inner = dx == 0 && i >= 2 && i <= 5;
-                    q.set(canvas, centre + dx, G + i, 36, inner ? ToyKit.PINK : ToyKit.WHITE);
-                }
-            }
-        }
-        // The rabbit's pocket watch hangs between the ears, high enough to walk under: a white face with yellow hands.
-        for (int ax = 33; ax <= 35; ax++) {
-            for (int y = G + 4; y <= G + 6; y++) {
-                boolean hand = ax == 34 && y >= G + 5 || ax == 35 && y == G + 5;
-                q.set(canvas, ax, y, 36, hand ? ToyKit.YELLOW : ToyKit.WHITE);
-            }
-        }
+        Map<Character, BlockSpec> ear = Map.of('W', ToyKit.WHITE, 'P', ToyKit.PINK);
+        ToyKit.plane(canvas, q, true, 28, 36, G + 1, EAR_LEFT, true, ear);
+        ToyKit.plane(canvas, q, true, 37, 36, G + 1, EAR_RIGHT, true, ear);
+        ToyKit.plane(canvas, q, true, 32, 36, G + 4, WATCH, true,
+                Map.of('Y', ToyKit.YELLOW, 'W', ToyKit.WHITE, 'R', ToyKit.RED));
+        q.set(canvas, 34, G + 10, 36, ToyKit.CHAIN);
     }
 
-    /** 사탕 샘물: a round white basin of water with a pink and white candy pillar in the middle. */
+    /**
+     * 사탕 샘물: a two-tier candy fountain: a round basin of water with a bevelled white rim, a white bowl on a pink and
+     * white candy pillar (water in it too) and a sparkle on top.
+     */
     private static void fountain(MapCanvas canvas, Quarter q) {
         int cx = 16;
         int cz = 35;
         for (int dx = -3; dx <= 3; dx++) {
             for (int dz = -3; dz <= 3; dz++) {
                 double d = Math.hypot(dx, dz);
-                if (d <= 1.5) {
+                if (d == 0) {
+                    continue;
+                }
+                if (d <= 2.5) {
                     q.set(canvas, cx + dx, G + 1, cz + dz, ToyKit.WATER);
-                } else if (d <= 2.5) {
-                    q.set(canvas, cx + dx, G + 1, cz + dz, ToyKit.WHITE);
+                } else if (d <= 3.3) {
+                    q.place(canvas, cx + dx, G + 1, cz + dz, ToyKit.bevel(ToyKit.WHITE_STAIRS, dx, dz, false));
+                }
+                // The bowl stands high enough over the basin to wade in under it.
+                if (d <= 1.5) {
+                    q.set(canvas, cx + dx, G + 4, cz + dz, ToyKit.WHITE);
+                    q.set(canvas, cx + dx, G + 5, cz + dz, ToyKit.WATER);
+                } else if (d <= 2.3) {
+                    q.place(canvas, cx + dx, G + 4, cz + dz, ToyKit.bevel(ToyKit.WHITE_STAIRS, dx, dz, true));
+                    q.place(canvas, cx + dx, G + 5, cz + dz, ToyKit.WHITE_SLAB);
                 }
             }
         }
-        for (int i = 1; i <= 4; i++) {
-            q.set(canvas, cx, G + i, cz, i % 2 == 0 ? ToyKit.WHITE : ToyKit.PINK);
+        BlockSpec[] pillar = {ToyKit.PINK, ToyKit.WHITE, ToyKit.PINK, ToyKit.WHITE, ToyKit.PINK, ToyKit.WHITE};
+        for (int i = 0; i < pillar.length; i++) {
+            q.set(canvas, cx, G + 1 + i, cz, pillar[i]);
         }
-        q.set(canvas, cx, G + 5, cz, ToyKit.PINK);
+        q.place(canvas, cx, G + 7, cz, ToyKit.STICK);
     }
 
-    /** 망원경 탑: a small white lookout with a yellow cap and a yellow telescope pointing over the clearing. */
+    /**
+     * 망원경 탑: a small white lookout (a light blue base band and windows) with a railed wooden balcony on top, a yellow
+     * telescope on a tripod pointing out over the clearing and a red pennant at the back.
+     */
     private static void telescope(MapCanvas canvas, Quarter q) {
         int cx = 16;
         int cz = 35;
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
-                if (Math.hypot(dx, dz) > 1.5) {
+                double d = Math.hypot(dx, dz);
+                if (d > 2.3) {
                     continue;
                 }
-                for (int y = G + 1; y <= G + 7; y++) {
-                    BlockSpec spec = y == G + 7 ? ToyKit.YELLOW : ToyKit.WHITE;
-                    q.set(canvas, cx + dx, y, cz + dz, spec);
+                if (d <= 1.5) {
+                    for (int y = G + 1; y <= G + 6; y++) {
+                        boolean window = (dx == 0) != (dz == 0) && (y == G + 4 || y == G + 5);
+                        q.set(canvas, cx + dx, y, cz + dz, y == G + 1 || window ? ToyKit.SKY : ToyKit.WHITE);
+                    }
+                }
+                q.place(canvas, cx + dx, G + 7, cz + dz, ToyKit.WOOD_SLAB_TOP);
+                if (d > 1.5) {
+                    q.set(canvas, cx + dx, G + 8, cz + dz, ToyKit.FENCE);
                 }
             }
         }
-        for (int az = cz - 3; az <= cz + 1; az++) {
-            q.set(canvas, cx, G + 8, az, ToyKit.YELLOW);
+        // The telescope on its tripod: the eyepiece at the back, the lens out over the clearing (towards -az).
+        q.set(canvas, cx, G + 8, cz, ToyKit.FENCE);
+        q.place(canvas, cx, G + 9, cz + 1, ToyKit.stairs(ToyKit.YELLOW_STAIRS, BlockFace.NORTH, false));
+        for (int z = cz - 2; z <= cz; z++) {
+            q.set(canvas, cx, G + 9, z, ToyKit.YELLOW);
         }
-        q.set(canvas, cx, G + 9, cz - 3, ToyKit.YELLOW);
+        q.set(canvas, cx, G + 9, cz - 3, ToyKit.SKY);
+        // A red pennant on a pole at the back of the balcony, flying outwards.
+        for (int y = G + 9; y <= G + 10; y++) {
+            q.set(canvas, cx + 1, y, cz + 2, ToyKit.FENCE);
+        }
+        q.place(canvas, cx + 2, G + 10, cz + 2, BlockSpec.of(Material.RED_WALL_BANNER).facing(BlockFace.EAST));
+    }
+
+    /**
+     * A box of crayons on the floor (a yellow box with a white band), four crayons of different lengths standing in it,
+     * their tips sharpened (candles of their colour).
+     */
+    private static void crayonBox(MapCanvas canvas, Quarter q, int ax, int az) {
+        for (int dx = 0; dx <= 2; dx++) {
+            for (int dz = 0; dz <= 2; dz++) {
+                q.set(canvas, ax + dx, G + 1, az + dz, ToyKit.YELLOW);
+                q.set(canvas, ax + dx, G + 2, az + dz, ToyKit.WHITE);
+            }
+        }
+        crayon(canvas, q, ax, az, 2, ToyKit.RED, Material.RED_CANDLE);
+        crayon(canvas, q, ax + 1, az + 1, 3, ToyKit.SKY, Material.LIGHT_BLUE_CANDLE);
+        crayon(canvas, q, ax + 2, az + 2, 1, ToyKit.PINK, Material.PINK_CANDLE);
+        crayon(canvas, q, ax, az + 2, 2, ToyKit.MAT_TILE, Material.LIME_CANDLE);
+    }
+
+    private static void crayon(MapCanvas canvas, Quarter q, int ax, int az, int length, BlockSpec colour,
+                               Material tip) {
+        for (int i = 1; i <= length; i++) {
+            q.set(canvas, ax, G + 2 + i, az, colour);
+        }
+        q.place(canvas, ax, G + 3 + length, az, BlockSpec.of(tip));
+    }
+
+    /**
+     * A jar of marbles: a round glass jar with a narrow neck and a wooden lid, the marbles (toy colours) piled up
+     * inside.
+     */
+    private static void marbleJar(MapCanvas canvas, Quarter q, int cx, int cz) {
+        BlockSpec[] marbles = {ToyKit.PINK, ToyKit.SKY, ToyKit.YELLOW, ToyKit.RED};
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                double d = Math.hypot(dx, dz);
+                if (d > 2.3) {
+                    continue;
+                }
+                for (int y = G + 1; y <= G + 3; y++) {
+                    BlockSpec spec;
+                    if (d > 1.5) {
+                        spec = ToyKit.GLASS;
+                    } else if (y < G + 3 || ToyKit.speckle(cx + dx, y, cz + dz, 2)) {
+                        spec = marbles[Math.floorMod((cx + dx) * 3 + (cz + dz) * 5 + y, marbles.length)];
+                    } else {
+                        continue;
+                    }
+                    q.set(canvas, cx + dx, y, cz + dz, spec);
+                }
+                if (d <= 1.5) {
+                    if (d > 0) {
+                        q.set(canvas, cx + dx, G + 4, cz + dz, ToyKit.GLASS);
+                    }
+                    q.place(canvas, cx + dx, G + 5, cz + dz, ToyKit.WOOD_SLAB);
+                }
+            }
+        }
     }
 
     /** Where a corner toy stands (quarter coordinates): in the corner pocket beyond a lane's bend, on its diagonal. */
@@ -234,29 +362,27 @@ final class ToyJungleZone implements MapZone {
     private static final int CORNER_AZ = ToyLayout.HALF_Z - ToyLayout.CORNER
             + (int) Math.round((ToyLayout.CORNER - 5.0) / Math.sqrt(2));
 
-    /** Two big toy blocks (yellow, light blue) side by side along the wall and a red one on top of both. */
+    /**
+     * Two big alphabet blocks (yellow with red letters, light blue with yellow letters; white bevelled frames) side by
+     * side along the wall and a red triangle block on top of both.
+     */
     private static void blockStack(MapCanvas canvas, Quarter q) {
         int ax = CORNER_AX;
         int az = CORNER_AZ;
         ToyKit.toyBlock(canvas, q, ax - 4, G + 1, az, 4, ToyKit.YELLOW);
         ToyKit.toyBlock(canvas, q, ax, G + 1, az - 4, 4, ToyKit.SKY);
-        ToyKit.toyBlock(canvas, q, ax - 2, G + 5, az - 2, 3, ToyKit.RED);
+        ToyKit.box(canvas, q, ax - 2, G + 5, az - 2, 3, 1, 3, ToyKit.RED);
+        ToyKit.prism(canvas, q, ax - 2, G + 6, az - 2, 3, 3, ToyKit.RED);
     }
 
-    /** A spinning top on its tip: white, yellow and red rings, widest at head height, a white handle on top. */
+    /**
+     * A spinning top on its tip: white, yellow and red rings, widest at head height, its profile smoothed with stairs,
+     * a white handle with a red knob on top.
+     */
     private static void spinningTop(MapCanvas canvas, Quarter q) {
-        double[] radius = {0.5, 1.5, 2.3, 3.2, 2.6, 1.6, 0.5, 0.5};
+        double[] radius = {0.5, 1.5, 2.3, 3.2, 2.6, 1.6, 0.5, 0.5, 0.5};
         BlockSpec[] ring = {ToyKit.WHITE, ToyKit.YELLOW, ToyKit.RED, ToyKit.WHITE, ToyKit.RED, ToyKit.YELLOW,
-            ToyKit.WHITE, ToyKit.WHITE};
-        for (int i = 0; i < radius.length; i++) {
-            int r = (int) Math.ceil(radius[i]);
-            for (int dx = -r; dx <= r; dx++) {
-                for (int dz = -r; dz <= r; dz++) {
-                    if (Math.hypot(dx, dz) <= radius[i]) {
-                        q.set(canvas, CORNER_AX + dx, G + 1 + i, CORNER_AZ + dz, ring[i]);
-                    }
-                }
-            }
-        }
+            ToyKit.WHITE, ToyKit.WHITE, ToyKit.RED};
+        ToyKit.lathe(canvas, q, CORNER_AX, CORNER_AZ, G + 1, radius, ring);
     }
 }
