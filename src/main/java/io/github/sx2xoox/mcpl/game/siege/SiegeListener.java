@@ -11,6 +11,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
+import org.bukkit.event.player.PlayerItemDamageEvent;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -32,6 +33,14 @@ final class SiegeListener implements Listener {
     }
 
     /** Melee and ability damage on a tower: the event is cancelled, the tower takes the final damage. */
+    /** Fighters' gear never wears out in 공성전 (rounds are long; a broken toy armour or weapon is no fun). */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onGearWear(PlayerItemDamageEvent event) {
+        if (session.isParticipant(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onTowerDamage(EntityDamageEvent event) {
         Tower tower = match.towerOf(event.getEntity());

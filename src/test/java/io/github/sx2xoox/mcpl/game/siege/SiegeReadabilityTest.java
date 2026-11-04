@@ -487,4 +487,14 @@ class SiegeReadabilityTest {
         assertEquals(1f, a.getSaturation(), 1e-6);
         assertEquals(0f, a.getExhaustion(), 1e-6);
     }
+
+    @Test
+    void fightersGearNeverWearsOut() {
+        SiegeMatch match = start(2);
+        Player a = member(match, 0, 0);
+        org.bukkit.inventory.ItemStack chest = new org.bukkit.inventory.ItemStack(org.bukkit.Material.LEATHER_CHESTPLATE);
+        org.bukkit.event.player.PlayerItemDamageEvent event = new org.bukkit.event.player.PlayerItemDamageEvent(a, chest, 3, 3);
+        org.bukkit.Bukkit.getPluginManager().callEvent(event);
+        assertTrue(event.isCancelled());
+    }
 }
