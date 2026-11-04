@@ -13,6 +13,7 @@ import io.github.sx2xoox.mcpl.core.game.GameStartException;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings.Feel;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttacks;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
@@ -45,6 +46,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 class BasicAttackMatchTest {
 
     private static final String PREFIX = SiegeMatch.BASIC_ATTACKS + "." + BasicAttackSettings.ATTACKS + ".dummy.";
+    private static final String FEEL = SiegeMatch.BASIC_ATTACKS + ".";
 
     private MatchHarness h;
     private SiegeGame siege;
@@ -64,6 +66,8 @@ class BasicAttackMatchTest {
         config.set(SiegeSettings.SPAWN_ZONE_DAMAGE, 0);
         config.set(SiegeSettings.PROTECTION_SECONDS, 0);
         config.set(SiegeProgressSettings.XP_PASSIVE, 0);
+        // exact damage below: no random critical hits unless a test turns them on
+        config.set(FEEL + BasicAttackSettings.CRITICAL + "." + BasicAttackSettings.CRIT_CHANCE, 0);
     }
 
     @AfterEach
@@ -305,6 +309,225 @@ class BasicAttackMatchTest {
         config.set(SiegeMatch.BASIC_ATTACKS + "." + BasicAttackSettings.ENABLED, false);
         SiegeMatch match = start(2);
         assertFalse(match.abilities().hasBasicAttacks());
+    }
+
+    // =================================================================== combo, critical hits, displays
+
+    @Test
+    void theThirdAttackInARowIsAFinisherAndAPauseStartsOver() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        Feel feel = Feel.DEFAULT;
+        double hit = BasicAttacks.FALLBACK.damage();
+        int cooldown = BasicAttacks.FALLBACK.cooldown();
+        SuperpowerMatch abilities = match.abilities();
+        double[] dealt = new double[4];
+        for (int i = 0; i < 4; i++) {
+            place(match, cast.attacker(), 0, 0);
+            place(match, cast.enemy(), 2.5, 0);
+            assertTrue(abilities.basicAttack(cast.attacker()), "attack " + i);
+            dealt[i] = max(cast.enemy()) - cast.enemy().getHealth();
+            h.ticks(cooldown);
+        }
+        assertEquals(hit, dealt[0], 1.0E-6);
+        assertEquals(hit, dealt[1], 1.0E-6);
+        assertEquals(hit * feel.finisherDamage(), dealt[2], 1.0E-6, "the third is the finisher");
+        assertEquals(hit, dealt[3], 1.0E-6, "then a new combo");
+        assertEquals(1, abilities.basicAttackComboStep(cast.attacker()));
+
+        h.ticks((int) feel.comboResetTicks() + 1);
+        assertEquals(0, abilities.basicAttackComboStep(cast.attacker()), "a pause starts the combo over");
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(abilities.basicAttack(cast.attacker()));
+        h.ticks(cooldown);
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(abilities.basicAttack(cast.attacker()));
+        assertEquals(hit, max(cast.enemy()) - cast.enemy().getHealth(), 1.0E-6,
+                "after the pause the second attack is no finisher");
+    }
+
+    @Test
+    void comboAndCriticalNumbersComeFromTheConfig() {
+        config.set(FEEL + BasicAttackSettings.COMBO + "." + BasicAttackSettings.COMBO_LENGTH, 2);
+        config.set(FEEL + BasicAttackSettings.COMBO + "." + BasicAttackSettings.FINISHER_DAMAGE, 2.0);
+        config.set(FEEL + BasicAttackSettings.CRITICAL + "." + BasicAttackSettings.CRIT_CHANCE, 1.0);
+        config.set(FEEL + BasicAttackSettings.CRITICAL + "." + BasicAttackSettings.CRIT_DAMAGE, 1.5);
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        double hit = BasicAttacks.FALLBACK.damage();
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(match.abilities().basicAttack(cast.attacker()));
+        assertEquals(hit * 1.5, max(cast.enemy()) - cast.enemy().getHealth(), 1.0E-6, "always critical: ×1.5");
+        h.ticks(BasicAttacks.FALLBACK.cooldown());
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(match.abilities().basicAttack(cast.attacker()));
+        assertEquals(hit * 1.5 * 2.0, max(cast.enemy()) - cast.enemy().getHealth(), 1.0E-6,
+                "a two-hit combo: the second is the finisher (×2), critical too");
+    }
+
+    @Test
+    void criticalHitsComeAtTheirChance() {
+        config.set(FEEL + BasicAttackSettings.CRITICAL + "." + BasicAttackSettings.CRIT_CHANCE, 0.25);
+        config.set(FEEL + BasicAttackSettings.COMBO + "." + BasicAttackSettings.COMBO_LENGTH, 1);
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        double hit = BasicAttacks.FALLBACK.damage();
+        int crits = 0;
+        int attacks = 200;
+        for (int i = 0; i < attacks; i++) {
+            place(match, cast.attacker(), 0, 0);
+            place(match, cast.enemy(), 2.5, 0);
+            assertTrue(match.abilities().basicAttack(cast.attacker()));
+            double dealt = max(cast.enemy()) - cast.enemy().getHealth();
+            if (Math.abs(dealt - hit * Feel.DEFAULT.critDamage()) < 1.0E-6) {
+                crits++;
+            } else {
+                assertEquals(hit, dealt, 1.0E-6);
+            }
+            h.ticks(BasicAttacks.FALLBACK.cooldown());
+        }
+        assertTrue(crits > attacks * 0.12 && crits < attacks * 0.38, "about a quarter critical, was " + crits);
+    }
+
+    @Test
+    void displaysAreCappedAndGoneSoonAfter() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        SuperpowerMatch abilities = match.abilities();
+        int cap = Feel.DEFAULT.maxPerAttack();
+        for (BasicAttack attack : BasicAttacks.defaults().values()) {
+            assertTrue(abilities.replaceAbility(cast.attacker(), attack.id()), attack.id());
+            place(match, cast.attacker(), 0, 0);
+            place(match, cast.enemy(), 2.5, 0);
+            h.ticks(1);
+            place(match, cast.attacker(), 0, 0);
+            place(match, cast.enemy(), 2.5, 0);
+            assertTrue(abilities.basicAttack(cast.attacker()), attack.id());
+            int most = 0;
+            for (int t = 0; t < 40; t++) {
+                most = Math.max(most, fxDisplays(match));
+                assertTrue(fxDisplays(match) <= Feel.DEFAULT.maxPerPlayer(), attack.id());
+                h.ticks(1);
+            }
+            assertTrue(most > 0, attack.id() + " shows displays");
+            assertTrue(most <= cap, attack.id() + ": at most " + cap + " displays per attack, was " + most);
+            h.ticks(30);
+            assertEquals(0, fxDisplays(match), attack.id() + ": every display is gone after the attack");
+            assertEquals(0, abilities.basicAttackDisplays(), attack.id());
+            cast.attacker().setHealth(max(cast.attacker()));
+            cast.enemy().setHealth(max(cast.enemy()));
+        }
+    }
+
+    @Test
+    void theDisplayBudgetIsConfigurable() {
+        config.set(FEEL + BasicAttackSettings.EFFECTS + "." + BasicAttackSettings.MAX_PER_ATTACK, 5);
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(match.abilities().basicAttack(cast.attacker()));
+        int most = 0;
+        for (int t = 0; t < 20; t++) {
+            most = Math.max(most, fxDisplays(match));
+            h.ticks(1);
+        }
+        assertTrue(most > 0 && most <= 5, "at most 5, was " + most);
+    }
+
+    @Test
+    void displaysCanBeTurnedOff() {
+        config.set(FEEL + BasicAttackSettings.EFFECTS + "." + BasicAttackSettings.DISPLAYS, false);
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(match.abilities().basicAttack(cast.attacker()));
+        h.ticks(2);
+        assertEquals(0, fxDisplays(match), "particles only");
+        assertTrue(cast.enemy().getHealth() < max(cast.enemy()), "the attack still hits");
+    }
+
+    @Test
+    void displaysGoWhenTheAttackerDies() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        SuperpowerMatch abilities = match.abilities();
+        assertTrue(abilities.replaceAbility(cast.attacker(), "ninja"));
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 12, 0);
+        h.ticks(1);
+        place(match, cast.attacker(), 0, 0);
+        assertTrue(abilities.basicAttack(cast.attacker()));
+        h.ticks(2);
+        assertTrue(fxDisplays(match) > 0, "shuriken in flight");
+        cast.attacker().setHealth(0);
+        h.ticks(2);
+        assertEquals(0, fxDisplays(match), "the dead attacker's displays are gone");
+    }
+
+    @Test
+    void displaysGoWhenTheMatchEnds() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        SuperpowerMatch abilities = match.abilities();
+        assertTrue(abilities.replaceAbility(cast.attacker(), "ninja"));
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 12, 0);
+        h.ticks(1);
+        place(match, cast.attacker(), 0, 0);
+        assertTrue(abilities.basicAttack(cast.attacker()));
+        h.ticks(1);
+        assertTrue(fxDisplays(match) > 0, "shuriken in flight");
+        org.bukkit.World world = match.session().arena().center().getWorld();
+        h.hub.games().stop(net.kyori.adventure.text.Component.text("test"));
+        h.ticks(1);
+        assertEquals(0, fxDisplays(world), "the match end removes every display");
+    }
+
+    @Test
+    void aFlyingArrowPointsWhereItFliesAsTheClientDrawsItems() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        SuperpowerMatch abilities = match.abilities();
+        assertTrue(abilities.replaceAbility(cast.attacker(), "archer"));
+        place(match, cast.attacker(), 0, 0);
+        place(match, cast.enemy(), 20, 6);
+        h.ticks(1);
+        place(match, cast.attacker(), 0, 0);
+        assertTrue(abilities.basicAttack(cast.attacker()));
+        h.ticks(1);
+        org.bukkit.entity.ItemDisplay arrow = null;
+        for (org.bukkit.entity.Entity entity : match.session().arena().center().getWorld().getEntities()) {
+            if (entity instanceof org.bukkit.entity.ItemDisplay item && item.isValid()
+                    && item.getScoreboardTags().contains("mcpl_basic_fx")) {
+                arrow = item;
+            }
+        }
+        assertNotNull(arrow, "the arrow flies as an item display");
+        org.bukkit.util.Transformation t = arrow.getTransformation();
+        org.joml.Vector3f origin = io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels.drawn(0, t,
+                new org.joml.Vector3f());
+        org.joml.Vector3f tip = io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels.drawn(0, t,
+                new org.joml.Vector3f(0.5f, 0.5f, 0)).sub(origin);
+        assertTrue(tip.x > 0.5f * tip.length(), "the sprite's tip points east, where the attacker looks: " + tip);
+    }
+
+    private static int fxDisplays(SiegeMatch match) {
+        return fxDisplays(match.session().arena().center().getWorld());
+    }
+
+    private static int fxDisplays(org.bukkit.World world) {
+        int count = 0;
+        for (org.bukkit.entity.Entity entity : world.getEntities()) {
+            if (entity instanceof org.bukkit.entity.Display && entity.isValid()
+                    && entity.getScoreboardTags().contains("mcpl_basic_fx")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // =================================================================== 초능력전쟁

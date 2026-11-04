@@ -1163,8 +1163,8 @@ public final class SiegeBots implements SiegeModule, Listener {
             victimBot.lastHurt = now;
             victimBot.plateDirty = true;
             match.damageNumbers().show(entity, event.getFinalDamage(),
-                    match.abilities().context().isAbilityDamage() ? DamageNumbers.Kind.ABILITY
-                            : DamageNumbers.Kind.NORMAL);
+                    DamageNumbers.Kind.ofHit(match.abilities().context().isAbilityDamage(),
+                            match.abilities().context().basicHitAccent()));
         }
         Player player = session.combat().resolveAttacker(event);
         UUID attacker = player != null ? player.getUniqueId() : fighterAttacker(event);

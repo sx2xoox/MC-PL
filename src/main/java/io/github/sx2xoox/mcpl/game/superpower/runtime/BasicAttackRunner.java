@@ -10,13 +10,19 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
-import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack.Accent;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack.Palette;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack.Weight;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings.Feel;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicFx;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicFx.Moment;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicFx.Part;
+import io.github.sx2xoox.mcpl.game.superpower.basic.FxSprite;
 import io.github.sx2xoox.mcpl.game.superpower.ui.AbilityItems;
 import io.github.sx2xoox.mcpl.util.Text;
 import io.papermc.paper.datacomponent.DataComponentTypes;
@@ -29,6 +35,7 @@ import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
+import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
@@ -37,7 +44,6 @@ import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -56,6 +62,8 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -70,9 +78,14 @@ import org.jspecify.annotations.Nullable;
  *     <li>Cadence: one attack per {@link BasicAttack#cooldown()} ticks; a click up to {@value #BUFFER_TICKS} ticks
  *     early is kept and fires when ready. The player's attack speed is set so the crosshair attack indicator fills
  *     in exactly that time.</li>
+ *     <li>Combo ({@link Feel}): attacks in a row (each within the reset time of being ready) count up; the last of a
+ *     combo is a finisher (bigger look, more damage, a push). Any attack may be a rare critical hit.</li>
  *     <li>Damage: {@link MatchContext#basicHit} (a melee hit: armor applies, hooks and kill credit as a sword hit; only
  *     enemies, so team mode, spectators and the host's targets work), times the host's
- *     {@link MatchHost#basicAttackMultiplier}, the configured scale and the attacker's attack damage bonuses.</li>
+ *     {@link MatchHost#basicAttackMultiplier}, the configured scale, the attacker's attack damage bonuses and the
+ *     finisher / critical factors.</li>
+ *     <li>Look: display entities from {@link BasicFx} played by {@link BasicFxPlayer} (slash arcs, beams, flying
+ *     items, hit sparks), a few particles as accents, and separate sounds for the attack and the hit.</li>
  *     <li>Everything it creates is owner-scoped (tasks, displays), so a death or the match end removes it.</li>
  * </ul>
  */
@@ -98,10 +111,12 @@ final class BasicAttackRunner implements Listener {
     private final AbilityItems items;
     private final MatchHost host;
     private final BasicAttackSettings settings;
+    private final Feel feel;
     private final NamespacedKey speedKey;
     private final Map<UUID, State> states = new HashMap<>();
+    private @Nullable BasicFxPlayer fx;
 
-    /** One attacker's cadence and its running effects on others. */
+    /** One attacker's cadence, combo and its running effects on others. */
     private static final class State {
         long readyAt = Long.MIN_VALUE;
         boolean queued;
@@ -109,9 +124,17 @@ final class BasicAttackRunner implements Listener {
         long blockedTick = -1;
         @Nullable UUID hint;
         long hintTick = -1;
+        /** Attacks in a row so far in the current combo, and the tick the combo starts over after. */
+        int combo;
+        long comboUntil = Long.MIN_VALUE;
         final Map<UUID, NamespacedKey> slows = new HashMap<>();
         final Map<UUID, NamespacedKey> weakens = new HashMap<>();
         final Map<UUID, BukkitTask> dots = new HashMap<>();
+    }
+
+    /** One attack being carried out: what fired, where it is in the combo, its damage factor and display budget. */
+    private record Act(Player owner, BasicAttack attack, Moment moment, double multiplier, Accent accent,
+                       BasicFxPlayer.Budget budget) {
     }
 
     BasicAttackRunner(SuperpowerMatch match, MatchHost host, BasicAttackSettings settings) {
@@ -120,6 +143,7 @@ final class BasicAttackRunner implements Listener {
         this.items = match.items();
         this.host = host;
         this.settings = settings;
+        this.feel = settings.feel();
         this.speedKey = session.hub().key("basic_attack_speed");
     }
 
@@ -131,8 +155,26 @@ final class BasicAttackRunner implements Listener {
         return match.context();
     }
 
+    private BasicFxPlayer fx() {
+        if (fx == null) {
+            fx = new BasicFxPlayer(ctx(), session, feel);
+        }
+        return fx;
+    }
+
     private State state(Player player) {
         return states.computeIfAbsent(player.getUniqueId(), id -> new State());
+    }
+
+    /** The attacker's combo step of its next attack (0 = a new combo), tests. */
+    int comboStep(Player player) {
+        State state = states.get(player.getUniqueId());
+        return state == null || session.tick() > state.comboUntil ? 0 : state.combo;
+    }
+
+    /** Basic attack displays showing now, all attackers (tests). */
+    int liveDisplays() {
+        return fx == null ? 0 : fx.liveTotal();
     }
 
     // =================================================================== input
@@ -251,7 +293,18 @@ final class BasicAttackRunner implements Listener {
         }
         BasicAttack attack = settings.attack(abilityId);
         long now = session.tick();
+        if (now > state.comboUntil) {
+            state.combo = 0;
+        }
+        int step = state.combo;
+        boolean finisher = feel.isFinisher(step);
+        state.combo = finisher ? 0 : step + 1;
         state.readyAt = now + attack.cooldown();
+        state.comboUntil = state.readyAt + feel.comboResetTicks();
+        boolean crit = feel.critChance() > 0 && session.random().nextDouble() < feel.critChance();
+        Moment moment = new Moment(step, finisher, crit, session.random().nextLong());
+        double multiplier = (finisher ? feel.finisherDamage() : 1) * (crit ? feel.critDamage() : 1);
+        Accent accent = crit ? Accent.CRITICAL : finisher ? Accent.FINISH : Accent.NONE;
         LivingEntity hint = null;
         if (state.hintTick == now && state.hint != null
                 && player.getWorld().getEntity(state.hint) instanceof LivingEntity living) {
@@ -259,44 +312,53 @@ final class BasicAttackRunner implements Listener {
         }
         state.hint = null;
         LivingEntity aimed = hint;
+        Act act = new Act(player, attack, moment, multiplier, accent, fx().budget(player));
         ctx().runOwnCode(player.getUniqueId(),
-                () -> match.guard().run(abilityId, "basicAttack", () -> execute(player, attack, aimed)));
+                () -> match.guard().run(abilityId, "basicAttack", () -> execute(act, aimed)));
     }
 
     // =================================================================== shapes
 
-    private void execute(Player owner, BasicAttack attack, @Nullable LivingEntity hint) {
+    private void execute(Act act, @Nullable LivingEntity hint) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         if (attack.effect() == BasicAttack.Effect.LUNGE) {
             Vector forward = Motion.horizontalFacing(owner.getLocation()).multiply(attack.effectPower());
             ctx().setVoluntaryVelocity(owner, forward.setY(Math.max(0.0, owner.getVelocity().getY())));
         }
         Palette palette = attack.palette();
-        sound(owner.getLocation(), palette.sound(), palette.pitch(), 0.6f);
+        Location at = owner.getLocation();
+        sound(at, palette.sound(), palette.pitch(), 0.6f);
+        if (act.moment().finisher()) {
+            sound(at, Sound.ITEM_MACE_SMASH_AIR, 1.3f, 0.45f);
+            sound(at, palette.sound(), palette.pitch() * 0.85f, 0.5f);
+        }
         switch (attack.shape()) {
-            case SWING -> swing(owner, attack, 0, hint);
-            case COMBO -> repeat(owner, attack, index -> swing(owner, attack, index, index == 0 ? hint : null));
-            case THRUST -> thrust(owner, attack);
-            case SHOT -> repeat(owner, attack, index -> shot(owner, attack, index));
-            case PROJECTILE -> projectiles(owner, attack);
-            case LOB -> lob(owner, attack);
-            case CHAIN -> chain(owner, attack);
-            case CONE -> repeat(owner, attack, index -> cone(owner, attack));
-            case NOVA -> nova(owner, attack);
-            case STRIKE -> strike(owner, attack);
+            case SWING -> swing(act, 0, true, hint);
+            case COMBO -> repeat(act, index -> swing(act, index, index == attack.hits() - 1,
+                    index == 0 ? hint : null));
+            case THRUST -> thrust(act);
+            case SHOT -> repeat(act, index -> shot(act, index));
+            case PROJECTILE -> projectiles(act);
+            case LOB -> lob(act);
+            case CHAIN -> chain(act);
+            case CONE -> repeat(act, index -> cone(act, index));
+            case NOVA -> nova(act);
+            case STRIKE -> strike(act);
         }
     }
 
     /** Runs {@code hit} for each of the attack's hits, {@code interval} ticks apart (the first one now). */
-    private void repeat(Player owner, BasicAttack attack, java.util.function.IntConsumer hit) {
+    private void repeat(Act act, java.util.function.IntConsumer hit) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         hit.accept(0);
         for (int i = 1; i < attack.hits(); i++) {
             int index = i;
             ctx().runLater(owner, Math.max(1, (long) attack.interval() * i), () -> {
                 if (session.isInPlay(owner)) {
-                    if (index > 0) {
-                        sound(owner.getLocation(), attack.palette().sound(),
-                                attack.palette().pitch() + 0.08f * index, 0.45f);
-                    }
+                    sound(owner.getLocation(), attack.palette().sound(), attack.palette().pitch() + 0.08f * index,
+                            0.45f);
                     hit.accept(index);
                 }
             });
@@ -304,7 +366,9 @@ final class BasicAttackRunner implements Listener {
     }
 
     /** A horizontal arc in front: every enemy inside (up to {@code pierce}), the clicked one first. */
-    private void swing(Player owner, BasicAttack attack, int index, @Nullable LivingEntity hint) {
+    private void swing(Act act, int index, boolean last, @Nullable LivingEntity hint) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector look = horizontal(eye.getDirection(), owner);
         List<LivingEntity> found = new ArrayList<>();
@@ -318,19 +382,28 @@ final class BasicAttackRunner implements Listener {
             }
         }
         Palette palette = attack.palette();
-        double height = index % 2 == 0 ? -0.35 : -0.15;
-        Location center = eye.clone().add(0, height, 0);
+        Location chest = eye.clone().subtract(0, BasicFx.CHEST_DROP, 0);
         double width = Math.max(40, attack.angle());
-        int points = (int) Math.max(6, Math.round(width / 12));
-        Vfx.arc(ctx(), center, attack.range() * 0.75, eye.getYaw(), width, points, Particle.DUST,
-                dust(palette, 1.1f), false);
-        Vfx.arc(ctx(), center, attack.range() * 0.55, eye.getYaw(), width * 0.8, Math.max(3, points / 2),
-                palette.particle(), null, false);
-        hitAll(owner, attack, limit(found, attack.pierce()), attack.damage());
+        if (displays()) {
+            fx().play(owner, chest, yawFrame(eye.getYaw()), BasicFx.swing(attack, act.moment(), index, last),
+                    act.budget());
+            Vfx.arc(ctx(), chest, attack.range() * 0.7, eye.getYaw(), width, 4, palette.particle(), null, false);
+        } else {
+            double height = index % 2 == 0 ? -0.35 : -0.15;
+            Location center = eye.clone().add(0, height, 0);
+            int points = (int) Math.max(6, Math.round(width / 12));
+            Vfx.arc(ctx(), center, attack.range() * 0.75, eye.getYaw(), width, points, Particle.DUST,
+                    dust(palette, 1.1f), false);
+            Vfx.arc(ctx(), center, attack.range() * 0.55, eye.getYaw(), width * 0.8, Math.max(3, points / 2),
+                    palette.particle(), null, false);
+        }
+        hitAll(act, limit(found, attack.pierce()), attack.damage());
     }
 
     /** A straight poke through enemies, stopped by walls. */
-    private void thrust(Player owner, BasicAttack attack) {
+    private void thrust(Act act) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection().normalize();
         double reach = reach(eye, direction, attack.range());
@@ -340,16 +413,23 @@ final class BasicAttackRunner implements Listener {
                 found.add(enemy);
             }
         }
-        Location from = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(0.6));
-        Location tip = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(reach));
         Palette palette = attack.palette();
-        Vfx.line(ctx(), from, tip, 4, Particle.DUST, dust(palette, 0.8f), false);
-        Vfx.cloud(ctx(), tip, palette.particle(), 4, 0.1, 0.02, null, false);
-        hitAll(owner, attack, limit(found, attack.pierce()), attack.damage());
+        Location tip = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(reach));
+        if (displays()) {
+            fx().play(owner, eye.clone().subtract(0, BasicFx.AIM_DROP, 0), aimFrame(direction),
+                    BasicFx.thrust(attack, act.moment(), reach), act.budget());
+        } else {
+            Location from = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(0.6));
+            Vfx.line(ctx(), from, tip, 4, Particle.DUST, dust(palette, 0.8f), false);
+        }
+        Vfx.cloud(ctx(), tip, palette.particle(), 3, 0.1, 0.02, null, false);
+        hitAll(act, limit(found, attack.pierce()), attack.damage());
     }
 
     /** An instant shot at the aimed enemy (aim assist, walls block), with a tracer. */
-    private void shot(Player owner, BasicAttack attack, int index) {
+    private void shot(Act act, int index) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection().normalize();
         LivingEntity target = ctx().findTarget(owner, attack.range());
@@ -357,20 +437,29 @@ final class BasicAttackRunner implements Listener {
         Location end = target != null ? Fx.body(target) : eye.clone().add(direction.clone()
                 .multiply(reach(eye, direction, attack.range())));
         Palette palette = attack.palette();
-        Vfx.line(ctx(), muzzle, end, 2.5, Particle.DUST, dust(palette, 0.6f), false);
+        if (displays()) {
+            Vector toward = end.toVector().subtract(muzzle.toVector());
+            double length = toward.length();
+            fx().play(owner, muzzle, aimFrame(length > 1.0E-3 ? toward : direction),
+                    BasicFx.tracer(attack, act.moment(), length, index), act.budget());
+        } else {
+            Vfx.line(ctx(), muzzle, end, 2.5, Particle.DUST, dust(palette, 0.6f), false);
+        }
         Vfx.cloud(ctx(), muzzle, palette.particle(), 2, 0.05, 0.01, null, false);
         if (index > 0) {
             sound(muzzle, palette.sound(), palette.pitch() + 0.1f, 0.4f);
         }
         if (target != null) {
-            hitAll(owner, attack, List.of(target), attack.damage());
+            hitAll(act, List.of(target), attack.damage());
         } else {
             Vfx.cloud(ctx(), end, palette.particle(), 3, 0.1, 0.02, null, false);
         }
     }
 
     /** {@code hits} projectiles fanned over {@code angle} (or one after another when {@code interval} is set). */
-    private void projectiles(Player owner, BasicAttack attack) {
+    private void projectiles(Act act) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         int count = attack.hits();
         for (int i = 0; i < count; i++) {
             double offset = count > 1 && attack.interval() == 0
@@ -378,41 +467,111 @@ final class BasicAttackRunner implements Listener {
             if (attack.interval() > 0 && i > 0) {
                 ctx().runLater(owner, (long) attack.interval() * i, () -> {
                     if (session.isInPlay(owner)) {
-                        launch(owner, attack, 0);
+                        launch(act, 0);
                     }
                 });
             } else {
-                launch(owner, attack, offset);
+                launch(act, offset);
             }
         }
     }
 
-    private void launch(Player owner, BasicAttack attack, double yawOffset) {
-        Location eye = owner.getEyeLocation();
+    private void launch(Act act, double yawOffset) {
+        Location eye = act.owner().getEyeLocation();
         Vector direction = eye.getDirection().normalize().rotateAroundY(Math.toRadians(-yawOffset));
         Location start = eye.clone().add(0, -0.15, 0).add(direction.clone().multiply(0.4));
-        new Flight(owner, attack, start, direction).begin();
+        new Flight(act, start, direction).begin();
+    }
+
+    /** A projectile's look in flight: its parts' displays and the trail it leaves. */
+    private final class Body {
+        final Act act;
+        final List<Part> parts;
+        final List<Display> displays = new ArrayList<>();
+        final BasicFxPlayer.@Nullable Run trail;
+        final Quaternionf frame;
+        @Nullable Location last;
+        int tick;
+
+        Body(Act act, Location at, Vector heading) {
+            this.act = act;
+            this.frame = aimFrame(heading);
+            if (!displays()) {
+                parts = List.of();
+                trail = null;
+                return;
+            }
+            parts = BasicFx.projectile(act.attack(), act.moment());
+            for (Part part : parts) {
+                if (!act.budget().take()) {
+                    break;
+                }
+                Display display = fx().spawn(act.owner(), part.kind(), part.material(), null, at,
+                        BasicFxPlayer.transformation(part.kind(), BasicFx.partPose(act.attack(), part, 0), frame));
+                if (display != null) {
+                    displays.add(display);
+                }
+            }
+            trail = fx().run(act.owner());
+            last = at.clone();
+        }
+
+        /** The projectile is at {@code at} now. */
+        void move(Location at) {
+            tick++;
+            for (int i = 0; i < displays.size(); i++) {
+                Display display = displays.get(i);
+                if (display.isValid()) {
+                    Location spot = at.clone();
+                    spot.setYaw(0);
+                    spot.setPitch(0);
+                    display.teleport(spot);
+                    Part part = parts.get(i);
+                    BasicFxPlayer.animate(display, BasicFxPlayer.transformation(part.kind(),
+                            BasicFx.partPose(act.attack(), part, tick), frame));
+                }
+            }
+            if (trail != null && last != null) {
+                Vector back = last.toVector().subtract(at.toVector());
+                trail.add(BasicFx.trail(act.attack(), act.moment(),
+                        new Vector3f((float) back.getX(), (float) back.getY(), (float) back.getZ()), tick), at,
+                        new Quaternionf(), act.budget());
+                trail.step();
+            }
+            last = at.clone();
+        }
+
+        void end() {
+            for (Display display : displays) {
+                fx().remove(act.owner().getUniqueId(), display);
+            }
+            displays.clear();
+            if (trail != null) {
+                trail.drain();
+            }
+        }
     }
 
     /** One flying projectile: moves {@code speed} blocks a tick, hits enemies on its path, heals allies it passes. */
     private final class Flight {
+        final Act act;
         final Player owner;
         final BasicAttack attack;
         final Location position;
         final Vector direction;
         final Set<UUID> touched = new HashSet<>();
-        final @Nullable ItemDisplay display;
+        final Body body;
         double traveled;
         int hits;
         @Nullable BukkitTask task;
 
-        Flight(Player owner, BasicAttack attack, Location start, Vector direction) {
-            this.owner = owner;
-            this.attack = attack;
+        Flight(Act act, Location start, Vector direction) {
+            this.act = act;
+            this.owner = act.owner();
+            this.attack = act.attack();
             this.position = start;
             this.direction = direction;
-            long lifetime = (long) Math.ceil(attack.range() / attack.speed()) + 4;
-            this.display = attack.palette().item() == null ? null : projectileDisplay(owner, attack, start, lifetime);
+            this.body = new Body(act, start, direction);
         }
 
         void begin() {
@@ -448,7 +607,7 @@ final class BasicAttackRunner implements Listener {
             boolean over = free < length;
             for (Hit hit : path) {
                 touched.add(hit.entity.getUniqueId());
-                hitAll(owner, attack, List.of(hit.entity), attack.damage());
+                hitAll(act, List.of(hit.entity), attack.damage());
                 hits++;
                 if (attack.pierce() > 0 && hits >= attack.pierce()) {
                     stop = hit.along;
@@ -466,15 +625,17 @@ final class BasicAttackRunner implements Listener {
             }
             Location next = position.clone().add(direction.clone().multiply(stop));
             Palette palette = attack.palette();
-            Vfx.line(ctx(), position, next, 2, Particle.DUST, dust(palette, 0.7f), false);
-            Vfx.dot(next, palette.particle(), null, false);
+            if (displays()) {
+                Vfx.dot(next, palette.particle(), null, false);
+            } else {
+                Vfx.line(ctx(), position, next, 2, Particle.DUST, dust(palette, 0.7f), false);
+                Vfx.dot(next, palette.particle(), null, false);
+            }
             position.setX(next.getX());
             position.setY(next.getY());
             position.setZ(next.getZ());
             traveled += stop;
-            if (display != null) {
-                Displays.moveTo(display, position);
-            }
+            body.move(position);
             return !over && traveled < attack.range() - 1.0E-6;
         }
 
@@ -484,9 +645,7 @@ final class BasicAttackRunner implements Listener {
                 task = null;
             }
             Vfx.cloud(ctx(), position, attack.palette().particle(), 3, 0.08, 0.02, null, false);
-            if (display != null && display.isValid()) {
-                display.remove();
-            }
+            body.end();
         }
     }
 
@@ -494,14 +653,15 @@ final class BasicAttackRunner implements Listener {
     }
 
     /** A thrown object falling in an arc; bursts on a wall, the ground or an enemy and splashes {@code radius}. */
-    private void lob(Player owner, BasicAttack attack) {
+    private void lob(Act act) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection().normalize();
         Location position = eye.clone().add(0, -0.2, 0).add(direction.clone().multiply(0.5));
         Vector velocity = direction.clone().multiply(attack.speed()).add(new Vector(0, 0.15, 0));
         Location start = position.clone();
-        ItemDisplay display = attack.palette().item() == null ? null
-                : projectileDisplay(owner, attack, position, LOB_MAX_TICKS + 4);
+        Body body = new Body(act, position, horizontal(direction, owner));
         BukkitTask[] task = new BukkitTask[1];
         int[] ticks = {0};
         Runnable step = () -> {
@@ -525,9 +685,7 @@ final class BasicAttackRunner implements Listener {
             position.setX(next.getX());
             position.setY(next.getY());
             position.setZ(next.getZ());
-            if (display != null) {
-                Displays.moveTo(display, position);
-            }
+            body.move(position);
             velocity.setY(velocity.getY() - LOB_GRAVITY).multiply(0.99);
             double horizontal = Math.hypot(position.getX() - start.getX(), position.getZ() - start.getZ());
             if (burst == null && (ticks[0] >= LOB_MAX_TICKS || horizontal >= attack.range()
@@ -538,11 +696,9 @@ final class BasicAttackRunner implements Listener {
                 if (task[0] != null) {
                     task[0].cancel();
                 }
-                if (display != null && display.isValid()) {
-                    display.remove();
-                }
+                body.end();
                 if (session.isInPlay(owner)) {
-                    splash(owner, attack, burst);
+                    splash(act, burst);
                 }
             }
         };
@@ -550,38 +706,47 @@ final class BasicAttackRunner implements Listener {
     }
 
     /** The burst of a lob: every enemy within {@code radius}. */
-    private void splash(Player owner, BasicAttack attack, Location at) {
+    private void splash(Act act, Location at) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Palette palette = attack.palette();
         Location center = at.clone().add(0, 0.3, 0);
-        Vfx.ring(ctx(), center, attack.radius(), 14, 0, Particle.DUST, dust(palette, 1.2f), false);
-        Vfx.cloud(ctx(), center, palette.particle(), 10, attack.radius() * 0.4, 0.05, null, false);
+        if (displays()) {
+            fx().play(owner, at, new Quaternionf(), BasicFx.splash(attack, act.moment()), act.budget());
+        } else {
+            Vfx.ring(ctx(), center, attack.radius(), 14, 0, Particle.DUST, dust(palette, 1.2f), false);
+        }
+        Vfx.cloud(ctx(), center, palette.particle(), 6, attack.radius() * 0.4, 0.05, null, false);
         if (attack.radius() >= 1.8) {
             Vfx.dot(center, Particle.EXPLOSION, null, false);
         }
         sound(center, palette.impact(), palette.impactPitch(), 0.7f);
-        hitAll(owner, attack, ctx().enemiesNear(owner, center, attack.radius()), attack.damage());
+        hitAll(act, ctx().enemiesNear(owner, center, attack.radius()), attack.damage());
         healAlliesNear(owner, attack, center, attack.radius());
     }
 
     /** A zap on the aimed enemy that jumps on to the nearest ones it has not hit. */
-    private void chain(Player owner, BasicAttack attack) {
+    private void chain(Act act) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection().normalize();
         Location hand = eye.clone().add(0, -0.25, 0).add(direction.clone().multiply(0.6));
         LivingEntity first = ctx().findTarget(owner, attack.range());
         if (first == null) {
-            zap(attack, hand, eye.clone().add(direction.multiply(reach(eye, direction, attack.range()))));
+            zap(act, hand, eye.clone().add(direction.multiply(reach(eye, direction, attack.range()))), 0);
             return;
         }
-        zap(attack, hand, Fx.body(first));
-        hitAll(owner, attack, List.of(first), attack.damage());
+        zap(act, hand, Fx.body(first), 0);
+        hitAll(act, List.of(first), attack.damage());
         Set<UUID> struck = new HashSet<>();
         struck.add(first.getUniqueId());
-        jump(owner, attack, first, struck, 1, attack.damage() * attack.falloff());
+        jump(act, first, struck, 1, attack.damage() * attack.falloff());
     }
 
-    private void jump(Player owner, BasicAttack attack, LivingEntity from, Set<UUID> struck, int index,
-                      double damage) {
+    private void jump(Act act, LivingEntity from, Set<UUID> struck, int index, double damage) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         if (index >= attack.hits() || !(damage > 0)) {
             return;
         }
@@ -601,19 +766,28 @@ final class BasicAttackRunner implements Listener {
                 return;
             }
             struck.add(next.getUniqueId());
-            zap(attack, origin, Fx.body(next));
-            hitAll(owner, attack, List.of(next), damage);
-            jump(owner, attack, next, struck, index + 1, damage * attack.falloff());
+            zap(act, origin, Fx.body(next), index);
+            hitAll(act, List.of(next), damage);
+            jump(act, next, struck, index + 1, damage * attack.falloff());
         });
     }
 
     /** A jagged bolt from {@code from} to {@code to}. */
-    private void zap(BasicAttack attack, Location from, Location to) {
+    private void zap(Act act, Location from, Location to, int index) {
+        BasicAttack attack = act.attack();
+        Palette palette = attack.palette();
+        if (displays()) {
+            Vector delta = to.toVector().subtract(from.toVector());
+            fx().play(act.owner(), from, new Quaternionf(), BasicFx.bolt(attack, act.moment(),
+                    new Vector3f((float) delta.getX(), (float) delta.getY(), (float) delta.getZ()),
+                    act.moment().seed() + index), act.budget());
+            Vfx.dot(to, palette.particle(), null, false);
+            return;
+        }
         ThreadLocalRandom random = ThreadLocalRandom.current();
         Vector delta = to.toVector().subtract(from.toVector());
         int segments = (int) Math.max(2, Math.min(8, Math.round(delta.length() / 1.2)));
         Location previous = from.clone();
-        Palette palette = attack.palette();
         for (int i = 1; i <= segments; i++) {
             Location point = from.clone().add(delta.clone().multiply((double) i / segments));
             if (i < segments) {
@@ -627,7 +801,9 @@ final class BasicAttackRunner implements Listener {
     }
 
     /** A short cone in front: every enemy inside (up to {@code pierce}). */
-    private void cone(Player owner, BasicAttack attack) {
+    private void cone(Act act, int index) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection().normalize();
         List<LivingEntity> found = new ArrayList<>();
@@ -639,7 +815,11 @@ final class BasicAttackRunner implements Listener {
         Palette palette = attack.palette();
         ThreadLocalRandom random = ThreadLocalRandom.current();
         double half = Math.toRadians(attack.angle() / 2);
-        int puffs = Vfx.n(ctx(), 10);
+        if (displays()) {
+            fx().play(owner, eye.clone().subtract(0, BasicFx.AIM_DROP, 0), aimFrame(direction),
+                    BasicFx.cone(attack, act.moment(), index), act.budget());
+        }
+        int puffs = Vfx.n(ctx(), displays() ? 4 : 10);
         World world = eye.getWorld();
         for (int i = 0; i < puffs; i++) {
             Vector spray = direction.clone()
@@ -649,29 +829,38 @@ final class BasicAttackRunner implements Listener {
             world.spawnParticle(i % 2 == 0 ? palette.particle() : Particle.DUST, at, 1, 0, 0, 0, 0,
                     i % 2 == 0 ? null : dust(palette, 1.0f), false);
         }
-        hitAll(owner, attack, limit(found, attack.pierce()), attack.damage());
+        hitAll(act, limit(found, attack.pierce()), attack.damage());
     }
 
     /** A burst around the attacker: every enemy within {@code range}; allies inside may heal. */
-    private void nova(Player owner, BasicAttack attack) {
+    private void nova(Act act) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location center = owner.getLocation().add(0, 1, 0);
         Palette palette = attack.palette();
-        for (int i = 0; i < 3; i++) {
-            double radius = attack.range() * (i + 1) / 3.0;
-            if (i == 0) {
-                Vfx.ring(ctx(), center, radius, 10, 0, Particle.DUST, dust(palette, 1.0f), false);
-            } else {
-                ctx().runLater(owner, i, () -> Vfx.ring(ctx(), center, radius, (int) Math.round(radius * 5), 0.3,
-                        Particle.DUST, dust(palette, 1.0f), false));
+        if (displays()) {
+            fx().play(owner, center, yawFrame(owner.getLocation().getYaw()), BasicFx.nova(attack, act.moment()),
+                    act.budget());
+        } else {
+            for (int i = 0; i < 3; i++) {
+                double radius = attack.range() * (i + 1) / 3.0;
+                if (i == 0) {
+                    Vfx.ring(ctx(), center, radius, 10, 0, Particle.DUST, dust(palette, 1.0f), false);
+                } else {
+                    ctx().runLater(owner, i, () -> Vfx.ring(ctx(), center, radius, (int) Math.round(radius * 5),
+                            0.3, Particle.DUST, dust(palette, 1.0f), false));
+                }
             }
         }
         Vfx.ring(ctx(), center, attack.range() * 0.5, 6, 0.2, palette.particle(), null, false);
-        hitAll(owner, attack, ctx().enemiesNear(owner, center, attack.range()), attack.damage());
+        hitAll(act, ctx().enemiesNear(owner, center, attack.range()), attack.damage());
         healAlliesNear(owner, attack, center, attack.range());
     }
 
     /** A blow on the aimed spot (the aimed enemy, or the block looked at) after {@code interval} ticks. */
-    private void strike(Player owner, BasicAttack attack) {
+    private void strike(Act act) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
         Location eye = owner.getEyeLocation();
         Vector direction = eye.getDirection().normalize();
         LivingEntity aimed = ctx().findTarget(owner, attack.range());
@@ -683,23 +872,29 @@ final class BasicAttackRunner implements Listener {
             spot = ground(eye.clone().add(direction.clone().multiply(Math.max(0, reach - 0.2))));
         }
         Palette palette = attack.palette();
-        Location mark = spot.clone().add(0, 0.1, 0);
-        Vfx.ring(ctx(), mark, attack.radius(), 12, 0, Particle.DUST, dust(palette, 0.9f), false);
+        if (displays()) {
+            List<FxSprite> sprites = new ArrayList<>(BasicFx.telegraph(attack, act.moment(), attack.interval()));
+            BasicFxPlayer.Run run = fx().run(owner);
+            run.add(sprites, spot, new Quaternionf(), act.budget());
+            List<FxSprite> landing = new ArrayList<>();
+            for (FxSprite sprite : BasicFx.eruption(attack, act.moment())) {
+                landing.add(sprite.delayed(attack.interval()));
+            }
+            run.add(landing, spot, yawFrame(eye.getYaw()), act.budget());
+            run.drain();
+        } else {
+            Vfx.ring(ctx(), spot.clone().add(0, 0.1, 0), attack.radius(), 12, 0, Particle.DUST, dust(palette, 0.9f),
+                    false);
+        }
         Runnable land = () -> {
             if (!session.isInPlay(owner)) {
                 return;
             }
             Location center = spot.clone().add(0, 0.6, 0);
-            Vfx.cloud(ctx(), center, palette.particle(), 12, attack.radius() * 0.4, 0.05, null, false);
-            Vfx.line(ctx(), spot, spot.clone().add(0, 1.8, 0), 4, Particle.DUST, dust(palette, 1.2f), false);
-            if (palette.item() != null) {
-                ItemDisplay spike = Displays.item(ctx(), owner, spot.clone().add(0, 0.2, 0),
-                        new ItemStack(palette.item()), Displays.centered(0, 0, 0, 0.2f, 0.2f, 0.2f, 0, 0, 0), 12);
-                Displays.animateNextTick(ctx(), owner, spike, Displays.centered(0, 0.6f, 0, 1.3f, 1.6f, 1.3f,
-                        0, 0, 0), 3);
-            }
+            Vfx.cloud(ctx(), center, palette.particle(), displays() ? 6 : 12, attack.radius() * 0.4, 0.05, null,
+                    false);
             sound(center, palette.impact(), palette.impactPitch(), 0.7f);
-            hitAll(owner, attack, ctx().enemiesNear(owner, center, attack.radius()), attack.damage());
+            hitAll(act, ctx().enemiesNear(owner, center, attack.radius()), attack.damage());
             healAlliesNear(owner, attack, center, attack.radius());
         };
         if (attack.interval() > 0) {
@@ -711,29 +906,44 @@ final class BasicAttackRunner implements Listener {
 
     // =================================================================== hits & effects
 
-    private void hitAll(Player owner, BasicAttack attack, List<LivingEntity> targets, double damage) {
+    private void hitAll(Act act, List<LivingEntity> targets, double damage) {
         for (LivingEntity target : targets) {
-            if (!session.isInPlay(owner) || !ctx().isEnemy(owner, target)) {
+            if (!session.isInPlay(act.owner()) || !ctx().isEnemy(act.owner(), target)) {
                 continue;
             }
-            hit(owner, attack, target, damage);
+            hit(act, target, damage);
         }
     }
 
-    /** One hit: the damage, its look and sound, and the side effect. */
-    private void hit(Player owner, BasicAttack attack, LivingEntity target, double damage) {
-        double amount = scaled(owner, target, damage);
+    /** One hit: the damage, its look and sound, the side effect and the finisher's push. */
+    private void hit(Act act, LivingEntity target, double damage) {
+        Player owner = act.owner();
+        BasicAttack attack = act.attack();
+        Moment moment = act.moment();
+        double amount = scaled(owner, target, damage) * act.multiplier();
         Location body = Fx.body(target);
-        double lost = ctx().basicHit(owner, target, amount, DamageType.PLAYER_ATTACK);
+        double lost = ctx().basicHit(owner, target, amount, DamageType.PLAYER_ATTACK, act.accent());
         Palette palette = attack.palette();
-        Vfx.cloud(ctx(), body, palette.particle(), 5, 0.2, 0.03, null, false);
-        Vfx.cloud(ctx(), body, Particle.DUST, 4, 0.25, 0, dust(palette, 1.0f), false);
-        sound(body, palette.impact(), palette.impactPitch(), 0.55f);
+        if (displays()) {
+            Vector toward = body.toVector().subtract(owner.getEyeLocation().toVector()).setY(0);
+            fx().play(owner, body, toward.lengthSquared() < 1.0E-4 ? yawFrame(owner.getLocation().getYaw())
+                    : aimFrame(toward), BasicFx.impact(attack, moment, moment.seed() ^ target.getUniqueId()
+                    .getLeastSignificantBits()), act.budget());
+            Vfx.cloud(ctx(), body, palette.particle(), 3, 0.2, 0.03, null, false);
+        } else {
+            Vfx.cloud(ctx(), body, palette.particle(), 5, 0.2, 0.03, null, false);
+            Vfx.cloud(ctx(), body, Particle.DUST, 4, 0.25, 0, dust(palette, 1.0f), false);
+        }
+        if (moment.crit()) {
+            Vfx.cloud(ctx(), body, Particle.CRIT, 8, 0.25, 0.25, null, false);
+        }
+        hitSounds(body, attack, moment);
         if (target.isDead() || !target.isValid()) {
             return;
         }
         long ticks = Math.max(1, Math.round(attack.effectSeconds() * 20));
         State state = state(owner);
+        double push = moment.finisher() ? feel.finisherPush() : 0;
         switch (attack.effect()) {
             case SLOW -> timedModifier(owner, target, Attribute.MOVEMENT_SPEED, -attack.effectPower(),
                     AttributeModifier.Operation.MULTIPLY_SCALAR_1, ticks, state.slows);
@@ -741,15 +951,11 @@ final class BasicAttackRunner implements Listener {
                     AttributeModifier.Operation.ADD_NUMBER, ticks, state.weakens);
             case DOT -> damageOverTime(owner, attack, target, ticks, state);
             case KNOCKBACK -> {
-                if (!match.isHostTarget(target)) {
-                    Vector away = target.getLocation().toVector().subtract(owner.getLocation().toVector()).setY(0);
-                    away = away.lengthSquared() < 1.0E-4 ? Motion.horizontalFacing(owner.getLocation())
-                            : away.normalize();
-                    double power = attack.effectPower();
-                    Motion.push(target, away.multiply(power).setY(Math.min(0.45, 0.2 + power * 0.2)), 2.0);
-                }
+                pushAway(owner, target, attack.effectPower() + push);
+                push = 0;
             }
             case PULL -> {
+                push = 0;
                 if (!match.isHostTarget(target)) {
                     Vector toward = owner.getLocation().toVector().subtract(target.getLocation().toVector())
                             .setY(0);
@@ -771,6 +977,40 @@ final class BasicAttackRunner implements Listener {
             }
             default -> {
             }
+        }
+        if (push > 0) {
+            pushAway(owner, target, push);
+        }
+    }
+
+    /** Pushes {@code target} away from the attacker (never the host's targets: towers, minions, monsters). */
+    private void pushAway(Player owner, LivingEntity target, double power) {
+        if (match.isHostTarget(target) || !(power > 0)) {
+            return;
+        }
+        Vector away = target.getLocation().toVector().subtract(owner.getLocation().toVector()).setY(0);
+        away = away.lengthSquared() < 1.0E-4 ? Motion.horizontalFacing(owner.getLocation()) : away.normalize();
+        Motion.push(target, away.multiply(power).setY(Math.min(0.45, 0.2 + power * 0.2)), 2.0);
+    }
+
+    /** The hit's sounds: the ability's own impact, a layer for its weight, and a ring for a finisher or critical. */
+    private void hitSounds(Location at, BasicAttack attack, Moment moment) {
+        Palette palette = attack.palette();
+        sound(at, palette.impact(), palette.impactPitch(), 0.55f);
+        Weight weight = attack.fx().weight();
+        switch (weight) {
+            case LIGHT -> sound(at, Sound.ENTITY_PLAYER_ATTACK_STRONG, 1.6f, 0.35f);
+            case SHARP -> sound(at, Sound.ITEM_SPEAR_HIT, 1.5f, 0.4f);
+            case HEAVY -> sound(at, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 0.7f, 0.5f);
+            case MAGIC -> sound(at, Sound.BLOCK_AMETHYST_CLUSTER_HIT, 1.4f, 0.45f);
+        }
+        if (moment.crit()) {
+            sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.8f);
+            sound(at, Sound.BLOCK_ANVIL_LAND, 2.0f, 0.25f);
+        }
+        if (moment.finisher()) {
+            sound(at, weight == Weight.HEAVY ? Sound.ITEM_MACE_SMASH_GROUND : Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK,
+                    weight == Weight.HEAVY ? 1.2f : 0.9f, 0.6f);
         }
     }
 
@@ -898,7 +1138,7 @@ final class BasicAttackRunner implements Listener {
         }
     }
 
-    /** The match ended: every attack speed change is undone. */
+    /** The match ended: every attack speed change is undone and every display goes. */
     void dispose() {
         for (Participant participant : match.participants()) {
             Player player = participant.player();
@@ -911,6 +1151,9 @@ final class BasicAttackRunner implements Listener {
             state.dots.values().forEach(BukkitTask::cancel);
         }
         states.clear();
+        if (fx != null) {
+            fx.dispose();
+        }
     }
 
     /** The weapon's lore gets a line naming its basic attack. */
@@ -922,18 +1165,25 @@ final class BasicAttackRunner implements Listener {
         lines.add(Text.mm("<gray>좌클릭 평타: <white>" + attack.name() + "</white> <dark_gray>("
                 + attack.shape().korean() + ")").decoration(TextDecoration.ITALIC, false));
         lines.add(Text.mm("<dark_gray>" + attack.description()).decoration(TextDecoration.ITALIC, false));
+        if (feel.comboLength() > 1) {
+            lines.add(Text.mm("<dark_gray>" + feel.comboLength() + "번째 연속 평타는 피니시 (더 세고 크게)")
+                    .decoration(TextDecoration.ITALIC, false));
+        }
         weapon.setData(DataComponentTypes.LORE, ItemLore.lore(lines));
     }
 
     // =================================================================== geometry & looks
 
-    private ItemDisplay projectileDisplay(Player owner, BasicAttack attack, Location at, long lifetime) {
-        float scale = attack.palette().item() != null && attack.palette().item().isBlock() ? 0.3f : 0.45f;
-        ItemDisplay display = Displays.item(ctx(), owner, at, new ItemStack(attack.palette().item()),
-                Displays.centered(0, 0, 0, scale, scale, scale, 0, 0, 0), lifetime);
-        display.setBillboard(Display.Billboard.CENTER);
-        display.setTeleportDuration(1);
-        return display;
+    private boolean displays() {
+        return feel.displays();
+    }
+
+    private static Quaternionf yawFrame(float yaw) {
+        return BasicFx.yawFrame(yaw);
+    }
+
+    private static Quaternionf aimFrame(Vector direction) {
+        return BasicFx.aimFrame(direction.getX(), direction.getY(), direction.getZ());
     }
 
     /** How far a ray from {@code from} gets before a solid block (at most {@code length}). */
@@ -1015,7 +1265,7 @@ final class BasicAttackRunner implements Listener {
         return new Particle.DustOptions(palette.color(), size);
     }
 
-    private static void sound(Location at, org.bukkit.Sound sound, float pitch, float volume) {
+    private static void sound(Location at, Sound sound, float pitch, float volume) {
         at.getWorld().playSound(at, sound, SoundCategory.PLAYERS, volume,
                 Math.max(0.5f, Math.min(2.0f, pitch + Fx.jitter(0.05f))));
     }

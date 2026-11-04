@@ -9,6 +9,7 @@ import java.util.function.Predicate;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
@@ -27,7 +28,8 @@ import org.joml.Vector3f;
 /**
  * Floating damage numbers (docs/siege.md "화면 표시"): a number pops up over whatever was hit, rises and fades within a
  * second. Colours: {@link Kind#NORMAL} white, {@link Kind#ABILITY} yellow, {@link Kind#HEAL} green ({@code +}),
- * {@link Kind#STRUCTURE} orange. Hits on one target of one kind are summed for {@value #AGGREGATE_TICKS} ticks into a
+ * {@link Kind#STRUCTURE} orange; a basic attack's combo finisher ({@link Kind#FINISH}) is a bigger white number and its
+ * critical hit ({@link Kind#CRITICAL}) a big gold one with {@code !}. Hits on one target of one kind are summed for {@value #AGGREGATE_TICKS} ticks into a
  * single number, so a fast multi-hit ability does not spam. Only players within {@code range} blocks of the target
  * (at the moment it pops) see it. Every display is tracked by the session.
  */
@@ -35,19 +37,42 @@ public final class DamageNumbers {
 
     /** What kind of number (its colour). */
     public enum Kind {
-        NORMAL(NamedTextColor.WHITE),
-        ABILITY(NamedTextColor.YELLOW),
-        HEAL(NamedTextColor.GREEN),
-        STRUCTURE(NamedTextColor.GOLD);
+        NORMAL(NamedTextColor.WHITE, 1.0f),
+        ABILITY(NamedTextColor.YELLOW, 1.0f),
+        HEAL(NamedTextColor.GREEN, 1.0f),
+        STRUCTURE(NamedTextColor.GOLD, 1.0f),
+        /** The last attack of a basic attack combo. */
+        FINISH(NamedTextColor.WHITE, 1.35f),
+        /** A critical basic attack hit. */
+        CRITICAL(TextColor.color(0xFFB020), 1.6f);
 
         private final TextColor color;
+        private final float scale;
 
-        Kind(TextColor color) {
+        Kind(TextColor color, float scale) {
             this.color = color;
+            this.scale = scale;
         }
 
         public TextColor color() {
             return color;
+        }
+
+        /** Size of the number (1 = usual). */
+        public float scale() {
+            return scale;
+        }
+
+        /** The kind of a hit: ability damage, else a basic attack's accent (finisher, critical), else normal. */
+        public static Kind ofHit(boolean ability, BasicAttack.Accent accent) {
+            if (ability) {
+                return ABILITY;
+            }
+            return switch (accent) {
+                case CRITICAL -> CRITICAL;
+                case FINISH -> FINISH;
+                case NONE -> NORMAL;
+            };
         }
     }
 
@@ -134,7 +159,7 @@ public final class DamageNumbers {
         pending.clear();
         for (Map.Entry<Key, Pending> entry : due) {
             Pending next = entry.getValue();
-            pop(next.at, text(next.amount, entry.getKey().kind()), next.viewers);
+            pop(next.at, text(next.amount, entry.getKey().kind()), entry.getKey().kind().scale(), next.viewers);
         }
     }
 
@@ -148,7 +173,7 @@ public final class DamageNumbers {
         return spawned;
     }
 
-    private void pop(Location at, Component text, Predicate<? super Player> viewers) {
+    private void pop(Location at, Component text, float scale, Predicate<? super Player> viewers) {
         World world = at.getWorld();
         if (world == null) {
             return;
@@ -165,7 +190,7 @@ public final class DamageNumbers {
                 d.setShadowed(true);
                 d.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
                 d.setBrightness(FULL_BRIGHT);
-                d.setTransformation(transform(0, 0.6f));
+                d.setTransformation(transform(0, 0.6f * scale));
             });
             session.track(display);
             spawned++;
@@ -180,7 +205,7 @@ public final class DamageNumbers {
                 if (display.isValid()) {
                     display.setInterpolationDelay(0);
                     display.setInterpolationDuration(RISE_TICKS);
-                    display.setTransformation(transform(0.9f, 1.1f));
+                    display.setTransformation(transform(0.9f, 1.1f * scale));
                 }
             });
             session.runLater(RISE_TICKS, () -> {
@@ -205,7 +230,8 @@ public final class DamageNumbers {
     /** The number: bold, in the kind's colour, {@code +} in front of a heal. */
     public static Component text(double amount, Kind kind) {
         String number = format(amount);
-        return Component.text(kind == Kind.HEAL ? "+" + number : number, kind.color())
+        String shown = kind == Kind.HEAL ? "+" + number : kind == Kind.CRITICAL ? number + "!" : number;
+        return Component.text(shown, kind.color())
                 .decoration(TextDecoration.BOLD, true);
     }
 

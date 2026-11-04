@@ -356,8 +356,8 @@ final class LaneSystemsModule implements SiegeModule {
 
         @Override
         public void damageNumber(LivingEntity victim, double amount) {
-            match.damageNumbers().show(victim, amount, isAbilityDamage() ? DamageNumbers.Kind.ABILITY
-                    : DamageNumbers.Kind.NORMAL);
+            match.damageNumbers().show(victim, amount, DamageNumbers.Kind.ofHit(isAbilityDamage(),
+                    match.abilities().context().basicHitAccent()));
         }
     }
 }

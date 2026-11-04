@@ -32,10 +32,12 @@ import org.jspecify.annotations.Nullable;
  * @param effectPower  the effect's strength (slow/weaken amount, damage over time total, push speed, heal, share)
  * @param effectSeconds how long a timed effect lasts
  * @param palette      particles, color, sounds and the projectile item
+ * @param fx           the display look: slash and beam blocks, the weapon that flashes, the hit weight, the signature
  */
 public record BasicAttack(String id, String name, String description, Shape shape, double damage, int cooldown,
                           double range, int hits, int interval, double radius, double angle, double speed, int pierce,
-                          double falloff, Effect effect, double effectPower, double effectSeconds, Palette palette) {
+                          double falloff, Effect effect, double effectPower, double effectSeconds, Palette palette,
+                          Fx fx) {
 
     /** How an attack finds what it hits. */
     public enum Shape {
@@ -129,6 +131,95 @@ public record BasicAttack(String id, String name, String description, Shape shap
         }
     }
 
+    /** What a hit stands for beyond its damage (the host shows it, e.g. as a bigger damage number). */
+    public enum Accent {
+        /** An ordinary hit. */
+        NONE,
+        /** A hit of a combo's finisher. */
+        FINISH,
+        /** A critical hit. */
+        CRITICAL
+    }
+
+    /** How a hit feels: its spark shape and the sound layered under the ability's own impact sound. */
+    public enum Weight {
+        /** Quick and small (punches, darts): short sparks, a light tap. */
+        LIGHT,
+        /** Blades and points: long thin sparks, a sharp cut. */
+        SHARP,
+        /** Hammers, picks, bats: short thick sparks and a chunk, a deep thud. */
+        HEAVY,
+        /** Spells and energy: sparks with a glowing orb, a chime. */
+        MAGIC
+    }
+
+    /** How a flying item turns (projectiles and lobs). */
+    public enum Spin {
+        /** Faces the flight, slowly rolling (orbs, cubes). */
+        ROLL,
+        /** Lies flat and spins like a disc (shuriken). */
+        FLAT,
+        /** Points along the flight (arrows, knives, clock hands). */
+        POINT,
+        /** Tumbles end over end (bombs, flasks). */
+        TUMBLE
+    }
+
+    /** A small per-job flourish on top of its shape's look. */
+    public enum Signature {
+        NONE,
+        /** Ghost copies of the knife trail the swing (요리사). */
+        CLEAVER,
+        /** Combo hits are straight jabs with a shock ring instead of arcs (격투가). */
+        PUNCH,
+        /** Three parallel claw marks instead of one arc (늑대인간, 악마). */
+        CLAW,
+        /** "딱!" over every hit, "홈런!" on the finisher (야구선수). */
+        HOMERUN,
+        /** Music notes fly out of the burst (음유시인). */
+        NOTES,
+        /** Ones and zeros trail the packet (해커). */
+        BINARY,
+        /** Bubbles trail the shot (물). */
+        BUBBLE,
+        /** A soul rises from whoever is hit (사신, 강령술사). */
+        SOUL,
+        /** Drops of blood fall from whoever is hit (흡혈귀, 사냥꾼). */
+        BLOOD,
+        /** Embers fly from every hit (대장장이). */
+        EMBER,
+        /** A cobweb clings to whoever is hit for a moment (거미). */
+        WEB,
+        /** A red and a blue beam side by side (자석). */
+        MAGNET,
+        /** A thin line and a hook instead of a beam (낚시꾼). */
+        HOOK,
+        /** The shield bashes forward with the swing (수호자). */
+        SHIELD,
+        /** Lightning branches flicker around every jump (뇌신). */
+        BOLT
+    }
+
+    /**
+     * The display look of an attack (no resource pack needed: vanilla blocks and items on display entities).
+     *
+     * @param glow      translucent colored block of slash arcs, beams, rings (stained glass)
+     * @param core      the bright core block (concrete, lanterns, froglights)
+     * @param weapon    the item that flashes along a melee swing or thrust (null: none)
+     * @param weight    the hit's spark and sound layer
+     * @param spin      how a flying item turns
+     * @param signature the job's flourish
+     * @param size      overall size factor (1 = usual)
+     * @param scene     Korean one-liner of the look (docs)
+     */
+    public record Fx(Material glow, Material core, @Nullable Material weapon, Weight weight, Spin spin,
+                     Signature signature, float size, String scene) {
+
+        public Fx {
+            size = Math.max(0.3f, Math.min(3f, size));
+        }
+    }
+
     public BasicAttack {
         cooldown = Math.max(1, cooldown);
         hits = Math.max(1, hits);
@@ -171,12 +262,12 @@ public record BasicAttack(String id, String name, String description, Shape shap
                             double radius, double angle, double speed, int pierce, double falloff, Effect effect,
                             double effectPower, double effectSeconds) {
         return new BasicAttack(id, name, description, shape, damage, cooldown, range, hits, interval, radius, angle,
-                speed, pierce, falloff, effect, effectPower, effectSeconds, palette);
+                speed, pierce, falloff, effect, effectPower, effectSeconds, palette, fx);
     }
 
     /** The same attack for another ability id (the fallback for abilities without their own). */
     public BasicAttack forId(String abilityId) {
         return new BasicAttack(abilityId, name, description, shape, damage, cooldown, range, hits, interval, radius,
-                angle, speed, pierce, falloff, effect, effectPower, effectSeconds, palette);
+                angle, speed, pierce, falloff, effect, effectPower, effectSeconds, palette, fx);
     }
 }

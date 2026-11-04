@@ -1697,6 +1697,16 @@ public final class SuperpowerMatch implements GameInstance {
         return basics != null && basics.trigger(player);
     }
 
+    /** The combo step {@code player}'s next basic attack would have (0 = a new combo; tests and HUDs). */
+    public int basicAttackComboStep(Player player) {
+        return basics == null ? 0 : basics.comboStep(player);
+    }
+
+    /** Basic attack display entities showing now (tests). */
+    public int basicAttackDisplays() {
+        return basics == null ? 0 : basics.liveDisplays();
+    }
+
     /** True if left-clicks with the ability weapon fire basic attacks (평타) in this match. */
     public boolean hasBasicAttacks() {
         return basics != null;

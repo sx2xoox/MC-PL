@@ -26,6 +26,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.InputKey;
 import io.github.sx2xoox.mcpl.game.superpower.ability.Prompt;
 import io.github.sx2xoox.mcpl.game.superpower.ability.PromptEndReason;
 import io.github.sx2xoox.mcpl.game.superpower.ability.PromptHandle;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.FluidCollisionMode;
@@ -91,6 +92,7 @@ public final class MatchContext implements AbilityContext {
     private final Set<UUID> ultimateEntities = new HashSet<>();
     private int abilityDamageDepth;
     private int basicHitDepth;
+    private BasicAttack.Accent basicHitAccent = BasicAttack.Accent.NONE;
     private long modifierSequence;
     private boolean closed;
 
@@ -471,6 +473,14 @@ public final class MatchContext implements AbilityContext {
      * @return the health (and absorption) the target lost
      */
     double basicHit(Player source, LivingEntity target, double amount, DamageType type) {
+        return basicHit(source, target, amount, type, BasicAttack.Accent.NONE);
+    }
+
+    /**
+     * {@link #basicHit(Player, LivingEntity, double, DamageType)} that stands for {@code accent} (a finisher or a
+     * critical hit): while it lands {@link #basicHitAccent()} says so (a host shows a bigger damage number).
+     */
+    double basicHit(Player source, LivingEntity target, double amount, DamageType type, BasicAttack.Accent accent) {
         if (closed || !(amount > 0) || !Double.isFinite(amount) || !session.isAlive(source)
                 || !isEnemy(source, target)) {
             return 0;
@@ -485,11 +495,14 @@ public final class MatchContext implements AbilityContext {
         double previousLastDamage = target.getLastDamage();
         target.setNoDamageTicks(0);
         basicHitDepth++;
+        BasicAttack.Accent outerAccent = basicHitAccent;
+        basicHitAccent = accent;
         knockbackSuppressed.merge(id, 1, Integer::sum);
         try {
             target.damage(amount, damageSource);
         } finally {
             basicHitDepth--;
+            basicHitAccent = outerAccent;
             knockbackSuppressed.computeIfPresent(id, (key, count) -> count <= 1 ? null : count - 1);
             if (!target.isDead()) {
                 target.setNoDamageTicks(previousNoDamageTicks);
@@ -503,6 +516,11 @@ public final class MatchContext implements AbilityContext {
     /** True while a basic attack hit ({@link #basicHit}) is landing. */
     public boolean isBasicHit() {
         return basicHitDepth > 0;
+    }
+
+    /** What the basic attack hit landing now stands for ({@code NONE} when none lands). */
+    public BasicAttack.Accent basicHitAccent() {
+        return basicHitDepth > 0 ? basicHitAccent : BasicAttack.Accent.NONE;
     }
 
     /** Border damage: no attacker (the combat tracker credits the last hit), ignores invulnerability frames. */

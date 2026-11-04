@@ -18,6 +18,7 @@ import java.util.Set;
 import io.github.sx2xoox.mcpl.game.superpower.abilities.BuiltinAbilities;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttacks;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import org.bukkit.Particle;
@@ -63,6 +64,32 @@ class BasicAttackDocsTest {
             assertTrue(data == Void.class || data == Particle.DustOptions.class,
                     attack.id() + ": its particle needs no data");
             assertNotEquals(attack.palette().sound(), null, attack.id());
+            assertNotNull(attack.fx(), attack.id() + " has a display look");
+            assertTrue(!attack.fx().scene().isBlank(), attack.id() + " describes its look");
+        }
+    }
+
+    @Test
+    void everyJobLooksDifferent() {
+        Set<String> looks = new HashSet<>();
+        for (BasicAttack attack : BasicAttacks.defaults().values()) {
+            BasicAttack.Fx fx = attack.fx();
+            String look = attack.shape() + " " + fx.glow() + " " + fx.core() + " " + fx.weapon() + " " + fx.weight()
+                    + " " + fx.signature() + " " + fx.size() + " " + attack.palette().item() + " "
+                    + attack.palette().particle();
+            assertTrue(looks.add(look), attack.id() + " looks like another job: " + look);
+        }
+    }
+
+    @Test
+    void combosAndCriticalHitsKeepTheDamagePerSecondWithinTenPercent() {
+        BasicAttackSettings.Feel feel = BasicAttackSettings.Feel.DEFAULT;
+        double average = feel.averageMultiplier();
+        assertTrue(average >= 1.0 && average <= 1.10,
+                "finishers and critical hits add at most 10% to an unbroken combo, was " + average);
+        for (BasicAttack attack : BasicAttacks.defaults().values()) {
+            assertTrue(attack.damagePerSecond() * average <= 9.6,
+                    attack.id() + ": even with combos at most an iron sword's damage per second");
         }
     }
 
@@ -105,8 +132,16 @@ class BasicAttackDocsTest {
 
     static String render(AbilityRegistry registry) {
         StringBuilder out = new StringBuilder();
-        out.append("\n| 능력 | 평타 | 형태 | 피해 | 간격 | 사거리 | 초당 | 부가효과 | 설명 |\n");
-        out.append("|---|---|---|---|---|---|---|---|---|\n");
+        BasicAttackSettings.Feel feel = BasicAttackSettings.Feel.DEFAULT;
+        out.append("\n콤보: 연속 ").append(feel.comboLength()).append("번째 평타가 **피니시**(피해 ×")
+                .append(n(feel.finisherDamage())).append(", 밀침 ").append(n(feel.finisherPush()))
+                .append(", 더 큰 연출), 준비된 뒤 ").append(n(feel.comboResetSeconds()))
+                .append("초 안에 안 치면 처음부터. 치명타: 평타마다 ").append(n(feel.critChance() * 100))
+                .append("% 확률로 피해 ×").append(n(feel.critDamage()))
+                .append(" (금색 불꽃, 큰 숫자). 쉬지 않고 이어 칠 때 평균 피해 ×")
+                .append(n(feel.averageMultiplier())).append(" (아래 '초당'은 기본값 기준).\n");
+        out.append("\n| 능력 | 평타 | 형태 | 피해 | 간격 | 사거리 | 초당 | 부가효과 | 연출 | 설명 |\n");
+        out.append("|---|---|---|---|---|---|---|---|---|---|\n");
         for (BasicAttack attack : BasicAttacks.defaults().values()) {
             AbilityRegistry.Entry entry = registry.get(attack.id());
             String ability = entry == null ? attack.id() : entry.info().name();
@@ -114,7 +149,8 @@ class BasicAttackDocsTest {
                     .append(attack.name()).append("** | ").append(attack.shape().korean()).append(" | ")
                     .append(damage(attack)).append(" | ").append(n(attack.cooldownSeconds())).append("초 | ")
                     .append(n(attack.range())).append(" | ").append(n(round1(attack.damagePerSecond())))
-                    .append(" | ").append(effect(attack)).append(" | ").append(attack.description()).append(" |\n");
+                    .append(" | ").append(effect(attack)).append(" | ").append(attack.fx().scene()).append(" | ")
+                    .append(attack.description()).append(" |\n");
         }
         out.append("\n50종 한 줄 요약:\n\n");
         List<String> lines = new ArrayList<>();

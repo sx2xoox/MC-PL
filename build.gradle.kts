@@ -127,6 +127,19 @@ tasks.register<Test>("updateCreatureAttacks") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("updateBasicAttackFx") {
+    description = "Regenerates tools/assetgen/models/basic_attack_fx.json (the basic attack looks the preview GIFs draw)."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*BasicAttackFxExportTest")
+    }
+    systemProperty("mcpl.updateDocs", "true")
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("updateAugmentDocs") {
     description = "Regenerates docs/augments.md from the augment definitions (AugmentInfo, BonusCondition)."
     group = "documentation"

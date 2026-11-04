@@ -78,8 +78,8 @@ final class SiegeListener implements Listener {
         if (event.getEntity() instanceof Player player && session.isParticipant(player)) {
             match.healthChanged(player);
             MatchContext ctx = match.abilities().context();
-            match.damageNumbers().show(player, event.getFinalDamage(), ctx.isAbilityDamage()
-                    ? DamageNumbers.Kind.ABILITY : DamageNumbers.Kind.NORMAL,
+            match.damageNumbers().show(player, event.getFinalDamage(),
+                    DamageNumbers.Kind.ofHit(ctx.isAbilityDamage(), ctx.basicHitAccent()),
                     viewer -> !ctx.isConcealedFrom(player, viewer));
         }
     }

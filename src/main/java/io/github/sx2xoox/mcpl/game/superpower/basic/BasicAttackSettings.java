@@ -21,6 +21,9 @@ import org.jspecify.annotations.Nullable;
  * enabled: true
  * damage-scale: 1.0          # every basic attack's damage
  * bonus-reference: 5.0       # attack damage bonus (items, buffs) adds bonus/reference of each hit's damage
+ * combo: {length: 3, reset-seconds: 1.0, finisher-damage: 1.15, finisher-push: 0.3}
+ * critical: {chance: 0.05, damage: 1.5}
+ * effects: {displays: true, max-per-attack: 40, max-per-player: 72, view-range: 0.5}
  * attacks:
  *   chef: {shape: combo, damage: 2.6, cooldown: 0.7, range: 3, hits: 2, interval: 4, angle: 70}
  * </pre>
@@ -33,9 +36,67 @@ import org.jspecify.annotations.Nullable;
  * @param bonusReference the hit damage at which a +1 attack damage bonus adds exactly +1 (a hit of {@code d} gains
  *                       {@code bonus × d / reference}); 0 ignores attack damage bonuses
  * @param attacks        every configured attack by ability id
+ * @param feel           combo, critical hits and the display budget
  */
 public record BasicAttackSettings(boolean enabled, double damageScale, double bonusReference,
-                                  Map<String, BasicAttack> attacks) {
+                                  Map<String, BasicAttack> attacks, Feel feel) {
+
+    /**
+     * How basic attacks feel beyond their numbers: a combo whose last attack ({@code comboLength}-th in a row, each
+     * within {@code comboResetSeconds} of being ready) is a finisher, rare critical hits, and how many display
+     * entities the looks may use.
+     *
+     * @param comboLength       attacks in a combo (the last is the finisher); 1 = no combo
+     * @param comboResetSeconds a combo starts over when no attack fires this long after the next one is ready
+     * @param finisherDamage    damage factor of the finisher
+     * @param finisherPush      push (blocks per tick) of a finisher hit (more for knockback attacks; never on
+     *                          towers, minions or jungle monsters)
+     * @param critChance        chance of an attack to be a critical hit
+     * @param critDamage        damage factor of a critical hit
+     * @param displays          false: particles only, no display entities
+     * @param maxPerAttack      display entities one attack may spawn
+     * @param maxPerPlayer      display entities one attacker's attacks may have at once
+     * @param viewRange         display view range (1 = 64 blocks at the default entity distance)
+     */
+    public record Feel(int comboLength, double comboResetSeconds, double finisherDamage, double finisherPush,
+                       double critChance, double critDamage, boolean displays, int maxPerAttack, int maxPerPlayer,
+                       double viewRange) {
+
+        public static final Feel DEFAULT = new Feel(3, 1.0, 1.15, 0.3, 0.05, 1.5, true, 40, 72, 0.5);
+
+        /**
+         * The average damage factor of a combo kept up without a break (finisher every {@code comboLength} attacks,
+         * critical hits at their chance): what the combo and criticals add to an attack's damage per second.
+         */
+        public double averageMultiplier() {
+            double combo = comboLength <= 1 ? 1 : (comboLength - 1 + finisherDamage) / comboLength;
+            return combo * (1 + critChance * (critDamage - 1));
+        }
+
+        /** True if the {@code step}-th attack in a row (0 = first) is the finisher. */
+        public boolean isFinisher(int step) {
+            return comboLength > 1 && step % comboLength == comboLength - 1;
+        }
+
+        /** Ticks after an attack is ready until its combo starts over. */
+        public long comboResetTicks() {
+            return Math.round(comboResetSeconds * 20);
+        }
+    }
+
+    public static final String COMBO = "combo";
+    public static final String COMBO_LENGTH = "length";
+    public static final String COMBO_RESET = "reset-seconds";
+    public static final String FINISHER_DAMAGE = "finisher-damage";
+    public static final String FINISHER_PUSH = "finisher-push";
+    public static final String CRITICAL = "critical";
+    public static final String CRIT_CHANCE = "chance";
+    public static final String CRIT_DAMAGE = "damage";
+    public static final String EFFECTS = "effects";
+    public static final String DISPLAYS = "displays";
+    public static final String MAX_PER_ATTACK = "max-per-attack";
+    public static final String MAX_PER_PLAYER = "max-per-player";
+    public static final String VIEW_RANGE = "view-range";
 
     public static final String ENABLED = "enabled";
     public static final String DAMAGE_SCALE = "damage-scale";
@@ -65,12 +126,12 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
 
     /** Every default, on. */
     public static BasicAttackSettings defaults() {
-        return new BasicAttackSettings(true, 1.0, DEFAULT_BONUS_REFERENCE, BasicAttacks.defaults());
+        return new BasicAttackSettings(true, 1.0, DEFAULT_BONUS_REFERENCE, BasicAttacks.defaults(), Feel.DEFAULT);
     }
 
     /** The table switched off (the ability weapon stays a plain sword). */
     public static BasicAttackSettings off() {
-        return new BasicAttackSettings(false, 1.0, DEFAULT_BONUS_REFERENCE, BasicAttacks.defaults());
+        return new BasicAttackSettings(false, 1.0, DEFAULT_BONUS_REFERENCE, BasicAttacks.defaults(), Feel.DEFAULT);
     }
 
     /** The basic attack of {@code abilityId}: its own, or the fallback. */
@@ -102,7 +163,25 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
                 clamp(section.getDouble(DAMAGE_SCALE, 1.0), 0, 10, 1.0),
                 clamp(section.getDouble(BONUS_REFERENCE, DEFAULT_BONUS_REFERENCE), 0, 100,
                         DEFAULT_BONUS_REFERENCE),
-                attacks);
+                attacks, readFeel(section));
+    }
+
+    private static Feel readFeel(ConfigurationSection section) {
+        Feel d = Feel.DEFAULT;
+        String c = COMBO + ".";
+        String k = CRITICAL + ".";
+        String e = EFFECTS + ".";
+        return new Feel(
+                (int) clamp(section.getInt(c + COMBO_LENGTH, d.comboLength()), 1, 10, d.comboLength()),
+                clamp(section.getDouble(c + COMBO_RESET, d.comboResetSeconds()), 0, 10, d.comboResetSeconds()),
+                clamp(section.getDouble(c + FINISHER_DAMAGE, d.finisherDamage()), 0, 5, d.finisherDamage()),
+                clamp(section.getDouble(c + FINISHER_PUSH, d.finisherPush()), 0, 3, d.finisherPush()),
+                clamp(section.getDouble(k + CRIT_CHANCE, d.critChance()), 0, 1, d.critChance()),
+                clamp(section.getDouble(k + CRIT_DAMAGE, d.critDamage()), 1, 5, d.critDamage()),
+                section.getBoolean(e + DISPLAYS, d.displays()),
+                (int) clamp(section.getInt(e + MAX_PER_ATTACK, d.maxPerAttack()), 0, 200, d.maxPerAttack()),
+                (int) clamp(section.getInt(e + MAX_PER_PLAYER, d.maxPerPlayer()), 0, 500, d.maxPerPlayer()),
+                clamp(section.getDouble(e + VIEW_RANGE, d.viewRange()), 0.05, 4, d.viewRange()));
     }
 
     private static BasicAttack override(BasicAttack base, ConfigurationSection c) {
@@ -142,6 +221,29 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
         d.setComments(p + BONUS_REFERENCE, List.of(
                 "공격력 보너스(상점 검, 버프)가 평타에 붙는 비율: 한 타 피해가 이 값일 때 보너스 +1 = 피해 +1",
                 "(약한 타는 그만큼 적게, 강한 타는 많이). 0 이면 공격력 보너스 무시"));
+        Feel feel = Feel.DEFAULT;
+        String c = p + COMBO + ".";
+        d.set(c + COMBO_LENGTH, feel.comboLength());
+        d.set(c + COMBO_RESET, feel.comboResetSeconds());
+        d.set(c + FINISHER_DAMAGE, feel.finisherDamage());
+        d.set(c + FINISHER_PUSH, feel.finisherPush());
+        d.setComments(p + COMBO, List.of(
+                "연속 평타 콤보: length 번째 평타가 피니시(더 큰 이펙트, 피해 × finisher-damage, 맞은 적을",
+                "finisher-push 만큼 밀침 — 타워·미니언·정글 몹 제외). 준비된 뒤 reset-seconds 안에 안 치면 처음부터",
+                "length 1 = 콤보 없음"));
+        String k = p + CRITICAL + ".";
+        d.set(k + CRIT_CHANCE, feel.critChance());
+        d.set(k + CRIT_DAMAGE, feel.critDamage());
+        d.setComments(p + CRITICAL, List.of("치명타: 평타마다 chance 확률(0~1)로 피해 × damage, 금색 불꽃과 큰 숫자"));
+        String e = p + EFFECTS + ".";
+        d.set(e + DISPLAYS, feel.displays());
+        d.set(e + MAX_PER_ATTACK, feel.maxPerAttack());
+        d.set(e + MAX_PER_PLAYER, feel.maxPerPlayer());
+        d.set(e + VIEW_RANGE, feel.viewRange());
+        d.setComments(p + EFFECTS, List.of(
+                "평타 연출(디스플레이 엔티티 검기·빛줄기·투사체·타격 불꽃). displays false 면 파티클만.",
+                "max-per-attack = 평타 한 번이 쓰는 최대 개수, max-per-player = 한 사람 평타가 동시에 띄우는 최대 개수,",
+                "view-range = 보이는 거리 배율(1 = 64블록)"));
         d.setComments(p + ATTACKS, List.of(
                 "능력별 평타 수치. shape: swing(휘두르기) combo(연타) thrust(찌르기) shot(사격) projectile(투사체)",
                 "lob(투척) chain(연쇄) cone(부채꼴) nova(주변 파동) strike(지점 타격)",
