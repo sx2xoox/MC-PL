@@ -49,6 +49,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Firework;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.inventory.meta.FireworkMeta;
 import org.bukkit.util.BoundingBox;
@@ -396,6 +397,24 @@ public final class SiegeMatch implements GameInstance {
                 }
             }
             return false;
+        }
+
+        /**
+         * Gauge for hits on more than players ({@code games.siege.gauge.*}): 봇전 bots, minions and monsters. Structures
+         * take their hits themselves ({@link #hitTower}), with {@link SiegeSettings#gaugeStructureFactor()}.
+         */
+        @Override
+        public double gaugeDealtFactor(Player attacker, LivingEntity target) {
+            if (target instanceof Player) {
+                return 1.0;
+            }
+            if (towerOf(target) != null) {
+                return settings.gaugeStructureFactor();
+            }
+            if (fighterOf(target) != null) {
+                return settings.gaugeBotFactor();
+            }
+            return isExtraTarget(target) ? settings.gaugeCreatureFactor() : 0.0;
         }
 
         @Override
@@ -1056,9 +1075,15 @@ public final class SiegeMatch implements GameInstance {
 
     /**
      * A melee or ability hit of {@code attacker} on a structure's hitbox: only enemies in play during the fight hurt
-     * it, and only when it is not shielded.
+     * it, and only when it is not shielded. The attacker earns gauge for the health it lost
+     * ({@code games.siege.gauge.structure}).
      */
     void hitTower(Tower tower, @Nullable Player attacker, double amount) {
+        hitTower(tower, attacker, amount, null);
+    }
+
+    /** {@link #hitTower(Tower, Player, double)} of a damage event (to tell whether it belongs to an ultimate). */
+    void hitTower(Tower tower, @Nullable Player attacker, double amount, @Nullable EntityDamageEvent event) {
         if (phase != Phase.FIGHT || attacker == null || tower.isDestroyed() || !session.isInPlay(attacker)) {
             return;
         }
@@ -1073,7 +1098,12 @@ public final class SiegeMatch implements GameInstance {
             sounds().shieldBlocked(attacker);
             return;
         }
-        damageStructure(tower, side, amount, attacker);
+        double dealt = damageStructure(tower, side, amount, attacker);
+        if (abilities != null) {
+            // the gauge for the health it lost, unless the hit belongs to the attacker's ultimate
+            boolean ultimate = event != null && abilities.isUltimateHit(event, attacker);
+            abilities.chargeDealtGauge(attacker, dealt, settings.gaugeStructureFactor(), ultimate);
+        }
     }
 
     /**

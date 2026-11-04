@@ -164,7 +164,8 @@ public record SuperpowerSettings(
         // A section comment only sticks once the section exists, i.e. after its first value was set.
         d.set(GAUGE_DEALT, 4.0);
         d.setComments("ultimate", List.of("궁극기 게이지 (0~100%, 경험치 바에 표시)"));
-        d.setComments(GAUGE_DEALT, List.of("적 플레이어에게 준 피해 1(하트 반 칸)당 충전량(%)"));
+        d.setComments(GAUGE_DEALT, List.of("적 플레이어에게 준 피해 1(하트 반 칸)당 충전량(%)",
+                "(공성전은 봇·미니언·정글 몬스터·건물에도 games.siege.gauge.* 배율로 충전)"));
         d.set(GAUGE_TAKEN, 2.0);
         d.setComments(GAUGE_TAKEN, List.of("받은 피해 1당 충전량(%)"));
         d.set(GAUGE_SECOND, 0.5);

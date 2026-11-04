@@ -43,7 +43,10 @@ public record SiegeSettings(
         double towerAttackDamage,
         int towerAttackTicks,
         double towerAttackRange,
-        double hitboxScale) {
+        double hitboxScale,
+        double gaugeBotFactor,
+        double gaugeCreatureFactor,
+        double gaugeStructureFactor) {
 
     public static final String ROUNDS_TO_WIN = "rounds-to-win";
     public static final String ROUND_SECONDS = "round-seconds";
@@ -76,6 +79,9 @@ public record SiegeSettings(
     public static final String ATTACK_SECONDS = "towers.attack-seconds";
     public static final String ATTACK_RANGE = "towers.attack-range";
     public static final String HITBOX_SCALE = "towers.hitbox-scale";
+    public static final String GAUGE_BOT = "gauge.bot";
+    public static final String GAUGE_CREATURE = "gauge.creature";
+    public static final String GAUGE_STRUCTURE = "gauge.structure";
 
     public static final int MAX_SECONDS = 3600;
     /**
@@ -143,7 +149,10 @@ public record SiegeSettings(
                 Math.max(0, Math.min(100, finite(c.getDouble(ATTACK_DAMAGE, 4), 4))),
                 ticks(c.getDouble(ATTACK_SECONDS, 1.5), 0.25),
                 Math.max(0, Math.min(64, finite(c.getDouble(ATTACK_RANGE, 10), 10))),
-                Math.max(0.5, Math.min(10.0, finite(c.getDouble(HITBOX_SCALE, 2.5), 2.5))));
+                Math.max(0.5, Math.min(10.0, finite(c.getDouble(HITBOX_SCALE, 2.5), 2.5))),
+                gaugeFactor(c.getDouble(GAUGE_BOT, 1.0)),
+                gaugeFactor(c.getDouble(GAUGE_CREATURE, 0.5)),
+                gaugeFactor(c.getDouble(GAUGE_STRUCTURE, 0.3)));
     }
 
     /** Configured health of a structure (the health against three attackers). */
@@ -243,7 +252,20 @@ public record SiegeSettings(
                 "미니언이 있으면 미니언을 먼저 노립니다"));
         d.set(HITBOX_SCALE, 2.5);
         d.setComments(HITBOX_SCALE, List.of("건물 피격 판정 크기 배율 (0.5~10). 3D 건물은 크기에 맞춰 이 값을 더 키워 씁니다"));
+        d.setComments("gauge", List.of(
+                "궁극기 게이지: 적에게 준 피해(실제로 깎인 체력)에 붙는 배율. 적 플레이어 = 1",
+                "(게이지 = 피해 × 배율 × games.superpower.ultimate.per-damage-dealt, 궁극기 피해는 제외)"));
+        d.set(GAUGE_BOT, 1.0);
+        d.setComments(GAUGE_BOT, List.of("봇전의 적 봇 (0 = 안 참)"));
+        d.set(GAUGE_CREATURE, 0.5);
+        d.setComments(GAUGE_CREATURE, List.of("미니언·정글 몬스터 (0 = 안 참)"));
+        d.set(GAUGE_STRUCTURE, 0.3);
+        d.setComments(GAUGE_STRUCTURE, List.of("적 타워·코어 (0 = 안 참)"));
         SiegeHudSettings.declareDefaults(d);
+    }
+
+    private static double gaugeFactor(double value) {
+        return Math.max(0, Math.min(10, finite(value, 0)));
     }
 
     private static int points(ConfigurationSection c, String key, int fallback) {

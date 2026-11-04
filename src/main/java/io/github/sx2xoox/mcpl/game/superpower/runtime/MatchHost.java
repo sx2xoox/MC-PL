@@ -138,6 +138,15 @@ public interface MatchHost {
         return true;
     }
 
+    /**
+     * Factor on the ultimate gauge {@code attacker} earns for the health it took from the enemy {@code target}
+     * (times {@code ultimate.per-damage-dealt}; hits of its own ultimate never count). By default only players
+     * count (1.0), like a classic match; a host weighs its other targets (공성전: bots, minions, structures).
+     */
+    default double gaugeDealtFactor(Player attacker, LivingEntity target) {
+        return target instanceof Player ? 1.0 : 0.0;
+    }
+
     // ------------------------------------------------------------------ balance (공성전 levels, items, buffs)
 
     /**

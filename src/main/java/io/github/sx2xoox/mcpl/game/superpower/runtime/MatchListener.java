@@ -251,28 +251,50 @@ final class MatchListener implements Listener {
     }
 
     /**
-     * Ultimate gauge: damage taken, and damage dealt to enemy players. Damage that belongs to the attacker's own
-     * ultimate never charges the attacker; nothing charges during the post-ultimate lock.
+     * Ultimate gauge: damage taken, and damage dealt to enemies: players, and the host's other targets as far as
+     * {@link SuperpowerMatch#gaugeDealtFactor} says (공성전: bots, minions, monsters). Damage that belongs to the
+     * attacker's own ultimate never charges the attacker; nothing charges during the post-ultimate lock.
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDamageMonitor(EntityDamageEvent event) {
-        if (!fighting() || !(event.getEntity() instanceof Player victim) || !session.isParticipant(victim)
-                || !session.isInPlay(victim)) {
+        if (!fighting() || !(event.getEntity() instanceof LivingEntity victim)) {
             return;
         }
-        double amount = Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
+        if (!(victim instanceof Player player)) {
+            chargeDealt(event, victim);
+            return;
+        }
+        if (!session.isParticipant(player) || !session.isInPlay(player)) {
+            return;
+        }
+        double amount = lost(event, player);
         if (!(amount > 0)) {
             return;
         }
         DamageType type = event.getDamageSource().getDamageType();
         if (type != DamageType.OUTSIDE_BORDER && type != DamageType.OUT_OF_WORLD && type != DamageType.GENERIC_KILL) {
-            match.addEarnedGauge(victim, amount * match.settings().gaugePerDamageTaken());
+            match.addEarnedGauge(player, amount * match.settings().gaugePerDamageTaken());
         }
+        chargeDealt(event, player);
+    }
+
+    /** The attacker of a landed hit earns gauge for the health {@code victim} lost (its host's factor). */
+    private void chargeDealt(EntityDamageEvent event, LivingEntity victim) {
         Player attacker = session.combat().resolveAttacker(event);
-        if (attacker != null && !attacker.equals(victim) && session.isInPlay(attacker)
-                && ctx().isEnemy(attacker, victim) && !ctx().isUltimateHit(event, attacker.getUniqueId())) {
-            match.addEarnedGauge(attacker, amount * match.settings().gaugePerDamageDealt());
+        if (attacker == null || attacker.equals(victim) || !session.isInPlay(attacker)
+                || !ctx().isEnemy(attacker, victim)) {
+            return;
         }
+        double factor = match.gaugeDealtFactor(attacker, victim);
+        double amount = factor > 0 ? lost(event, victim) : 0;
+        if (amount > 0 && !ctx().isUltimateHit(event, attacker.getUniqueId())) {
+            match.addEarnedGauge(attacker, amount * factor * match.settings().gaugePerDamageDealt());
+        }
+    }
+
+    /** The health (absorption included) a hit takes, no more than is left: overkill earns nothing. */
+    private static double lost(EntityDamageEvent event, LivingEntity victim) {
+        return Math.min(event.getFinalDamage(), victim.getHealth() + victim.getAbsorptionAmount());
     }
 
     // =================================================================== summons & created entities

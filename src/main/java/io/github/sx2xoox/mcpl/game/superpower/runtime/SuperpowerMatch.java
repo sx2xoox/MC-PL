@@ -56,6 +56,7 @@ import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryType;
@@ -1483,6 +1484,35 @@ public final class SuperpowerMatch implements GameInstance {
         if (!participant.isGaugeLocked(fightTicks)) {
             addGauge(participant, amount);
         }
+    }
+
+    /**
+     * Factor on the gauge {@code attacker} earns for damage dealt to the enemy {@code target}
+     * ({@link MatchHost#gaugeDealtFactor}): 1 for players, nothing for anything else unless a host says so.
+     */
+    double gaugeDealtFactor(Player attacker, LivingEntity target) {
+        if (host != null) {
+            return host.gaugeDealtFactor(attacker, target);
+        }
+        return target instanceof Player ? 1.0 : 0.0;
+    }
+
+    /**
+     * Gauge for damage dealt that no damage event shows landing (a host's structure takes the hit itself, e.g. the
+     * 공성전 towers): {@code attacker} earns {@code lost × factor ×} {@code ultimate.per-damage-dealt}, nothing
+     * if {@code ultimate} (a hit of its own ultimate, see {@link #isUltimateHit}), outside the fight or while locked.
+     */
+    public void chargeDealtGauge(Player attacker, double lost, double factor, boolean ultimate) {
+        if (phase != MatchPhase.FIGHT || ultimate || !(lost > 0) || !(factor > 0)
+                || context().isUltimateOrigin(attacker.getUniqueId())) {
+            return;
+        }
+        addEarnedGauge(attacker, lost * factor * settings.gaugePerDamageDealt());
+    }
+
+    /** True if {@code event} is a hit of {@code attacker}'s ultimate (its code, or an entity the ultimate created). */
+    public boolean isUltimateHit(EntityDamageEvent event, Player attacker) {
+        return context().isUltimateHit(event, attacker.getUniqueId());
     }
 
     /** True while a participant's gauge earns nothing after an ultimate ({@code ultimate.recharge-delay-seconds}). */

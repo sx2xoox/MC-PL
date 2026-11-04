@@ -46,7 +46,7 @@ final class SiegeListener implements Listener {
         double amount = event.getFinalDamage();
         event.setCancelled(true);
         Player attacker = session.combat().resolveAttacker(event);
-        match.hitTower(tower, attacker != null && session.isParticipant(attacker) ? attacker : null, amount);
+        match.hitTower(tower, attacker != null && session.isParticipant(attacker) ? attacker : null, amount, event);
     }
 
     /** Freshly respawned players take no damage; attacking ends the protection. */
