@@ -65,6 +65,27 @@ public interface LaneSites {
         return List.of();
     }
 
+    /**
+     * The map's decorations shown as resource-pack models (item displays) instead of blocks: the game shows them while
+     * the map is played and removes them afterwards. The map keeps at most an invisible footing (barriers) and light
+     * where they stand. May be empty.
+     */
+    default List<ModelProp> modelProps() {
+        return List.of();
+    }
+
+    /** How a model prop moves: not at all, spinning slowly about its upright axis, a wind-up key turning, bobbing. */
+    enum PropMotion { STILL, SPIN, KEY, BOB }
+
+    /**
+     * A decoration model: {@code model} is the pack's item model id below {@code mcpl:} (e.g. {@code prop/lollipop}),
+     * standing with its base at {@code x, y, z} (blocks, map coordinates, not snapped: 10.5 is the middle of block 10;
+     * for a floating prop the water's surface), its front towards {@code yaw} (Minecraft yaw, 0 = +z; the models are
+     * authored facing -z, i.e. yaw 180), {@code size} times its designed size.
+     */
+    record ModelProp(String model, double x, double y, double z, float yaw, double size, PropMotion motion) {
+    }
+
     /** A standing place: the block the feet are in, and the direction to face (Minecraft yaw, 0 = +z). */
     record Spot(int x, int y, int z, float yaw) {
     }

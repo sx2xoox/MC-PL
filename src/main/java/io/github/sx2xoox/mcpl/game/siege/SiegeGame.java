@@ -24,6 +24,7 @@ import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
+import io.github.sx2xoox.mcpl.game.siege.props.MapProps;
 import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStats;
 import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsSettings;
 import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsStore;
@@ -80,6 +81,7 @@ public final class SiegeGame implements MiniGame {
         this.towerLook = new ModelTowerLook(hub.plugin(), hub.resourcePacks());
         this.stats = new SiegeStatsStore(hub.plugin().getDataFolder().toPath().resolve("stats").resolve(ID));
         addModule(match -> new SiegeStats(match, stats, superpower.registry()));
+        addModule(MapProps::new);
     }
 
     @Override

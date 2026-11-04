@@ -52,6 +52,11 @@ public final class LaneLayout {
         return new Location(world, originX + objective.x() + 0.5, objective.y(), originZ + objective.z() + 0.5);
     }
 
+    /** The base of a model prop (its coordinates are not snapped to block middles). */
+    public Location at(LaneSites.ModelProp prop) {
+        return new Location(world, originX + prop.x(), prop.y(), originZ + prop.z());
+    }
+
     /** The base of a structure of {@code owner}, its front towards the enemies coming at it ({@link #facing}). */
     public Location at(LaneSites.Structure structure, LaneSites.Side owner) {
         return new Location(world, originX + structure.x() + 0.5, structure.y(), originZ + structure.z() + 0.5,

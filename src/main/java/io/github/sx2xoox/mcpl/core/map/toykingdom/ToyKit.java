@@ -4,6 +4,7 @@ import java.util.Map;
 
 import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Lane;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import org.bukkit.Material;
@@ -15,12 +16,12 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The blocks of 장난감 왕국 and the shared pieces: the floor of every column (a mint play mat of big tiles on wooden
- * floorboards) and the toy props (toy brick walls, cotton candy and sponge balls, candy canes, lollipop lamps, toy
- * blocks). Props are placed in quarter coordinates ({@code ax, az >= 0}) through a {@link Quarter}, so both halves (and
- * both lanes) are mirror images; shaped detail blocks (stairs, slabs, trapdoors, buttons, banners) go through
- * {@link Quarter#place}, which mirrors their facing too. The detail blocks are a second tone of the toy colours
- * (cherry = pink, quartz = white, bamboo = yellow, birch = the floorboards, red nether brick = deep red) that round off
- * corners, slopes and rims.
+ * floorboards) and the toy props (toy brick walls, cotton candy and sponge balls, toy blocks; the bigger toys are
+ * resource-pack models, {@link Quarter#prop}). Props are placed in quarter coordinates ({@code ax, az >= 0}) through a
+ * {@link Quarter}, so both halves (and both lanes) are mirror images; shaped detail blocks (stairs, slabs, trapdoors,
+ * buttons, banners) go through {@link Quarter#place}, which mirrors their facing too. The detail blocks are a second
+ * tone of the toy colours (cherry = pink, quartz = white, bamboo = yellow, birch = the floorboards, red nether brick =
+ * deep red) that round off corners, slopes and rims.
  */
 final class ToyKit {
 
@@ -408,7 +409,35 @@ final class ToyKit {
         void place(MapCanvas canvas, int ax, int y, int az, BlockSpec spec) {
             canvas.set(x(ax), y, z(az), mirrored(spec, sx < 0, sz < 0));
         }
+
+        /**
+         * The real x of a point given in continuous quarter coordinates (block {@code ax} spans {@code ax .. ax + 1},
+         * so its middle is {@code ax + 0.5}): mirrored with the blocks.
+         */
+        double px(double ax) {
+            return sx * (ax - 0.5) + 0.5;
+        }
+
+        /** The real z of a point in continuous quarter coordinates (see {@link #px}). */
+        double pz(double az) {
+            return sz * (az - 0.5) + 0.5;
+        }
+
+        /** The Minecraft yaw (0 = +z) of the direction {@code (dax, daz)} given in quarter coordinates. */
+        float yaw(double dax, double daz) {
+            return (float) Math.toDegrees(Math.atan2(-sx * dax, sz * daz));
+        }
+
+        /** A model prop standing at the continuous quarter point {@code (ax, az)}, its front towards {@code yaw}. */
+        LaneSites.ModelProp prop(String model, double ax, double y, double az, float yaw, LaneSites.PropMotion motion) {
+            return new LaneSites.ModelProp("prop/" + model, px(ax), y, pz(az), yaw, 1.0, motion);
+        }
     }
+
+    /** Invisible footing under a model prop (a minimal hitbox where its blocks used to stand). */
+    static final BlockSpec FOOTING = BlockSpec.of(Material.BARRIER);
+    /** An invisible light where a model prop glows (a lollipop lamp's sweet). */
+    static final BlockSpec PROP_LIGHT = BlockSpec.of(Material.LIGHT);
 
     /** {@code spec} mirrored across x ({@code mx}) and/or z ({@code mz}): facing and stair corners follow. */
     static BlockSpec mirrored(BlockSpec spec, boolean mx, boolean mz) {
@@ -668,56 +697,6 @@ final class ToyKit {
     private static boolean inFluff(int dx, int dy, int dz, double radius) {
         double ny = dy / (radius * 0.8);
         return dx * dx / (radius * radius) + dz * dz / (radius * radius) + ny * ny <= 1;
-    }
-
-    /**
-     * A candy cane: a red and white striped post with its hook bent towards {@code (hookAx, hookAz)}: round over the
-     * top (stairs) and two blocks down, its tip rounded off too.
-     */
-    static void candyCane(MapCanvas canvas, Quarter q, int ax, int az, int hookAx, int hookAz, int height) {
-        for (int i = 0; i < height; i++) {
-            q.set(canvas, ax, G + 1 + i, az, stripe(i));
-        }
-        boolean alongX = Math.abs(hookAx - ax) >= Math.abs(hookAz - az);
-        int sx = alongX ? Integer.signum(hookAx - ax) : 0;
-        int sz = alongX ? 0 : Integer.signum(hookAz - az);
-        BlockFace towards = alongX ? (sx > 0 ? BlockFace.EAST : BlockFace.WEST)
-                : (sz > 0 ? BlockFace.SOUTH : BlockFace.NORTH);
-        BlockFace back = towards.getOppositeFace();
-        int top = G + height;
-        int hx = ax + sx;
-        int hz = az + sz;
-        q.place(canvas, ax, top + 1, az, stairs(stairsOf(stripe(height)), towards, false));
-        q.place(canvas, hx, top + 1, hz, stairs(stairsOf(stripe(height + 1)), back, false));
-        q.set(canvas, hx, top, hz, stripe(height + 2));
-        q.place(canvas, hx, top - 1, hz, stairs(stairsOf(stripe(height + 3)), back, true));
-    }
-
-    private static BlockSpec stripe(int i) {
-        return i % 2 == 0 ? RED : WHITE;
-    }
-
-    /** A lollipop lamp with its sweet across x (see {@link #lollipop(MapCanvas, Quarter, int, int, int, boolean)}). */
-    static void lollipop(MapCanvas canvas, Quarter q, int ax, int az, int height) {
-        lollipop(canvas, q, ax, az, height, true);
-    }
-
-    /** The swirl of a lollipop's sweet, bottom row first: red, white, the glowing middle. */
-    private static final String[] SWEET = {"..WWR..", ".WWWWR.", "WRRRWRR", "RRWgWRR", "RRWRRRW", ".RWWWW.",
-        "..RWW.."};
-
-    /**
-     * A lollipop lamp: a thin glowing white stick of {@code height} on a little white foot and a round sweet on top
-     * (seven across, along x or z: a red and white swirl around a glowing middle, its outline rounded with stairs of
-     * the second tones), so the verges are lit at night too.
-     */
-    static void lollipop(MapCanvas canvas, Quarter q, int ax, int az, int height, boolean alongX) {
-        q.place(canvas, ax, G + 1, az, WHITE_SLAB);
-        for (int i = 2; i <= height; i++) {
-            q.place(canvas, ax, G + i, az, STICK);
-        }
-        plane(canvas, q, alongX, (alongX ? ax : az) - 3, alongX ? az : ax, G + height + 1, SWEET, true,
-                Map.of('R', RED, 'W', WHITE, 'g', GLOW));
     }
 
     /**

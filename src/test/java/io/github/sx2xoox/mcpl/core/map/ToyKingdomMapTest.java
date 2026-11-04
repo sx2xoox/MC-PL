@@ -77,7 +77,7 @@ class ToyKingdomMapTest {
         System.out.println("[toykingdom] built in " + (System.nanoTime() - started) / 1_000_000 + " ms");
         LaneSites.Spot start = map.spawns(Side.BLUE).getFirst();
         int radius = (int) Math.ceil(Math.hypot(map.buildRadius(), ToyLayout.HALF_Z + 8));
-        audit = new MapAudit(canvas, radius, ToyLayout::partOf);
+        audit = new MapAudit(canvas, radius, ToyLayout::partOf).allowInvisible(ToyKingdomMapTest::underAProp);
         report = audit.run(start.x(), start.y(), start.z());
         blockFindings = new MapBlockChecks(canvas, ToyLayout::partOf).run();
         nodes = new HashMap<>();
@@ -605,6 +605,9 @@ class ToyKingdomMapTest {
         Map<String, Set<Material>> palettes = new TreeMap<>();
         Map<String, Set<Material>> details = new TreeMap<>();
         canvas.forEach((x, y, z, spec) -> {
+            if (spec.material() == Material.BARRIER || spec.material() == Material.LIGHT) {
+                return; // the invisible footings and lights of model props show nothing
+            }
             boolean hall = ToyHall.isHall(x, y, z);
             (!hall && isDetail(spec.material()) ? details : palettes)
                     .computeIfAbsent(hall ? "hall" : ToyLayout.partOf(x, z), k -> new TreeSet<>())
@@ -655,6 +658,16 @@ class ToyKingdomMapTest {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** True for a column within a model prop's reach (its invisible footing and light may stand there). */
+    private static boolean underAProp(int x, int z) {
+        for (LaneSites.ModelProp prop : map.modelProps()) {
+            if (Math.abs(x + 0.5 - prop.x()) <= 7 && Math.abs(z + 0.5 - prop.z()) <= 7) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /** The dragon's leash (games.siege.jungle defaults): the holes in the middle keep out of it. */
     private static final double DRAGON_LEASH = 20;

@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 
 import org.bukkit.Material;
 import org.jspecify.annotations.Nullable;
@@ -75,6 +76,15 @@ public final class MapAudit {
         this.canvas = canvas;
         this.playRadius = playRadius;
         this.zoneOf = zoneOf;
+    }
+
+    /** Where an invisible footing (barrier) or light may stand: under a model prop the map declares. Default: nowhere. */
+    private BiPredicate<Integer, Integer> invisibleAllowed = (x, z) -> false;
+
+    /** Allows barriers and light blocks in the columns {@code allowed} accepts (the footings of model props). */
+    public MapAudit allowInvisible(BiPredicate<Integer, Integer> allowed) {
+        this.invisibleAllowed = allowed;
+        return this;
     }
 
     /** Runs every check; {@code startX, startZ} is where players are assumed to start (the center). */
@@ -338,7 +348,10 @@ public final class MapAudit {
                     problems.add(spec.name() + " at " + x + "," + y + "," + z + " [" + zoneOf.apply(x, z) + "]");
                 }
             }
-            if (material == Material.BARRIER || material == Material.LIGHT || material.name().contains("COMMAND")
+            boolean footing = (material == Material.BARRIER || material == Material.LIGHT)
+                    && invisibleAllowed.test(x, z);
+            if (!footing && (material == Material.BARRIER || material == Material.LIGHT)
+                    || material.name().contains("COMMAND")
                     || material == Material.STRUCTURE_BLOCK || material == Material.JIGSAW) {
                 if (counts[3]++ < 5) {
                     problems.add("technical block " + spec.name() + " at " + x + "," + y + "," + z);

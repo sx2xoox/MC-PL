@@ -77,6 +77,10 @@ src/main/java/io/github/sx2xoox/mcpl/
                                SiegeModifiers = per-player skill damage/taken/cooldown for shop items and buffs;
                                `./gradlew updateSiegeBalance` regenerates docs/siege-balance.md + siege-balance.yml
                                (SiegeBalanceReport fails while stale)
+    props/                     map model props (LaneSites#modelProps: pack models instead of block props, on invisible
+                               footings): MapProps = the SiegeModule (item displays for the match, interpolated
+                               spin/key/bob steps, removed in stop), PropModels = display table synced with
+                               tools/assetgen/models/props.py (MapPropsTest)
     stats/                     balance records of real matches (docs/siege-v2.md §10): SiegeStats = the SiegeModule (round ×
                                player × ability; nothing shown in play), SiegeStatsStore (stats/siege/*.csv + totals.yml),
                                SiegeStatsCommand (/게임 공성전 통계, admins only), games.siege.stats.*

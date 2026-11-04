@@ -2,11 +2,13 @@ package io.github.sx2xoox.mcpl.core.map.toykingdom;
 
 import static io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.G;
 
+import java.util.List;
 import java.util.Map;
 
 import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
 import io.github.sx2xoox.mcpl.core.map.MapZone;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Lane;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
@@ -22,8 +24,8 @@ import org.bukkit.block.BlockFace;
  * fountain on a light blue one (사탕 샘물) and a telescope tower on a light blue one (망원경 탑). Piles of toy boxes and
  * cotton candy trees fill the corners in between (with a box of crayons on the TOP side and a jar of marbles on the
  * BOTTOM side), and giant toys stand in the far corner pockets beyond the lanes' bends (a stack of alphabet blocks by
- * the TOP lane, a spinning top by the BOTTOM lane). The props are shaped with stairs, slabs and other detail blocks in
- * a second tone of their colours ({@link ToyKit}).
+ * the TOP lane, a spinning top model by the BOTTOM lane, {@link #props}). The props are shaped with stairs, slabs and
+ * other detail blocks in a second tone of their colours ({@link ToyKit}).
  */
 final class ToyJungleZone implements MapZone {
 
@@ -389,13 +391,26 @@ final class ToyJungleZone implements MapZone {
     }
 
     /**
-     * A spinning top on its tip: white, yellow and red rings, widest at head height, its profile smoothed with stairs,
-     * a white handle with a red knob on top.
+     * A spinning top on its tip is a model ({@link #props}): an invisible footing (radius 1.6, two blocks high) keeps
+     * players out of its middle.
      */
     private static void spinningTop(MapCanvas canvas, Quarter q) {
-        double[] radius = {0.5, 1.5, 2.3, 3.2, 2.6, 1.6, 0.5, 0.5, 0.5};
-        BlockSpec[] ring = {ToyKit.WHITE, ToyKit.YELLOW, ToyKit.RED, ToyKit.WHITE, ToyKit.RED, ToyKit.YELLOW,
-            ToyKit.WHITE, ToyKit.WHITE, ToyKit.RED};
-        ToyKit.lathe(canvas, q, CORNER_AX, CORNER_AZ, G + 1, radius, ring);
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                if (Math.hypot(dx, dz) <= 1.6) {
+                    q.set(canvas, CORNER_AX + dx, G + 1, CORNER_AZ + dz, ToyKit.FOOTING);
+                    q.set(canvas, CORNER_AX + dx, G + 2, CORNER_AZ + dz, ToyKit.FOOTING);
+                }
+            }
+        }
+    }
+
+    /** The jungle's model props: the big spinning top (white, yellow, red and blue bands) slowly spinning (BOTTOM). */
+    static void props(List<LaneSites.ModelProp> out) {
+        for (Side side : Side.values()) {
+            Quarter q = Quarter.of(side, Lane.BOTTOM);
+            out.add(q.prop("spinning_top", CORNER_AX + 0.5, G + 1, CORNER_AZ + 0.5, q.yaw(-1, -1),
+                    LaneSites.PropMotion.SPIN));
+        }
     }
 }
