@@ -35,7 +35,11 @@ public interface LaneSites {
     /** Where a side (re)spawns: at least 8 spots in its base, facing the enemy base. */
     List<Spot> spawns(Side side);
 
-    /** The shop terminal of a side (in its base, next to the spawns). */
+    /**
+     * The shop terminal of a side (in its base, next to the spawns). Its yaw is the direction the shopkeeper (태엽 상인)
+     * faces: out of its stall towards the players coming to it (the courtyard and the spawns), not the direction a
+     * shopper looks at the counter.
+     */
     Spot shop(Side side);
 
     /** A side's towers on a lane, outer first (2 per lane). */

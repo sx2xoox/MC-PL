@@ -10,6 +10,9 @@ import java.util.Comparator;
 import java.util.List;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels;
+import io.github.sx2xoox.mcpl.core.pack.PackAudience;
+import io.github.sx2xoox.mcpl.game.siege.creature.ModelCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
 import io.github.sx2xoox.mcpl.game.siege.shop.ShopItem;
 import io.github.sx2xoox.mcpl.game.siege.shop.ShopMenu;
@@ -20,6 +23,8 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.block.BlockFace;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.entity.Interaction;
+import org.bukkit.entity.ItemDisplay;
+import org.bukkit.entity.Villager;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Zombie;
 import org.bukkit.event.block.Action;
@@ -94,6 +99,50 @@ class SiegeShopTest extends LaneTestBase {
         assertEquals(502, gold(player(LaneSites.Side.RED, 0)), "the enemy gets nothing");
         systems.endRound();
         assertEquals(500, gold(killer), "reset with the round");
+    }
+
+    @Test
+    void theShopkeeperFacesItsSpotsYaw() {
+        PackAudience everyone = new PackAudience() {
+            @Override
+            public boolean hasPack(Player player) {
+                return true;
+            }
+
+            @Override
+            public Subscription subscribe(java.util.function.Consumer<Player> listener) {
+                return () -> { };
+            }
+        };
+        ModelCreatureLook look = new ModelCreatureLook(h.hub.plugin(), everyone);
+        java.util.Map<java.util.UUID, ModelCreatureLook.ModelCreature> models = new java.util.HashMap<>();
+        skin = (body, kind, team) -> {
+            ModelCreatureLook.ModelCreature model = look.attach(body, kind, team);
+            models.put(body.getUniqueId(), model);
+            return model;
+        };
+        start(1, 1);
+        run(5);
+        for (LaneSites.Side side : LaneSites.Side.values()) {
+            LaneSites.Spot spot = arena.sites().shop(side);
+            Location home = shop().terminal(side);
+            Villager keeper = h.flatWorld().getEntitiesByClass(Villager.class).stream()
+                    .min(Comparator.comparingDouble(v -> v.getLocation().distanceSquared(home))).orElseThrow();
+            // the spot's yaw is where the keeper looks (LaneSites#shop), never where a shopper looks
+            org.bukkit.util.Vector wanted = new Location(home.getWorld(), 0, 0, 0, spot.yaw(), 0).getDirection();
+            org.bukkit.util.Vector looks = keeper.getLocation().getDirection().setY(0).normalize();
+            assertTrue(looks.dot(wanted) > 0.99, side + ": the body looks " + looks + ", not " + wanted);
+            assertEquals(Math.floorMod((int) spot.yaw(), 360), Math.floorMod(Math.round(keeper.getBodyYaw()), 360),
+                    side + ": the body turned too");
+            ModelCreatureLook.ModelCreature model = models.get(keeper.getUniqueId());
+            assertNotNull(model, "the 태엽 상인 model");
+            for (ItemDisplay display : model.displays()) {
+                org.joml.Vector3f front = ItemDisplayModels.front(display.getLocation().getYaw(),
+                        display.getTransformation());
+                assertTrue(front.x * wanted.getX() + front.z * wanted.getZ() > 0.95,
+                        side + ": the model looks " + front + ", not " + wanted);
+            }
+        }
     }
 
     @Test

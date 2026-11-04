@@ -767,7 +767,7 @@ public final class BladeAbility extends Ability {
                     continue;
                 }
                 int taken = assigned.getOrDefault(enemy.getUniqueId(), 0);
-                boolean visible = owner.hasLineOfSight(enemy);
+                boolean visible = ctx().canSee(owner, enemy);
                 if (best == null || (visible && !bestVisible) || (visible == bestVisible && taken < fewest)) {
                     best = enemy;
                     fewest = taken;

@@ -3,7 +3,9 @@ package io.github.sx2xoox.mcpl.game.siege.creature;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.function.DoubleFunction;
 
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import org.bukkit.Location;
 import org.bukkit.entity.AbstractCubeMob;
 import org.bukkit.entity.Mob;
@@ -19,6 +21,10 @@ import org.bukkit.util.Vector;
  * direction it spawned facing. They are {@link #hop hopped} at the goal instead (along the server's path, {@link
  * #waypoint}), with their move control
  * switched off ({@link Mob#setAware}).
+ *
+ * <p>Buildings ({@link #pathfinder(DoubleFunction)}'s walls, the 공성전 structures' barrier squares): a goal inside one is
+ * moved out of it (the pathfinder cannot reach it, a stepped creature would walk into it) and a stepped creature goes
+ * round them ({@link Footprint.Box#step}) instead of through.
  */
 public interface CreatureMover {
 
@@ -46,6 +52,14 @@ public interface CreatureMover {
 
     /** Paper's pathfinder (hops for slimes), stepping on servers without one. */
     static CreatureMover pathfinder() {
+        return pathfinder(margin -> List.of());
+    }
+
+    /**
+     * {@link #pathfinder()} around buildings: {@code walls} gives the ground squares no body of the given half width may
+     * stand in.
+     */
+    static CreatureMover pathfinder(DoubleFunction<List<Footprint.Box>> walls) {
         return new CreatureMover() {
             /** Goals of creatures the server cannot path for, with their speed. */
             private final Map<Mob, Object[]> stepping = new WeakHashMap<>();
@@ -53,7 +67,8 @@ public interface CreatureMover {
             private final Map<Mob, Object[]> hopping = new WeakHashMap<>();
 
             @Override
-            public void moveTo(Mob mob, Location to, double speed) {
+            public void moveTo(Mob mob, Location wanted, double speed) {
+                Location to = clear(walls.apply(halfWidth(mob)), wanted);
                 try {
                     if (mob instanceof AbstractCubeMob) {
                         mob.getPathfinder().stopPathfinding(); // throws where the server has no pathfinder
@@ -99,7 +114,7 @@ public interface CreatureMover {
                 Object[] goal = stepping.get(mob);
                 if (goal != null && mob.isValid()) {
                     Location to = (Location) goal[0];
-                    step(mob, to, STEP_PER_TICK * (double) goal[1]);
+                    step(mob, to, STEP_PER_TICK * (double) goal[1], walls.apply(halfWidth(mob)));
                     if (mob.getLocation().distanceSquared(to) < 1.0E-4) {
                         stepping.remove(mob);
                     }
@@ -161,13 +176,49 @@ public interface CreatureMover {
         return to;
     }
 
+    /** A body's half width, the margin it keeps from walls. */
+    static double halfWidth(Mob mob) {
+        return Math.max(0.3, mob.getWidth() / 2);
+    }
+
+    /** {@code at} moved out of the walls ({@link Footprint#clear}). */
+    static Location clear(List<Footprint.Box> walls, Location at) {
+        if (walls.isEmpty()) {
+            return at;
+        }
+        double[] clear = Footprint.clear(walls, at.getX(), at.getZ());
+        Location out = at.clone();
+        out.setX(clear[0]);
+        out.setZ(clear[1]);
+        return out;
+    }
+
     /** Moves the mob up to {@code distance} blocks straight towards {@code to}. */
     static void step(Mob mob, Location to, double distance) {
+        step(mob, to, distance, List.of());
+    }
+
+    /** Moves the mob up to {@code distance} blocks towards {@code to}, round the walls (never into one). */
+    static void step(Mob mob, Location to, double distance, List<Footprint.Box> walls) {
         Location from = mob.getLocation();
         Vector delta = to.toVector().subtract(from.toVector());
         double length = delta.length();
         Location next = length <= distance || length < 1.0E-6 ? to.clone()
                 : from.clone().add(delta.clone().multiply(distance / length));
+        for (Footprint.Box wall : walls) {
+            if (wall.contains(next.getX(), next.getZ())
+                    || wall.crosses(from.getX(), from.getZ(), next.getX(), next.getZ())) {
+                double[] slid = wall.step(from.getX(), from.getZ(), to.getX(), to.getZ(), distance);
+                boolean free = true;
+                for (Footprint.Box other : walls) {
+                    free &= !other.contains(slid[0], slid[1]);
+                }
+                // between two walls with no way round: wait where it is
+                next.setX(free ? slid[0] : from.getX());
+                next.setZ(free ? slid[1] : from.getZ());
+                break;
+            }
+        }
         Vector flat = delta.setY(0);
         if (flat.lengthSquared() > 1.0E-6) {
             next.setDirection(flat);

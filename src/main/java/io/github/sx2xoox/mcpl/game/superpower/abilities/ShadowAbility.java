@@ -322,7 +322,7 @@ public final class ShadowAbility extends Ability {
         }
         int strikes = Math.max(1, params().integer("ult_strikes"));
         // Visible enemies first; enemiesNear is nearest first and the sort is stable.
-        targets.sort(Comparator.comparingInt(enemy -> owner.hasLineOfSight(enemy) ? 0 : 1));
+        targets.sort(Comparator.comparingInt(enemy -> ctx().canSee(owner, enemy) ? 0 : 1));
         if (targets.size() > strikes) {
             targets = new ArrayList<>(targets.subList(0, strikes));
         }

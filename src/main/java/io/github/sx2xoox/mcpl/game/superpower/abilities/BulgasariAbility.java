@@ -551,7 +551,7 @@ public final class BulgasariAbility extends Ability {
             }
             Vector to = Motion.horizontal(enemy.getLocation().toVector().subtract(owner.getLocation().toVector()));
             boolean pointBlank = enemy.getLocation().distanceSquared(owner.getLocation()) < 0.8 * 0.8;
-            if ((pointBlank || to.dot(facing) >= cos) && owner.hasLineOfSight(enemy)) {
+            if ((pointBlank || to.dot(facing) >= cos) && ctx().canSee(owner, enemy)) {
                 return enemy;
             }
         }

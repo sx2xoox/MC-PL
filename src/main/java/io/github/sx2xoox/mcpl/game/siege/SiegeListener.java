@@ -38,6 +38,11 @@ final class SiegeListener implements Listener {
         if (tower == null) {
             return;
         }
+        if (event.getCause() == EntityDamageEvent.DamageCause.SUFFOCATION
+                || event.getCause() == EntityDamageEvent.DamageCause.CRAMMING) {
+            event.setCancelled(true); // the hitbox stands in its own walls: no structure damage from them
+            return;
+        }
         double amount = event.getFinalDamage();
         event.setCancelled(true);
         Player attacker = session.combat().resolveAttacker(event);

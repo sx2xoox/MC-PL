@@ -27,6 +27,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.jungle.JungleObjectives;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -105,7 +106,7 @@ public final class SiegeBots implements SiegeModule, Listener {
     private final GameSession session;
     private final Messages messages;
     private final SiegeBotSettings settings;
-    private final CreatureMover mover = CreatureMover.pathfinder();
+    private final CreatureMover mover;
     private final Random random;
     private final Map<UUID, SiegeBot> bots = new LinkedHashMap<>();
     /** Body entity id → bot. */
@@ -125,6 +126,7 @@ public final class SiegeBots implements SiegeModule, Listener {
 
     public SiegeBots(SiegeMatch match, Setup setup, List<Seat> seats) {
         this.match = match;
+        this.mover = CreatureMover.pathfinder(match::structureKeepOut);
         this.session = match.session();
         this.messages = match.messages();
         this.settings = setup.settings();
@@ -617,7 +619,7 @@ public final class SiegeBots implements SiegeModule, Listener {
                     bot.nextThink = Math.min(bot.nextThink, now);
                     stop(bot);
                 } else {
-                    engage(bot, now, hitbox, stats, hitbox.getWidth() / 2);
+                    siege(bot, now, tower, hitbox, stats);
                 }
             }
             case JUNGLE -> {
@@ -637,8 +639,36 @@ public final class SiegeBots implements SiegeModule, Listener {
         }
     }
 
+    /**
+     * Fights a structure: like {@link #engage}, but reach is measured from the building's walls and the bot walks up to
+     * the side of the walls nearest it (the hitbox stands inside them).
+     */
+    private void siege(SiegeBot bot, long now, Tower tower, LivingEntity hitbox, SiegeBotSettings.JobStats stats) {
+        Footprint.Box walls = tower.keepOut(0);
+        if (walls == null) {
+            engage(bot, now, hitbox, stats, hitbox.getWidth() / 2);
+            return;
+        }
+        Location at = bot.body.getLocation();
+        Location centre = hitbox.getLocation();
+        // reach + the part of the way to the centre that lies inside the walls: in reach once the walls are
+        double inside = Math.sqrt(Creatures.flatDistanceSquared(at, centre)) - walls.distance(at.getX(), at.getZ());
+        double margin = Math.max(0.3, bot.legs.getWidth() / 2) + 0.1;
+        Location approach = at.clone();
+        approach.setX(Math.clamp(at.getX(), walls.minX() - margin, walls.maxX() + margin));
+        approach.setZ(Math.clamp(at.getZ(), walls.minZ() - margin, walls.maxZ() + margin));
+        approach = match.clearOfStructures(approach, margin);
+        engage(bot, now, hitbox, stats, Math.max(0, inside) + 0.1, approach);
+    }
+
     /** Fights {@code target}: closes in until it is in reach, then attacks (and uses the skill when it may). */
     private void engage(SiegeBot bot, long now, LivingEntity target, SiegeBotSettings.JobStats stats, double extra) {
+        engage(bot, now, target, stats, extra, target.getLocation());
+    }
+
+    /** {@link #engage}, walking to {@code approach} while out of reach. */
+    private void engage(SiegeBot bot, long now, LivingEntity target, SiegeBotSettings.JobStats stats, double extra,
+                        Location approach) {
         Location at = bot.body.getLocation();
         Location to = target.getLocation();
         double distance = Math.sqrt(Creatures.flatDistanceSquared(at, to));
@@ -663,7 +693,7 @@ public final class SiegeBots implements SiegeModule, Listener {
             }
             return;
         }
-        walk(bot, now, to, stats.speed() * (isChampion(target) ? 1.1 : 1));
+        walk(bot, now, approach, stats.speed() * (isChampion(target) ? 1.1 : 1));
     }
 
     private void basicAttack(SiegeBot bot, LivingEntity target, SiegeBotSettings.JobStats stats) {
@@ -943,7 +973,8 @@ public final class SiegeBots implements SiegeModule, Listener {
     private void walk(SiegeBot bot, long now, Location goal, double speed) {
         WanderingTrader walker = bot.legs;
         Location at = walker.getLocation();
-        Location step = route(bot, at, goal);
+        // never towards a spot inside a building (its walls; the lane runs through the towers)
+        Location step = match.clearOfStructures(route(bot, at, goal), Math.max(0.3, walker.getWidth() / 2) + 0.1);
         if (Creatures.flatDistanceSquared(at, step) < 0.6 * 0.6) {
             stop(bot);
             return;
@@ -997,7 +1028,8 @@ public final class SiegeBots implements SiegeModule, Listener {
         LanePath lane = lane(bot);
         double from = lane.progress(vec(at));
         double to = lane.progress(vec(toward));
-        Location spot = laneLocation(bot, from + Math.signum(to - from) * 3);
+        Location spot = match.clearOfStructures(laneLocation(bot, from + Math.signum(to - from) * 3),
+                Math.max(0.3, bot.legs.getWidth() / 2) + 0.1);
         bot.legs.teleport(spot);
         bot.stuck = 0;
         bot.movingTo = null;

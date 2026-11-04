@@ -278,6 +278,8 @@ public final class SiegeShop implements Listener {
                 mob.setInvulnerable(true);
                 mob.setSilent(true);
             });
+            // the shop spot's yaw is where the keeper looks (LaneSites#shop: out at the players coming to it)
+            Creatures.turn(keeper, at.getYaw());
             arena.track(keeper);
             terminalParts.add(keeper);
         } catch (RuntimeException e) {

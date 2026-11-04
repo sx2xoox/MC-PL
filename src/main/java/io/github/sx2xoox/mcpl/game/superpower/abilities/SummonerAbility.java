@@ -498,7 +498,7 @@ public final class SummonerAbility extends Ability {
          */
         private void strike(Player target) {
             double reach = golem ? GOLEM_REACH : WOLF_REACH;
-            if (!mob.getBoundingBox().expand(reach).overlaps(target.getBoundingBox()) || !mob.hasLineOfSight(target)) {
+            if (!mob.getBoundingBox().expand(reach).overlaps(target.getBoundingBox()) || !ctx().canSee(mob, target)) {
                 mob.getPathfinder().moveTo(target, 1.2);
                 return;
             }

@@ -509,7 +509,7 @@ public final class MonkAbility extends Ability {
             candidates.add(aimed);
         }
         List<LivingEntity> nearby = new ArrayList<>(ctx().enemiesNear(owner, owner.getLocation(), range));
-        nearby.sort(Comparator.comparingInt(enemy -> owner.hasLineOfSight(enemy) ? 0 : 1));
+        nearby.sort(Comparator.comparingInt(enemy -> ctx().canSee(owner, enemy) ? 0 : 1));
         for (LivingEntity enemy : nearby) {
             if (!candidates.contains(enemy)) {
                 candidates.add(enemy);
@@ -523,7 +523,7 @@ public final class MonkAbility extends Ability {
                 continue;
             }
             Location from = owner.getLocation();
-            boolean close = from.distance(target.getLocation()) <= BARRAGE_REACH - 1.5 && owner.hasLineOfSight(target);
+            boolean close = from.distance(target.getLocation()) <= BARRAGE_REACH - 1.5 && ctx().canSee(owner, target);
             Location spot = Spots.around(ctx(), owner, target, 180);
             if (spot == null && !close) {
                 continue;

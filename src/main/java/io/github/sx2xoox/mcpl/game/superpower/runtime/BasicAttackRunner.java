@@ -373,7 +373,7 @@ final class BasicAttackRunner implements Listener {
         Vector look = horizontal(eye.getDirection(), owner);
         List<LivingEntity> found = new ArrayList<>();
         if (hint != null && ctx().isEnemy(owner, hint)
-                && MatchContext.distanceToBox(eye, hint.getBoundingBox()) <= attack.range() + 0.5) {
+                && MatchContext.distanceToBox(eye, ctx().boxOf(hint)) <= attack.range() + 0.5) {
             found.add(hint);
         }
         for (LivingEntity enemy : ctx().enemiesNear(owner, eye, attack.range())) {
@@ -757,7 +757,7 @@ final class BasicAttackRunner implements Listener {
             Location origin = from.isValid() ? Fx.body(from) : from.getLocation();
             LivingEntity next = null;
             for (LivingEntity enemy : ctx().enemiesNear(owner, origin, attack.radius())) {
-                if (!struck.contains(enemy.getUniqueId()) && (!from.isValid() || from.hasLineOfSight(enemy))) {
+                if (!struck.contains(enemy.getUniqueId()) && (!from.isValid() || ctx().canSee(from, enemy))) {
                     next = enemy;
                     break;
                 }
@@ -1186,13 +1186,16 @@ final class BasicAttackRunner implements Listener {
         return BasicFx.aimFrame(direction.getX(), direction.getY(), direction.getZ());
     }
 
-    /** How far a ray from {@code from} gets before a solid block (at most {@code length}). */
-    private static double reach(Location from, Vector direction, double length) {
+    /**
+     * How far a ray from {@code from} gets before a solid block (at most {@code length}); the host's see-through blocks
+     * (a 공성전 building's walls) do not stop it.
+     */
+    private double reach(Location from, Vector direction, double length) {
         World world = from.getWorld();
         if (world == null || !(length > 0)) {
             return 0;
         }
-        RayTraceResult wall = world.rayTraceBlocks(from, direction, length, FluidCollisionMode.NEVER, true);
+        RayTraceResult wall = ctx().wallAlong(from, direction, length);
         return wall == null ? length : Math.min(length, wall.getHitPosition().distance(from.toVector()));
     }
 
@@ -1200,8 +1203,8 @@ final class BasicAttackRunner implements Listener {
      * Where along a ray of {@code length} the entity's box widened by {@code radius} is entered (0 if the ray starts
      * inside), or −1 if it is missed.
      */
-    private static double along(Location from, Vector direction, double length, Entity entity, double radius) {
-        BoundingBox box = entity.getBoundingBox().expand(radius);
+    private double along(Location from, Vector direction, double length, Entity entity, double radius) {
+        BoundingBox box = ctx().boxOf(entity).clone().expand(radius);
         Vector start = from.toVector();
         if (box.contains(start)) {
             return 0;
@@ -1213,13 +1216,13 @@ final class BasicAttackRunner implements Listener {
         return hit == null ? -1 : hit.getHitPosition().distance(start);
     }
 
-    private static boolean onRay(Location from, Vector direction, double length, Entity entity, double radius) {
+    private boolean onRay(Location from, Vector direction, double length, Entity entity, double radius) {
         return along(from, direction, length, entity, radius) >= 0;
     }
 
     /** True if the entity is within {@code angle} degrees (total) of {@code look} on the horizontal plane. */
-    private static boolean withinArc(Location eye, Vector look, LivingEntity entity, double angle) {
-        Vector to = Fx.body(entity).toVector().subtract(eye.toVector()).setY(0);
+    private boolean withinArc(Location eye, Vector look, LivingEntity entity, double angle) {
+        Vector to = aimPoint(eye, entity).subtract(eye.toVector()).setY(0);
         double distance = to.length();
         if (distance < 0.8) {
             return true;
@@ -1229,8 +1232,8 @@ final class BasicAttackRunner implements Listener {
     }
 
     /** True if the entity is within {@code angle} degrees (total) of {@code direction}. */
-    private static boolean withinCone(Location eye, Vector direction, LivingEntity entity, double angle) {
-        Vector to = Fx.body(entity).toVector().subtract(eye.toVector());
+    private boolean withinCone(Location eye, Vector direction, LivingEntity entity, double angle) {
+        Vector to = aimPoint(eye, entity).subtract(eye.toVector());
         double distance = to.length();
         if (distance < 0.8) {
             return true;
@@ -1239,8 +1242,22 @@ final class BasicAttackRunner implements Listener {
         return Math.toDegrees(direction.angle(to)) <= angle / 2 + slack;
     }
 
-    private static boolean canSee(Player owner, LivingEntity entity) {
-        return owner.hasLineOfSight(entity);
+    private boolean canSee(Player owner, LivingEntity entity) {
+        return ctx().canSee(owner, entity);
+    }
+
+    /**
+     * Where an attack aims at {@code entity}: its body, or for a host target bigger than its hitbox (a 공성전 building)
+     * the point of the building nearest {@code eye}, so a swing at its wall counts.
+     */
+    private Vector aimPoint(Location eye, LivingEntity entity) {
+        BoundingBox box = ctx().boxOf(entity);
+        if (box.equals(entity.getBoundingBox())) {
+            return Fx.body(entity).toVector();
+        }
+        return new Vector(Math.clamp(eye.getX(), box.getMinX(), box.getMaxX()),
+                Math.clamp(eye.getY(), box.getMinY(), box.getMaxY()),
+                Math.clamp(eye.getZ(), box.getMinZ(), box.getMaxZ()));
     }
 
     /** The horizontal part of {@code direction}, or the player's facing when it looks straight up or down. */

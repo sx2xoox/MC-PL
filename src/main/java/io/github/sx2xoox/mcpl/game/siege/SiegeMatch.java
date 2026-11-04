@@ -24,6 +24,7 @@ import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalance;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeModifiers;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
@@ -41,6 +42,7 @@ import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Entity;
@@ -49,6 +51,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.inventory.meta.FireworkMeta;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -398,6 +401,19 @@ public final class SiegeMatch implements GameInstance {
         @Override
         public int abilityLevel(Player player) {
             return balanceLevel(player.getUniqueId());
+        }
+
+        /** A building is aimed at, reached and seen as drawn: its whole box, not only its hitbox. */
+        @Override
+        public @Nullable BoundingBox targetBounds(Entity entity) {
+            Tower tower = towerOf(entity);
+            return tower == null ? null : tower.bounds();
+        }
+
+        /** The buildings' barrier walls stop bodies only: rays and sight pass them (to the building inside). */
+        @Override
+        public boolean isSeeThrough(Block block) {
+            return isStructureWall(block);
         }
 
         @Override
@@ -1560,6 +1576,51 @@ public final class SiegeMatch implements GameInstance {
     /** Every structure of the round (towers and cores of both sides). */
     public List<Tower> towers() {
         return List.copyOf(towers);
+    }
+
+    /** True for a barrier block of a structure's walls ({@link Tower#isWall}). */
+    public boolean isStructureWall(Block block) {
+        if (block.getType() != org.bukkit.Material.BARRIER) {
+            return false;
+        }
+        for (Tower tower : towers) {
+            if (tower.isWall(block)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The ground squares no body of half width {@code margin} may stand in: every structure's walls (standing or ruin)
+     * grown by it ({@link Tower#keepOut}).
+     */
+    public List<Footprint.Box> structureKeepOut(double margin) {
+        List<Footprint.Box> out = new ArrayList<>();
+        for (Tower tower : towers) {
+            Footprint.Box box = tower.keepOut(margin);
+            if (box != null) {
+                out.add(box);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * {@code at} moved out of any structure's walls (to the nearest side, {@code margin} away), for a goal or a
+     * teleport of a body of half width {@code margin}; {@code at} itself when it is clear.
+     */
+    public Location clearOfStructures(Location at, double margin) {
+        return clearOf(structureKeepOut(margin), at);
+    }
+
+    /** {@code at} moved out of the boxes ({@link Footprint#clear}); itself when it is clear. */
+    public static Location clearOf(List<Footprint.Box> boxes, Location at) {
+        double[] clear = Footprint.clear(boxes, at.getX(), at.getZ());
+        Location out = at.clone();
+        out.setX(clear[0]);
+        out.setZ(clear[1]);
+        return out;
     }
 
     /** The structures of {@code side}. */

@@ -32,6 +32,15 @@ public interface TowerLook {
     }
 
     /**
+     * The solid shape of a structure of this look ({@link Footprint}): the game fills it with temporary barrier blocks
+     * so bodies cannot walk into the building (the hitbox should reach a little past its ground layer, so a click at the
+     * building lands on the hitbox, not on a barrier). Default: none.
+     */
+    default Footprint footprint(String towerId) {
+        return Footprint.NONE;
+    }
+
+    /**
      * Height above the base (blocks) of the structure's health bar. The bar stands at about eye level in the middle of
      * the building and is drawn through it ({@code Tower} spawns it see-through): a bar over the top of a 20-block toy
      * tower is out of sight from anywhere near it. Default: {@value #BAR_HEIGHT}.

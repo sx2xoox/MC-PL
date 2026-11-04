@@ -104,9 +104,12 @@ public final class ModelTowerLook implements TowerLook {
      * @param shield       half width (x), height and half depth (z) of the shield dome, blocks
      * @param spinnerAt    height of the fallback's spinning gold crown, blocks
      * @param spinnerSize  its size, blocks (0 = none)
-     * @param hitbox       recommended Mannequin scale at the default {@code hitbox-scale} 2.5
+     * @param hitbox       recommended Mannequin scale at the default {@code hitbox-scale} 2.5 (a Mannequin is 0.6 × scale
+     *                     wide; the scale attribute stops at 16)
+     * @param footprint    the solid blocks of the building and of its ruin
      */
-    record Spec(List<Part> parts, Vector3f shield, float spinnerAt, float spinnerSize, double hitbox) {
+    record Spec(List<Part> parts, Vector3f shield, float spinnerAt, float spinnerSize, double hitbox,
+                Footprint footprint) {
     }
 
     private static final float BODY = 4f;
@@ -129,7 +132,12 @@ public final class ModelTowerLook implements TowerLook {
                     new Part("top", 3, 3, 18, BODY, Motion.NONE),
                     new Part("flag", 0, 2, 16.35f, 2, Motion.FLAG),
                     new Part("shield", 0, 3, SHIELD_CENTRE, SHIELD_SCALE, Motion.SHIELD)),
-                    new Vector3f(4.4f, 18f, 4.4f), 0, 0, 6),
+                    // walls ±2 on a ±2.75 plinth up to 9.1, roof tiers ±2.75 … ±0.55 up to ~14.4: 5 × 5 blocks up to the
+                    // roof, then a step (below the hitbox's eyes at 14.2: a hitbox in a block would suffocate); the
+                    // hitbox (±2.6) reaches just past the ground blocks (±2.5)
+                    new Vector3f(4.4f, 18f, 4.4f), 0, 0, 8.75,
+                    new Footprint(List.of(Footprint.Layer.centred(2.5, 0, 11), Footprint.Layer.centred(1.5, 11, 13)),
+                            List.of(Footprint.Layer.centred(2.5, 0, 2)))),
             CORE, new Spec(List.of(
                     new Part("body", 4, 4, 12, CORE_BODY, Motion.NONE),
                     new Part("top", 3, 3, 36, CORE_BODY, Motion.NONE),
@@ -137,7 +145,15 @@ public final class ModelTowerLook implements TowerLook {
                     new Part("star", 0, 2, STAR_CENTRE, 2, Motion.CROWN),
                     new Part("key", 0, 3, 4f, CORE_BODY, Motion.KEY),
                     new Part("shield", 0, 3, 14f, 16, Motion.SHIELD)),
-                    new Vector3f(9.8f, 35.5f, 9.8f), 21.8f, 3.6f, 14));
+                    // the music box ±7 (lid ±7.5) up to 7.5, the keep ±3.5 and four turrets (±5.5, ±1.5 … roofs ±2)
+                    // up to ~23, the spire ±2.4 above; the hitbox is as big as a Mannequin gets (±4.8), the game
+                    // measures reach and sight to the whole building (Tower#bounds)
+                    new Vector3f(9.8f, 35.5f, 9.8f), 21.8f, 3.6f, 16,
+                    new Footprint(List.of(Footprint.Layer.centred(7.5, 0, 8), Footprint.Layer.centred(3.5, 8, 20),
+                            new Footprint.Layer(5.5, 5.5, 1.5, 8, 23), new Footprint.Layer(-5.5, 5.5, 1.5, 8, 23),
+                            new Footprint.Layer(5.5, -5.5, 1.5, 8, 23), new Footprint.Layer(-5.5, -5.5, 1.5, 8, 23),
+                            Footprint.Layer.centred(2.5, 20, 24)),
+                            List.of(Footprint.Layer.centred(7.5, 0, 7), Footprint.Layer.centred(3.5, 7, 9)))));
 
     private static final int FLASH_TICKS = 4;
     private static final int SHAKE_TICKS = 3;
@@ -183,6 +199,11 @@ public final class ModelTowerLook implements TowerLook {
     @Override
     public double hitboxScale(String towerId, double configured) {
         return configured * SPECS.get(lookOf(towerId)).hitbox() / DEFAULT_HITBOX;
+    }
+
+    @Override
+    public Footprint footprint(String towerId) {
+        return SPECS.get(lookOf(towerId)).footprint();
     }
 
     @Override

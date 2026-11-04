@@ -20,6 +20,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.ModelCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.SkinnedCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.VanillaCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -74,8 +75,8 @@ final class LaneSystemsModule implements SiegeModule {
         session.registerListener(skins);
         match.damageNumbers().height(this::topOf);
         this.systems = new SiegeSystems(new Arena(), session.gameConfig(),
-                new SkinnedCreatureLook(new VanillaCreatureLook(), skins), CreatureMover.pathfinder(),
-                match.modifiers());
+                new SkinnedCreatureLook(new VanillaCreatureLook(), skins),
+                CreatureMover.pathfinder(match::structureKeepOut), match.modifiers());
         for (var listener : systems.listeners()) {
             session.registerListener(listener);
         }
@@ -392,6 +393,26 @@ final class LaneSystemsModule implements SiegeModule {
         @Override
         public boolean isStructure(Entity entity) {
             return match.towerOf(entity) != null;
+        }
+
+        @Override
+        public double structureDistance(LivingEntity structure, Location from) {
+            Tower tower = match.towerOf(structure);
+            Footprint.Box walls = tower == null ? null : tower.keepOut(0);
+            return walls == null ? SiegeArena.super.structureDistance(structure, from)
+                    : walls.distance(from.getX(), from.getZ());
+        }
+
+        @Override
+        public double structureHalfWidth(LivingEntity structure) {
+            Tower tower = match.towerOf(structure);
+            double walls = tower == null ? 0 : tower.footprint().halfWidth(tower.isDestroyed());
+            return Math.max(walls, SiegeArena.super.structureHalfWidth(structure));
+        }
+
+        @Override
+        public List<Footprint.Box> structureWalls(double margin) {
+            return match.structureKeepOut(margin);
         }
 
         @Override

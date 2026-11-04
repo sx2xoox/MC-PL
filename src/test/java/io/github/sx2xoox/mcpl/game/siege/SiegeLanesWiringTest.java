@@ -16,10 +16,13 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKingdomMap;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
+import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchContext;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Mob;
@@ -110,6 +113,100 @@ class SiegeLanesWiringTest {
                 match.teams().get(0).members().iterator().next());
         LaneSites.Side side = match.side(a.getUniqueId());
         assertEquals(0, a.getLocation().distance(match.layout().spawns(side).getFirst()), 1.0);
+    }
+
+    /** The tower of {@code side} and {@code kind} on the top lane (or the core). */
+    private static Tower structure(SiegeMatch match, LaneSites.Side side, Tower.Kind kind) {
+        for (Tower tower : match.towers(side)) {
+            if (tower.kind() == kind && (kind == Tower.Kind.CORE || tower.lane() == LaneSites.Lane.TOP)) {
+                return tower;
+            }
+        }
+        throw new AssertionError("no " + kind);
+    }
+
+    @Test
+    void buildingsStandInBarrierWallsThatStillLetThemBeSeenAndHit() {
+        SiegeMatch match = start(2);
+        for (Tower tower : match.towers()) {
+            assertTrue(tower.wallCount() > 0, tower.id() + " has walls");
+            Location base = tower.base();
+            assertEquals(Material.BARRIER, base.getBlock().getType(), tower.id() + ": no body walks into it");
+            assertTrue(match.isStructureWall(base.getBlock()));
+            Footprint.Box walls = tower.keepOut(0);
+            assertNotNull(walls);
+            // the model's size, cut to the room the map keeps clear (the fallback's core has 5)
+            double reach = Math.min(tower.isCore() ? 7.5 : 2.5, tower.site().radius() - 0.5);
+            assertEquals(reach, walls.maxX() - base.getX(), 1.0E-9, tower.id());
+            // the hitbox of a tower reaches past its ground walls: a click at the building lands on the hitbox
+            Mannequin hitbox = tower.hitbox();
+            assertNotNull(hitbox);
+            if (!tower.isCore()) {
+                assertTrue(hitbox.getBoundingBox().getMaxX() > walls.maxX(), tower.id());
+            }
+            assertTrue(tower.bounds().getMaxX() >= walls.maxX(), "reach and aim measure the whole building");
+        }
+        assertFalse(match.isStructureWall(h.flatWorld().getBlockAt(0, (int) FlatWorld.SURFACE, 0)));
+
+        // a player at the wall of an enemy tower sees and reaches it, through the barriers
+        Player a = match.session().hub().plugin().getServer().getPlayer(
+                match.teams().get(0).members().iterator().next());
+        LaneSites.Side enemy = match.side(a.getUniqueId()) == LaneSites.Side.BLUE ? LaneSites.Side.RED
+                : LaneSites.Side.BLUE;
+        Tower outer = structure(match, enemy, Tower.Kind.OUTER);
+        Location base = outer.base();
+        Footprint.Box walls = outer.keepOut(0);
+        Location front = new Location(base.getWorld(), walls.minX() - 0.4, base.getY(), base.getZ(), -90, 0);
+        a.teleport(front);
+        MatchContext ctx = match.abilities().context();
+        assertFalse(a.hasLineOfSight(outer.hitbox()), "the barrier hides the hitbox from vanilla sight");
+        assertTrue(ctx.canSee(a, outer.hitbox()), "but the game sees the building");
+        assertTrue(ctx.enemiesNear(a, a.getEyeLocation(), 1.0).contains(outer.hitbox()), "in arm's reach");
+        assertEquals(outer.hitbox(), ctx.findTarget(a, 4), "aimed at");
+
+        // a fallen tower leaves the walls of its ruin, a round's end takes every wall down
+        int standing = outer.wallCount();
+        outer.damage(outer.maxHealth(), null, match.session().tick());
+        assertTrue(outer.isDestroyed());
+        assertTrue(outer.wallCount() > 0 && outer.wallCount() < standing, "the ruin's walls");
+        assertEquals(Material.BARRIER, base.getBlock().getType());
+        assertEquals(Material.AIR, base.clone().add(0, 4, 0).getBlock().getType(), "nothing over the ruin");
+        Tower core = structure(match, enemy, Tower.Kind.CORE);
+        Location coreBase = core.base();
+        outer.dispose();
+        assertEquals(Material.AIR, base.getBlock().getType(), "restored");
+        assertEquals(0, outer.wallCount());
+        assertTrue(h.server.dispatchCommand(h.server.getConsoleSender(), "게임 중지"));
+        h.tickUntil(() -> h.hub.games().session() == null, 2000, "the session to close");
+        assertEquals(Material.AIR, coreBase.getBlock().getType(), "every wall goes with the match");
+    }
+
+    @Test
+    void minionsWalkRoundTheTowersOnTheirLanesNeverThrough() {
+        SiegeMatch match = start(2);
+        MinionWaves minions = match.systems().minions();
+        h.tickUntil(() -> !minions.minions().isEmpty(), 400, "the first wave");
+        double furthestBlue = Double.NEGATIVE_INFINITY;
+        int checked = 0;
+        for (int tick = 0; tick < 700; tick++) {
+            h.ticks(1);
+            for (MinionWaves.Minion minion : minions.minions()) {
+                Location at = minion.body().getLocation();
+                for (Tower tower : match.towers()) {
+                    Footprint.Box walls = tower.keepOut(0);
+                    assertFalse(walls != null && walls.contains(at.getX(), at.getZ()),
+                            minion.side() + " " + minion.kind() + " at " + at.toVector() + " inside " + tower.id()
+                                    + " (tick " + tick + ")");
+                }
+                if (minion.side() == LaneSites.Side.BLUE && minion.lane() == LaneSites.Lane.TOP) {
+                    furthestBlue = Math.max(furthestBlue, at.getX());
+                }
+                checked++;
+            }
+        }
+        assertTrue(checked > 1000, "minion ticks checked: " + checked);
+        // the fallback's BLUE towers stand on the lane at x -24 and -12: the minions got past both
+        assertTrue(furthestBlue > -8, "BLUE's top wave got past its towers: " + furthestBlue);
     }
 
     @Test

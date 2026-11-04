@@ -731,7 +731,7 @@ public final class FighterAbility extends Ability {
             candidates.add(aimed);
         }
         List<LivingEntity> nearby = new ArrayList<>(ctx().enemiesNear(owner, owner.getLocation(), range));
-        nearby.sort(Comparator.comparingInt(enemy -> owner.hasLineOfSight(enemy) ? 0 : 1));
+        nearby.sort(Comparator.comparingInt(enemy -> ctx().canSee(owner, enemy) ? 0 : 1));
         for (LivingEntity enemy : nearby) {
             if (!candidates.contains(enemy)) {
                 candidates.add(enemy);
@@ -746,7 +746,7 @@ public final class FighterAbility extends Ability {
             }
             Location from = owner.getLocation();
             boolean close = horizontalDistance(from, target.getLocation()) <= ULT_GRAB_REACH
-                    && owner.hasLineOfSight(target) && ctx().isInsideArena(from)
+                    && ctx().canSee(owner, target) && ctx().isInsideArena(from)
                     && groundBelow(from, GROUND_PROBE) != null;
             Location spot = close ? null : Spots.around(ctx(), owner, target, 180);
             if (!close && (spot == null || groundBelow(spot, GROUND_PROBE) == null)) {

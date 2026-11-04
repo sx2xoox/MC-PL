@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
 import org.bukkit.Sound;
@@ -118,6 +119,43 @@ public interface SiegeArena {
     /** Whether the entity is the hitbox of a tower or a core (of either side). */
     default boolean isStructure(Entity entity) {
         return false;
+    }
+
+    /**
+     * Horizontal distance from {@code from} to the building of a structure hitbox (to its walls, 0 inside): how far a
+     * minion is from hitting it. Default: to the hitbox's side.
+     */
+    default double structureDistance(LivingEntity structure, Location from) {
+        Location at = structure.getLocation();
+        double dx = from.getX() - at.getX();
+        double dz = from.getZ() - at.getZ();
+        return Math.max(0, Math.sqrt(dx * dx + dz * dz) - structure.getWidth() / 2);
+    }
+
+    /** Half the width of the building of a structure hitbox (how far it reaches from its base). Default: the hitbox's. */
+    default double structureHalfWidth(LivingEntity structure) {
+        return structure.getWidth() / 2;
+    }
+
+    /**
+     * The ground squares no body of half width {@code margin} may stand in (the structures' walls grown by it): goals,
+     * teleports and stepped moves keep out of them. None by default.
+     */
+    default List<Footprint.Box> structureWalls(double margin) {
+        return List.of();
+    }
+
+    /** {@code at} moved out of the {@link #structureWalls} for a body of half width {@code margin}. */
+    default Location clearOfStructures(Location at, double margin) {
+        List<Footprint.Box> walls = structureWalls(margin);
+        if (walls.isEmpty()) {
+            return at;
+        }
+        double[] clear = Footprint.clear(walls, at.getX(), at.getZ());
+        Location out = at.clone();
+        out.setX(clear[0]);
+        out.setZ(clear[1]);
+        return out;
     }
 
     /** A minion hits a structure hitbox for {@code amount} health points (the rules apply shields and scoring). */

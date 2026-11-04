@@ -274,7 +274,7 @@ public final class VampireAbility extends Ability {
             }
             double leash = range + DRAIN_LEASH;
             return owner.getEyeLocation().distanceSquared(chest(target)) <= leash * leash
-                    && owner.hasLineOfSight(target);
+                    && ctx().canSee(owner, target);
         }
 
         /** The tether: motes of blood flowing to the vampire, wrapped in a twisting double strand. */

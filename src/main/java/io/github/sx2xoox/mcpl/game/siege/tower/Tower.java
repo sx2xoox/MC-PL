@@ -1,7 +1,12 @@
 package io.github.sx2xoox.mcpl.game.siege.tower;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 
@@ -11,18 +16,24 @@ import io.github.sx2xoox.mcpl.game.siege.OverheadBar;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Mannequin;
+import org.bukkit.util.BoundingBox;
 import org.jspecify.annotations.Nullable;
 
 /**
  * One structure of a 공성전 round, a lane tower or a core: its rules (health, shield, who hurt it, warnings) and its
  * parts: an invisible, immovable {@link Mannequin} as the hitbox (melee and ability damage land on it and are turned
- * into structure damage by the game), the {@link TowerLook.Visual} and an {@link OverheadBar}. Created when a round
- * starts, {@link #dispose() disposed} when it ends.
+ * into structure damage by the game), the {@link TowerLook.Visual}, an {@link OverheadBar} and its walls: the look's
+ * {@link Footprint} filled with temporary barrier blocks, so no body walks into the building (lowered to the ruin's
+ * when it falls). The game measures reach and sight to the whole building ({@link #bounds()}) and lets rays pass its
+ * walls ({@link #isWall}). Created when a round starts, {@link #dispose() disposed} when it ends (the walls restored).
  */
 public final class Tower {
 
@@ -69,6 +80,10 @@ public final class Tower {
     private @Nullable Mannequin hitbox;
     private TowerLook.@Nullable Visual visual;
     private @Nullable OverheadBar bar;
+    private Footprint footprint = Footprint.NONE;
+    private @Nullable GameSession session;
+    /** The barrier blocks standing now, by {@link Footprint#key}. */
+    private final Map<Long, Block> walls = new LinkedHashMap<>();
 
     public Tower(LaneSites.Structure site, LaneSites.Side owner, LaneSites.@Nullable Lane lane, Kind kind,
                  Location base, double maxHealth) {
@@ -89,6 +104,10 @@ public final class Tower {
         if (world == null) {
             return;
         }
+        this.session = session;
+        // never past the room the map keeps clear round the base (a small map: its spawns and lanes stay free)
+        footprint = look.footprint(kind.lookId()).within(site.radius());
+        raiseWalls(session, footprint.layers(false));
         try {
             visual = look.spawn(base.clone(), kind.lookId(), color);
         } catch (RuntimeException e) {
@@ -135,8 +154,53 @@ public final class Tower {
         return bar;
     }
 
-    /** Removes the hitbox, the visual and the bar. */
+    /** Fills the layers with temporary barrier blocks where the map leaves room (air, plants). */
+    private void raiseWalls(GameSession session, List<Footprint.Layer> layers) {
+        World world = base.getWorld();
+        if (world == null || layers.isEmpty()) {
+            return;
+        }
+        BlockData barrier = Material.BARRIER.createBlockData();
+        for (int[] at : Footprint.blocks(layers, base.getX(), base.getBlockY(), base.getZ())) {
+            long key = Footprint.key(at[0], at[1], at[2]);
+            if (walls.containsKey(key)) {
+                continue;
+            }
+            Block block = world.getBlockAt(at[0], at[1], at[2]);
+            if (session.placeTempBlock(block, barrier, 0)) {
+                walls.put(key, block);
+            }
+        }
+    }
+
+    /** Takes the walls down to the ruin's (all of them when {@code keep} is empty). */
+    private void lowerWalls(List<Footprint.Layer> keep) {
+        GameSession owner = session;
+        if (owner == null || walls.isEmpty()) {
+            return;
+        }
+        Set<Long> kept = new HashSet<>();
+        for (int[] at : Footprint.blocks(keep, base.getX(), base.getBlockY(), base.getZ())) {
+            kept.add(Footprint.key(at[0], at[1], at[2]));
+        }
+        List<Block> gone = new ArrayList<>();
+        walls.entrySet().removeIf(entry -> {
+            if (kept.contains(entry.getKey())) {
+                return false;
+            }
+            gone.add(entry.getValue());
+            return true;
+        });
+        // top down, so nothing is ever left hanging over a gap
+        gone.sort((a, b) -> Integer.compare(b.getY(), a.getY()));
+        for (Block block : gone) {
+            owner.hub().tempBlocks().restore(block);
+        }
+    }
+
+    /** Removes the hitbox, the visual, the bar and the walls. */
     public void dispose() {
+        lowerWalls(List.of());
         Mannequin body = hitbox;
         hitbox = null;
         if (body != null) {
@@ -181,6 +245,7 @@ public final class Tower {
             if (visual != null) {
                 visual.destroyed();
             }
+            lowerWalls(footprint.layers(true));
             Mannequin body = hitbox;
             hitbox = null;
             if (body != null) {
@@ -341,6 +406,58 @@ public final class Tower {
     public boolean isHitbox(@Nullable Entity entity) {
         Mannequin body = hitbox;
         return entity != null && body != null && body.getUniqueId().equals(entity.getUniqueId());
+    }
+
+    /** The look's solid shape of this structure. */
+    public Footprint footprint() {
+        return footprint;
+    }
+
+    /** True for a barrier block of this structure's walls (rays and sight pass them: they only stop bodies). */
+    public boolean isWall(Block block) {
+        return !walls.isEmpty() && walls.containsKey(Footprint.key(block.getX(), block.getY(), block.getZ()))
+                && block.getWorld().equals(base.getWorld());
+    }
+
+    /** Number of wall blocks standing (tests). */
+    public int wallCount() {
+        return walls.size();
+    }
+
+    /**
+     * The whole building as a box (its footprint and its hitbox): what reach, aim and area checks measure against, so
+     * a building is hit where it is drawn, not only where its (smaller) hitbox is.
+     */
+    public BoundingBox bounds() {
+        Mannequin body = hitbox;
+        BoundingBox out = body != null ? body.getBoundingBox() : null;
+        for (Footprint.Layer layer : footprint.layers(destroyed)) {
+            double half = Footprint.outerHalf(layer.half());
+            BoundingBox box = new BoundingBox(base.getX() + layer.x() - half, base.getBlockY() + layer.bottom(),
+                    base.getZ() + layer.z() - half, base.getX() + layer.x() + half, base.getBlockY() + layer.top(),
+                    base.getZ() + layer.z() + half);
+            out = out == null ? box : out.union(box);
+        }
+        return out != null ? out : BoundingBox.of(base, 0.5, 1, 0.5);
+    }
+
+    /**
+     * The ground square no body may stand in (x/z, world coordinates), {@code margin} wider on each side (a body's
+     * half width), or null when the structure has no walls.
+     */
+    public Footprint.@Nullable Box keepOut(double margin) {
+        Footprint.Box out = null;
+        for (Footprint.Layer layer : footprint.layers(destroyed)) {
+            if (layer.bottom() > 1.5) {
+                continue; // over a body's head
+            }
+            double half = Footprint.outerHalf(layer.half());
+            Footprint.Box box = new Footprint.Box(base.getX() + layer.x() - half, base.getZ() + layer.z() - half,
+                    base.getX() + layer.x() + half, base.getZ() + layer.z() + half);
+            out = out == null ? box : new Footprint.Box(Math.min(out.minX(), box.minX()),
+                    Math.min(out.minZ(), box.minZ()), Math.max(out.maxX(), box.maxX()), Math.max(out.maxZ(), box.maxZ()));
+        }
+        return out == null ? null : out.grow(margin);
     }
 
     /** Horizontal distance check against the structure's radius. */

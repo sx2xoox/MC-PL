@@ -444,7 +444,7 @@ public final class FrogAbility extends Ability {
                 if (flat.lengthSquared() > 1.0E-4 && facing.dot(flat.clone().normalize()) < cos) {
                     continue;
                 }
-                if (!owner.hasLineOfSight(enemy)) {
+                if (!ctx().canSee(owner, enemy)) {
                     continue;
                 }
                 hit.add(enemy.getUniqueId());

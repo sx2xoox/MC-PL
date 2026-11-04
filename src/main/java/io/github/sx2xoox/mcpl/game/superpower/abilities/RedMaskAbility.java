@@ -486,7 +486,7 @@ public final class RedMaskAbility extends Ability {
                 continue;
             }
             Vector to = Motion.horizontal(entity.getLocation().toVector().subtract(owner.getLocation().toVector()));
-            if ((to.lengthSquared() < 1.0E-6 || to.dot(facing) >= CONE_COS) && owner.hasLineOfSight(entity)) {
+            if ((to.lengthSquared() < 1.0E-6 || to.dot(facing) >= CONE_COS) && ctx().canSee(owner, entity)) {
                 return entity;
             }
         }

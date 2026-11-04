@@ -278,7 +278,7 @@ public final class MatchContext implements AbilityContext {
             if (!center.getWorld().equals(candidate.getWorld()) || !isEnemy(owner, candidate)) {
                 continue;
             }
-            double distance = distanceToBox(center, candidate.getBoundingBox());
+            double distance = distanceToBox(center, boxOf(candidate));
             if (distance <= radius) {
                 found.add(new Ranked(candidate, distance));
             }
@@ -329,6 +329,63 @@ public final class MatchContext implements AbilityContext {
         return all;
     }
 
+    /**
+     * The box targeting measures {@code entity} against: the host's for its targets ({@link MatchHost#targetBounds}, a
+     * whole 공성전 building), else the entity's own.
+     */
+    public BoundingBox boxOf(Entity entity) {
+        MatchHost host = match.host();
+        BoundingBox box = host == null ? null : host.targetBounds(entity);
+        return box != null ? box : entity.getBoundingBox();
+    }
+
+    /**
+     * The first solid block a ray meets ({@link World#rayTraceBlocks}, passable blocks ignored), skipping the host's
+     * see-through blocks ({@link MatchHost#isSeeThrough}); null when the way is clear.
+     */
+    public @Nullable RayTraceResult wallAlong(Location from, Vector direction, double length) {
+        World world = from.getWorld();
+        if (world == null || !(length > 0) || direction.lengthSquared() < 1.0E-12) {
+            return null;
+        }
+        MatchHost host = match.host();
+        if (host == null) {
+            return world.rayTraceBlocks(from, direction, length, FluidCollisionMode.NEVER, true);
+        }
+        return world.rayTraceBlocks(from, direction, length, FluidCollisionMode.NEVER, true,
+                block -> !host.isSeeThrough(block));
+    }
+
+    @Override
+    public boolean canSee(LivingEntity viewer, Entity target) {
+        if (viewer.hasLineOfSight(target)) {
+            return true;
+        }
+        MatchHost host = match.host();
+        if (host == null || !viewer.getWorld().equals(target.getWorld())) {
+            return false;
+        }
+        // through the host's see-through walls: eyes to the target's eyes (to the middle of a host target's box)
+        Location eye = viewer.getEyeLocation();
+        BoundingBox box = host.targetBounds(target);
+        Vector to = box != null ? box.getCenter()
+                : target instanceof LivingEntity living ? living.getEyeLocation().toVector()
+                : target.getLocation().toVector();
+        Vector direction = to.clone().subtract(eye.toVector());
+        double length = direction.length();
+        if (length < 1.0E-6) {
+            return true;
+        }
+        if (box != null) {
+            // a building is seen once the ray reaches its box
+            RayTraceResult entry = box.rayTrace(eye.toVector(), direction, length);
+            if (entry != null) {
+                length = entry.getHitPosition().distance(eye.toVector());
+            }
+        }
+        return length > 128 || wallAlong(eye, direction, length) == null;
+    }
+
     /** Distance from a point to the closest point of a box (0 inside). */
     static double distanceToBox(Location point, BoundingBox box) {
         double dx = Math.max(Math.max(box.getMinX() - point.getX(), 0), point.getX() - box.getMaxX());
@@ -360,7 +417,7 @@ public final class MatchContext implements AbilityContext {
             if (candidate instanceof Player hidden && !owner.canSee(hidden)) {
                 continue;
             }
-            BoundingBox box = candidate.getBoundingBox().expand(AIM_ASSIST);
+            BoundingBox box = boxOf(candidate).clone().expand(AIM_ASSIST);
             double distance;
             if (box.contains(start)) {
                 distance = 0;
@@ -380,7 +437,7 @@ public final class MatchContext implements AbilityContext {
             return null;
         }
         if (bestDistance > 0) {
-            RayTraceResult wall = world.rayTraceBlocks(eye, direction, bestDistance, FluidCollisionMode.NEVER, true);
+            RayTraceResult wall = wallAlong(eye, direction, bestDistance);
             if (wall != null && wall.getHitBlock() != null) {
                 return null;
             }

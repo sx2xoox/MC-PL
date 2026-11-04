@@ -402,10 +402,19 @@ public final class MinionWaves implements Listener {
         walk(minion, stats, at, slot);
     }
 
-    /** Whether a minion's target is within its hit range (a structure's half width more). */
+    /** Whether a minion's target is within its hit range (for a structure: from its walls). */
     private boolean inReach(Minion minion, LivingEntity target) {
-        double reach = settings.stats(minion.kind).range() + (arena.isStructure(target) ? target.getWidth() / 2 : 0);
-        return Creatures.flatDistanceSquared(minion.body.getLocation(), target.getLocation()) <= reach * reach;
+        double range = settings.stats(minion.kind).range();
+        if (arena.isStructure(target)) {
+            // a hair of slack: a minion pushed out of the walls stands right at them
+            return arena.structureDistance(target, minion.body.getLocation()) <= range + 0.1;
+        }
+        return Creatures.flatDistanceSquared(minion.body.getLocation(), target.getLocation()) <= range * range;
+    }
+
+    /** A body's half width: the margin it keeps from the structures' walls. */
+    private static double margin(LivingEntity body) {
+        return Math.max(0.3, body.getWidth() / 2) + 0.05;
     }
 
     /**
@@ -423,7 +432,9 @@ public final class MinionWaves implements Listener {
         Creatures.face(minion.body, target.getLocation());
     }
 
-    private void goTo(Minion minion, Location goal, double speed) {
+    private void goTo(Minion minion, Location wanted, double speed) {
+        // never a goal inside a building (the pathfinder cannot reach it, a stepped minion would walk in)
+        Location goal = arena.clearOfStructures(wanted, margin(minion.body));
         if (minion.movingTo == null || Creatures.flatDistanceSquared(goal, minion.movingTo) > 0.25
                 || now - minion.movedAt >= 20) {
             minion.movingTo = goal;
@@ -444,8 +455,8 @@ public final class MinionWaves implements Listener {
             return null;
         }
         Formation.Frame frame = minion.group.geo.frame(vec(target.getLocation()), minion.progress, FRAME_WINDOW);
-        return Formation.standPoint(frame, structure ? target.getWidth() / 2 : 0, slot.lateral(), stats.range(),
-                minion.kind.ranged(), settings.formation());
+        return Formation.standPoint(frame, structure ? arena.structureHalfWidth(target) : 0, slot.lateral(),
+                stats.range(), minion.kind.ranged(), settings.formation());
     }
 
     private Location place(Minion minion, Formation.Frame frame, Location at) {
@@ -463,7 +474,18 @@ public final class MinionWaves implements Listener {
             return there;
         }
         Location goal = place(minion, stand, there);
-        return Creatures.flatDistanceSquared(at, goal) < 1.0 ? there : goal;
+        if (Creatures.flatDistanceSquared(at, goal) >= 1.0) {
+            return goal;
+        }
+        if (arena.isStructure(target)) {
+            // straight at a building's wall (its centre is inside the walls)
+            org.bukkit.util.Vector towards = there.toVector().subtract(at.toVector()).setY(0);
+            double gap = arena.structureDistance(target, at);
+            if (towards.lengthSquared() > 1.0E-6) {
+                return at.clone().add(towards.normalize().multiply(Math.max(0, gap - 0.2)));
+            }
+        }
+        return there;
     }
 
     /**
@@ -483,7 +505,8 @@ public final class MinionWaves implements Listener {
         double lateral = Math.clamp(slot.lateral(), -formation.maxLateral(), formation.maxLateral());
         double ahead = Math.min(geo.length(), minion.progress + formation.lookahead());
         Formation.Vec spot = geo.at(ahead, lateral);
-        Location goal = new Location(at.getWorld(), spot.x(), height(minion.path, geo, ahead), spot.z());
+        Location goal = arena.clearOfStructures(new Location(at.getWorld(), spot.x(), height(minion.path, geo, ahead),
+                spot.z()), margin(minion.body));
         if (now - minion.checkedAt >= 20) {
             if (at.distanceSquared(minion.lastCheck) < 0.25) {
                 minion.stuck += (int) (now - minion.checkedAt);
@@ -497,7 +520,9 @@ public final class MinionWaves implements Listener {
             // Re-pathing did not get it out: put it on its path (its file at the next waypoint).
             Formation.Vec put = geo.at(geo.walked(minion.next), lateral);
             Location waypoint = minion.path.get(minion.next);
-            Location to = new Location(at.getWorld(), put.x(), waypoint.getY(), put.z());
+            // the lane passes through its towers: never put inside one
+            Location to = arena.clearOfStructures(new Location(at.getWorld(), put.x(), waypoint.getY(), put.z()),
+                    margin(minion.body));
             minion.body.teleport(to.setDirection(to.toVector().subtract(at.toVector()).setY(0)));
             minion.stuck = 0;
             minion.lastCheck = minion.body.getLocation();
@@ -567,7 +592,7 @@ public final class MinionWaves implements Listener {
         LivingEntity best = null;
         double bestDistance = Double.MAX_VALUE;
         for (LivingEntity structure : arena.structures(enemy(minion.side))) {
-            double reach = radius + structure.getWidth() / 2;
+            double reach = radius + arena.structureHalfWidth(structure);
             double distance = Creatures.flatDistanceSquared(at, structure.getLocation());
             if (structure.getWorld().equals(at.getWorld()) && distance <= reach * reach && distance < bestDistance) {
                 best = structure;

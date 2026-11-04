@@ -122,6 +122,15 @@ public final class Creatures {
         };
     }
 
+    /**
+     * Turns a standing creature to face {@code yaw} (Minecraft yaw, 0 = +z): its rotation, head and body, so a mob
+     * without AI keeps facing there (its model follows the rotation).
+     */
+    public static void turn(Mob mob, float yaw) {
+        VanillaCreatureLook.optional(() -> mob.setRotation(yaw, 0));
+        VanillaCreatureLook.optional(() -> mob.setBodyYaw(yaw));
+    }
+
     /** Turns the body towards a place. */
     public static void face(Mob mob, Location at) {
         Vector delta = at.toVector().subtract(mob.getLocation().toVector()).setY(0);

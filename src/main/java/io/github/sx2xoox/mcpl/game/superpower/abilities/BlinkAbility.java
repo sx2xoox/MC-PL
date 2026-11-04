@@ -279,7 +279,7 @@ public final class BlinkAbility extends Ability {
         }
         List<LivingEntity> nearby = new ArrayList<>(ctx().enemiesNear(owner, owner.getLocation(), range));
         // Visible enemies first, then by distance (enemiesNear is already nearest first; the sort is stable).
-        nearby.sort(Comparator.comparingInt(enemy -> owner.hasLineOfSight(enemy) ? 0 : 1));
+        nearby.sort(Comparator.comparingInt(enemy -> ctx().canSee(owner, enemy) ? 0 : 1));
         for (LivingEntity enemy : nearby) {
             if (!candidates.contains(enemy)) {
                 candidates.add(enemy);

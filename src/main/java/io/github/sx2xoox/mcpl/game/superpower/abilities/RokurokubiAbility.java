@@ -657,7 +657,7 @@ public final class RokurokubiAbility extends Ability {
             done = true;
             Location body = Fx.body(enemy);
             double damage = params().num("bite_damage");
-            boolean corner = !owner.hasLineOfSight(enemy);
+            boolean corner = !ctx().canSee(owner, enemy);
             if (corner) {
                 damage += Math.max(0, params().num("corner_bonus"));
             }

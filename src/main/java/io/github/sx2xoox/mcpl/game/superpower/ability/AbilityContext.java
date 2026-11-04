@@ -79,6 +79,15 @@ public interface AbilityContext {
     /** True for alive teammates of {@code owner} (never the owner) and their/owner's summons. Always false in FFA except own summons. */
     boolean isAlly(Player owner, Entity entity);
 
+    /**
+     * Whether {@code viewer} can see {@code target} (eyes to eyes, solid blocks in between hide it): use it instead of
+     * {@link LivingEntity#hasLineOfSight} for enemies, so a hosting mode's buildings, walled in by blocks that only
+     * stop bodies, are seen as they are drawn.
+     */
+    default boolean canSee(LivingEntity viewer, Entity target) {
+        return viewer.hasLineOfSight(target);
+    }
+
     /** Enemies of {@code owner} whose bounding box is within {@code radius} of {@code center}, nearest first. */
     List<LivingEntity> enemiesNear(Player owner, Location center, double radius);
 

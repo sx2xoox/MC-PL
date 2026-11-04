@@ -19,6 +19,7 @@ import io.github.sx2xoox.mcpl.game.siege.SiegeModule;
 import io.github.sx2xoox.mcpl.game.siege.SiegeSettings;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchContext;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
@@ -210,6 +211,36 @@ class SiegeBotMatchTest {
         assertTrue(bots.isDead(mate));
         assertEquals(4, match.score().points(foeTeam));
         assertEquals(2, match.session().stats().of(foe).kills());
+    }
+
+    @Test
+    void botsWalkRoundTheBuildingsAndSiegeThemFromOutside() {
+        SiegeMatch match = start(1, 2);
+        SiegeBots bots = bots(match);
+        double nearest = Double.MAX_VALUE;
+        for (int tick = 0; tick < 1200; tick++) {
+            h.ticks(1);
+            for (UUID id : bots.ids()) {
+                Mannequin body = bots.body(id);
+                if (body == null || !body.isValid()) {
+                    continue;
+                }
+                Location at = body.getLocation();
+                for (Tower tower : match.towers()) {
+                    Footprint.Box walls = tower.keepOut(0);
+                    if (walls == null) {
+                        continue;
+                    }
+                    assertFalse(walls.contains(at.getX(), at.getZ()),
+                            "bot at " + at.toVector() + " inside " + tower.id() + " (tick " + tick + ")");
+                    if (tower.owner() != match.side(id)) {
+                        nearest = Math.min(nearest, walls.distance(at.getX(), at.getZ()));
+                    }
+                }
+            }
+        }
+        boolean sieged = match.towers().stream().anyMatch(t -> t.health() < t.maxHealth());
+        assertTrue(!sieged || nearest < 3, "a bot that hit a building stood by its walls: " + nearest);
     }
 
     @Test

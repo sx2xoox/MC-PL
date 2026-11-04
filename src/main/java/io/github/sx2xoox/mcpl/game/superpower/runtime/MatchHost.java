@@ -6,9 +6,11 @@ import io.github.sx2xoox.mcpl.core.game.DeathOutcome;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import net.kyori.adventure.text.Component;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.util.BoundingBox;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -96,6 +98,22 @@ public interface MatchHost {
 
     /** Whether the host's target {@code entity} is an enemy of {@code owner}. */
     default boolean isExtraEnemy(Player owner, Entity entity) {
+        return false;
+    }
+
+    /**
+     * The box targeting measures a host target against (reach, aim, areas, sight), when it is bigger than the entity's
+     * own (a 공성전 building: the whole model, its hitbox is smaller); null (the default) for the entity's box.
+     */
+    default @Nullable BoundingBox targetBounds(Entity entity) {
+        return null;
+    }
+
+    /**
+     * Whether rays and lines of sight pass {@code block} although it is solid: blocks that only stop bodies (the
+     * barrier walls of 공성전 buildings, so the building behind them can still be seen and hit). False by default.
+     */
+    default boolean isSeeThrough(Block block) {
         return false;
     }
 

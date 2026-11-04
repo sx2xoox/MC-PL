@@ -210,7 +210,7 @@ public final class EagleAbility extends Ability {
         double gap = owner.getLocation().getY() - enemy.getLocation().getY();
         double range = Math.max(0, params().num("eye_range"));
         return gap >= params().num("eye_height") && owner.getLocation().distanceSquared(enemy.getLocation())
-                <= range * range && owner.hasLineOfSight(enemy);
+                <= range * range && ctx().canSee(owner, enemy);
     }
 
     @Override
