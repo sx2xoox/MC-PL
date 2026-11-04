@@ -47,7 +47,13 @@ add_ramps({
     "t_cherry":   (24, 0.150, 0.60, 0.22, 4, False),   # toy red: candy swirls, train, car, boat hull
     "t_cobalt":   (258, 0.110, 0.58, 0.20, 4, False),  # toy blue: the train's cab, the top's band
     "t_orange":   (58, 0.140, 0.76, 0.18, 4, False),   # the duck's beak and feet
+    "t_sand":     (75, 0.055, 0.84, 0.18, 4, False),   # sandbox sand: castles, buckets
+    "t_cheese":   (82, 0.130, 0.86, 0.18, 4, False),   # the clockwork mice's cheese
+    "t_lemon":    (100, 0.165, 0.86, 0.16, 4, False),  # bright toy yellow: the spade, the bucket's handle
 })
+
+# the marble jar's glass: every pixel this alpha (not the soap film's marker)
+GLASS_ALPHA = 96
 
 
 def _new(fill=None):
@@ -279,6 +285,46 @@ def syrup():
     return im
 
 
+def jelly_lime():
+    """Lime gummy jelly (the jungle's jelly puddings): like t_jelly in lime green."""
+    rnd = random.Random(72)
+    im = _new()
+    px = im.load()
+    for y in range(W):
+        for x in range(W):
+            i = 3 if y < 12 else 2
+            if rnd.random() < 0.03:
+                i -= 1
+            glint = (x + y) % 32 in (6, 7) and y < 14 or (x + y) % 32 == 22 and 18 < y < 26
+            px[x, y] = ramp("t_snow", 3) if glint else ramp("t_lime", i)
+    return im
+
+
+def sand():
+    """Sandbox sand: pale tan with a scatter of darker and lighter grains."""
+    rnd = random.Random(73)
+    im = _new()
+    px = im.load()
+    for y in range(W):
+        for x in range(W):
+            r = rnd.random()
+            px[x, y] = ramp("t_sand", 1 if r < 0.12 else 3 if r < 0.18 else 2)
+    return im
+
+
+def glass():
+    """Clear toy glass (the marble jar): a pale sky film at GLASS_ALPHA, a white glint stripe down every 16 px."""
+    im = _new()
+    px = im.load()
+    for y in range(W):
+        for x in range(W):
+            if x % 16 in (3, 4):
+                px[x, y] = ramp("t_snow", 3, 200)
+            else:
+                px[x, y] = ramp("t_sky", 3, GLASS_ALPHA)
+    return im
+
+
 def bubble():
     """Soap film: pale rainbow bands (a thin-film look baked in for clients without the shaders), every pixel at the
     shader's marker alpha."""
@@ -323,6 +369,12 @@ SURFACES = {
     "t_jelly": jelly,
     "t_syrup": syrup,
     "t_bubble": bubble,
+    "t_jelly_lime": jelly_lime,
+    "t_sand": sand,
+    "t_glass": glass,
+    "t_cheese": plastic("t_cheese", 2, 122),
+    "t_cheese_hole": plastic("t_cheese", 0, 123),
+    "t_lemon": plastic("t_lemon", 2, 124),
     "t_metal": metal,
     "t_iron": iron,
     "t_pink": plastic("t_pink", 2, 101),
@@ -352,3 +404,4 @@ SURFACES = {
 
 T.SURFACES.update(SURFACES)
 T.TRANSLUCENT.add("t_bubble")
+T.TRANSLUCENT.add("t_glass")

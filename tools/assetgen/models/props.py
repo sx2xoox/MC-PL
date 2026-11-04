@@ -16,6 +16,21 @@ a model prop. Pack players only (no vanilla fallback): the block prop's place ke
   오리 배 (duck)               a big rubber duck floating on the river, in a little sailor cap
   무지개 (rainbow)             a five-band rainbow arching over the river between two sleepy puffy clouds
 
+The second batch (PENDING: made, not placed on the map yet):
+
+  솜사탕 나무 (cotton_tree)    a candy-striped stick under a cloud of pink fluff with white tufts
+  크레용 상자 (crayon_box)     a yellow box with a white band, seven sharpened crayons, one lying in front
+  구슬 병 (marble_jar)         a clear glass jar (t_glass) full of marbles, a wooden lid, a ribbon bow, a label
+  알파벳 블록 더미 (block_stack) two big lettered blocks, a green bridge with a red triangle block, a cylinder, a ball
+  장난감 상자 (toy_box, toy_box_pink / _sky / _yellow)  open toy chests (lid up, toys peeking out); the teddy's big
+                               one with two stacked blocks beside it
+  젤리 푸딩 (jelly)            a fluted lime jelly on a plate, whipped cream and a cherry
+  치즈 (cheese)                a cheese wedge with holes; the mice's wind-up key (cheese_key) spins in its top
+  토끼 귀와 회중시계 (rabbit_watch)  two rabbit ears with a gold pocket watch hung between them; its hands
+                               (rabbit_watch_hands) tick round
+  모래성 / 양동이 / 삽 (sand_castle, sand_bucket, sand_spade)  by the dragon's sandbox (castle and spade stand on the
+                               sand, one block below the ground)
+
 Every model is designed in blocks at real size, base at y = 0 (the ground's top; for the floating boat and duck the
 water's surface), front towards -z (vehicles head -z), then shown at the display scale / centre of PROPS (kept in
 sync with the Java side once the map places them).
@@ -527,6 +542,648 @@ def rainbow():
     return b
 
 
+# ================================================================================================
+# second batch (모델만, not on the map yet: PENDING)
+# ================================================================================================
+
+def tube(b, name, centre, r, y0, y1, thick, tex, sides=16, **kw):
+    """A hollow round wall (a regular `sides`-gon, `r` to its corners, `thick` deep) around y from y0 to y1: one
+    panel per side, turned about y, a little wider than a side so the corners close; neighbours stagger their ends."""
+    cx, cz = centre
+    ap = r * math.cos(math.pi / sides)
+    hs = (ap + thick) * math.tan(math.pi / sides) + 0.02
+    for k in range(sides):
+        phi = k * 360 / sides
+        q = int(round(phi / 90)) % 4
+        rem = phi - 90 * round(phi / 90)
+        e = EPS if k % 2 else 0
+        lo, hi = y0 + e, y1 - e
+        if q == 0:
+            frm, to = (cx + ap - thick, lo, cz - hs), (cx + ap, hi, cz + hs)
+        elif q == 2:
+            frm, to = (cx - ap, lo, cz - hs), (cx - ap + thick, hi, cz + hs)
+        elif q == 1:
+            frm, to = (cx - hs, lo, cz + ap - thick), (cx + hs, hi, cz + ap)
+        else:
+            frm, to = (cx - hs, lo, cz - ap), (cx + hs, hi, cz - ap + thick)
+        b.box(f"{name}_{k}", frm, to, tex, **kw, **_rot("y", rem, (cx, (y0 + y1) / 2, cz)))
+
+
+# pixel letters and signs (5 x 5, the star 7 x 7) for the alphabet blocks and decals, top row first
+FONT = {
+    "A": (".###.", "#...#", "#####", "#...#", "#...#"),
+    "B": ("####.", "#...#", "####.", "#...#", "####."),
+    "C": (".####", "#....", "#....", "#....", ".####"),
+    "1": ("..#..", ".##..", "..#..", "..#..", ".###."),
+    "2": ("####.", "....#", ".###.", "#....", "#####"),
+    "3": ("####.", "....#", ".###.", "....#", "####."),
+    "heart": (".#.#.", "#####", "#####", ".###.", "..#.."),
+    "star": ("...#...", "..###..", "#######", ".#####.", "..###..", ".##.##.", ".#...#."),
+}
+
+
+def glyph(b, name, ch, face, c, cell, depth, tex, **kw):
+    """Raises a pixel letter (FONT) of `cell` blocks a pixel off a face. `face`: '-z' (front), '+z', '-x', '+x' or
+    '+y' (top, the letter's top towards -z); `c` = the letter's middle on the face's surface. Reads unmirrored from
+    in front of that face."""
+    cx, cy, cz = c
+    rows = FONT[ch]
+    hm = len(rows) / 2
+    for r, row in enumerate(rows):
+        hn = len(row) / 2
+        s = 0
+        while s < len(row):
+            if row[s] != "#":
+                s += 1
+                continue
+            t = s
+            while t + 1 < len(row) and row[t + 1] == "#":
+                t += 1
+            u0, u1 = (s - hn) * cell, (t + 1 - hn) * cell     # along the reader's right
+            v0, v1 = (hm - r - 1) * cell, (hm - r) * cell     # up
+            n = f"{name}_{r}_{s}"
+            if face == "-z":
+                b.box(n, (cx - u1, cy + v0, cz - depth), (cx - u0, cy + v1, cz), tex, **kw)
+            elif face == "+z":
+                b.box(n, (cx + u0, cy + v0, cz), (cx + u1, cy + v1, cz + depth), tex, **kw)
+            elif face == "+x":
+                b.box(n, (cx, cy + v0, cz - u1), (cx + depth, cy + v1, cz - u0), tex, **kw)
+            elif face == "-x":
+                b.box(n, (cx - depth, cy + v0, cz + u0), (cx, cy + v1, cz + u1), tex, **kw)
+            else:
+                b.box(n, (cx + u0, cy, cz - v1), (cx + u1, cy + depth, cz - v0), tex, **kw)
+            s = t + 1
+
+
+def sphere(b, name, c, r, tex, slices=5, sides=16):
+    """A ball: `slices` round discs stacked through it, each as wide as the ball at its middle."""
+    x, y, z = c
+    for k in range(slices):
+        y0 = y - r + 2 * r * k / slices
+        y1 = y - r + 2 * r * (k + 1) / slices
+        mid = (y0 + y1) / 2 - y
+        rr = math.sqrt(max(r * r - mid * mid, 0)) * 1.04
+        cyl(b, f"{name}_{k}", (x, z), rr, y0 + (EPS if k else 0), y1, tex, sides=sides)
+
+
+def dot_y(b, name, cx, y, cz, r, depth, tex, **kw):
+    """An octagonal flat dot on a top face at height y (three boxes), e.g. holes in the cheese."""
+    a, d = r * 0.414, r * 0.707
+    b.box(name + "_a", (cx - r, y, cz - a), (cx + r, y + depth, cz + a), tex, **kw)
+    b.box(name + "_b", (cx - a, y, cz - r), (cx + a, y + depth + EPS, cz + r), tex, **kw)
+    b.box(name + "_c", (cx - d, y, cz - d), (cx + d, y + depth + 2 * EPS, cz + d), tex, **kw)
+
+
+def dot_z(b, name, cx, cy, z, r, depth, tex):
+    """A round dot on a front (-z) face at z: an 8-gon disc standing `depth` proud."""
+    cyl(b, name, (cx, cy), r, z - depth, z, tex, axis="z", sides=8)
+
+
+# ------------------------------------------------------------------------------------------------
+# 솜사탕 나무 (cotton candy tree): a candy-striped stick, a cloud of pink fluff high enough to walk under
+# ------------------------------------------------------------------------------------------------
+
+def cotton_tree():
+    b = Build()
+    cyl(b, "foot", (0, 0), 0.6, 0, 0.16, "t_white")
+    cyl(b, "stick", (0, 0), 0.22, 0.16, 3.4, "t_candy", sides=8)
+    # the fluff: a round core, a ring of puffs, a deeper pink underside, white tufts on top
+    b.rbox("core", (-2.3, 2.95, -2.3), (2.3, 6.85, 2.3), "t_pink", 1.0)
+    for k in range(8):
+        ang = math.radians(k * 45 + 11)
+        rr = 2.25 + (0.12 if k % 2 else -0.05)
+        x, z = rr * math.cos(ang), rr * math.sin(ang)
+        y = 4.75 + (0.23 if k % 3 == 0 else -0.11 if k % 3 == 1 else 0.07)
+        puff(b, f"ring_{k}", (x, y, z), 2.3 + 0.07 * (k % 3), "t_pink")
+    for k in range(5):
+        ang = math.radians(k * 72 + 30)
+        x, z = 1.35 * math.cos(ang), 1.35 * math.sin(ang)
+        puff(b, f"under_{k}", (x, 3.05 + 0.04 * k, z), 1.9 + 0.05 * k, "t_rose")
+    puff(b, "under_mid", (0.07, 2.92, -0.05), 2.1, "t_rose")
+    for k in range(5):
+        ang = math.radians(k * 72 + 5)
+        x, z = 1.3 * math.cos(ang), 1.3 * math.sin(ang)
+        puff(b, f"upper_{k}", (x, 6.55 + 0.05 * k, z), 2.05 + 0.04 * k, "t_pink")
+    puff(b, "crown", (0.1, 7.3, 0.05), 2.0, "t_white")
+    tufts = ((1.85, 6.15, -1.3, 1.05), (-1.9, 6.05, -0.95, 1.1), (-0.6, 6.5, 1.95, 1.0), (1.35, 6.35, 1.6, 0.95),
+             (-1.45, 6.55, -1.95, 0.9), (0.25, 6.95, -1.7, 1.0))
+    for n, (x, y, z, s) in enumerate(tufts):
+        puff(b, f"tuft_{n}", (x, y, z), s, "t_white")
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 크레용 상자 (box of crayons): a yellow box with a white band, crayons of every length, one lying in front
+# ------------------------------------------------------------------------------------------------
+
+CRAYONS = ((-1.05, -0.45, 4.55, "t_cherry"), (-0.35, -0.45, 5.35, "t_cobalt"), (0.35, -0.45, 4.15, "t_lime"),
+           (1.05, -0.45, 4.95, "t_orange"), (-0.7, 0.42, 5.75, "t_rose"), (0.0, 0.42, 4.75, "t_grape"),
+           (0.7, 0.42, 5.5, "t_sky"))
+
+
+def _crayon_tip(b, name, centre, a0, a1, tex, axis="y"):
+    """A sharpened crayon tip from a0 (the body) to a1 (the point): two narrowing steps."""
+    d = a1 - a0
+    cyl(b, name + "_tip0", centre, 0.24, a0, a0 + d * 0.55, tex, axis=axis, sides=8)
+    cyl(b, name + "_tip1", centre, 0.13, a0 + d * 0.55 - EPS, a1, tex, axis=axis, sides=8)
+
+
+def crayon_box():
+    b = Build()
+    # the box: a solid body below the crayons, thin rims around them, the back panel higher (the lid flap)
+    b.rbox("body", (-1.6, 0, -1.1), (1.6, 1.95, 1.1), "t_butter", 0.12, top=False)
+    b.box("rim_front", (-1.6, 1.95, -1.1), (1.6, 2.3, -0.92), "t_butter")
+    b.rbox("rim_back", (-1.6, 1.95, 0.92), (1.6, 3.45, 1.1), "t_butter", 0.08, bottom=False)
+    b.mirror("rim_side", (-1.6, 1.95 + EPS, -0.92), (-1.42, 2.3, 0.92), "t_butter")
+    b.box("flap_band", (-1.62, 2.75, 0.98), (1.62, 3.0, 1.12), "t_white")
+    glyph(b, "flap_star", "star", "-z", (0, 2.45 - 0.05, 0.92), 0.07, 0.03, "t_cherry")
+    # the white band round the box and a row of crayon-coloured dots on it
+    b.rbox("band", (-1.64, 0.75, -1.14), (1.64, 1.35, 1.14), "t_white", 0.1, top=False, bottom=False)
+    for n, (_, _, _, tex) in enumerate(CRAYONS[:5]):
+        x = 1.0 - n * 0.5
+        dot_z(b, f"band_dot_{n}", x, 1.05, -1.14, 0.16, 0.03, tex)
+    # a cobalt zigzag drawn on the side
+    for n in range(4):
+        z = -0.6 + n * 0.4
+        x0, x1 = (-1.6, -1.63)
+        b.box(f"zigzag_{n}", (x1, 0.25, z - 0.05), (x0, 0.6, z + 0.05), "t_cobalt",
+              rotation=("x", 22.5 if n % 2 else -22.5, (-1.65, 0.42, z)))
+    # the crayons standing in it: body, two dark wrapper lines, a sharpened tip
+    for n, (x, z, top, tex) in enumerate(CRAYONS):
+        body_top = top - 0.6
+        cyl(b, f"crayon_{n}", (x, z), 0.3, 1.8, body_top, tex, sides=8)
+        for m, y in enumerate((body_top - 1.0, body_top - 0.25)):
+            if y > 2.35:
+                cyl(b, f"crayon_{n}_line_{m}", (x, z), 0.32, y, y + 0.08, "t_ink", sides=8)
+        _crayon_tip(b, f"crayon_{n}", (x, z), body_top, top, tex)
+    # one crayon lying on the floor in front, its point to +x
+    cyl(b, "lying", (0.3, -1.65), 0.3, -1.35, 0.55, "t_mint", axis="x", sides=8)
+    cyl(b, "lying_line", (0.3, -1.65), 0.32, -0.95, -0.87, "t_ink", axis="x", sides=8)
+    _crayon_tip(b, "lying", (0.3, -1.65), 0.55, 1.15, "t_mint", axis="x")
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 구슬 병 (jar of marbles): a clear jar full of marbles, a wooden lid, a ribbon and a label, a few spilled
+# ------------------------------------------------------------------------------------------------
+
+JAR_R = 2.25
+MARBLES = ("t_cherry", "t_sky", "t_butter", "t_rose", "t_mint", "t_cobalt", "t_lilac", "t_orange")
+
+
+def _marble(b, name, x, y, z, tex, s=0.62):
+    """A marble: a chamfered cube with its corners filled in (reads round at any angle)."""
+    h = s / 2
+    b.rbox(name, (x - h, y, z - h), (x + h, y + s, z + h), tex, 0.18)
+    c = h * 0.72
+    b.box(name + "_c", (x - c, y + h - c, z - c), (x + c, y + h + c, z + c), tex)
+
+
+def marble_jar():
+    b = Build()
+    tube(b, "glass", (0, 0), JAR_R, 0.12, 3.95, 0.08, "t_glass")
+    cyl(b, "glass_base", (0, 0), JAR_R, 0, 0.12, "t_glass")
+    # the marbles: the outer ring of each layer (the inside cannot be seen) and a heap on top
+    k = 0
+    for layer in range(5):
+        y = 0.13 + layer * 0.6 + (layer % 2) * EPS
+        rings = ((1.62, 15),) if layer < 4 else ((1.25, 10), (0.45, 4))
+        if layer == 3:
+            rings = ((1.62, 15), (0.95, 8))
+        for rr, count in rings:
+            for i in range(count):
+                ang = math.radians(i * 360 / count + layer * 11.25 + rr * 7)
+                x, z = rr * math.cos(ang), rr * math.sin(ang)
+                _marble(b, f"marble_{layer}_{k}", x, y, z, MARBLES[(k * 3 + layer) % len(MARBLES)])
+                k += 1
+    _marble(b, "marble_top", 0.05, 3.15, -0.08, "t_cherry")
+    # the wooden lid with a knob, a ribbon round the neck with a bow in front
+    cyl(b, "lid", (0, 0), JAR_R + 0.16, 3.9, 4.5, "t_wood")
+    cyl(b, "lid_top", (0, 0), JAR_R - 0.25, 4.5, 4.68, "t_wood")
+    cyl(b, "knob", (0, 0), 0.42, 4.68, 5.1, "t_wood", sides=8)
+    tube(b, "ribbon", (0, 0), JAR_R + 0.05, 3.45, 3.75, 0.07, "t_rose")
+    by, bz = 3.6, -JAR_R - 0.02
+    b.box("bow_knot", (-0.2, by - 0.17, bz - 0.2), (0.2, by + 0.17, bz), "t_rose")
+    b.mirror("bow_loop", (-0.85, by - 0.24, bz - 0.14), (-0.18, by + 0.24, bz - 0.04), "t_rose",
+             rotation=("z", -22.5, (-0.18, by, bz)))
+    b.mirror("bow_tail", (-0.38, by - 0.8, bz - 0.12), (-0.18, by - 0.12, bz - 0.04), "t_rose",
+             rotation=("z", 22.5, (-0.18, by - 0.12, bz)))
+    # a white label on the front with a pink heart
+    ap = JAR_R * math.cos(math.pi / 16)
+    b.box("label", (-0.62, 1.35, -ap - 0.03), (0.62, 2.45, -ap), "t_white")
+    glyph(b, "label_heart", "heart", "-z", (0, 1.9, -ap - 0.03), 0.16, 0.03, "t_rose")
+    # spilled marbles
+    for n, (x, z, tex) in enumerate(((2.55, -1.15, "t_sky"), (2.0, -2.35, "t_cherry"), (-2.6, 1.5, "t_butter"))):
+        _marble(b, f"spilled_{n}", x, 0, z, tex)
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 알파벳 블록 더미 (stack of alphabet blocks): two big blocks corner to corner, a green bridge with a red
+# triangle block on top, a cylinder block and a ball beside
+# ------------------------------------------------------------------------------------------------
+
+def _alphabet_block(b, name, x0, z0, s, tex, letter_tex, letters):
+    """A white rounded block of size s (low corner x0, 0, z0), a colour panel on every face but the bottom, a raised
+    letter on each panel (letters: {face: char})."""
+    b.rbox(name, (x0, 0, z0), (x0 + s, s, z0 + s), "t_white", 0.32)
+    m = 0.42
+    d = 0.06
+    x1, z1 = x0 + s, z0 + s
+    cxm, czm, cym = x0 + s / 2, z0 + s / 2, s / 2
+    b.box(name + "_p_n", (x0 + m, m, z0 - d), (x1 - m, s - m, z0), tex)
+    b.box(name + "_p_s", (x0 + m, m, z1), (x1 - m, s - m, z1 + d), tex)
+    b.box(name + "_p_w", (x0 - d, m, z0 + m), (x0, s - m, z1 - m), tex)
+    b.box(name + "_p_e", (x1, m, z0 + m), (x1 + d, s - m, z1 - m), tex)
+    b.box(name + "_p_u", (x0 + m, s, z0 + m), (x1 - m, s + d, z1 - m), tex)
+    cell = (s - 2 * m) * 0.15
+    spots = {"-z": (cxm, cym, z0 - d), "+z": (cxm, cym, z1 + d), "-x": (x0 - d, cym, czm), "+x": (x1 + d, cym, czm),
+             "+y": (cxm, s + d, czm)}
+    for face, ch in letters.items():
+        glyph(b, f"{name}_{face[1]}{'p' if face[0] == '+' else 'm'}", ch, face, spots[face], cell, 0.07,
+              letter_tex)
+
+
+def block_stack():
+    b = Build()
+    _alphabet_block(b, "yellow", -4.0, 0.0, 4.0, "t_butter", "t_cherry",
+                    {"-z": "A", "-x": "B", "+z": "C", "+x": "1", "+y": "2"})
+    _alphabet_block(b, "sky", 0.0, -4.0, 4.0, "t_sky", "t_butter",
+                    {"-z": "1", "+x": "2", "-x": "3", "+z": "A", "+y": "B"})
+    # the green bridge across the two blocks, a red triangle block on it (a turned square, its lower half hidden)
+    b.rbox("bridge", (-2.25, 3.97, -2.25), (1.25, 5.4, 1.25), "t_mint", 0.15)
+    s = 1.38 * math.sqrt(2)
+    b.box("roof", (-0.5 - s / 2, 5.4 - s / 2, -2.05), (-0.5 + s / 2, 5.4 + s / 2, 1.05), "t_cherry",
+          rotation=("z", 45, (-0.5, 5.4, -0.5)))
+    glyph(b, "bridge_star", "star", "-z", (-0.5, 4.68, -2.25), 0.2, 0.05, "t_white")
+    # a cylinder block and a ball in the open corners
+    cyl(b, "cylinder", (2.25, 2.3), 0.85, 0, 1.75, "t_lilac")
+    cyl(b, "cylinder_top", (2.25, 2.3), 0.62, 1.75, 1.82, "t_white")
+    sphere(b, "ball", (-2.65, 0.78, -2.65), 0.78, "t_cherry")
+    cyl(b, "ball_stripe", (-2.65, -2.65), 0.83, 0.68, 0.88, "t_white")
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 장난감 상자 (toy chests): an open chest with white corner posts and rim, its lid standing open at the back,
+# a gold latch, a decal on the front, toys peeking out
+# ------------------------------------------------------------------------------------------------
+
+def _toy_chest(b, w, d, h, tex, decal="star", toys=True):
+    hw, hd = w / 2, d / 2
+    t = 0.22
+    # feet, walls, a felt floor just under the toys
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            cyl(b, f"foot_{sx}_{sz}", (sx * (hw - 0.3), sz * (hd - 0.3)), 0.22, 0, 0.2, "t_white", sides=8)
+    b.box("front", (-hw + 0.2, 0.2, -hd), (hw - 0.2, h - 0.2, -hd + t), tex)
+    b.box("back", (-hw + 0.2, 0.2, hd - t), (hw - 0.2, h - 0.2, hd), tex)
+    b.mirror("side", (-hw, 0.2 + EPS, -hd + 0.2), (-hw + t, h - 0.2 - EPS, hd - 0.2), tex)
+    b.box("floor", (-hw + t, 0.2 + EPS * 2, -hd + t), (hw - t, h - 0.75, hd - t), "t_lilac")
+    # white rounded corner posts and the rim
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            x0, x1 = sorted((sx * hw, sx * (hw - 0.42)))
+            z0, z1 = sorted((sz * hd, sz * (hd - 0.42)))
+            b.rbox(f"post_{sx}_{sz}", (x0 + sx * 0.03, 0.18, z0 + sz * 0.03), (x1 + sx * 0.03, h + 0.05, z1 + sz * 0.03),
+                   "t_white", 0.1)
+    b.box("rim_front", (-hw + 0.38, h - 0.22, -hd - 0.04), (hw - 0.38, h, -hd + t + 0.04), "t_white")
+    b.box("rim_back", (-hw + 0.38, h - 0.22, hd - t - 0.04), (hw - 0.38, h, hd + 0.04), "t_white")
+    b.mirror("rim_side", (-hw - 0.04, h - 0.22 + EPS, -hd + 0.38), (-hw + t + 0.04, h - EPS, hd - 0.38), "t_white")
+    # the lid standing open behind, leaning back a little, a white edge and the decal on its inside
+    lt = 0.2
+    lid_rot = ("x", 22.5, (0, h, hd))
+    b.box("lid", (-hw, h, hd - lt), (hw, h + d, hd), tex, rotation=lid_rot)
+    b.box("lid_edge", (-hw + 0.25, h + d - 0.2, hd - lt - 0.04), (hw - 0.25, h + d - 0.04, hd - lt), "t_white",
+          rotation=lid_rot)
+    glyph(b, "lid_decal", decal, "-z", (0, h + d * 0.48, hd - lt), min(w, d) * 0.1, 0.04, "t_white", rotation=lid_rot)
+    # the latch on the front rim and the decal on the front
+    b.rbox("latch", (-0.22, h - 0.55, -hd - 0.14), (0.22, h - 0.05, -hd - 0.04), "t_gold", 0.06)
+    glyph(b, "front_decal", decal, "-z", (0, (h - 0.2) * 0.48 + 0.1, -hd), min(w, h) * 0.085, 0.04, "t_white")
+    if not toys:
+        return
+    # toys peeking out: a ball, toy blocks, a star wand, a little drum (by the chest's size)
+    top = h - 0.75
+    b.rbox("toy_ball", (-hw + 0.35, top - 0.2, -hd + 0.35), (-hw + 1.45, top + 0.9, -hd + 1.45), "t_cherry", 0.33)
+    b.box("toy_ball_stripe", (-hw + 0.33, top + 0.22, -hd + 0.62), (-hw + 1.47, top + 0.45, -hd + 1.18), "t_white")
+    bx = hw - 1.05
+    b.rbox("toy_block", (bx - 0.5, top - 0.1, -0.5), (bx + 0.5, top + 0.9, 0.5), "t_sky", 0.08,
+           rotation=("y", 22.5, (bx, top + 0.4, 0)))
+    if w >= 3.5:
+        b.rbox("toy_block_2", (-0.55, top - 0.05, hd - 1.25), (0.35, top + 0.85, hd - 0.35), "t_butter", 0.08,
+               rotation=("y", -22.5, (-0.1, top + 0.4, hd - 0.8)))
+    wx, wz = (0.45, -0.2) if w >= 3.5 else (-0.2, 0.35)
+    b.box("wand", (wx - 0.06, top, wz - 0.06), (wx + 0.06, top + 1.6, wz + 0.06), "t_white",
+          rotation=("z", 22.5, (wx, top, wz)))
+    sx = wx - math.sin(math.radians(22.5)) * 1.6
+    sy = top + math.cos(math.radians(22.5)) * 1.6
+    glyph(b, "wand_star", "star", "-z", (sx, sy, wz - 0.06), 0.1, 0.12, "t_lemon")
+    if w >= 5:
+        cyl(b, "toy_rings_peg", (2.0, hd - 0.9), 0.1, top - 0.2, top + 1.55, "t_wood", sides=8)
+        for n, (rr, tex) in enumerate(((0.55, "t_cherry"), (0.45, "t_butter"), (0.36, "t_mint"),
+                                       (0.28, "t_sky"))):
+            y0 = top + n * 0.3
+            cyl(b, f"toy_ring_{n}", (2.0, hd - 0.9), rr, y0, y0 + 0.27, tex)
+        sphere(b, "toy_ball_2", (-2.4, top + 0.3, hd - 0.85), 0.5, "t_mint", slices=4)
+        cyl(b, "toy_drum", (-1.0, hd - 0.85), 0.6, top - 0.2, top + 0.65, "t_cobalt")
+        cyl(b, "toy_drum_skin", (-1.0, hd - 0.85), 0.5, top + 0.65, top + 0.72, "t_white")
+        cyl(b, "toy_drum_band", (-1.0, hd - 0.85), 0.63, top + 0.1, top + 0.25, "t_gold")
+
+
+def toy_box():
+    """곰인형 대장's big pink toy chest (7 x 3, 4 high, a white heart) and two toy blocks stacked beside it."""
+    b = Build()
+    _toy_chest(b, 7.0, 3.0, 4.0, "t_pink", "heart")
+    _alphabet_block(b, "stack_low", 4.0, -0.4, 2.0, "t_sky", "t_butter", {"-z": "A", "+x": "B"})
+    y0 = 2.0 + EPS * 3
+    stack = Build()
+    _alphabet_block(stack, "stack_high", 4.05, -0.35, 1.9, "t_butter", "t_cherry", {"-z": "B", "+x": "C", "+y": "1"})
+    for name, frm, to, tex, kw in stack.boxes:
+        b.box(name, (frm[0], frm[1] + y0, frm[2]), (to[0], to[1] + y0, to[2]), tex,
+              rotation=("y", 22.5, (5.0, y0 + 0.95, 0.6)))
+    return b
+
+
+def toy_box_pink():
+    b = Build()
+    _toy_chest(b, 4.0, 3.0, 3.0, "t_pink", "heart")
+    return b
+
+
+def toy_box_sky():
+    b = Build()
+    _toy_chest(b, 4.0, 4.0, 3.0, "t_sky", "star")
+    return b
+
+
+def toy_box_yellow():
+    b = Build()
+    _toy_chest(b, 3.0, 3.0, 5.0, "t_butter", "star")
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 젤리 푸딩 (jelly pudding, 젤리 무리): a fluted lime jelly on a plate, whipped cream and a cherry on top
+# ------------------------------------------------------------------------------------------------
+
+def jelly():
+    b = Build()
+    cyl(b, "plate", (0, 0), 1.95, 0, 0.14, "t_white")
+    cyl(b, "tier_0", (0, 0), 1.55, 0.14, 1.5, "t_jelly_lime")
+    cyl(b, "tier_1", (0, 0), 1.3, 1.5, 2.5, "t_jelly_lime")
+    cyl(b, "tier_2", (0, 0), 0.98, 2.5, 3.0, "t_jelly_lime")
+    # the mould's flutes: rounded ribs round the two lower tiers (on the axes, and turned 45 degrees between them)
+    for k in range(8):
+        e = EPS * (k % 2)
+        ang = math.radians(k * 45)
+        fx, fz = math.cos(ang), math.sin(ang)
+        for name, rr, y0, y1, hw in (("rib", 1.48, 0.14, 1.45, 0.22), ("rib_up", 1.25, 1.5, 2.42, 0.18)):
+            px, pz = fx * rr, fz * rr
+            if k % 2 == 0:
+                along_x = k in (0, 4)
+                dx, dz = (0.18, hw) if along_x else (hw, 0.18)
+                b.box(f"{name}_{k}", (px - dx, y0 + e, pz - dz), (px + dx, y1 - e, pz + dz), "t_jelly_lime")
+            else:
+                b.box(f"{name}_{k}", (px - 0.18, y0 + e, pz - hw), (px + 0.18, y1 - e, pz + hw), "t_jelly_lime",
+                      rotation=("y", -45 if k in (1, 5) else 45, (px, (y0 + y1) / 2, pz)))
+    # whipped cream: a ring of dollops draped over the top edge, a swirl in the middle
+    for k in range(8):
+        ang = math.radians(k * 45 + 22.5)
+        x, z = 0.82 * math.cos(ang), 0.82 * math.sin(ang)
+        b.rbox(f"cream_{k}", (x - 0.3, 2.72 + EPS * (k % 2), z - 0.3), (x + 0.3, 3.22 - EPS * (k % 2), z + 0.3),
+               "t_white", 0.12)
+        b.box(f"drip_{k}", (x * 1.15 - 0.1, 2.35, z * 1.15 - 0.1), (x * 1.15 + 0.1, 2.8, z * 1.15 + 0.1), "t_white")
+    cyl(b, "swirl_0", (0, 0), 0.62, 3.0, 3.3, "t_white", sides=8)
+    cyl(b, "swirl_1", (0, 0), 0.42, 3.3, 3.55, "t_white", sides=8)
+    cyl(b, "swirl_2", (0, 0), 0.22, 3.55, 3.72, "t_white", sides=8)
+    # the cherry and its stem
+    sphere(b, "cherry", (0, 3.98, 0), 0.31, "t_cherry", slices=4, sides=8)
+    b.box("cherry_glint", (-0.2, 4.0, -0.32), (-0.08, 4.12, -0.3), "t_white")
+    b.box("stem", (0.0, 4.15, -0.03), (0.06, 4.75, 0.03), "t_lime", rotation=("z", -22.5, (0.03, 4.2, 0)))
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 치즈와 태엽 열쇠 (태엽 쥐 떼): a big cheese wedge with holes, the mice's wind-up key stuck in its top (cheese_key,
+# spins). The key stands at the model's origin; the wedge rises from -x to the key.
+# ------------------------------------------------------------------------------------------------
+
+CHEESE_TOP = 3.1
+
+
+def cheese():
+    b = Build()
+    zf, zb = -3.5, 3.5
+    b.box("base", (-3.5, 0, zf), (0.6, 0.9, zb), "t_cheese")
+    b.box("high", (-1.3, 0.9, zf + EPS), (0.6, CHEESE_TOP, zb - EPS), "t_cheese")
+    # the slope: a slab laid on 45 degrees from the low end up to the high block (its lower part inside the cheese)
+    slope_l = 2.2 * math.sqrt(2)
+    rot = ("z", 45, (-1.3, CHEESE_TOP, 0))
+    b.box("slope", (-1.3 - slope_l, CHEESE_TOP - 1.2, zf + 2 * EPS), (-1.3, CHEESE_TOP, zb - 2 * EPS), "t_cheese",
+          rotation=rot)
+    # holes: on the slope (in its own frame), on the top, on the sides and the high end
+    for n, (u, z, r) in enumerate(((-1.0, -1.6, 0.36), (-2.1, 0.9, 0.42), (-0.7, 2.3, 0.27), (-2.5, -2.6, 0.25))):
+        dot_y(b, f"slope_hole_{n}", -1.3 + u, CHEESE_TOP, z, r, 0.03, "t_cheese_hole", rotation=rot)
+    for n, (x, z, r) in enumerate(((-0.45, 1.5, 0.36), (-0.75, -2.4, 0.26), (0.1, -1.0, 0.2))):
+        dot_y(b, f"top_hole_{n}", x, CHEESE_TOP, z, r, 0.03, "t_cheese_hole")
+    sides = (("front", zf, -1, ((-2.75, 0.45, 0.27), (-0.55, 2.25, 0.42), (-1.55, 1.15, 0.33), (0.15, 0.6, 0.24))),
+             ("back", zb, 1, ((-2.3, 0.5, 0.3), (-0.4, 1.4, 0.38), (-0.95, 2.5, 0.24), (-3.0, 0.4, 0.2))))
+    for side, z, s, holes in sides:
+        for n, (x, y, r) in enumerate(holes):
+            z0, z1 = sorted((z, z + s * 0.03))
+            cyl(b, f"{side}_hole_{n}", (x, y), r, z0, z1, "t_cheese_hole", axis="z", sides=8)
+    for n, (y, z, r) in enumerate(((1.2, -1.9, 0.38), (2.3, 0.6, 0.3), (0.6, 2.2, 0.26))):
+        cyl(b, f"end_hole_{n}", (y, z), r, 0.6, 0.63, "t_cheese_hole", axis="x", sides=8)
+    # the key's socket
+    cyl(b, "socket", (0, 0), 0.34, CHEESE_TOP, CHEESE_TOP + 0.18, "t_gold", sides=8)
+    return b
+
+
+def cheese_key():
+    """The wind-up key stuck in the cheese: a gold stem and a pink bow of two rings facing ±x (spins about y)."""
+    b = Build()
+    cyl(b, "stem", (0, 0), 0.17, CHEESE_TOP + 0.1, 5.85, "t_gold", sides=8)
+    cyl(b, "collar", (0, 0), 0.28, 4.6, 4.85, "t_gold", sides=8)
+    y = 6.75
+    cyl(b, "hub", (y, 0), 0.34, -0.17, 0.17, "t_gold", axis="x", sides=8)
+    for side in (-1, 1):
+        z = side * 1.25
+        cyl(b, f"lobe_{side}", (y, z), 1.12, -0.13, 0.13, "t_rose", axis="x")
+        cyl(b, f"lobe_hole_{side}", (y, z), 0.46, -0.15, 0.15, "t_white", axis="x", sides=8)
+    cyl(b, "cap", (0, 0), 0.22, 7.0, 7.25, "t_gold", sides=8)
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 토끼 귀와 회중시계 (시계 토끼): two tall rabbit ears out of the ground, tips leaning outwards, the rabbit's gold
+# pocket watch hung between them on a chain, high enough to walk under; its hands tick round (rabbit_watch_hands)
+# ------------------------------------------------------------------------------------------------
+
+WATCH_Y = 5.6
+WATCH_R = 2.45
+EAR_X = 4.5
+EAR_BEND = 4.4
+
+
+def _ear(b, name, s):
+    """One ear on side s (-1 left, +1 right): a straight lower part and a tip leaning outwards, pink inside."""
+    x = s * EAR_X
+    b.rbox(name + "_low", (x - 1.0, 0.1, -0.55), (x + 1.0, EAR_BEND + 0.25, 0.55), "t_fur", 0.4, top=False)
+    b.box(name + "_inner_low", (x - 0.55, 0.35, -0.6), (x + 0.55, EAR_BEND + 0.25, -0.55), "t_pink")
+    rot = ("z", -22.5 * s, (x, EAR_BEND, 0))
+    b.rbox(name + "_tip", (x - 1.0 + EPS, EAR_BEND - 0.1, -0.55 + EPS), (x + 1.0 - EPS, 7.9, 0.55 - EPS), "t_fur", 0.45,
+           top=False, bottom=False, rotation=rot)
+    b.rbox(name + "_cap", (x - 0.78, 7.75, -0.47), (x + 0.78, 8.55, 0.47), "t_fur", 0.4, bottom=False, rotation=rot)
+    b.box(name + "_inner_tip", (x - 0.55, EAR_BEND - 0.1, -0.6), (x + 0.55, 7.75, -0.55 + EPS), "t_pink", rotation=rot)
+    b.box(name + "_inner_top", (x - 0.38, 7.75 - EPS, -0.52), (x + 0.38, 8.15, -0.47 + EPS), "t_pink", rotation=rot)
+    # a fluffy root in the grass
+    b.rbox(name + "_root", (x - 1.25, 0, -0.65), (x + 1.25, 0.55, 0.65), "t_fur", 0.22, bottom=False)
+
+
+def rabbit_watch():
+    b = Build()
+    for s in (-1, 1):
+        _ear(b, f"ear_{'l' if s < 0 else 'r'}", s)
+    # the watch: a gold case, a white face with hour marks, a crown and a ring on top
+    cyl(b, "case", (0, WATCH_Y), WATCH_R, -0.32, 0.32, "t_gold", axis="z")
+    cyl(b, "bezel", (0, WATCH_Y), WATCH_R - 0.12, -0.38, -0.32, "t_gold", axis="z")
+    cyl(b, "face", (0, WATCH_Y), WATCH_R - 0.38, -0.42, -0.38, "t_white", axis="z")
+    cyl(b, "back", (0, WATCH_Y), WATCH_R - 0.5, 0.32, 0.4, "t_gold", axis="z")
+    for k in range(12):
+        ang = math.radians(90 - k * 30)
+        rr = 1.7
+        x, y = -rr * math.cos(ang), WATCH_Y + rr * math.sin(ang)    # front view: clockwise towards -x
+        big = k % 3 == 0
+        h = 0.17 if big else 0.08
+        b.box(f"mark_{k}", (x - h, y - h, -0.45), (x + h, y + h, -0.42), "t_cobalt" if big else "t_ink")
+    cyl(b, "crown_neck", (0, 0), 0.2, WATCH_Y + WATCH_R - 0.05, WATCH_Y + WATCH_R + 0.25, "t_gold", sides=8)
+    cyl(b, "crown", (0, 0), 0.36, WATCH_Y + WATCH_R + 0.25, WATCH_Y + WATCH_R + 0.6, "t_gold", sides=8)
+    ring_y = WATCH_Y + WATCH_R + 1.0
+    arc_xy(b, "ring", (0, ring_y), 0.38, 0, 337.5, 0.07, -0.07, 0.07, "t_gold")
+    # the chain swagged from the ring to each ear (links alternately wide and narrow)
+    for s in (-1, 1):
+        x0, y0 = s * 0.4, ring_y
+        x1, y1 = s * 4.75, ring_y - 4.35 * math.tan(math.radians(22.5))
+        n = 9
+        for k in range(n):
+            t = (k + 0.5) / n
+            x, y = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+            wide = k % 2 == 0
+            hl, hw, hd = (0.3, 0.09, 0.03) if wide else (0.26, 0.04, 0.08)
+            b.box(f"chain_{s}_{k}", (x - hl, y - hw, -hd), (x + hl, y + hw, hd), "t_gold",
+                  rotation=("z", -22.5 * s, (x, y, 0)))
+    return b
+
+
+def rabbit_watch_hands():
+    """The watch's red hands at ten past twelve and a gold pin (they tick round about z)."""
+    b = Build()
+    y = WATCH_Y
+    bar_xy(b, "hour", (0, y + 0.5), 90, 1.0, 0.1, -0.5, -0.45, "t_cherry")
+    d = 1.45
+    ang = math.radians(157.5)
+    bar_xy(b, "minute", (math.cos(ang) * d / 2, y + math.sin(ang) * d / 2), 157.5, d, 0.07, -0.55, -0.5, "t_cherry")
+    cyl(b, "pin", (0, y), 0.16, -0.6, -0.42, "t_gold", axis="z", sides=8)
+    return b
+
+
+# ------------------------------------------------------------------------------------------------
+# 강가 모래성·양동이·삽 (by the dragon's sandbox): base y = 0 is the sand's surface for the castle and the spade
+# ------------------------------------------------------------------------------------------------
+
+def _crenels(b, name, cx, cz, r, y, h, count, tex):
+    """Little square merlons round a tower top."""
+    for k in range(count):
+        ang = math.radians(k * 360 / count + 22.5 / 2)
+        x, z = cx + r * math.cos(ang), cz + r * math.sin(ang)
+        b.box(f"{name}_{k}", (x - 0.13, y + EPS * (k % 2), z - 0.13), (x + 0.13, y + h, z + 0.13), tex)
+
+
+def sand_castle():
+    b = Build()
+    b.rbox("mound", (-1.95, 0, -1.95), (1.95, 0.3, 1.95), "t_sand", 0.25, bottom=False)
+    # the keep: a bucket-moulded drum with ridges, merlons, a toothpick flag
+    cyl(b, "keep_0", (0, 0.2), 1.05, 0.3, 1.0, "t_sand")
+    cyl(b, "keep_1", (0, 0.2), 0.97, 1.0, 1.75, "t_sand")
+    cyl(b, "keep_2", (0, 0.2), 0.9, 1.75, 2.4, "t_sand")
+    cyl(b, "keep_ridge", (0, 0.2), 1.0, 1.7, 1.8, "t_sand")
+    _crenels(b, "keep_crenel", 0, 0.2, 0.72, 2.4, 0.3, 8, "t_sand")
+    b.box("pole", (-0.04, 2.4, 0.16), (0.04, 3.9, 0.24), "t_wood")
+    b.box("flag", (0.04, 3.35, 0.18), (0.75, 3.85, 0.22), "t_cherry")
+    b.box("flag_tip", (0.74, 3.48, 0.185), (0.95, 3.72, 0.215), "t_cherry")
+    # four corner towers with cone roofs, walls between them, a gate in front
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            cx, cz = sx * 1.4, sz * 1.4
+            cyl(b, f"tower_{sx}_{sz}", (cx, cz), 0.52, 0.3, 1.45, "t_sand")
+            cyl(b, f"tower_rim_{sx}_{sz}", (cx, cz), 0.6, 1.45, 1.6, "t_sand")
+            cyl(b, f"tower_cone0_{sx}_{sz}", (cx, cz), 0.42, 1.6, 1.85, "t_sand", sides=8)
+            cyl(b, f"tower_cone1_{sx}_{sz}", (cx, cz), 0.26, 1.85, 2.05, "t_sand", sides=8)
+            cyl(b, f"tower_cone2_{sx}_{sz}", (cx, cz), 0.12, 2.05, 2.25, "t_sand", sides=8)
+    for name, frm, to in (("wall_front", (-1.0, 0.3, -1.6), (1.0, 1.0, -1.2)), ("wall_back", (-1.0, 0.3, 1.2), (1.0, 1.0, 1.6))):
+        b.box(name, frm, to, "t_sand")
+        for k in range(3):
+            x = -0.6 + k * 0.6
+            b.box(f"{name}_crenel_{k}", (x - 0.14, 1.0, frm[2] + 0.04), (x + 0.14, 1.25, to[2] - 0.04), "t_sand")
+    b.mirror("wall_side", (-1.6, 0.3 + EPS, -1.0), (-1.2, 1.0 - EPS, 1.0), "t_sand")
+    for k in range(3):
+        z = -0.6 + k * 0.6
+        b.mirror(f"wall_side_crenel_{k}", (-1.56, 1.0 + EPS, z - 0.14), (-1.24, 1.25, z + 0.14), "t_sand")
+    b.box("gate", (-0.3, 0.3, -1.62), (0.3, 0.85, -1.6), "t_cocoa")
+    b.box("gate_top", (-0.18, 0.85, -1.62), (0.18, 0.95, -1.6), "t_cocoa")
+    # shells and a starfish stuck in the sand
+    for n, (x, y, z, tex) in enumerate(((-0.65, 0.55, -1.6, "t_pink"), (0.65, 0.6, -1.6, "t_rose"),
+                                        (0.0, 1.35, -0.75, "t_pink"))):
+        b.box(f"shell_{n}", (x - 0.1, y - 0.08, z - 0.03), (x + 0.1, y + 0.08, z), tex)
+    glyph(b, "starfish", "star", "+y", (1.05, 0, -2.45), 0.09, 0.05, "t_orange")
+    return b
+
+
+def sand_bucket():
+    b = Build()
+    tiers = ((0.0, 0.5, 1.22), (0.5, 1.0, 1.3), (1.0, 1.55, 1.38))
+    for n, (y0, y1, r) in enumerate(tiers):
+        cyl(b, f"body_{n}", (0, 0), r, y0, y1, "t_sky")
+    cyl(b, "base_band", (0, 0), 1.26, 0.08, 0.24, "t_white")
+    tube(b, "rim", (0, 0), 1.52, 1.55, 1.92, 0.2, "t_white")
+    # sand heaped in it
+    cyl(b, "sand", (0, 0), 1.36, 1.5, 1.82, "t_sand")
+    cyl(b, "sand_heap", (0.12, -0.05), 0.95, 1.82, 2.12, "t_sand")
+    cyl(b, "sand_heap_top", (0.18, -0.1), 0.5, 2.12, 2.32, "t_sand", sides=8)
+    # the yellow handle and its hinges
+    arc_xy(b, "handle", (0, 1.78), 1.5, 0, 180, 0.07, -0.07, 0.07, "t_lemon")
+    for s in (-1, 1):
+        x0, x1 = sorted((s * 1.5, s * 1.62))
+        cyl(b, f"hinge_{s}", (1.78, 0), 0.14, x0, x1, "t_lemon", axis="x", sides=8)
+    # a white starfish moulded on the front
+    ap = 1.3 * math.cos(math.pi / 16)
+    glyph(b, "star", "star", "-z", (0, 0.75, -ap), 0.09, 0.03, "t_white")
+    # a little spilled sand beside it
+    cyl(b, "spill_0", (-1.75, 1.75), 0.7, 0, 0.2, "t_sand")
+    cyl(b, "spill_0_top", (-1.7, 1.7), 0.42, 0.2, 0.36, "t_sand", sides=8)
+    cyl(b, "spill_1", (-0.85, 2.3), 0.42, 0, 0.14, "t_sand", sides=8)
+    return b
+
+
+def sand_spade():
+    b = Build()
+    # the sand pushed up round the blade
+    cyl(b, "heap", (0, 0), 0.8, 0, 0.16, "t_sand")
+    cyl(b, "heap_top", (0, 0), 0.5, 0.16, 0.28, "t_sand", sides=8)
+    # the yellow blade, half buried, a ridge down its middle, its shoulders and socket
+    b.box("blade", (-0.7, 0.04, -0.07), (0.7, 0.95, 0.07), "t_lemon")
+    b.box("ridge", (-0.1, 0.06, -0.12), (0.1, 0.95, 0.12), "t_lemon")
+    b.box("shoulder", (-0.5, 0.95, -0.07 + EPS), (0.5, 1.12, 0.07 - EPS), "t_lemon")
+    cyl(b, "socket", (0, 0), 0.2, 1.05, 1.5, "t_lemon", sides=8)
+    # the red shaft, a white band, the D grip
+    cyl(b, "shaft", (0, 0), 0.13, 1.45, 3.55, "t_cherry", sides=8)
+    cyl(b, "band", (0, 0), 0.16, 3.25, 3.4, "t_white", sides=8)
+    for s in (-1, 1):
+        bar_xy(b, f"grip_side_{s}", (s * 0.2, 3.77), 90 - 45 * s, 0.66, 0.07, -0.08, 0.08, "t_cherry")
+    cyl(b, "grip", (4.05, 0), 0.13, -0.5, 0.5, "t_cherry", axis="x", sides=8)
+    return b
+
+
 # ------------------------------------------------------------------------------------------------
 # registry: model id -> (builder, display scale, centre blocks above the base)
 # ------------------------------------------------------------------------------------------------
@@ -543,5 +1200,28 @@ PROPS = {
     "rainbow": (rainbow, 5, 4.0),
 }
 
+# made but not on the map yet (the second batch, waiting for the user's look): moved into PROPS (and the Java
+# PropModels table) when the map places them
+PENDING = {
+    "cotton_tree": (cotton_tree, 3, 4.5),
+    "crayon_box": (crayon_box, 3, 4.5),
+    "marble_jar": (marble_jar, 2, 3.0),
+    "block_stack": (block_stack, 4, 4.0),
+    "toy_box": (toy_box, 5, 4.5),
+    "toy_box_pink": (toy_box_pink, 3, 4.5),
+    "toy_box_sky": (toy_box_sky, 3, 4.5),
+    "toy_box_yellow": (toy_box_yellow, 3, 4.5),
+    "jelly": (jelly, 2, 2.5),
+    "cheese": (cheese, 3, 4.5),
+    "cheese_key": (cheese_key, 3, 4.5),
+    "rabbit_watch": (rabbit_watch, 5, 5.0),
+    "rabbit_watch_hands": (rabbit_watch_hands, 2, WATCH_Y),
+    "sand_castle": (sand_castle, 2, 2.0),
+    "sand_bucket": (sand_bucket, 2, 2.0),
+    "sand_spade": (sand_spade, 2, 2.5),
+}
+
+DISPLAY = {**PROPS, **PENDING}
+
 ALL = {f"prop/{k}": (lambda fn, sc, c, k: lambda: fn().centred(f"prop/{k}", sc, c))(fn, sc, c, k)
-       for k, (fn, sc, c) in PROPS.items()}
+       for k, (fn, sc, c) in DISPLAY.items()}

@@ -122,4 +122,5 @@ Map props (`models/props.py`, item models `mcpl:prop/<id>`): the 3D versions of 
 candy cane, toy train, wind-up car + its key, spinning top, flag boat, rubber duck, rainbow), same block-space rules
 (base y = 0, the water's surface for floating props; front / heading -z), display scale and centre in `PROPS`. Round
 parts use `cyl` (a regular 8/16-gon as a union of bars through the middle; never overlapping rotated squares, whose
-union is a star). Previews: `python3 -I tools/assetgen/prop_preview.py <dir> [--blocks <dump.json>]`.
+union is a star). Models made but not placed yet live in `PENDING` (outside `PROPS`, which must match the Java
+`PropModels` table). Previews: `python3 -I tools/assetgen/prop_preview.py <dir> [--blocks <dump.json>] [--pending]`.

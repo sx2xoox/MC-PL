@@ -6,7 +6,9 @@ their display scale and centre height), next to a player silhouette:
   props_lineup.png     every prop in a row, front 3/4 and from above
   props_compare.png    block props (top row) above their 3D models (bottom row), same scale
 
-    python3 -I tools/assetgen/prop_preview.py <out dir> [--blocks <dump.json>]
+    python3 -I tools/assetgen/prop_preview.py <out dir> [--blocks <dump.json>] [--pending] [<id> ...]
+
+--pending draws the props made but not placed yet (props.PENDING) instead of the placed ones (props.PROPS).
 
 The block dump ({prop id: [[x, y, z, "#rrggbb", shape], ...]}) comes from the map canvas (MapPreview colours); the
 blocks are drawn as flat-coloured boxes (stairs as full blocks).
@@ -31,13 +33,18 @@ BUILD = HERE.parent.parent / "build" / "assetgen"
 WATER = {"boat", "duck"}
 # block props laid along x in the map: turned so they head -z like the models
 TURN = {"train": True, "windup_car": True}
+# props that stand in the sandbox: their base is the sand one block down
+SANDBOX = {"sand_castle", "sand_spade"}
+# moving parts shown with their prop (a separate model at the same place)
+PARTS = {"windup_car": "windup_car_key", "cheese": "cheese_key", "rabbit_watch": "rabbit_watch_hands"}
 
 
 def model_parts(built, pid, x=0.0, z=0.0, yaw=0.0):
-    out = [placed(built[f"prop/{pid}"], None, (x, props.PROPS[pid][2], z), props.PROPS[pid][1], yaw)]
-    if pid == "windup_car":
-        out.append(placed(built["prop/windup_car_key"], None, (x, props.CAR_KEY_Y, z), props.PROPS["windup_car_key"][1],
-                          yaw))
+    out = []
+    for m in (pid, PARTS.get(pid)):
+        if m:
+            _, scale, centre = props.DISPLAY[m]
+            out.append(placed(built[f"prop/{m}"], None, (x, centre, z), scale, yaw))
     return out
 
 
@@ -67,7 +74,7 @@ def block_parts(blocks, pid, x=0.0, z=0.0):
     xs = [b[0] for b in blocks]
     zs = [b[2] for b in blocks]
     mx, mz = (min(xs) + max(xs) + 1) / 2, (min(zs) + max(zs) + 1) / 2
-    base = 65
+    base = 64 if pid in SANDBOX else 65
     textures, elements = {}, []
     for bx, by, bz, colour, shape in blocks:
         y0, y1, h0, h1 = SHAPES.get(shape, SHAPES["full"])
@@ -85,7 +92,13 @@ def block_parts(blocks, pid, x=0.0, z=0.0):
 
 
 SIZE = {"lollipop": (7, 12), "candy_cane": (3, 8), "train": (12, 6), "windup_car": (7, 3.5), "spinning_top": (7, 9),
-        "boat": (6, 8.5), "duck": (4, 3.5), "rainbow": (16, 8)}
+        "boat": (6, 8.5), "duck": (4, 3.5), "rainbow": (16, 8),
+        "cotton_tree": (7, 8.5), "crayon_box": (4, 6), "marble_jar": (5, 5.2), "block_stack": (9, 7),
+        "toy_box": (12, 7), "toy_box_pink": (4.5, 6), "toy_box_sky": (4.5, 6.5), "toy_box_yellow": (3.5, 8),
+        "jelly": (4, 4.8), "cheese": (5, 8), "rabbit_watch": (14, 9.5), "sand_castle": (4, 4),
+        "sand_bucket": (5, 3.5), "sand_spade": (2, 4.2)}
+PLACED = [pid for pid in SIZE if pid in props.PROPS]
+PENDING = [pid for pid in SIZE if pid in props.PENDING]
 
 
 def _ground(pid):
@@ -110,22 +123,22 @@ def prop_sheet(built, blocks, pid, render, work, png):
     render(scene(parts, work / f"prop_{pid}.preview.json", views, ground=[-s, 0, -s, far + s, s]), png)
 
 
-def lineup(built, render, work, png):
+def lineup(built, render, work, png, ids):
     parts, x = [figure(0, 0)], 1.5
-    for pid in SIZE:
+    for pid in ids:
         w = SIZE[pid][0]
         x += w / 2 + 0.8
         parts += model_parts(built, pid, x, 0)
         x += w / 2 + 0.8
-    views = [{"x": 0, "y": 0, "w": 1600, "h": 600, "az": -18, "el": 12, "target": [x / 2, 3.5, 0], "dist": x * 0.62},
-             {"x": 0, "y": 600, "w": 1600, "h": 400, "az": -18, "el": 55, "target": [x / 2, 1.0, 0], "dist": x * 0.55}]
+    views = [{"x": 0, "y": 0, "w": 1600, "h": 600, "az": -18, "el": 12, "target": [x / 2, 3.5, 0], "dist": x * 0.78},
+             {"x": 0, "y": 600, "w": 1600, "h": 400, "az": -18, "el": 55, "target": [x / 2, 1.0, 0], "dist": x * 0.7}]
     render(scene(parts, work / "props_lineup.preview.json", views, ground=[-3, 0, -8, x + 3, 8]), png)
 
 
-def compare(built, blocks, render, work, png):
+def compare(built, blocks, render, work, png, ids):
     """A grid: four props per pair of rows, the block prop above its model, each cell aimed at its own prop."""
     parts, views, apart, gap = [], [], 300.0, 24.0
-    for i, pid in enumerate(SIZE):
+    for i, pid in enumerate(ids):
         w, h = SIZE[pid]
         x = i * gap
         parts += block_parts(blocks.get(pid), pid, x, 0)
@@ -135,17 +148,22 @@ def compare(built, blocks, render, work, png):
         for row, ox in ((0, 0.0), (1, apart)):
             views.append({"x": col * 400, "y": (pair * 2 + row) * 250, "w": 400, "h": 250, "az": -30, "el": 14,
                           "target": [x + ox, h / 2, 0], "dist": max(w, h) * 1.9 + 3})
-    render(scene(parts, work / "props_compare.preview.json", views,
-                 ground=[-12, 0, -12, apart + gap * len(SIZE), 12]), png)
+    path = scene(parts, work / "props_compare.preview.json", views,
+                 ground=[-12, 0, -12, apart + gap * len(ids), 12])
+    data = json.loads(path.read_text())
+    data["height"] = ((len(ids) + 3) // 4) * 500
+    path.write_text(json.dumps(data))
+    render(path, png)
 
 
-def render_all(built, render, work, out, blocks=None):
+def render_all(built, render, work, out, blocks=None, ids=None):
     blocks = blocks or {}
-    for pid in SIZE:
+    ids = ids or PLACED
+    for pid in ids:
         prop_sheet(built, blocks, pid, render, work, out / f"prop_{pid}.png")
-    lineup(built, render, work, out / "props_lineup.png")
+    lineup(built, render, work, out / "props_lineup.png", ids)
     if blocks:
-        compare(built, blocks, render, work, out / "props_compare.png")
+        compare(built, blocks, render, work, out / "props_compare.png", [pid for pid in ids if pid in blocks])
 
 
 def main():
@@ -165,7 +183,7 @@ def main():
         for pid in only:
             prop_sheet(built, blocks, pid, build.render, BUILD, out / f"prop_{pid}.png")
         return
-    render_all(built, build.render, BUILD, out, blocks)
+    render_all(built, build.render, BUILD, out, blocks, PENDING if "--pending" in args else PLACED)
 
 
 if __name__ == "__main__":
