@@ -35,6 +35,8 @@ public final class Creatures {
      */
     public static void prepare(Mob mob, Component name, double health, double scale, double followRange) {
         mob.setPersistent(false);
+        // no vanilla moans, steps or death cries: the toys make their own sounds (CreatureSounds, JungleSounds)
+        mob.setSilent(true);
         VanillaCreatureLook.optional(() -> mob.setRemoveWhenFarAway(false));
         VanillaCreatureLook.optional(() -> mob.setDespawnInPeacefulOverride(TriState.FALSE));
         VanillaCreatureLook.optional(() -> mob.setCanPickupItems(false));

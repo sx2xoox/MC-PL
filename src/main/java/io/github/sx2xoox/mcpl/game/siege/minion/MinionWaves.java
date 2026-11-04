@@ -818,6 +818,7 @@ public final class MinionWaves implements Listener {
         minion.healthDirty = true;
         arena.damageNumber(minion.body, event.getFinalDamage());
         look.hurt(minion.body);
+        CreatureSounds.hurt(arena, minion.kind.creature(), minion.body.getLocation());
         if (event.getFinalDamage() >= minion.body.getHealth()) {
             Player attacker = arena.attacker(event);
             minion.lastHitter = attacker != null ? attacker.getUniqueId() : arena.fighterAttacker(event);
@@ -832,6 +833,7 @@ public final class MinionWaves implements Listener {
         }
         event.getDrops().clear();
         event.setDroppedExp(0);
+        CreatureSounds.death(arena, minion.body.getLocation());
         remove(minion);
         died(minion);
     }

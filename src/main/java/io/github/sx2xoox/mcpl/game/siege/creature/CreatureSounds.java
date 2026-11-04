@@ -38,4 +38,19 @@ public final class CreatureSounds {
             case SHOPKEEPER -> arena.sound(at, Sound.ENTITY_WANDERING_TRADER_YES, 0.5f, 1.4f);
         }
     }
+
+    /** A minion takes a hit (the bodies are silent): a wooden toy knock, the cannon a metal clang. */
+    public static void hurt(SiegeArena arena, CreatureKind kind, Location at) {
+        if (kind == CreatureKind.MINION_CANNON) {
+            arena.sound(at, Sound.BLOCK_METAL_HIT, 0.7f, 1.4f);
+        } else {
+            arena.sound(at, Sound.BLOCK_WOOD_HIT, 0.7f, 1.6f);
+        }
+    }
+
+    /** A creature breaks: a little toy pop instead of the vanilla death cry. */
+    public static void death(SiegeArena arena, Location at) {
+        arena.sound(at, Sound.ENTITY_ITEM_BREAK, 0.6f, 1.3f);
+        arena.sound(at, Sound.ENTITY_CHICKEN_EGG, 0.6f, 1.6f);
+    }
 }

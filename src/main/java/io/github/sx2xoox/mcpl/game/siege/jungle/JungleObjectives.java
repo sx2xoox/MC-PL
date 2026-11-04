@@ -918,6 +918,7 @@ public final class JungleObjectives implements Listener {
         if (site == null) {
             return;
         }
+        CreatureSounds.death(arena, mob.getLocation());
         event.getDrops().clear();
         event.setDroppedExp(0);
         died(site, mob, site.hitters.get(mob.getUniqueId()));
