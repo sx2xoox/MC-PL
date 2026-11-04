@@ -113,14 +113,19 @@ public final class ModelTowerLook implements TowerLook {
     }
 
     private static final float BODY = 4f;
-    /** The core is twice the old size: slabs of 24 blocks at display scale 8 (tools/assetgen/models/toys.py). */
+    /**
+     * The core is designed at twice the old size (slabs of 24 blocks at display scale 8, tools/assetgen/models/toys.py)
+     * and shown at {@link #CORE_SIZE} of it: 1.5 times the old size.
+     */
     private static final float CORE_BODY = 8f;
+    /** How big the core is shown, of its design size (toys.py CORE_SHOWN): every core part's height and scale. */
+    static final float CORE_SIZE = 0.75f;
     private static final float SHIELD_SCALE = 8f;
     private static final float SHIELD_CENTRE = 11f;
-    /** The core's spire tip (its turning jewel's centre), blocks. */
+    /** The core's spire tip (its turning jewel's centre) as designed, blocks. */
     private static final float STAR_CENTRE = 33.1f;
     /** The core's health bar: eye level over the heads of the players crowding its big music box. */
-    static final double CORE_BAR_HEIGHT = 4.5;
+    static final double CORE_BAR_HEIGHT = 4.0;
     private static final double DEFAULT_HITBOX = 2.5;
     /** Look ids. */
     public static final String TOWER = "tower";
@@ -138,22 +143,33 @@ public final class ModelTowerLook implements TowerLook {
                     new Vector3f(4.4f, 18f, 4.4f), 0, 0, 8.75,
                     new Footprint(List.of(Footprint.Layer.centred(2.5, 0, 11), Footprint.Layer.centred(1.5, 11, 13)),
                             List.of(Footprint.Layer.centred(2.5, 0, 2)))),
-            CORE, new Spec(List.of(
+            CORE, new Spec(shown(CORE_SIZE,
                     new Part("body", 4, 4, 12, CORE_BODY, Motion.NONE),
                     new Part("top", 3, 3, 36, CORE_BODY, Motion.NONE),
                     new Part("crown", 0, 3, 22.8f, 4, Motion.CROWN),
                     new Part("star", 0, 2, STAR_CENTRE, 2, Motion.CROWN),
                     new Part("key", 0, 3, 4f, CORE_BODY, Motion.KEY),
                     new Part("shield", 0, 3, 14f, 16, Motion.SHIELD)),
-                    // the music box ±7 (lid ±7.5) up to 7.5, the keep ±3.5 and four turrets (±5.5, ±1.5 … roofs ±2)
-                    // up to ~23, the spire ±2.4 above; the hitbox is as big as a Mannequin gets (±4.8), the game
-                    // measures reach and sight to the whole building (Tower#bounds)
-                    new Vector3f(9.8f, 35.5f, 9.8f), 21.8f, 3.6f, 16,
-                    new Footprint(List.of(Footprint.Layer.centred(7.5, 0, 8), Footprint.Layer.centred(3.5, 8, 20),
-                            new Footprint.Layer(5.5, 5.5, 1.5, 8, 23), new Footprint.Layer(-5.5, 5.5, 1.5, 8, 23),
-                            new Footprint.Layer(5.5, -5.5, 1.5, 8, 23), new Footprint.Layer(-5.5, -5.5, 1.5, 8, 23),
-                            Footprint.Layer.centred(2.5, 20, 24)),
-                            List.of(Footprint.Layer.centred(7.5, 0, 7), Footprint.Layer.centred(3.5, 7, 9)))));
+                    // as shown (0.75 of the design): the music box ±5.25 (lid ±5.6) up to 5.6, the keep ±2.6 (cornice
+                    // ±3.1) up to 15 and four turrets (±4.1, ±1.1 … roofs ±1.5) up to ~18, the spire ±1.8 above, its
+                    // jewel at ~25.7; the hitbox (±3.6, eyes at 19.4 over the walls), the game measures reach and sight
+                    // to the whole building (Tower#bounds); the bubble 0.75 of the design's too
+                    new Vector3f(7.35f, 26.6f, 7.35f), 16.35f, 2.7f, 12,
+                    new Footprint(List.of(Footprint.Layer.centred(5.5, 0, 6), Footprint.Layer.centred(2.5, 6, 15),
+                            new Footprint.Layer(4, 4, 1, 6, 17), new Footprint.Layer(-4, 4, 1, 6, 17),
+                            new Footprint.Layer(4, -4, 1, 6, 17), new Footprint.Layer(-4, -4, 1, 6, 17),
+                            Footprint.Layer.centred(1.5, 15, 18)),
+                            List.of(Footprint.Layer.centred(5.5, 0, 5), Footprint.Layer.centred(2.5, 5, 7)))));
+
+    /** Parts designed at one size shown at {@code size} of it: heights and display scales alike. */
+    private static List<Part> shown(float size, Part... parts) {
+        List<Part> out = new ArrayList<>();
+        for (Part part : parts) {
+            out.add(new Part(part.model(), part.stages(), part.until(), part.height() * size, part.scale() * size,
+                    part.motion()));
+        }
+        return List.copyOf(out);
+    }
 
     private static final int FLASH_TICKS = 4;
     /** Ticks of a hit's shake, and its offset on the first one (blocks; it dies down each tick after). */
@@ -723,6 +739,11 @@ public final class ModelTowerLook implements TowerLook {
         static Box of(double x0, double y0, double z0, double x1, double y1, double z1, Material material) {
             return new Box((float) x0, (float) y0, (float) z0, (float) x1, (float) y1, (float) z1, material, false);
         }
+
+        /** This box {@code k} times as big about the base. */
+        Box scaled(float k) {
+            return new Box(x0 * k, y0 * k, z0 * k, x1 * k, y1 * k, z1 * k, material, bright);
+        }
     }
 
     /**
@@ -754,12 +775,20 @@ public final class ModelTowerLook implements TowerLook {
             List<Box> out = new ArrayList<>();
             if (CORE.equals(look)) {
                 core(out, stage, roof);
-            } else {
-                tower(out, stage, roof, cloth);
+                scatter(out, look, stage);
+                // designed at twice the old size like the models, shown at CORE_SIZE of it
+                out.replaceAll(box -> box.scaled(CORE_SIZE));
+                return out;
             }
-            // building blocks scattered once heavily damaged
+            tower(out, stage, roof, cloth);
+            scatter(out, look, stage);
+            return out;
+        }
+
+        /** Building blocks scattered once heavily damaged. */
+        private static void scatter(List<Box> out, String look, int stage) {
             double[][] spots = {{-3.9, -2.6, 0.7}, {3.2, 1.9, 0.6}, {-1.0, -4.0, 0.55}, {2.6, -3.6, 0.8}};
-            double k = CORE.equals(look) ? 2.3 : 1;   // round the core's (twice as big) music box
+            double k = CORE.equals(look) ? 2.3 : 1;   // round the core's (as designed: twice as big) music box
             for (int n = 0; n < spots.length; n++) {
                 double[] s = spots[n];
                 boolean shown = stage >= RUIN || stage >= 2 && n < 2;
@@ -767,7 +796,6 @@ public final class ModelTowerLook implements TowerLook {
                 out.add(Box.of(s[0] * k, 0, s[1] * k, s[0] * k + size, size, s[1] * k + size,
                         shown ? TOY_BLOCKS[n] : NONE));
             }
-            return out;
         }
 
         private static Material keep(boolean keep, Material material) {

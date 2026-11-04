@@ -22,10 +22,13 @@ class FootprintTest {
         assertEquals(2.5, tower.halfWidth(false), 1e-9);
         assertEquals(5 * 5 * 2, Footprint.blocks(tower.layers(true), 0.5, 64, 0.5).size(), "the ruin's stub");
         Footprint core = ModelTowerLook.SPECS.get(ModelTowerLook.CORE).footprint();
-        assertEquals(7.5, core.halfWidth(false), 1e-9, "the music box ±7, its lid ±7.5");
-        assertEquals(7.5, core.within(10).halfWidth(false), 1e-9, "the 장난감 왕국 keeps 10 clear");
+        assertEquals(5.5, core.halfWidth(false), 1e-9, "the music box ±5.25, its lid ±5.6");
+        assertEquals(5.5, core.within(10).halfWidth(false), 1e-9, "the 장난감 왕국 keeps 10 clear");
+        assertEquals(11 * 11 * 6, Footprint.blocks(core.layers(false).subList(0, 1), 0.5, 64, 0.5).size(),
+                "an 11 × 11 music box, 6 high");
         assertEquals(4.5, core.within(5).halfWidth(false), 1e-9, "a small map's core: cut to its room");
-        assertEquals(3, core.within(5).standing().size(), "the box, keep and spire: the turrets do not fit");
+        assertEquals(7, core.within(5).standing().size(), "the box, keep, spire and the turrets' middle columns");
+        assertTrue(core.height(false) <= 1.62 * 12, "the core's hitbox eyes stay over its walls");
         // the tower's hitbox eyes (Mannequin 1.62 × scale) stay out of the walls: a hitbox in a block suffocates
         assertTrue(tower.height(false) <= 1.62 * 8.75);
     }

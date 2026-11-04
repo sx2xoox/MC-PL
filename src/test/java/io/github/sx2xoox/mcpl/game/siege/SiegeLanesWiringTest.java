@@ -136,7 +136,7 @@ class SiegeLanesWiringTest {
             Footprint.Box walls = tower.keepOut(0);
             assertNotNull(walls);
             // the model's size, cut to the room the map keeps clear (the fallback's core has 5)
-            double reach = Math.min(tower.isCore() ? 7.5 : 2.5, tower.site().radius() - 0.5);
+            double reach = Math.min(tower.isCore() ? 5.5 : 2.5, tower.site().radius() - 0.5);
             assertEquals(reach, walls.maxX() - base.getX(), 1.0E-9, tower.id());
             // the hitbox of a tower reaches past its ground walls: a click at the building lands on the hitbox
             Mannequin hitbox = tower.hitbox();

@@ -365,8 +365,8 @@ class ModelTowerLookTest {
         ModelTowerLook look = new ModelTowerLook(plugin, audience);
         assertEquals(8.75, look.hitboxScale("front", 2.5), 1e-9);
         assertEquals(8.75, look.hitboxScale("bottom_inner", 2.5), 1e-9);
-        assertEquals(16, look.hitboxScale("core", 2.5), 1e-9, "the core is twice as big");
-        assertEquals(8, look.hitboxScale("core", 1.25), 1e-9, "follows the configured scale");
+        assertEquals(12, look.hitboxScale("core", 2.5), 1e-9, "the core is 1.5 times as big as it was");
+        assertEquals(6, look.hitboxScale("core", 1.25), 1e-9, "follows the configured scale");
         assertEquals(ModelTowerLook.CORE_BAR_HEIGHT, look.barHeight("blue_core"), 1e-9);
         assertEquals(TowerLook.BAR_HEIGHT, look.barHeight("top_outer"), 1e-9);
         // any id gets a look: the rules may name their towers freely

@@ -3,7 +3,7 @@
 
   장난감 성 망루 (tower)       a cream-brick watchtower on a lilac plinth: arched door, round windows, a team-coloured
                                band and shingled cone roof, a gold finial and a waving team pennant
-  왕관 쓴 오르골 성 (core)     twice the tower's footprint: a pink music box on gold ball feet (music notes, the drum
+  왕관 쓴 오르골 성 (core)     1.5 times its old size: a pink music box on gold ball feet (music notes, the drum
                                and comb in a front window, a team lid set with glowing gems, a wind-up key turning on
                                its side) carrying a castle: a keep with a face, a tall team spire whose tip jewel
                                turns, four turrets with team bands and roofs, a big gold crown turning round the
@@ -189,8 +189,11 @@ FLAG_SCALE = 2
 
 TURRETS = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
 
-# The core is twice the old size (v2: 14 x 14 music box, a 34-block soap bubble): designed at real size and shown as
-# slabs of 24 blocks at display scale 8. Stepped roof tiers end exactly on the slab border y = 24.
+# The core is designed at twice the old size (a 14 x 14 music box, the spire's jewel at ~34 blocks) as slabs of 24
+# blocks at display scale 8, and shown at CORE_SHOWN of that (every part's centre and scale, PARTS; ModelTowerLook
+# CORE_SIZE): 1.5 times the old size, a 10.5 x 10.5 music box under a ~26-block spire. Stepped roof tiers end exactly on
+# the slab border y = 24 (as designed).
+CORE_SHOWN = 0.75
 CORE_BODY = 8
 CORE_SLAB = 24
 CORE_TURRET_ROOF = [(2.0, 1.5), (1.55, 1.5), (1.05, 1.4), (0.55, 1.2)]     # 19.6 + 4.4 = the slab border
@@ -217,9 +220,9 @@ def _note(b, name, x, y, z, side):
 
 
 def core_body(stage):
-    """왕관 쓴 오르골 성, twice the old size: a pink music box on gold ball feet with gold bands, music notes on every
-    side and its open drum and comb in a cream window at the front, a team lid set with gems; on it a tall keep with a
-    face of round windows, a team spire to 31.5 blocks, four corner turrets with team bands and roofs."""
+    """왕관 쓴 오르골 성 as designed (shown at CORE_SHOWN): a pink music box on gold ball feet with gold bands, music
+    notes on every side and its open drum and comb in a cream window at the front, a team lid set with gems; on it a
+    tall keep with a face of round windows, a team spire to 31.5 blocks, four corner turrets with team bands and roofs."""
     b = Build()
     ruin = stage >= 3
     wall = _wall(stage)
@@ -425,7 +428,8 @@ def bubble(rx, height, tiers=9, sink=0.5):
     return b
 
 
-# kind -> (half width, height, display scale, centre): the core's bubble fills its clearing (radius 10, 36 high)
+# kind -> (half width, height, display scale, centre), as designed: the core's bubble is shown at CORE_SHOWN of it
+# (radius 7.35, 26.6 high, inside its clearing of radius 10)
 SHIELDS = {"tower": (4.4, 18.0, SHIELD_SCALE, SHIELD_CENTRE), "core": (9.8, 35.5, 16, 14.0)}
 
 
@@ -546,7 +550,10 @@ ALL["structure/telescope_scope"] = lambda: telescope_scope().centred("structure/
 PARTS = {
     "tower": [("body", 4, 6.0, BODY, "none"), ("top", 3, 18.0, BODY, "none"),
               ("flag", 0, FLAG_CENTRE, FLAG_SCALE, "flag"), ("shield", 0, SHIELD_CENTRE, SHIELD_SCALE, "shield")],
-    "core": [("body", 4, 12.0, CORE_BODY, "none"), ("top", 3, 36.0, CORE_BODY, "none"),
-             ("crown", 0, CROWN_CENTRE, CROWN_SCALE, "crown"), ("star", 0, STAR_CENTRE, STAR_SCALE, "crown"),
-             ("key", 0, KEY_CENTRE, CORE_BODY, "key"), ("shield", 0, SHIELDS["core"][3], SHIELDS["core"][2], "shield")],
+    "core": [(part, stages, centre * CORE_SHOWN, scale * CORE_SHOWN, motion)
+             for part, stages, centre, scale, motion in (
+                 ("body", 4, 12.0, CORE_BODY, "none"), ("top", 3, 36.0, CORE_BODY, "none"),
+                 ("crown", 0, CROWN_CENTRE, CROWN_SCALE, "crown"), ("star", 0, STAR_CENTRE, STAR_SCALE, "crown"),
+                 ("key", 0, KEY_CENTRE, CORE_BODY, "key"),
+                 ("shield", 0, SHIELDS["core"][3], SHIELDS["core"][2], "shield"))],
 }
