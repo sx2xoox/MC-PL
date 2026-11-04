@@ -160,7 +160,7 @@ public final class SiegeMatch implements GameInstance {
         sounds = new SiegeSounds(session);
         guidance = new Guidance(session, messages);
         guidance.enabled(hudSettings.guidance());
-        guidance.fallback(this::defaultGuidance);
+        // no standing "where to go" line: the action bar only carries short alerts (a tower under attack, a shield)
         damageNumbers = new DamageNumbers(session, hudSettings.damageNumberRange());
         damageNumbers.enabled(hudSettings.damageNumbers());
         progress = new SiegeProgress(this, SiegeProgressSettings.read(session.gameConfig()));
@@ -1229,29 +1229,6 @@ public final class SiegeMatch implements GameInstance {
     }
 
     // =================================================================== guidance
-
-    /** The "▶ 지금 할 일" line when nothing more urgent is suggested. */
-    private @Nullable Component defaultGuidance(Player player) {
-        LaneSites.Side side = side(player.getUniqueId());
-        if (side == null) {
-            return null;
-        }
-        return switch (phase) {
-            case PREP -> messages.get(rerollsLeft(player) > 0 ? "guide.prep-reroll" : "guide.prep",
-                    Messages.tag("count", rerollsLeft(player)));
-            case FIGHT -> {
-                if (session.isRespawning(player.getUniqueId())) {
-                    yield messages.get("guide.respawning");
-                }
-                Tower target = nearestTarget(player);
-                yield target == null ? null : messages.get(target.isCore() ? "guide.core" : "guide.tower",
-                        Messages.tag("name", target.name()),
-                        Messages.tag("distance", (int) Math.round(target.base().distance(player.getLocation()))));
-            }
-            case BREAK -> messages.get("guide.break");
-            case OVER -> null;
-        };
-    }
 
     /** The closest enemy structure {@code player} can hit now (no shield), or null. */
     public @Nullable Tower nearestTarget(Player player) {

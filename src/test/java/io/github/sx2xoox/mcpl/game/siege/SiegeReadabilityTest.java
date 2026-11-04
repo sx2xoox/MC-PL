@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.siege;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -235,18 +236,16 @@ class SiegeReadabilityTest {
         SiegeMatch match = start(2);
         Player a = member(match, 0, 0);
         Guidance guidance = match.guidance();
-        String fallback = Scenario.plain(guidance.current(a));
-        assertTrue(fallback.contains("바깥 타워") && fallback.contains("m"), "default: the nearest target: " + fallback);
+        assertNull(guidance.current(a), "no standing 'where to go' line");
         actionBars(a);
         guidance.suggest(a, Component.text("A"), Guidance.ALERT);
         guidance.suggest(a, Component.text("B"), Guidance.INFO);
         assertEquals("A", Scenario.plain(guidance.current(a)), "a lower priority waits");
-        assertTrue(actionBars(a).stream().anyMatch(bar -> bar.startsWith("▶ 지금 할 일") && bar.endsWith("A")));
+        assertTrue(actionBars(a).stream().anyMatch(bar -> bar.equals("A")));
         guidance.suggest(a, Component.text("C"), Guidance.URGENT, 5);
         assertEquals("C", Scenario.plain(guidance.current(a)));
         h.ticks(6);
-        assertEquals(fallback.substring(0, 6), Scenario.plain(guidance.current(a)).substring(0, 6),
-                "back to the default line when it runs out");
+        assertNull(guidance.current(a), "nothing once it runs out");
     }
 
     @Test

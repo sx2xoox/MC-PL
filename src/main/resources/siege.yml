@@ -95,13 +95,7 @@ structure:
   destroyed: "<red>💥</red> <owner><gray>의 <white><name></white> 파괴! <player><gray> (<team><gray>) <gold>+<points>점"
 
 guide:
-  line: "<gold><bold>▶ 지금 할 일</bold></gold> <dark_gray>│</dark_gray> <line>"
-  prep: "<gray>검 우클릭 <white>액티브</white> · <white>F</white> 궁극기"
-  prep-reroll: "<white>웅크리고 검 우클릭</white><gray>으로 능력 리롤 (<white><count>번</white>)"
-  respawning: "<gray>본진에서 곧 부활합니다"
-  tower: "<white><name></white><gray> 부수기 <dark_gray>·</dark_gray> <white><distance>m"
-  core: "<gold><bold>코어</bold></gold><gray> 부수기 <dark_gray>·</dark_gray> <white><distance>m"
-  break: "<gray>쉬는 시간"
+  line: "<line>"
 
 tutorial:
   title-1: "<aqua><bold>라인을 밀어라"
@@ -123,7 +117,6 @@ hud:
   phase-over: "<gray>경기 종료"
   score: "<gray>점수 </gray><team_a> <white><bold><a></bold></white><gray> : </gray><white><bold><b></bold></white> <team_b>"
   rounds: "<gray>라운드 </gray><white><a></white><gray> : </gray><white><b>"
-  towers: "<gray>타워 </gray><white><a></white><gray> : </gray><white><b>"
   level: "<yellow>Lv.<white><level></white> <gray>(<xp>/<next>)"
   level-max: "<yellow>Lv.<white><level></white> <gold>MAX"
   level-gold: "<level> <gold>💰 <money>"

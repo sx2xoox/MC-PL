@@ -183,8 +183,8 @@ final class SiegeHud {
     }
 
     /**
-     * Five lines: the score, the rounds won, the standing structures, my level and gold, the next big
-     * objective; in the preparation my ability (and rerolls) too. The round and its time are on the boss bar only.
+     * Four lines: the score, the rounds won, my level and gold, the dragon's timer; in the preparation my ability
+     * (and rerolls) too. The round and its time are on the boss bar only.
      */
     List<Component> lines(Player viewer) {
         SiegeScore score = match.score();
@@ -196,10 +196,6 @@ final class SiegeHud {
                 Messages.tag("a", score.points(0)), Messages.tag("b", score.points(1))));
         lines.add(messages.get("hud.rounds", Messages.tag("a", score.roundWins(0)),
                 Messages.tag("b", score.roundWins(1))));
-        if (match.phase() != SiegeMatch.Phase.BREAK && match.phase() != SiegeMatch.Phase.OVER) {
-            lines.add(messages.get("hud.towers", Messages.tag("a", standing(match.sideOf(0))),
-                    Messages.tag("b", standing(match.sideOf(1)))));
-        }
         UUID id = viewer.getUniqueId();
         if (match.teamIndex(id) < 0) {
             lines.add(messages.get("hud.spectating"));

@@ -1074,7 +1074,7 @@ public final class JungleObjectives implements Listener {
             return null;
         }
         List<Component> parts = new ArrayList<>();
-        for (ObjectiveKind kind : List.of(ObjectiveKind.DRAGON, ObjectiveKind.TEDDY, ObjectiveKind.RABBIT)) {
+        for (ObjectiveKind kind : List.of(ObjectiveKind.DRAGON)) {
             long soonest = Long.MAX_VALUE;
             boolean up = false;
             for (Site site : sites) {
