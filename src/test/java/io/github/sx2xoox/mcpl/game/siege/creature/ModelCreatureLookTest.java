@@ -16,6 +16,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels;
 import io.github.sx2xoox.mcpl.core.pack.ModelRef;
 import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
@@ -155,6 +159,12 @@ class ModelCreatureLookTest {
             // the models face -z: turned half round from the mob's yaw so the face looks where the mob looks
             assertEquals(270, Math.floorMod((int) at.getYaw(), 360));
         }
+        assertFacesItsYaw(rabbit, body);
+        for (float yaw : new float[] {0, 45, 90, 135, 180, -135, -90, -45}) {
+            body.teleport(new Location(world, 8, 64, 6, yaw, 0));
+            server.getScheduler().performTicks(2);
+            assertFacesItsYaw(rabbit, body);
+        }
         assertEquals(8, rabbit.hitbox().getLocation().getX(), 1e-6);
         Vector3f lift = rabbit.displays().get(0).getTransformation().getTranslation();
         assertTrue(lift.y > 0.9, "the model's centre sits above the feet");
@@ -246,6 +256,56 @@ class ModelCreatureLookTest {
         assertFalse(look.running());
         assertTrue(audience.listeners.isEmpty(), "unsubscribed");
         assertEquals(before + 2, world.getEntities().stream().filter(e -> !e.isDead()).count(), "only the mobs");
+    }
+
+    /**
+     * As the client draws them (the item display's half turn included), every part's front (the -z the models are
+     * authored with, where the eyes are) points where the mob looks.
+     */
+    static void assertFacesItsYaw(ModelCreatureLook.ModelCreature creature, LivingEntity body) {
+        Location look = body.getLocation();
+        Vector3f wanted = new Vector3f((float) look.getDirection().getX(), 0, (float) look.getDirection().getZ())
+                .normalize();
+        for (ItemDisplay display : creature.displays()) {
+            Vector3f front = ItemDisplayModels.front(display.getLocation().getYaw(), display.getTransformation());
+            assertTrue(front.dot(wanted) > 0.95f, creature.kind() + " at yaw " + look.getYaw() + " looks " + front
+                    + ", not " + wanted);
+        }
+    }
+
+    @Test
+    void theAuthoredFrontIsWhereTheEyesAre() throws Exception {
+        // the convention every turn relies on: the models' faces (eyes) are on the -z side (model units, centre 8)
+        for (String kind : CreatureModels.CREATURES.keySet()) {
+            Path file = Path.of("src/main/resourcepack-src/models/creature/" + kind + ".bbmodel");
+            JsonObject model = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+            double sum = 0;
+            int eyes = 0;
+            for (JsonElement element : model.getAsJsonArray("elements")) {
+                JsonObject box = element.getAsJsonObject();
+                if (box.get("name").getAsString().startsWith("eye")) {
+                    sum += box.getAsJsonArray("from").get(2).getAsDouble()
+                            + box.getAsJsonArray("to").get(2).getAsDouble();
+                    eyes += 2;
+                }
+            }
+            assertTrue(eyes > 0, kind + " has eyes");
+            assertTrue(sum / eyes < 8, kind + "'s eyes are on the -z side");
+        }
+    }
+
+    @Test
+    void aDyingMobIsNotShownToPackPlayers() {
+        Zombie body = mob(5, 5, 0);
+        ModelCreatureLook.ModelCreature soldier = look.attach(body, "melee", Color.BLUE);
+        assertFalse(withPack.canSee(body));
+        body.setHealth(0); // dies: the death event's listeners remove the look while the body plays its death
+        assertTrue(body.isDead());
+        soldier.remove();
+        assertFalse(withPack.canSee(body),
+                "the dying vanilla body (and its vanilla name) never appears in the model's place");
+        assertTrue(without.canSee(body));
+        assertEquals(0, look.creatureCount());
     }
 
     @Test

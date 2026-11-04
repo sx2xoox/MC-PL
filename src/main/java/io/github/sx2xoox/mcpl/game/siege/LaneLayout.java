@@ -52,10 +52,63 @@ public final class LaneLayout {
         return new Location(world, originX + objective.x() + 0.5, objective.y(), originZ + objective.z() + 0.5);
     }
 
-    /** The base of a structure of {@code owner}, facing the enemy base (BLUE faces +x, yaw −90; RED faces −x, yaw 90). */
+    /** The base of a structure of {@code owner}, its front towards the enemies coming at it ({@link #facing}). */
     public Location at(LaneSites.Structure structure, LaneSites.Side owner) {
         return new Location(world, originX + structure.x() + 0.5, structure.y(), originZ + structure.z() + 0.5,
-                owner == LaneSites.Side.BLUE ? -90f : 90f, 0f);
+                facing(sites, structure, owner), 0f);
+    }
+
+    /** How far along its lane a tower looks for the direction its enemies come from, blocks. */
+    static final double TOWER_LOOK_AHEAD = 16;
+
+    /**
+     * The yaw a structure's front (door, windows) faces: a lane tower looks down its lane towards the enemy base (where
+     * the enemy minions and players come from, {@link #TOWER_LOOK_AHEAD} blocks along the path its side's minions
+     * walk), a core at the enemy core. Falls back to straight at the enemy end of the map (BLUE +x, RED −x).
+     */
+    public static float facing(LaneSites sites, LaneSites.Structure structure, LaneSites.Side owner) {
+        LaneSites.Side enemy = owner == LaneSites.Side.BLUE ? LaneSites.Side.RED : LaneSites.Side.BLUE;
+        double tx = Double.NaN;
+        double tz = Double.NaN;
+        for (LaneSites.Lane lane : LaneSites.Lane.values()) {
+            if (!sites.towers(owner, lane).contains(structure)) {
+                continue;
+            }
+            List<LaneSites.Point> path = new ArrayList<>(sites.lanePath(lane));
+            if (owner == LaneSites.Side.RED) {
+                java.util.Collections.reverse(path);
+            }
+            int nearest = -1;
+            double best = Double.MAX_VALUE;
+            for (int i = 0; i < path.size(); i++) {
+                double d = flatSquared(path.get(i).x(), path.get(i).z(), structure.x(), structure.z());
+                if (d < best) {
+                    best = d;
+                    nearest = i;
+                }
+            }
+            for (int i = Math.max(0, nearest); i < path.size(); i++) {
+                LaneSites.Point point = path.get(i);
+                tx = point.x();
+                tz = point.z();
+                if (flatSquared(tx, tz, structure.x(), structure.z()) >= TOWER_LOOK_AHEAD * TOWER_LOOK_AHEAD) {
+                    break;
+                }
+            }
+        }
+        if (Double.isNaN(tx) || flatSquared(tx, tz, structure.x(), structure.z()) < 1) {
+            LaneSites.Structure core = sites.core(enemy);
+            tx = core.x();
+            tz = core.z();
+        }
+        if (flatSquared(tx, tz, structure.x(), structure.z()) < 1) {
+            return owner == LaneSites.Side.BLUE ? -90f : 90f;
+        }
+        return (float) Math.toDegrees(Math.atan2(-(tx - structure.x()), tz - structure.z()));
+    }
+
+    private static double flatSquared(double x1, double z1, double x2, double z2) {
+        return (x1 - x2) * (x1 - x2) + (z1 - z2) * (z1 - z2);
     }
 
     public List<Location> spawns(LaneSites.Side side) {

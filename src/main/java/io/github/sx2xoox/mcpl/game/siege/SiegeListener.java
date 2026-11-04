@@ -109,6 +109,10 @@ final class SiegeListener implements Listener {
      * The server logs the death of every named mob ("Named entity … died") after the death event: the match's minions
      * and monsters die by the hundred, so they lose their name tag once every other listener has read it. Whether the
      * dead one is the match's is asked first (the systems stop tracking their creatures during the event).
+     *
+     * <p>The name tag goes with the name: the client shows a name tag whenever {@code CustomNameVisible} is set, and
+     * without a custom name it shows the entity type's name, so a minion would say "스켈레톤" through its death
+     * animation.
      */
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onCreatureDying(EntityDeathEvent event) {
@@ -122,6 +126,7 @@ final class SiegeListener implements Listener {
         LivingEntity dead = dyingCreature;
         dyingCreature = null;
         if (dead != null && dead.equals(event.getEntity())) {
+            dead.setCustomNameVisible(false);
             dead.customName(null);
         }
     }

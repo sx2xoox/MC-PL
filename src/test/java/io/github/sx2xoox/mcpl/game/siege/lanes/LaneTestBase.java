@@ -55,6 +55,8 @@ abstract class LaneTestBase {
     TestArena arena;
     SiegeSystems systems;
     CreatureMover mover = CreatureMover.pathfinder();
+    /** The skin the creatures wear (null = {@link #recordingSkin}). */
+    @Nullable CreatureSkin skin;
     /** What the creatures' skins were asked to play: {@code "<kind> attack"}, {@code "<kind> hit"}. */
     final List<String> skinEvents = new ArrayList<>();
     /** A skin that records its visuals' calls (the look is the match's: vanilla bodies + a skin). */
@@ -107,7 +109,7 @@ abstract class LaneTestBase {
             arena.add(join("R" + (i + 1)), LaneSites.Side.RED);
         }
         systems = new SiegeSystems(arena, config,
-                new SkinnedCreatureLook(new VanillaCreatureLook(), recordingSkin), mover);
+                new SkinnedCreatureLook(new VanillaCreatureLook(), skin != null ? skin : recordingSkin), mover);
         for (Listener listener : systems.listeners()) {
             Bukkit.getPluginManager().registerEvents(listener, h.hub.plugin());
         }

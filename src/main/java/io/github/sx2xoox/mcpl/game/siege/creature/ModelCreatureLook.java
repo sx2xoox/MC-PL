@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
 
+import io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels;
 import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Attack;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Motion;
@@ -23,7 +24,6 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.entity.BlockDisplay;
-import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
@@ -177,10 +177,11 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
         }
     }
 
-    private static void animate(Display display, Transformation to, int ticks) {
+    /** A model display to the pose {@code to} (in the model's authored frame, front -z) in {@code ticks}. */
+    private static void animate(ItemDisplay display, Transformation to, int ticks) {
         display.setInterpolationDelay(0);
         display.setInterpolationDuration(ticks);
-        display.setTransformation(to);
+        display.setTransformation(ItemDisplayModels.asAuthored(to));
     }
 
     /**
@@ -298,7 +299,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                     d.setVisibleByDefault(false); // only players with the pack are shown it
                     d.setItemStack(part.ref().item(team));
                     d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE);
-                    d.setTransformation(pose(part, 0, false));
+                    d.setTransformation(ItemDisplayModels.asAuthored(pose(part, 0, false)));
                     d.setTeleportDuration(TELEPORT_TICKS);
                     d.setViewRange(VIEW_RANGE);
                     d.setShadowRadius(0);
@@ -357,8 +358,14 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             displays.clear();
             hitbox.remove();
             byHitbox.remove(hitbox.getUniqueId());
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                player.showEntity(plugin, body); // the vanilla mob back for everyone
+            if (body.isValid() && !body.isDead()) {
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    player.showEntity(plugin, body); // the vanilla mob back for everyone
+                }
+            } else if (body.isDead()) {
+                // Died: pack players never see the vanilla body (its death animation, its vanilla name) appear in
+                // the model's place; a little poof instead. The server forgets the hidden body when it is removed.
+                body.getWorld().spawnParticle(Particle.POOF, last.clone().add(0, 0.5, 0), 8, 0.3, 0.3, 0.3, 0.02);
             }
             creatures.remove(this);
             stopWhenIdle();
@@ -370,7 +377,8 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             return kind;
         }
 
-        List<ItemDisplay> displays() {
+        /** The model displays, one per part (tests, checks). */
+        public List<ItemDisplay> displays() {
             return List.copyOf(displays);
         }
 
@@ -422,8 +430,10 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 return;
             }
             if (!body.isValid() || body.isDead()) {
-                // gone without a remove(): a little poof where it stood, then clean up
-                body.getWorld().spawnParticle(Particle.POOF, last.clone().add(0, 0.5, 0), 8, 0.3, 0.3, 0.3, 0.02);
+                // gone without a remove(): a little poof where it stood (remove() makes it for a death), then clean up
+                if (!body.isDead()) {
+                    body.getWorld().spawnParticle(Particle.POOF, last.clone().add(0, 0.5, 0), 8, 0.3, 0.3, 0.3, 0.02);
+                }
                 remove();
                 return;
             }
@@ -506,7 +516,11 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             }
         }
 
-        /** The display location for the mob at {@code at}: models face -z, so turned half round from the mob. */
+        /**
+         * The display location for the mob at {@code at}. A yaw turns an entity's +z towards where it looks; the models
+         * face -z as authored ({@link ItemDisplayModels#asAuthored} keeps them so), so the display is turned half round
+         * from the mob and the face looks where the mob looks (and walks).
+         */
         private Location facing(Location at) {
             Location out = at.clone();
             out.setYaw(at.getYaw() + 180);
@@ -547,7 +561,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                     d.setVisibleByDefault(false);
                     d.setItemStack(part.ref().item(owner));
                     d.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.NONE);
-                    d.setTransformation(turned(pose(part, 0, false)));
+                    d.setTransformation(ItemDisplayModels.asAuthored(turned(pose(part, 0, false))));
                     d.setViewRange(VIEW_RANGE * 2);
                     d.setShadowRadius(0);
                 }));

@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
+import io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels;
 import io.github.sx2xoox.mcpl.core.pack.ModelRef;
 import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import net.kyori.adventure.text.format.TextColor;
@@ -233,7 +234,8 @@ public final class ModelTowerLook implements TowerLook {
             this.look = look;
             this.spec = spec;
             this.tint = tint;
-            // models face north (-Z); turn the front towards the base's yaw (yaw 0 = south)
+            // models face north (-Z) as authored (item displays: ItemDisplayModels.asAuthored); turn the front
+            // towards the base's yaw (yaw 0 = south), for the models and the fallback boxes alike
             this.facing = new Quaternionf().rotationY((float) Math.PI - (float) Math.toRadians(base.getYaw()));
             this.roof = coloured(tint, "_CONCRETE", Material.WHITE_CONCRETE);
             this.cloth = coloured(tint, "_WOOL", Material.WHITE_WOOL);
@@ -245,7 +247,7 @@ public final class ModelTowerLook implements TowerLook {
             for (Part part : spec.parts()) {
                 Shown shown = new Shown(part, spawnModel(world, at, part));
                 parts.add(shown);
-                animate(shown.display, transform(shown), 1);
+                animateModel(shown.display, transform(shown), 1);
             }
 
             for (Box box : FallbackShape.of(look, 0, roof, cloth)) {
@@ -288,7 +290,7 @@ public final class ModelTowerLook implements TowerLook {
             this.shielded = shielded;
             for (Shown shown : parts) {
                 if (shown.part.motion() == Motion.SHIELD) {
-                    animate(shown.display, transform(shown), SHIELD_POP_TICKS);
+                    animateModel(shown.display, transform(shown), SHIELD_POP_TICKS);
                 }
             }
             animate(fallbackShield, shieldBlockTransform(shielded), SHIELD_POP_TICKS);
@@ -315,7 +317,7 @@ public final class ModelTowerLook implements TowerLook {
             for (Shown shown : parts) {
                 if (shown.part.motion() == Motion.SHIELD && shielded && !shown.hidden) {
                     // the bubble wobbles where it was poked
-                    animate(shown.display, transform(shown, 0, 0, 1.05f), 2);
+                    animateModel(shown.display, transform(shown, 0, 0, 1.05f), 2);
                 }
             }
         }
@@ -445,7 +447,7 @@ public final class ModelTowerLook implements TowerLook {
                 boolean still = shown.part.motion() == Motion.SHIELD && !shielded;
                 if (period > 0 && !shown.hidden && !still && tick % period == 1) {
                     shown.step++;
-                    animate(shown.display, transform(shown), period);
+                    animateModel(shown.display, transform(shown), period);
                 }
             }
             if (fallbackSpinner != null && tick % 40 == 1) {
@@ -458,7 +460,7 @@ public final class ModelTowerLook implements TowerLook {
                 float sign = shake % 2 == 0 ? 1 : -1;
                 for (Shown shown : parts) {
                     if (shown.part.stages() > 0 && shown.collapseAt < 0) {
-                        animate(shown.display, transform(shown, sign * amount, -sign * amount, 1), 1);
+                        animateModel(shown.display, transform(shown, sign * amount, -sign * amount, 1), 1);
                     }
                 }
             }
@@ -505,12 +507,12 @@ public final class ModelTowerLook implements TowerLook {
                     shown.display.setItemStack(part.ref(look, next).item(tint));
                     if (shown.hidden) {
                         shown.hidden = false;
-                        animate(shown.display, transform(shown), 6);
+                        animateModel(shown.display, transform(shown), 6);
                     }
                 } else if (next == RUIN && part.stages() > 0) {
                     // the upper slab comes down with the building
                     shown.collapseAt = (int) tick + COLLAPSE_TICKS;
-                    animate(shown.display, collapseTransform(shown), COLLAPSE_TICKS);
+                    animateModel(shown.display, collapseTransform(shown), COLLAPSE_TICKS);
                 } else if (next == RUIN) {
                     // the bubble pops, the crown and the key tumble off
                     if (part.motion() != Motion.SHIELD && !shown.hidden) {
@@ -520,13 +522,13 @@ public final class ModelTowerLook implements TowerLook {
                     }
                     shown.hidden = true;
                     shown.collapseAt = (int) tick + 5;
-                    animate(shown.display, transform(shown), 4);
+                    animateModel(shown.display, transform(shown), 4);
                 } else if (!shown.hidden) {
                     shown.hidden = true;
                     Location spot = base.clone().add(0, part.height(), 0);
                     base.getWorld().spawnParticle(Particle.DUST, spot, 20, 0.5, 0.5, 0.5, 0,
                             new Particle.DustOptions(tint, 1.2f));
-                    animate(shown.display, transform(shown), 6);
+                    animateModel(shown.display, transform(shown), 6);
                 }
             }
             List<Box> shape = FallbackShape.of(look, next, roof, cloth);
@@ -645,10 +647,21 @@ public final class ModelTowerLook implements TowerLook {
             return display;
         }
 
-        private static void animate(Display display, Transformation to, int ticks) {
+        /** A block display of the fallback to {@code to} in {@code ticks}. */
+        private static void animate(BlockDisplay display, Transformation to, int ticks) {
             display.setInterpolationDelay(0);
             display.setInterpolationDuration(ticks);
             display.setTransformation(to);
+        }
+
+        /**
+         * A model display to {@code to} (written for the model as authored, front -z, like the fallback's boxes) in
+         * {@code ticks}: the client's half turn of an item display's item is undone ({@link ItemDisplayModels}).
+         */
+        private static void animateModel(ItemDisplay display, Transformation to, int ticks) {
+            display.setInterpolationDelay(0);
+            display.setInterpolationDuration(ticks);
+            display.setTransformation(ItemDisplayModels.asAuthored(to));
         }
     }
 

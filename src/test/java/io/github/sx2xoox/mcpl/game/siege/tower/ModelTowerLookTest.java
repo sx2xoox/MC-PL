@@ -15,8 +15,16 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKingdomMap;
+import io.github.sx2xoox.mcpl.core.pack.ItemDisplayModels;
 import io.github.sx2xoox.mcpl.core.pack.ModelRef;
 import io.github.sx2xoox.mcpl.core.pack.PackAudience;
+import io.github.sx2xoox.mcpl.game.siege.FallbackLaneSites;
+import io.github.sx2xoox.mcpl.game.siege.LaneLayout;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestServer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -238,6 +246,79 @@ class ModelTowerLookTest {
         assertEquals(1, Math.abs(across.z), 1e-4);
         assertTrue(door.getTransformation().getTranslation().x < -1.9, "on the front, towards -x");
         visual.remove();
+    }
+
+    @Test
+    void theModelsFaceTheBaseYawAsTheClientDrawsThem() throws Exception {
+        // the door and the two window "eyes" are on the models' -z side as authored
+        for (String look : List.of(ModelTowerLook.TOWER, ModelTowerLook.CORE)) {
+            JsonObject model = JsonParser.parseString(Files.readString(
+                    Path.of("src/main/resourcepack-src/models/structure/" + look + "_body_0.bbmodel")))
+                    .getAsJsonObject();
+            boolean door = false;
+            for (JsonElement element : model.getAsJsonArray("elements")) {
+                JsonObject box = element.getAsJsonObject();
+                if (box.get("name").getAsString().startsWith("door")) {
+                    door = true;
+                    assertTrue(box.getAsJsonArray("to").get(2).getAsDouble() < 8, look + "'s door is on -z");
+                }
+            }
+            assertTrue(door, look + " has a door");
+        }
+        for (String tower : List.of("outer", "core")) {
+            for (float yaw : new float[] {-90, 90, 0, 180}) {
+                ModelTowerLook.ModelVisual visual = spawn(tower, yaw);
+                Vector3f wanted = new Vector3f((float) -Math.sin(Math.toRadians(yaw)), 0,
+                        (float) Math.cos(Math.toRadians(yaw)));
+                for (Display model : visual.models()) {
+                    if (model.getTransformation().getScale().lengthSquared() < 1.0E-6f) {
+                        continue; // a hidden part (the shield while down)
+                    }
+                    Vector3f front = ItemDisplayModels.front(model.getLocation().getYaw(), model.getTransformation());
+                    assertTrue(front.dot(wanted) > 0.95f, tower + " at yaw " + yaw + ": a model looks " + front
+                            + ", not " + wanted);
+                }
+                visual.remove();
+            }
+        }
+    }
+
+    @Test
+    void everyToyKingdomStructureFacesTheEnemiesComingAtIt() {
+        for (LaneSites sites : List.of(new ToyKingdomMap(), new FallbackLaneSites(64))) {
+            for (LaneSites.Side side : LaneSites.Side.values()) {
+                LaneSites.Side enemy = side == LaneSites.Side.BLUE ? LaneSites.Side.RED : LaneSites.Side.BLUE;
+                LaneSites.Structure enemyCore = sites.core(enemy);
+                List<LaneSites.Structure> all = new ArrayList<>();
+                for (LaneSites.Lane lane : LaneSites.Lane.values()) {
+                    all.addAll(sites.towers(side, lane));
+                }
+                all.add(sites.core(side));
+                for (LaneSites.Structure structure : all) {
+                    float yaw = LaneLayout.facing(sites, structure, side);
+                    Vector3f toCore = new Vector3f(enemyCore.x() - structure.x(), 0, enemyCore.z() - structure.z())
+                            .normalize();
+                    String what = sites.getClass().getSimpleName() + " " + side + " " + structure.id();
+                    ModelTowerLook.ModelVisual visual = spawn(structure.id(), yaw);
+                    // the door and windows (models as the client draws them, and the vanilla look) face the enemy
+                    for (Display model : visual.models()) {
+                        if (model.getTransformation().getScale().lengthSquared() < 1.0E-6f) {
+                            continue;
+                        }
+                        Vector3f front = ItemDisplayModels.front(model.getLocation().getYaw(),
+                                model.getTransformation());
+                        assertTrue(front.dot(toCore) > 0.3f, what + ": a model looks " + front + ", the enemy core is "
+                                + toCore);
+                    }
+                    BlockDisplay door = visual.fallback().stream()
+                            .filter(d -> d instanceof BlockDisplay b && b.getBlock().getMaterial() == Material.OAK_PLANKS)
+                            .map(d -> (BlockDisplay) d).findFirst().orElseThrow();
+                    Vector3f doorAt = new Vector3f(door.getTransformation().getTranslation()).setComponent(1, 0);
+                    assertTrue(doorAt.normalize().dot(toCore) > 0.3f, what + ": the vanilla door is on the enemy side");
+                    visual.remove();
+                }
+            }
+        }
     }
 
     private static long solidFallbackBlocks(ModelTowerLook.ModelVisual visual) {

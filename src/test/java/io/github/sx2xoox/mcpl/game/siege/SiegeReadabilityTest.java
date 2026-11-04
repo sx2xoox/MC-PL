@@ -12,6 +12,7 @@ import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.game.GameStartException;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.game.siege.jungle.JungleObjectives;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
@@ -32,6 +33,7 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Zombie;
@@ -398,7 +400,24 @@ class SiegeReadabilityTest {
         minion.setHealth(0);
         bystander.setHealth(0);
         assertTrue(minion.customName() == null, "no \"Named entity ... died\" line per minion");
+        assertFalse(minion.isCustomNameVisible(),
+                "no name tag through the death animation: without a name the client would show \"좀비\"");
         assertNotNull(bystander.customName(), "entities the match does not own keep their name");
+
+        // the jungle's monsters too
+        JungleObjectives.Site camp = match.systems().jungle().sites().stream()
+                .filter(site -> site.isUp() && !site.mobs().isEmpty()).findFirst().orElse(null);
+        if (camp == null) {
+            h.tickUntil(() -> match.systems().jungle().sites().stream()
+                    .anyMatch(site -> site.isUp() && !site.mobs().isEmpty()), 4000, "a jungle camp");
+            camp = match.systems().jungle().sites().stream()
+                    .filter(site -> site.isUp() && !site.mobs().isEmpty()).findFirst().orElseThrow();
+        }
+        Mob monster = camp.mobs().getFirst();
+        assertTrue(monster.isCustomNameVisible());
+        monster.setHealth(0);
+        assertTrue(monster.customName() == null);
+        assertFalse(monster.isCustomNameVisible(), "a dying monster shows no vanilla name either");
     }
 
     private static @Nullable Zombie minion(Player in) {
