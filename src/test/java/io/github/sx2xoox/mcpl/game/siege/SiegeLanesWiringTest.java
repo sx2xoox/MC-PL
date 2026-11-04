@@ -366,10 +366,10 @@ class SiegeLanesWiringTest {
         for (String kind : List.of("CANNON", "MELEE", "RANGED", "TEDDY", "RABBIT", "DRAGON", "JELLY", "MICE")) {
             assertTrue(creatures.containsKey(kind), kind);
         }
-        assertNotNull(lanes.bar(creatures.get("CANNON")).packDisplay(),
-                "made in the spawn tick, the cannon's bar judged the golem at its unscaled height");
-        // A scaled mob's height settles once it ticks (MockBukkit never applies the scale): the cannon's golem
-        // (scale 0.6) then stands about as tall as its model, which once left its pack bar behind at the spawn.
+        assertNotNull(lanes.bar(creatures.get("RABBIT")).packDisplay(),
+                "the rabbit's model (ears and all) is much taller than its body: its own bar for pack players");
+        // A scaled body's height settles once it ticks (MockBukkit never applies the scale): every body then stands
+        // at its scaled height, the bars must follow whichever is right for each viewer.
         java.util.function.ToDoubleFunction<org.bukkit.entity.LivingEntity> height = c -> c.getHeight()
                 * c.getAttribute(org.bukkit.attribute.Attribute.SCALE).getValue();
         lanes.bodyHeight(height);

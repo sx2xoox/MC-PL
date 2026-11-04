@@ -18,12 +18,15 @@ import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
+import io.github.sx2xoox.mcpl.game.siege.creature.Telegraphs;
+import io.github.sx2xoox.mcpl.game.siege.creature.ToyShots;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Location;
+import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -63,6 +66,8 @@ public final class MinionWaves implements Listener {
     private final CreatureLook look;
     private final CreatureMover mover;
     private final Gold gold;
+    /** The archers' arrows and the cannons' shells in flight. */
+    private final ToyShots shots;
     private final Map<Mob, Minion> minions = new LinkedHashMap<>();
     private final List<int[]> heldChunks = new ArrayList<>();
     private final Map<LaneSites.Side, Long> empoweredUntil = new EnumMap<>(LaneSites.Side.class);
@@ -78,6 +83,7 @@ public final class MinionWaves implements Listener {
         this.look = look;
         this.mover = mover;
         this.gold = gold;
+        this.shots = new ToyShots(arena);
     }
 
     /** One live minion. */
@@ -211,6 +217,7 @@ public final class MinionWaves implements Listener {
         for (Minion minion : gone) {
             remove(minion);
         }
+        shots.tick();
     }
 
     /** The round is over: every minion goes. */
@@ -220,6 +227,7 @@ public final class MinionWaves implements Listener {
             remove(minion);
         }
         minions.clear();
+        shots.clear();
         empoweredUntil.clear();
         wave = 0;
         now = 0;
@@ -649,15 +657,103 @@ public final class MinionWaves implements Listener {
                 <= settings.leash() * settings.leash();
     }
 
+    /**
+     * A minion's attack (docs/siege-v2.md §2): the soldier's bayonet lands at once; the archer looses a toy arrow that
+     * hits when it reaches the target; the cannon lobs a shell at where the target stands (a building: its near wall),
+     * marked on the ground, that bursts where it lands.
+     */
     private void strike(Minion minion, LivingEntity target) {
+        Creatures.face(minion.body, target.getLocation());
+        look.attack(minion.body);
+        CreatureSounds.attack(arena, minion.kind.creature(), minion.body.getLocation());
+        double damage = minion.damage;
+        MinionSettings.Shots shot = settings.shots();
+        switch (minion.kind) {
+            case MELEE -> deal(minion, target, damage);
+            case RANGED -> shots.homing(minion.body, ToyShots.Look.ARROW, muzzle(minion.body), target,
+                    shot.arrowSpeed(), hit -> {
+                        deal(minion, hit, damage);
+                        CreatureSounds.arrowHit(arena, hit.getLocation());
+                    });
+            case CANNON -> shots.lob(minion.body, ToyShots.Look.SHELL, muzzle(minion.body), landing(minion, target),
+                    shot.shellSpeed(), arc(minion.body.getLocation(), target.getLocation(), shot.shellArc()),
+                    shot.splashRadius(), at -> burst(minion, target, at, damage));
+        }
+    }
+
+    /** A minion's blow on {@code victim}: the only damage a minion deals (kill credit and the rules as a mob hit). */
+    private void deal(Minion minion, LivingEntity victim, double damage) {
+        if (!minion.body.isValid() || minion.body.isDead()) {
+            return;
+        }
         striking = true;
         try {
-            Creatures.strike(arena, minion.body, target, minion.damage, minion.side, minion.kind.ranged());
+            Creatures.hit(arena, minion.body, victim, damage, minion.side);
         } finally {
             striking = false;
         }
-        look.attack(minion.body);
-        CreatureSounds.attack(arena, minion.kind.creature(), minion.body.getLocation());
+    }
+
+    /** A shell bursts at {@code at}: the target it was aimed at, and half as much to every other enemy close by. */
+    private void burst(Minion minion, LivingEntity aimed, Location at, double damage) {
+        double radius = settings.shots().splashRadius();
+        Telegraphs.burst(at, radius, Particle.CLOUD);
+        at.getWorld().spawnParticle(Particle.SMOKE, at.clone().add(0, 0.3, 0), 8, radius / 3, 0.2, radius / 3, 0.02);
+        CreatureSounds.shellBurst(arena, at);
+        if (arena.isStructure(aimed) || Creatures.flatDistanceSquared(aimed.getLocation(), at) <= radius * radius) {
+            deal(minion, aimed, damage);
+        }
+        double splash = damage * settings.shots().splashShare();
+        if (splash <= 0) {
+            return;
+        }
+        List<LivingEntity> near = new ArrayList<>();
+        for (Minion other : new ArrayList<>(minions.values())) {
+            if (other.side != minion.side) {
+                near.add(other.body);
+            }
+        }
+        near.addAll(arena.fighters(enemy(minion.side)));
+        near.addAll(arena.extraFighters(enemy(minion.side)));
+        for (LivingEntity victim : near) {
+            if (victim != aimed && victim.isValid() && !victim.isDead() && victim.getWorld().equals(at.getWorld())
+                    && Creatures.flatDistanceSquared(victim.getLocation(), at) <= radius * radius
+                    && Math.abs(victim.getLocation().getY() - at.getY()) < 2.5) {
+                deal(minion, victim, splash);
+            }
+        }
+    }
+
+    /** Where a shot leaves a minion: ahead of it, at about its middle. */
+    private static Location muzzle(Mob body) {
+        Location at = body.getLocation();
+        Vector ahead = at.getDirection().setY(0);
+        if (ahead.lengthSquared() > 1.0E-6) {
+            at.add(ahead.normalize().multiply(0.5));
+        }
+        return at.add(0, Math.max(0.4, body.getHeight() * 0.7), 0);
+    }
+
+    /** Where a cannon's shell comes down on {@code target}: its feet, or a building's near wall. */
+    private Location landing(Minion minion, LivingEntity target) {
+        Location centre = target.getLocation();
+        if (!arena.isStructure(target)) {
+            return centre;
+        }
+        Location from = minion.body.getLocation();
+        Vector out = from.toVector().subtract(centre.toVector()).setY(0);
+        double wall = Math.min(arena.structureHalfWidth(target), out.length());
+        if (out.lengthSquared() > 1.0E-6) {
+            centre.add(out.normalize().multiply(wall));
+        }
+        centre.setY(from.getY());
+        return centre;
+    }
+
+    /** A shell's arc: {@code arc} over a 6 block shot, higher for longer ones. */
+    private static double arc(Location from, Location to, double arc) {
+        double distance = Math.sqrt(Creatures.flatDistanceSquared(from, to));
+        return arc * Math.clamp(distance / 6, 0.6, 1.8);
     }
 
     // ------------------------------------------------------------------ queries
@@ -740,14 +836,30 @@ public final class MinionWaves implements Listener {
     }
 
     /**
-     * A minion's hit does not knock another minion back (vanilla would, and the lines would fall apart); players' and
-     * bots' hits and abilities still push minions as they push anything.
+     * A minion's own knockback (docs/siege-v2.md §2): a minion's hit does not push another minion (the lines would fall
+     * apart); any other blow (players, bots, towers, abilities' hits) pushes it only a little, never the vanilla fling,
+     * and it staggers.
      */
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onKnockback(EntityKnockbackEvent event) {
-        if (striking && !settings.formation().knockback() && minionOf(event.getEntity()) != null) {
-            event.setCancelled(true);
+        Minion minion = minionOf(event.getEntity());
+        if (minion == null) {
+            return;
         }
+        if (striking && !settings.formation().knockback()) {
+            event.setCancelled(true);
+            return;
+        }
+        double blocks = settings.stats(minion.kind).knockback();
+        Vector away = event.getKnockback().clone().setY(0);
+        if (blocks <= 0 || away.lengthSquared() < 1.0E-8) {
+            event.setCancelled(true);
+            return;
+        }
+        Location body = minion.body.getLocation();
+        Location from = body.clone().subtract(away.normalize());
+        event.setKnockback(Creatures.push(body, from, blocks));
+        look.stagger(minion.body, from, Math.min(1, blocks / 0.4));
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -873,6 +985,7 @@ public final class MinionWaves implements Listener {
 
     private void remove(Minion minion) {
         minions.remove(minion.body);
+        shots.cancel(minion.body);
         arena.untrack(minion.body);
         arena.removeOverheadBar(minion.body);
         look.removed(minion.body);
@@ -906,6 +1019,11 @@ public final class MinionWaves implements Listener {
             world.removePluginChunkTicket(chunk[0], chunk[1], arena.plugin());
         }
         heldChunks.clear();
+    }
+
+    /** The arrows and shells in flight (tests). */
+    public ToyShots shots() {
+        return shots;
     }
 
     public int heldChunks() {

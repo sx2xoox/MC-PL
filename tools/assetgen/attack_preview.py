@@ -3,12 +3,14 @@ Attack animation GIFs of the 공성전 v2 creatures, drawn from the very poses t
 display transformations of every tick of each kind's attack (CreatureModels.Attack), exported by
 `./gradlew updateCreatureAttacks` to models/creature_attacks.json (CreatureAttacksExportTest fails while it is stale).
 
-    python3 -I tools/assetgen/attack_preview.py <out dir> [kind ...]
+    python3 -I tools/assetgen/attack_preview.py <out dir> [kind ...] [--motions]
 
-Writes <kind>.gif (one tick per frame, 20 fps like the game, a player silhouette in front as the target) and
-all.gif (every kind side by side, striking together). The attack particles (the cannon's smoke, the dragon's breath)
-are drawn as little cubes drifting the way the game's puffs drift. Needs node + playwright + three (see render/) and
-Pillow (else the frame sheets <kind>.png are left as they are).
+Writes <kind>.gif (the basic attack, one tick per frame, 20 fps like the game, a player silhouette in front as the
+target) and all.gif (every kind side by side, striking together). With --motions also every skill
+(<kind>_<motion>.gif: the warning area marked on the ground filling up, as the game's particles do, then the motion)
+and the walk cycle (<kind>_walk.gif: the toy's own gait, travelling forward as its body walks). The attack particles
+(the cannon's smoke, the dragon's breath) are drawn as little cubes drifting the way the game's puffs drift. Needs
+node + playwright + three (see render/) and Pillow (else the frame sheets <kind>.png are left as they are).
 """
 
 import base64
@@ -37,17 +39,24 @@ AZ, EL = 62.0, 12.0  # the camera: the creature's right, a little in front, a li
 
 # kind: (title, target distance in front, camera target height, camera distance, team tint)
 KINDS = {
-    "soldier": ("태엽 병정 · 칼 찌르기", 1.5, 0.8, 4.4, toy_preview.RED),
+    "soldier": ("태엽 병정 · 총검 찌르기", 1.5, 0.8, 4.4, toy_preview.RED),
     "archer": ("장난감 궁수 · 활 당겼다 놓기", 3.0, 0.8, 6.4, toy_preview.RED),
     "cannon": ("장난감 대포 · 발사 반동", 3.6, 0.8, 7.2, toy_preview.BLUE),
-    "jelly": ("젤리 · 통통 내려찍기", 1.4, 0.7, 4.8, None),
+    "jelly": ("젤리 · 몸통 박치기", 1.4, 0.7, 4.8, None),
     "mouse": ("태엽 쥐 · 튀어나가 깨물기", 1.2, 0.6, 4.2, None),
-    "teddy": ("곰인형 대장 · 두 팔 휘두르기", 1.9, 1.1, 6.4, None),
-    "dragon": ("장난감 드래곤 · 숨결", 5.0, 1.9, 15.0, None),
-    "rabbit": ("시계 토끼 · 깜짝 깡충 (맞을 때)", 1.8, 0.8, 5.0, None),
+    "teddy": ("곰인형 대장 · 앞발 내려치기", 1.9, 1.1, 6.4, None),
+    "dragon": ("장난감 드래곤 · 깨물기", 5.0, 1.9, 15.0, None),
+    "rabbit": ("시계 토끼 · 시곗바늘 던지기", 4.0, 0.8, 6.0, None),
     "merchant": ("태엽 상인 · 인사 (상점 열 때)", 1.5, 0.9, 4.8, None),
 }
-PUFF_COLOURS = {"cloud": (250, 250, 250), "smoke": (110, 110, 118)}
+PUFF_COLOURS = {"cloud": (250, 250, 250), "smoke": (110, 110, 118), "item_slime": (255, 140, 190),
+                "end_rod": (255, 250, 215)}
+MOTION_TITLES = {"goop": "끈적 젤리 웅덩이", "squeak": "흩어지기 (찍찍)", "shockwave": "솜뭉치 충격파",
+                 "wind": "태엽 감기 (순간이동)", "breath": "숨결", "tail": "꼬리 휩쓸기", "gust": "날개 돌풍",
+                 "roar": "격노", "recoil": "발사 반동 (포탄 착탄 예고)", "slam": "앞발 내려치기 (예고)"}
+AREA_COLOURS = {"danger": (255, 80, 100), "sticky": (255, 140, 190), "push": (158, 230, 255)}
+WARN = 10  # frames of warning (the area filling up) before a skill's motion
+WALK_SPEED = 0.12  # blocks a tick the body walks under the gait in the walk previews
 
 
 def render(json_path, png_path):
@@ -128,42 +137,100 @@ def particles(puffs, tick, at, seed):
     return out
 
 
-def frames_of(table):
-    """Rest, the attack's ticks, rest: (frame poses, attack tick or None)."""
+def frames_of(table, area=None):
+    """Rest, the motion's ticks, rest: (frame poses, motion tick or None, warning fill or None, travel). A motion
+    with an area first shows WARN frames of its mark filling up; the mark is full as the blow lands."""
     rest = table["frames"][0]
-    seq = [(rest, None)] * BEFORE
-    seq += [(f, t) for t, f in enumerate(table["frames"])]
-    seq += [(rest, None)] * AFTER
+    impact = max(1, table.get("impact", 1))
+    seq = [(rest, None, None, 0.0)] * BEFORE
+    if area:
+        seq += [(rest, None, 0.6 * i / WARN, 0.0) for i in range(WARN)]
+    for t, f in enumerate(table["frames"]):
+        fill = 0.6 + 0.4 * min(1.0, t / impact) if area and t <= impact else None
+        seq.append((f, t, fill, 0.0))
+    seq += [(rest, None, None, 0.0)] * AFTER
     return seq
 
 
-def sheet(built, kind, table, out_png, total=None):
-    """Every frame of the kind's attack as one view each, on one canvas (one browser start)."""
+def walk_frames(walk):
+    """Two walk cycles, the creature travelling forward (-z) as its body walks."""
+    cycle = walk + walk
+    return [(f, None, None, WALK_SPEED * i) for i, f in enumerate(cycle)]
+
+
+def _dot(x, z, size, colour):
+    return _cube((x, 0.04, z), size, colour)
+
+
+def area_elements(area, fill, at):
+    """The game's warning mark (Telegraphs): the outline and a second line growing out to it."""
+    out = []
+    colour = AREA_COLOURS.get(area["colour"], (255, 80, 100))
+    cx, cz = at[0], at[2] - area["forward"]
+    r = area["radius"]
+
+    def ring(radius, size):
+        n = max(10, int(2 * math.pi * radius / 0.45))
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            out.append(_dot(cx + math.cos(a) * radius, cz + math.sin(a) * radius, size, colour))
+
+    def arc(radius, half, size):
+        n = max(3, int(2 * half * radius / 0.45))
+        for i in range(n + 1):
+            a = -math.pi / 2 - half + 2 * half * i / n
+            out.append(_dot(at[0] + math.cos(a) * radius, at[2] + math.sin(a) * radius, size, colour))
+
+    if area["shape"] == "circle":
+        ring(r, 0.14)
+        if r * fill > 0.2:
+            ring(r * fill, 0.1)
+    else:
+        half = math.radians(area["angle"] / 2)
+        for side in (-half, half):
+            a = -math.pi / 2 + side
+            d = 0.6
+            while d <= r:
+                out.append(_dot(at[0] + math.cos(a) * d, at[2] + math.sin(a) * d, 0.14, colour))
+                d += 0.45
+        arc(r, half, 0.14)
+        if r * fill > 0.6:
+            arc(r * fill, half, 0.1)
+    return out
+
+
+def sheet(built, kind, seq, puffs, out_png, total=None, area=None, name="attack"):
+    """Every frame of a sequence as one view each, on one canvas (one browser start)."""
     _title, gap, target_y, dist, tint = KINDS[kind]
-    seq = frames_of(table)
     if total and len(seq) < total:
-        seq += [(table["frames"][0], None)] * (total - len(seq))
+        last = seq[-1]
+        seq = seq + [(last[0], None, None, last[3])] * (total - len(seq))
     rows = math.ceil(len(seq) / COLUMNS)
     perp = (math.cos(math.radians(AZ)), 0.0, math.sin(math.radians(AZ)))
+    wide = area is not None and area["radius"] + area["forward"] > 3
     textures, elements, views = {"puff": _puff_texture()}, [], []
-    for i, (frame, tick) in enumerate(seq):
-        at = (perp[0] * SPACING * i, 0.0, perp[2] * SPACING * i)
+    for i, (frame, tick, fill, travel) in enumerate(seq):
+        base = (perp[0] * SPACING * i, 0.0, perp[2] * SPACING * i)
+        at = (base[0], 0.0, base[2] - travel)
         t, e = posed(built, kind, frame, tint, at)
         textures.update(t)
         elements.extend(e)
-        if tick is not None and table["puffs"]:
-            elements.extend(particles(table["puffs"], tick, at, seed=7))
-        t, e = toy_preview.figure(at[0], at[2] - gap - 0.3, 180)
-        textures.update(t)
-        elements.extend(e)
+        if tick is not None and puffs:
+            elements.extend(particles(puffs, tick, at, seed=7))
+        if fill is not None and area:
+            elements.extend(area_elements(area, fill, at))
+        if name != "walk":
+            t, e = toy_preview.figure(at[0], at[2] - gap - 0.3, 180)
+            textures.update(t)
+            elements.extend(e)
         views.append({"x": (i % COLUMNS) * FRAME_W, "y": (i // COLUMNS) * FRAME_H, "w": FRAME_W, "h": FRAME_H,
-                      "az": AZ, "el": EL, "target": [at[0], target_y, at[2] - gap / 2], "dist": dist,
-                      "background": toy_preview.SKY})
+                      "az": AZ, "el": EL + (14 if area else 0), "target": [at[0], target_y, at[2] - gap / 2],
+                      "dist": dist * (1.8 if wide else 1), "background": toy_preview.SKY})
     reach = SPACING * len(seq) + 40
     model = {"width": COLUMNS * FRAME_W, "height": rows * FRAME_H, "textures": textures, "elements": elements,
              "grid": False, "views": views, "groundColor": toy_preview.GRASS, "ground": [-reach, 0, -reach, reach, reach]}
     WORK.mkdir(parents=True, exist_ok=True)
-    path = WORK / f"attack_{kind}.preview.json"
+    path = WORK / f"{name}_{kind}.preview.json"
     path.write_text(json.dumps(model))
     render(path, out_png)
     return len(seq)
@@ -200,7 +267,8 @@ def save_gif(frames, path):
 
 
 def main():
-    args = sys.argv[1:]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    motions = "--motions" in sys.argv[1:]
     if not args:
         print(__doc__)
         sys.exit(2)
@@ -218,12 +286,14 @@ def main():
     cut_frames = {}
     for kind in kinds:
         png = out / f"{kind}.png"
-        count = sheet(built, kind, table[kind], png, total)
+        count = sheet(built, kind, frames_of(table[kind]), table[kind]["puffs"], png, total)
         if have_pil:
             cut_frames[kind] = cut(png, count, KINDS[kind][0])
             own = len(frames_of(table[kind]))
             save_gif(cut_frames[kind][:own], out / f"{kind}.gif")
             print(f"gif     {out / (kind + '.gif')}: {own} frames")
+        if motions:
+            previews(built, kind, table[kind], out, have_pil)
     if have_pil and len(kinds) > 1:
         from PIL import Image
         columns = 3
@@ -236,6 +306,27 @@ def main():
             combined.append(canvas)
         save_gif(combined, out / "all.gif")
         print(f"gif     {out / 'all.gif'}: {total} frames")
+
+
+def previews(built, kind, entry, out, have_pil):
+    """A kind's skills (each with its warning mark) and its walk cycle."""
+    creature = KINDS[kind][0].split(" · ")[0]
+    for name, motion in entry.get("motions", {}).items():
+        area = motion.get("area")
+        if name == entry["attack"] and not area:
+            continue  # the basic attack's GIF is <kind>.gif
+        seq = frames_of(motion, area)
+        png = out / f"{kind}_{name}.png"
+        count = sheet(built, kind, seq, motion["puffs"], png, area=area, name=name)
+        if have_pil:
+            save_gif(cut(png, count, f"{creature} · {MOTION_TITLES.get(name, name)}"), out / f"{kind}_{name}.gif")
+            print(f"gif     {out / (kind + '_' + name + '.gif')}: {count} frames")
+    seq = walk_frames(entry["walk"])
+    png = out / f"{kind}_walk.png"
+    count = sheet(built, kind, seq, [], png, name="walk")
+    if have_pil:
+        save_gif(cut(png, count, f"{creature} · 걸음 ({entry['gait']})"), out / f"{kind}_walk.gif")
+        print(f"gif     {out / (kind + '_walk.gif')}: {count} frames")
 
 
 if __name__ == "__main__":

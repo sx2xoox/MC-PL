@@ -15,10 +15,11 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.SiegeGame;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSkin;
 import io.github.sx2xoox.mcpl.game.siege.creature.SkinnedCreatureLook;
-import io.github.sx2xoox.mcpl.game.siege.creature.VanillaCreatureLook;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
@@ -72,6 +73,27 @@ abstract class LaneTestBase {
         }
 
         @Override
+        public void attack(CreatureModels.Attack motion) {
+            skinEvents.add(kind + " " + motion.name().toLowerCase(java.util.Locale.ROOT));
+            attack();
+        }
+
+        @Override
+        public void charge(int ticks) {
+            skinEvents.add(kind + " charge");
+        }
+
+        @Override
+        public void stagger(double fromX, double fromZ, double strength) {
+            skinEvents.add(kind + " stagger");
+        }
+
+        @Override
+        public void enraged(boolean enraged) {
+            skinEvents.add(kind + (enraged ? " enraged" : " calm"));
+        }
+
+        @Override
         public void remove() {
         }
     };
@@ -109,7 +131,7 @@ abstract class LaneTestBase {
             arena.add(join("R" + (i + 1)), LaneSites.Side.RED);
         }
         systems = new SiegeSystems(arena, config,
-                new SkinnedCreatureLook(new VanillaCreatureLook(), skin != null ? skin : recordingSkin), mover);
+                new SkinnedCreatureLook(new CreatureBodies(), skin != null ? skin : recordingSkin), mover);
         for (Listener listener : systems.listeners()) {
             Bukkit.getPluginManager().registerEvents(listener, h.hub.plugin());
         }

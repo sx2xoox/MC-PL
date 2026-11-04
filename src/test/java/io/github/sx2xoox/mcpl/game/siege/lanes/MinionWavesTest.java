@@ -10,9 +10,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
+import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
+import io.github.sx2xoox.mcpl.game.siege.creature.ToyShots;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionKind;
 import io.github.sx2xoox.mcpl.game.siege.minion.MinionWaves;
+import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.attribute.Attribute;
@@ -20,6 +24,7 @@ import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.entity.IronGolem;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Sheep;
 import org.bukkit.entity.Skeleton;
 import org.bukkit.entity.Zombie;
 import org.junit.jupiter.api.Test;
@@ -42,6 +47,10 @@ class MinionWavesTest extends LaneTestBase {
         return minions().minions().stream().filter(m -> m.side() == side && m.kind() == kind).toList();
     }
 
+    private long kinds(MinionKind kind) {
+        return minions().minions().stream().filter(m -> m.kind() == kind).count();
+    }
+
     @Test
     void wavesSpawnOnBothLanesAndLeaveNothingBehind() {
         config.set("minions.interval-seconds", 1);
@@ -49,9 +58,17 @@ class MinionWavesTest extends LaneTestBase {
         run(2);
         assertEquals(1, minions().wave());
         // 3 melee + 2 ranged, each side, each lane.
-        assertEquals(12, count(Zombie.class));
-        assertEquals(8, count(Skeleton.class));
-        assertEquals(0, count(IronGolem.class));
+        assertEquals(12, kinds(MinionKind.MELEE));
+        assertEquals(8, kinds(MinionKind.RANGED));
+        assertEquals(0, kinds(MinionKind.CANNON));
+        // one neutral, invisible body for every kind (the toys are what players see)
+        assertEquals(20 + 2, count(Sheep.class), "(and the two shopkeepers)");
+        for (MinionWaves.Minion minion : minions().minions()) {
+            assertEquals(CreatureBodies.TYPE, minion.body().getType());
+            assertTrue(minion.body().isInvisible() && minion.body().isSilent());
+            assertFalse(minion.body().isCollidable(), "bodies do not shove each other");
+        }
+        assertEquals(0, count(Zombie.class) + count(Skeleton.class) + count(IronGolem.class), "no vanilla minion");
         for (LaneSites.Lane lane : LaneSites.Lane.values()) {
             for (MinionWaves.Minion minion : minions().minions()) {
                 if (minion.lane() == lane) {
@@ -68,11 +85,11 @@ class MinionWavesTest extends LaneTestBase {
         // Waves 2 and 3: the third brings a cannon on every lane, health grows a little each wave.
         run(40);
         assertEquals(3, minions().wave());
-        assertEquals(4, count(IronGolem.class));
+        assertEquals(4, kinds(MinionKind.CANNON));
         assertTrue(of(LaneSites.Side.RED, MinionKind.CANNON).getFirst().body().getHealth() > 60);
 
         systems.endRound();
-        assertEquals(0, count(Zombie.class) + count(Skeleton.class) + count(IronGolem.class));
+        assertEquals(0, count(Sheep.class));
         assertTrue(minions().minions().isEmpty());
         assertEquals(0, minions().heldChunks(), "chunk tickets released");
         assertTrue(arena.tracked.isEmpty(), "nothing tracked is left");
@@ -83,7 +100,7 @@ class MinionWavesTest extends LaneTestBase {
         start(4, 2);
         run(2);
         // (4 − 1) / 3 = one extra melee per lane and side.
-        assertEquals(4 * 4, count(Zombie.class));
+        assertEquals(4 * 4, kinds(MinionKind.MELEE));
     }
 
     @Test
@@ -188,6 +205,90 @@ class MinionWavesTest extends LaneTestBase {
         assertNotNull(target);
         assertSame(LaneSites.Side.BLUE, minions().minionOf(target).side());
         assertNull(systems.towerTarget(LaneSites.Side.BLUE, front, 10), "no RED minions left");
+    }
+
+    /** Keeps one BLUE minion of {@code kind} on its lane, every other minion gone; returns it. */
+    private MinionWaves.Minion alone(MinionKind kind) {
+        MinionWaves.Minion keep = of(LaneSites.Side.BLUE, kind).getFirst();
+        for (MinionWaves.Minion other : minions().minions()) {
+            if (other != keep) {
+                other.body().remove();
+            }
+        }
+        run(1);
+        return keep;
+    }
+
+    /** A spot {@code ahead} blocks ahead of a minion along its walk. */
+    private static Location ahead(MinionWaves.Minion minion, double ahead) {
+        Location at = minion.body().getLocation();
+        org.bukkit.util.Vector way = minion.path().get(Math.min(minion.path().size() - 1, minion.nextWaypoint()))
+                .toVector().subtract(at.toVector()).setY(0).normalize();
+        return at.add(way.multiply(ahead));
+    }
+
+    @Test
+    void archersLooseToyArrowsThatHitWhenTheyArrive() {
+        start(1, 1);
+        run(2);
+        MinionWaves.Minion archer = alone(MinionKind.RANGED);
+        Player red = player(LaneSites.Side.RED, 0);
+        red.teleport(ahead(archer, 6));
+        boolean flying = false;
+        for (int i = 0; i < 40 && !flying; i++) {
+            run(1);
+            flying = minions().shots().shots().stream().anyMatch(s -> s.look() == ToyShots.Look.ARROW);
+        }
+        assertTrue(flying, "an arrow you can see");
+        assertEquals(20, red.getHealth(), 1.0E-6, "it has not arrived yet");
+        run(10);
+        assertEquals(18, red.getHealth(), 1.0E-6, "then it hits: 2");
+        assertTrue(arena.sounds.contains(Sound.ENTITY_ARROW_HIT), arena.sounds.toString());
+    }
+
+    @Test
+    void cannonsLobMarkedShellsThatBurstWhereTheyLand() {
+        config.set("minions.cannon-every", 1);
+        start(1, 2);
+        run(2);
+        MinionWaves.Minion cannon = alone(MinionKind.CANNON);
+        Player aimed = player(LaneSites.Side.RED, 0);
+        Player beside = player(LaneSites.Side.RED, 1);
+        Location spot = ahead(cannon, 4.5);
+        aimed.teleport(spot);
+        beside.teleport(spot.clone().add(0.8, 0, 0.6));
+        ToyShots.Shot shell = null;
+        for (int i = 0; i < 40 && shell == null; i++) {
+            run(1);
+            shell = minions().shots().shots().stream().filter(s -> s.look() == ToyShots.Look.SHELL).findFirst()
+                    .orElse(null);
+        }
+        assertNotNull(shell, "a shell you can see");
+        assertNotNull(shell.landing());
+        assertTrue(Creatures.flatDistanceSquared(shell.landing(), spot) < 0.01, "aimed where the target stands");
+        assertTrue(shell.flight() >= 8, "an arc, not an instant hit: " + shell.flight());
+        assertEquals(20, aimed.getHealth(), 1.0E-6, "it has not landed yet");
+        ToyShots.Shot flying = shell;
+        for (int i = 0; i < 40 && !flying.isDone(); i++) {
+            run(1);
+        }
+        assertEquals(15, aimed.getHealth(), 1.0E-6, "the target: 5");
+        assertEquals(17.5, beside.getHealth(), 1.0E-6, "close by: half");
+        assertTrue(arena.sounds.contains(Sound.ENTITY_FIREWORK_ROCKET_LARGE_BLAST), arena.sounds.toString());
+    }
+
+    @Test
+    void aMinionSlidesALittleAndStaggersInsteadOfTheVanillaFling() {
+        start(1, 1);
+        run(2);
+        MinionWaves.Minion soldier = of(LaneSites.Side.BLUE, MinionKind.MELEE).getFirst();
+        EntityKnockbackEvent push = new EntityKnockbackEvent(soldier.body(), EntityKnockbackEvent.Cause.ENTITY_ATTACK,
+                new org.bukkit.util.Vector(0, 0.4, 1.1));
+        org.bukkit.Bukkit.getPluginManager().callEvent(push);
+        assertFalse(push.isCancelled());
+        assertEquals(0, push.getKnockback().getY(), 1.0E-9);
+        assertEquals(0.35 * 0.454, push.getKnockback().length(), 1.0E-6);
+        assertTrue(skinEvents.contains("minion_melee stagger"), skinEvents.toString());
     }
 
     @Test

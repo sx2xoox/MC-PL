@@ -44,6 +44,26 @@ public interface CreatureSkin {
         default void attack() {
         }
 
+        /** Plays {@code motion} now (a skill's motion: the jelly's goop, the teddy's shockwave, the dragon's tail...). */
+        default void attack(CreatureModels.Attack motion) {
+            attack();
+        }
+
+        /** Charges a skill for {@code ticks} (its warning): a shiver, before the skill's motion plays. */
+        default void charge(int ticks) {
+        }
+
+        /**
+         * Pushed by a blow from {@code fromX, fromZ} (world coordinates): staggers away from it, as strong as
+         * {@code strength} (0..1).
+         */
+        default void stagger(double fromX, double fromZ, double strength) {
+        }
+
+        /** Enraged (the dragon below its rage health) or calm again: glows angry red while it is. */
+        default void enraged(boolean enraged) {
+        }
+
         /** Removes every entity of this visual and gives everyone the vanilla mob back. Safe to call twice. */
         void remove();
     }

@@ -36,6 +36,7 @@ import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Sheep;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Zombie;
 import org.bukkit.event.block.Action;
@@ -394,7 +395,7 @@ class SiegeReadabilityTest {
         SiegeMatch match = start(2);
         Player a = member(match, 0, 0);
         h.tickUntil(() -> minion(a) != null, 2000, "the first minion wave");
-        Zombie minion = minion(a);
+        Sheep minion = minion(a);
         assertNotNull(minion);
         Zombie bystander = a.getWorld().spawn(a.getLocation().add(-5, 0, 0), Zombie.class,
                 z -> z.customName(Component.text("pet")));
@@ -402,7 +403,7 @@ class SiegeReadabilityTest {
         bystander.setHealth(0);
         assertTrue(minion.customName() == null, "no \"Named entity ... died\" line per minion");
         assertFalse(minion.isCustomNameVisible(),
-                "no name tag through the death animation: without a name the client would show \"좀비\"");
+                "no name tag through the death animation: without a name the client would show \"양\"");
         assertNotNull(bystander.customName(), "entities the match does not own keep their name");
 
         // the jungle's monsters too
@@ -423,10 +424,10 @@ class SiegeReadabilityTest {
         assertFalse(monster.isCustomNameVisible(), "a dying monster shows no vanilla name either");
     }
 
-    private static @Nullable Zombie minion(Player in) {
-        for (Zombie zombie : in.getWorld().getEntitiesByClass(Zombie.class)) {
-            if (!zombie.isDead() && zombie.customName() != null) {
-                return zombie;
+    private static @Nullable Sheep minion(Player in) {
+        for (Sheep body : in.getWorld().getEntitiesByClass(Sheep.class)) {
+            if (!body.isDead() && body.customName() != null && !body.isCollidable()) {
+                return body;
             }
         }
         return null;

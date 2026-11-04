@@ -26,6 +26,7 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param empoweredBonus     health and damage bonus of a team's minions while it holds the dragon buff
  * @param stats              each kind's numbers
  * @param formation          how a wave keeps its lines ({@code minions.formation.*})
+ * @param shots              the archers' arrows and the cannons' shells ({@code minions.shots.*})
  */
 public record MinionSettings(
         boolean enabled,
@@ -44,7 +45,8 @@ public record MinionSettings(
         double xpRadius,
         double empoweredBonus,
         Map<MinionKind, Stats> stats,
-        Formation.Settings formation) {
+        Formation.Settings formation,
+        Shots shots) {
 
     public static final String PATH = "minions.";
 
@@ -55,18 +57,35 @@ public record MinionSettings(
      * @param damage      damage of a hit (on minions, players and structures)
      * @param range       hit range
      * @param attackTicks between hits
-     * @param speed       walking speed (pathfinder multiplier)
-     * @param scale       size
+     * @param speed       walking speed (× the bodies' walk)
+     * @param scale       the toy's size (1 = as modelled; the body and the model both)
      * @param xp          experience for nearby enemies when it dies
+     * @param knockback   blocks it slides when a player's or bot's blow pushes it (0 = it stands its ground)
      */
     public record Stats(double health, double damage, double range, int attackTicks, double speed, double scale,
-            int xp) {
+            int xp, double knockback) {
+    }
+
+    /**
+     * The minions' visible shots (docs/siege-v2.md §2): the archer's toy arrow flies at its target and hits when it
+     * gets there; the cannon lobs a shell at where its target stood, marked on the ground, that bursts on landing.
+     *
+     * @param arrowSpeed   blocks an arrow flies a tick
+     * @param shellSpeed   blocks a shell covers a tick (along the ground)
+     * @param shellArc     how high a shell's arc rises over a 6 block shot, blocks (longer shots rise higher)
+     * @param splashRadius a shell hurts enemies this close to where it lands
+     * @param splashShare  the damage to enemies other than the one aimed at (0.5 = half)
+     */
+    public record Shots(double arrowSpeed, double shellSpeed, double shellArc, double splashRadius,
+            double splashShare) {
+
+        public static final Shots DEFAULTS = new Shots(1.0, 0.45, 2.2, 1.6, 0.5);
     }
 
     private static final Map<MinionKind, Stats> DEFAULTS = Map.of(
-            MinionKind.MELEE, new Stats(22, 2.5, 2.2, 20, 1.0, 1.0, 6),
-            MinionKind.RANGED, new Stats(15, 2.0, 7.0, 30, 1.0, 0.8, 6),
-            MinionKind.CANNON, new Stats(60, 5.0, 5.5, 40, 0.8, 0.6, 15));
+            MinionKind.MELEE, new Stats(22, 2.5, 2.2, 20, 1.0, 1.0, 6, 0.35),
+            MinionKind.RANGED, new Stats(15, 2.0, 7.0, 30, 1.0, 1.0, 6, 0.4),
+            MinionKind.CANNON, new Stats(60, 5.0, 5.5, 40, 0.8, 1.0, 15, 0.1));
 
     public static MinionSettings read(ConfigurationSection config) {
         Map<MinionKind, Stats> stats = new EnumMap<>(MinionKind.class);
@@ -80,7 +99,8 @@ public record MinionSettings(
                     ticks(config.getDouble(p + "attack-seconds", d.attackTicks() / 20.0)),
                     config.getDouble(p + "speed", d.speed()),
                     config.getDouble(p + "scale", d.scale()),
-                    config.getInt(p + "xp", d.xp())));
+                    config.getInt(p + "xp", d.xp()),
+                    Math.max(0, config.getDouble(p + "knockback", d.knockback()))));
         }
         return new MinionSettings(
                 config.getBoolean(PATH + "enabled", true),
@@ -99,7 +119,19 @@ public record MinionSettings(
                 config.getDouble(PATH + "xp-radius", 12),
                 config.getDouble(PATH + "empowered-bonus", 0.25),
                 stats,
-                formation(config));
+                formation(config),
+                shots(config));
+    }
+
+    private static Shots shots(ConfigurationSection config) {
+        Shots d = Shots.DEFAULTS;
+        String p = PATH + "shots.";
+        return new Shots(
+                Math.max(0.1, config.getDouble(p + "arrow-speed", d.arrowSpeed())),
+                Math.max(0.05, config.getDouble(p + "shell-speed", d.shellSpeed())),
+                Math.max(0, config.getDouble(p + "shell-arc", d.shellArc())),
+                Math.max(0, config.getDouble(p + "splash-radius", d.splashRadius())),
+                Math.clamp(config.getDouble(p + "splash-share", d.splashShare()), 0, 1));
     }
 
     private static Formation.Settings formation(ConfigurationSection config) {

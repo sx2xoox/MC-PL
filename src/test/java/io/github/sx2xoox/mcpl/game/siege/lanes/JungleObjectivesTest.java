@@ -14,7 +14,9 @@ import java.util.Map;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.ObjectiveKind;
 import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
-import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
+import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.jungle.JungleObjectives;
 import org.bukkit.Location;
 import org.bukkit.Sound;
@@ -26,6 +28,7 @@ import org.bukkit.entity.Panda;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Rabbit;
 import org.bukkit.entity.Ravager;
+import org.bukkit.entity.Sheep;
 import org.bukkit.entity.Silverfish;
 import org.bukkit.entity.Slime;
 import org.bukkit.potion.PotionEffectType;
@@ -73,17 +76,23 @@ class JungleObjectivesTest extends LaneTestBase {
     void everyKindLooksDifferentAndLeavesNothingBehind() {
         startUp(1, 1);
         assertEquals(13, jungle().sites().size(), "six a side and the dragon");
-        assertEquals(6, count(Slime.class), "젤리 3 a side");
-        assertEquals(4, count(Silverfish.class), "쥐: silverfish…");
-        assertEquals(4, count(Endermite.class), "…and endermites");
-        assertEquals(2, count(Panda.class), "곰인형");
-        assertEquals(2, count(Rabbit.class), "시계 토끼");
-        assertEquals(1, count(Ravager.class), "드래곤");
-        Mob teddy = site(LaneSites.Side.BLUE, ObjectiveKind.TEDDY).mobs().getFirst();
-        assertEquals(1.4, teddy.getAttribute(Attribute.SCALE).getBaseValue(), 1.0E-6);
-        assertEquals(Panda.Gene.BROWN, ((Panda) teddy).getMainGene());
-        assertEquals(Rabbit.Type.GOLD, ((Rabbit) site(LaneSites.Side.RED, ObjectiveKind.RABBIT).mobs().getFirst())
-                .getRabbitType());
+        // one neutral body for every monster, invisible: what players see is the toy, never a vanilla mob
+        assertEquals(6 + 8 + 2 + 2 + 1 + 2, count(Sheep.class),
+                "젤리 3, 쥐 4, 곰인형, 토끼 a side, the dragon (and the two shopkeepers)");
+        for (JungleObjectives.Site site : jungle().sites()) {
+            for (Mob mob : site.mobs()) {
+                assertEquals(CreatureBodies.TYPE, mob.getType(), site.kind() + " has the neutral body");
+                assertTrue(mob.isInvisible(), site.kind() + ": nobody sees the body");
+                assertTrue(mob.isSilent());
+                CreatureKind creature = CreatureKind.of(site.kind());
+                assertEquals(CreatureBodies.bodyScale(creature), mob.getAttribute(Attribute.SCALE).getBaseValue(),
+                        1.0E-6, site.kind() + ": its size is the toy's");
+                assertEquals(Creatures.BODY_SPEED, mob.getAttribute(Attribute.MOVEMENT_SPEED).getBaseValue(), 1.0E-9,
+                        "one walk for all: the kinds' speeds multiply it");
+            }
+        }
+        assertEquals(0, count(Slime.class) + count(Silverfish.class) + count(Endermite.class) + count(Panda.class)
+                + count(Rabbit.class) + count(Ravager.class), "no vanilla monster at all");
         assertNull(site(null, ObjectiveKind.DRAGON).label(),
                 "no label over a camp that is up: its monsters' bars carry the name");
         JungleObjectives.Site fountain = site(LaneSites.Side.BLUE, ObjectiveKind.FOUNTAIN);
@@ -92,8 +101,7 @@ class JungleObjectivesTest extends LaneTestBase {
         assertTrue(arena.tracked.contains(fountain.label()));
 
         systems.endRound();
-        assertEquals(0, count(Slime.class) + count(Silverfish.class) + count(Endermite.class) + count(Panda.class)
-                + count(Rabbit.class) + count(Ravager.class));
+        assertEquals(0, count(Sheep.class));
         assertTrue(arena.tracked.isEmpty(), "monsters and labels are gone");
     }
 
@@ -115,8 +123,9 @@ class JungleObjectivesTest extends LaneTestBase {
         run(60);
         assertTrue(player.getHealth() < 20, "the teddy fights back");
         assertTrue(skinEvents.contains("teddy hit"), "the skin flinches when hit: " + skinEvents);
-        assertTrue(skinEvents.contains("teddy attack"), "and swings when it strikes: " + skinEvents);
-        assertTrue(arena.sounds.contains(Sound.BLOCK_WOOL_PLACE), "a soft whump: " + arena.sounds);
+        assertTrue(skinEvents.contains("teddy charge") && skinEvents.contains("teddy slam"),
+                "and rears up, then slams its paws down: " + skinEvents);
+        assertTrue(arena.sounds.contains(Sound.BLOCK_WOOL_FALL), "a soft whump: " + arena.sounds);
 
         // Pulled beyond the leash: home, full health, idle.
         bear.teleport(teddy.at().add(30, 0, 0));
@@ -168,26 +177,6 @@ class JungleObjectivesTest extends LaneTestBase {
         }
     }
 
-    /**
-     * A slime cannot be pathed (its move control hops along a heading its own goals set, whatever the path says), so
-     * the mover hops it straight at the goal: facing it, up like a jump, never past it.
-     */
-    @Test
-    void aJellyHopsStraightAtItsGoal() {
-        Slime jelly = h.flatWorld().spawn(at(0, 0), Slime.class, slime -> slime.setRotation(135, 0));
-        Location goal = at(10, 0);
-        assertTrue(CreatureMover.hop(jelly, goal, 1.0));
-        Vector velocity = jelly.getVelocity();
-        assertEquals(CreatureMover.HOP_LIFT, velocity.getY(), 1.0E-9);
-        assertTrue(velocity.getX() > 0 && Math.abs(velocity.getZ()) < 1.0E-9, "towards the goal: " + velocity);
-        assertTrue(velocity.getX() * CreatureMover.HOP_REACH <= 10 + 1.0E-9, "not past it");
-        assertEquals(-90, jelly.getLocation().getYaw(), 1.0, "facing it");
-        assertFalse(CreatureMover.hop(jelly, at(0.2, 0.2), 1.0), "already there: no hop");
-        Location near = at(1.5, 0);
-        CreatureMover.hop(jelly, near, 1.0);
-        assertTrue(jelly.getVelocity().getX() * CreatureMover.HOP_REACH <= 1.5 + 1.0E-9, "a short hop to a near goal");
-    }
-
     @Test
     void aCampThatIsDownShowsItsRespawnTimer() {
         startUp(1, 1);
@@ -211,7 +200,7 @@ class JungleObjectivesTest extends LaneTestBase {
         helper.teleport(jelly.at().add(-2, 0, 0));
         int gold = systems.gold().balance(killer.getUniqueId());
         clear(jelly, killer);
-        assertEquals(3, count(Slime.class), "only the RED jellies are left (no splitting)");
+        assertEquals(3, site(LaneSites.Side.RED, ObjectiveKind.JELLY).mobs().size(), "the RED jellies are left");
         assertEquals(1, arena.score.get(LaneSites.Side.BLUE));
         assertEquals(gold + 40, systems.gold().balance(killer.getUniqueId()));
         assertEquals(15, arena.xp(killer), "30 XP split");
@@ -220,7 +209,7 @@ class JungleObjectivesTest extends LaneTestBase {
         assertEquals(60 * 20, back, "60 s respawn");
         run((int) back + 1);
         assertTrue(jelly.isUp(), "back");
-        assertEquals(6, count(Slime.class));
+        assertEquals(3, jelly.mobs().size());
 
         JungleObjectives.Site mice = site(LaneSites.Side.RED, ObjectiveKind.MICE);
         clear(mice, killer);
@@ -261,21 +250,10 @@ class JungleObjectivesTest extends LaneTestBase {
     }
 
     @Test
-    void theRabbitRunsAwayAndGivesFasterCooldowns() {
+    void theRabbitGivesFasterCooldowns() {
         startUp(1, 1);
         Player player = player(LaneSites.Side.BLUE, 0);
         JungleObjectives.Site rabbit = site(LaneSites.Side.BLUE, ObjectiveKind.RABBIT);
-        Mob bunny = rabbit.mobs().getFirst();
-        player.teleport(rabbit.at().add(-2, 0, 0));
-        double before = bunny.getLocation().distance(player.getLocation());
-        melee(player, bunny, 1);
-        run(20);
-        assertTrue(bunny.getLocation().distance(player.getLocation()) > before + 1, "flees");
-        assertEquals(20, player.getHealth(), 1.0E-6, "never bites");
-        assertTrue(skinEvents.contains("rabbit hit") && skinEvents.contains("rabbit attack"),
-                "a startled hop when hit: " + skinEvents);
-        assertTrue(arena.sounds.contains(Sound.ENTITY_RABBIT_JUMP), arena.sounds.toString());
-
         clear(rabbit, player);
         assertTrue(jungle().hasBuff(player.getUniqueId(), ObjectiveKind.RABBIT));
         run(40);

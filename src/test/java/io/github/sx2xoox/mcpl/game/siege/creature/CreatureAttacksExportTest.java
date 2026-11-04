@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.siege.creature;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,10 +17,15 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Attack;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Gait;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Key;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Offset;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Part;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.Puff;
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.ObjectiveKind;
+import io.github.sx2xoox.mcpl.game.siege.jungle.JungleSettings;
+import io.github.sx2xoox.mcpl.game.siege.minion.MinionSettings;
+import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -38,14 +44,22 @@ class CreatureAttacksExportTest {
     @Test
     void everyCreatureHasItsOwnAttackFromRestToRest() {
         assertEquals(CreatureModels.CREATURES.keySet(), CreatureModels.ATTACKS.keySet());
+        assertEquals(CreatureModels.CREATURES.keySet(), CreatureModels.SKILLS.keySet());
+        assertEquals(CreatureModels.CREATURES.keySet(), CreatureModels.GAITS.keySet());
+        assertEquals(CreatureModels.CREATURES.keySet(), CreatureModels.BODY_SCALES.keySet());
         assertEquals(CreatureModels.ATTACKS.size(), new HashSet<>(CreatureModels.ATTACKS.values()).size(),
                 "no two kinds share a motion");
+        Set<Attack> used = new HashSet<>(CreatureModels.ATTACKS.values());
+        CreatureModels.SKILLS.values().forEach(skills -> skills.forEach(skill -> assertTrue(used.add(skill),
+                skill + " belongs to one kind, once")));
+        assertEquals(Set.of(Attack.values()), used, "every motion is someone's");
         for (Attack attack : Attack.values()) {
             List<Key> keys = attack.keys();
             assertEquals(0, keys.getFirst().tick(), attack + " starts at once");
             assertEquals(Offset.REST, keys.getFirst().offset());
             assertEquals(Offset.REST, keys.getLast().offset(), attack + " ends at rest");
             assertTrue(attack.ticks() <= 20, attack + " is over within a second");
+            assertTrue(attack.impact() >= 0 && attack.impact() < attack.ticks(), attack + " lands while it plays");
             for (int i = 1; i < keys.size(); i++) {
                 assertTrue(keys.get(i).tick() > keys.get(i - 1).tick(), attack + ": keys in order");
             }
@@ -59,6 +73,10 @@ class CreatureAttacksExportTest {
         assertEquals(Offset.REST, CreatureModels.hitAt(0));
         assertTrue(CreatureModels.hitAt(1).height() < 1, "a hit squashes");
         assertEquals(Offset.REST, CreatureModels.hitAt(CreatureModels.HIT_TICKS));
+        assertEquals(Offset.REST, CreatureModels.staggerAt(CreatureModels.STAGGER_TICKS, 1, 0, 1));
+        assertTrue(CreatureModels.staggerAt(2, 1, 0, 1).pitch() < 0, "a blow from ahead leans it back");
+        assertTrue(CreatureModels.staggerAt(2, -1, 0, 1).pitch() > 0, "from behind, forward");
+        assertTrue(CreatureModels.staggerAt(2, 0, 1, 1).roll() < 0, "from its right, it tilts to its left");
     }
 
     @Test
@@ -72,11 +90,15 @@ class CreatureAttacksExportTest {
         assertTrue(recoil.forward() < -0.2 && recoil.pitch() < 0, "the cannon kicks back, muzzle up");
         assertTrue(Attack.POUNCE.at(3).height() > 1.2 && Attack.POUNCE.at(3).up() > 0, "the jelly springs up tall");
         assertTrue(Attack.POUNCE.at(5).height() < 0.7, "and slams flat");
-        assertTrue(Math.abs(Attack.SWIPE.at(2).yaw()) > 10 && Attack.SWIPE.at(2).yaw() * Attack.SWIPE.at(5).yaw() < 0,
-                "the teddy twists one way, then the other");
+        assertTrue(Attack.SLAM.at(8).pitch() < -10 && Attack.SLAM.at(Attack.SLAM.impact()).pitch() > 10,
+                "the teddy rears up, then brings its paws down as the blow lands");
+        assertTrue(Attack.SHOCKWAVE.at(8).up() > 0.5 && Attack.SHOCKWAVE.at(Attack.SHOCKWAVE.impact()).height() < 0.8,
+                "jumps, and lands flat with the shockwave");
+        assertTrue(Attack.WIND.at(Attack.WIND.impact()).height() < 0.4, "the rabbit is wound down to nothing");
         assertTrue(Attack.BREATH.at(4).pitch() < 0 && Attack.BREATH.at(7).pitch() > 0, "the dragon rears, lunges");
         assertTrue(Attack.BREATH.at(4).wings() > 0.3, "wings wide open");
-        assertTrue(Attack.STARTLE.at(3).up() > 0.4, "the rabbit hops");
+        assertTrue(Attack.TAIL.at(Attack.TAIL.impact()).yaw() >= 150, "the tail sweeps round");
+        assertTrue(Attack.GUST.at(8).wings() > 0.8, "a huge wing beat");
         assertTrue(!Attack.RECOIL.puffs().isEmpty() && !Attack.BREATH.puffs().isEmpty(), "smoke and breath");
 
         // the same moment of the motion puts each kind's body somewhere else
@@ -89,6 +111,40 @@ class CreatureAttacksExportTest {
                 trace.append(json(ModelCreatureLook.pose(body, 0, false, attack.at(tick))));
             }
             assertTrue(poses.add(trace.toString()), kind + " moves like no other");
+        }
+    }
+
+    /**
+     * The toys walk their own way (not their bodies'): each walk cycle loops seamlessly, and the soldier rocks, the jelly
+     * squashes and springs, the rabbit hops, the dragon half opens its wings.
+     */
+    @Test
+    void everyKindHasItsOwnGait() {
+        for (Gait gait : Gait.values()) {
+            assertEquals(gait.walk().getFirst().offset(), gait.walk().getLast().offset(), gait + " loops");
+            assertEquals(gait.idle().getFirst().offset(), gait.idle().getLast().offset(), gait + " idles in a loop");
+            assertEquals(gait.walkAt(0), gait.walkAt(gait.period()), gait + " walk cycle");
+            assertEquals(gait.walkAt(3), gait.walkAt(3 + 5 * gait.period()));
+        }
+        Gait march = CreatureModels.GAITS.get(CreatureModels.SOLDIER);
+        assertTrue(march.walkAt(0).roll() < 0 && march.walkAt(4).roll() > 0, "the soldier rocks side to side");
+        Gait bounce = CreatureModels.GAITS.get(CreatureModels.JELLY);
+        assertTrue(bounce.walkAt(0).height() < 0.8 && bounce.walkAt(6).up() > 0.5, "the jelly lands flat, springs high");
+        assertTrue(bounce.idleAt(0).height() != bounce.idleAt(8).height(), "a jelly wobbles even standing");
+        Gait hop = CreatureModels.GAITS.get(CreatureModels.RABBIT);
+        assertTrue(hop.walkAt(5).up() > 0.5, "the rabbit hops (its own short hop)");
+        Gait stride = CreatureModels.GAITS.get(CreatureModels.DRAGON);
+        assertTrue(stride.walkAt(6).wings() > 0.3, "the dragon half opens its wings each stride");
+        assertTrue(stride.period() > march.period() * 2, "a grand, slow stride");
+        assertTrue(CreatureModels.GAITS.get(CreatureModels.TEDDY).stepsAt(0), "the teddy's thud");
+        assertFalse(CreatureModels.GAITS.get(CreatureModels.MOUSE).stepsAt(0), "the mice patter silently");
+        Set<String> walks = new HashSet<>();
+        for (Gait gait : Gait.values()) {
+            StringBuilder trace = new StringBuilder();
+            for (int tick = 0; tick < 12; tick++) {
+                trace.append(gait.walkAt(tick));
+            }
+            assertTrue(walks.add(trace.toString()), gait + " walks like no other");
         }
     }
 
@@ -136,8 +192,13 @@ class CreatureAttacksExportTest {
         return best;
     }
 
-    /** Per kind: its parts, then every tick of its attack and of the flinch, each part's display transformation. */
+    /**
+     * Per kind: its parts; its basic attack (every tick, and the flinch) as before; every motion it plays (basic and
+     * skills: ticks, impact, puffs, frames, the area its warning marks with the default settings); its walk and idle
+     * cycles. Each frame is every part's display transformation.
+     */
     static String export() {
+        JungleSettings jungle = JungleSettings.read(new MemoryConfiguration());
         StringBuilder out = new StringBuilder("{\n");
         out.append("  \"generated\": \"CreatureAttacksExportTest (./gradlew updateCreatureAttacks): the poses ")
                 .append("ModelCreatureLook shows; forward is -z, feet at y 0\",\n");
@@ -149,32 +210,53 @@ class CreatureAttacksExportTest {
             List<Part> parts = CreatureModels.CREATURES.get(kind);
             Attack attack = CreatureModels.ATTACKS.get(kind);
             out.append("    \"").append(kind).append("\": {\n");
-            out.append("      \"attack\": \"").append(attack.name().toLowerCase(Locale.ROOT)).append("\",\n");
+            out.append("      \"attack\": \"").append(name(attack)).append("\",\n");
             out.append("      \"ticks\": ").append(attack.ticks()).append(",\n");
             out.append("      \"parts\": [");
             for (int i = 0; i < parts.size(); i++) {
                 out.append(i == 0 ? "" : ", ").append('"').append(parts.get(i).model()).append('"');
             }
             out.append("],\n");
-            out.append("      \"puffs\": [");
-            List<Puff> puffs = attack.puffs();
-            for (int i = 0; i < puffs.size(); i++) {
-                Puff p = puffs.get(i);
-                out.append(i == 0 ? "\n" : ",\n").append(String.format(Locale.ROOT,
-                        "        {\"tick\": %d, \"particle\": \"%s\", \"forward\": %s, \"up\": %s, \"count\": %d, "
-                                + "\"spread\": %s, \"speed\": %s}",
-                        p.tick(), p.particle().name().toLowerCase(Locale.ROOT), num(p.forward()), num(p.up()),
-                        p.count(), num(p.spread()), num(p.speed())));
-            }
-            out.append(puffs.isEmpty() ? "],\n" : "\n      ],\n");
+            puffs(out, attack.puffs(), "      ");
             out.append("      \"frames\": [\n");
             for (int tick = 0; tick <= attack.ticks(); tick++) {
-                frame(out, parts, attack.at(tick), tick == attack.ticks());
+                frame(out, parts, attack.at(tick), 0, false, tick == attack.ticks());
             }
             out.append("      ],\n");
             out.append("      \"hit\": [\n");
             for (int tick = 0; tick <= CreatureModels.HIT_TICKS; tick++) {
-                frame(out, parts, CreatureModels.hitAt(tick), tick == CreatureModels.HIT_TICKS);
+                frame(out, parts, CreatureModels.hitAt(tick), 0, false, tick == CreatureModels.HIT_TICKS);
+            }
+            out.append("      ],\n");
+            List<Attack> motions = new ArrayList<>();
+            motions.add(attack);
+            motions.addAll(CreatureModels.SKILLS.get(kind));
+            out.append("      \"motions\": {\n");
+            for (int m = 0; m < motions.size(); m++) {
+                Attack motion = motions.get(m);
+                out.append("        \"").append(name(motion)).append("\": {\n");
+                out.append("          \"ticks\": ").append(motion.ticks()).append(", \"impact\": ")
+                        .append(motion.impact()).append(",\n");
+                out.append("          \"area\": ").append(area(motion, jungle)).append(",\n");
+                puffs(out, motion.puffs(), "          ");
+                out.append("          \"frames\": [\n");
+                for (int tick = 0; tick <= motion.ticks(); tick++) {
+                    frame(out, parts, motion.at(tick), 0, false, tick == motion.ticks());
+                }
+                out.append("          ]\n");
+                out.append(m == motions.size() - 1 ? "        }\n" : "        },\n");
+            }
+            out.append("      },\n");
+            Gait gait = CreatureModels.GAITS.get(kind);
+            out.append("      \"gait\": \"").append(gait.name().toLowerCase(Locale.ROOT)).append("\",\n");
+            out.append("      \"walk\": [\n");
+            for (int tick = 0; tick < gait.period(); tick++) {
+                frame(out, parts, gait.walkAt(tick), tick, true, tick == gait.period() - 1);
+            }
+            out.append("      ],\n");
+            out.append("      \"idle\": [\n");
+            for (int tick = 0; tick < gait.idlePeriod(); tick++) {
+                frame(out, parts, gait.idleAt(tick), tick, false, tick == gait.idlePeriod() - 1);
             }
             out.append("      ]\n");
             out.append(k == kinds.size() - 1 ? "    }\n" : "    },\n");
@@ -183,10 +265,57 @@ class CreatureAttacksExportTest {
         return out.toString();
     }
 
-    private static void frame(StringBuilder out, List<Part> parts, Offset offset, boolean last) {
+    private static String name(Attack attack) {
+        return attack.name().toLowerCase(Locale.ROOT);
+    }
+
+    private static void puffs(StringBuilder out, List<Puff> puffs, String indent) {
+        out.append(indent).append("\"puffs\": [");
+        for (int i = 0; i < puffs.size(); i++) {
+            Puff p = puffs.get(i);
+            out.append(i == 0 ? "\n" : ",\n").append(indent).append(String.format(Locale.ROOT,
+                    "  {\"tick\": %d, \"particle\": \"%s\", \"forward\": %s, \"up\": %s, \"count\": %d, "
+                            + "\"spread\": %s, \"speed\": %s}",
+                    p.tick(), p.particle().name().toLowerCase(Locale.ROOT), num(p.forward()), num(p.up()),
+                    p.count(), num(p.spread()), num(p.speed())));
+        }
+        out.append(puffs.isEmpty() ? "],\n" : "\n" + indent + "],\n");
+    }
+
+    /**
+     * The area a motion's warning marks on the ground with the default settings (null for none): circle or cone,
+     * centred {@code forward} blocks ahead of the feet.
+     */
+    private static String area(Attack motion, JungleSettings jungle) {
+        return switch (motion) {
+            case GOOP -> circle(4, jungle.skill(ObjectiveKind.JELLY, JungleSettings.GOO).radius(), "sticky");
+            case SLAM -> {
+                double r = jungle.skill(ObjectiveKind.TEDDY, JungleSettings.SLAM).radius();
+                yield circle(r * 0.9, r, "danger");
+            }
+            case SHOCKWAVE -> circle(0, jungle.skill(ObjectiveKind.TEDDY, JungleSettings.SHOCKWAVE).radius(), "danger");
+            case TAIL -> circle(0, jungle.skill(ObjectiveKind.DRAGON, JungleSettings.TAIL).radius(), "danger");
+            case GUST -> circle(0, jungle.skill(ObjectiveKind.DRAGON, JungleSettings.GUST).radius(), "push");
+            case RECOIL -> circle(5, MinionSettings.Shots.DEFAULTS.splashRadius(), "danger");
+            case BREATH -> {
+                JungleSettings.Skill breath = jungle.skill(ObjectiveKind.DRAGON, JungleSettings.BREATH);
+                yield "{\"shape\": \"cone\", \"forward\": 0.0000, \"radius\": " + num((float) breath.radius())
+                        + ", \"angle\": " + num((float) breath.angle()) + ", \"colour\": \"danger\"}";
+            }
+            default -> "null";
+        };
+    }
+
+    private static String circle(double forward, double radius, String colour) {
+        return "{\"shape\": \"circle\", \"forward\": " + num((float) forward) + ", \"radius\": "
+                + num((float) radius) + ", \"angle\": 0.0000, \"colour\": \"" + colour + "\"}";
+    }
+
+    private static void frame(StringBuilder out, List<Part> parts, Offset offset, int age, boolean moving,
+            boolean last) {
         out.append("        [");
         for (int i = 0; i < parts.size(); i++) {
-            out.append(i == 0 ? "" : ", ").append(json(ModelCreatureLook.pose(parts.get(i), 0, false, offset)));
+            out.append(i == 0 ? "" : ", ").append(json(ModelCreatureLook.pose(parts.get(i), age, moving, offset)));
         }
         out.append(last ? "]\n" : "],\n");
     }

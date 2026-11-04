@@ -8,7 +8,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * Every creature 공성전 v2 spawns (docs/siege-v2.md §2, §4, §7): the minions, the jungle monsters, the dragon and the
  * shopkeeper. Each has a resource pack model {@link #modelId()} ({@code mcpl:creature/<id>}) the models agent provides;
- * {@link VanillaCreatureLook} is the look without the pack; {@link CreatureModels#kindOf} maps the id to its model.
+ * {@link CreatureBodies} spawns its (one neutral, invisible) body; {@link CreatureModels#kindOf} maps the id to its model.
  */
 public enum CreatureKind {
     /** 태엽 병정: the melee minion. */

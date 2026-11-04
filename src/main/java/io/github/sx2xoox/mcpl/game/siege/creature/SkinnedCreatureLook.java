@@ -29,7 +29,7 @@ public final class SkinnedCreatureLook implements CreatureLook {
     @Override
     public Mob spawn(CreatureKind kind, LaneSites.@Nullable Side side, Location at, Consumer<Mob> configure) {
         Mob body = bodies.spawn(kind, side, at, configure);
-        Color team = side == null ? null : side == LaneSites.Side.RED ? VanillaCreatureLook.RED : VanillaCreatureLook.BLUE;
+        Color team = side == null ? null : side == LaneSites.Side.RED ? CreatureBodies.RED : CreatureBodies.BLUE;
         CreatureSkin.Visual visual = skin.attach(body, kind.id(), team);
         if (visual != CreatureSkin.Visual.NONE) {
             visuals.put(body.getUniqueId(), visual);
@@ -46,6 +46,27 @@ public final class SkinnedCreatureLook implements CreatureLook {
     public void attack(Mob body) {
         visual(body).attack();
         bodies.attack(body);
+    }
+
+    @Override
+    public void attack(Mob body, CreatureModels.Attack motion) {
+        visual(body).attack(motion);
+        bodies.attack(body, motion);
+    }
+
+    @Override
+    public void charge(Mob body, int ticks) {
+        visual(body).charge(ticks);
+    }
+
+    @Override
+    public void stagger(Mob body, Location from, double strength) {
+        visual(body).stagger(from.getX(), from.getZ(), strength);
+    }
+
+    @Override
+    public void enraged(Mob body, boolean enraged) {
+        visual(body).enraged(enraged);
     }
 
     @Override

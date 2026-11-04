@@ -24,7 +24,7 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
-import org.bukkit.entity.Villager;
+import org.bukkit.entity.Sheep;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Zombie;
 import org.bukkit.event.block.Action;
@@ -126,7 +126,7 @@ class SiegeShopTest extends LaneTestBase {
         for (LaneSites.Side side : LaneSites.Side.values()) {
             LaneSites.Spot spot = arena.sites().shop(side);
             Location home = shop().terminal(side);
-            Villager keeper = h.flatWorld().getEntitiesByClass(Villager.class).stream()
+            Sheep keeper = h.flatWorld().getEntitiesByClass(Sheep.class).stream()
                     .min(Comparator.comparingDouble(v -> v.getLocation().distanceSquared(home))).orElseThrow();
             // the spot's yaw is where the keeper looks (LaneSites#shop), never where a shopper looks
             org.bukkit.util.Vector wanted = new Location(home.getWorld(), 0, 0, 0, spot.yaw(), 0).getDirection();

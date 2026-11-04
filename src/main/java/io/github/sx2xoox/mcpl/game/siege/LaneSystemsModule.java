@@ -18,7 +18,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.creature.ModelCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.SkinnedCreatureLook;
-import io.github.sx2xoox.mcpl.game.siege.creature.VanillaCreatureLook;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
 import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
@@ -39,8 +39,8 @@ import org.jspecify.annotations.Nullable;
  * The 공성전 v2 lane systems ({@link SiegeSystems}: minions, jungle objectives, gold, shop) plugged into a
  * {@link SiegeMatch}: this module drives them through the round and forwards the match's hooks, and its
  * {@link SiegeArena} answers what they ask of the rules (sides, fighters, structures, score, experience, overhead
- * bars, damage numbers, sounds). Creatures wear the 3D models of the pack ({@link ModelCreatureLook}) for players who
- * have it, and the vanilla mob for everyone else; their overhead bars are separate displays that follow them (players
+ * bars, damage numbers, sounds). Creatures are one invisible neutral body each ({@link CreatureBodies}) dressed as the
+ * pack's 3D toys ({@link ModelCreatureLook}); their overhead bars are separate displays that follow them (players
  * with the pack do not see the mob, so a bar riding on it would be invisible to them).
  */
 final class LaneSystemsModule implements SiegeModule {
@@ -75,7 +75,7 @@ final class LaneSystemsModule implements SiegeModule {
         session.registerListener(skins);
         match.damageNumbers().height(this::topOf);
         this.systems = new SiegeSystems(new Arena(), session.gameConfig(),
-                new SkinnedCreatureLook(new VanillaCreatureLook(), skins),
+                new SkinnedCreatureLook(new CreatureBodies(), skins),
                 CreatureMover.pathfinder(match::structureKeepOut), match.modifiers());
         for (var listener : systems.listeners()) {
             session.registerListener(listener);

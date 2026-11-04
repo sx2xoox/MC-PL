@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
-import io.github.sx2xoox.mcpl.game.siege.creature.VanillaCreatureLook;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.CustomModelData;
 import io.papermc.paper.datacomponent.item.DyedItemColor;
@@ -83,7 +83,7 @@ public final class ToyArmor {
         Map<LaneSites.Side, List<Look>> looks = new EnumMap<>(LaneSites.Side.class);
         for (LaneSites.Side side : LaneSites.Side.values()) {
             String team = side.name().toLowerCase(Locale.ROOT);
-            Color dye = side == LaneSites.Side.BLUE ? VanillaCreatureLook.BLUE : VanillaCreatureLook.RED;
+            Color dye = side == LaneSites.Side.BLUE ? CreatureBodies.BLUE : CreatureBodies.RED;
             looks.put(side, List.of(
                     new Look("toy_armor/" + team + "_0", TIER_PATTERNS.get(0), TEAM_MATERIALS.get(side), dye),
                     new Look("toy_armor/" + team + "_1", TIER_PATTERNS.get(1), TEAM_MATERIALS.get(side), dye),

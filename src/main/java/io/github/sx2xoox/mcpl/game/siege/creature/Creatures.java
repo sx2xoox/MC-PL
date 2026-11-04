@@ -26,26 +26,33 @@ public final class Creatures {
     /** Segments of the fallback health bar in a creature's name. */
     private static final int BAR = 10;
 
+    /**
+     * The walking speed attribute of every body ({@link CreatureBodies}: one mob type for all): a kind's settings speed
+     * multiplies it (1 = an ordinary toy's walk).
+     */
+    public static final double BODY_SPEED = 0.25;
+
     private Creatures() {
     }
 
     /**
      * Makes a freshly spawned mob a driven creature: no vanilla goals (the systems walk and fight it), never despawns,
-     * picks nothing up, the given health, size, name; persistent false (tracked by the match instead).
+     * picks nothing up, the given health, size (the toy's size: 1 = as modelled), name; persistent false (tracked by
+     * the match instead). Every body walks at {@link #BODY_SPEED} (the systems' speeds multiply it); the systems
+     * replace vanilla's knockback with their own small push ({@link #push}).
      */
     public static void prepare(Mob mob, Component name, double health, double scale, double followRange) {
         mob.setPersistent(false);
         // no vanilla moans, steps or death cries: the toys make their own sounds (CreatureSounds, JungleSounds)
         mob.setSilent(true);
-        VanillaCreatureLook.optional(() -> mob.setRemoveWhenFarAway(false));
-        VanillaCreatureLook.optional(() -> mob.setDespawnInPeacefulOverride(TriState.FALSE));
-        VanillaCreatureLook.optional(() -> mob.setCanPickupItems(false));
-        VanillaCreatureLook.optional(() -> Bukkit.getMobGoals().removeAllGoals(mob));
+        CreatureBodies.optional(() -> mob.setRemoveWhenFarAway(false));
+        CreatureBodies.optional(() -> mob.setDespawnInPeacefulOverride(TriState.FALSE));
+        CreatureBodies.optional(() -> mob.setCanPickupItems(false));
+        CreatureBodies.optional(() -> Bukkit.getMobGoals().removeAllGoals(mob));
         base(mob, Attribute.MAX_HEALTH, health);
         base(mob, Attribute.SCALE, scale);
         base(mob, Attribute.FOLLOW_RANGE, followRange);
-        // Zombies never call reinforcements.
-        base(mob, Attribute.SPAWN_REINFORCEMENTS, 0);
+        base(mob, Attribute.MOVEMENT_SPEED, BODY_SPEED);
         mob.setHealth(maxHealth(mob));
         mob.customName(name);
         mob.setCustomNameVisible(true);
@@ -91,9 +98,21 @@ public final class Creatures {
     public static void strike(SiegeArena arena, Mob attacker, LivingEntity victim, double damage,
             LaneSites.@Nullable Side side, boolean ranged) {
         face(attacker, victim.getLocation());
-        VanillaCreatureLook.optional(attacker::swingMainHand);
         if (ranged) {
             trail(attacker.getEyeLocation(), victim.getLocation().add(0, victim.getHeight() / 2, 0));
+        }
+        hit(arena, attacker, victim, damage, side);
+    }
+
+    /**
+     * A creature's blow landing on {@code victim} (an area skill, a projectile arriving): {@link #strike} without
+     * turning the attacker. A structure hitbox goes through the rules, anything else takes mob attack damage caused by
+     * the creature (the world difficulty compensated for players).
+     */
+    public static void hit(SiegeArena arena, Mob attacker, LivingEntity victim, double damage,
+            LaneSites.@Nullable Side side) {
+        if (!victim.isValid() || victim.isDead()) {
+            return;
         }
         if (arena.isStructure(victim)) {
             if (side != null) {
@@ -129,8 +148,8 @@ public final class Creatures {
      * without AI keeps facing there (its model follows the rotation).
      */
     public static void turn(Mob mob, float yaw) {
-        VanillaCreatureLook.optional(() -> mob.setRotation(yaw, 0));
-        VanillaCreatureLook.optional(() -> mob.setBodyYaw(yaw));
+        CreatureBodies.optional(() -> mob.setRotation(yaw, 0));
+        CreatureBodies.optional(() -> mob.setBodyYaw(yaw));
     }
 
     /** Turns the body towards a place. */
@@ -140,7 +159,7 @@ public final class Creatures {
             return;
         }
         float yaw = (float) Math.toDegrees(Math.atan2(-delta.getX(), delta.getZ()));
-        VanillaCreatureLook.optional(() -> mob.setRotation(yaw, 0));
+        CreatureBodies.optional(() -> mob.setRotation(yaw, 0));
     }
 
     private static void trail(Location from, Location to) {
@@ -156,6 +175,19 @@ public final class Creatures {
             at.add(step);
             at.getWorld().spawnParticle(Particle.CRIT, at, 1, 0, 0, 0, 0);
         }
+    }
+
+    /**
+     * The creatures' own knockback (instead of vanilla's, which flings a toy like the mob its body is): the velocity of
+     * a small horizontal push away from {@code from} that slides about {@code blocks} (0 = it stands its ground).
+     */
+    public static Vector push(Location body, Location from, double blocks) {
+        Vector away = body.toVector().subtract(from.toVector()).setY(0);
+        if (blocks <= 0 || away.lengthSquared() < 1.0E-6) {
+            return new Vector();
+        }
+        // v blocks per tick slides about v / (1 - 0.546) on the ground (block friction 0.6 × drag 0.91)
+        return away.normalize().multiply(blocks * 0.454);
     }
 
     /** Horizontal distance squared. */

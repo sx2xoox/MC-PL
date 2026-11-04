@@ -23,7 +23,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.pack.PackBuilder;
-import io.github.sx2xoox.mcpl.game.siege.creature.VanillaCreatureLook;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestPlayer;
 import io.github.sx2xoox.mcpl.game.superpower.support.TestServer;
 import io.papermc.paper.datacomponent.DataComponentTypes;
@@ -75,7 +75,7 @@ class ToyArmorTest {
                 ToyArmor.Look look = ToyArmor.look(side, tier);
                 assertTrue(trims.add(look.pattern() + " " + look.material()), "one trim marks one look: " + look);
                 assertTrue(ids.add(look.id()));
-                assertEquals(side == LaneSites.Side.BLUE ? VanillaCreatureLook.BLUE : VanillaCreatureLook.RED,
+                assertEquals(side == LaneSites.Side.BLUE ? CreatureBodies.BLUE : CreatureBodies.RED,
                         look.dye());
             }
         }

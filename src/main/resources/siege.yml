@@ -288,6 +288,7 @@ jungle:
   hud-up: "<name> <green>등장</green>"
   hud-down: "<name> <white><time></white>"
   dragon-spawned: "<gray>드래곤이 생성되었습니다."
+  dragon-enraged: "<red>장난감 드래곤이 화났습니다! <gray>기술이 더 자주, 더 세게 옵니다."
   small-cleared: "<name><gray> 처치!"
   taken:
     fountain: "<team><gray> · <name> 점령"

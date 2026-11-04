@@ -28,11 +28,12 @@ import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Zombie;
+import org.bukkit.entity.Sheep;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -106,8 +107,15 @@ class ModelCreatureLookTest {
         MockBukkit.unmock();
     }
 
-    private Zombie mob(double x, double z, float yaw) {
-        return world.spawn(new Location(world, x, 64, z, yaw, 0), Zombie.class);
+    private Sheep mob(double x, double z, float yaw) {
+        return world.spawn(new Location(world, x, 64, z, yaw, 0), Sheep.class);
+    }
+
+    /** A body as the game makes it for {@code kind} at size 1 (its {@link CreatureModels#BODY_SCALES}). */
+    private Sheep body(String kind, double x, double z) {
+        Sheep body = mob(x, z, 0);
+        body.getAttribute(Attribute.SCALE).setBaseValue(CreatureModels.BODY_SCALES.get(kind));
+        return body;
     }
 
     private static void assertSees(Player player, List<? extends Entity> entities, boolean sees) {
@@ -118,7 +126,7 @@ class ModelCreatureLookTest {
 
     @Test
     void packPlayersSeeTheModelOthersTheVanillaMob() {
-        Zombie body = mob(5, 5, 0);
+        Sheep body = mob(5, 5, 0);
         ModelCreatureLook.ModelCreature soldier = look.attach(body, "melee", Color.RED);
         assertEquals(CreatureModels.SOLDIER, soldier.kind());
         assertEquals(2, soldier.displays().size(), "the soldier and his wind-up key");
@@ -148,7 +156,7 @@ class ModelCreatureLookTest {
 
     @Test
     void theModelFollowsAndFacesTheMob() {
-        Zombie body = mob(5, 5, 0);
+        Sheep body = mob(5, 5, 0);
         ModelCreatureLook.ModelCreature rabbit = look.attach(body, "RABBIT", null);
         body.teleport(new Location(world, 8, 64, 6, 90, 0));
         server.getScheduler().performTicks(2);
@@ -173,7 +181,7 @@ class ModelCreatureLookTest {
 
     @Test
     void aPackPlayersHitOnTheHitboxIsTheirAttackOnTheMob() {
-        Zombie body = mob(5, 5, 0);
+        Sheep body = mob(5, 5, 0);
         ModelCreatureLook.ModelCreature teddy = look.attach(body, "teddy", null);
         withPack.attackAttempt(teddy.hitbox());
         assertEquals(List.of("A>" + body.getUniqueId()), hits);
@@ -189,9 +197,10 @@ class ModelCreatureLookTest {
 
     @Test
     void eachKindPlaysItsOwnAttackThenTheMotionAgainAndFlinchesWhenHit() {
-        ModelCreatureLook.ModelCreature soldier = look.attach(mob(5, 5, 0), "soldier", Color.RED);
-        ModelCreatureLook.ModelCreature jelly = look.attach(mob(9, 9, 0), "jelly", null);
-        ModelCreatureLook.ModelCreature cannon = look.attach(mob(13, 13, 0), "cannon", Color.BLUE);
+        ModelCreatureLook.ModelCreature soldier = look.attach(body("soldier", 5, 5), "soldier", Color.RED);
+        ModelCreatureLook.ModelCreature jelly = look.attach(body("jelly", 9, 9), "jelly", null);
+        ModelCreatureLook.ModelCreature cannon = look.attach(body("cannon", 13, 13), "cannon", Color.BLUE);
+        assertEquals(1, soldier.size(), 1e-6, "a body of its kind's size wears the model as built");
         assertSame(CreatureModels.Attack.THRUST, soldier.attackMotion());
         assertSame(CreatureModels.Attack.POUNCE, jelly.attackMotion());
         assertSame(CreatureModels.Attack.RECOIL, cannon.attackMotion());
@@ -216,7 +225,8 @@ class ModelCreatureLookTest {
 
         server.getScheduler().performTicks(CreatureModels.Attack.POUNCE.ticks());
         assertEquals(0, soldier.attackTick(), "over");
-        assertEquals(new Vector3f(0, 1, 0), translation(soldier), "back in its own pose");
+        Vector3f back = translation(soldier);
+        assertTrue(Math.abs(back.y - 1) < 0.05 && Math.abs(back.z) < 1e-4, "back in its own (breathing) pose: " + back);
 
         jelly.hit();
         assertEquals(1, jelly.hitTick());
@@ -242,7 +252,7 @@ class ModelCreatureLookTest {
     @Test
     void removeCleansEverythingAndGivesTheMobBack() {
         int before = world.getEntities().size();
-        Zombie body = mob(5, 5, 0);
+        Sheep body = mob(5, 5, 0);
         ModelCreatureLook.ModelCreature dragon = look.attach(body, "dragon", null);
         ModelCreatureLook.ModelCreature mouse = look.attach(mob(7, 7, 0), "mice", null);
         assertEquals(3, dragon.displays().size(), "body, wings, key");
@@ -296,7 +306,7 @@ class ModelCreatureLookTest {
 
     @Test
     void aDyingMobIsNotShownToPackPlayers() {
-        Zombie body = mob(5, 5, 0);
+        Sheep body = mob(5, 5, 0);
         ModelCreatureLook.ModelCreature soldier = look.attach(body, "melee", Color.BLUE);
         assertFalse(withPack.canSee(body));
         body.setHealth(0); // dies: the death event's listeners remove the look while the body plays its death
@@ -310,7 +320,7 @@ class ModelCreatureLookTest {
 
     @Test
     void aMobThatDiesWithoutRemoveIsCleanedUp() {
-        Zombie body = mob(5, 5, 0);
+        Sheep body = mob(5, 5, 0);
         ModelCreatureLook.ModelCreature jelly = look.attach(body, "jelly", null);
         body.remove();
         server.getScheduler().performTicks(2);
@@ -375,9 +385,17 @@ class ModelCreatureLookTest {
             }
             assertEquals(top, CreatureModels.TOPS.get(entry.getKey()), 0.02, entry.getKey());
         }
-        LivingEntity rabbit = mob(4, 2, 0);
+        LivingEntity rabbit = body("rabbit", 4, 2);
         ModelCreatureLook.ModelCreature skinned = look.attach(rabbit, "rabbit", null);
-        assertEquals(CreatureModels.TOPS.get("rabbit"), look.modelTop(rabbit), 1e-9);
+        assertEquals(CreatureModels.TOPS.get("rabbit"), look.modelTop(rabbit), 1e-6);
+        // a toy made twice as big (the settings' size) is twice as tall
+        LivingEntity big = mob(8, 2, 0);
+        big.getAttribute(Attribute.SCALE).setBaseValue(CreatureModels.BODY_SCALES.get("rabbit") * 2);
+        ModelCreatureLook.ModelCreature twice = look.attach(big, "rabbit", null);
+        assertEquals(2 * CreatureModels.TOPS.get("rabbit"), look.modelTop(big), 1e-6);
+        assertEquals(2 * CreatureModels.CREATURES.get("rabbit").getFirst().scale(),
+                twice.displays().getFirst().getTransformation().getScale().x, 1e-5);
+        twice.remove();
         assertTrue(skinned.hitbox().getInteractionHeight() >= CreatureModels.TOPS.get("rabbit") - 1e-6,
                 "a pack player hits the model's ears too");
         skinned.remove();

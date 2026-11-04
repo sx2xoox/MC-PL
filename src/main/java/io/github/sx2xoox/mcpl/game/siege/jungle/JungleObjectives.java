@@ -45,11 +45,11 @@ import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.entity.SlimeSplitEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.util.Vector;
@@ -61,8 +61,8 @@ import org.jspecify.annotations.Nullable;
  *
  * <ul>
  *     <li>Monster camps (젤리, 쥐, 곰인형, 토끼, 드래곤) stand still until a player in play hits them, then fight the
- *     nearest player (the rabbit only flees); pulled beyond their leash, or left alone for a while, they walk home with
- *     full health. The last hit takes the camp for that player's side: score, gold for the last hitter (the dragon: the
+ *     nearest player with their own skills ({@link MonsterSkills}: warned on the ground first); pulled beyond their
+ *     leash, or left alone for a while, they walk home with full health. The last hit takes the camp for that player's side: score, gold for the last hitter (the dragon: the
  *     whole team), experience split between the side's players nearby (the dragon: each member), and the buff (곰인형:
  *     attack, 토끼: cooldown, to the last hitter and allies nearby; 드래곤: damage for the whole team and stronger
  *     minions).</li>
@@ -95,6 +95,8 @@ public final class JungleObjectives implements Listener {
     private final @Nullable MinionWaves minions;
     private final Messages messages;
     private final List<Site> sites = new ArrayList<>();
+    /** How the monsters fight: their skills, warnings, shots and puddles. */
+    private final MonsterSkills skills;
     /** Player → buff kind → the tick it ends. */
     private final Map<UUID, EnumMap<ObjectiveKind, Long>> buffs = new HashMap<>();
     /** Side → telescope reveal: the end tick and the half of the map (−1 = −x, 1 = +x, 0 = all). */
@@ -114,6 +116,27 @@ public final class JungleObjectives implements Listener {
         this.modifiers = modifiers;
         this.minions = minions;
         this.messages = arena.messages();
+        this.skills = new MonsterSkills(arena, settings, look, mover, new MonsterSkills.Host() {
+            @Override
+            public List<LivingEntity> fighters(Site site) {
+                return fightersIn(site);
+            }
+
+            @Override
+            public void deal(Mob mob, LivingEntity victim, double damage) {
+                hit(mob, victim, damage);
+            }
+
+            @Override
+            public void basic(Site site, Mob mob, LivingEntity target, double damage) {
+                strike(site, mob, target, damage);
+            }
+
+            @Override
+            public long now() {
+                return now;
+            }
+        });
         LaneSites map = arena.sites();
         for (LaneSites.Side side : LaneSites.Side.values()) {
             for (LaneSites.Objective objective : map.objectives(side)) {
@@ -134,7 +157,6 @@ public final class JungleObjectives implements Listener {
         /** The last player who hit each monster (by monster id). */
         private final Map<UUID, UUID> hitters = new HashMap<>();
         private final Map<Mob, @Nullable LivingEntity> targets = new HashMap<>();
-        private final Map<Mob, Long> nextAttack = new HashMap<>();
         private boolean up;
         private long upAt;
         private boolean aggro;
@@ -291,6 +313,7 @@ public final class JungleObjectives implements Listener {
                 JungleSounds.ambient(arena, site.kind(), site.at, now / 20);
             }
         }
+        skills.tick();
         if (now % 20 == 0) {
             second();
         }
@@ -307,6 +330,7 @@ public final class JungleObjectives implements Listener {
             site.contested = false;
             removeLabel(site);
         }
+        skills.clear();
         for (UUID player : new ArrayList<>(buffs.keySet())) {
             endBuffs(player);
         }
@@ -398,40 +422,11 @@ public final class JungleObjectives implements Listener {
                 continue;
             }
             site.lastEngaged = now;
-            if (kind.range() <= 0) {
-                flee(site, mob, target);
-                continue;
-            }
-            if (Creatures.flatDistanceSquared(mob.getLocation(), target.getLocation()) <= kind.range() * kind.range()) {
-                mover.stop(mob);
-                Creatures.face(mob, target.getLocation());
-                if (now >= site.nextAttack.getOrDefault(mob, 0L)) {
-                    site.nextAttack.put(mob, now + kind.attackTicks());
-                    strike(site, mob, target, kind.damage());
-                }
-            } else {
-                mover.moveTo(mob, target.getLocation(), kind.speed());
-            }
+            skills.fight(site, mob, target);
         }
     }
 
-    /** The clock rabbit runs away from its attacker, staying inside its leash. */
-    private void flee(Site site, Mob mob, LivingEntity from) {
-        Vector away = mob.getLocation().toVector().subtract(from.getLocation().toVector()).setY(0);
-        if (away.lengthSquared() < 1.0E-4) {
-            away = new Vector(1, 0, 0);
-        }
-        Location goal = mob.getLocation().add(away.normalize().multiply(4));
-        double room = Math.max(1, site.kindSettings().leash() - 3);
-        Vector fromHome = goal.toVector().subtract(site.at.toVector()).setY(0);
-        if (fromHome.lengthSquared() > room * room) {
-            // Cornered at the edge: dash across home to the other side instead.
-            goal = site.at.clone().subtract(fromHome.normalize().multiply(room * 0.6));
-        }
-        goal.setY(site.at.getY());
-        mover.moveTo(mob, goal, site.kindSettings().speed() * 1.2);
-    }
-
+    /** A monster's basic attack: its hit (a ranged one throws a shot of its own instead), motion and sound. */
     private void strike(Site site, Mob mob, LivingEntity target, double damage) {
         striking = true;
         try {
@@ -442,7 +437,20 @@ public final class JungleObjectives implements Listener {
         attackMotion(site, mob);
     }
 
-    /** The monster's attack motion (pack players) and sound (everyone). */
+    /** A monster's blow landing (a skill's area, a thrown hand): the only damage monsters deal. */
+    private void hit(Mob mob, LivingEntity victim, double damage) {
+        if (!mob.isValid() || mob.isDead()) {
+            return;
+        }
+        striking = true;
+        try {
+            Creatures.hit(arena, mob, victim, damage, null);
+        } finally {
+            striking = false;
+        }
+    }
+
+    /** The monster's attack motion and sound (everyone). */
     private void attackMotion(Site site, Mob mob) {
         look.attack(mob);
         CreatureKind creature = CreatureKind.of(site.kind());
@@ -453,6 +461,7 @@ public final class JungleObjectives implements Listener {
 
     /** Back home, full health, standing still again. */
     public void reset(Site site) {
+        skills.reset(site);
         site.aggro = false;
         site.hitters.clear();
         site.targets.clear();
@@ -483,6 +492,21 @@ public final class JungleObjectives implements Listener {
                 <= site.kindSettings().leash() * site.kindSettings().leash();
     }
 
+    /** Every fighter inside a camp's leash. */
+    private List<LivingEntity> fightersIn(Site site) {
+        List<LivingEntity> out = new ArrayList<>();
+        for (LaneSites.Side side : LaneSites.Side.values()) {
+            List<LivingEntity> fighters = new ArrayList<>(arena.fighters(side));
+            fighters.addAll(arena.extraFighters(side));
+            for (LivingEntity fighter : fighters) {
+                if (fighter(site, fighter)) {
+                    out.add(fighter);
+                }
+            }
+        }
+        return out;
+    }
+
     private @Nullable LivingEntity nearestFighter(Site site, Location from) {
         LivingEntity best = null;
         double bestDistance = Double.MAX_VALUE;
@@ -511,10 +535,10 @@ public final class JungleObjectives implements Listener {
         site.mobs.clear();
         site.hitters.clear();
         site.targets.clear();
-        site.nextAttack.clear();
     }
 
     private void forget(Mob mob) {
+        skills.forget(mob);
         arena.untrack(mob);
         arena.removeOverheadBar(mob);
         look.removed(mob);
@@ -527,7 +551,6 @@ public final class JungleObjectives implements Listener {
         }
         forget(mob);
         site.targets.remove(mob);
-        site.nextAttack.remove(mob);
         UUID last = credit != null ? credit : site.hitters.get(mob.getUniqueId());
         if (last == null) {
             last = site.lastHitter;
@@ -815,11 +838,28 @@ public final class JungleObjectives implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onSplit(SlimeSplitEvent event) {
-        if (siteOf(event.getEntity()) != null) {
-            event.setCancelled(true);
+    /**
+     * A monster's own knockback (instead of vanilla's): a blow pushes it only a little ({@code jungle.<kind>.knockback},
+     * the dragon not at all) and it staggers; its own camp's blows never push it.
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onKnockback(EntityKnockbackEvent event) {
+        Site site = siteOf(event.getEntity());
+        if (site == null) {
+            return;
         }
+        Mob mob = (Mob) event.getEntity();
+        double blocks = site.kindSettings().knockback();
+        Vector away = event.getKnockback().clone().setY(0);
+        if (striking || blocks <= 0 || away.lengthSquared() < 1.0E-8 || skills.busy(mob)) {
+            // a monster charging a skill stands its ground: its warning stays where it was marked
+            event.setCancelled(true);
+            return;
+        }
+        Location body = mob.getLocation();
+        Location from = body.clone().subtract(away.normalize());
+        event.setKnockback(Creatures.push(body, from, blocks));
+        look.stagger(mob, from, Math.min(1, blocks / 0.4));
     }
 
     /**
@@ -874,10 +914,6 @@ public final class JungleObjectives implements Listener {
         arena.damageNumber(hurt, event.getFinalDamage());
         JungleSounds.hurt(arena, site.kind(), hurt.getLocation());
         look.hurt(hurt);
-        if (site.kindSettings().range() <= 0) {
-            // the clock rabbit never strikes: its "attack" is a startled hop when hit
-            attackMotion(site, hurt);
-        }
         Player attacker = arena.attacker(event);
         LivingEntity hitter;
         UUID hitterId;
@@ -985,6 +1021,26 @@ public final class JungleObjectives implements Listener {
 
     public long now() {
         return now;
+    }
+
+    /** Whether a monster (the dragon) is enraged. */
+    public boolean isEnraged(Mob mob) {
+        return skills.enraged(mob);
+    }
+
+    /** Whether a monster is charging or playing a skill (it stands still meanwhile). */
+    public boolean isCasting(Mob mob) {
+        return skills.busy(mob);
+    }
+
+    /** The monsters' shots in flight (tests). */
+    public io.github.sx2xoox.mcpl.game.siege.creature.ToyShots shots() {
+        return skills.shots();
+    }
+
+    /** Sticky puddles on the ground (tests). */
+    public int puddles() {
+        return skills.puddleCount();
     }
 
     // ------------------------------------------------------------------ looks
