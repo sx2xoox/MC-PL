@@ -4,7 +4,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.function.DoubleFunction;
+import java.util.function.Function;
 
+import com.destroystokyo.paper.entity.Pathfinder;
 import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import org.bukkit.Location;
 import org.bukkit.entity.Mob;
@@ -20,7 +22,9 @@ import org.bukkit.util.Vector;
  *
  * <p>Buildings ({@link #pathfinder(DoubleFunction)}'s walls, the 공성전 structures' barrier squares): a goal inside one is
  * moved out of it (the pathfinder cannot reach it, a stepped creature would walk into it) and a stepped creature goes
- * round them ({@link Footprint.Box#step}) instead of through.
+ * round them ({@link Footprint.Box#step}) instead of through. A pathfinder's goal keeps {@link #nodeRoom} more off the
+ * walls (vanilla's walk nodes of a wide body), and one its path cannot reach is looked for {@link #ESCAPE} farther
+ * out, so a body is never sent to rub at a wall.
  */
 public interface CreatureMover {
 
@@ -47,17 +51,45 @@ public interface CreatureMover {
      * stand in.
      */
     static CreatureMover pathfinder(DoubleFunction<List<Footprint.Box>> walls) {
+        return pathfinder(walls, Mob::getPathfinder);
+    }
+
+    /**
+     * {@link #pathfinder(DoubleFunction)} with the pathfinder of a mob from {@code pathfinders} (tests: one of their
+     * own); a mob it throws for is stepped.
+     */
+    static CreatureMover pathfinder(DoubleFunction<List<Footprint.Box>> walls,
+            Function<Mob, Pathfinder> pathfinders) {
         return new CreatureMover() {
             /** Goals of creatures the server cannot path for, with their speed. */
             private final Map<Mob, Object[]> stepping = new WeakHashMap<>();
 
             @Override
             public void moveTo(Mob mob, Location wanted, double speed) {
-                Location to = clear(walls.apply(halfWidth(mob)), wanted);
+                double margin = halfWidth(mob);
+                Location to = clear(walls.apply(margin + nodeRoom(mob)), wanted);
                 try {
-                    mob.getPathfinder().moveTo(to, speed);
+                    walk(pathfinders.apply(mob), to, walls.apply(margin + nodeRoom(mob) + ESCAPE), wanted, speed);
                 } catch (RuntimeException noPathfinder) {
-                    stepping.put(mob, new Object[] {to.clone(), speed});
+                    stepping.put(mob, new Object[] {clear(walls.apply(margin), wanted), speed});
+                }
+            }
+
+            private void walk(Pathfinder pathfinder, Location to,
+                    List<Footprint.Box> farWalls, Location wanted, double speed) {
+                Pathfinder.PathResult path = pathfinder.findPath(to);
+                if (path == null || !path.canReachFinalPoint()) {
+                    // a goal at a wall the path cannot end on (the walk nodes of a wide body): one farther out
+                    Location farther = clear(farWalls, wanted);
+                    if (farther.distanceSquared(to) > 1.0E-6) {
+                        Pathfinder.PathResult other = pathfinder.findPath(farther);
+                        if (other != null && (path == null || other.canReachFinalPoint())) {
+                            path = other;
+                        }
+                    }
+                }
+                if (path != null) {
+                    pathfinder.moveTo(path, speed);
                 }
             }
 
@@ -67,7 +99,7 @@ public interface CreatureMover {
                     return;
                 }
                 try {
-                    mob.getPathfinder().stopPathfinding();
+                    pathfinders.apply(mob).stopPathfinding();
                 } catch (RuntimeException noPathfinder) {
                     // Nothing walks on a server without a pathfinder.
                 }
@@ -86,6 +118,18 @@ public interface CreatureMover {
             }
         };
     }
+
+    /**
+     * Room a pathfinder's goal keeps from walls besides the body's half width: vanilla's walk nodes of a body wider
+     * than a block take two blocks a node, so a goal on the block next to a wall is no node it can end on (the path
+     * stops short and the body rubs at the wall); a narrower body still gets a hair of room.
+     */
+    static double nodeRoom(Mob mob) {
+        return mob.getWidth() > 1 ? 1.0 : 0.3;
+    }
+
+    /** How much farther out a goal is moved when the path to it cannot reach it. */
+    double ESCAPE = 1.5;
 
     /** A body's half width, the margin it keeps from walls. */
     static double halfWidth(Mob mob) {

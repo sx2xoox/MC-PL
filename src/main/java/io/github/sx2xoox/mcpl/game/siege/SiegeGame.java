@@ -3,6 +3,7 @@ package io.github.sx2xoox.mcpl.game.siege;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.DoubleFunction;
 import java.util.function.Function;
 import java.util.logging.Level;
 
@@ -22,9 +23,11 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStats;
 import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsSettings;
 import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsStore;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
 import io.github.sx2xoox.mcpl.game.siege.tower.TowerLook;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
@@ -58,6 +61,7 @@ public final class SiegeGame implements MiniGame {
     private TowerLook towerLook;
     private @Nullable LaneSites sitesOverride;
     private @Nullable PackAudience packsOverride;
+    private @Nullable Function<DoubleFunction<List<Footprint.Box>>, CreatureMover> moverOverride;
     private final List<Function<SiegeMatch, SiegeModule>> moduleFactories = new ArrayList<>();
     private @Nullable List<SettingsSection> settings;
     private @Nullable SiegeMatch current;
@@ -258,6 +262,19 @@ public final class SiegeGame implements MiniGame {
     /** Who has the resource pack, for the next matches' creature looks and bars (tests); null = the hub's pack. */
     void packsOverride(@Nullable PackAudience packs) {
         this.packsOverride = packs;
+    }
+
+    /**
+     * How the next matches walk their creatures and bots round the buildings' {@code walls} (tests: a pathfinder
+     * of their own); null = {@link CreatureMover#pathfinder(DoubleFunction)}.
+     */
+    void moverOverride(@Nullable Function<DoubleFunction<List<Footprint.Box>>, CreatureMover> mover) {
+        this.moverOverride = mover;
+    }
+
+    /** What walks the creatures and bots of a match round the buildings' {@code walls}. */
+    public CreatureMover creatureMover(DoubleFunction<List<Footprint.Box>> walls) {
+        return moverOverride != null ? moverOverride.apply(walls) : CreatureMover.pathfinder(walls);
     }
 
     /** Who has the resource pack: the hub's pack service, or {@link #packsOverride}. */

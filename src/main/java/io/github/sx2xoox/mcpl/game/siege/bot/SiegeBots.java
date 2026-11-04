@@ -115,6 +115,8 @@ public final class SiegeBots implements SiegeModule, Listener {
     private final Map<UUID, SiegeBot> legs = new HashMap<>();
     private final Map<String, LanePath> lanes = new HashMap<>();
     private final Map<String, List<Location>> laneLocations = new HashMap<>();
+    /** The buildings' walls the cached {@link #lanes} go round ({@link #lanesRound}). */
+    private List<Footprint.Box> laneWalls = List.of();
     /** What each bot saw at its last decision, by participant or entity id. */
     private final Map<UUID, Map<UUID, LivingEntity>> seen = new HashMap<>();
     private final Set<Long> heldChunks = new HashSet<>();
@@ -126,7 +128,7 @@ public final class SiegeBots implements SiegeModule, Listener {
 
     public SiegeBots(SiegeMatch match, Setup setup, List<Seat> seats) {
         this.match = match;
-        this.mover = CreatureMover.pathfinder(match::structureKeepOut);
+        this.mover = match.game().creatureMover(match::structureKeepOut);
         this.session = match.session();
         this.messages = match.messages();
         this.settings = setup.settings();
@@ -218,6 +220,7 @@ public final class SiegeBots implements SiegeModule, Listener {
         if (abandoned(now)) {
             return;
         }
+        lanesRound();
         for (SiegeBot bot : List.copyOf(bots.values())) {
             try {
                 tickBot(bot, now);
@@ -1367,6 +1370,23 @@ public final class SiegeBots implements SiegeModule, Listener {
         return best;
     }
 
+    /** Room the bots' lanes keep from the buildings' walls they go round (a bot's half width and some room). */
+    static final double LANE_MARGIN = 0.4 + MinionWaves.LANE_ROOM;
+
+    /**
+     * Keeps the lanes going round the buildings' walls as they stand: the map's lanes run through the towers, so a lane
+     * point a bot walks to would lie inside a tower and be moved to the wall facing the bot, where it would rub (the
+     * minions' lanes do the same, {@link MinionWaves#detour}).
+     */
+    private void lanesRound() {
+        List<Footprint.Box> walls = match.structureKeepOut(LANE_MARGIN);
+        if (!walls.equals(laneWalls)) {
+            laneWalls = walls;
+            lanes.clear();
+            laneLocations.clear();
+        }
+    }
+
     /** The bot's lane from its base to the enemy base. */
     private LanePath lane(SiegeBot bot) {
         String key = bot.side + ":" + bot.lane;
@@ -1391,6 +1411,7 @@ public final class SiegeBots implements SiegeModule, Listener {
             for (LaneSites.Point point : match.sites().lanePath(bot.lane)) {
                 points.add(match.layout().at(point));
             }
+            points = MinionWaves.detour(points, laneWalls);
             if (bot.side == LaneSites.Side.RED) {
                 Collections.reverse(points);
             }
@@ -1505,6 +1526,12 @@ public final class SiegeBots implements SiegeModule, Listener {
     /** The bots, in the order they were enlisted. */
     public List<UUID> ids() {
         return List.copyOf(bots.keySet());
+    }
+
+    /** The waypoints a bot walks its lane by (from its base, round the buildings), or empty for no such bot. */
+    List<Location> lanePoints(UUID id) {
+        SiegeBot bot = bots.get(id);
+        return bot == null ? List.of() : List.copyOf(laneLocations(bot));
     }
 
     /** The body of a live bot, or null. */

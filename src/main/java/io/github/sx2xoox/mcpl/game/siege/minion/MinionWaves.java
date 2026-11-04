@@ -14,6 +14,7 @@ import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
@@ -22,6 +23,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.creature.Telegraphs;
 import io.github.sx2xoox.mcpl.game.siege.creature.ToyShots;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
+import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.papermc.paper.event.entity.EntityKnockbackEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -47,13 +49,16 @@ import org.jspecify.annotations.Nullable;
 /**
  * The minion waves of 공성전 v2 (docs/siege-v2.md §2). Every {@link MinionSettings#intervalTicks()} each side sends a
  * wave down both lanes from its base: melee and ranged minions (one more melee per few players), a cannon every few
- * waves. Minions walk {@link LaneSites#lanePath} (BLUE as given, RED reversed) with the pathfinder in a formation
- * ({@link Formation}: melee rows in front, the ranged row and the cannon behind, each on its own file), re-path when
- * stuck and are put back on the path when that does not help; they fight an enemy minion (the one facing their file
- * that the fewest allies fight; melee from just in front of it, ranged from the end of their range), else an enemy
- * tower or core in reach ({@link SiegeArena#structures}), else an enemy player or bot, and never chase farther than
- * {@link MinionSettings#leash()} from the lane. Vanilla AI is off: they target nothing by themselves and hurt only
- * through their own hits; their bodies do not push each other and their hits do not knock each other back.
+ * waves. Minions walk {@link LaneSites#lanePath} (BLUE as given, RED reversed; where it runs through a tower or a core,
+ * round the building's walls instead, {@link #LANE_ROOM} off them, {@link Footprint#detour}) with the pathfinder in a
+ * formation ({@link Formation}: melee rows in front, the ranged row and the cannon behind, each on its own file; files
+ * close in where a wall is near, {@link #FILE_ROOM}), re-path when stuck (and walk in single file for a while) and are
+ * put back on the path (its next waypoint, clear of the walls) when that does not help; they fight an enemy minion
+ * (the one facing their file that the fewest allies fight; melee from just in front of it, ranged from the end of
+ * their range), else an enemy tower or core in reach ({@link SiegeArena#structures}), else an enemy player or bot, and
+ * never chase farther than {@link MinionSettings#leash()} from the lane. Vanilla AI is off: they target nothing by
+ * themselves and hurt only through their own hits; their bodies do not push each other and their hits do not knock
+ * each other back.
  *
  * <p>The player who lands the killing blow gets the minion's gold ({@link Gold#settings()}); enemies of the minion
  * nearby share its experience. Minions are tracked by the match, their lanes' chunks are held loaded, and
@@ -110,6 +115,10 @@ public final class MinionWaves implements Listener {
         private int stuck;
         private long checkedAt;
         private long repathedAt = -1;
+        /** Until when it walks on the lane line, not on its file (it got stuck). */
+        private long singleFileUntil = -1;
+        /** The lane progress it last marched to (NaN: none since it fought or was put back). */
+        private double carrot = Double.NaN;
         private @Nullable Location movingTo;
         private long movedAt;
         private @Nullable UUID lastHitter;
@@ -332,16 +341,61 @@ public final class MinionWaves implements Listener {
         return new Vector(direction.x(), 0, direction.z());
     }
 
-    /** The waypoints of a lane in a side's walking order, as world locations. */
+    /**
+     * Blocks a lane keeps between the walls of a building it runs through and the widest minion's body: the room the
+     * detour round the building leaves (the lane line itself is never at a wall, the files close in,
+     * {@link #FILE_ROOM}).
+     */
+    public static final double LANE_ROOM = 1.5;
+    /** Blocks a marching minion's goal on its file keeps from the walls besides its half width (else it closes in). */
+    static final double FILE_ROOM = 0.75;
+
+    /**
+     * The waypoints of a lane in a side's walking order, as world locations: the map's lane, round the buildings it
+     * runs through ({@link Footprint#detour}; one way round for both sides, so the waves still meet).
+     */
     List<Location> path(LaneSites.Side side, LaneSites.Lane lane) {
-        List<Location> out = new ArrayList<>();
+        List<Location> raw = new ArrayList<>();
         for (LaneSites.Point point : arena.sites().lanePath(lane)) {
-            out.add(arena.at(point.x(), point.y(), point.z()));
+            raw.add(arena.at(point.x(), point.y(), point.z()));
         }
+        List<Location> out = detour(raw, arena.structureWalls(widestHalf() + LANE_ROOM));
         if (side == LaneSites.Side.RED) {
             Collections.reverse(out);
         }
         return out;
+    }
+
+    /** {@code path} round the {@code walls} ({@link Footprint#detour}), new points at the nearest old one's height. */
+    public static List<Location> detour(List<Location> path, List<Footprint.Box> walls) {
+        if (walls.isEmpty() || path.size() < 2) {
+            return new ArrayList<>(path);
+        }
+        List<double[]> flat = new ArrayList<>();
+        for (Location point : path) {
+            flat.add(new double[] {point.getX(), point.getZ()});
+        }
+        List<Location> out = new ArrayList<>();
+        for (double[] point : Footprint.detour(flat, walls)) {
+            Location nearest = path.getFirst();
+            for (Location old : path) {
+                if (Math.hypot(old.getX() - point[0], old.getZ() - point[1])
+                        < Math.hypot(nearest.getX() - point[0], nearest.getZ() - point[1])) {
+                    nearest = old;
+                }
+            }
+            out.add(new Location(nearest.getWorld(), point[0], nearest.getY(), point[1]));
+        }
+        return out;
+    }
+
+    /** The half width of the widest minion body (with the hair of {@link #margin}). */
+    private double widestHalf() {
+        double out = 0.3;
+        for (MinionKind kind : MinionKind.values()) {
+            out = Math.max(out, CreatureBodies.width(kind.creature(), settings.stats(kind).scale()) / 2);
+        }
+        return out + 0.05;
     }
 
     // ------------------------------------------------------------------ behaviour
@@ -422,6 +476,7 @@ public final class MinionWaves implements Listener {
             minion.lastCheck = at;
             minion.checkedAt = now;
             minion.stuck = 0;
+            minion.carrot = Double.NaN;
             return;
         }
         walk(minion, stats, at, slot);
@@ -558,9 +613,23 @@ public final class MinionWaves implements Listener {
             minion.movingTo = null;
             return;
         }
-        double lateral = Math.clamp(slot.lateral(), -formation.maxLateral(), formation.maxLateral());
         double ahead = Math.min(geo.length(), minion.progress + formation.lookahead());
+        if (!Double.isNaN(minion.carrot)) {
+            // never back: on the outside of a sharp bend its own lane point can stay behind at the bend's corner
+            // (a file's place there is nearer to the corner than to the lane it is on), the goal must still go on
+            ahead = Math.min(geo.length(), Math.max(ahead, Math.min(minion.carrot,
+                    minion.progress + 2 * formation.lookahead())));
+        }
+        double file = Math.clamp(slot.lateral(), -formation.maxLateral(), formation.maxLateral());
+        double lateral = file(minion, geo, ahead, file);
         Formation.Vec spot = geo.at(ahead, lateral);
+        if (Math.hypot(spot.x() - at.getX(), spot.z() - at.getZ()) < 1.0 && ahead < geo.length()) {
+            // at its goal already: the next one on
+            ahead = Math.min(geo.length(), ahead + formation.lookahead());
+            lateral = file(minion, geo, ahead, file);
+            spot = geo.at(ahead, lateral);
+        }
+        minion.carrot = ahead;
         Location goal = arena.clearOfStructures(new Location(at.getWorld(), spot.x(), height(minion.path, geo, ahead),
                 spot.z()), margin(minion.body));
         if (now - minion.checkedAt >= 20) {
@@ -573,13 +642,17 @@ public final class MinionWaves implements Listener {
             minion.checkedAt = now;
         }
         if (minion.stuck >= settings.stuckTicks() * 2) {
-            // Re-pathing did not get it out: put it on its path (its file at the next waypoint).
-            Formation.Vec put = geo.at(geo.walked(minion.next), lateral);
+            // Re-pathing did not get it out: put it on its path, the lane line at its next waypoint (the lane goes
+            // round the buildings, so that is clear of their walls; cleared again with room, never at or into a wall).
             Location waypoint = minion.path.get(minion.next);
-            // the lane passes through its towers: never put inside one
-            Location to = arena.clearOfStructures(new Location(at.getWorld(), put.x(), waypoint.getY(), put.z()),
-                    margin(minion.body));
-            minion.body.teleport(to.setDirection(to.toVector().subtract(at.toVector()).setY(0)));
+            Location to = arena.clearOfStructures(new Location(at.getWorld(), waypoint.getX(), waypoint.getY(),
+                    waypoint.getZ()), margin(minion.body) + FILE_ROOM);
+            Vector facing = to.toVector().subtract(at.toVector()).setY(0);
+            if (facing.lengthSquared() > 1.0E-6) {
+                to.setDirection(facing);
+            }
+            minion.body.teleport(to);
+            minion.carrot = Double.NaN;
             minion.stuck = 0;
             minion.lastCheck = minion.body.getLocation();
             minion.movingTo = null;
@@ -589,6 +662,11 @@ public final class MinionWaves implements Listener {
         if (repath) {
             mover.stop(minion.body);
             minion.repathedAt = now;
+            // out of the formation for a while: on the lane line, which keeps its room from the walls
+            minion.singleFileUntil = now + settings.stuckTicks() * 2L;
+            Formation.Vec line = geo.at(ahead, 0);
+            goal = arena.clearOfStructures(new Location(at.getWorld(), line.x(), goal.getY(), line.z()),
+                    margin(minion.body) + FILE_ROOM);
         }
         double speed = stats.speed() * Formation.pace(minion.progress, slot.row(), minion.group.front, formation);
         if (repath || minion.movingTo == null || Creatures.flatDistanceSquared(goal, minion.movingTo) > 0.25
@@ -598,6 +676,29 @@ public final class MinionWaves implements Listener {
             minion.movedAt = now;
             mover.moveTo(minion.body, goal, speed);
         }
+    }
+
+    /**
+     * The file a marching minion walks on at {@code progress}: its slot's, closed in towards the lane line where that
+     * would put it near a building's walls (the lane keeps {@link #LANE_ROOM} off them, a file farther out on the
+     * building's side would not), the lane line while it walks in single file after getting stuck.
+     */
+    private double file(Minion minion, Formation.Lane geo, double progress, double lateral) {
+        if (now < minion.singleFileUntil || Math.abs(lateral) < 1.0E-9) {
+            return 0;
+        }
+        List<Footprint.Box> walls = arena.structureWalls(margin(minion.body) + FILE_ROOM);
+        for (double share : new double[] {1, 0.5}) {
+            Formation.Vec spot = geo.at(progress, lateral * share);
+            boolean clear = true;
+            for (Footprint.Box wall : walls) {
+                clear &= !wall.contains(spot.x(), spot.z());
+            }
+            if (clear) {
+                return lateral * share;
+            }
+        }
+        return 0;
     }
 
     /** The lane's height at {@code progress}: between the heights of the waypoints around it. */

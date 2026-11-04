@@ -49,6 +49,14 @@ public final class CreatureBodies implements CreatureLook {
         });
     }
 
+    /** The width of an unscaled body ({@link #TYPE}'s hitbox). */
+    public static final double WIDTH = 0.9;
+
+    /** The width of the body of a {@code kind} toy of {@code size} (1 = as modelled). */
+    public static double width(CreatureKind kind, double size) {
+        return WIDTH * bodyScale(kind) * size;
+    }
+
     /** The body scale of a kind at size 1 ({@link CreatureModels#BODY_SCALES}). */
     public static double bodyScale(CreatureKind kind) {
         String model = CreatureModels.kindOf(kind.id());

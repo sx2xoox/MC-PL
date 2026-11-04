@@ -1524,7 +1524,7 @@ public final class SiegeMatch implements GameInstance {
         return session;
     }
 
-    SiegeGame game() {
+    public SiegeGame game() {
         return game;
     }
 

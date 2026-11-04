@@ -152,6 +152,99 @@ public record Footprint(List<Layer> standing, List<Layer> ruin) {
     }
 
     /**
+     * A path ({x, z} points) that goes round the boxes instead of through them: where it runs into a box, the part
+     * inside is replaced by the box's edge from where it enters to where it leaves, along the shorter side (past the
+     * corners), so every point and every segment of the result stays out of the boxes (on their edges at most). A path
+     * that starts (ends) inside a box starts (ends) where it leaves (enters) it. A lane through its towers (their
+     * walls grown by a body's half width and some room) so becomes one that walks round them.
+     */
+    public static List<double[]> detour(List<double[]> path, List<Box> boxes) {
+        List<double[]> out = new ArrayList<>();
+        for (double[] point : path) {
+            out.add(new double[] {point[0], point[1]});
+        }
+        for (Box box : boxes) {
+            out = round(out, box);
+        }
+        return out;
+    }
+
+    private static List<double[]> round(List<double[]> path, Box box) {
+        int n = path.size();
+        int firstSegment = -1;
+        int lastSegment = -1;
+        double firstT = 0;
+        double lastT = 0;
+        for (int i = 0; i + 1 < n; i++) {
+            double[] a = path.get(i);
+            double[] b = path.get(i + 1);
+            double[] inside = box.clip(a[0], a[1], b[0], b[1]);
+            if (inside != null) {
+                if (firstSegment < 0) {
+                    firstSegment = i;
+                    firstT = inside[0];
+                }
+                lastSegment = i;
+                lastT = inside[1];
+            }
+        }
+        if (firstSegment < 0) {
+            return path;
+        }
+        double[] entry = lerp(path.get(firstSegment), path.get(firstSegment + 1), firstT);
+        double[] exit = lerp(path.get(lastSegment), path.get(lastSegment + 1), lastT);
+        boolean startsInside = box.contains(path.getFirst()[0], path.getFirst()[1]);
+        boolean endsInside = box.contains(path.getLast()[0], path.getLast()[1]);
+        List<double[]> out = new ArrayList<>();
+        if (startsInside && endsInside) {
+            return path;
+        }
+        if (startsInside) {
+            add(out, exit);
+        } else {
+            for (int i = 0; i <= firstSegment; i++) {
+                add(out, path.get(i));
+            }
+            if (endsInside) {
+                add(out, entry);
+                return out;
+            }
+            // pulled taut round the box from the last point before it to the first after it, the shorter way
+            double[] before = path.get(firstSegment);
+            double[] after = path.get(lastSegment + 1);
+            List<double[]> one = box.taut(before, after, box.corners(entry, exit, true));
+            List<double[]> other = box.taut(before, after, box.corners(entry, exit, false));
+            for (double[] corner : length(before, one, after) <= length(before, other, after) + 1.0E-9 ? one : other) {
+                add(out, corner);
+            }
+        }
+        for (int i = lastSegment + 1; i < n; i++) {
+            add(out, path.get(i));
+        }
+        return out;
+    }
+
+    private static double length(double[] from, List<double[]> via, double[] to) {
+        double out = 0;
+        double[] at = from;
+        for (double[] point : via) {
+            out += Math.hypot(point[0] - at[0], point[1] - at[1]);
+            at = point;
+        }
+        return out + Math.hypot(to[0] - at[0], to[1] - at[1]);
+    }
+
+    private static void add(List<double[]> out, double[] point) {
+        if (out.isEmpty() || Math.hypot(out.getLast()[0] - point[0], out.getLast()[1] - point[1]) > 1.0E-6) {
+            out.add(point);
+        }
+    }
+
+    private static double[] lerp(double[] a, double[] b, double t) {
+        return new double[] {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t};
+    }
+
+    /**
      * The solid square of a standing building on the ground as an x/z box (world coordinates), {@code margin} wider on
      * each side.
      */
@@ -236,6 +329,14 @@ public record Footprint(List<Layer> standing, List<Layer> ruin) {
 
         /** Whether the segment from (x0, z0) to (x1, z1) passes through the box. */
         public boolean crosses(double x0, double z0, double x1, double z1) {
+            return clip(x0, z0, x1, z1) != null;
+        }
+
+        /**
+         * The part of the segment from (x0, z0) to (x1, z1) inside the box as {t from, t to} (0 = the start, 1 = the
+         * end), or null when it does not pass through the box (running along an edge does not).
+         */
+        public double @org.jspecify.annotations.Nullable [] clip(double x0, double z0, double x1, double z1) {
             double t0 = 0;
             double t1 = 1;
             double[] p = {-(x1 - x0), x1 - x0, -(z1 - z0), z1 - z0};
@@ -243,7 +344,7 @@ public record Footprint(List<Layer> standing, List<Layer> ruin) {
             for (int i = 0; i < 4; i++) {
                 if (Math.abs(p[i]) < 1.0E-12) {
                     if (q[i] <= 0) {
-                        return false;
+                        return null;
                     }
                 } else {
                     double r = q[i] / p[i];
@@ -253,11 +354,103 @@ public record Footprint(List<Layer> standing, List<Layer> ruin) {
                         t1 = Math.min(t1, r);
                     }
                     if (t0 >= t1) {
-                        return false;
+                        return null;
                     }
                 }
             }
-            return true;
+            return new double[] {t0, t1};
+        }
+
+        /**
+         * The corners passed walking the box's edge from {@code from} to {@code to} (both on the edge), in walking
+         * order: {@code forward} = the way along +x from the min/min corner (then +z, -x, -z), else the other way.
+         */
+        public List<double[]> corners(double[] from, double[] to, boolean forward) {
+            double w = maxX - minX;
+            double h = maxZ - minZ;
+            double perimeter = 2 * (w + h);
+            double[][] corners = {{minX, minZ}, {maxX, minZ}, {maxX, maxZ}, {minX, maxZ}};
+            double[] at = {0, w, w + h, 2 * w + h};
+            double start = around(from);
+            double end = around(to);
+            double length = forward ? ((end - start) % perimeter + perimeter) % perimeter
+                    : ((start - end) % perimeter + perimeter) % perimeter;
+            List<double[]> passed = new ArrayList<>();
+            List<Double> distance = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                double d = forward ? ((at[i] - start) % perimeter + perimeter) % perimeter
+                        : ((start - at[i]) % perimeter + perimeter) % perimeter;
+                if (d > 1.0E-9 && d < length - 1.0E-9) {
+                    passed.add(corners[i]);
+                    distance.add(d);
+                }
+            }
+            List<double[]> out = new ArrayList<>();
+            while (!passed.isEmpty()) {
+                int next = 0;
+                for (int i = 1; i < passed.size(); i++) {
+                    if (distance.get(i) < distance.get(next)) {
+                        next = i;
+                    }
+                }
+                out.add(new double[] {passed.get(next)[0], passed.get(next)[1]});
+                passed.remove(next);
+                distance.remove(next);
+            }
+            return out;
+        }
+
+        /**
+         * The {@code corners} (in walking order, from {@code from} to {@code to} round the box) a path from
+         * {@code from} to {@code to} needs so that no segment of it passes through the box: each segment goes as far
+         * along the corners as it can see.
+         */
+        public List<double[]> taut(double[] from, double[] to, List<double[]> corners) {
+            List<double[]> candidates = new ArrayList<>(corners);
+            candidates.add(to);
+            List<double[]> out = new ArrayList<>();
+            double[] at = from;
+            int next = 0;
+            while (next < candidates.size()) {
+                int far = next;
+                for (int j = candidates.size() - 1; j > next; j--) {
+                    double[] c = candidates.get(j);
+                    if (clip(at[0], at[1], c[0], c[1]) == null) {
+                        far = j;
+                        break;
+                    }
+                }
+                if (far == candidates.size() - 1) {
+                    break;
+                }
+                at = candidates.get(far);
+                out.add(at);
+                next = far + 1;
+            }
+            return out;
+        }
+
+        /** How far round the edge (from the min/min corner along +x, +z, -x, -z) the edge point nearest a point is. */
+        private double around(double[] point) {
+            double w = maxX - minX;
+            double h = maxZ - minZ;
+            double x = Math.clamp(point[0], minX, maxX);
+            double z = Math.clamp(point[1], minZ, maxZ);
+            double toMinZ = Math.abs(point[1] - minZ);
+            double toMaxX = Math.abs(point[0] - maxX);
+            double toMaxZ = Math.abs(point[1] - maxZ);
+            double toMinX = Math.abs(point[0] - minX);
+            double least = Math.min(Math.min(toMinZ, toMaxX), Math.min(toMaxZ, toMinX));
+            if (least == toMinZ) {
+                return x - minX;
+            }
+            if (least == toMaxX) {
+                return w + (z - minZ);
+            }
+            if (least == toMaxZ) {
+                return w + h + (maxX - x);
+            }
+            return 2 * w + h + (maxZ - z);
         }
     }
 }

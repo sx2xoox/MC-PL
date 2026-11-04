@@ -214,6 +214,30 @@ class SiegeBotMatchTest {
     }
 
     @Test
+    void aBotsLaneGoesRoundTheBuildingsItRunsThrough() {
+        SiegeMatch match = start(1, 2);
+        SiegeBots bots = bots(match);
+        h.ticks(2);
+        for (UUID id : bots.ids()) {
+            List<Location> lane = bots.lanePoints(id);
+            assertTrue(lane.size() >= 2);
+            for (Tower tower : match.towers()) {
+                // the map's lane runs through the towers; the bot's keeps a body and some room off their walls
+                Footprint.Box walls = tower.keepOut(1.0);
+                if (walls == null) {
+                    continue;
+                }
+                for (int i = 1; i < lane.size(); i++) {
+                    Location a = lane.get(i - 1);
+                    Location b = lane.get(i);
+                    assertFalse(walls.crosses(a.getX(), a.getZ(), b.getX(), b.getZ()),
+                            "the lane of " + match.side(id) + " runs through " + tower.id() + " at " + a.toVector());
+                }
+            }
+        }
+    }
+
+    @Test
     void botsWalkRoundTheBuildingsAndSiegeThemFromOutside() {
         SiegeMatch match = start(1, 2);
         SiegeBots bots = bots(match);

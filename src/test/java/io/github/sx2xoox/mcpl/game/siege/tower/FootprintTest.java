@@ -64,4 +64,39 @@ class FootprintTest {
         assertEquals(0, box.distance(2.5, 1), 1e-9);
         assertEquals(1.5, box.distance(4, 0), 1e-9);
     }
+
+    @Test
+    void aPathThroughBuildingsGoesRoundThemTheShortWayAndOnlyThere() {
+        Footprint.Box a = new Footprint.Box(-3, -3, 3, 3);
+        Footprint.Box b = new Footprint.Box(17, 1, 23, 7);
+        // a lane straight through the centre of a, then through the edge of b, then on
+        List<double[]> path = List.of(new double[] {-20, 0}, new double[] {-10, 0}, new double[] {0, 0},
+                new double[] {10, 0}, new double[] {20, 2}, new double[] {40, 4});
+        List<double[]> round = Footprint.detour(path, List.of(a, b));
+        assertEquals(-20, round.getFirst()[0], 1e-9);
+        assertEquals(40, round.getLast()[0], 1e-9);
+        double length = 0;
+        for (int i = 1; i < round.size(); i++) {
+            double[] p = round.get(i - 1);
+            double[] q = round.get(i);
+            assertFalse(a.crosses(p[0], p[1], q[0], q[1]), "segment " + i + " through a");
+            assertFalse(b.crosses(p[0], p[1], q[0], q[1]), "segment " + i + " through b");
+            assertFalse(a.contains(q[0], q[1]) || b.contains(q[0], q[1]));
+            length += Math.hypot(q[0] - p[0], q[1] - p[1]);
+        }
+        // pulled taut: round a's two corners on one side, past b's corner that is in the way
+        assertTrue(length < 60.5 + 2 * 3.2 + 2, "no long way round: " + length);
+        assertEquals(7, round.size(), "-20, -10, a's two corners, 10, b's corner, 40");
+        double lowest = 0;
+        for (double[] p : round) {
+            lowest = Math.min(lowest, p[1]);
+        }
+        assertEquals(-3, lowest, 1e-9, "a's side at z -3 (one way for both walking directions)");
+        assertTrue(round.stream().anyMatch(p -> p[0] == 23 && p[1] == 1), "b's corner");
+        // a path clear of the boxes stays as it is; one ending inside a box ends at its edge
+        assertEquals(2, Footprint.detour(List.of(new double[] {-20, 10}, new double[] {20, 10}), List.of(a)).size());
+        List<double[]> into = Footprint.detour(List.of(new double[] {-20, 0}, new double[] {0, 0}), List.of(a));
+        assertEquals(-3, into.getLast()[0], 1e-9);
+        assertEquals(0, into.getLast()[1], 1e-9);
+    }
 }

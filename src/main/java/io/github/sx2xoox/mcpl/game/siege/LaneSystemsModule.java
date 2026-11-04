@@ -15,7 +15,6 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
-import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
 import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.creature.ModelCreatureLook;
@@ -80,7 +79,7 @@ final class LaneSystemsModule implements SiegeModule {
         match.damageNumbers().height(this::topOf);
         this.systems = new SiegeSystems(new Arena(), session.gameConfig(),
                 new SkinnedCreatureLook(new CreatureBodies(), skins),
-                CreatureMover.pathfinder(match::structureKeepOut), match.modifiers());
+                match.game().creatureMover(match::structureKeepOut), match.modifiers());
         for (var listener : systems.listeners()) {
             session.registerListener(listener);
         }
