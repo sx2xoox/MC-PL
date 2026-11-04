@@ -279,7 +279,7 @@ class SiegeReadabilityTest {
         match.hitTower(outer, a, 10);
         assertTrue(heard(a, "block.bamboo_wood.hit"), "a wooden toy tower knocks");
         assertTrue(heard(b, "block.bell.use"), "the owner hears the alarm, wherever they are");
-        assertTrue(actionBars(b).stream().anyMatch(bar -> bar.contains("공격받는 중")), "and reads it");
+        assertTrue(actionBars(b).stream().anyMatch(bar -> bar.contains("공격받고 있습니다")), "and reads it");
         ((TestPlayer) b).getHeardSounds().clear();
         h.ticks(SiegeSounds.HIT_GAP_TICKS);
         match.hitTower(outer, a, 10);
