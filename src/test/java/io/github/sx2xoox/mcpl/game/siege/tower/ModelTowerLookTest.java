@@ -166,8 +166,8 @@ class ModelTowerLookTest {
         ModelTowerLook.ModelVisual visual = spawn("core");
         // (MockBukkit keeps no data components, so the model each part was given is checked instead)
         assertEquals(Arrays.asList(ref("structure/core_body_0"), ref("structure/core_top_0"),
-                ref("structure/core_crown"), ref("structure/core_key"), ref("structure/core_shield")),
-                visual.partModels());
+                ref("structure/core_crown"), ref("structure/core_star"), ref("structure/core_key"),
+                ref("structure/core_shield")), visual.partModels());
         assertEquals(Color.fromRGB(NamedTextColor.RED.value()), visual.tint());
 
         visual.health(0.9);
@@ -180,6 +180,7 @@ class ModelTowerLookTest {
         assertEquals(2, visual.stage());
         assertEquals(ref("structure/core_top_2"), visual.partModels().get(1));
         assertEquals(ref("structure/core_crown"), visual.partModels().get(2), "the crown stays on until the fall");
+        assertNull(visual.partModels().get(3), "the spire's jewel goes with its knocked-off tip");
         visual.health(1);
         assertEquals(0, visual.stage(), "repaired at half time");
 
@@ -215,7 +216,7 @@ class ModelTowerLookTest {
         assertTrue(ModelTowerLook.models().contains(ref("structure/core_crown")));
         assertTrue(ModelTowerLook.models().contains(ref("structure/tower_top_2")));
         assertFalse(ModelTowerLook.models().contains(ref("structure/tower_top_3")), "the top has no ruin");
-        assertEquals(4 + 3 + 2 + 4 + 3 + 3, ModelTowerLook.models().size());
+        assertEquals(4 + 3 + 2 + 4 + 3 + 4, ModelTowerLook.models().size());
     }
 
     @Test
@@ -364,8 +365,10 @@ class ModelTowerLookTest {
         ModelTowerLook look = new ModelTowerLook(plugin, audience);
         assertEquals(6, look.hitboxScale("front", 2.5), 1e-9);
         assertEquals(6, look.hitboxScale("bottom_inner", 2.5), 1e-9);
-        assertEquals(7, look.hitboxScale("core", 2.5), 1e-9);
-        assertEquals(3.5, look.hitboxScale("core", 1.25), 1e-9, "follows the configured scale");
+        assertEquals(14, look.hitboxScale("core", 2.5), 1e-9, "the core is twice as big");
+        assertEquals(7, look.hitboxScale("core", 1.25), 1e-9, "follows the configured scale");
+        assertEquals(ModelTowerLook.CORE_BAR_HEIGHT, look.barHeight("blue_core"), 1e-9);
+        assertEquals(TowerLook.BAR_HEIGHT, look.barHeight("top_outer"), 1e-9);
         // any id gets a look: the rules may name their towers freely
         ModelTowerLook.ModelVisual visual = spawn("gate");
         assertEquals(ModelTowerLook.TOWER, visual.look());

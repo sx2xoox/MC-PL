@@ -107,9 +107,12 @@ class ResourcePackContentsTest {
             }
             if (path.endsWith(".png")) {
                 BufferedImage image = ImageIO.read(new ByteArrayInputStream(file.getValue()));
+                boolean equipment = path.contains("/textures/trims/entity/") || path.contains("/textures/entity/equipment/");
                 if (image == null) {
                     problems.add(path + " is not a PNG");
-                } else if (!path.contains("/textures/font/")    // font glyphs may have any size
+                } else if (equipment && image.getWidth() != 2 * image.getHeight()) {
+                    problems.add(path + " is not a 2:1 equipment texture (the 64 x 32 humanoid layout)");
+                } else if (!equipment && !path.contains("/textures/font/")    // font glyphs may have any size
                         && image.getWidth() != image.getHeight() && image.getHeight() % image.getWidth() != 0) {
                     problems.add(path + " is not a square (or frame strip) PNG");
                 }

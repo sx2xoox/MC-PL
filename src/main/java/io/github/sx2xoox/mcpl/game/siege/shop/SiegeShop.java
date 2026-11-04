@@ -317,7 +317,8 @@ public final class SiegeShop implements Listener {
             refuse(player, refusal);
             return false;
         }
-        ShopMenu menu = new ShopMenu(player.getUniqueId(), messages.get("shop.title"));
+        ShopMenu menu = new ShopMenu(player.getUniqueId(), messages.get("shop.title"),
+                arena.side(player.getUniqueId()));
         menus.put(player.getUniqueId(), menu);
         render(player, menu);
         player.openInventory(menu.getInventory());
@@ -548,6 +549,20 @@ public final class SiegeShop implements Listener {
                 count(id, ShopItem.REVIVE_CLOCK) > 0 ? settings.reviveSeconds() : 0);
     }
 
+    /** Roman numerals of the 장난감 갑옷 tiers in item names (tier 0 = the kit's armour: none). */
+    private static final String[] TIER_NAMES = {"", " I", " II", " III"};
+
+    /** The 장난감 갑옷 tier {@code player} owns (0 = none): the look of the armour they wear ({@link ToyArmor}). */
+    public int armorTier(UUID player) {
+        int tier = 0;
+        for (Owned slot : owned(player)) {
+            if ("armor".equals(slot.item.line())) {
+                tier = Math.max(tier, slot.item.tier());
+            }
+        }
+        return Math.min(tier, ToyArmor.MAX_TIER);
+    }
+
     private void removeEffects(Player player) {
         AttributeBonus.remove(player, Attribute.ARMOR, key("armor"));
         AttributeBonus.remove(player, Attribute.ATTACK_DAMAGE, key("sword"));
@@ -572,6 +587,9 @@ public final class SiegeShop implements Listener {
             return;
         }
         apply(player);
+        int tier = armorTier(id);
+        ToyArmor.dress(player, side, tier, piece -> messages.has("shop.toy-armor." + piece)
+                ? messages.get("shop.toy-armor." + piece, Messages.tag("tier", TIER_NAMES[tier])) : null);
         Map<String, Integer> wanted = new LinkedHashMap<>();
         wanted.put(FLAG, 1);
         for (Owned slot : owned(id)) {

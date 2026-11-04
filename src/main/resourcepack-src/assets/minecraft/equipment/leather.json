@@ -1,0 +1,106 @@
+{
+  "layers": {
+    "horse_body": [
+      {
+        "dyeable": {
+          "color_when_undyed": -6265536
+        },
+        "texture": "minecraft:leather"
+      },
+      {
+        "texture": "minecraft:leather_overlay"
+      }
+    ],
+    "humanoid": [
+      {
+        "dyeable": {
+          "color_when_undyed": -6265536
+        },
+        "texture": "minecraft:leather"
+      },
+      {
+        "texture": "minecraft:leather_overlay"
+      }
+    ],
+    "humanoid_baby": [
+      {
+        "dyeable": {
+          "color_when_undyed": -6265536
+        },
+        "texture": "minecraft:leather"
+      },
+      {
+        "texture": "minecraft:leather_overlay"
+      }
+    ],
+    "humanoid_leggings": [
+      {
+        "dyeable": {
+          "color_when_undyed": -6265536
+        },
+        "texture": "minecraft:leather"
+      },
+      {
+        "texture": "minecraft:leather_overlay"
+      }
+    ]
+  },
+  "trim_overrides": [
+    {
+      "when": {
+        "material": "minecraft:gold",
+        "pattern": "minecraft:sentry"
+      },
+      "texture": "mcpl:toy_armor/blue_0"
+    },
+    {
+      "when": {
+        "material": "minecraft:gold",
+        "pattern": "minecraft:coast"
+      },
+      "texture": "mcpl:toy_armor/blue_1"
+    },
+    {
+      "when": {
+        "material": "minecraft:gold",
+        "pattern": "minecraft:bolt"
+      },
+      "texture": "mcpl:toy_armor/blue_2"
+    },
+    {
+      "when": {
+        "material": "minecraft:gold",
+        "pattern": "minecraft:silence"
+      },
+      "texture": "mcpl:toy_armor/blue_3"
+    },
+    {
+      "when": {
+        "material": "minecraft:resin",
+        "pattern": "minecraft:sentry"
+      },
+      "texture": "mcpl:toy_armor/red_0"
+    },
+    {
+      "when": {
+        "material": "minecraft:resin",
+        "pattern": "minecraft:coast"
+      },
+      "texture": "mcpl:toy_armor/red_1"
+    },
+    {
+      "when": {
+        "material": "minecraft:resin",
+        "pattern": "minecraft:bolt"
+      },
+      "texture": "mcpl:toy_armor/red_2"
+    },
+    {
+      "when": {
+        "material": "minecraft:resin",
+        "pattern": "minecraft:silence"
+      },
+      "texture": "mcpl:toy_armor/red_3"
+    }
+  ]
+}

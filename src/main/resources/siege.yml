@@ -313,6 +313,12 @@ shop:
   recall-done: "<aqua>귀환"
   recall-stopped: "<gray>귀환 취소"
   recall-interrupted: "<red>귀환 취소"
+  # the worn armour as the team's toy soldier uniform (<tier> = " I" / " II" / " III" with 장난감 갑옷, else empty)
+  toy-armor:
+    helmet: "<white>장난감 병정 모자<tier>"
+    chestplate: "<white>장난감 병정 제복<tier>"
+    leggings: "<white>장난감 병정 바지<tier>"
+    boots: "<white>장난감 병정 장화<tier>"
   refused:
     not-playing: "<red>이 경기의 참가자가 아닙니다"
     too-far: "<red>자기 본진 상점 <white><range>칸</white> 안에서만 살 수 있습니다"

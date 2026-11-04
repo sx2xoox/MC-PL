@@ -53,7 +53,7 @@ def building(built, kind, stage, tint, shielded=False, ox=0.0, oz=0.0, yaw=0.0):
                 continue
             name = f"structure/{kind}_{part}_{stage}"
         else:
-            if stage >= (2 if part == "flag" else 3):
+            if stage >= (2 if part in ("flag", "star") else 3):
                 continue
             name = f"structure/{kind}_{part}"
         t, e = placed(built[name], tint, (ox, centre, oz), scale, yaw)
@@ -116,27 +116,31 @@ def scene(parts, path, views, ground=None):
 
 
 def stages_sheet(built, kind, render, work, png):
-    gap = 16 if kind == "tower" else 18
+    gap = 16 if kind == "tower" else 32
     configs = [(s, RED, False) for s in range(4)] + [(0, BLUE, True)]
     parts = [building(built, kind, s, tint, shielded, ox=i * gap) for i, (s, tint, shielded) in enumerate(configs)]
     parts += [figure(i * gap - 3.2, -4.6) for i in range(len(configs))]
     views = []
     for i in range(len(configs)):
         target = [i * gap, 7.5, 0]
-        views.append({"x": i * 320, "y": 0, "w": 320, "h": 600, "az": -30, "el": 12, "target": target, "dist": 40})
-        views.append({"x": i * 320, "y": 600, "w": 320, "h": 400, "az": 150, "el": 26, "target": target, "dist": 42})
-    render(scene(parts, work / f"{kind}.preview.json", views, ground=[-12, 0, -12, len(configs) * gap, 12]), png)
+        far = 40 if kind == "tower" else 66
+        target = [i * gap, 7.5 if kind == "tower" else 13.5, 0]
+        views.append({"x": i * 320, "y": 0, "w": 320, "h": 600, "az": -30, "el": 12, "target": target, "dist": far})
+        views.append({"x": i * 320, "y": 600, "w": 320, "h": 400, "az": 150, "el": 26, "target": target,
+                      "dist": far + 2})
+    edge = 12 if kind == "tower" else 16
+    render(scene(parts, work / f"{kind}.preview.json", views, ground=[-edge, 0, -edge, len(configs) * gap, edge]), png)
 
 
 def buildings_sheet(built, render, work, png):
-    parts = [building(built, "tower", 0, BLUE, ox=-24), building(built, "core", 0, RED, ox=-6),
+    parts = [building(built, "tower", 0, BLUE, ox=-28), building(built, "core", 0, RED, ox=-6),
              landmark(built, "fountain", None, ox=10), landmark(built, "telescope", BLUE, ox=22),
              landmark(built, "fountain", RED, ox=10, oz=12)]
-    parts += [figure(x, -4.0) for x in (-27, -10, 7, 19)]
-    views = [{"x": 0, "y": 0, "w": 1600, "h": 640, "az": -14, "el": 10, "target": [-1, 6, 0], "dist": 58},
+    parts += [figure(x, -4.0) for x in (-31, -10, 7, 19)] + [figure(-6, -9.5)]
+    views = [{"x": 0, "y": 0, "w": 1600, "h": 640, "az": -14, "el": 10, "target": [-3, 10, 0], "dist": 80},
              {"x": 0, "y": 640, "w": 800, "h": 360, "az": -40, "el": 30, "target": [10, 2, 0], "dist": 16},
              {"x": 800, "y": 640, "w": 800, "h": 360, "az": -30, "el": 20, "target": [22, 4.5, 0], "dist": 18}]
-    render(scene(parts, work / "buildings.preview.json", views, ground=[-34, 0, -14, 30, 20]), png)
+    render(scene(parts, work / "buildings.preview.json", views, ground=[-38, 0, -16, 30, 20]), png)
 
 
 def minions_sheet(built, render, work, png):

@@ -110,8 +110,14 @@ public final class ModelTowerLook implements TowerLook {
     }
 
     private static final float BODY = 4f;
+    /** The core is twice the old size: slabs of 24 blocks at display scale 8 (tools/assetgen/models/toys.py). */
+    private static final float CORE_BODY = 8f;
     private static final float SHIELD_SCALE = 8f;
     private static final float SHIELD_CENTRE = 11f;
+    /** The core's spire tip (its turning jewel's centre), blocks. */
+    private static final float STAR_CENTRE = 33.1f;
+    /** The core's health bar: eye level over the heads of the players crowding its big music box. */
+    static final double CORE_BAR_HEIGHT = 4.5;
     private static final double DEFAULT_HITBOX = 2.5;
     /** Look ids. */
     public static final String TOWER = "tower";
@@ -125,12 +131,13 @@ public final class ModelTowerLook implements TowerLook {
                     new Part("shield", 0, 3, SHIELD_CENTRE, SHIELD_SCALE, Motion.SHIELD)),
                     new Vector3f(4.4f, 18f, 4.4f), 0, 0, 6),
             CORE, new Spec(List.of(
-                    new Part("body", 4, 4, 6, BODY, Motion.NONE),
-                    new Part("top", 3, 3, 18, BODY, Motion.NONE),
-                    new Part("crown", 0, 3, 12f, 2, Motion.CROWN),
-                    new Part("key", 0, 3, 2f, BODY, Motion.KEY),
-                    new Part("shield", 0, 3, SHIELD_CENTRE, SHIELD_SCALE, Motion.SHIELD)),
-                    new Vector3f(5.75f, 14.75f, 5.75f), 11.9f, 1.6f, 7));
+                    new Part("body", 4, 4, 12, CORE_BODY, Motion.NONE),
+                    new Part("top", 3, 3, 36, CORE_BODY, Motion.NONE),
+                    new Part("crown", 0, 3, 22.8f, 4, Motion.CROWN),
+                    new Part("star", 0, 2, STAR_CENTRE, 2, Motion.CROWN),
+                    new Part("key", 0, 3, 4f, CORE_BODY, Motion.KEY),
+                    new Part("shield", 0, 3, 14f, 16, Motion.SHIELD)),
+                    new Vector3f(9.8f, 35.5f, 9.8f), 21.8f, 3.6f, 14));
 
     private static final int FLASH_TICKS = 4;
     private static final int SHAKE_TICKS = 3;
@@ -176,6 +183,11 @@ public final class ModelTowerLook implements TowerLook {
     @Override
     public double hitboxScale(String towerId, double configured) {
         return configured * SPECS.get(lookOf(towerId)).hitbox() / DEFAULT_HITBOX;
+    }
+
+    @Override
+    public double barHeight(String towerId) {
+        return CORE.equals(lookOf(towerId)) ? CORE_BAR_HEIGHT : BAR_HEIGHT;
     }
 
     @Override
@@ -723,10 +735,13 @@ public final class ModelTowerLook implements TowerLook {
             }
             // building blocks scattered once heavily damaged
             double[][] spots = {{-3.9, -2.6, 0.7}, {3.2, 1.9, 0.6}, {-1.0, -4.0, 0.55}, {2.6, -3.6, 0.8}};
+            double k = CORE.equals(look) ? 2.3 : 1;   // round the core's (twice as big) music box
             for (int n = 0; n < spots.length; n++) {
                 double[] s = spots[n];
                 boolean shown = stage >= RUIN || stage >= 2 && n < 2;
-                out.add(Box.of(s[0], 0, s[1], s[0] + s[2], s[2], s[1] + s[2], shown ? TOY_BLOCKS[n] : NONE));
+                double size = s[2] * (k > 1 ? 1.6 : 1);
+                out.add(Box.of(s[0] * k, 0, s[1] * k, s[0] * k + size, size, s[1] * k + size,
+                        shown ? TOY_BLOCKS[n] : NONE));
             }
             return out;
         }
@@ -762,29 +777,32 @@ public final class ModelTowerLook implements TowerLook {
         private static void core(List<Box> out, int stage, Material roof) {
             boolean ruin = stage >= RUIN;
             for (int[] c : CORNERS) {
-                out.add(Box.of(c[0] * 3 - 0.45, 0, c[1] * 3 - 0.45, c[0] * 3 + 0.45, 0.55, c[1] * 3 + 0.45, GOLD));
+                out.add(Box.of(c[0] * 6 - 0.9, 0, c[1] * 6 - 0.9, c[0] * 6 + 0.9, 1.1, c[1] * 6 + 0.9, GOLD));
             }
-            out.add(Box.of(-3.5, 0.5, -3.5, 3.5, 3.25, 3.5, BOX));
-            out.add(Box.of(-3.5625, 2.75, -3.5625, 3.5625, 3.0, 3.5625, GOLD));
-            out.add(Box.of(-3.75, 3.25, -3.75, 3.75, ruin ? 3.5 : 3.75, ruin ? 2.5 : 3.75, roof));
-            out.add(Box.of(-4.4, 1.85, -0.15, -3.5, 2.15, 0.15, GOLD));
-            out.add(Box.of(-4.7, 1.55, -0.9, -4.45, 2.45, 0.9, keep(!ruin, GOLD)));
-            out.add(Box.of(-1.75, 3.75, -1.75, 1.75, ruin ? 4.8 : 10, 1.75, WALL));
-            out.add(Box.of(-0.55, 3.75, -1.8125, 0.55, ruin ? 4.6 : 5.35, -1.75, DOOR));
-            out.add(Box.of(-0.55, 6.8, -1.8125, 0.55, 8.0, -1.75, keep(!ruin, WINDOW)));
-            out.add(Box.of(-2.05, 10, -2.05, 2.05, 10.5, 2.05, keep(!ruin, PLINTH)));
+            out.add(Box.of(-7, 1, -7, 7, 6.5, 7, BOX));
+            out.add(Box.of(-7.125, 5.5, -7.125, 7.125, 6.0, 7.125, GOLD));
+            out.add(Box.of(-7.5, 6.5, -7.5, 7.5, ruin ? 7.0 : 7.5, ruin ? 5.0 : 7.5, roof));
+            out.add(Box.of(-8.8, 3.76, -0.24, -7.0, 4.24, 0.24, GOLD));
+            out.add(Box.of(-9.4, 3.1, -1.8, -8.9, 4.9, 1.8, keep(!ruin, GOLD)));
+            out.add(Box.of(-3.5, 7.5, -3.5, 3.5, ruin ? 9.6 : 19, 3.5, WALL));
+            out.add(Box.of(-1.1, 7.5, -3.625, 1.1, ruin ? 9.2 : 10.7, -3.5, DOOR));
+            out.add(Box.of(-1.0, 12.3, -3.625, 1.0, 14.5, -3.5, keep(!ruin, WINDOW)));
+            out.add(Box.of(-4.1, 19, -4.1, 4.1, 20, 4.1, keep(!ruin, PLINTH)));
+            // the spire (its top knocked off when heavily damaged)
+            out.add(Box.of(-2.4, 20, -2.4, 2.4, 24, 2.4, keep(!ruin, roof)));
+            out.add(Box.of(-1.3, 24, -1.3, 1.3, 27.7, 1.3, keep(!ruin && stage < 2, roof)));
+            out.add(Box.of(-0.7, 27.7, -0.7, 0.7, 31.5, 0.7, keep(!ruin && stage < 2, roof)));
             for (int n = 0; n < CORNERS.length; n++) {
-                double cx = CORNERS[n][0] * 2.75;
-                double cz = CORNERS[n][1] * 2.75;
+                double cx = CORNERS[n][0] * 5.5;
+                double cz = CORNERS[n][1] * 5.5;
                 boolean fallen = stage >= 2 && (n == 1 || n == 2);
-                double top = fallen ? 8 : 9.5;
-                out.add(Box.of(cx - 0.75, 3.75, cz - 0.75, cx + 0.75, ruin ? (n == 3 ? 4.2 : 3.75) : top, cz + 0.75,
+                double top = fallen ? 16 : 19;
+                out.add(Box.of(cx - 1.5, 7.5, cz - 1.5, cx + 1.5, ruin ? (n == 3 ? 8.4 : 7.5) : top, cz + 1.5,
                         keep(!ruin || n == 3, WALL)));
                 boolean roofed = !ruin && !fallen;
-                out.add(Box.of(cx - 0.9, 9.5, cz - 0.9, cx + 0.9, 9.8, cz + 0.9, keep(roofed, PLINTH)));
-                out.add(Box.of(cx - 1.15, 9.8, cz - 1.15, cx + 1.15, 10.55, cz + 1.15, keep(roofed, roof)));
-                out.add(Box.of(cx - 0.75, 10.55, cz - 0.75, cx + 0.75, 11.6, cz + 0.75, keep(roofed, roof)));
-                out.add(Box.of(cx - 0.3, 11.6, cz - 0.3, cx + 0.3, 12.5, cz + 0.3, keep(roofed, roof)));
+                out.add(Box.of(cx - 1.75, 19, cz - 1.75, cx + 1.75, 19.6, cz + 1.75, keep(roofed, PLINTH)));
+                out.add(Box.of(cx - 2.0, 19.6, cz - 2.0, cx + 2.0, 22.6, cz + 2.0, keep(roofed, roof)));
+                out.add(Box.of(cx - 1.05, 22.6, cz - 1.05, cx + 1.05, 25.2, cz + 1.05, keep(roofed, roof)));
             }
         }
     }

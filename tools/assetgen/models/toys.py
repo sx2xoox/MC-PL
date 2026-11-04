@@ -3,9 +3,11 @@
 
   장난감 성 망루 (tower)       a cream-brick watchtower on a lilac plinth: arched door, round windows, a team-coloured
                                band and shingled cone roof, a gold finial and a waving team pennant
-  왕관 쓴 오르골 성 (core)     a pink music box on gold ball feet (team-coloured lid, a wind-up key turning on its side)
-                               carrying a little castle: a keep and four turrets with team roofs, wearing a gold crown
-                               that turns slowly like the music box's dancer
+  왕관 쓴 오르골 성 (core)     twice the tower's footprint: a pink music box on gold ball feet (music notes, the drum
+                               and comb in a front window, a team lid set with glowing gems, a wind-up key turning on
+                               its side) carrying a castle: a keep with a face, a tall team spire whose tip jewel
+                               turns, four turrets with team bands and roofs, a big gold crown turning round the
+                               spire's foot like the music box's dancer
   비눗방울 돔 (shields)        a soap-bubble dome per building (t_bubble: the item shader's iridescent film marker)
   사탕 샘물 (fountain)         capture landmark: a candy fountain (pink basin, candy-cane column, syrup streams, a
                                lollipop on top, pennants in the owner's colour)
@@ -186,119 +188,193 @@ FLAG_SCALE = 2
 # ------------------------------------------------------------------------------------------------
 
 TURRETS = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
-TURRET_ROOF = [(1.15, 0.75), (0.85, 0.75), (0.55, 0.7), (0.28, 0.55)]   # 9.8 + 2.2 = the slab border
+
+# The core is twice the old size (v2: 14 x 14 music box, a 34-block soap bubble): designed at real size and shown as
+# slabs of 24 blocks at display scale 8. Stepped roof tiers end exactly on the slab border y = 24.
+CORE_BODY = 8
+CORE_SLAB = 24
+CORE_TURRET_ROOF = [(2.0, 1.5), (1.55, 1.5), (1.05, 1.4), (0.55, 1.2)]     # 19.6 + 4.4 = the slab border
+SPIRE_Y = 20.0
+SPIRE = [(2.4, 1.4), (2.0, 1.3), (1.65, 1.3), (1.3, 1.8), (1.0, 1.9), (0.7, 2.0), (0.38, 1.8)]   # 20 + 4.0 = 24
+SPIRE_TOP = SPIRE_Y + sum(h for _w, h in SPIRE)
+
+
+def _note(b, name, x, y, z, side):
+    """A gold music note (head, stem, flag) on a box face: side 'south' = the front (surface z), 'east'/'west' = the
+    side surfaces x (x is the surface, z the note's centre)."""
+    t = 0.125
+    if side == "south":
+        b.box(name + "_head", (x - 0.45, y, z - t), (x + 0.15, y + 0.45, z), "t_gold", faces={"south": None})
+        b.box(name + "_stem", (x + 0.0, y + 0.45, z - t), (x + 0.15, y + 1.5, z), "t_gold", faces={"south": None})
+        b.box(name + "_flag", (x + 0.15, y + 1.05, z - t), (x + 0.6, y + 1.5, z), "t_gold", faces={"south": None})
+        return
+    sign = 1 if side == "east" else -1
+    x0, x1 = (x, x + t) if sign > 0 else (x - t, x)
+    hide = {"west": None} if sign > 0 else {"east": None}
+    b.box(name + "_head", (x0, y, z - 0.3), (x1, y + 0.45, z + 0.3), "t_gold", faces=hide)
+    b.box(name + "_stem", (x0, y + 0.45, z + 0.15), (x1, y + 1.5, z + 0.3), "t_gold", faces=hide)
+    b.box(name + "_flag", (x0, y + 1.05, z + 0.3), (x1, y + 1.5, z + 0.75), "t_gold", faces=hide)
 
 
 def core_body(stage):
+    """왕관 쓴 오르골 성, twice the old size: a pink music box on gold ball feet with gold bands, music notes on every
+    side and its open drum and comb in a cream window at the front, a team lid set with gems; on it a tall keep with a
+    face of round windows, a team spire to 31.5 blocks, four corner turrets with team bands and roofs."""
     b = Build()
     ruin = stage >= 3
     wall = _wall(stage)
-    # the music box
     for n, (sx, sz) in enumerate(TURRETS):
-        b.rbox(f"foot_{n}", (sx * 3.0 - 0.45, 0, sz * 3.0 - 0.45), (sx * 3.0 + 0.45, 0.55, sz * 3.0 + 0.45),
-               "t_gold", 0.15)
-    b.rbox("box", (-3.5, 0.5, -3.5), (3.5, 3.25, 3.5), "t_pink", 0.375, top=False)
-    b.rbox("trim_low", (-3.5625, 0.75, -3.5625), (3.5625, 1.0, 3.5625), "t_gold", 0.375, top=False, bottom=False)
-    b.rbox("trim_high", (-3.5625, 2.75, -3.5625), (3.5625, 3.0, 3.5625), "t_gold", 0.375, top=False, bottom=False)
-    # the front plaque: a cream drawer with a gold music note
-    b.box("plaque", (-1.4, 1.2, -3.5625), (1.4, 2.5, -3.5), "t_cream", faces={"south": None})
-    b.box("note_head", (-0.35, 1.45, -3.625), (0.05, 1.75, -3.5625), "t_gold", faces={"south": None})
-    b.box("note_stem", (-0.05, 1.75, -3.625), (0.05, 2.3, -3.5625), "t_gold", faces={"south": None})
-    b.box("note_flag", (0.05, 2.05, -3.625), (0.35, 2.3, -3.5625), "t_gold", faces={"south": None})
-    # the key's socket on the east side
-    b.box("key_socket", (-3.625, 1.65, -0.3), (-3.5, 2.35, 0.3), "t_gold", faces={"east": None})
+        b.rbox(f"foot_{n}", (sx * 6.0 - 0.9, 0, sz * 6.0 - 0.9), (sx * 6.0 + 0.9, 1.1, sz * 6.0 + 0.9), "t_gold", 0.3)
+    b.rbox("box", (-7, 1.0, -7), (7, 6.5, 7), "t_pink", 0.75, top=False)
+    b.rbox("trim_low", (-7.125, 1.5, -7.125), (7.125, 2.0, 7.125), "t_gold", 0.75, top=False, bottom=False)
+    b.rbox("trim_high", (-7.125, 5.5, -7.125), (7.125, 6.0, 7.125), "t_gold", 0.75, top=False, bottom=False)
+    # the front: a cream window with the music drum (gold, white pins) over its tin comb
+    b.box("window_frame", (-4.0, 2.25, -7.125), (4.0, 5.25, -7.0), "t_cream", faces={"south": None})
+    b.box("window_back", (-3.6, 2.55, -7.25), (3.6, 4.95, -7.125), "t_navy", faces={"south": None})
+    b.box("drum", (-3.2, 3.55, -7.75), (3.2, 4.55, -7.25), "t_gold", faces={"south": None})
+    b.box("drum_end_l", (-3.45, 3.4, -7.825), (-3.2, 4.7, -7.25), "t_gold", faces={"south": None})
+    b.box("drum_end_r", (3.2, 3.4, -7.825), (3.45, 4.7, -7.25), "t_gold", faces={"south": None})
+    for n in range(7):
+        x = -2.7 + n * 0.9
+        y = 3.7 if n % 2 else 4.15
+        b.box(f"pin_{n}", (x - 0.1, y, -7.875), (x + 0.1, y + 0.2, -7.75), "t_white", faces={"south": None})
+    b.box("comb", (-3.2, 2.8, -7.5), (3.2, 3.3, -7.25), "t_metal", faces={"south": None})
+    # music notes on the sides and the back, the key's socket on the west side
+    _note(b, "note_e1", 7.0, 2.6, -2.5, "east")
+    _note(b, "note_e2", 7.0, 3.2, 2.0, "east")
+    _note(b, "note_w1", -7.0, 2.6, -4.0, "west")
+    _note(b, "note_w2", -7.0, 3.2, 3.5, "west")
+    b.box("key_socket", (-7.25, 3.3, -0.6), (-7.0, 4.7, 0.6), "t_gold", faces={"east": None})
     if ruin:
-        # the lid knocked askew, the castle in pieces
-        b.box("lid", (-3.6, 3.25, -3.6), (3.6, 3.7, 3.6), "t_paint_tint", tint=True,
-              rotation=("x", 22.5, (0, 3.25, 3.6)))
-        b.rbox("keep", (-1.8, 3.4, -1.0), (0.4, 4.8, 1.4), wall, 0.25, bottom=False)
-        b.rbox("turret_stub", (1.6, 3.4, 1.4), (3.0, 4.2, 2.8), wall, 0.2, bottom=False)
-        _plaster(b, "plaster", -2.0, 2.1, -3.5)
+        b.box("lid", (-7.6, 6.5, -7.6), (7.6, 7.4, 7.6), "t_paint_tint", tint=True,
+              rotation=("x", 22.5, (0, 6.5, 7.6)))
+        b.rbox("keep", (-3.6, 6.8, -2.0), (0.8, 9.6, 2.8), wall, 0.5, bottom=False)
+        b.rbox("turret_stub", (3.2, 6.8, 2.8), (6.0, 8.4, 5.6), wall, 0.4, bottom=False)
+        b.box("spire_tip", (-6.2, 0.02, 9.0), (-4.8, 1.4, 10.4), "t_roof_tint", tint=True,
+              rotation=("y", 22.5, (-5.5, 0.7, 9.7)))
+        _plaster(b, "plaster", -4.0, 4.2, -7.0, size=1.8)
         _toy_blocks(b, stage, CORE_BLOCKS)
         return b
-    b.rbox("lid", (-3.75, 3.25, -3.75), (3.75, 3.75, 3.75), "t_paint_tint", 0.25, bottom=False, tint=True)
-    # the castle: a keep between four corner turrets (they stand apart so the keep's door shows)
-    b.rbox("keep", (-1.75, 3.75, -1.75), (1.75, 10.0, 1.75), wall, 0.25, bottom=False, top=False)
-    _door(b, -1.75, w=1.1, h=1.6, y0=3.75)
-    _window(b, "win", 0, 7.4, -1.75, w=1.1, h=1.2)
-    _side_window(b, "win_e", 0, 7.2, 1.75)
-    b.rbox("cornice", (-2.05, 10.0, -2.05), (2.05, 10.5, 2.05), "t_stone", 0.2, bottom=False)
+    b.rbox("lid", (-7.5, 6.5, -7.5), (7.5, 7.5, 7.5), "t_paint_tint", 0.5, bottom=False, tint=True)
+    b.rbox("lid_band", (-7.625, 6.6, -7.625), (7.625, 6.9, 7.625), "t_gold", 0.5, top=False, bottom=False)
+    for n, x in enumerate((-5.0, -1.7, 1.7, 5.0)):
+        b.box(f"lid_gem_{n}", (x - 0.3, 6.6, -7.75), (x + 0.3, 7.2, -7.5), "t_paint_tint", tint=True, glow=True,
+              faces={"south": None})
+    # the keep, with a face: two round windows over a blushing balcony window and the door
+    b.rbox("keep", (-3.5, 7.5, -3.5), (3.5, 19.0, 3.5), wall, 0.5, bottom=False, top=False)
+    _door(b, -3.5, w=2.2, h=3.2, y0=7.5)
+    _window(b, "win", 0, 13.4, -3.5, w=2.0, h=2.2)
+    b.rbox("balcony", (-1.7, 11.9, -4.1), (1.7, 12.25, -3.5), "t_stone", 0.12, bottom=False)
+    _window(b, "eye_l", -1.7, 16.4, -3.5, w=1.1, h=1.2)
+    _window(b, "eye_r", 1.7, 16.4, -3.5, w=1.1, h=1.2)
+    b.mirror("blush", (-3.0, 15.2, -3.53125), (-2.4, 15.45, -3.5), "t_rose", faces={"south": None})
+    _side_window(b, "win_e", 0, 13.4, 3.5, w=1.6, h=2.0)
+    b.rbox("cornice", (-4.1, 19.0, -4.1), (4.1, 20.0, 4.1), "t_stone", 0.4, bottom=False)
+    spire = SPIRE if stage < 2 else SPIRE[:3]
+    top = _cone(b, "spire", 0, 0, SPIRE_Y, spire)
+    if stage < 2:
+        b.rbox("finial", (-0.35, top, -0.35), (0.35, top + 0.6, 0.35), "t_gold", 0.12, bottom=False)
+    else:
+        b.box("spire_chip", (-1.4, top, -0.8), (0.4, top + 0.4, 1.0), "t_roof_tint", tint=True)
     for n, (sx, sz) in enumerate(TURRETS):
-        cx, cz = sx * 2.75, sz * 2.75
+        cx, cz = sx * 5.5, sz * 5.5
         fallen = stage >= 2 and n in (1, 2)
-        top = 8.0 if fallen else 9.5
-        b.rbox(f"turret_{n}", (cx - 0.75, 3.75, cz - 0.75), (cx + 0.75, top, cz + 0.75), wall, 0.18, bottom=False,
+        ttop = 16.0 if fallen else 19.0
+        b.rbox(f"turret_{n}", (cx - 1.5, 7.5, cz - 1.5), (cx + 1.5, ttop, cz + 1.5), wall, 0.36, bottom=False,
                top=fallen)
-        b.box(f"turret_win_{n}", (cx - 0.2, 6.2, cz - 0.7625), (cx + 0.2, 6.9, cz - 0.75), "t_window",
+        b.rbox(f"turret_band_{n}", (cx - 1.5625, 10.0, cz - 1.5625), (cx + 1.5625, 10.5, cz + 1.5625),
+               "t_paint_tint", 0.36, top=False, bottom=False, tint=True)
+        b.box(f"turret_win_{n}", (cx - 0.4, 12.4, cz - 1.5625), (cx + 0.4, 13.8, cz - 1.5), "t_window",
               faces={"south": None})
         if fallen:
             continue
-        b.rbox(f"turret_cornice_{n}", (cx - 0.9, top, cz - 0.9), (cx + 0.9, top + 0.3, cz + 0.9), "t_stone", 0.15,
-               bottom=False)
-        y = _cone(b, f"turret_roof_{n}", cx, cz, top + 0.3, TURRET_ROOF)
-        b.box(f"turret_ball_{n}", (cx - 0.15, y, cz - 0.15), (cx + 0.15, y + 0.3, cz + 0.15), "t_gold")
+        b.rbox(f"turret_cornice_{n}", (cx - 1.75, ttop, cz - 1.75), (cx + 1.75, ttop + 0.6, cz + 1.75), "t_stone",
+               0.3, bottom=False)
+        y = _cone(b, f"turret_roof_{n}", cx, cz, ttop + 0.6, CORE_TURRET_ROOF)
+        b.box(f"turret_ball_{n}", (cx - 0.3, y, cz - 0.3), (cx + 0.3, y + 0.6, cz + 0.3), "t_gold")
     if stage >= 1:
-        _plaster(b, "plaster", -2.2, 2.0, -3.5)
-        _plaster(b, "plaster_2", 1.0, 5.6, -1.75)
+        _plaster(b, "plaster", -5.2, 3.9, -7.0, size=1.6)
+        _plaster(b, "plaster_2", 1.6, 9.6, -3.5, size=1.4)
     if stage >= 2:
-        _plaster(b, "plaster_3", 1.75, 6.0, -0.6, along="x")
-        b.box("hole", (-1.4, 5.0, -1.8125), (-0.8, 5.6, -1.75), "t_navy", faces={"south": None})
+        _plaster(b, "plaster_3", 3.5, 12.0, -1.2, along="x", size=1.4)
+        b.box("hole", (-2.6, 9.6, -3.5625), (-1.6, 10.6, -3.5), "t_navy", faces={"south": None})
     _toy_blocks(b, stage, CORE_BLOCKS)
     return b
 
 
-CORE_BLOCKS = [(-4.6, -3.0, 0.7, 22.5), (4.0, 2.4, 0.6, 0), (-1.8, -4.9, 0.6, 45), (4.1, -3.4, 0.8, 22.5),
-               (-4.4, 2.8, 0.6, 0), (1.2, 4.2, 0.55, 45)]
+CORE_BLOCKS = [(-9.2, -6.0, 1.4, 22.5), (8.4, 4.8, 1.2, 0), (-3.6, -9.6, 1.2, 45), (8.2, -6.8, 1.6, 22.5),
+               (-8.8, 5.6, 1.2, 0), (2.4, 8.6, 1.1, 45)]
 
 
 def core_crown():
-    """The big gold crown on the keep (turns about y like the music box's dancer): a band with tall points at the
-    sides, small ones at the corners, team-coloured gems and a team velvet cushion."""
+    """The big gold crown around the spire's foot (turns about y like the music box's dancer): a band with four tall
+    points at the sides tipped with team gems, four short ones with pearls at the corners, a glowing team jewel set in
+    the band under every tall point."""
     b = Build()
-    y0, h, half = CROWN_Y, 0.9, 1.8
-    b.rbox("cushion", (-1.5, y0, -1.5), (1.5, y0 + 0.8, 1.5), "t_paint_tint", 0.25, bottom=False, tint=True)
-    b.ring("band", half, y0 + 0.1, y0 + 0.1 + h, 0.3, "t_gold")
-    top = y0 + 0.1 + h
+    y0, h, half, thick = SPIRE_Y, 1.4, 3.2, 0.45
+    b.ring("band", half, y0, y0 + h, thick, "t_gold")
+    b.ring("band_rim", half + 0.06, y0 + 0.1, y0 + 0.35, 0.1, "t_white")
+    top = y0 + h
     for n in range(4):
         ang = n * 90
-        cx = (half - 0.15) * math.sin(math.radians(ang))
-        cz = -(half - 0.15) * math.cos(math.radians(ang))
-        wx, wz = (0.35, 0.15) if n % 2 == 0 else (0.15, 0.35)
-        b.box(f"point_{n}", (cx - wx, top, cz - wz), (cx + wx, top + 0.9, cz + wz), "t_gold")
-        b.box(f"point_top_{n}", (cx - wx * 0.6, top + 0.9, cz - wz * 0.6 - 0.01), (cx + wx * 0.6, top + 1.25,
-              cz + wz * 0.6 + 0.01), "t_gold")
-        b.rbox(f"tip_{n}", (cx - 0.2, top + 1.25, cz - 0.2), (cx + 0.2, top + 1.6, cz + 0.2), "t_paint_tint", 0.06,
+        s, c = math.sin(math.radians(ang)), -math.cos(math.radians(ang))
+        cx, cz = (half - thick / 2) * s, (half - thick / 2) * c
+        wx, wz = (0.75, 0.2) if n % 2 == 0 else (0.2, 0.75)
+        b.box(f"point_{n}", (cx - wx, top, cz - wz), (cx + wx, top + 1.5, cz + wz), "t_gold")
+        b.box(f"point_mid_{n}", (cx - wx * 0.55, top + 1.5, cz - wz * 0.55 - 0.01), (cx + wx * 0.55, top + 2.2,
+              cz + wz * 0.55 + 0.01), "t_gold")
+        b.rbox(f"tip_{n}", (cx - 0.35, top + 2.2, cz - 0.35), (cx + 0.35, top + 2.9, cz + 0.35), "t_paint_tint", 0.1,
                tint=True, glow=True)
-        gx, gz = (0.22, 0.34) if n % 2 == 0 else (0.34, 0.22)
-        b.box(f"gem_{n}", (cx - gx, y0 + 0.35, cz - gz), (cx + gx, y0 + 0.75, cz + gz), "t_paint_tint",
-              tint=True, glow=True)
+        gx, gz = (0.45, thick / 2 + 0.12) if n % 2 == 0 else (thick / 2 + 0.12, 0.45)
+        ex, ez = half * s, half * c
+        b.box(f"gem_{n}", (ex - gx, y0 + 0.45, ez - gz), (ex + gx, y0 + 1.15, ez + gz), "t_paint_tint", tint=True,
+              glow=True)
     for n, (sx, sz) in enumerate(TURRETS):
-        b.box(f"corner_{n}", (sx * 1.65 - 0.15, top, sz * 1.65 - 0.15), (sx * 1.65 + 0.15, top + 0.5,
-              sz * 1.65 + 0.15), "t_gold")
-        b.box(f"corner_ball_{n}", (sx * 1.65 - 0.12, top + 0.5, sz * 1.65 - 0.12), (sx * 1.65 + 0.12, top + 0.75,
-              sz * 1.65 + 0.12), "t_white")
+        x, z = sx * (half - 0.3), sz * (half - 0.3)
+        b.box(f"corner_{n}", (x - 0.25, top, z - 0.25), (x + 0.25, top + 0.8, z + 0.25), "t_gold")
+        b.box(f"corner_pearl_{n}", (x - 0.22, top + 0.8, z - 0.22), (x + 0.22, top + 1.25, z + 0.22), "t_white")
     return b
 
 
-CROWN_Y = 10.5
-CROWN_CENTRE = 12.0
-CROWN_SCALE = 2
+CROWN_CENTRE = 22.8
+CROWN_SCALE = 4
+
+
+def core_star():
+    """The team jewel on the spire's tip (turns slowly): a faceted gem in a gold four-prong setting."""
+    b = Build()
+    y = SPIRE_TOP + 0.6
+    for n, (half, h) in enumerate(((0.25, 0.3), (0.55, 0.4), (0.8, 0.5), (0.55, 0.4), (0.3, 0.3), (0.12, 0.3))):
+        b.box(f"gem_{n}", (-half, y, -half), (half, y + h, half), "t_paint_tint", tint=True, glow=True)
+        y += h
+    for n in range(4):
+        ang = n * 90
+        s, c = math.sin(math.radians(ang)), -math.cos(math.radians(ang))
+        x, z = 0.9 * s, 0.9 * c
+        b.box(f"prong_{n}", (x - 0.1, SPIRE_TOP + 0.75, z - 0.1), (x + 0.1, SPIRE_TOP + 1.7, z + 0.1), "t_gold")
+    return b
+
+
+STAR_CENTRE = SPIRE_TOP + 1.6
+STAR_SCALE = 2
 
 
 def core_key():
     """The music box's wind-up key on the west side (turns about the x axis through y = KEY_CENTRE, z = 0)."""
     b = Build()
     c = KEY_CENTRE
-    b.box("shaft", (-4.4, c - 0.12, -0.12), (-3.625, c + 0.12, 0.12), "t_gold")
-    b.box("collar", (-4.1, c - 0.22, -0.22), (-3.9, c + 0.22, 0.22), "t_gold")
-    b.rbox("bow_hub", (-4.7, c - 0.3, -0.3), (-4.4, c + 0.3, 0.3), "t_gold", 0.08)
+    b.box("shaft", (-8.8, c - 0.24, -0.24), (-7.25, c + 0.24, 0.24), "t_gold")
+    b.box("collar", (-8.2, c - 0.44, -0.44), (-7.8, c + 0.44, 0.44), "t_gold")
+    b.rbox("bow_hub", (-9.4, c - 0.6, -0.6), (-8.8, c + 0.6, 0.6), "t_gold", 0.16)
     for side in (-1, 1):
-        z0, z1 = (0.3, 1.05) if side > 0 else (-1.05, -0.3)
-        b.rbox(f"bow_{side}", (-4.65, c - 0.45, z0), (-4.45, c + 0.45, z1), "t_gold", 0.12)
+        z0, z1 = (0.6, 2.1) if side > 0 else (-2.1, -0.6)
+        b.rbox(f"bow_{side}", (-9.3, c - 0.9, z0), (-8.9, c + 0.9, z1), "t_gold", 0.24)
+        b.box(f"bow_gem_{side}", (-9.375, c - 0.25, (z0 + z1) / 2 - 0.25), (-9.3, c + 0.25, (z0 + z1) / 2 + 0.25),
+              "t_paint_tint", tint=True, glow=True, faces={"east": None})
     return b
 
 
-KEY_CENTRE = 2.0
+KEY_CENTRE = 4.0
 
 
 # ------------------------------------------------------------------------------------------------
@@ -349,7 +425,8 @@ def bubble(rx, height, tiers=9, sink=0.5):
     return b
 
 
-SHIELDS = {"tower": (4.4, 18.0), "core": (5.75, 14.75)}
+# kind -> (half width, height, display scale, centre): the core's bubble fills its clearing (radius 10, 36 high)
+SHIELDS = {"tower": (4.4, 18.0, SHIELD_SCALE, SHIELD_CENTRE), "core": (9.8, 35.5, 16, 14.0)}
 
 
 # ------------------------------------------------------------------------------------------------
@@ -433,9 +510,9 @@ SCOPE_SCALE = 2
 # registry: model id (below models/, without .bbmodel) -> builder of the Model
 # ------------------------------------------------------------------------------------------------
 
-def _slab(builder, kind, part, slab):
+def _slab(builder, kind, part, slab, scale=BODY, height=SLAB):
     def make(stage):
-        models = builder(stage).slabs(f"structure/{kind}_{part}_{stage}", 2, BODY, SLAB)
+        models = builder(stage).slabs(f"structure/{kind}_{part}_{stage}", 2, scale, height)
         m = models[slab]
         if m is None:
             return None
@@ -447,16 +524,19 @@ def _slab(builder, kind, part, slab):
 ALL = {}
 for _s in range(STAGES):
     ALL[f"structure/tower_body_{_s}"] = (lambda s: lambda: _slab(tower_body, "tower", "body", 0)(s))(_s)
-    ALL[f"structure/core_body_{_s}"] = (lambda s: lambda: _slab(core_body, "core", "body", 0)(s))(_s)
+    ALL[f"structure/core_body_{_s}"] = (lambda s: lambda: _slab(core_body, "core", "body", 0, CORE_BODY,
+                                                                CORE_SLAB)(s))(_s)
 for _s in range(STAGES - 1):
     ALL[f"structure/tower_top_{_s}"] = (lambda s: lambda: _slab(tower_body, "tower", "top", 1)(s))(_s)
-    ALL[f"structure/core_top_{_s}"] = (lambda s: lambda: _slab(core_body, "core", "top", 1)(s))(_s)
+    ALL[f"structure/core_top_{_s}"] = (lambda s: lambda: _slab(core_body, "core", "top", 1, CORE_BODY,
+                                                               CORE_SLAB)(s))(_s)
 ALL["structure/tower_flag"] = lambda: tower_flag().centred("structure/tower_flag", FLAG_SCALE, FLAG_CENTRE)
 ALL["structure/core_crown"] = lambda: core_crown().centred("structure/core_crown", CROWN_SCALE, CROWN_CENTRE)
-ALL["structure/core_key"] = lambda: core_key().centred("structure/core_key", BODY, KEY_CENTRE)
-for _k, (_rx, _h) in SHIELDS.items():
-    ALL[f"structure/{_k}_shield"] = (lambda k, rx, h: lambda: bubble(rx, h).centred(
-        f"structure/{k}_shield", SHIELD_SCALE, SHIELD_CENTRE))(_k, _rx, _h)
+ALL["structure/core_key"] = lambda: core_key().centred("structure/core_key", CORE_BODY, KEY_CENTRE)
+ALL["structure/core_star"] = lambda: core_star().centred("structure/core_star", STAR_SCALE, STAR_CENTRE)
+for _k, (_rx, _h, _sc, _c) in SHIELDS.items():
+    ALL[f"structure/{_k}_shield"] = (lambda k, rx, h, sc, c: lambda: bubble(rx, h).centred(
+        f"structure/{k}_shield", sc, c))(_k, _rx, _h, _sc, _c)
 ALL["structure/fountain"] = lambda: fountain().centred("structure/fountain", FOUNTAIN_SCALE, FOUNTAIN_CENTRE)
 ALL["structure/telescope"] = lambda: telescope().centred("structure/telescope", TELESCOPE_SCALE, TELESCOPE_CENTRE)
 ALL["structure/telescope_scope"] = lambda: telescope_scope().centred("structure/telescope_scope", SCOPE_SCALE,
@@ -466,7 +546,7 @@ ALL["structure/telescope_scope"] = lambda: telescope_scope().centred("structure/
 PARTS = {
     "tower": [("body", 4, 6.0, BODY, "none"), ("top", 3, 18.0, BODY, "none"),
               ("flag", 0, FLAG_CENTRE, FLAG_SCALE, "flag"), ("shield", 0, SHIELD_CENTRE, SHIELD_SCALE, "shield")],
-    "core": [("body", 4, 6.0, BODY, "none"), ("top", 3, 18.0, BODY, "none"),
-             ("crown", 0, CROWN_CENTRE, CROWN_SCALE, "crown"), ("key", 0, KEY_CENTRE, BODY, "key"),
-             ("shield", 0, SHIELD_CENTRE, SHIELD_SCALE, "shield")],
+    "core": [("body", 4, 12.0, CORE_BODY, "none"), ("top", 3, 36.0, CORE_BODY, "none"),
+             ("crown", 0, CROWN_CENTRE, CROWN_SCALE, "crown"), ("star", 0, STAR_CENTRE, STAR_SCALE, "crown"),
+             ("key", 0, KEY_CENTRE, CORE_BODY, "key"), ("shield", 0, SHIELDS["core"][3], SHIELDS["core"][2], "shield")],
 }

@@ -6,10 +6,12 @@ run when a model changes (its output is committed).
     python3 -I tools/assetgen/build.py                      # models only
     python3 -I tools/assetgen/build.py --render <out dir>   # + preview PNGs (needs node, playwright and three:
                                                             #   cd tools/assetgen/render && npm install)
-    python3 -I tools/assetgen/build.py --render <out dir> --only weapons|toys   # just one family's sheets
+    python3 -I tools/assetgen/build.py --render <out dir> --only weapons|toys|armor   # just one family's sheets
 
 Models: the ability weapons (models/weapons*.py -> models/weapon/<id>), the 공성전 v2 toy kingdom buildings
-(models/toys.py -> models/structure/<id>) and creatures (models/creatures.py -> models/creature/<id>).
+(models/toys.py -> models/structure/<id>) and creatures (models/creatures.py -> models/creature/<id>); the 공성전 toy
+soldier armour (models/toy_armor.py -> assets/minecraft/equipment/leather.json, the leather item definitions and
+assets/mcpl/textures/{trims/entity,item}/toy_armor).
 Ported from STSV tools/assetgen (same palette formula, texture rules and model checks).
 """
 
@@ -21,12 +23,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from mcpl_assets.palette import PALETTE  # noqa: E402
-from models import creatures, toys, weapons  # noqa: E402
+from models import creatures, toy_armor, toys, weapons  # noqa: E402
+import armor_preview  # noqa: E402
 import toy_preview  # noqa: E402
 import weapon_preview  # noqa: E402
 
 REPO = HERE.parent.parent
 MODELS = REPO / "src" / "main" / "resourcepack-src" / "models"
+ASSETS = REPO / "src" / "main" / "resourcepack-src" / "assets"
 BUILD = REPO / "build" / "assetgen"
 RENDER = HERE / "render" / "render.mjs"
 
@@ -79,6 +83,9 @@ def main():
         model.write(MODELS / f"{name}.bbmodel")
         print(f"toy     {name}: {len(model.elements)} elements")
 
+    written = toy_armor.write(ASSETS)
+    print(f"armour  toy_armor: {len(written)} files ({len(toy_armor.LOOKS)} looks)")
+
     if render_dir and only in (None, "weapons"):
         render_dir.mkdir(parents=True, exist_ok=True)
         for model in armoury:
@@ -87,6 +94,9 @@ def main():
     if render_dir and only in (None, "toys"):
         render_dir.mkdir(parents=True, exist_ok=True)
         toy_preview.render_all(built, render, BUILD, render_dir)
+    if render_dir and only in (None, "armor"):
+        render_dir.mkdir(parents=True, exist_ok=True)
+        armor_preview.main_sheets(render_dir)
 
 
 if __name__ == "__main__":

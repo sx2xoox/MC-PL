@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.ItemLore;
@@ -33,11 +34,13 @@ public final class ShopMenu implements InventoryHolder {
     static final int FIRST_OWNED = 46;
 
     private final UUID owner;
+    private final LaneSites.@Nullable Side side;
     private final Inventory inventory;
     private ShopItem.Category category = ShopItem.Category.BASIC;
 
-    ShopMenu(UUID owner, Component title) {
+    ShopMenu(UUID owner, Component title, LaneSites.@Nullable Side side) {
         this.owner = owner;
+        this.side = side;
         this.inventory = Bukkit.createInventory(this, SIZE, title);
     }
 
@@ -75,8 +78,7 @@ public final class ShopMenu implements InventoryHolder {
         for (int i = 0; i < items.size() && i < ITEM_SLOTS.length; i++) {
             ShopItem item = items.get(i);
             int price = settings.price(item);
-            ItemStack icon = named(ItemStack.of(item.icon()), messages.get("shop.item." + item.key() + ".name"),
-                    List.of());
+            ItemStack icon = named(icon(item, 1), messages.get("shop.item." + item.key() + ".name"), List.of());
             List<Component> lore = new ArrayList<>(messages.lines("shop.item." + item.key() + ".lore"));
             lore.add(messages.get(gold >= price ? "shop.price" : "shop.price-short", Messages.tag("price", price)));
             icon.setData(DataComponentTypes.LORE, ItemLore.lore(italicFree(lore)));
@@ -86,7 +88,7 @@ public final class ShopMenu implements InventoryHolder {
             ItemStack icon;
             if (i < owned.size()) {
                 SiegeShop.Owned slot = owned.get(i);
-                icon = named(ItemStack.of(slot.item().icon(), Math.max(1, Math.min(64, slot.count()))),
+                icon = named(icon(slot.item(), Math.max(1, Math.min(64, slot.count()))),
                         messages.get("shop.item." + slot.item().key() + ".name"),
                         messages.lines("shop.item." + slot.item().key() + ".lore"));
             } else {
@@ -95,6 +97,12 @@ public final class ShopMenu implements InventoryHolder {
             }
             inventory.setItem(FIRST_OWNED + i, icon);
         }
+    }
+
+    /** An item's icon: a 장난감 갑옷 is drawn as the buyer's toy uniform of its tier ({@link ToyArmor}). */
+    private ItemStack icon(ShopItem item, int amount) {
+        ItemStack icon = ItemStack.of(item.icon(), amount);
+        return side != null && "armor".equals(item.line()) ? ToyArmor.icon(side, item.tier(), icon) : icon;
     }
 
     /** The tab in a slot, or null. */
