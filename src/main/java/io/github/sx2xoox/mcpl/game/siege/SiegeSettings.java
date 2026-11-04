@@ -177,27 +177,27 @@ public record SiegeSettings(
     /** Declares the defaults (with Korean comments) merged into {@code config.yml} → {@code games.siege}. */
     public static void declareDefaults(ConfigurationSection d) {
         d.set(ROUNDS_TO_WIN, 2);
-        d.setComments(ROUNDS_TO_WIN, List.of("이 판 수를 먼저 이긴 팀이 우승 (2 = 3판 2선승)"));
+        d.setComments(ROUNDS_TO_WIN, List.of("이 라운드 수를 먼저 이긴 팀이 우승 (2 = 3라운드 2선승)"));
         d.set(ROUND_SECONDS, 1200);
         d.setComments(ROUND_SECONDS, List.of(
-                "한 판의 제한 시간(초). 코어를 부수면 시간과 상관없이 바로 판 승리,",
+                "한 라운드의 제한 시간(초). 코어를 부수면 시간과 상관없이 바로 라운드 승리,",
                 "시간이 끝나면 점수 → 부순 타워 → 처치 순으로 승자, 모두 같으면 연장전"));
         d.set(ROUND_PREP_SECONDS, 20);
-        d.setComments(ROUND_PREP_SECONDS, List.of("판 시작 준비 시간(초): 규칙 안내, 능력 공개, 리롤(웅크리고 우클릭). 무적"));
+        d.setComments(ROUND_PREP_SECONDS, List.of("라운드 시작 준비 시간(초): 규칙 안내, 능력 공개, 리롤(웅크리고 우클릭). 무적"));
         d.set(ROUND_BREAK_SECONDS, 60);
-        d.setComments(ROUND_BREAK_SECONDS, List.of("판 사이 쉬는 시간(초)"));
+        d.setComments(ROUND_BREAK_SECONDS, List.of("라운드 사이 쉬는 시간(초)"));
         d.set(OVERTIME_SECONDS, 120);
         d.setComments(OVERTIME_SECONDS, List.of(
-                "연장전(초): 먼저 점수를 낸 팀이 판 승리. 아무도 못 내면 건물 체력이 더 많이 남은 팀"));
+                "연장전(초): 먼저 점수를 낸 팀이 라운드 승리. 아무도 못 내면 건물 체력이 더 많이 남은 팀"));
         d.set(CLIMAX_SECONDS, 180);
         d.setComments(CLIMAX_SECONDS, List.of("남은 시간이 이만큼(초)이 되면 '마지막 3분' 알림 (규칙은 그대로, 0 = 끔)"));
         d.set(REROLLS, 1);
-        d.setComments(REROLLS, List.of("판마다 한 사람이 능력을 다시 뽑을 수 있는 횟수 (판 준비 시간에 웅크리고 우클릭)"));
+        d.setComments(REROLLS, List.of("라운드마다 한 사람이 능력을 다시 뽑을 수 있는 횟수 (라운드 준비 시간에 웅크리고 우클릭)"));
         d.set(ABILITY_POOL, DEFAULT_POOL);
         d.setComments(ABILITY_POOL, List.of(
                 "공성전에서 나오는 능력 id 목록. 비어 있으면 abilities.yml 에서 켜진 모든 능력",
                 "/게임 공성전 능력풀 <추가|제거|목록|초기화> [능력] 로도 바꿀 수 있습니다."));
-        d.setComments("points", List.of("점수 (한 판 동안). 정글·드래곤·점령지 점수는 그 기능의 설정에 있습니다"));
+        d.setComments("points", List.of("점수 (한 라운드 동안). 정글·드래곤·점령지 점수는 그 기능의 설정에 있습니다"));
         d.set(KILL, 2);
         d.setComments(KILL, List.of("적 처치"));
         d.set(ASSIST, 1);
@@ -205,13 +205,13 @@ public record SiegeSettings(
         d.set(ASSIST_SECONDS, 8);
         d.setComments(ASSIST_SECONDS, List.of("도움으로 치는 피해의 시간(초)"));
         d.set(TOWER_POINTS, 8);
-        d.setComments(TOWER_POINTS, List.of("적 타워 파괴 (코어는 파괴 즉시 판 승리)"));
+        d.setComments(TOWER_POINTS, List.of("적 타워 파괴 (코어는 파괴 즉시 라운드 승리)"));
         d.setComments("respawn", List.of("부활 (자기 본진에서)"));
         d.set(RESPAWN_SECONDS, 6);
         d.setComments(RESPAWN_SECONDS, List.of("기본 부활 대기 시간(초)"));
         d.set(RESPAWN_DEATHS_PER_STEP, 3);
         d.set(RESPAWN_STEP_SECONDS, 1);
-        d.setComments(RESPAWN_DEATHS_PER_STEP, List.of("그 판에서 이만큼 죽을 때마다 부활 대기 +step-seconds초 (최대 max-seconds)"));
+        d.setComments(RESPAWN_DEATHS_PER_STEP, List.of("그 라운드에서 이만큼 죽을 때마다 부활 대기 +step-seconds초 (최대 max-seconds)"));
         d.set(RESPAWN_MAX_SECONDS, 14);
         d.set(PROTECTION_SECONDS, 3);
         d.setComments(PROTECTION_SECONDS, List.of("부활 직후 무적(초). 공격하면 풀립니다"));

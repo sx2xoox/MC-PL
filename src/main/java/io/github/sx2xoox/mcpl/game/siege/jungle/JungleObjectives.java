@@ -72,13 +72,18 @@ import org.jspecify.annotations.Nullable;
  *     of the map glowing).</li>
  * </ul>
  *
- * A label over every site shows its name, state and respawn timer; monsters show their health. Buffs end on death and
+ * A capture point or a camp that is down has a label (name, capture state or respawn timer); a camp that is up has none:
+ * its monsters show their name and health on their bars. Buffs end on death and
  * at the end of the round ({@link #clear()}); everything spawned is tracked by the match.
  */
 public final class JungleObjectives implements Listener {
 
     /** Blocks a player's feet may be above or below a capture point and still count as inside. */
     static final double HEIGHT_RANGE = 3.5;
+    /** Ticks a fighting camp waits with nobody to fight inside its leash before it goes home. */
+    public static final int DISENGAGE_TICKS = 40;
+    /** Height of a site's label above the site (eye level, a little over a player's head). */
+    static final double LABEL_HEIGHT = 2.5;
     private static final TextColor MONSTER = TextColor.color(0xFFC857);
 
     private final SiegeArena arena;
@@ -134,6 +139,8 @@ public final class JungleObjectives implements Listener {
         private long upAt;
         private boolean aggro;
         private long lastHit;
+        /** The last tick any of the camp's monsters had someone inside the leash to fight. */
+        private long lastEngaged;
         private @Nullable UUID lastHitter;
         private LaneSites.@Nullable Side capturer;
         private int progress;
@@ -298,11 +305,7 @@ public final class JungleObjectives implements Listener {
             site.capturer = null;
             site.progress = 0;
             site.contested = false;
-            if (site.label != null) {
-                site.label.remove();
-                arena.untrack(site.label);
-                site.label = null;
-            }
+            removeLabel(site);
         }
         for (UUID player : new ArrayList<>(buffs.keySet())) {
             endBuffs(player);
@@ -380,7 +383,7 @@ public final class JungleObjectives implements Listener {
                 return;
             }
         }
-        if (now - site.lastHit >= settings.resetTicks()) {
+        if (now - site.lastHit >= settings.resetTicks() || now - site.lastEngaged >= DISENGAGE_TICKS) {
             reset(site);
             return;
         }
@@ -394,6 +397,7 @@ public final class JungleObjectives implements Listener {
                 mover.stop(mob);
                 continue;
             }
+            site.lastEngaged = now;
             if (kind.range() <= 0) {
                 flee(site, mob, target);
                 continue;
@@ -891,6 +895,7 @@ public final class JungleObjectives implements Listener {
         }
         site.aggro = true;
         site.lastHit = now;
+        site.lastEngaged = now;
         site.lastHitter = hitterId;
         site.hitters.put(event.getEntity().getUniqueId(), hitterId);
         for (Mob mob : site.mobs.keySet()) {
@@ -1003,35 +1008,44 @@ public final class JungleObjectives implements Listener {
             return messages.get("jungle.status-down",
                     Messages.tag("time", Format.clock((Math.max(0, site.upAt - now) + 19) / 20)));
         }
-        if (site.isCapturePoint()) {
-            if (site.contested) {
-                return messages.get("jungle.status-contested");
-            }
-            if (site.capturer == null) {
-                return null;
-            }
-            int filled = (int) Math.round(site.fraction() * 10);
-            TextColor colour = MinionWaves.colour(site.capturer);
-            return Component.text("|".repeat(filled), colour)
-                    .append(Component.text("|".repeat(10 - filled), NamedTextColor.DARK_GRAY));
+        if (site.contested) {
+            return messages.get("jungle.status-contested");
         }
-        return site.aggro ? messages.get("jungle.status-fighting") : null;
+        if (site.capturer == null) {
+            return null;
+        }
+        int filled = (int) Math.round(site.fraction() * 10);
+        TextColor colour = MinionWaves.colour(site.capturer);
+        return Component.text("|".repeat(filled), colour)
+                .append(Component.text("|".repeat(10 - filled), NamedTextColor.DARK_GRAY));
     }
 
-    /** Spawns or refreshes the label over a site: its name and its state or respawn timer. */
+    /**
+     * Spawns, refreshes or removes the label over a site: its name and its state or respawn timer. A monster camp that
+     * is up has none: its monsters' health bars carry their names, and a label over the camp would sit on (or inside)
+     * a big monster and its bar. A capture point's label stands at eye level and is drawn through the landmark (the
+     * fountain and the telescope models are taller than any label height a player would look at).
+     */
     private void label(Site site) {
+        if (site.up && !site.isCapturePoint()) {
+            removeLabel(site);
+            return;
+        }
         Component status = status(site);
         Component text = status == null ? siteName(site)
                 : Component.join(JoinConfiguration.newlines(), siteName(site), status);
         try {
             TextDisplay label = site.label;
             if (label == null || !label.isValid()) {
-                double height = site.isCapturePoint() ? 2.5 : 1.6 + 2.0 * site.kindSettings().scale();
-                label = site.at.getWorld().spawn(site.at.clone().add(0, height, 0), TextDisplay.class, display -> {
+                boolean point = site.isCapturePoint();
+                label = site.at.getWorld().spawn(site.at.clone().add(0, LABEL_HEIGHT, 0), TextDisplay.class,
+                        display -> {
                     display.setPersistent(false);
                     display.setBillboard(Display.Billboard.CENTER);
                     display.setShadowed(true);
                     display.setBrightness(new Display.Brightness(15, 15));
+                    display.setSeeThrough(point);
+                    display.setViewRange(point ? 0.6f : 0.5f);
                 });
                 arena.track(label);
                 site.label = label;
@@ -1039,6 +1053,15 @@ public final class JungleObjectives implements Listener {
             label.text(text);
         } catch (RuntimeException e) {
             arena.plugin().getLogger().log(Level.FINE, "Could not label jungle site " + site.objective.id(), e);
+        }
+    }
+
+    private void removeLabel(Site site) {
+        TextDisplay label = site.label;
+        site.label = null;
+        if (label != null) {
+            label.remove();
+            arena.untrack(label);
         }
     }
 

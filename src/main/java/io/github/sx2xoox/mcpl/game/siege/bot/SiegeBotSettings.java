@@ -253,7 +253,7 @@ public record SiegeBotSettings(int perSide, SiegeBotDifficulty difficulty, List<
         d.set(UPGRADE + "health", 2);
         d.set(UPGRADE + "max", 4);
         d.setComments("bots.upgrade", List.of("봇은 본진에서 골드로 강화를 삽니다: cost 골드마다 피해 +damage(비율), 최대 체력 +health,",
-                "한 판에 max 번까지"));
+                "한 라운드에 max 번까지"));
         d.setComments("bots.job", List.of(
                 "직업 수치 (1레벨 기준, 레벨에 따라 능력처럼 강해짐): health 체력 · defense 받는 피해 감소 비율 · speed 이동 속도",
                 "damage·range·attack-seconds 기본 공격 · skill-* 스킬 (치유사 skill-damage = 회복량,",

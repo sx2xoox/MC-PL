@@ -357,4 +357,30 @@ class ModelCreatureLookTest {
             assertEquals("creature/" + kind, CreatureModels.CREATURES.get(kind).get(0).model(), "body first");
         }
     }
+
+    /** {@link CreatureModels#TOPS} is the top of every kind's models as built (bars and numbers float over it). */
+    @Test
+    void modelTopsMatchTheBuiltModels() throws Exception {
+        assertEquals(CreatureModels.CREATURES.keySet(), CreatureModels.TOPS.keySet());
+        for (var entry : CreatureModels.CREATURES.entrySet()) {
+            double top = 0;
+            for (CreatureModels.Part part : entry.getValue()) {
+                JsonObject model = JsonParser.parseString(Files.readString(Path.of("src/main/resourcepack-src/models",
+                        part.model() + ".bbmodel"))).getAsJsonObject();
+                for (JsonElement element : model.getAsJsonArray("elements")) {
+                    double y = element.getAsJsonObject().getAsJsonArray("to").get(1).getAsDouble();
+                    // tools/assetgen toykit.centred: y = -16 + (blocks - (centre - 1.5 scale)) * 16 / scale
+                    top = Math.max(top, (y + 16) * part.scale() / 16 + part.height() - 1.5 * part.scale());
+                }
+            }
+            assertEquals(top, CreatureModels.TOPS.get(entry.getKey()), 0.02, entry.getKey());
+        }
+        LivingEntity rabbit = mob(4, 2, 0);
+        ModelCreatureLook.ModelCreature skinned = look.attach(rabbit, "rabbit", null);
+        assertEquals(CreatureModels.TOPS.get("rabbit"), look.modelTop(rabbit), 1e-9);
+        assertTrue(skinned.hitbox().getInteractionHeight() >= CreatureModels.TOPS.get("rabbit") - 1e-6,
+                "a pack player hits the model's ears too");
+        skinned.remove();
+        assertEquals(0, look.modelTop(rabbit), "no model, no top");
+    }
 }

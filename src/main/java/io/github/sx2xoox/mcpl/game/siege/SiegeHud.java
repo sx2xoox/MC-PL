@@ -22,9 +22,9 @@ import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The 공성전 HUD (docs/siege.md "화면 표시"), kept small on purpose: one boss bar with the round timer only, a private
- * sidebar of at most six lines per viewer (score and rounds, time, standing towers, my level and gold, the next big
- * objective from a {@link SiegeModule}, my ability), the health plates over the heads ({@link NamePlates}) and the
+ * The 공성전 HUD (docs/siege.md "화면 표시"), kept small on purpose: one boss bar with the round and its timer, a
+ * private sidebar of five lines per viewer (score, rounds won, standing towers, my level and gold, the next big
+ * objective from a {@link SiegeModule}; my ability while preparing), the health plates over the heads ({@link NamePlates}) and the
  * start tutorial (three titles and a chat summary). Structure health floats over the structures ({@link OverheadBar});
  * the "▶ 지금 할 일" line is {@link Guidance}.
  */
@@ -182,7 +182,10 @@ final class SiegeHud {
         };
     }
 
-    /** At most six lines: score, time, towers, level and gold, the next objective, the ability. */
+    /**
+     * Five lines: the score, the rounds won, the standing structures, my level and gold, the next big
+     * objective; in the preparation my ability (and rerolls) too. The round and its time are on the boss bar only.
+     */
     List<Component> lines(Player viewer) {
         SiegeScore score = match.score();
         List<MatchTeam> teams = match.teams();
@@ -190,10 +193,9 @@ final class SiegeHud {
         lines.add(messages.get("hud.score",
                 Messages.tag("team_a", Component.text(teams.get(0).shortName(), teams.get(0).color())),
                 Messages.tag("team_b", Component.text(teams.get(1).shortName(), teams.get(1).color())),
-                Messages.tag("a", score.points(0)), Messages.tag("b", score.points(1)),
-                Messages.tag("rounds_a", dots(score.roundWins(0))), Messages.tag("rounds_b", dots(score.roundWins(1)))));
-        lines.add(messages.get("hud.phase", Messages.tag("phase", phaseName()),
-                Messages.tag("time", Format.clock((match.ticksLeft() + 19) / 20))));
+                Messages.tag("a", score.points(0)), Messages.tag("b", score.points(1))));
+        lines.add(messages.get("hud.rounds", Messages.tag("a", score.roundWins(0)),
+                Messages.tag("b", score.roundWins(1))));
         if (match.phase() != SiegeMatch.Phase.BREAK && match.phase() != SiegeMatch.Phase.OVER) {
             lines.add(messages.get("hud.towers", Messages.tag("a", standing(match.sideOf(0))),
                     Messages.tag("b", standing(match.sideOf(1)))));
@@ -218,34 +220,24 @@ final class SiegeHud {
                 break;
             }
         }
-        if (match.phase() == SiegeMatch.Phase.PREP && match.rerollsLeft(viewer) > 0) {
-            lines.add(messages.get("hud.ability-reroll", Messages.tag("ability", match.abilityName(id)),
-                    Messages.tag("count", match.rerollsLeft(viewer))));
-        } else {
-            lines.add(messages.get("hud.ability", Messages.tag("ability", match.abilityName(id))));
+        if (match.phase() == SiegeMatch.Phase.PREP) {
+            // the ability is new (and may be rerolled) only now; in the fight it is the sword in the hand
+            lines.add(match.rerollsLeft(viewer) > 0
+                    ? messages.get("hud.ability-reroll", Messages.tag("ability", match.abilityName(id)),
+                            Messages.tag("count", match.rerollsLeft(viewer)))
+                    : messages.get("hud.ability", Messages.tag("ability", match.abilityName(id))));
         }
         return lines;
     }
 
-    /** "standing/total" structures of a side (cores included). */
-    private String standing(LaneSites.Side side) {
+    /** Standing towers of a side (its core included). */
+    private int standing(LaneSites.Side side) {
         int up = 0;
-        int all = 0;
         for (Tower tower : match.towers(side)) {
-            all++;
             if (!tower.isDestroyed()) {
                 up++;
             }
         }
-        return up + "/" + all;
-    }
-
-    private String dots(int wins) {
-        int total = match.settings().roundsToWin();
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < total; i++) {
-            out.append(i < wins ? '●' : '○');
-        }
-        return out.toString();
+        return up;
     }
 }

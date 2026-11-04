@@ -179,11 +179,6 @@ public final class ModelTowerLook implements TowerLook {
     }
 
     @Override
-    public double barHeight(String towerId) {
-        return SPECS.get(lookOf(towerId)).shield().y() + 1;
-    }
-
-    @Override
     public ModelVisual spawn(Location base, String towerId, TextColor teamColor) {
         String look = lookOf(towerId);
         return new ModelVisual(base.clone(), look, SPECS.get(look), Color.fromRGB(teamColor.value()));

@@ -155,11 +155,14 @@ class SiegeReadabilityTest {
             TextDisplay display = bar.display();
             assertNotNull(display);
             assertTrue(display.isValid());
-            assertTrue(display.getLocation().getY() > tower.base().getY() + 3, "above the structure");
+            double height = display.getLocation().getY() - tower.base().getY();
+            assertTrue(height > 2.5 && height < 5, "at eye level, not over the top of a 20-block tower: " + height);
+            assertTrue(display.isSeeThrough(), "drawn through the building it stands in");
+            assertEquals(Tower.BAR_SCALE, display.getTransformation().getScale().y(), 1.0E-6, "bigger than a creature's");
             assertTrue(Scenario.plain(bar.text()).contains(tower.name()));
         }
         assertEquals(1, ((TestPlayer) a).getBossBars().size(), "one boss bar: the round timer");
-        assertTrue(Scenario.plain(match.hud().timer().bar().name()).contains("1판"));
+        assertTrue(Scenario.plain(match.hud().timer().bar().name()).contains("1라운드"));
 
         Tower outer = enemyOuter(match, a);
         Tower inner = SiegeMatchTest.structure(match, outer.owner(), Tower.Kind.INNER, LaneSites.Lane.TOP);
@@ -413,7 +416,9 @@ class SiegeReadabilityTest {
                     .filter(site -> site.isUp() && !site.mobs().isEmpty()).findFirst().orElseThrow();
         }
         Mob monster = camp.mobs().getFirst();
-        assertTrue(monster.isCustomNameVisible());
+        h.ticks(2);
+        assertNotNull(monster.customName());
+        assertFalse(monster.isCustomNameVisible(), "its overhead bar carries the name: no vanilla name tag on it");
         monster.setHealth(0);
         assertTrue(monster.customName() == null);
         assertFalse(monster.isCustomNameVisible(), "a dying monster shows no vanilla name either");

@@ -41,7 +41,7 @@ public interface SiegeEconomy {
         return true;
     }
 
-    /** A new round: gold and items start over (docs: 판이 끝나면 초기화). */
+    /** A new round: gold and items start over (docs: 라운드가 끝나면 초기화). */
     default void newRound() {
     }
 }

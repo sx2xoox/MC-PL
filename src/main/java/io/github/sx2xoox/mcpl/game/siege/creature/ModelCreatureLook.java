@@ -71,6 +71,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
     private final List<ModelCreature> creatures = new ArrayList<>();
     private final List<Landmark> landmarks = new ArrayList<>();
     private final Map<UUID, ModelCreature> byHitbox = new HashMap<>();
+    private final Map<UUID, ModelCreature> byBody = new HashMap<>();
     private @Nullable BukkitTask ticker;
     private PackAudience.@Nullable Subscription subscription;
 
@@ -96,6 +97,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
         ModelCreature creature = new ModelCreature(body, id, parts, team);
         creatures.add(creature);
         byHitbox.put(creature.hitbox.getUniqueId(), creature);
+        byBody.put(body.getUniqueId(), creature);
         return creature;
     }
 
@@ -112,6 +114,15 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
         Landmark landmark = new Landmark(base.clone(), kind, owner);
         landmarks.add(landmark);
         return landmark;
+    }
+
+    /**
+     * The top of the model dressing {@code body} above its feet, blocks ({@link CreatureModels#TOPS}), or 0 when the
+     * body wears none.
+     */
+    public double modelTop(LivingEntity body) {
+        ModelCreature creature = byBody.get(body.getUniqueId());
+        return creature == null ? 0 : CreatureModels.TOPS.getOrDefault(creature.kind, 0.0);
     }
 
     /** Live creatures (for tests). */
@@ -306,7 +317,10 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 }));
             }
             float width = (float) Math.max(0.4, body.getBoundingBox().getWidthX());
-            float height = (float) Math.max(0.4, body.getBoundingBox().getHeight());
+            // as tall as the model where it is taller than the body: a pack player swinging at the rabbit's ears or
+            // the dragon's head hits it
+            float height = (float) Math.max(0.4, Math.max(body.getBoundingBox().getHeight(),
+                    CreatureModels.TOPS.getOrDefault(kind, 0.0)));
             hitbox = world.spawn(last.clone(), Interaction.class, i -> {
                 i.setPersistent(false);
                 i.setVisibleByDefault(false); // only pack players need it: everyone else hits the vanilla mob
@@ -358,6 +372,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             displays.clear();
             hitbox.remove();
             byHitbox.remove(hitbox.getUniqueId());
+            byBody.remove(body.getUniqueId(), this);
             if (body.isValid() && !body.isDead()) {
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     player.showEntity(plugin, body); // the vanilla mob back for everyone

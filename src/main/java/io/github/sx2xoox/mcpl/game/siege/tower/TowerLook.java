@@ -31,10 +31,17 @@ public interface TowerLook {
         return configured;
     }
 
-    /** Height above the base (blocks) of the overhead health bar: just over the top of the structure. */
+    /**
+     * Height above the base (blocks) of the structure's health bar. The bar stands at about eye level in the middle of
+     * the building and is drawn through it ({@code Tower} spawns it see-through): a bar over the top of a 20-block toy
+     * tower is out of sight from anywhere near it. Default: {@value #BAR_HEIGHT}.
+     */
     default double barHeight(String towerId) {
-        return 7;
+        return BAR_HEIGHT;
     }
+
+    /** Default {@link #barHeight}: a couple of blocks over a player's eyes. */
+    double BAR_HEIGHT = 3.5;
 
     /** One spawned visual. Every entity it creates is tracked and removed by {@link #remove()}. */
     interface Visual {

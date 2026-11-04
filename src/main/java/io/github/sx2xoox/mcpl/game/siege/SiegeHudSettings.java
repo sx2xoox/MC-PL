@@ -52,6 +52,6 @@ public record SiegeHudSettings(
         d.set(GUIDANCE, DEFAULTS.guidance);
         d.setComments(GUIDANCE, List.of("액션바에 '▶ 지금 할 일' 한 줄 안내"));
         d.set(TUTORIAL, DEFAULTS.tutorial);
-        d.setComments(TUTORIAL, List.of("첫 판 준비 시간에 규칙 안내 (타이틀 3장 + 채팅 요약)"));
+        d.setComments(TUTORIAL, List.of("첫 라운드 준비 시간에 규칙 안내 (타이틀 3장 + 채팅 요약)"));
     }
 }

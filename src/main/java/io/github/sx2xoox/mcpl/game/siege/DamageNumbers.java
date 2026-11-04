@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.function.ToDoubleFunction;
 import java.util.logging.Level;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
@@ -100,6 +101,7 @@ public final class DamageNumbers {
     private final GameSession session;
     private final double range;
     private final Map<Key, Pending> pending = new LinkedHashMap<>();
+    private ToDoubleFunction<Entity> height = Entity::getHeight;
     private boolean enabled = true;
     private boolean timerStarted;
     private int spawned;
@@ -107,6 +109,14 @@ public final class DamageNumbers {
     public DamageNumbers(GameSession session, double range) {
         this.session = session;
         this.range = range;
+    }
+
+    /**
+     * How tall what is drawn of an entity is (default its hitbox): a creature whose pack model is taller than its
+     * vanilla body has its numbers pop over the model, not inside it.
+     */
+    public void height(ToDoubleFunction<Entity> height) {
+        this.height = height;
     }
 
     /** Off: {@link #show} does nothing. */
@@ -127,7 +137,7 @@ public final class DamageNumbers {
      * whom a stealthed target is concealed).
      */
     public void show(Entity target, double amount, Kind kind, Predicate<? super Player> viewers) {
-        Location top = target.getLocation().add(0, target.getHeight() + 0.25, 0);
+        Location top = target.getLocation().add(0, height.applyAsDouble(target) + 0.25, 0);
         show(target.getUniqueId(), top, amount, kind, viewers);
     }
 
@@ -159,7 +169,8 @@ public final class DamageNumbers {
         pending.clear();
         for (Map.Entry<Key, Pending> entry : due) {
             Pending next = entry.getValue();
-            pop(next.at, text(next.amount, entry.getKey().kind()), entry.getKey().kind().scale(), next.viewers);
+            Kind kind = entry.getKey().kind();
+            pop(next.at, text(next.amount, kind), kind.scale(), kind == Kind.STRUCTURE, next.viewers);
         }
     }
 
@@ -173,7 +184,9 @@ public final class DamageNumbers {
         return spawned;
     }
 
-    private void pop(Location at, Component text, float scale, Predicate<? super Player> viewers) {
+    /** @param seeThrough drawn through blocks and models (a structure's number, by its see-through bar) */
+    private void pop(Location at, Component text, float scale, boolean seeThrough,
+            Predicate<? super Player> viewers) {
         World world = at.getWorld();
         if (world == null) {
             return;
@@ -188,6 +201,7 @@ public final class DamageNumbers {
                 d.text(text);
                 d.setBillboard(Display.Billboard.CENTER);
                 d.setShadowed(true);
+                d.setSeeThrough(seeThrough);
                 d.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
                 d.setBrightness(FULL_BRIGHT);
                 d.setTransformation(transform(0, 0.6f * scale));

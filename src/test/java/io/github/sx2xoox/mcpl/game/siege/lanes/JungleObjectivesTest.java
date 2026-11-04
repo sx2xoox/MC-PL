@@ -7,9 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.ObjectiveKind;
 import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.jungle.JungleObjectives;
 import org.bukkit.Location;
 import org.bukkit.Sound;
@@ -24,6 +29,7 @@ import org.bukkit.entity.Ravager;
 import org.bukkit.entity.Silverfish;
 import org.bukkit.entity.Slime;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
 /** 공성전 v2 jungle objectives (docs/siege-v2.md §4). */
@@ -78,8 +84,12 @@ class JungleObjectivesTest extends LaneTestBase {
         assertEquals(Panda.Gene.BROWN, ((Panda) teddy).getMainGene());
         assertEquals(Rabbit.Type.GOLD, ((Rabbit) site(LaneSites.Side.RED, ObjectiveKind.RABBIT).mobs().getFirst())
                 .getRabbitType());
-        assertNotNull(site(null, ObjectiveKind.DRAGON).label(), "a label over the site");
-        assertTrue(arena.tracked.contains(site(null, ObjectiveKind.DRAGON).label()));
+        assertNull(site(null, ObjectiveKind.DRAGON).label(),
+                "no label over a camp that is up: its monsters' bars carry the name");
+        JungleObjectives.Site fountain = site(LaneSites.Side.BLUE, ObjectiveKind.FOUNTAIN);
+        assertNotNull(fountain.label(), "a capture point is labelled");
+        assertTrue(fountain.label().isSeeThrough(), "drawn through the fountain model it stands in");
+        assertTrue(arena.tracked.contains(fountain.label()));
 
         systems.endRound();
         assertEquals(0, count(Slime.class) + count(Silverfish.class) + count(Endermite.class) + count(Panda.class)
@@ -121,6 +131,75 @@ class JungleObjectivesTest extends LaneTestBase {
         run(8 * 20 + 10);
         assertFalse(teddy.isFighting());
         assertEquals(bear.getAttribute(Attribute.MAX_HEALTH).getValue(), bear.getHealth(), 1.0E-6);
+    }
+
+    @Test
+    void hittingOneMonsterOfACampSendsTheWholeCampAtTheAttackerAndItGoesHomeTogether() {
+        startUp(1, 1);
+        for (ObjectiveKind kind : List.of(ObjectiveKind.JELLY, ObjectiveKind.MICE)) {
+            JungleObjectives.Site camp = site(LaneSites.Side.BLUE, kind);
+            List<Mob> mobs = camp.mobs();
+            assertTrue(mobs.size() > 1, kind + " is a camp of several");
+            Map<Mob, Location> homes = new HashMap<>();
+            for (Mob mob : mobs) {
+                homes.put(mob, mob.getLocation());
+            }
+            Player player = player(LaneSites.Side.BLUE, 0);
+            player.teleport(camp.at().add(7, 0, 0));
+            Map<Mob, Double> before = new HashMap<>();
+            for (Mob mob : mobs) {
+                before.put(mob, mob.getLocation().distance(player.getLocation()));
+            }
+            melee(player, mobs.getFirst(), 1);
+            run(20);
+            for (Mob mob : mobs) {
+                assertTrue(mob.getLocation().distance(player.getLocation()) < before.get(mob) - 1,
+                        kind + ": every monster of the camp comes at the attacker, not only the one hit");
+            }
+            // The attacker runs out of the leash: the whole camp goes home together, full health.
+            player.teleport(camp.at().add(40, 0, 0));
+            run(JungleObjectives.DISENGAGE_TICKS + 10);
+            assertFalse(camp.isFighting(), kind + ": reset");
+            for (Mob mob : mobs) {
+                assertEquals(0, mob.getLocation().distance(homes.get(mob)), 1.0E-6, kind + ": each back on its spot");
+                assertEquals(mob.getAttribute(Attribute.MAX_HEALTH).getValue(), mob.getHealth(), 1.0E-6);
+            }
+            player.setHealth(20);
+        }
+    }
+
+    /**
+     * A slime cannot be pathed (its move control hops along a heading its own goals set, whatever the path says), so
+     * the mover hops it straight at the goal: facing it, up like a jump, never past it.
+     */
+    @Test
+    void aJellyHopsStraightAtItsGoal() {
+        Slime jelly = h.flatWorld().spawn(at(0, 0), Slime.class, slime -> slime.setRotation(135, 0));
+        Location goal = at(10, 0);
+        assertTrue(CreatureMover.hop(jelly, goal, 1.0));
+        Vector velocity = jelly.getVelocity();
+        assertEquals(CreatureMover.HOP_LIFT, velocity.getY(), 1.0E-9);
+        assertTrue(velocity.getX() > 0 && Math.abs(velocity.getZ()) < 1.0E-9, "towards the goal: " + velocity);
+        assertTrue(velocity.getX() * CreatureMover.HOP_REACH <= 10 + 1.0E-9, "not past it");
+        assertEquals(-90, jelly.getLocation().getYaw(), 1.0, "facing it");
+        assertFalse(CreatureMover.hop(jelly, at(0.2, 0.2), 1.0), "already there: no hop");
+        Location near = at(1.5, 0);
+        CreatureMover.hop(jelly, near, 1.0);
+        assertTrue(jelly.getVelocity().getX() * CreatureMover.HOP_REACH <= 1.5 + 1.0E-9, "a short hop to a near goal");
+    }
+
+    @Test
+    void aCampThatIsDownShowsItsRespawnTimer() {
+        startUp(1, 1);
+        JungleObjectives.Site teddy = site(LaneSites.Side.BLUE, ObjectiveKind.TEDDY);
+        assertNull(teddy.label());
+        clear(teddy, player(LaneSites.Side.BLUE, 0));
+        run(10);
+        assertNotNull(teddy.label(), "the timer while it is down");
+        String text = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                .serialize(teddy.label().text());
+        assertTrue(text.contains("곰인형 대장") && text.contains("다시 나타남"), text);
+        assertEquals(teddy.at().getY() + 2.5, teddy.label().getLocation().getY(), 1.0E-6, "at eye level");
     }
 
     @Test

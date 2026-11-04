@@ -1040,7 +1040,7 @@ public final class SiegeMatch implements GameInstance {
         }
         Location base = tower.base();
         damageNumbers().show(UUID.nameUUIDFromBytes(tower.id().getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                base.clone().add(0, Math.min(6, game.towerLook().barHeight(tower.kind().lookId()) * 0.5), 0), dealt,
+                base.clone().add(0, game.towerLook().barHeight(tower.kind().lookId()) + 0.9, 0), dealt,
                 DamageNumbers.Kind.STRUCTURE);
         sounds().hit(base, surface(tower), tower.id());
         if (tower.isDestroyed()) {

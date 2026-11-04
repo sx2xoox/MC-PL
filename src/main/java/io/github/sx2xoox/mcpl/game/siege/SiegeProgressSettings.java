@@ -84,7 +84,7 @@ public record SiegeProgressSettings(
 
     /** Declares the defaults (with Korean comments) merged into {@code config.yml} → {@code games.siege}. */
     public static void declareDefaults(ConfigurationSection d) {
-        d.setComments("levels", List.of("경기 중 레벨 (판마다 1레벨부터). 레벨은 능력을 잠그지 않고 강화만 합니다"));
+        d.setComments("levels", List.of("경기 중 레벨 (라운드마다 1레벨부터). 레벨은 능력을 잠그지 않고 강화만 합니다"));
         d.set(LEVELS_ENABLED, true);
         d.setComments(LEVELS_ENABLED, List.of("false 면 레벨 없이 모두 최고 레벨로 시작 (체력 보너스 없음)"));
         d.set(MAX_LEVEL, 9);

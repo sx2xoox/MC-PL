@@ -149,6 +149,77 @@ class SiegeLanesWiringTest {
     }
 
     @Test
+    void aCreatureBarSitsOverItsModelForPackPlayersAndOverItsBodyForTheRest() {
+        SiegeMatch match = start(2);
+        SiegeSystems systems = match.systems();
+        assertNotNull(systems);
+        h.tickUntil(() -> systems.minions().minions().stream()
+                .anyMatch(m -> m.kind() == io.github.sx2xoox.mcpl.game.siege.minion.MinionKind.MELEE), 400,
+                "a melee minion");
+        h.ticks(3);
+        Mob soldier = systems.minions().minions().stream()
+                .filter(m -> m.kind() == io.github.sx2xoox.mcpl.game.siege.minion.MinionKind.MELEE).findFirst()
+                .orElseThrow().body();
+        OverheadBar bar = lanes(match).bar(soldier);
+        assertNotNull(bar);
+        assertFalse(soldier.isCustomNameVisible(), "the bar carries the name: no vanilla name tag on top of it");
+        TextDisplay body = bar.display();
+        TextDisplay model = bar.packDisplay();
+        assertNotNull(body);
+        assertNotNull(model, "the toy soldier model is twice as tall as the baby zombie under it");
+        h.ticks(2);
+        double feet = soldier.getLocation().getY();
+        assertEquals(soldier.getHeight() + LaneSystemsModule.BAR_GAP, body.getLocation().getY() - feet, 1.0E-6);
+        assertEquals(io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.TOPS.get("soldier")
+                + LaneSystemsModule.BAR_GAP, model.getLocation().getY() - feet, 1.0E-6);
+        assertFalse(model.isVisibleByDefault(), "only players with the pack see the model's bar");
+        Player a = match.session().hub().plugin().getServer().getPlayer(
+                match.teams().get(0).members().iterator().next());
+        assertTrue(a.canSee(body) && !a.canSee(model), "no pack: the bar over the vanilla body");
+        assertEquals(bar.text(), model.text());
+
+        soldier.remove();
+        h.ticks(2);
+        assertFalse(body.isValid() || model.isValid(), "both go with the minion");
+    }
+
+    @Test
+    void aSplitBarShowsEachViewerTheirOwnDisplay() {
+        SiegeMatch match = start(2);
+        Player a = match.session().hub().plugin().getServer().getPlayer(
+                match.teams().get(0).members().iterator().next());
+        Player b = match.session().hub().plugin().getServer().getPlayer(
+                match.teams().get(1).members().iterator().next());
+        io.github.sx2xoox.mcpl.core.pack.PackAudience onlyA = new io.github.sx2xoox.mcpl.core.pack.PackAudience() {
+            @Override
+            public boolean hasPack(Player player) {
+                return player.equals(a);
+            }
+
+            @Override
+            public Subscription subscribe(java.util.function.Consumer<Player> listener) {
+                return () -> { };
+            }
+        };
+        Location at = a.getLocation().add(3, 1, 0);
+        OverheadBar bar = OverheadBar.at(match.session(), at, net.kyori.adventure.text.Component.text("곰"),
+                net.kyori.adventure.text.format.NamedTextColor.GOLD, 0.75f);
+        bar.splitForPack(onlyA, at.clone().add(0, 1.5, 0));
+        TextDisplay body = bar.display();
+        TextDisplay model = bar.packDisplay();
+        assertNotNull(body);
+        assertNotNull(model);
+        assertTrue(a.canSee(model) && !a.canSee(body), "a has the pack");
+        assertTrue(b.canSee(body) && !b.canSee(model), "b does not");
+        bar.health(5, 10);
+        assertEquals(body.text(), model.text(), "both redrawn");
+        bar.moveTo(at.clone().add(1, 0, 0), at.clone().add(1, 1.5, 0));
+        assertEquals(at.getX() + 1, model.getLocation().getX(), 1.0E-6);
+        bar.remove();
+        assertFalse(body.isValid() || model.isValid());
+    }
+
+    @Test
     void towersShootMinionsFirst() {
         config.set(SiegeSettings.ATTACK_DAMAGE, 3);
         SiegeMatch match = start(2);

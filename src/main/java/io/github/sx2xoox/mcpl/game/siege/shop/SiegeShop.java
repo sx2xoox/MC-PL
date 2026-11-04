@@ -272,6 +272,8 @@ public final class SiegeShop implements Listener {
         try {
             Mob keeper = look.spawn(CreatureKind.SHOPKEEPER, side, at, mob -> {
                 Creatures.prepare(mob, messages.get("shop.keeper").color(MinionWaves.colour(side)), 20, 1, 1);
+                // the terminal's "상점" label names it: a second name tag right under it would only crowd it
+                mob.setCustomNameVisible(false);
                 mob.setAI(false);
                 mob.setInvulnerable(true);
                 mob.setSilent(true);

@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
@@ -45,9 +46,15 @@ final class LaneSystemsModule implements SiegeModule {
     /** Blocks above a creature's head where its bar floats. */
     static final double BAR_GAP = 0.45;
 
+    /** A pack model must be this much taller or shorter than the vanilla body for its own bar height. */
+    static final double SPLIT_DIFFERENCE = 0.3;
+
     private final SiegeMatch match;
     private final GameSession session;
     private final SiegeSystems systems;
+    private final PackAudience packs;
+    private final ModelCreatureLook skins;
+    private PackAudience.@Nullable Subscription packWatch;
     private final Map<UUID, Bar> bars = new HashMap<>();
 
     private record Bar(LivingEntity creature, OverheadBar bar) {
@@ -56,8 +63,10 @@ final class LaneSystemsModule implements SiegeModule {
     LaneSystemsModule(SiegeMatch match) {
         this.match = match;
         this.session = match.session();
-        ModelCreatureLook skins = new ModelCreatureLook(session.plugin(), match.hub().resourcePacks());
+        this.packs = match.hub().resourcePacks();
+        this.skins = new ModelCreatureLook(session.plugin(), packs);
         session.registerListener(skins);
+        match.damageNumbers().height(this::topOf);
         this.systems = new SiegeSystems(new Arena(), session.gameConfig(),
                 new SkinnedCreatureLook(new VanillaCreatureLook(), skins), CreatureMover.pathfinder(),
                 match.modifiers());
@@ -170,13 +179,29 @@ final class LaneSystemsModule implements SiegeModule {
                 it.remove();
                 continue;
             }
-            entry.bar().moveTo(barSpot(creature));
+            entry.bar().moveTo(barSpot(creature), packBarSpot(creature));
             entry.bar().health(creature.getHealth(), Creatures.maxHealth(creature));
         }
     }
 
+    /** Over the vanilla body (what players without the pack see). */
     private static Location barSpot(LivingEntity creature) {
         return creature.getLocation().add(0, creature.getHeight() + BAR_GAP, 0);
+    }
+
+    /** Over the pack model, or null when the creature wears none or it is about the body's height. */
+    private @Nullable Location packBarSpot(LivingEntity creature) {
+        double model = skins.modelTop(creature);
+        if (model <= 0 || Math.abs(model - creature.getHeight()) < SPLIT_DIFFERENCE) {
+            return null;
+        }
+        return creature.getLocation().add(0, model + BAR_GAP, 0);
+    }
+
+    /** How tall a creature looks: its body, or its pack model where that is taller (damage numbers pop over it). */
+    private double topOf(Entity entity) {
+        double body = entity.getHeight();
+        return entity instanceof LivingEntity living ? Math.max(body, skins.modelTop(living)) : body;
     }
 
     private void clearBars() {
@@ -184,6 +209,17 @@ final class LaneSystemsModule implements SiegeModule {
             entry.bar().remove();
         }
         bars.clear();
+        if (packWatch != null) {
+            packWatch.close();
+            packWatch = null;
+        }
+    }
+
+    /** A player's pack status changed: they see the bars over the models, or over the vanilla bodies. */
+    private void packChanged(Player player) {
+        for (Bar entry : bars.values()) {
+            entry.bar().refresh(player);
+        }
     }
 
     /** The bar of a creature (tests). */
@@ -338,6 +374,15 @@ final class LaneSystemsModule implements SiegeModule {
             if (entry == null) {
                 TextColor colour = name.color() != null ? name.color() : NamedTextColor.RED;
                 entry = new Bar(creature, OverheadBar.at(session, barSpot(creature), name, colour, 0.75f));
+                Location packSpot = packBarSpot(creature);
+                if (packSpot != null) {
+                    if (packWatch == null) {
+                        packWatch = packs.subscribe(LaneSystemsModule.this::packChanged);
+                    }
+                    entry.bar().splitForPack(packs, packSpot);
+                }
+                // the bar carries the name: the vanilla name tag would sit right on it
+                creature.setCustomNameVisible(false);
                 bars.put(creature.getUniqueId(), entry);
             } else {
                 entry.bar().name(name);

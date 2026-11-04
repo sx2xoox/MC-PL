@@ -7,8 +7,8 @@
 game:
   name: "<gradient:#f59e0b:#ef4444><bold>초능력 공성전</bold></gradient>"
   description:
-    - "파랑 성과 빨강 성이 두 라인의 타워를 밀고 상대 코어를 부수는 팀전 (3판 2선승)."
-    - "판마다 20분 점수전, 코어를 부수면 바로 승리. 초능력전쟁의 능력을 처음부터 모두 씁니다."
+    - "파랑 성과 빨강 성이 두 라인의 타워를 밀고 상대 코어를 부수는 팀전 (3라운드 2선승)."
+    - "라운드마다 20분 점수전, 코어를 부수면 바로 승리. 초능력전쟁의 능력을 처음부터 모두 씁니다."
     - "<click:suggest_command:'/게임 공성전'><hover:show_text:'<gray>클릭하여 입력'><white>/게임 공성전</white></hover></click> <gray>능력풀 <dark_gray>·</dark_gray> <white>/게임 점수</white> <gray>· <white>/게임 리롤</white> <gray>· <white>/게임 내정보"
 
 start:
@@ -29,15 +29,15 @@ result:
   reason-overtime-time: "연장전 종료 (점수 → 부순 타워 → 처치 순)"
   reason-structures: "연장전 종료, 건물 체력이 더 많이 남음"
   reason-coin: "연장전까지 완전 동점, 동전 던지기"
-  reason-rounds: "판 스코어 <a> : <b>"
+  reason-rounds: "라운드 스코어 <a> : <b>"
 
 reroll:
   announce: "<gray>리롤 <white><count>번</white> <dark_gray>(웅크리고 검 우클릭)"
   hint: "<white>웅크리고 우클릭</white><gray>하면 능력 리롤 (<white><count>번</white> 남음)"
   done: "<green>능력을 다시 뽑았습니다. <gray>(남은 리롤 <white><count></white>번)"
   not-participant: "<red>이 경기의 참가자가 아닙니다."
-  wrong-phase: "<red>리롤은 판 시작 준비 시간에만 할 수 있습니다."
-  none-left: "<red>이번 판의 리롤을 모두 썼습니다."
+  wrong-phase: "<red>리롤은 라운드 시작 준비 시간에만 할 수 있습니다."
+  none-left: "<red>이번 라운드의 리롤을 모두 썼습니다."
   no-options: "<red>뽑을 수 있는 다른 능력이 없습니다."
 
 pool:
@@ -48,21 +48,21 @@ pool:
   unknown-entry: "<red><id>(알 수 없음)</red>"
   unknown: "<red>'<input>' 능력을 찾을 수 없습니다."
   already: "<red><ability><red> 은(는) 이미 능력풀에 있습니다."
-  added: "<green><ability><green> 을(를) 공성전 능력풀에 추가했습니다. <gray>(<count>개, 다음 판부터)"
+  added: "<green><ability><green> 을(를) 공성전 능력풀에 추가했습니다. <gray>(<count>개, 다음 라운드부터)"
   disabled-warning: "<yellow><ability><yellow> 은(는) abilities.yml 에서 꺼져 있어 켤 때까지 나오지 않습니다."
   not-in-pool: "<red>'<input>' 은(는) 능력풀에 없습니다."
   removed: "<green><ability><green> 을(를) 공성전 능력풀에서 뺐습니다. <gray>(<count>개)"
   reset: "<green>공성전 능력풀을 기본값으로 되돌렸습니다. <gray>(<count>개)"
 
 round:
-  title: "<gold><bold><round>판"
-  subtitle: "<gray>판 스코어 <white><a> : <b>"
-  started: "<gold><round>판</gold><gray> 시작!"
-  won-title: "<team><gold><bold> 판 승리!"
+  title: "<gold><bold><round>라운드"
+  subtitle: "<gray>라운드 스코어 <white><a> : <b>"
+  started: "<gold><round>라운드</gold><gray> 시작!"
+  won-title: "<team><gold><bold> 라운드 승리!"
   won-subtitle: "<white><a></white><gray> : </gray><white><b></white>"
-  won: "<gold><round>판</gold><gray> 승리: <team><gray> (<reason>) — <white><a> : <b>"
-  mvp: "<gold>⭐ 이번 판 MVP:</gold> <player><gray> (기여 <white><points></white>점)"
-  break: "<gray>판 스코어 <white><a> : <b></white> · 다음 판 <white><seconds>초"
+  won: "<gold><round>라운드</gold><gray> 승리: <team><gray> (<reason>) — <white><a> : <b>"
+  mvp: "<gold>⭐ 이번 라운드 MVP:</gold> <player><gray> (기여 <white><points></white>점)"
+  break: "<gray>라운드 스코어 <white><a> : <b></white> · 다음 라운드 <white><seconds>초"
 
 prep:
   countdown: "<yellow><bold><seconds>"
@@ -109,20 +109,20 @@ tutorial:
   title-2: "<gold><bold>코어를 부수면 승리"
   subtitle-2: "<gray>안쪽 타워가 모두 무너지면 코어 보호막이 꺼짐"
   title-3: "<yellow><bold>20분 점수전"
-  subtitle-3: "<gray>처치 +2 · 타워 +8 · 3판 2선승"
+  subtitle-3: "<gray>처치 +2 · 타워 +8 · 3라운드 2선승"
   summary:
     - "<gray>검 우클릭 <white>액티브</white> · <white>F</white> 궁극기 · 좌클릭 <white>평타</white>"
 
 hud:
   bossbar: "<phase><gray> · </gray><white><time>"
-  phase-prep: "<yellow><round>판 준비"
-  phase-fight: "<gold><round>판"
-  phase-climax: "<red><bold><round>판 마지막"
-  phase-overtime: "<red><bold><round>판 연장전"
-  phase-break: "<aqua><round>판 준비 중"
+  phase-prep: "<yellow><round>라운드 준비"
+  phase-fight: "<gold><round>라운드"
+  phase-climax: "<red><bold><round>라운드 마지막"
+  phase-overtime: "<red><bold><round>라운드 연장전"
+  phase-break: "<aqua><round>라운드 준비 중"
   phase-over: "<gray>경기 종료"
-  score: "<team_a> <white><bold><a></bold></white><gray> : </gray><white><bold><b></bold></white> <team_b> <gold><rounds_a></gold><gray>|</gray><gold><rounds_b>"
-  phase: "<phase> <white><time>"
+  score: "<gray>점수 </gray><team_a> <white><bold><a></bold></white><gray> : </gray><white><bold><b></bold></white> <team_b>"
+  rounds: "<gray>라운드 </gray><white><a></white><gray> : </gray><white><b>"
   towers: "<gray>타워 </gray><white><a></white><gray> : </gray><white><b>"
   level: "<yellow>Lv.<white><level></white> <gray>(<xp>/<next>)"
   level-max: "<yellow>Lv.<white><level></white> <gold>MAX"
@@ -148,7 +148,7 @@ command:
   help:
     - "<gold>── 초능력 공성전 ──"
     - "<white>/게임 점수</white> <gray>지금 점수"
-    - "<white>/게임 리롤</white> <gray>판 시작 준비 시간에 능력 다시 뽑기"
+    - "<white>/게임 리롤</white> <gray>라운드 시작 준비 시간에 능력 다시 뽑기"
     - "<white>/게임 내정보</white> <gray>내 능력과 레벨 · <white>/게임 팀</white> <gray>팀원의 능력"
   help-admin:
     - "<white>/게임 시작 공성전</white> <gray>공성전 시작"
@@ -162,14 +162,14 @@ command:
   me-none: "<gray>아직 능력을 받지 않았습니다."
   team-none: "<red>공성전 팀에 속해 있지 않습니다."
   team: "<team> <gray>팀원: <members>"
-  status: "<gold><round>판</gold><gray> — <team_a> <white><a></white> : <white><b></white> <team_b><gray> (판 <white><rounds_a> : <rounds_b></white>)"
+  status: "<gold><round>라운드</gold><gray> — <team_a> <white><a></white> : <white><b></white> <team_b><gray> (라운드 스코어 <white><rounds_a> : <rounds_b></white>)"
 
 settings:
   section:
     match:
       name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>진행"
       lore:
-        - "<gray>판 수, 판 시간, 쉬는 시간, 연장전, 리롤"
+        - "<gray>라운드 수, 라운드 시간, 쉬는 시간, 연장전, 리롤"
     battle:
       name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>전투"
       lore:
@@ -179,32 +179,32 @@ settings:
       lore:
         - "<gray>최대 레벨, 기본 경험치"
   rounds-to-win:
-    name: "승리 판 수"
+    name: "승리 라운드 수"
     lore:
-      - "<gray>이 판 수를 먼저 이긴 팀이 우승합니다 (2 = 3판 2선승)."
+      - "<gray>이 라운드 수를 먼저 이긴 팀이 우승합니다 (2 = 3라운드 2선승)."
   round:
-    name: "판 제한 시간"
+    name: "라운드 제한 시간"
     lore:
-      - "<gray>한 판의 시간. 끝나면 점수가 높은 팀이 이깁니다."
+      - "<gray>한 라운드의 시간. 끝나면 점수가 높은 팀이 이깁니다."
       - "<gray>코어를 부수면 시간과 상관없이 바로 승리."
   round-break:
-    name: "판 사이 쉬는 시간"
+    name: "라운드 사이 쉬는 시간"
     lore:
-      - "<gray>판이 끝나고 다음 판까지의 시간"
+      - "<gray>라운드가 끝나고 다음 라운드까지의 시간"
   overtime:
     name: "연장전"
     lore:
       - "<gray>점수·타워·처치가 모두 같을 때의 연장 시간"
       - "<gray>먼저 점수를 낸 팀이 승리합니다."
   rerolls:
-    name: "판마다 리롤"
+    name: "라운드마다 리롤"
     lore:
-      - "<gray>판 시작 준비 시간에 능력을 다시 뽑을 수 있는 횟수"
+      - "<gray>라운드 시작 준비 시간에 능력을 다시 뽑을 수 있는 횟수"
     zero: "<red>리롤 없음"
   respawn:
     name: "부활 대기"
     lore:
-      - "<gray>기본 부활 대기 시간. 그 판에서 많이 죽을수록 길어집니다 (최대 14초)."
+      - "<gray>기본 부활 대기 시간. 그 라운드에서 많이 죽을수록 길어집니다 (최대 14초)."
     zero: "<aqua>바로 부활"
   tower-per-attacker:
     name: "상대 1명당 건물 체력"
@@ -214,7 +214,7 @@ settings:
   max-level:
     name: "최대 레벨"
     lore:
-      - "<gray>판마다 1레벨에서 시작해 이 레벨까지 오릅니다."
+      - "<gray>라운드마다 1레벨에서 시작해 이 레벨까지 오릅니다."
       - "<gray>레벨은 능력을 잠그지 않고 최대 체력 등 강화만 합니다."
   passive-xp:
     name: "기본 경험치 (초당)"
@@ -268,10 +268,9 @@ jungle:
   side:
     blue: "<aqua>블루 팀</aqua>"
     red: "<red>레드 팀</red>"
-  status-fighting: "<red>전투 중!"
   status-down: "<gray>다시 나타남 <white><time>"
   status-contested: "<yellow>경합 중!"
-  hud-up: "<name> <green>✔</green>"
+  hud-up: "<name> <green>등장</green>"
   hud-down: "<name> <white><time></white>"
   dragon-spawned: "<name><gray> 등장!"
   small-cleared: "<name><gray> 처치!"

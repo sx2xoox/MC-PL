@@ -46,6 +46,11 @@ public final class Tower {
         }
     }
 
+    /** Size of a structure's health bar (a creature's is 1). */
+    public static final float BAR_SCALE = 1.5f;
+    /** View range of a structure's health bar (× 64 blocks). */
+    public static final float BAR_VIEW_RANGE = 0.75f;
+
     private final LaneSites.Structure site;
     private final LaneSites.Side owner;
     private final LaneSites.@Nullable Lane lane;
@@ -106,7 +111,10 @@ public final class Tower {
         } catch (RuntimeException e) {
             session.plugin().getLogger().log(Level.WARNING, "Could not spawn the hitbox of tower " + site.id(), e);
         }
-        bar = OverheadBar.at(session, base.clone().add(0, look.barHeight(kind.lookId()), 0), barName, color, 2f);
+        // At eye level in the building, drawn through it, bigger than a creature's, seen within ~48 blocks: a bar
+        // over the top of a toy tower is out of sight from anywhere near it.
+        bar = OverheadBar.at(session, base.clone().add(0, look.barHeight(kind.lookId()), 0), barName, color,
+                BAR_VIEW_RANGE).style(BAR_SCALE, true);
         bar.health(health, maxHealth);
         bar.shielded(shielded);
     }

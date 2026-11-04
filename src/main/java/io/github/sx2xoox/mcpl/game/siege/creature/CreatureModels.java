@@ -300,6 +300,15 @@ public final class CreatureModels {
                     part(DRAGON, "key", 1, 3.05f, Motion.KEY_Y)),
             MERCHANT, List.of(body(MERCHANT, 1, 1, Motion.BOB), part(MERCHANT, "key", 0.5f, 0.8f, Motion.KEY_Z)));
 
+    /**
+     * Creature kind → the top of its model above the feet, blocks (the highest box of {@code creatures.py}, every
+     * part included). The vanilla body under it is often much shorter or taller (a rabbit at scale 2 is 1 block
+     * tall, its model 2.5), so whatever floats over a creature (health bar, damage numbers) is placed by the model for
+     * pack players.
+     */
+    public static final Map<String, Double> TOPS = Map.of(SOLDIER, 2.09, ARCHER, 1.86, CANNON, 1.36, JELLY, 0.82,
+            MOUSE, 0.68, TEDDY, 2.74, RABBIT, 2.51, DRAGON, 4.14, MERCHANT, 2.22);
+
     /** Landmark id → its displays (the owner's colour tints the pennants). */
     public static final Map<String, List<Part>> LANDMARKS = Map.of(
             FOUNTAIN, List.of(new Part("structure/fountain", 2, 2.5f, Motion.NONE)),
