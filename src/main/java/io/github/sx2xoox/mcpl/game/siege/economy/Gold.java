@@ -9,6 +9,7 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
@@ -93,7 +94,21 @@ public final class Gold {
         }
     }
 
-    /** Takes gold if the player has enough. */
+    /**
+     * {@link #add(UUID, int, String)} won at {@code at} (a last hit, a camp): the amount also pops up there for the
+     * player ({@link SiegeArena#goldPop}).
+     */
+    public void add(UUID player, int amount, @Nullable String reason, @Nullable Location at) {
+        if (amount <= 0 || arena.side(player) == null) {
+            return;
+        }
+        add(player, amount, reason);
+        if (at != null) {
+            arena.goldPop(player, at, amount);
+        }
+    }
+
+        /** Takes gold if the player has enough. */
     public boolean spend(UUID player, int amount) {
         int have = balance(player);
         if (amount < 0 || have < amount) {

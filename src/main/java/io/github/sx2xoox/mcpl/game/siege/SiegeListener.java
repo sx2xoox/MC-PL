@@ -85,7 +85,7 @@ final class SiegeListener implements Listener {
 
     /**
      * Health changes redraw the player's name plate; the damage pops up as a number (yellow for ability damage),
-     * never for viewers from whom the player is concealed.
+     * never for viewers from whom the player is concealed; the attacker hears their hit land ({@link HitFeel}).
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHealthLost(EntityDamageEvent event) {
@@ -95,6 +95,11 @@ final class SiegeListener implements Listener {
             match.damageNumbers().show(player, event.getFinalDamage(),
                     DamageNumbers.Kind.ofHit(ctx.isAbilityDamage(), ctx.basicHitAccent()),
                     viewer -> !ctx.isConcealedFrom(player, viewer));
+            Player attacker = session.combat().resolveAttacker(event);
+            if (attacker != null && !attacker.equals(player) && session.isParticipant(attacker)) {
+                // vanilla shows the victim's hurt; the attacker hears their own "딱"
+                match.hitFeel().fighter(attacker, match.hitFeel().strength(event));
+            }
         }
     }
 

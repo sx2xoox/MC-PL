@@ -24,10 +24,12 @@ import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalance;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeModifiers;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
+import io.github.sx2xoox.mcpl.game.siege.creature.HitMaterial;
 import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttack;
 import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchHost;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
@@ -97,6 +99,7 @@ public final class SiegeMatch implements GameInstance {
     private float hungerSaturation = 1f;
     private @Nullable SiegeSounds sounds;
     private @Nullable DamageNumbers damageNumbers;
+    private @Nullable HitFeel hitFeel;
     private SiegeEconomy economy = SiegeEconomy.NONE;
     /** Stat modifiers of items and buffs ({@link #modifiers()}) and the ability balance read from them. */
     private final SiegeModifiers modifiers = new SiegeModifiers();
@@ -172,6 +175,9 @@ public final class SiegeMatch implements GameInstance {
         // no standing "where to go" line: the action bar only carries short alerts (a tower under attack, a shield)
         damageNumbers = new DamageNumbers(session, hudSettings.damageNumberRange());
         damageNumbers.enabled(hudSettings.damageNumbers());
+        hitFeel = new HitFeel(session, sounds, damageNumbers, HitFeelSettings.read(session.gameConfig()),
+                () -> abilities == null ? BasicAttack.Accent.NONE : abilities.context().basicHitAccent(),
+                () -> abilities != null && abilities.context().isAbilityDamage());
         progress = new SiegeProgress(this, SiegeProgressSettings.read(session.gameConfig()));
         SuperpowerMatch hosted = new SuperpowerMatch(game.superpower(), session, new Host());
         abilities = hosted;
@@ -1133,6 +1139,9 @@ public final class SiegeMatch implements GameInstance {
                 base.clone().add(0, game.towerLook().barHeight(tower.kind().lookId()) + 0.9, 0), dealt,
                 DamageNumbers.Kind.STRUCTURE);
         sounds().hit(base, surface(tower), tower.id());
+        Player striker = credit == null ? null : Bukkit.getPlayer(credit);
+        hitFeel().structure(tower.id(), base.getWorld(), tower.bounds(),
+                tower.isCore() ? HitMaterial.PORCELAIN : HitMaterial.WOOD, striker, tower.isDestroyed());
         if (tower.isDestroyed()) {
             structureDestroyed(tower, by, credit);
             return dealt;
@@ -1482,6 +1491,14 @@ public final class SiegeMatch implements GameInstance {
             throw new IllegalStateException("The match has not started");
         }
         return sounds;
+    }
+
+    /** The hit feel (타격감): sparks, layered hit sounds, the attacker's confirmation. */
+    public HitFeel hitFeel() {
+        if (hitFeel == null) {
+            throw new IllegalStateException("The match has not started");
+        }
+        return hitFeel;
     }
 
     public DamageNumbers damageNumbers() {

@@ -1221,6 +1221,10 @@ public final class SiegeBots implements SiegeModule, Listener {
                             match.abilities().context().basicHitAccent()));
         }
         Player player = session.combat().resolveAttacker(event);
+        if (victimBot != null && player != null && session.isParticipant(player)) {
+            // the bot's vanilla body shows the hurt; the attacker hears their own "딱"
+            match.hitFeel().fighter(player, match.hitFeel().strength(event));
+        }
         UUID attacker = player != null ? player.getUniqueId() : fighterAttacker(event);
         if (attacker == null || attacker.equals(victim) || (player != null && victimBot == null)) {
             // between players the hub and the match's listener already count it

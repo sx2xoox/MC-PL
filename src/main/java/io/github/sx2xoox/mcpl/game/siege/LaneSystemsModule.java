@@ -14,8 +14,10 @@ import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
+import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.creature.ModelCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.SkinnedCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
@@ -25,6 +27,7 @@ import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.World;
@@ -72,6 +75,7 @@ final class LaneSystemsModule implements SiegeModule {
         this.session = match.session();
         this.packs = match.game().packs();
         this.skins = new ModelCreatureLook(session.plugin(), packs);
+        skins.reaction(match.hitFeel().settings().reaction());
         session.registerListener(skins);
         match.damageNumbers().height(this::topOf);
         this.systems = new SiegeSystems(new Arena(), session.gameConfig(),
@@ -448,6 +452,30 @@ final class LaneSystemsModule implements SiegeModule {
             Bar entry = bars.remove(creature.getUniqueId());
             if (entry != null) {
                 entry.bar().remove();
+            }
+        }
+
+        @Override
+        public HitStrength hitStrength(EntityDamageEvent event) {
+            return match.hitFeel().strength(event);
+        }
+
+        @Override
+        public void creatureHit(LivingEntity victim, EntityDamageEvent event, CreatureKind kind, HitStrength strength,
+                                boolean killing) {
+            Player attacker = attacker(event);
+            if (attacker != null && !session.isParticipant(attacker)) {
+                attacker = null;
+            }
+            match.hitFeel().creature(victim, Creatures.hitFrom(event), attacker, kind, strength, killing,
+                    topOf(victim));
+        }
+
+        @Override
+        public void goldPop(UUID player, Location at, int amount) {
+            Player online = Bukkit.getPlayer(player);
+            if (online != null) {
+                match.hitFeel().gold(online, at, amount);
             }
         }
 

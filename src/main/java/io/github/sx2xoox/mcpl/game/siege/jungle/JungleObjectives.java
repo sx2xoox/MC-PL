@@ -20,6 +20,7 @@ import io.github.sx2xoox.mcpl.game.siege.arena.AttributeBonus;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.LaneModifiers;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
+import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
@@ -164,6 +165,8 @@ public final class JungleObjectives implements Listener {
         /** The last tick any of the camp's monsters had someone inside the leash to fight. */
         private long lastEngaged;
         private @Nullable UUID lastHitter;
+        /** Where its last monster fell (the gold for the camp pops there). */
+        private @Nullable Location fell;
         private LaneSites.@Nullable Side capturer;
         private int progress;
         private boolean contested;
@@ -551,6 +554,7 @@ public final class JungleObjectives implements Listener {
         }
         forget(mob);
         site.targets.remove(mob);
+        site.fell = mob.getLocation().add(0, mob.getHeight(), 0);
         UUID last = credit != null ? credit : site.hitters.get(mob.getUniqueId());
         if (last == null) {
             last = site.lastHitter;
@@ -641,8 +645,8 @@ public final class JungleObjectives implements Listener {
         arena.addScore(side, kind.score());
         Gold.Settings money = gold.settings();
         switch (site.kind()) {
-            case JELLY, MICE -> gold.add(credit, money.small(), "jungle");
-            case TEDDY, RABBIT -> gold.add(credit, money.buff(), "jungle-buff");
+            case JELLY, MICE -> gold.add(credit, money.small(), "jungle", site.fell);
+            case TEDDY, RABBIT -> gold.add(credit, money.buff(), "jungle-buff", site.fell);
             case FOUNTAIN, TELESCOPE -> {
                 for (UUID id : sharers) {
                     gold.add(id, money.capture(), "capture");
@@ -912,8 +916,12 @@ public final class JungleObjectives implements Listener {
         site.healthDirty = true;
         Mob hurt = (Mob) event.getEntity();
         arena.damageNumber(hurt, event.getFinalDamage());
-        JungleSounds.hurt(arena, site.kind(), hurt.getLocation());
-        look.hurt(hurt);
+        HitStrength strength = arena.hitStrength(event);
+        look.hurt(hurt, Creatures.hitFrom(event), strength);
+        CreatureKind creature = CreatureKind.of(site.kind());
+        if (creature != null) {
+            arena.creatureHit(hurt, event, creature, strength, event.getFinalDamage() >= hurt.getHealth());
+        }
         Player attacker = arena.attacker(event);
         LivingEntity hitter;
         UUID hitterId;

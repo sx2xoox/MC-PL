@@ -45,7 +45,9 @@ public final class DamageNumbers {
         /** The last attack of a basic attack combo. */
         FINISH(NamedTextColor.WHITE, 1.35f),
         /** A critical basic attack hit. */
-        CRITICAL(TextColor.color(0xFFB020), 1.6f);
+        CRITICAL(TextColor.color(0xFFB020), 1.6f),
+        /** Gold won (a last hit, a camp), shown to the winner only. */
+        GOLD(TextColor.color(0xFFD23F), 1.15f);
 
         private final TextColor color;
         private final float scale;
@@ -160,6 +162,15 @@ public final class DamageNumbers {
         }
     }
 
+    /**
+     * {@code amount} gold won by {@code player} at {@code at}: {@code +N 골드} pops up there for them only (several within
+     * {@value #AGGREGATE_TICKS} ticks add up).
+     */
+    public void gold(Player player, Location at, int amount) {
+        show(new UUID(player.getUniqueId().getMostSignificantBits(), ~player.getUniqueId().getLeastSignificantBits()),
+                at, amount, Kind.GOLD, viewer -> viewer.getUniqueId().equals(player.getUniqueId()));
+    }
+
     /** Spawns the numbers collected since the last flush. */
     public void flush() {
         if (pending.isEmpty()) {
@@ -170,7 +181,8 @@ public final class DamageNumbers {
         for (Map.Entry<Key, Pending> entry : due) {
             Pending next = entry.getValue();
             Kind kind = entry.getKey().kind();
-            pop(next.at, text(next.amount, kind), kind.scale(), kind == Kind.STRUCTURE, next.viewers);
+            pop(next.at, text(next.amount, kind), kind.scale(), kind == Kind.STRUCTURE || kind == Kind.GOLD,
+                    next.viewers);
         }
     }
 
@@ -244,7 +256,12 @@ public final class DamageNumbers {
     /** The number: bold, in the kind's colour, {@code +} in front of a heal. */
     public static Component text(double amount, Kind kind) {
         String number = format(amount);
-        String shown = kind == Kind.HEAL ? "+" + number : kind == Kind.CRITICAL ? number + "!" : number;
+        String shown = switch (kind) {
+            case HEAL -> "+" + number;
+            case CRITICAL -> number + "!";
+            case GOLD -> "+" + number + " 골드";
+            default -> number;
+        };
         return Component.text(shown, kind.color())
                 .decoration(TextDecoration.BOLD, true);
     }

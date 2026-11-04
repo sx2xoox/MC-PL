@@ -14,9 +14,11 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.util.Vector;
 import org.jspecify.annotations.Nullable;
 
@@ -188,6 +190,24 @@ public final class Creatures {
         }
         // v blocks per tick slides about v / (1 - 0.546) on the ground (block friction 0.6 × drag 0.91)
         return away.normalize().multiply(blocks * 0.454);
+    }
+
+    /**
+     * Where a landed hit came from: the projectile or attacker that dealt it (the direct entity, else the causing one,
+     * else the source's place), or null when nothing says (a burn, a poison).
+     */
+    public static @Nullable Location hitFrom(EntityDamageEvent event) {
+        DamageSource source = event.getDamageSource();
+        Entity direct = source.getDirectEntity();
+        if (direct != null && !direct.equals(event.getEntity())) {
+            return direct.getLocation();
+        }
+        Entity causing = source.getCausingEntity();
+        if (causing != null && !causing.equals(event.getEntity())) {
+            return causing.getLocation();
+        }
+        Location at = source.getSourceLocation();
+        return at == null ? null : at.clone();
     }
 
     /** Horizontal distance squared. */

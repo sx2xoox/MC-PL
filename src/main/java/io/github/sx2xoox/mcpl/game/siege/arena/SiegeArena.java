@@ -5,6 +5,8 @@ import java.util.UUID;
 
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
+import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.tower.Footprint;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
@@ -176,5 +178,27 @@ public interface SiegeArena {
 
     /** A floating damage number (rules agent's {@code DamageNumbers}); nothing by default. */
     default void damageNumber(LivingEntity victim, double amount) {
+    }
+
+    /**
+     * How hard a landed hit on a creature reads (a basic attack's critical hit or finisher, a big blow =
+     * {@link HitStrength#STRONG}; burns and poisons = {@link HitStrength#LIGHT}); {@link HitStrength#NORMAL} by default.
+     */
+    default HitStrength hitStrength(EntityDamageEvent event) {
+        return HitStrength.NORMAL;
+    }
+
+    /**
+     * A creature of {@code kind} took a landed hit (the match's hit feel: sparks of its material where the blow landed,
+     * the layered hit sound, the attacker's own confirmation sound, the pop of a killing blow); nothing by default.
+     *
+     * @param killing the hit takes its last health
+     */
+    default void creatureHit(LivingEntity victim, EntityDamageEvent event, CreatureKind kind, HitStrength strength,
+                             boolean killing) {
+    }
+
+    /** {@code amount} gold won by {@code player} at {@code at}: the number pops up there, for them only. */
+    default void goldPop(UUID player, Location at, int amount) {
     }
 }

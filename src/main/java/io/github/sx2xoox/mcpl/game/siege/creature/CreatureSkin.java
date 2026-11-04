@@ -1,6 +1,7 @@
 package io.github.sx2xoox.mcpl.game.siege.creature;
 
 import org.bukkit.Color;
+import org.bukkit.Location;
 import org.bukkit.entity.LivingEntity;
 import org.jspecify.annotations.Nullable;
 
@@ -35,6 +36,15 @@ public interface CreatureSkin {
 
         /** Just took a hit: a short squash and flash. */
         default void hit() {
+        }
+
+        /**
+         * Just took a hit from {@code from} (the attacker's or projectile's place; null = unknown) as hard as
+         * {@code strength}: the toy freezes for a moment (hitstop), leans away from the blow, flashes white then red,
+         * squashes and springs back. {@link #hit()} by default.
+         */
+        default void hit(@Nullable Location from, HitStrength strength) {
+            hit();
         }
 
         /**

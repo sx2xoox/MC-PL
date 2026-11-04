@@ -58,6 +58,14 @@ public interface CreatureLook {
     default void hurt(Mob body) {
     }
 
+    /**
+     * The body took a hit from {@code from} (null = unknown) as hard as {@code strength}: the look flinches away from
+     * it ({@link CreatureSkin.Visual#hit(Location, HitStrength)}). {@link #hurt(Mob)} by default.
+     */
+    default void hurt(Mob body, @Nullable Location from, HitStrength strength) {
+        hurt(body);
+    }
+
     /** Called every tick for each live body (animations); nothing by default. */
     default void tick(Mob body, CreatureKind kind) {
     }

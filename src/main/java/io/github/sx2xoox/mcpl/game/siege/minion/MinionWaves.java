@@ -18,6 +18,7 @@ import io.github.sx2xoox.mcpl.game.siege.creature.CreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSounds;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.Creatures;
+import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.creature.Telegraphs;
 import io.github.sx2xoox.mcpl.game.siege.creature.ToyShots;
 import io.github.sx2xoox.mcpl.game.siege.economy.Gold;
@@ -929,9 +930,11 @@ public final class MinionWaves implements Listener {
         }
         minion.healthDirty = true;
         arena.damageNumber(minion.body, event.getFinalDamage());
-        look.hurt(minion.body);
-        CreatureSounds.hurt(arena, minion.kind.creature(), minion.body.getLocation());
-        if (event.getFinalDamage() >= minion.body.getHealth()) {
+        boolean killing = event.getFinalDamage() >= minion.body.getHealth();
+        HitStrength strength = arena.hitStrength(event);
+        look.hurt(minion.body, Creatures.hitFrom(event), strength);
+        arena.creatureHit(minion.body, event, minion.kind.creature(), strength, killing);
+        if (killing) {
             Player attacker = arena.attacker(event);
             minion.lastHitter = attacker != null ? attacker.getUniqueId() : arena.fighterAttacker(event);
         }
@@ -955,7 +958,7 @@ public final class MinionWaves implements Listener {
         UUID hitter = minion.lastHitter;
         if (hitter != null && arena.side(hitter) != null && arena.side(hitter) != minion.side) {
             gold.add(hitter, minion.kind == MinionKind.CANNON ? gold.settings().cannon() : gold.settings().minion(),
-                    "minion");
+                    "minion", minion.body.getLocation().add(0, minion.body.getHeight(), 0));
         }
         int xp = settings.stats(minion.kind).xp();
         if (xp <= 0) {

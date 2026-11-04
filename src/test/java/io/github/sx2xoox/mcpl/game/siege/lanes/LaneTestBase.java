@@ -15,9 +15,11 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.SiegeGame;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeArena;
 import io.github.sx2xoox.mcpl.game.siege.arena.SiegeSystems;
+import io.github.sx2xoox.mcpl.game.siege.creature.CreatureKind;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureMover;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureSkin;
+import io.github.sx2xoox.mcpl.game.siege.creature.HitStrength;
 import io.github.sx2xoox.mcpl.game.siege.creature.SkinnedCreatureLook;
 import io.github.sx2xoox.mcpl.game.siege.creature.CreatureBodies;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
@@ -65,6 +67,14 @@ abstract class LaneTestBase {
         @Override
         public void hit() {
             skinEvents.add(kind + " hit");
+        }
+
+        @Override
+        public void hit(@Nullable Location from, HitStrength strength) {
+            if (from != null) {
+                skinEvents.add(kind + " hit from");
+            }
+            hit();
         }
 
         @Override
@@ -271,6 +281,23 @@ abstract class LaneTestBase {
         @Override
         public void sound(Location at, Sound sound, float volume, float pitch) {
             sounds.add(sound);
+        }
+
+        /** The hit feel asked for: {@code "<kind> <strength>[ kill]"}. */
+        final List<String> creatureHits = new ArrayList<>();
+        /** Gold pops: {@code "<player> +<amount>"}. */
+        final List<String> goldPops = new ArrayList<>();
+
+        @Override
+        public void creatureHit(LivingEntity victim, EntityDamageEvent event, CreatureKind kind, HitStrength strength,
+                                boolean killing) {
+            creatureHits.add(kind.id() + " " + strength.name().toLowerCase(java.util.Locale.ROOT)
+                    + (killing ? " kill" : ""));
+        }
+
+        @Override
+        public void goldPop(UUID player, Location at, int amount) {
+            goldPops.add(player + " +" + amount);
         }
 
         @Override

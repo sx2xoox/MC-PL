@@ -26,6 +26,7 @@ import org.bukkit.Particle;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemDisplay;
@@ -69,10 +70,36 @@ import org.jspecify.annotations.Nullable;
 public final class ModelCreatureLook implements CreatureSkin, Listener {
 
     private static final int TELEPORT_TICKS = 2;
-    private static final int FLASH_TICKS = 3;
     private static final float VIEW_RANGE = 2f;
     /** The glow of an enraged creature. */
     static final Color RAGE = Color.fromRGB(0xFF, 0x45, 0x45);
+    /** The second half of the hit flash (after the white): a hurt red. */
+    static final Color HURT = Color.fromRGB(0xFF, 0x30, 0x30);
+    private static final Display.Brightness FULL_BRIGHT = new Display.Brightness(15, 15);
+
+    /**
+     * How a model takes a hit ({@code games.siege.hit-feel.creature.*}).
+     *
+     * @param hitstop       ticks a normal hit freezes the toy in its impact pose (its gait stops; 0 = none)
+     * @param strongHitstop the same for a {@link HitStrength#STRONG} hit (critical, finisher, a big blow)
+     * @param whiteTicks    ticks of the white flash (full bright, white glow) as the blow lands
+     * @param redTicks      ticks of the red glow after the white
+     * @param intensity     the size of the flinch against the modelled one (1); each kind scales it by its weight
+     *                      ({@link CreatureModels#hitAmount})
+     */
+    public record Reaction(int hitstop, int strongHitstop, int whiteTicks, int redTicks, float intensity) {
+
+        public static final Reaction DEFAULT = new Reaction(2, 3, 1, 3, 1f);
+
+        /** The hitstop of a hit as hard as {@code strength}. */
+        public int hold(HitStrength strength) {
+            return switch (strength) {
+                case LIGHT -> 0;
+                case NORMAL -> hitstop;
+                case STRONG -> strongHitstop;
+            };
+        }
+    }
 
     private final Plugin plugin;
     private final PackAudience audience;
@@ -83,6 +110,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
     private final Map<UUID, ModelCreature> byBody = new HashMap<>();
     private @Nullable BukkitTask ticker;
     private PackAudience.@Nullable Subscription subscription;
+    private Reaction reaction = Reaction.DEFAULT;
 
     public ModelCreatureLook(Plugin plugin, PackAudience audience) {
         this(plugin, audience, (player, body) -> player.attack(body));
@@ -132,6 +160,15 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
     public double modelTop(LivingEntity body) {
         ModelCreature creature = byBody.get(body.getUniqueId());
         return creature == null ? 0 : creature.top();
+    }
+
+    /** How the models take hits from now on. */
+    public void reaction(Reaction reaction) {
+        this.reaction = reaction;
+    }
+
+    public Reaction reaction() {
+        return reaction;
     }
 
     /** Live creatures (for tests). */
@@ -316,10 +353,17 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
         /** Ticks walked since it last stood (the gait's clock). */
         private int walked;
         private Attack attack;
-        private int flash;
+        /** Ticks left of the white, then the red part of the hit flash. */
+        private int white;
+        private int red;
         /** The tick of the attack / flinch / stagger playing (1 = its first), 0 = none. */
         private int attackTick;
         private int hitTick;
+        /** The flinch playing: its hitstop, the blow's direction (as {@link CreatureModels#hitAt}) and size. */
+        private int hitHold;
+        private float hitAhead = 1;
+        private float hitRight;
+        private float hitAmount = 1;
         private int staggerTick;
         private float staggerAhead;
         private float staggerRight;
@@ -380,12 +424,46 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
 
         @Override
         public void hit() {
+            hit(null, HitStrength.NORMAL);
+        }
+
+        /**
+         * The hit reaction: the toy snaps into its impact pose (squashed, leaning away from {@code from}, as big as its
+         * weight and the hit allow), holds it through the hitstop (its gait stops), then springs back; it flashes
+         * white (full bright, white glow) and then red.
+         */
+        @Override
+        public void hit(@Nullable Location from, HitStrength strength) {
             if (removed) {
                 return;
             }
-            flash = FLASH_TICKS;
-            glow(Color.WHITE);
+            float ahead = 1;
+            float right = 0;
+            Location at = body.getLocation();
+            if (from != null && at.getWorld() != null && at.getWorld().equals(from.getWorld())) {
+                double dx = from.getX() - at.getX();
+                double dz = from.getZ() - at.getZ();
+                double length = Math.sqrt(dx * dx + dz * dz);
+                if (length > 1.0E-6) {
+                    double yaw = Math.toRadians(at.getYaw());
+                    ahead = (float) ((-Math.sin(yaw) * dx + Math.cos(yaw) * dz) / length);
+                    right = (float) ((-Math.cos(yaw) * dx - Math.sin(yaw) * dz) / length);
+                }
+            }
+            hitAhead = ahead;
+            hitRight = right;
+            hitAmount = Math.min(2.2f, CreatureModels.hitAmount(kind) * strength.amount() * reaction.intensity());
+            hitHold = Math.max(0, reaction.hold(strength));
             hitTick = 1;
+            white = strength == HitStrength.LIGHT ? 0 : Math.max(0, reaction.whiteTicks());
+            red = Math.max(0, reaction.redTicks());
+            if (white > 0) {
+                glow(Color.WHITE);
+                bright(true);
+            } else if (red > 0) {
+                bright(false);
+                glow(HURT);
+            }
             show(1);
         }
 
@@ -443,7 +521,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             this.enraged = enraged;
             if (enraged) {
                 glow(RAGE);
-            } else if (flash == 0) {
+            } else if (white == 0 && red == 0) {
                 unglow();
             }
         }
@@ -512,6 +590,26 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             return hitTick;
         }
 
+        /** The hitstop of the flinch playing. */
+        int hitHold() {
+            return hitHold;
+        }
+
+        /** True while a hit holds the toy in its impact pose (its gait clock stopped). */
+        boolean frozen() {
+            return hitTick > 0 && hitTick <= 1 + hitHold;
+        }
+
+        /** The glow showing now: white, then the hurt red of a hit, the rage, or none (tests). */
+        @Nullable Color glowColour() {
+            return white > 0 ? Color.WHITE : red > 0 ? HURT : enraged ? RAGE : null;
+        }
+
+        /** The flinch playing: its direction ahead / right and size (tests). */
+        float[] hitDirection() {
+            return new float[] {hitAhead, hitRight, hitAmount};
+        }
+
         int staggerTick() {
             return staggerTick;
         }
@@ -567,7 +665,10 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 remove();
                 return;
             }
-            age++;
+            boolean frozen = frozen();
+            if (!frozen) {
+                age++; // a hitstop stops the toy's own clock (gait, breathing)
+            }
             Location now = body.getLocation();
             double dx = now.getX() - last.getX();
             double dz = now.getZ() - last.getZ();
@@ -581,16 +682,21 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 hitbox.teleport(now);
             }
             last = now;
-            if (flash > 0 && --flash == 0) {
-                if (enraged) {
-                    glow(RAGE);
+            if (white > 0 && --white == 0) {
+                bright(false);
+                if (red > 0) {
+                    glow(HURT);
                 } else {
-                    unglow();
+                    endFlash();
                 }
+            } else if (white == 0 && red > 0 && --red == 0) {
+                endFlash();
             }
             boolean restart = moving != wasMoving;
             wasMoving = moving;
-            if (moving) {
+            if (frozen) {
+                // held in the impact pose: neither steps nor the stagger move on
+            } else if (moving) {
                 walked++;
                 if (gait.stepsAt(walked) && attackTick == 0) {
                     body.getWorld().playSound(now, gait.stepSound(), SoundCategory.NEUTRAL, gait.stepVolume(),
@@ -602,10 +708,10 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             if (attackTick > 0 && ++attackTick > attack.ticks()) {
                 attackTick = 0;
             }
-            if (hitTick > 0 && ++hitTick > CreatureModels.HIT_TICKS) {
+            if (hitTick > 0 && ++hitTick > CreatureModels.HIT_TICKS + hitHold) {
                 hitTick = 0;
             }
-            if (staggerTick > 0 && ++staggerTick > CreatureModels.STAGGER_TICKS) {
+            if (staggerTick > 0 && !frozen && ++staggerTick > CreatureModels.STAGGER_TICKS) {
                 staggerTick = 0;
             }
             if (charging > 0) {
@@ -641,7 +747,7 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
                 out = wasMoving ? gait.walkAt(walked) : gait.idleAt(age);
             }
             if (hitTick > 0) {
-                out = out.plus(CreatureModels.hitAt(hitTick));
+                out = out.plus(CreatureModels.hitAt(hitTick, hitHold, hitAhead, hitRight, hitAmount));
             }
             if (staggerTick > 0) {
                 out = out.plus(CreatureModels.staggerAt(staggerTick, staggerAhead, staggerRight, staggerStrength));
@@ -668,6 +774,22 @@ public final class ModelCreatureLook implements CreatureSkin, Listener {
             for (ItemDisplay display : displays) {
                 display.setGlowing(false);
                 display.setGlowColorOverride(null);
+            }
+        }
+
+        /** The flash is over: the rage glow back, or none. */
+        private void endFlash() {
+            if (enraged) {
+                glow(RAGE);
+            } else {
+                unglow();
+            }
+        }
+
+        /** Full bright (the white flash) or the world's light again. */
+        private void bright(boolean on) {
+            for (ItemDisplay display : displays) {
+                display.setBrightness(on ? FULL_BRIGHT : null);
             }
         }
 

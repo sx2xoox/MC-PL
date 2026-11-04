@@ -262,6 +262,7 @@ public record SiegeSettings(
         d.set(GAUGE_STRUCTURE, 0.3);
         d.setComments(GAUGE_STRUCTURE, List.of("적 타워·코어 (0 = 안 참)"));
         SiegeHudSettings.declareDefaults(d);
+        HitFeelSettings.declareDefaults(d);
     }
 
     private static double gaugeFactor(double value) {

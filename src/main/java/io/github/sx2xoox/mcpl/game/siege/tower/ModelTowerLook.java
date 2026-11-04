@@ -156,7 +156,9 @@ public final class ModelTowerLook implements TowerLook {
                             List.of(Footprint.Layer.centred(7.5, 0, 7), Footprint.Layer.centred(3.5, 7, 9)))));
 
     private static final int FLASH_TICKS = 4;
-    private static final int SHAKE_TICKS = 3;
+    /** Ticks of a hit's shake, and its offset on the first one (blocks; it dies down each tick after). */
+    static final int SHAKE_TICKS = 4;
+    static final float SHAKE = 0.13f;
     private static final int SHIELD_POP_TICKS = 8;
     private static final int COLLAPSE_TICKS = 16;
     private static final float VIEW_RANGE = 4f;
@@ -484,7 +486,8 @@ public final class ModelTowerLook implements TowerLook {
             }
             if (shake > 0) {
                 shake--;
-                float amount = shake == 0 ? 0 : 0.07f;
+                // a short rattle dying down: 0.13, 0.09, 0.04 blocks to alternate sides, then still
+                float amount = SHAKE * shake / (SHAKE_TICKS - 1);
                 float sign = shake % 2 == 0 ? 1 : -1;
                 for (Shown shown : parts) {
                     if (shown.part.stages() > 0 && shown.collapseAt < 0) {

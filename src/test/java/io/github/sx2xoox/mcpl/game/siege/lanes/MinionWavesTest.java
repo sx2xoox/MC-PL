@@ -167,6 +167,8 @@ class MinionWavesTest extends LaneTestBase {
         // the skins play it: the attackers' attack motion, the victims' flinch; everyone hears the wind-up click
         assertTrue(skinEvents.contains("minion_melee attack"), skinEvents.toString());
         assertTrue(skinEvents.contains("minion_melee hit"), skinEvents.toString());
+        assertTrue(skinEvents.contains("minion_melee hit from"), "it flinches away from the blow: " + skinEvents);
+        assertTrue(arena.creatureHits.contains("minion_melee normal"), "the hit feel plays: " + arena.creatureHits);
         assertTrue(arena.sounds.contains(Sound.BLOCK_TRIPWIRE_CLICK_ON), arena.sounds.toString());
 
         // Without enemy minions around, the enemy player is the target.
@@ -316,6 +318,9 @@ class MinionWavesTest extends LaneTestBase {
         melee(hitter, red.body(), 100);
         assertTrue(red.body().isDead());
         assertEquals(before + 15, systems.gold().balance(hitter.getUniqueId()), "last-hit gold");
+        assertTrue(arena.creatureHits.contains("minion_melee normal kill"), arena.creatureHits.toString());
+        assertTrue(arena.goldPops.contains(hitter.getUniqueId() + " +15"), "the gold pops up where it fell: "
+                + arena.goldPops);
         assertEquals(6, arena.xp(hitter));
         assertEquals(0, arena.xp(farAway), "too far for the experience");
 

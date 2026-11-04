@@ -321,16 +321,57 @@ public final class CreatureModels {
         }
     }
 
-    /** The flinch when hit (with the white flash): squashed for a tick, a springy rebound, rest. */
-    public static final List<Key> HIT = List.of(Key.rest(0), Key.of(1, -0.05f, 0, -3, 0, 0, 1.12f, 0.82f, 0),
-            Key.of(3, 0, 0, 0, 0, 0, 0.96f, 1.06f, 0), Key.rest(5));
+    /**
+     * The flinch when hit (with the white-then-red flash), for a blow from straight ahead: knocked back into a squash
+     * leaning away from the blow (held through the hitstop), a springy rebound past upright with a little hop, a
+     * wobble, rest. {@link #hitAt(int, int, float, float, float)} turns it to the blow and sizes it.
+     */
+    public static final List<Key> HIT = List.of(Key.rest(0), Key.of(1, -0.1f, 0, -14, 0, 0, 1.2f, 0.8f, 0),
+            Key.of(3, 0.03f, 0.05f, 5, 0, 0, 0.93f, 1.09f, 0), Key.of(5, 0, 0, -2, 0, 0, 1.03f, 0.98f, 0),
+            Key.rest(7));
 
-    /** How long the flinch takes, ticks. */
+    /** How long the flinch takes without a hitstop, ticks. */
     public static final int HIT_TICKS = HIT.getLast().tick();
 
-    /** The flinch offset at {@code tick}. */
+    /** The flinch offset at {@code tick} (a blow from straight ahead, normal size, no hitstop). */
     public static Offset hitAt(int tick) {
         return sample(HIT, tick);
+    }
+
+    /**
+     * The flinch at {@code tick} (1 = the tick of the blow) for a blow from {@code ahead} (1 = straight in front, -1 =
+     * behind) and {@code right} (1 = its right side), {@code amount} times the normal flinch, its impact pose held for
+     * {@code hold} more ticks (the hitstop). Over after {@link #HIT_TICKS} + {@code hold} ticks.
+     */
+    public static Offset hitAt(int tick, int hold, float ahead, float right, float amount) {
+        if (tick <= 0) {
+            return Offset.REST;
+        }
+        int t = tick <= 1 + hold ? 1 : tick - hold;
+        Offset base = sample(HIT, t);
+        if (base.equals(Offset.REST)) {
+            return base;
+        }
+        return new Offset(base.forward() * ahead * amount, base.up() * amount, base.pitch() * ahead * amount, 0,
+                base.pitch() * right * amount, 1 + (base.width() - 1) * amount, 1 + (base.height() - 1) * amount, 0);
+    }
+
+    /**
+     * How heavy each toy is to hit, 0 (a feather) .. 1 (the dragon): heavy ones flinch little and sound deep, light ones
+     * bounce a lot and sound bright ({@link #hitAmount}).
+     */
+    public static final Map<String, Double> HEAVINESS = Map.of(SOLDIER, 0.45, ARCHER, 0.4, CANNON, 0.7, JELLY, 0.25,
+            MOUSE, 0.1, TEDDY, 0.85, RABBIT, 0.4, DRAGON, 1.0, MERCHANT, 0.5);
+
+    /** {@link #HEAVINESS} of a kind or alias (0.5 when unknown). */
+    public static double heaviness(String kind) {
+        String id = kindOf(kind);
+        return id == null ? 0.5 : HEAVINESS.getOrDefault(id, 0.5);
+    }
+
+    /** How big a kind's flinch is against a normal one (1): the dragon about a third, the mouse a third more. */
+    public static float hitAmount(String kind) {
+        return (float) (1.45 - 1.1 * heaviness(kind));
     }
 
     /**

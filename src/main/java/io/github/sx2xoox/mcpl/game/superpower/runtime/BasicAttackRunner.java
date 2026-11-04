@@ -922,20 +922,21 @@ final class BasicAttackRunner implements Listener {
         Moment moment = act.moment();
         double amount = scaled(owner, target, damage) * act.multiplier();
         Location body = Fx.body(target);
+        Location spark = impactPoint(owner.getEyeLocation(), target);
         double lost = ctx().basicHit(owner, target, amount, DamageType.PLAYER_ATTACK, act.accent());
         Palette palette = attack.palette();
         if (displays()) {
             Vector toward = body.toVector().subtract(owner.getEyeLocation().toVector()).setY(0);
-            fx().play(owner, body, toward.lengthSquared() < 1.0E-4 ? yawFrame(owner.getLocation().getYaw())
+            fx().play(owner, spark, toward.lengthSquared() < 1.0E-4 ? yawFrame(owner.getLocation().getYaw())
                     : aimFrame(toward), BasicFx.impact(attack, moment, moment.seed() ^ target.getUniqueId()
                     .getLeastSignificantBits()), act.budget());
-            Vfx.cloud(ctx(), body, palette.particle(), 3, 0.2, 0.03, null, false);
+            Vfx.cloud(ctx(), spark, palette.particle(), 3, 0.2, 0.03, null, false);
         } else {
-            Vfx.cloud(ctx(), body, palette.particle(), 5, 0.2, 0.03, null, false);
-            Vfx.cloud(ctx(), body, Particle.DUST, 4, 0.25, 0, dust(palette, 1.0f), false);
+            Vfx.cloud(ctx(), spark, palette.particle(), 5, 0.2, 0.03, null, false);
+            Vfx.cloud(ctx(), spark, Particle.DUST, 4, 0.25, 0, dust(palette, 1.0f), false);
         }
         if (moment.crit()) {
-            Vfx.cloud(ctx(), body, Particle.CRIT, 8, 0.25, 0.25, null, false);
+            Vfx.cloud(ctx(), spark, Particle.CRIT, 8, 0.25, 0.25, null, false);
         }
         hitSounds(body, attack, moment);
         if (target.isDead() || !target.isValid()) {
@@ -981,6 +982,26 @@ final class BasicAttackRunner implements Listener {
         if (push > 0) {
             pushAway(owner, target, push);
         }
+    }
+
+    /**
+     * Where a hit's spark shows on {@code target}: on its side facing {@code eye} (the attacker's), at about the
+     * attacker's eye height within its box (a little below), never inside the body or model where nobody sees it. The
+     * box is the host's for a building ({@link MatchContext#boxOf}).
+     */
+    Location impactPoint(Location eye, LivingEntity target) {
+        BoundingBox box = ctx().boxOf(target);
+        double cx = box.getCenterX();
+        double cz = box.getCenterZ();
+        double dx = eye.getX() - cx;
+        double dz = eye.getZ() - cz;
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        double half = Math.min(box.getWidthX(), box.getWidthZ()) * 0.5;
+        double reach = distance < 1.0E-6 ? 0 : Math.min(half, Math.max(0, distance - 0.2)) / distance;
+        double low = box.getMinY() + box.getHeight() * 0.25;
+        double high = box.getMinY() + box.getHeight() * 0.85;
+        double y = Math.max(low, Math.min(high, eye.getY() - 0.35));
+        return new Location(target.getWorld(), cx + dx * reach, y, cz + dz * reach);
     }
 
     /** Pushes {@code target} away from the attacker (never the host's targets: towers, minions, monsters). */

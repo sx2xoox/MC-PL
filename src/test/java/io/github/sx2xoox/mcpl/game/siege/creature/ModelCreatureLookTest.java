@@ -2,6 +2,7 @@ package io.github.sx2xoox.mcpl.game.siege.creature;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -232,7 +233,7 @@ class ModelCreatureLookTest {
         assertEquals(1, jelly.hitTick());
         assertTrue(jelly.displays().getFirst().isGlowing(), "a white flash");
         assertTrue(jelly.displays().getFirst().getTransformation().getScale().y < 0.9, "squashed");
-        server.getScheduler().performTicks(CreatureModels.HIT_TICKS + 2);
+        server.getScheduler().performTicks(CreatureModels.HIT_TICKS + ModelCreatureLook.Reaction.DEFAULT.hitstop() + 2);
         assertEquals(0, jelly.hitTick());
         assertFalse(jelly.displays().getFirst().isGlowing());
         soldier.remove();
@@ -247,6 +248,61 @@ class ModelCreatureLookTest {
     private static Vector3f expected(String kind, CreatureModels.Offset offset) {
         return ModelCreatureLook.pose(CreatureModels.CREATURES.get(kind).getFirst(), 0, false, offset)
                 .getTranslation();
+    }
+
+    @Test
+    void aHitFreezesTheToyLeansItAwayAndFlashesWhiteThenRed() {
+        ModelCreatureLook.Reaction reaction = ModelCreatureLook.Reaction.DEFAULT;
+        ModelCreatureLook.ModelCreature soldier = look.attach(body(CreatureModels.SOLDIER, 0, 0), "soldier",
+                null);
+        server.getScheduler().performTicks(5);
+        // yaw 0 looks along +z: a blow from +z is from straight ahead
+        soldier.hit(new Location(world, 0, 64, 3), HitStrength.NORMAL);
+        assertTrue(soldier.frozen(), "the hitstop holds it");
+        assertEquals(reaction.hitstop(), soldier.hitHold());
+        assertEquals(1, soldier.hitDirection()[0], 1e-4, "from ahead");
+        ItemDisplay first = soldier.displays().getFirst();
+        Vector3f impact = translation(soldier);
+        assertTrue(impact.z > 0.05, "knocked back, away from the blow (its front is -z): " + impact);
+        assertTrue(first.isGlowing(), "a flash");
+        assertEquals(Color.WHITE, soldier.glowColour(), "a white flash");
+        assertEquals(15, first.getBrightness().getBlockLight(), "full bright while white");
+
+        server.getScheduler().performTicks(reaction.whiteTicks());
+        assertEquals(ModelCreatureLook.HURT, soldier.glowColour(), "then red");
+        assertTrue(first.isGlowing());
+        assertNull(first.getBrightness());
+        server.getScheduler().performTicks(1);
+        assertTrue(soldier.frozen(), "still held");
+        assertEquals(impact, translation(soldier), "the impact pose holds through the hitstop");
+        server.getScheduler().performTicks(reaction.hitstop());
+        assertFalse(soldier.frozen());
+        assertNotEquals(impact, translation(soldier), "then springs back");
+        server.getScheduler().performTicks(reaction.redTicks());
+        assertFalse(first.isGlowing(), "the flash is over");
+        assertNull(soldier.glowColour());
+        server.getScheduler().performTicks(CreatureModels.HIT_TICKS + 2);
+        assertEquals(0, soldier.hitTick());
+
+        soldier.hit(new Location(world, 0, 64, -3), HitStrength.STRONG);
+        assertEquals(reaction.strongHitstop(), soldier.hitHold(), "a strong hit holds longer");
+        assertTrue(translation(soldier).z < -0.05, "a blow from behind throws it forward: " + translation(soldier));
+        server.getScheduler().performTicks(CreatureModels.HIT_TICKS + reaction.strongHitstop() + 2);
+
+        soldier.hit(null, HitStrength.LIGHT);
+        assertEquals(0, soldier.hitHold(), "a burn's tick: no hitstop");
+        assertEquals(ModelCreatureLook.HURT, soldier.glowColour(), "and no white flash");
+
+        ModelCreatureLook.ModelCreature dragon = look.attach(body(CreatureModels.DRAGON, 8, 0), "dragon", null);
+        ModelCreatureLook.ModelCreature mouse = look.attach(body(CreatureModels.MOUSE, -8, 0), "mice", null);
+        dragon.hit(new Location(world, 8, 64, 3), HitStrength.NORMAL);
+        mouse.hit(new Location(world, -8, 64, 3), HitStrength.NORMAL);
+        assertTrue(dragon.hitDirection()[2] < 0.5f && mouse.hitDirection()[2] > 1.2f,
+                "the dragon takes it heavily, the mouse bounces");
+        soldier.remove();
+        dragon.remove();
+        mouse.remove();
+        assertEquals(0, look.creatureCount());
     }
 
     @Test

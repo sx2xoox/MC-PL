@@ -73,6 +73,18 @@ class CreatureAttacksExportTest {
         assertEquals(Offset.REST, CreatureModels.hitAt(0));
         assertTrue(CreatureModels.hitAt(1).height() < 1, "a hit squashes");
         assertEquals(Offset.REST, CreatureModels.hitAt(CreatureModels.HIT_TICKS));
+        // the directional, held flinch: leans away from the blow, holds the impact pose through the hitstop
+        Offset impact = CreatureModels.hitAt(1, 2, 1, 0, 1);
+        assertTrue(impact.pitch() < -10 && impact.forward() < 0, "a blow from ahead knocks it back: " + impact);
+        assertEquals(impact, CreatureModels.hitAt(3, 2, 1, 0, 1), "held through the hitstop");
+        assertNotEquals(impact, CreatureModels.hitAt(4, 2, 1, 0, 1), "then it springs back");
+        assertEquals(Offset.REST, CreatureModels.hitAt(CreatureModels.HIT_TICKS + 2, 2, 1, 0, 1));
+        assertTrue(CreatureModels.hitAt(1, 0, -1, 0, 1).pitch() > 0, "from behind it pitches forward");
+        assertTrue(CreatureModels.hitAt(1, 0, 0, 1, 1).roll() < 0, "from its right it tilts to its left");
+        assertTrue(CreatureModels.hitAmount(CreatureModels.DRAGON) < 0.5f
+                && CreatureModels.hitAmount(CreatureModels.TEDDY) < CreatureModels.hitAmount(CreatureModels.SOLDIER)
+                && CreatureModels.hitAmount(CreatureModels.MOUSE) > 1.2f, "big toys flinch little, small ones a lot");
+        assertTrue(CreatureModels.hitAt(1, 0, 1, 0, 1.4f).height() < impact.height(), "a bigger flinch squashes more");
         assertEquals(Offset.REST, CreatureModels.staggerAt(CreatureModels.STAGGER_TICKS, 1, 0, 1));
         assertTrue(CreatureModels.staggerAt(2, 1, 0, 1).pitch() < 0, "a blow from ahead leans it back");
         assertTrue(CreatureModels.staggerAt(2, -1, 0, 1).pitch() > 0, "from behind, forward");
@@ -203,6 +215,11 @@ class CreatureAttacksExportTest {
         out.append("  \"generated\": \"CreatureAttacksExportTest (./gradlew updateCreatureAttacks): the poses ")
                 .append("ModelCreatureLook shows; forward is -z, feet at y 0\",\n");
         out.append("  \"hitTicks\": ").append(CreatureModels.HIT_TICKS).append(",\n");
+        ModelCreatureLook.Reaction reaction = ModelCreatureLook.Reaction.DEFAULT;
+        out.append("  \"hitstop\": {\"normal\": ").append(reaction.hold(HitStrength.NORMAL)).append(", \"strong\": ")
+                .append(reaction.hold(HitStrength.STRONG)).append("},\n");
+        out.append("  \"flash\": {\"white\": ").append(reaction.whiteTicks()).append(", \"red\": ")
+                .append(reaction.redTicks()).append("},\n");
         out.append("  \"creatures\": {\n");
         List<String> kinds = new ArrayList<>(new TreeSet<>(CreatureModels.CREATURES.keySet()));
         for (int k = 0; k < kinds.size(); k++) {
@@ -223,11 +240,19 @@ class CreatureAttacksExportTest {
                 frame(out, parts, attack.at(tick), 0, false, tick == attack.ticks());
             }
             out.append("      ],\n");
-            out.append("      \"hit\": [\n");
-            for (int tick = 0; tick <= CreatureModels.HIT_TICKS; tick++) {
-                frame(out, parts, CreatureModels.hitAt(tick), 0, false, tick == CreatureModels.HIT_TICKS);
+            // the hit reactions ModelCreatureLook plays for a blow from straight ahead: tick 0 = before, 1 = the blow
+            // (its impact pose held through the hitstop), then the rebound; normal and strong
+            for (HitStrength strength : List.of(HitStrength.NORMAL, HitStrength.STRONG)) {
+                int hold = reaction.hold(strength);
+                float amount = Math.min(2.2f, CreatureModels.hitAmount(kind) * strength.amount()
+                        * reaction.intensity());
+                int last = CreatureModels.HIT_TICKS + hold;
+                out.append(strength == HitStrength.NORMAL ? "      \"hit\": [\n" : "      \"hitStrong\": [\n");
+                for (int tick = 0; tick <= last; tick++) {
+                    frame(out, parts, CreatureModels.hitAt(tick, hold, 1, 0, amount), 0, false, tick == last);
+                }
+                out.append("      ],\n");
             }
-            out.append("      ],\n");
             List<Attack> motions = new ArrayList<>();
             motions.add(attack);
             motions.addAll(CreatureModels.SKILLS.get(kind));
