@@ -215,8 +215,113 @@ class SiegeLanesWiringTest {
         assertEquals(body.text(), model.text(), "both redrawn");
         bar.moveTo(at.clone().add(1, 0, 0), at.clone().add(1, 1.5, 0));
         assertEquals(at.getX() + 1, model.getLocation().getX(), 1.0E-6);
+        bar.moveTo(at.clone().add(4, 0, 0), null);
+        assertEquals(at.getX() + 4, model.getLocation().getX(), 1.0E-6, "no model spot: the twin goes with the bar");
         bar.remove();
         assertFalse(body.isValid() || model.isValid());
+    }
+
+    @Test
+    void everyCreatureBarFollowsItsCreatureForPlayersWithAndWithoutThePack() {
+        config.set("minions.cannon-every", 1);
+        for (String kind : List.of("teddy", "rabbit", "dragon", "jelly", "mice")) {
+            config.set("jungle." + kind + ".first-seconds", 1);
+        }
+        java.util.List<java.util.function.Consumer<Player>> listeners = new java.util.ArrayList<>();
+        java.util.Set<Player> withPack = new java.util.HashSet<>();
+        siege.packsOverride(new io.github.sx2xoox.mcpl.core.pack.PackAudience() {
+            @Override
+            public boolean hasPack(Player player) {
+                return withPack.contains(player);
+            }
+
+            @Override
+            public Subscription subscribe(java.util.function.Consumer<Player> listener) {
+                listeners.add(listener);
+                return () -> listeners.remove(listener);
+            }
+        });
+        SiegeMatch match = start(2);
+        SiegeSystems systems = match.systems();
+        assertNotNull(systems);
+        Player pack = match.session().hub().plugin().getServer().getPlayer(
+                match.teams().get(0).members().iterator().next());
+        Player vanilla = match.session().hub().plugin().getServer().getPlayer(
+                match.teams().get(1).members().iterator().next());
+        withPack.add(pack);
+        listeners.forEach(l -> l.accept(pack));
+        h.tickUntil(() -> systems.minions().minions().stream()
+                .anyMatch(m -> m.kind() == io.github.sx2xoox.mcpl.game.siege.minion.MinionKind.CANNON), 2000,
+                "a cannon");
+        h.tickUntil(() -> systems.jungle().sites().stream().filter(s -> !s.isCapturePoint()).allMatch(
+                io.github.sx2xoox.mcpl.game.siege.jungle.JungleObjectives.Site::isUp), 2000, "the jungle");
+        h.ticks(3);
+        LaneSystemsModule lanes = lanes(match);
+        java.util.Map<String, Mob> creatures = new java.util.LinkedHashMap<>();
+        for (MinionWaves.Minion minion : systems.minions().minions()) {
+            creatures.putIfAbsent(minion.kind().name(), minion.body());
+        }
+        for (var site : systems.jungle().sites()) {
+            if (!site.mobs().isEmpty()) {
+                creatures.putIfAbsent(site.kind().name(), site.mobs().getFirst());
+            }
+        }
+        for (String kind : List.of("CANNON", "MELEE", "RANGED", "TEDDY", "RABBIT", "DRAGON", "JELLY", "MICE")) {
+            assertTrue(creatures.containsKey(kind), kind);
+        }
+        assertNotNull(lanes.bar(creatures.get("CANNON")).packDisplay(),
+                "made in the spawn tick, the cannon's bar judged the golem at its unscaled height");
+        // A scaled mob's height settles once it ticks (MockBukkit never applies the scale): the cannon's golem
+        // (scale 0.6) then stands about as tall as its model, which once left its pack bar behind at the spawn.
+        java.util.function.ToDoubleFunction<org.bukkit.entity.LivingEntity> height = c -> c.getHeight()
+                * c.getAttribute(org.bukkit.attribute.Attribute.SCALE).getValue();
+        lanes.bodyHeight(height);
+        for (int step = 1; step <= 4; step++) {
+            for (Mob creature : creatures.values()) {
+                creature.setAI(false);
+                creature.teleport(creature.getLocation().add(3, 0, 2));
+            }
+            h.ticks(2);
+            for (var e : creatures.entrySet()) {
+                Mob creature = e.getValue();
+                OverheadBar bar = lanes.bar(creature);
+                assertNotNull(bar, e.getKey());
+                String kind = io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.kindOf(
+                        e.getKey().equals("MELEE") ? "soldier" : e.getKey().equals("RANGED") ? "archer"
+                                : e.getKey());
+                double model = io.github.sx2xoox.mcpl.game.siege.creature.CreatureModels.TOPS.get(kind);
+                Location feet = creature.getLocation();
+                TextDisplay seenByVanilla = seen(bar, vanilla);
+                TextDisplay seenByPack = seen(bar, pack);
+                assertEquals(feet.getX(), seenByVanilla.getLocation().getX(), 1.0E-6, e.getKey() + " no pack x");
+                assertEquals(feet.getZ(), seenByVanilla.getLocation().getZ(), 1.0E-6, e.getKey() + " no pack z");
+                double body = height.applyAsDouble(creature);
+                assertEquals(body + LaneSystemsModule.BAR_GAP,
+                        seenByVanilla.getLocation().getY() - feet.getY(), 1.0E-6, e.getKey() + " over the body");
+                assertEquals(feet.getX(), seenByPack.getLocation().getX(), 1.0E-6, e.getKey() + " pack x");
+                assertEquals(feet.getZ(), seenByPack.getLocation().getZ(), 1.0E-6, e.getKey() + " pack z");
+                double over = seenByPack.getLocation().getY() - feet.getY();
+                assertTrue(over >= Math.min(model, body) + LaneSystemsModule.BAR_GAP - 1.0E-6
+                        && over <= Math.max(model, body) + LaneSystemsModule.BAR_GAP + 1.0E-6,
+                        e.getKey() + " over the model: " + over);
+                if (bar.packDisplay() != null) {
+                    assertEquals(model + LaneSystemsModule.BAR_GAP, over, 1.0E-6, e.getKey() + " the model's bar");
+                }
+            }
+        }
+    }
+
+    /** The one display of {@code bar} that {@code viewer} sees. */
+    private static TextDisplay seen(OverheadBar bar, Player viewer) {
+        TextDisplay main = bar.display();
+        TextDisplay twin = bar.packDisplay();
+        assertNotNull(main);
+        if (twin == null) {
+            assertTrue(viewer.canSee(main));
+            return main;
+        }
+        assertTrue(viewer.canSee(main) != viewer.canSee(twin), "exactly one of the two");
+        return viewer.canSee(twin) ? twin : main;
     }
 
     @Test

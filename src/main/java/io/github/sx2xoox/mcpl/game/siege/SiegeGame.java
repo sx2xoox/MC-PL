@@ -17,6 +17,7 @@ import io.github.sx2xoox.mcpl.core.game.MiniGame;
 import io.github.sx2xoox.mcpl.core.map.ArenaMap;
 import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotSettings;
@@ -56,6 +57,7 @@ public final class SiegeGame implements MiniGame {
     private final Messages messages;
     private TowerLook towerLook;
     private @Nullable LaneSites sitesOverride;
+    private @Nullable PackAudience packsOverride;
     private final List<Function<SiegeMatch, SiegeModule>> moduleFactories = new ArrayList<>();
     private @Nullable List<SettingsSection> settings;
     private @Nullable SiegeMatch current;
@@ -251,6 +253,17 @@ public final class SiegeGame implements MiniGame {
      */
     public void sitesOverride(@Nullable LaneSites sites) {
         this.sitesOverride = sites;
+    }
+
+    /** Who has the resource pack, for the next matches' creature looks and bars (tests); null = the hub's pack. */
+    void packsOverride(@Nullable PackAudience packs) {
+        this.packsOverride = packs;
+    }
+
+    /** Who has the resource pack: the hub's pack service, or {@link #packsOverride}. */
+    PackAudience packs() {
+        PackAudience override = packsOverride;
+        return override != null ? override : hub.resourcePacks();
     }
 
     /** The running match of this mode, or null. */

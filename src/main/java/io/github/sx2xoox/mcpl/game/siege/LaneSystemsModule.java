@@ -6,6 +6,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.ToDoubleFunction;
 
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
@@ -56,6 +57,11 @@ final class LaneSystemsModule implements SiegeModule {
     private final ModelCreatureLook skins;
     private PackAudience.@Nullable Subscription packWatch;
     private final Map<UUID, Bar> bars = new HashMap<>();
+    /**
+     * A creature's vanilla body height. A scaled mob's ({@code Attribute.SCALE}) is its unscaled one until it first
+     * ticks, so a bar made in its spawn tick may judge the split on the wrong height (tests replace it to show that).
+     */
+    private ToDoubleFunction<LivingEntity> bodyHeight = LivingEntity::getHeight;
 
     private record Bar(LivingEntity creature, OverheadBar bar) {
     }
@@ -63,7 +69,7 @@ final class LaneSystemsModule implements SiegeModule {
     LaneSystemsModule(SiegeMatch match) {
         this.match = match;
         this.session = match.session();
-        this.packs = match.hub().resourcePacks();
+        this.packs = match.game().packs();
         this.skins = new ModelCreatureLook(session.plugin(), packs);
         session.registerListener(skins);
         match.damageNumbers().height(this::topOf);
@@ -179,23 +185,46 @@ final class LaneSystemsModule implements SiegeModule {
                 it.remove();
                 continue;
             }
-            entry.bar().moveTo(barSpot(creature), packBarSpot(creature));
+            OverheadBar bar = entry.bar();
+            if (bar.packDisplay() == null) {
+                // the body's height settles a tick after the spawn (a scaled mob): split when the gap shows up
+                Location packSpot = packBarSpot(creature);
+                if (packSpot != null) {
+                    split(bar, packSpot);
+                }
+            }
+            // once split, the twin follows the model for good (even where the body later turns out about as tall)
+            bar.moveTo(barSpot(creature), modelBarSpot(creature));
             entry.bar().health(creature.getHealth(), Creatures.maxHealth(creature));
         }
     }
 
     /** Over the vanilla body (what players without the pack see). */
-    private static Location barSpot(LivingEntity creature) {
-        return creature.getLocation().add(0, creature.getHeight() + BAR_GAP, 0);
+    private Location barSpot(LivingEntity creature) {
+        return creature.getLocation().add(0, bodyHeight.applyAsDouble(creature) + BAR_GAP, 0);
     }
 
     /** Over the pack model, or null when the creature wears none or it is about the body's height. */
     private @Nullable Location packBarSpot(LivingEntity creature) {
         double model = skins.modelTop(creature);
-        if (model <= 0 || Math.abs(model - creature.getHeight()) < SPLIT_DIFFERENCE) {
+        if (model <= 0 || Math.abs(model - bodyHeight.applyAsDouble(creature)) < SPLIT_DIFFERENCE) {
             return null;
         }
-        return creature.getLocation().add(0, model + BAR_GAP, 0);
+        return modelBarSpot(creature);
+    }
+
+    /** Over the pack model, or null when the creature wears none. */
+    private @Nullable Location modelBarSpot(LivingEntity creature) {
+        double model = skins.modelTop(creature);
+        return model <= 0 ? null : creature.getLocation().add(0, model + BAR_GAP, 0);
+    }
+
+    /** Gives a creature's bar its twin over the pack model. */
+    private void split(OverheadBar bar, Location packSpot) {
+        if (packWatch == null) {
+            packWatch = packs.subscribe(this::packChanged);
+        }
+        bar.splitForPack(packs, packSpot);
     }
 
     /** How tall a creature looks: its body, or its pack model where that is taller (damage numbers pop over it). */
@@ -220,6 +249,11 @@ final class LaneSystemsModule implements SiegeModule {
         for (Bar entry : bars.values()) {
             entry.bar().refresh(player);
         }
+    }
+
+    /** Replaces how tall the vanilla bodies are (tests: a body whose height changes after its bar was made). */
+    void bodyHeight(ToDoubleFunction<LivingEntity> height) {
+        this.bodyHeight = height;
     }
 
     /** The bar of a creature (tests). */
@@ -376,10 +410,7 @@ final class LaneSystemsModule implements SiegeModule {
                 entry = new Bar(creature, OverheadBar.at(session, barSpot(creature), name, colour, 0.75f));
                 Location packSpot = packBarSpot(creature);
                 if (packSpot != null) {
-                    if (packWatch == null) {
-                        packWatch = packs.subscribe(LaneSystemsModule.this::packChanged);
-                    }
-                    entry.bar().splitForPack(packs, packSpot);
+                    split(entry.bar(), packSpot);
                 }
                 // the bar carries the name: the vanilla name tag would sit right on it
                 creature.setCustomNameVisible(false);

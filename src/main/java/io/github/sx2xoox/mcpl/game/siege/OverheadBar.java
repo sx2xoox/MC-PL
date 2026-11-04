@@ -234,15 +234,19 @@ public final class OverheadBar {
         moveTo(to, null);
     }
 
-    /** Moves a standing bar, and its pack twin (when split) to {@code packTo}. */
+    /**
+     * Moves a standing bar, and its pack twin (when split) to {@code packTo}, or along with the bar to {@code to} when
+     * that is null (a twin is never left behind).
+     */
     public void moveTo(Location to, @Nullable Location packTo) {
         TextDisplay d = display;
         if (d != null && d.isValid() && d.getVehicle() == null && moved(d, to)) {
             d.teleport(to);
         }
         TextDisplay twin = packDisplay;
-        if (twin != null && packTo != null && twin.isValid() && moved(twin, packTo)) {
-            twin.teleport(packTo);
+        Location twinTo = packTo != null ? packTo : to;
+        if (twin != null && twin.isValid() && moved(twin, twinTo)) {
+            twin.teleport(twinTo);
         }
     }
 
