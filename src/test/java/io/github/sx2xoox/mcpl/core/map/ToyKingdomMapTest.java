@@ -35,8 +35,12 @@ import org.mockbukkit.mockbukkit.MockBukkit;
  */
 class ToyKingdomMapTest {
 
-    /** Most distinct block types (materials) a zone may use. */
-    private static final int PALETTE_BUDGET = 8;
+    /**
+     * Most distinct block types (materials) a zone may use: the floorboards, the two mints of the play mat and a
+     * handful of toy colours. The jungle has two more (a rug per camp and its soft toys: cotton candy, jelly).
+     */
+    private static final int PALETTE_BUDGET = 9;
+    private static final int JUNGLE_PALETTE_BUDGET = 11;
 
     private static ToyKingdomMap map;
     private static MapCanvas canvas;
@@ -50,11 +54,13 @@ class ToyKingdomMapTest {
     static void build() {
         MockBukkit.mock();
         map = new ToyKingdomMap();
+        long started = System.nanoTime();
         canvas = map.render();
+        System.out.println("[toykingdom] built in " + (System.nanoTime() - started) / 1_000_000 + " ms");
         LaneSites.Spot start = map.spawns(Side.BLUE).getFirst();
         int radius = (int) Math.ceil(Math.hypot(map.buildRadius(), ToyLayout.HALF_Z + 8));
         audit = new MapAudit(canvas, radius, ToyLayout::partOf);
-        report = audit.run(start.x(), start.z());
+        report = audit.run(start.x(), start.y(), start.z());
         blockFindings = new MapBlockChecks(canvas, ToyLayout::partOf).run();
         nodes = new HashMap<>();
         for (MapAudit.Node node : audit.nodes()) {
@@ -164,7 +170,8 @@ class ToyKingdomMapTest {
                     int z = s.z() + dz;
                     BlockSpec floor = canvas.get(x, s.y() - 1, z);
                     assertTrue(floor != null && MapBlocks.isFullCube(floor), s.id() + ": flat floor at " + x + "," + z);
-                    for (int y = s.y(); y <= s.y() + ToyLayout.CLEARANCE; y++) {
+                    int clearance = s.id().contains("core") ? ToyLayout.CORE_CLEARANCE : ToyLayout.CLEARANCE;
+                    for (int y = s.y(); y <= s.y() + clearance; y++) {
                         assertFalse(canvas.isSolid(x, y, z), s.id() + ": open at " + x + "," + y + "," + z);
                     }
                     assertTrue(reachable.contains(nodes.get(key(x, s.y(), z))), s.id() + ": reachable at " + x + ","
@@ -274,6 +281,94 @@ class ToyKingdomMapTest {
         }
     }
 
+    @Test
+    void theDropsStayAwayFromThePathsAndAreMarked() {
+        int r = map.buildRadius();
+        int drops = 0;
+        for (int x = -r; x <= r; x++) {
+            for (int z = -r; z <= r; z++) {
+                if (!ToyLayout.inCliff(x, z) || !ToyLayout.isInterior(x, z)) {
+                    continue;
+                }
+                drops++;
+                for (int y = canvas.minY(); y <= canvas.maxY(); y++) {
+                    BlockSpec spec = canvas.get(x, y, z);
+                    assertTrue(spec == null || spec.isAir() || ToyLayout.inDomeShell(x, y, z),
+                            "nothing in a drop below the dome at " + x + "," + y + "," + z);
+                }
+                String at = " near the drop at " + x + "," + z;
+                assertTrue(ToyLayout.laneDistance(ToyLayout.laneOf(z), x, z) >= ToyLayout.EDGE_HALF + 5,
+                        "a lane" + at);
+                for (LaneSites.Structure s : structures()) {
+                    assertTrue(Math.hypot(x - s.x(), z - s.z()) > s.radius() + 12, s.id() + at);
+                }
+                for (Side side : Side.values()) {
+                    for (LaneSites.Objective o : map.objectives(side)) {
+                        assertTrue(Math.hypot(x - o.x(), z - o.z()) > o.radius() + 16, o.id() + at);
+                    }
+                    for (LaneSites.Spot spot : map.spawns(side)) {
+                        assertTrue(Math.hypot(x - spot.x(), z - spot.z()) > 40, "a spawn" + at);
+                    }
+                    assertTrue(Math.hypot(x - map.shop(side).x(), z - map.shop(side).z()) > 40, "the shop" + at);
+                }
+                assertTrue(Math.hypot(x, z) > map.epic().radius() + 24, "the dragon" + at);
+            }
+        }
+        assertTrue(drops > 0, "the map has drops");
+        // Every walkable column at the edge of a drop is striped red and white.
+        for (MapAudit.Node node : reachable) {
+            if (!ToyLayout.onCliffEdge(node.x(), node.z()) || !ToyLayout.isInterior(node.x(), node.z())) {
+                continue;
+            }
+            Material floor = canvas.get(node.x(), node.y() - 1, node.z()).material();
+            assertTrue(floor == Material.RED_CONCRETE || floor == Material.WHITE_CONCRETE,
+                    "warning stripes at " + node + ": " + floor);
+        }
+    }
+
+    @Test
+    void theDomeIsGlassSoTheKingdomStaysBright() {
+        int r = map.buildRadius();
+        int shell = 0;
+        for (int x = -r; x <= r; x++) {
+            for (int z = -r; z <= r; z++) {
+                for (int y = ToyLayout.GROUND_Y + 1; y <= canvas.maxY(); y++) {
+                    if (!ToyLayout.inDomeShell(x, y, z)) {
+                        continue;
+                    }
+                    shell++;
+                    BlockSpec spec = canvas.get(x, y, z);
+                    assertNotNull(spec, "the dome is closed at " + x + "," + y + "," + z);
+                    if (!spec.material().name().contains("GLASS")) {
+                        assertTrue(Math.hypot(x, z) <= ToyLayout.CLOCK_RADIUS, "only the clock is not glass: "
+                                + spec + " at " + x + "," + y + "," + z);
+                    }
+                }
+            }
+        }
+        System.out.println("[toykingdom] dome shell: " + shell + " blocks");
+        // Nothing of the kingdom pokes through the glass.
+        canvas.forEach((x, y, z, spec) -> assertTrue(y <= ToyLayout.GROUND_Y || ToyLayout.inDomeShell(x, y, z)
+                || ToyLayout.insideDome(x, y, z), "outside the dome: " + spec + " at " + x + "," + y + "," + z));
+    }
+
+    @Test
+    void theRoadsStayClearForTheMinions() {
+        // Nothing stands on a road or its white edge (the minions march up to 3.5 blocks off the centre line).
+        int r = map.buildRadius();
+        for (int x = -r; x <= r; x++) {
+            for (int z = -r; z <= r; z++) {
+                if (ToyLayout.inCastle(x, z) || !ToyLayout.isInterior(x, z)
+                        || ToyLayout.laneDistance(ToyLayout.laneOf(z), x, z) > ToyLayout.EDGE_HALF) {
+                    continue;
+                }
+                for (int y = ToyLayout.GROUND_Y + 1; y <= ToyLayout.GROUND_Y + 4; y++) {
+                    assertFalse(canvas.isSolid(x, y, z), "an obstacle on the road at " + x + "," + y + "," + z);
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ the whole map
 
     @Test
@@ -352,17 +447,18 @@ class ToyKingdomMapTest {
     @Test
     void eachZoneKeepsToAFewBlockTypes() {
         Map<String, Set<Material>> palettes = new TreeMap<>();
-        canvas.forEach((x, y, z, spec) -> palettes.computeIfAbsent(ToyLayout.partOf(x, z), k -> new TreeSet<>())
-                .add(spec.material()));
+        canvas.forEach((x, y, z, spec) -> palettes.computeIfAbsent(ToyLayout.inDomeShell(x, y, z) ? "dome"
+                : ToyLayout.partOf(x, z), k -> new TreeSet<>()).add(spec.material()));
         palettes.forEach((zone, palette) -> System.out.println("[toykingdom] palette " + zone + " (" + palette.size()
                 + "): " + palette));
-        assertEquals(Set.of("border", "blue-castle", "red-castle", "top-lane", "bottom-lane", "jungle", "river"),
-                palettes.keySet());
-        palettes.forEach((zone, palette) -> assertTrue(palette.size() <= PALETTE_BUDGET,
+        assertEquals(Set.of("border", "blue-castle", "red-castle", "top-lane", "bottom-lane", "jungle", "river",
+                "dome"), palettes.keySet());
+        palettes.forEach((zone, palette) -> assertTrue(palette.size() <= (zone.equals("jungle")
+                ? JUNGLE_PALETTE_BUDGET : PALETTE_BUDGET),
                 zone + " uses " + palette.size() + " block types: " + palette));
         Set<Material> all = new TreeSet<>();
         palettes.values().forEach(all::addAll);
-        assertTrue(all.size() <= 14, "the whole map uses " + all.size() + " block types: " + all);
+        assertTrue(all.size() <= 20, "the whole map uses " + all.size() + " block types: " + all);
     }
 
     @Test

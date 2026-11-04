@@ -33,7 +33,7 @@ public final class ToyLayout {
     /** Top of the ground everywhere (the dragon's sandbox and the river are one lower). */
     public static final int GROUND_Y = 64;
     public static final int MIN_Y = GROUND_Y - 5;
-    public static final int MAX_Y = GROUND_Y + 32;
+    public static final int MAX_Y = GROUND_Y + 66;
     /** Blocks the map builds on each side of the centre (the canvas). */
     public static final int BUILD_RADIUS = 106;
 
@@ -54,22 +54,32 @@ public final class ToyLayout {
     public static final int CASTLE_BACK = 96;
     public static final int CASTLE_HALF_Z = 18;
     /** Height of the castle walls above the ground (the white top band included). */
-    public static final int WALL_HEIGHT = 5;
+    public static final int WALL_HEIGHT = 7;
     /** The castle zone: the box and a strip of lawn around it. */
     public static final int CASTLE_ZONE_FRONT = 62;
     public static final int CASTLE_ZONE_HALF_Z = 21;
-    /** The core in the courtyard. */
+    /** The core in the courtyard: its stage (open within the radius) and the free height over it. */
     public static final int CORE_AX = 80;
-    public static final int CORE_RADIUS = 6;
+    public static final int CORE_RADIUS = 10;
+    public static final int CORE_CLEARANCE = 36;
     /** The lane gates (north and south walls) around {@code |x| = GATE_AX}, the front gate around {@code z = 0}. */
     public static final int GATE_AX = 80;
     public static final int GATE_HALF = 3;
-    /** The spawn mat behind the core, and the shop counter in the back corner. */
-    public static final int SPAWN_AX1 = 88;
+    /**
+     * The two spawn mats beside the stage, right inside the lane gates ({@code |x|} SPAWN_AX1..SPAWN_AX2,
+     * {@code |z|} SPAWN_Z1..SPAWN_Z2), and the shop stall at the back of the courtyard behind the core.
+     */
+    public static final int SPAWN_AX1 = 85;
     public static final int SPAWN_AX2 = 93;
-    public static final int SPAWN_HALF_Z = 7;
-    public static final int SHOP_AX = 90;
-    public static final int SHOP_Z = -9;
+    public static final int SPAWN_Z1 = 12;
+    public static final int SPAWN_Z2 = 16;
+    /** The spawn spots on each mat ({@code |x|}, {@code |z|}). */
+    public static final int[] SPAWN_SPOT_AX = {86, 91};
+    public static final int[] SPAWN_SPOT_AZ = {13, 15};
+    public static final int SHOP_AX = 91;
+    public static final int SHOP_Z = 0;
+    /** The checkered half disc in front of the front gate (centred on the wall at {@code z = 0}). */
+    public static final double FRONT_PLAZA_RADIUS = 7.5;
 
     // ------------------------------------------------------------------ lanes
 
@@ -91,7 +101,7 @@ public final class ToyLayout {
     /** Team coloured ring around a tower plaza (where its defence zone ends). */
     public static final double RING_OUTER = 9;
     public static final double TOWER_ZONE = 11.5;
-    /** Free height over towers and cores (LaneSites contract). */
+    /** Free height over towers (LaneSites contract; the core has {@link #CORE_CLEARANCE}). */
     public static final int CLEARANCE = 20;
 
     // ------------------------------------------------------------------ middle
@@ -108,6 +118,70 @@ public final class ToyLayout {
     public static final int RIVER_ZONE_HALF_X = 6;
     public static final int RIVER_ZONE_HALF_Z = 43;
     public static final double RIVER_ZONE_RADIUS = 16;
+
+    // ------------------------------------------------------------------ hazards
+
+    /**
+     * The drops: in the middle of each lane the play mat ends in a cliff beyond the outer verge (|x| <= CLIFF_HALF_X):
+     * no hedge, no floor, nothing but the void below. The last row before it is striped as a warning.
+     */
+    public static final int CLIFF_HALF_X = 12;
+    /** The cliff starts this far inside the outline (the verge is 5.5 blocks wide there). */
+    public static final double CLIFF_INSET = 2;
+
+    /** True for the columns of a drop (no blocks at all in the column, up to the dome). */
+    public static boolean inCliff(int x, int z) {
+        return Math.abs(x) <= CLIFF_HALF_X && outline(x, z) > -CLIFF_INSET;
+    }
+
+    /** True for the striped warning row along a drop's edge. */
+    public static boolean onCliffEdge(int x, int z) {
+        if (Math.abs(x) > CLIFF_HALF_X + 1 || inCliff(x, z)) {
+            return false;
+        }
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (inCliff(x + dx, z + dz)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------------ the glass dome
+
+    /**
+     * The glass dome over the kingdom, like a snow globe: its foot stands on the outer edge of the floor (the outline
+     * plus {@code DOME_FOOT}); across the map its section is a half superellipse ({@code u^3 + h^2 <= 1}) of
+     * {@code DOME_HALF_WIDTH} by {@code DOME_HEIGHT}, so it rises steeply at the edge and is flat and high over the
+     * middle (high enough over the cores' stages).
+     */
+    public static final double DOME_FOOT = HEDGE_WIDTH + 0.5;
+    public static final double DOME_HALF_WIDTH = HALF_Z + DOME_FOOT;
+    public static final int DOME_HEIGHT = 62;
+    /** The clock face on the top of the dome, centred over the dragon. */
+    public static final double CLOCK_RADIUS = 21.5;
+
+    /** True inside the dome (the air and everything under the glass), for {@code y} above the ground. */
+    public static boolean insideDome(int x, int y, int z) {
+        double inset = DOME_FOOT - outline(x, z);
+        if (inset < 0) {
+            return false;
+        }
+        double u = Math.max(0, DOME_HALF_WIDTH - inset) / DOME_HALF_WIDTH;
+        double h = (y - GROUND_Y) / (double) DOME_HEIGHT;
+        return u * u * u + h * h < 1;
+    }
+
+    /** True for the blocks of the dome's shell: inside, next to the outside (never on or under the ground). */
+    public static boolean inDomeShell(int x, int y, int z) {
+        if (y <= GROUND_Y || !insideDome(x, y, z)) {
+            return false;
+        }
+        return !insideDome(x + 1, y, z) || !insideDome(x - 1, y, z) || !insideDome(x, y + 1, z)
+                || !insideDome(x, y, z + 1) || !insideDome(x, y, z - 1);
+    }
 
     // ------------------------------------------------------------------ outline helpers
 
@@ -128,6 +202,12 @@ public final class ToyLayout {
     public static boolean inCastle(int x, int z) {
         int ax = Math.abs(x);
         return ax >= CASTLE_FRONT && ax <= CASTLE_BACK && Math.abs(z) <= CASTLE_HALF_Z;
+    }
+
+    /** True on the checkered half disc in front of a castle's front gate (outside the wall). */
+    public static boolean onFrontPlaza(int x, int z) {
+        int ax = Math.abs(x);
+        return ax < CASTLE_FRONT && Math.hypot(ax - CASTLE_FRONT, z) <= FRONT_PLAZA_RADIUS;
     }
 
     /** True inside a castle's courtyard (inside the two-block walls). */

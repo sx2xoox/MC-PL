@@ -13,8 +13,9 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
  * symmetric. The BLUE castle (light blue, −x) and the RED castle (pink, +x) hold the cores; the TOP lane (yellow brick
  * road, −z) and the BOTTOM lane (light blue brick road, +z) bend out from the castles' lane gates along the edge of
  * the kingdom, two towers per side on each; the jungle between the lanes has six objective clearings per side, the
- * river runs along the middle and the toy dragon's sandbox sits in the exact centre. See {@link ToyLayout} for the
- * plan.
+ * river runs along the middle and the toy dragon's sandbox sits in the exact centre. The kingdom is a play mat on a
+ * wooden floor under a glass dome with a giant clock on top, like a toy world kept in a snow globe; in the middle of
+ * each lane the mat ends in a drop into the void beyond the outer verge. See {@link ToyLayout} for the plan.
  */
 public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
@@ -27,7 +28,8 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
             new ToyLaneZone(Lane.TOP),
             new ToyLaneZone(Lane.BOTTOM),
             new ToyJungleZone(),
-            new ToyRiverZone());
+            new ToyRiverZone(),
+            new ToyDomeZone());
 
     /** The objective sites of the BLUE half: kind, Korean name, x, z, radius (RED mirrors x). */
     private record Site(ObjectiveKind kind, String name, int x, int z, int radius) {
@@ -89,7 +91,7 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
 
     @Override
     public int version() {
-        return 1;
+        return 2;
     }
 
     /** The zones in build order (exposed for tests and previews). */
@@ -111,8 +113,9 @@ public final class ToyKingdomMap implements ArenaMap, LaneSites {
         int sx = ToyLayout.sign(side);
         float yaw = side == Side.BLUE ? -90 : 90;
         List<Spot> spots = new ArrayList<>();
-        for (int ax : new int[] {ToyLayout.SPAWN_AX1 + 1, ToyLayout.SPAWN_AX2 - 1}) {
-            for (int z : new int[] {-6, -2, 2, 6}) {
+        for (int ax : ToyLayout.SPAWN_SPOT_AX) {
+            int[] az = ToyLayout.SPAWN_SPOT_AZ;
+            for (int z : new int[] {-az[1], -az[0], az[0], az[1]}) {
                 spots.add(new Spot(sx * ax, G + 1, z, yaw));
             }
         }

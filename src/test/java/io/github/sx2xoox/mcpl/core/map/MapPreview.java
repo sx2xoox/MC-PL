@@ -457,6 +457,7 @@ public final class MapPreview {
             case "DARK_OAK_LOG", "DARK_OAK_WOOD" -> new Color(60, 46, 28);
             case "BIRCH_LOG", "BIRCH_WOOD" -> new Color(215, 210, 200);
             case "HAY_BLOCK" -> new Color(200, 170, 40);
+            case "SPONGE" -> new Color(205, 195, 85);
             case "TERRACOTTA" -> new Color(150, 92, 66);
             case "CLAY" -> new Color(160, 166, 178);
             case "MUD" -> new Color(60, 55, 60);

@@ -80,7 +80,19 @@ public final class MapAudit {
     /** Runs every check; {@code startX, startZ} is where players are assumed to start (the center). */
     public Report run(int startX, int startZ) {
         collectNodes();
-        Node start = highestNode(startX, startZ);
+        return run(highestNode(startX, startZ), startX, startZ);
+    }
+
+    /**
+     * Runs the audit from the place to stand at {@code startX, startY, startZ} (feet), for maps with a roof over the
+     * start (the highest place of its column is on the roof).
+     */
+    public Report run(int startX, int startY, int startZ) {
+        collectNodes();
+        return run(nodes.get(key(startX, startY, startZ)), startX, startZ);
+    }
+
+    private Report run(@Nullable Node start, int startX, int startZ) {
         List<String> problems = blockProblems();
         if (start == null) {
             problems.add("no place to stand at the start column " + startX + "," + startZ);

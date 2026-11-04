@@ -7,9 +7,10 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import org.bukkit.Material;
 
 /**
- * The few blocks of 장난감 왕국 and the shared pieces: the ground of every column and the toy props (ball bushes,
- * hedges, candy canes, toy blocks, cone roofs). Props are placed in quarter coordinates ({@code ax, az >= 0}) through a
- * {@link Quarter}, so both halves (and both lanes) are mirror images.
+ * The blocks of 장난감 왕국 and the shared pieces: the floor of every column (a mint play mat of big tiles on wooden
+ * floorboards) and the toy props (toy brick walls, cotton candy and sponge balls, candy canes, lollipop lamps, toy
+ * blocks). Props are placed in quarter coordinates ({@code ax, az >= 0}) through a {@link Quarter}, so both halves (and
+ * both lanes) are mirror images.
  */
 final class ToyKit {
 
@@ -18,19 +19,28 @@ final class ToyKit {
 
     static final int G = ToyLayout.GROUND_Y;
 
-    static final BlockSpec GRASS = BlockSpec.of(Material.GRASS_BLOCK);
-    static final BlockSpec DIRT = BlockSpec.of(Material.DIRT);
-    static final BlockSpec HEDGE = BlockSpec.of(Material.OAK_LEAVES);
+    /** The play mat: big tiles of two mints. */
+    static final BlockSpec MAT = BlockSpec.of(Material.LIME_WOOL);
+    static final BlockSpec MAT_TILE = BlockSpec.of(Material.LIME_CONCRETE);
+    /** Wooden floorboards: the room's floor around the mat, under it, the courtyards and the sandbox frame. */
+    static final BlockSpec WOOD = BlockSpec.of(Material.BIRCH_PLANKS);
     static final BlockSpec WHITE = BlockSpec.of(Material.WHITE_CONCRETE);
     static final BlockSpec YELLOW = BlockSpec.of(Material.YELLOW_CONCRETE);
     static final BlockSpec SKY = BlockSpec.of(Material.LIGHT_BLUE_CONCRETE);
     static final BlockSpec PINK = BlockSpec.of(Material.PINK_CONCRETE);
     static final BlockSpec BLUE = BlockSpec.of(Material.BLUE_CONCRETE);
     static final BlockSpec RED = BlockSpec.of(Material.RED_CONCRETE);
-    static final BlockSpec WOOD = BlockSpec.of(Material.BIRCH_PLANKS);
     static final BlockSpec SAND = BlockSpec.of(Material.SAND);
     static final BlockSpec WATER = BlockSpec.of(Material.WATER);
     static final BlockSpec JELLY = BlockSpec.of(Material.SLIME_BLOCK);
+    /** Soft toys: cotton candy (pink wool) and sponge. */
+    static final BlockSpec COTTON = BlockSpec.of(Material.PINK_WOOL);
+    static final BlockSpec SPONGE = BlockSpec.of(Material.SPONGE);
+    /** The glowing sweet in the middle of a lollipop lamp (and the clock's hour marks). */
+    static final BlockSpec GLOW = BlockSpec.of(Material.PEARLESCENT_FROGLIGHT);
+
+    /** The colours of toy bricks, in turn. */
+    static final BlockSpec[] TOY_COLOURS = {PINK, YELLOW, SKY, WHITE};
 
     /** The road colour of a lane: TOP the yellow brick road, BOTTOM the light blue one. */
     static BlockSpec road(Lane lane) {
@@ -48,23 +58,40 @@ final class ToyKit {
 
     // ------------------------------------------------------------------ ground
 
-    /** Builds the ground of one column: dirt under a top block chosen by the plan. */
+    /** The play mat at a column: 4 x 4 tiles of two mints. */
+    static BlockSpec mat(int x, int z) {
+        return Math.floorMod(Math.floorDiv(x, 4) + Math.floorDiv(z, 4), 2) == 0 ? MAT : MAT_TILE;
+    }
+
+    /** Builds the ground of one column: floorboards under a top block chosen by the plan (nothing over a drop). */
     static void ground(MapCanvas canvas, int x, int z) {
         double out = ToyLayout.outline(x, z);
-        if (out > ToyLayout.HEDGE_WIDTH + ToyLayout.APRON_WIDTH) {
+        if (out > ToyLayout.HEDGE_WIDTH + ToyLayout.APRON_WIDTH || ToyLayout.inCliff(x, z)) {
             return;
         }
         for (int y = G - 3; y < G; y++) {
-            canvas.set(x, y, z, DIRT);
+            canvas.set(x, y, z, WOOD);
+        }
+        if (ToyLayout.onCliffEdge(x, z)) {
+            // Red and white warning stripes along the edge of a drop.
+            canvas.set(x, G, z, Math.floorMod(x + z, 2) == 0 ? RED : WHITE);
+            return;
         }
         if (out > 0) {
-            canvas.set(x, G, z, GRASS);
+            canvas.set(x, G, z, WOOD);
             return;
         }
         Side side = ToyLayout.sideOf(x);
         int ax = Math.abs(x);
         if (ToyLayout.inCastle(x, z)) {
             canvas.set(x, G, z, castleFloor(side, ax, z));
+            return;
+        }
+        if (ToyLayout.onFrontPlaza(x, z)) {
+            // A checkerboard mat in the side's pastel and white, like a toy board at the castle's door; the lowered
+            // drawbridge (floorboards) runs across it from the gate.
+            boolean bridge = Math.abs(z) <= ToyLayout.GATE_HALF - 1 && ax >= ToyLayout.CASTLE_ZONE_FRONT;
+            canvas.set(x, G, z, bridge ? WOOD : Math.floorMod(ax + z, 2) == 0 ? WHITE : pastel(side));
             return;
         }
         double centre = ToyLayout.centre(x, z);
@@ -94,24 +121,52 @@ final class ToyKit {
         } else if (d <= ToyLayout.EDGE_HALF) {
             top = WHITE;
         } else {
-            top = GRASS;
+            top = mat(x, z);
         }
         canvas.set(x, G, z, top);
     }
 
-    /** The courtyard floor: wooden boards, the core's white plate in a team ring, the spawn mat. */
+    /**
+     * The courtyard floor: the core's stage (a white plate with a pastel ring, rimmed in the team colour and white),
+     * carpets in the team colour from the gates to the stage, the spawn mats (pastel, white spots, a team coloured
+     * frame) and a checker of floorboards and white tiles everywhere else.
+     */
     private static BlockSpec castleFloor(Side side, int ax, int z) {
+        int az = Math.abs(z);
         double core = Math.hypot(ax - ToyLayout.CORE_AX, z);
-        if (core <= ToyLayout.CORE_RADIUS + 0.5) {
-            return WHITE;
+        double r = ToyLayout.CORE_RADIUS;
+        if (core <= r + 0.5) {
+            return core > r - 3.5 && core <= r - 2.5 ? pastel(side) : WHITE;
         }
-        if (core <= ToyLayout.CORE_RADIUS + 1.5) {
+        if (core <= r + 1.5) {
             return strong(side);
         }
-        if (ax >= ToyLayout.SPAWN_AX1 && ax <= ToyLayout.SPAWN_AX2 && Math.abs(z) <= ToyLayout.SPAWN_HALF_Z) {
-            return pastel(side);
+        if (core <= r + 2.5) {
+            return WHITE;
         }
-        return WOOD;
+        boolean frontCarpet = ax < ToyLayout.CORE_AX && az <= 1;
+        boolean laneCarpet = Math.abs(ax - ToyLayout.GATE_AX) <= 1;
+        if (frontCarpet || laneCarpet) {
+            return strong(side);
+        }
+        if (ax >= ToyLayout.SPAWN_AX1 && ax <= ToyLayout.SPAWN_AX2 && az >= ToyLayout.SPAWN_Z1
+                && az <= ToyLayout.SPAWN_Z2) {
+            boolean spot = contains(ToyLayout.SPAWN_SPOT_AX, ax) && contains(ToyLayout.SPAWN_SPOT_AZ, az);
+            return spot ? WHITE : pastel(side);
+        }
+        if (ax >= ToyLayout.SPAWN_AX1 - 1 && ax <= ToyLayout.SPAWN_AX2 + 1 && az >= ToyLayout.SPAWN_Z1 - 1) {
+            return strong(side);
+        }
+        return Math.floorMod(Math.floorDiv(ax, 2) + Math.floorDiv(z, 2), 2) == 0 ? WOOD : WHITE;
+    }
+
+    private static boolean contains(int[] values, int value) {
+        for (int v : values) {
+            if (v == value) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ quarters
@@ -139,10 +194,22 @@ final class ToyKit {
     // ------------------------------------------------------------------ props
 
     /**
-     * A hedge along a segment in quarter coordinates: three blocks high, two at its rounded edge, so nobody hops onto
-     * it.
+     * A column of a toy brick wall: {@code height} blocks of {@code colour}, the top course studded with white every
+     * other block (by the real column, so walls of both halves look alike).
      */
-    static void hedge(MapCanvas canvas, Quarter q, double ax1, double az1, double ax2, double az2, double radius) {
+    static void brick(MapCanvas canvas, int x, int z, int height, BlockSpec colour) {
+        for (int i = 1; i <= height; i++) {
+            boolean stud = i == height && Math.floorMod(x + z, 2) == 0;
+            canvas.set(x, G + i, z, stud ? WHITE : colour);
+        }
+    }
+
+    /**
+     * A toy brick wall along a segment in quarter coordinates: three blocks high, two at its rounded edge, so nobody
+     * hops onto it.
+     */
+    static void wall(MapCanvas canvas, Quarter q, double ax1, double az1, double ax2, double az2, double radius,
+                     BlockSpec colour) {
         int minX = (int) Math.floor(Math.min(ax1, ax2) - radius);
         int maxX = (int) Math.ceil(Math.max(ax1, ax2) + radius);
         int minZ = (int) Math.floor(Math.min(az1, az2) - radius);
@@ -153,16 +220,13 @@ final class ToyKit {
                 if (d > radius) {
                     continue;
                 }
-                int height = d <= radius - 1 ? 3 : 2;
-                for (int y = G + 1; y <= G + height; y++) {
-                    q.set(canvas, ax, y, az, HEDGE);
-                }
+                brick(canvas, q.x(ax), q.z(az), d <= radius - 1 ? 3 : 2, colour);
             }
         }
     }
 
-    /** A round bush resting on the ground (a squashed ball of leaves). */
-    static void ball(MapCanvas canvas, Quarter q, int ax, int az, double radius) {
+    /** A soft round toy resting on the ground (a squashed ball), of cotton candy or sponge. */
+    static void ball(MapCanvas canvas, Quarter q, int ax, int az, double radius, BlockSpec spec) {
         int r = (int) Math.ceil(radius);
         double height = radius * 0.9;
         for (int dx = -r; dx <= r; dx++) {
@@ -172,7 +236,29 @@ final class ToyKit {
                     double nx = dx / (radius + 0.25);
                     double nz = dz / (radius + 0.25);
                     if (nx * nx + ny * ny + nz * nz <= 1) {
-                        q.set(canvas, ax + dx, G + 1 + dy, az + dz, HEDGE);
+                        q.set(canvas, ax + dx, G + 1 + dy, az + dz, spec);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * A cotton candy tree: a white stick of {@code stick} blocks and a pink cotton ball of {@code radius} on it, high
+     * enough to walk under.
+     */
+    static void cottonCandy(MapCanvas canvas, Quarter q, int ax, int az, int stick, double radius) {
+        for (int i = 1; i <= stick; i++) {
+            q.set(canvas, ax, G + i, az, WHITE);
+        }
+        int r = (int) Math.ceil(radius);
+        int cy = G + stick + r;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
+                for (int dy = -r; dy <= r; dy++) {
+                    double ny = dy / (radius * 0.8);
+                    if (dx * dx / (radius * radius) + dz * dz / (radius * radius) + ny * ny <= 1) {
+                        q.set(canvas, ax + dx, cy + dy, az + dz, COTTON);
                     }
                 }
             }
@@ -196,15 +282,54 @@ final class ToyKit {
         q.set(canvas, hx, top, hz, height % 2 == 0 ? RED : WHITE);
     }
 
+    /**
+     * A lollipop lamp: a white stick of {@code height} with a round sweet on top (a 3 x 3 disc across x, red and white
+     * swirl around a glowing middle), so the verges are lit at night too.
+     */
+    static void lollipop(MapCanvas canvas, Quarter q, int ax, int az, int height) {
+        for (int i = 1; i <= height; i++) {
+            q.set(canvas, ax, G + i, az, WHITE);
+        }
+        int cy = G + height + 2;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                BlockSpec spec = dx == 0 && dy == 0 ? GLOW : (dx + dy + 2) % 2 == 0 ? WHITE : RED;
+                q.set(canvas, ax + dx, cy + dy, az, spec);
+            }
+        }
+    }
+
     /** A toy building block: a cube of {@code size} with its low corner at {@code ax, y, az}. */
     static void toyBlock(MapCanvas canvas, Quarter q, int ax, int y, int az, int size, BlockSpec spec) {
-        for (int dx = 0; dx < size; dx++) {
-            for (int dz = 0; dz < size; dz++) {
-                for (int dy = 0; dy < size; dy++) {
+        box(canvas, q, ax, y, az, size, size, size, spec);
+    }
+
+    /** A box of {@code sx} by {@code sy} by {@code sz} blocks with its low corner at {@code ax, y, az}. */
+    static void box(MapCanvas canvas, Quarter q, int ax, int y, int az, int sx, int sy, int sz, BlockSpec spec) {
+        for (int dx = 0; dx < sx; dx++) {
+            for (int dz = 0; dz < sz; dz++) {
+                for (int dy = 0; dy < sy; dy++) {
                     q.set(canvas, ax + dx, y + dy, az + dz, spec);
                 }
             }
         }
+    }
+
+    /**
+     * A toy box: a chest of {@code colour} with a white rim and lid edge, {@code sx} by {@code sz} and {@code height}
+     * high, a few toy blocks peeking out of the top.
+     */
+    static void toyBox(MapCanvas canvas, Quarter q, int ax, int az, int sx, int sz, int height, BlockSpec colour) {
+        for (int dx = 0; dx < sx; dx++) {
+            for (int dz = 0; dz < sz; dz++) {
+                boolean edge = dx == 0 || dz == 0 || dx == sx - 1 || dz == sz - 1;
+                for (int y = G + 1; y <= G + height; y++) {
+                    q.set(canvas, ax + dx, y, az + dz, y == G + height && edge ? WHITE : colour);
+                }
+            }
+        }
+        q.set(canvas, ax + 1, G + height + 1, az + 1, YELLOW);
+        q.set(canvas, ax + sx - 2, G + height + 1, az + sz - 2, SKY);
     }
 
     /** Distance from a point to a segment. */

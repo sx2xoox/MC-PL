@@ -52,10 +52,16 @@ class MapPreviewRender {
                 SiegeGuideMap.write(map, canvas, new File(out, "siege-guide.png"));
             }
             if (only.isEmpty() || only.equals("toykingdom")) {
+                // The kingdom under its glass dome (the views would show only glass), then the dome itself.
                 ToyKingdomMap map = new ToyKingdomMap();
                 int r = map.buildRadius();
-                MapCanvas canvas = render(map, map.zones(), zoneName, out, -r, -68, r, 68, 0, 6, (x, z) -> true);
+                ArenaMap open = new WithoutZone(map, map.zones(), "dome");
+                List<MapZone> zones = map.zones().stream().filter(z -> !z.name().equals("dome")).toList();
+                MapCanvas canvas = render(open, zones, zoneName, out, -r, -68, r, 68, 0, 6, (x, z) -> true);
                 ToyKingdomGuideMap.write(map, canvas, new File(out, "toykingdom-guide.png"));
+                MapPreview domed = new MapPreview(map.render());
+                MapPreview.write(domed.isometric(-r, -r, r, r, 6, (x, z) -> true),
+                        new File(out, "toykingdom-dome-iso.png"));
             }
         } finally {
             MockBukkit.unmock();
@@ -102,5 +108,68 @@ class MapPreviewRender {
             }
         }
         return new int[] {minX - 2, minZ - 2, maxX + 2, maxZ + 2};
+    }
+
+    /** A map built without one of its zones (for previews of what lies under a roof). */
+    private record WithoutZone(ArenaMap map, List<MapZone> zones, String left) implements ArenaMap {
+
+        @Override
+        public String id() {
+            return map.id();
+        }
+
+        @Override
+        public String displayName() {
+            return map.displayName();
+        }
+
+        @Override
+        public String description() {
+            return map.description();
+        }
+
+        @Override
+        public int playRadius() {
+            return map.playRadius();
+        }
+
+        @Override
+        public int buildRadius() {
+            return map.buildRadius();
+        }
+
+        @Override
+        public int groundY() {
+            return map.groundY();
+        }
+
+        @Override
+        public int minY() {
+            return map.minY();
+        }
+
+        @Override
+        public int maxY() {
+            return map.maxY();
+        }
+
+        @Override
+        public long seed() {
+            return map.seed();
+        }
+
+        @Override
+        public int version() {
+            return map.version();
+        }
+
+        @Override
+        public void build(MapCanvas canvas) {
+            for (MapZone zone : zones) {
+                if (!zone.name().equals(left)) {
+                    zone.build(canvas.restrictTo(zone::contains, zone.name()));
+                }
+            }
+        }
     }
 }

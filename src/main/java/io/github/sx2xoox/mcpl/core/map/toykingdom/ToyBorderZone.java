@@ -1,13 +1,14 @@
 package io.github.sx2xoox.mcpl.core.map.toykingdom;
 
-import static io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.G;
-
+import io.github.sx2xoox.mcpl.core.map.BlockSpec;
 import io.github.sx2xoox.mcpl.core.map.MapCanvas;
 import io.github.sx2xoox.mcpl.core.map.MapZone;
 
 /**
- * The edge of the kingdom: a three block hedge all around the walkable area (nobody hops over it), and a strip of
- * lawn behind it so whoever is thrown over lands softly and is not at the void's edge.
+ * The edge of the kingdom: a wall of toy blocks (3 x 3 cells in pink, yellow, light blue and white, three high, two at
+ * its outer rim) all around the walkable area, the foot of the glass dome standing on its rim, and the wooden
+ * floorboards of the room beyond, outside the dome. In the middle of each lane the wall and the floor are cut away
+ * (the drops, see {@link ToyLayout#inCliff}).
  */
 final class ToyBorderZone implements MapZone {
 
@@ -31,13 +32,16 @@ final class ToyBorderZone implements MapZone {
                 }
                 ToyKit.ground(canvas, x, z);
                 double out = ToyLayout.outline(x, z);
-                if (out <= ToyLayout.HEDGE_WIDTH) {
-                    int height = out <= ToyLayout.HEDGE_WIDTH - 1 ? 3 : 2;
-                    for (int y = G + 1; y <= G + height; y++) {
-                        canvas.set(x, y, z, ToyKit.HEDGE);
-                    }
+                if (out <= ToyLayout.HEDGE_WIDTH && !ToyLayout.inCliff(x, z)) {
+                    ToyKit.brick(canvas, x, z, out <= ToyLayout.HEDGE_WIDTH - 1 ? 3 : 2, colour(x, z));
                 }
             }
         }
+    }
+
+    /** The colour of the toy block wall at a column: 3 x 3 cells of the toy colours. */
+    static BlockSpec colour(int x, int z) {
+        int cell = Math.floorDiv(x, 3) + Math.floorDiv(z, 3);
+        return ToyKit.TOY_COLOURS[Math.floorMod(cell, ToyKit.TOY_COLOURS.length)];
     }
 }

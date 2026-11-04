@@ -374,6 +374,14 @@ public final class SiegeBots implements SiegeModule, Listener {
             return;
         }
         WanderingTrader walker = bot.legs;
+        if (walker.getY() < match.fallLine()) {
+            // Knocked off the map (a drop): the body dies at once, the kill going to its last attacker (onDeath).
+            Mannequin body = bot.body;
+            if (body != null) {
+                body.setHealth(0);
+            }
+            return;
+        }
         mover.tick(walker);
         if ((now + bot.id.hashCode()) % 20 == 0) {
             second(bot, now);

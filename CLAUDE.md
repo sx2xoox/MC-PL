@@ -60,7 +60,8 @@ src/main/java/io/github/sx2xoox/mcpl/
                                objectives, dragon, regions; docs/siege-v2.md)
       toykingdom/              장난감 왕국 (공성전 v2 map, pastel, mirror symmetric): ToyLayout (the plan + geometry),
                                ToyKit (ground, props), ToyKingdomMap (ArenaMap + LaneSites) + one MapZone per part
-                               (border, castles, lanes, jungle, river); ToyKingdomMapTest (sites, paths, symmetry, palette)
+                               (border, castles, lanes, jungle, river, glass dome); ToyKingdomMapTest (sites, paths, drops,
+                               symmetry, palette); previews leave the dome out (toykingdom-dome-iso.png shows it)
     world/                     throw-away match worlds (TempWorlds: create/dispose/leftovers, WorldProvider, ChunkPregen)
     pack/                      MCPL resource pack: ResourcePackService (resource-pack.*, built-in HTTP host, per-player
                                PackAudience status), PackBuilder + BBModelConverter (build time), ModelRef (item_model),

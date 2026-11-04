@@ -7,13 +7,18 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites.Side;
 import io.github.sx2xoox.mcpl.core.map.toykingdom.ToyKit.Quarter;
 
 /**
- * One lane: the coloured brick road with white edges on a lawn, a round plaza in the road's colour for every tower
- * (ringed in the owner's colour), a pair of candy canes at each plaza and a few round bushes on the verges.
+ * One lane: the coloured brick road with white edges on the play mat, a round plaza in the road's colour for every
+ * tower (ringed in the owner's colour), a pair of candy canes at each plaza, a few round sponge bushes on the verges
+ * and a row of lollipop lamps along the outer verge.
  */
 final class ToyLaneZone implements MapZone {
 
-    /** Round bushes on the verges, in quarter coordinates of the BLUE half's TOP lane: {ax along, side, radius}. */
+    /** Sponge bushes on the verges, in quarter coordinates of the BLUE half's TOP lane: {ax along, side, radius}. */
     private static final double[][] BUSHES = {{14, 1, 2.2}, {50, -1, 2}, {54, 1, 2.4}};
+    /** Lollipop lamps on the outer verge (towards the edge), at these {@code |x|} of the lane's centre line. */
+    private static final int[] LAMPS = {8, 19, 41, 60};
+    /** How far a lamp stands from the lane's centre line (clear of the road, its white edge and the minions). */
+    private static final double LAMP_OFFSET = 6.5;
 
     private final Lane lane;
 
@@ -52,7 +57,13 @@ final class ToyLaneZone implements MapZone {
                 double[] n = normalAt(bush[0]);
                 double off = 7 * bush[1];
                 ToyKit.ball(canvas, q, (int) Math.round(p[0] + n[0] * off), (int) Math.round(-(p[1] + n[1] * off)),
-                        bush[2]);
+                        bush[2], ToyKit.SPONGE);
+            }
+            for (int ax : LAMPS) {
+                double[] p = ToyLayout.curveAt(ax);
+                double[] n = normalAt(ax);
+                ToyKit.lollipop(canvas, q, (int) Math.round(p[0] - n[0] * LAMP_OFFSET),
+                        (int) Math.round(-(p[1] - n[1] * LAMP_OFFSET)), 3);
             }
         }
     }

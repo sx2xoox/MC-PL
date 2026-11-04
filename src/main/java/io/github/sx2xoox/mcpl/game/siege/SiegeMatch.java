@@ -713,6 +713,7 @@ public final class SiegeMatch implements GameInstance {
         }
         if (fightTicks % 5 == 0) {
             towerShots(now);
+            fallenOut();
         }
         if (fightTicks % 20 == 0) {
             secondTick(now);
@@ -731,6 +732,36 @@ public final class SiegeMatch implements GameInstance {
         }
         if (fightTicks >= limit) {
             timeUp();
+        }
+    }
+
+    /**
+     * The height below which a fighter has fallen off the map (a drop or the edge into the void): well under the floor
+     * of the lowest spawn.
+     */
+    public double fallLine() {
+        int lowest = Integer.MAX_VALUE;
+        for (LaneSites.Side side : LaneSites.Side.values()) {
+            for (LaneSites.Spot spot : sites().spawns(side)) {
+                lowest = Math.min(lowest, spot.y());
+            }
+        }
+        return lowest - FALL_DEPTH;
+    }
+
+    /** How far under the lowest spawn a fall becomes a death. */
+    private static final int FALL_DEPTH = 12;
+
+    /**
+     * Players who fell off the map die at once (out of the world) instead of after the long fall to the void, so the
+     * enemy who knocked them off still gets the kill (the last attacker of the last 10 seconds).
+     */
+    private void fallenOut() {
+        double line = fallLine();
+        for (Player player : session.alivePlayers()) {
+            if (player.getY() < line && session.isInPlay(player) && !player.isDead()) {
+                player.damage(1_000_000, DamageSource.builder(DamageType.OUT_OF_WORLD).build());
+            }
         }
     }
 
