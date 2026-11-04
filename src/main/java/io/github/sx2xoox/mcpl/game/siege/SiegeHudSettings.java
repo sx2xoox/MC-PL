@@ -16,6 +16,7 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param lockHunger        keeps every fighter's food bar full and saturation at {@code saturation}: no hunger, and
  *                          a steady natural regeneration (saturation 1 = about 1/3 health a second)
  * @param saturation        the saturation held while {@code lockHunger} is on (0 = 1 health per 4 seconds)
+ * @param sidebarPanel      the 장난감 왕국 panel behind the sidebar of players who have the MCPL pack
  */
 public record SiegeHudSettings(
         boolean namePlates,
@@ -24,7 +25,8 @@ public record SiegeHudSettings(
         boolean guidance,
         boolean tutorial,
         boolean lockHunger,
-        float saturation) {
+        float saturation,
+        boolean sidebarPanel) {
 
     public static final String NAME_PLATES = "hud.name-plates";
     public static final String DAMAGE_NUMBERS = "hud.damage-numbers";
@@ -33,9 +35,11 @@ public record SiegeHudSettings(
     public static final String TUTORIAL = "hud.tutorial";
     public static final String LOCK_HUNGER = "hunger.lock";
     public static final String SATURATION = "hunger.saturation";
+    public static final String SIDEBAR_PANEL = "hud.sidebar-panel";
 
     /** Defaults (also used before a match read its section). */
-    public static final SiegeHudSettings DEFAULTS = new SiegeHudSettings(true, true, 24, true, true, true, 1f);
+    public static final SiegeHudSettings DEFAULTS = new SiegeHudSettings(true, true, 24, true, true, true, 1f,
+            true);
 
     public static SiegeHudSettings read(ConfigurationSection c) {
         double range = c.getDouble(DAMAGE_NUMBER_RANGE, DEFAULTS.damageNumberRange);
@@ -46,7 +50,8 @@ public record SiegeHudSettings(
                 c.getBoolean(GUIDANCE, DEFAULTS.guidance),
                 c.getBoolean(TUTORIAL, DEFAULTS.tutorial),
                 c.getBoolean(LOCK_HUNGER, DEFAULTS.lockHunger),
-                (float) Math.max(0, Math.min(20, c.getDouble(SATURATION, DEFAULTS.saturation))));
+                (float) Math.max(0, Math.min(20, c.getDouble(SATURATION, DEFAULTS.saturation))),
+                c.getBoolean(SIDEBAR_PANEL, DEFAULTS.sidebarPanel));
     }
 
     /** Declares the defaults (with Korean comments) under {@code games.siege.hud}. */
@@ -62,6 +67,8 @@ public record SiegeHudSettings(
         d.setComments(GUIDANCE, List.of("액션바에 '▶ 지금 할 일' 한 줄 안내"));
         d.set(TUTORIAL, DEFAULTS.tutorial);
         d.setComments(TUTORIAL, List.of("첫 라운드 준비 시간에 규칙 안내 (타이틀 3장 + 채팅 요약)"));
+        d.set(SIDEBAR_PANEL, DEFAULTS.sidebarPanel);
+        d.setComments(SIDEBAR_PANEL, List.of("리소스팩을 받은 플레이어의 사이드바 뒤에 장난감 왕국 패널(리본 제목) 표시"));
         d.setComments("hunger", List.of("배고픔"));
         d.set(LOCK_HUNGER, DEFAULTS.lockHunger);
         d.setComments(LOCK_HUNGER, List.of("true 면 경기 중 배고픔이 닳지 않음 (항상 가득, 포화도는 아래 값으로 고정)"));

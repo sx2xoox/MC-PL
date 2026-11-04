@@ -6,6 +6,7 @@ import java.util.UUID;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.core.ui.TextWidth;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import net.kyori.adventure.text.Component;
@@ -173,6 +174,34 @@ final class SiegeProgress {
     }
 
     // ------------------------------------------------------------------ HUD
+
+    /**
+     * The sidebar line under the level: the next level that brings the player's ability a perk and what it does
+     * ("6레벨: 불바다 범위 +1블록"), at most {@code maxWidth} wide (the perk's name loses words from the front until it
+     * fits); null at the top level, when no perk is left, or while levels or perks are off.
+     */
+    @Nullable Component nextPerkLine(UUID player, int maxWidth) {
+        AbilityInfo info = match.abilityInfo(player);
+        if (info == null || !settings().levelsEnabled() || !match.balance().settings().perks()) {
+            return null;
+        }
+        SiegePerks.Perk perk = SiegePerks.next(info.id(), levels.level(player), settings().maxLevel());
+        if (perk == null) {
+            return null;
+        }
+        String change = perk.text().substring(perk.label().length());
+        String label = perk.label();
+        Component line = perkLine(perk.level(), label + change);
+        while (TextWidth.of(line) > maxWidth && label.indexOf(' ') > 0) {
+            label = label.substring(label.indexOf(' ') + 1);
+            line = perkLine(perk.level(), label + change);
+        }
+        return line;
+    }
+
+    private Component perkLine(int level, String perk) {
+        return messages.get("hud.next-perk", Messages.tag("level", level), Messages.tag("perk", perk));
+    }
 
     /** The sidebar line of a participant: level and experience, or null while levels are off. */
     @Nullable Component hudLine(UUID player) {

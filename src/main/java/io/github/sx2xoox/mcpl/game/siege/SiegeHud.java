@@ -10,11 +10,13 @@ import java.util.logging.Level;
 import io.github.sx2xoox.mcpl.core.game.GameSession;
 import io.github.sx2xoox.mcpl.core.game.MatchTeam;
 import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
+import io.github.sx2xoox.mcpl.core.pack.PackAudience;
 import io.github.sx2xoox.mcpl.core.ui.Feedback;
 import io.github.sx2xoox.mcpl.core.ui.Format;
 import io.github.sx2xoox.mcpl.core.ui.ManagedBossBar;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.core.ui.Sidebar;
+import io.github.sx2xoox.mcpl.core.ui.SidebarPanel;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
@@ -26,9 +28,13 @@ import org.jspecify.annotations.Nullable;
  * private sidebar of five lines per viewer (score, rounds won, standing towers, my level and gold, the next big
  * objective from a {@link SiegeModule}; my ability while preparing), the health plates over the heads ({@link NamePlates}) and the
  * start tutorial (three titles and a chat summary). Structure health floats over the structures ({@link OverheadBar});
- * the "▶ 지금 할 일" line is {@link Guidance}.
+ * the "▶ 지금 할 일" line is {@link Guidance}. Players who have the MCPL pack see the sidebar on the 장난감 왕국 panel
+ * ({@link SidebarPanel}); everyone else gets the plain vanilla sidebar.
  */
 final class SiegeHud {
+
+    /** The widest a sidebar line of this HUD should be (estimated GUI pixels, {@code TextWidth}). */
+    static final int MAX_LINE_WIDTH = 124;
 
     /** Ticks between the tutorial's titles. */
     static final int TUTORIAL_STEP_TICKS = 130;
@@ -41,6 +47,7 @@ final class SiegeHud {
     private final Set<UUID> broken = new HashSet<>();
     private @Nullable ManagedBossBar timer;
     private boolean reported;
+    private PackAudience packs;
 
     SiegeHud(SiegeMatch match, SiegeHudSettings settings) {
         this.match = match;
@@ -48,6 +55,12 @@ final class SiegeHud {
         this.messages = match.messages();
         this.settings = settings;
         this.plates = new NamePlates(match, match::plateLevel);
+        this.packs = match.hub().resourcePacks();
+    }
+
+    /** Who has the pack (tests replace the hub's). */
+    void packs(PackAudience packs) {
+        this.packs = packs;
     }
 
     /** Every tick: the plates over the heads (who carries one, who sees it, health changes). */
@@ -133,8 +146,15 @@ final class SiegeHud {
             }
             try {
                 Sidebar sidebar = session.sidebar(viewer);
-                sidebar.title(messages.get("game.name"));
-                sidebar.lines(lines(viewer));
+                if (settings.sidebarPanel() && packs.hasPack(viewer)) {
+                    SidebarPanel.Decorated panel = SidebarPanel.decorate(messages.get("hud.panel-title"),
+                            lines(viewer));
+                    sidebar.title(panel.title());
+                    sidebar.lines(panel.lines());
+                } else {
+                    sidebar.title(messages.get("game.name"));
+                    sidebar.lines(lines(viewer));
+                }
             } catch (RuntimeException e) {
                 broken.add(viewer.getUniqueId());
                 report("sidebar of " + viewer.getName(), e);
@@ -183,8 +203,8 @@ final class SiegeHud {
     }
 
     /**
-     * Four lines: the score, the rounds won, my level and gold, the dragon's timer; in the preparation my ability
-     * (and rerolls) too. The round and its time are on the boss bar only.
+     * Four lines: the score, the rounds won, my level and gold (and under it the next level that brings my ability a
+     * perk), the dragon's timer; in the preparation my ability (and rerolls) too. The round and its time are on the boss bar only.
      */
     List<Component> lines(Player viewer) {
         SiegeScore score = match.score();
@@ -208,6 +228,10 @@ final class SiegeHud {
                     Messages.tag("money", economy.gold(id))));
         } else if (level != null) {
             lines.add(level);
+        }
+        Component perk = match.progress().nextPerkLine(id, MAX_LINE_WIDTH);
+        if (perk != null) {
+            lines.add(perk);
         }
         for (SiegeModule module : match.modules()) {
             Component objective = module.sidebarLine(viewer);

@@ -29,6 +29,7 @@ Previews need Node + Playwright (Chromium). In a cloud session:
 | `mcpl_assets/weapon_textures.py` | weapon textures (`w_*`, 32 px) |
 | `mcpl_assets/model.py` | the box DSL → `.bbmodel`, plus the checks (z-fighting, see-through boxes, −16..32 range) |
 | `mcpl_assets/weaponkit.py` | the weapon builder: weapon space, common parts, the shared `display` preset |
+| `sidebar_panel.py` | 공성전 sidebar panel glyphs (font `mcpl:sidebar` + `textures/font/sidebar/*.png`, run it after a change; `--preview <dir>`: vanilla vs panel). Numbers shared with `core/ui/SidebarPanel` (`SidebarPanelTest`) |
 | `weapon_preview.py` | weapon sheets: icon (+16/32 px), first person, third person, ground, item frame |
 
 ## 새 능력 무기 추가하는 법 (ability weapons)

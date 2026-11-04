@@ -223,7 +223,7 @@ match:
   eliminated-subtitle: "<gray>관전 모드로 전환됩니다"
   eliminated-subtitle-killer: "<gray>처치자 <killer>"
   respawn-title: "<red><bold>사망!"
-  respawn-subtitle: "<gray><white><seconds></white>초 후 부활합니다"
+  respawn-subtitle: "<white><seconds></white><gray>초 후 부활"
   aborted: "<red>경기가 중단되었습니다. <gray>(<reason><gray>)"
   reason-admin: "<white><player></white>님이 경기를 중지함"
   reason-not-enough: "인원 부족: <white><count></white>/<white><min></white>명"

@@ -120,6 +120,8 @@ hud:
   level: "<yellow>Lv.<white><level></white> <gray>(<xp>/<next>)"
   level-max: "<yellow>Lv.<white><level></white> <gold>MAX"
   level-gold: "<level> <gold>💰 <money>"
+  next-perk: "<gray><level>레벨: <white><perk>"
+  panel-title: "<#fff8ea><bold>초능력 공성전"
   ability: "<gray>능력 </gray><ability>"
   ability-reroll: "<gray>능력 </gray><ability> <dark_gray>(리롤 <count>)"
   spectating: "<gray>관전 중"

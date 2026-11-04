@@ -119,6 +119,8 @@ public final class GameSession {
     private final Set<UUID> awaitingSpectator = new HashSet<>();
     private final Map<UUID, DeathOutcome.Respawn> awaitingRespawn = new HashMap<>();
     private final Set<UUID> respawning = new HashSet<>();
+    /** The current wait (a token) of each player in {@link #respawning}: its countdown and respawn check it. */
+    private final Map<UUID, Object> respawnWaits = new HashMap<>();
     private final List<BukkitTask> hubTasks = new ArrayList<>();
     private List<MatchTeam> teams = List.of();
     private final Map<UUID, MatchTeam> teamByPlayer = new HashMap<>();
@@ -863,6 +865,7 @@ public final class GameSession {
         stopInstance();
         cancelHubTasks();
         respawning.clear();
+        respawnWaits.clear();
         awaitingRespawn.clear();
         if (computed != null) {
             try {
@@ -1311,6 +1314,7 @@ public final class GameSession {
         eliminationOrder.remove(id);
         eliminationOrder.add(id);
         respawning.remove(id);
+        respawnWaits.remove(id);
         awaitingRespawn.remove(id);
     }
 
@@ -1622,10 +1626,14 @@ public final class GameSession {
         }
         respawning.add(id);
         makeSpectator(player, null);
-        int seconds = (respawn.delayTicks() + 19) / 20;
-        Feedback.title(player, messages().get("match.respawn-title"),
-                messages().get("match.respawn-subtitle", Messages.tag("seconds", seconds)), 0, respawn.delayTicks(), 10);
+        Object wait = new Object();
+        respawnWaits.put(id, wait);
+        respawnCountdown(id, wait, respawn.delayTicks());
         hubLater(respawn.delayTicks(), () -> {
+            if (respawnWaits.get(id) != wait) {
+                return; // eliminated, or a newer death started its own wait
+            }
+            respawnWaits.remove(id);
             if (!respawning.remove(id) || state != GameState.RUNNING || !alive.contains(id)) {
                 return;
             }
@@ -1634,6 +1642,27 @@ public final class GameSession {
                 completeRespawn(online, respawn.location());
             }
         });
+    }
+
+    /**
+     * The death title of a player waiting to respawn, its subtitle counting the seconds down: shown now with
+     * {@code ticksLeft} to go and again at every whole second left, each staying until the respawn (so a title another
+     * feature shows meanwhile is replaced at the next second).
+     */
+    private void respawnCountdown(UUID id, Object wait, int ticksLeft) {
+        if (ticksLeft <= 0 || respawnWaits.get(id) != wait || !respawning.contains(id) || state != GameState.RUNNING) {
+            return;
+        }
+        Player player = Bukkit.getPlayer(id);
+        if (player != null) {
+            int seconds = (ticksLeft + 19) / 20;
+            Feedback.title(player, messages().get("match.respawn-title"),
+                    messages().get("match.respawn-subtitle", Messages.tag("seconds", seconds)), 0, ticksLeft, 10);
+        }
+        int step = ticksLeft % 20 == 0 ? 20 : ticksLeft % 20;
+        if (ticksLeft > step) {
+            hubLater(step, () -> respawnCountdown(id, wait, ticksLeft - step));
+        }
     }
 
     private void completeRespawn(Player player, @Nullable Location to) {

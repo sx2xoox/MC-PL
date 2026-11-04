@@ -246,6 +246,101 @@ class SiegeMatchTest {
     }
 
     @Test
+    void theDeathTitleCountsTheSecondsDownToTheRespawn() {
+        config.set(SiegeSettings.RESPAWN_SECONDS, 3);
+        SiegeMatch match = start(2);
+        Player a = member(match, 0);
+        TestPlayer b = (TestPlayer) member(match, 1);
+        GameSession session = match.session();
+        b.teleport(new Location(h.flatWorld(), 0.5, FlatWorld.SURFACE, 0.5));
+        b.setNoDamageTicks(0);
+        ctx(match).damage(a, b, 10_000);
+        int seconds = (match.respawnTicks(b.getUniqueId()) + 19) / 20;
+        b.titles().clear();
+        respawn(b);
+        List<String> shown = new ArrayList<>();
+        int waited = 0;
+        while (session.isRespawning(b.getUniqueId()) && waited++ < 200) {
+            for (net.kyori.adventure.title.Title title : b.titles()) {
+                shown.add(plain(title.title()) + " / " + plain(title.subtitle()));
+            }
+            b.titles().clear();
+            h.ticks(1);
+        }
+        assertTrue(session.isInPlay(b), "back in play");
+        List<String> expected = new ArrayList<>();
+        for (int left = seconds; left >= 1; left--) {
+            expected.add("사망! / " + left + "초 후 부활");
+        }
+        assertEquals(expected, shown, "one title per second, counting down");
+        assertTrue(waited >= (seconds - 1) * 20 && waited <= seconds * 20 + 2, "respawned at 0 (" + waited + " ticks)");
+    }
+
+    @Test
+    void onlyPlayersWithThePackGetThePanelBehindTheSidebar() {
+        SiegeMatch match = start(2);
+        Player a = member(match, 0);
+        Player b = member(match, 1);
+        match.hud().packs(new io.github.sx2xoox.mcpl.core.pack.PackAudience() {
+            @Override
+            public boolean hasPack(Player player) {
+                return player.equals(a);
+            }
+
+            @Override
+            public Subscription subscribe(java.util.function.Consumer<Player> listener) {
+                return () -> { };
+            }
+        });
+        h.ticks(21);
+        io.github.sx2xoox.mcpl.core.ui.Sidebar withPack = match.session().sidebar(a);
+        io.github.sx2xoox.mcpl.core.ui.Sidebar without = match.session().sidebar(b);
+        assertTrue(hasPanelGlyph(withPack.title()), "the ribbon behind the title");
+        assertTrue(withPack.lines().stream().allMatch(SiegeMatchTest::hasPanelGlyph), "a piece behind every line");
+        assertFalse(hasPanelGlyph(without.title()), "no pack: no glyph (it would be a box)");
+        assertTrue(without.lines().stream().noneMatch(SiegeMatchTest::hasPanelGlyph), "no pack: vanilla lines");
+        assertEquals(without.lines().size(), withPack.lines().size());
+        assertEquals(plain(match.hud().lines(a).getFirst()),
+                plain(withPack.lines().getFirst()).codePoints()
+                        .filter(cp -> !io.github.sx2xoox.mcpl.core.ui.SidebarPanel.isPanelGlyph(cp))
+                        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append).toString(),
+                "the same text on the panel");
+    }
+
+    private static boolean hasPanelGlyph(net.kyori.adventure.text.Component component) {
+        return plain(component).codePoints().anyMatch(io.github.sx2xoox.mcpl.core.ui.SidebarPanel::isPanelGlyph);
+    }
+
+    @Test
+    void theSidebarShowsTheNextLevelPerkUntilNoneIsLeft() {
+        config.set(SiegeSettings.ABILITY_POOL, List.of("pyro"));
+        config.set(SiegeProgressSettings.XP_PASSIVE, 0);
+        SiegeMatch match = start(2);
+        Player a = member(match, 0);
+        assertEquals("pyro", match.abilityInfo(a.getUniqueId()).id());
+        String third = io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.describe("pyro", 3);
+        assertTrue(lines(match, a).contains(third), "level 1: the level 3 perk " + lines(match, a));
+        match.progress().grant(a.getUniqueId(), 60 + 100);
+        assertEquals(3, match.level(a.getUniqueId()));
+        String sixth = io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.describe("pyro", 6);
+        assertTrue(lines(match, a).contains(sixth), "level 3: the level 6 perk " + lines(match, a));
+        assertFalse(lines(match, a).contains(third));
+        match.progress().grant(a.getUniqueId(), 100_000);
+        assertTrue(lines(match, a).stream().noneMatch(line -> line.contains("레벨:")), "no perk left at the top");
+        for (String abilityId : io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.abilities()) {
+            for (io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.Perk perk
+                    : io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.perks(abilityId)) {
+                assertTrue(io.github.sx2xoox.mcpl.core.ui.TextWidth.of(net.kyori.adventure.text.Component.text(
+                        perk.level() + "레벨: " + perk.text())) <= 170, perk.text());
+            }
+        }
+    }
+
+    private static List<String> lines(SiegeMatch match, Player player) {
+        return match.hud().lines(player).stream().map(SiegeMatchTest::plain).toList();
+    }
+
+    @Test
     void enemiesInABaseAreHurt() {
         config.set(SiegeSettings.SPAWN_ZONE_DAMAGE, 4);
         SiegeMatch match = start(2);

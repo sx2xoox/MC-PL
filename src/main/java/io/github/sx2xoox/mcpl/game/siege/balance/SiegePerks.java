@@ -366,6 +366,19 @@ public final class SiegePerks {
         return problems;
     }
 
+    /**
+     * The next perk of an ability for a player at {@code level}: the first one above it, up to {@code maxLevel}; null
+     * when none is left.
+     */
+    public static @Nullable Perk next(String abilityId, int level, int maxLevel) {
+        for (Perk perk : perks(abilityId)) {
+            if (perk.level() > level && perk.level() <= maxLevel) {
+                return perk;
+            }
+        }
+        return null;
+    }
+
     /** "6레벨: 불바다 범위 +1블록", or null if the ability gets no perk at {@code level}. */
     public static @Nullable String describe(String abilityId, int level) {
         Perk perk = perk(abilityId, level);

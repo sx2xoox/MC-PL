@@ -73,6 +73,7 @@ class ResourcePackContentsTest {
     void everyJsonParsesAndEveryReferenceExists() throws IOException {
         List<String> problems = new ArrayList<>();
         int items = 0;
+        int fonts = 0;
         for (Map.Entry<String, byte[]> file : built.files().entrySet()) {
             String path = file.getKey();
             if (path.endsWith(".json") || path.endsWith(".mcmeta")) {
@@ -94,15 +95,29 @@ class ResourcePackContentsTest {
                     }
                 }
             }
+            if (path.matches("assets/[^/]+/font/[^/]+\\.json")) {
+                fonts++;
+                for (JsonElement p : json(path).getAsJsonArray("providers")) {
+                    JsonObject provider = p.getAsJsonObject();
+                    String[] ref = provider.has("file") ? provider.get("file").getAsString().split(":", 2) : null;
+                    if (ref != null && !built.files().containsKey("assets/" + ref[0] + "/textures/" + ref[1])) {
+                        problems.add(path + " → missing font image " + provider.get("file").getAsString());
+                    }
+                }
+            }
             if (path.endsWith(".png")) {
                 BufferedImage image = ImageIO.read(new ByteArrayInputStream(file.getValue()));
-                if (image == null || image.getWidth() != image.getHeight() && image.getHeight() % image.getWidth() != 0) {
+                if (image == null) {
+                    problems.add(path + " is not a PNG");
+                } else if (!path.contains("/textures/font/")    // font glyphs may have any size
+                        && image.getWidth() != image.getHeight() && image.getHeight() % image.getWidth() != 0) {
                     problems.add(path + " is not a square (or frame strip) PNG");
                 }
             }
         }
         assertTrue(problems.isEmpty(), () -> String.join("\n", problems));
         assertTrue(items >= ModelTowerLook.models().size(), "every tower part");
+        assertTrue(fonts >= 1, "the sidebar panel font (tools/assetgen/sidebar_panel.py)");
     }
 
     @Test
