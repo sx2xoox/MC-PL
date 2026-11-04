@@ -21,6 +21,9 @@ import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotSettings;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
+import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStats;
+import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsSettings;
+import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsStore;
 import io.github.sx2xoox.mcpl.game.siege.tower.ModelTowerLook;
 import io.github.sx2xoox.mcpl.game.siege.tower.TowerLook;
 import io.github.sx2xoox.mcpl.game.superpower.SuperpowerGame;
@@ -60,6 +63,8 @@ public final class SiegeGame implements MiniGame {
     private SiegeBots.@Nullable Setup botRequest;
     /** When {@link #botRequest} was made (a request whose start never came expires). */
     private long botRequestedAt;
+    /** The balance records ({@code plugins/MCPL/stats/siege/}). */
+    private final SiegeStatsStore stats;
 
     public SiegeGame(Hub hub, SuperpowerGame superpower) {
         this.hub = hub;
@@ -67,6 +72,8 @@ public final class SiegeGame implements MiniGame {
         this.messages = new Messages(hub.plugin(), MESSAGES_FILE, hub.messages());
         this.messages.load();
         this.towerLook = new ModelTowerLook(hub.plugin(), hub.resourcePacks());
+        this.stats = new SiegeStatsStore(hub.plugin().getDataFolder().toPath().resolve("stats").resolve(ID));
+        addModule(match -> new SiegeStats(match, stats, superpower.registry()));
     }
 
     @Override
@@ -123,6 +130,7 @@ public final class SiegeGame implements MiniGame {
         SiegeBalanceSettings.declareDefaults(defaults);
         BasicAttackSettings.declareDefaults(defaults, SiegeMatch.BASIC_ATTACKS);
         SiegeBotSettings.declareDefaults(defaults);
+        SiegeStatsSettings.declareDefaults(defaults);
     }
 
     @Override
@@ -276,6 +284,16 @@ public final class SiegeGame implements MiniGame {
         botRequest = null;
         // A countdown that was cancelled leaves its request behind: the next ordinary start must not get bots.
         return setup != null && System.currentTimeMillis() - botRequestedAt <= BOT_REQUEST_MILLIS ? setup : null;
+    }
+
+    /** Where the balance records of real matches are kept. */
+    public SiegeStatsStore statsStore() {
+        return stats;
+    }
+
+    /** The balance record settings ({@code games.siege.stats.*}) as configured now. */
+    public SiegeStatsSettings statsSettings() {
+        return SiegeStatsSettings.read(config());
     }
 
     /** The 봇전 settings ({@code games.siege.bots.*}) as configured now. */

@@ -148,6 +148,7 @@ command:
     - "<white>/게임 시작 공성전 봇전 [팀당 인원] [쉬움|보통|어려움]</white> <gray>봇이 두 팀의 빈자리를 채우는 공성전"
     - "<white>/게임 공성전 봇</white> <gray>봇전의 봇마다 직업·라인·레벨·체력·하는 일"
     - "<white>/게임 공성전 능력풀 [목록|추가|제거|초기화] [능력]</white> <gray>공성전에서 나오는 능력"
+    - "<white>/게임 공성전 통계 [봇] [피해|건물|승률|KDA] [쪽]</white> <gray>실전 밸런스 누적 기록"
   usage-pool: "<red>사용법: /게임 공성전 능력풀 <추가|제거> <능력>"
   player-only: "<red>플레이어만 쓸 수 있습니다."
   no-match: "<red>진행 중인 공성전이 없습니다."
@@ -156,6 +157,25 @@ command:
   team-none: "<red>공성전 팀에 속해 있지 않습니다."
   team: "<team> <gray>팀원: <members>"
   status: "<gold><round>라운드</gold><gray> — <team_a> <white><a></white> : <white><b></white> <team_b><gray> (라운드 스코어 <white><rounds_a> : <rounds_b></white>)"
+
+# 실전 밸런스 기록 (/게임 공성전 통계, 관리자만)
+stats:
+  header: "<gold>공성전 통계</gold> <dark_gray>· <sort>순 · <page>/<pages>"
+  header-bots: "<gold>공성전 통계 · 봇 직업</gold> <dark_gray>· <sort>순 · <page>/<pages>"
+  row: "<white><name></white> <dark_gray><rounds>판</dark_gray> <gray>적</gray> <white><damage></white><dark_gray>/분</dark_gray> <gray>건물</gray> <white><structure></white><dark_gray>/분</dark_gray> <gray>KDA</gray> <white><kda></white> <gray>승률</gray> <white><win>%</white><mark>"
+  row-few: "<dark_gray><name> <rounds>판 적 <damage>/분 건물 <structure>/분 KDA <kda> 승률 <win>%"
+  mark-high: " <red>▲"
+  mark-low: " <aqua>▼"
+  next: "<dark_gray>▶ 다음 쪽"
+  empty: "<gray>아직 기록이 없습니다."
+  failed: "<red>통계 파일을 읽거나 쓰지 못했습니다. <gray>(서버 로그)"
+  reset-confirm: "<yellow>누적 통계를 지우려면 <white><command></white> <gray>(경기별 CSV는 남음)"
+  reset-done: "<green>누적 통계를 지웠습니다."
+  sort:
+    damage: "분당 적 피해"
+    structure: "분당 건물 피해"
+    winrate: "승률"
+    kda: "KDA"
 
 settings:
   section:

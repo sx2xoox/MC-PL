@@ -1050,6 +1050,7 @@ public final class SiegeMatch implements GameInstance {
         if (!(dealt > 0)) {
             return 0;
         }
+        eachModule(module -> module.structureDamaged(tower, by, dealt, credit));
         Location base = tower.base();
         damageNumbers().show(UUID.nameUUIDFromBytes(tower.id().getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 base.clone().add(0, game.towerLook().barHeight(tower.kind().lookId()) + 0.9, 0), dealt,

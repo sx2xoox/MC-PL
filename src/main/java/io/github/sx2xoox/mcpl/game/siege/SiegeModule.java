@@ -49,6 +49,13 @@ public interface SiegeModule {
     default void playerKilled(UUID victim, @Nullable UUID killer, List<UUID> assisters) {
     }
 
+    /**
+     * A structure of the other side lost {@code dealt} health to {@code by} (after the shield and the remaining health);
+     * {@code credit} is the participant (a player or a bot) who dealt it, null for a minion.
+     */
+    default void structureDamaged(Tower tower, LaneSites.Side by, double dealt, @Nullable UUID credit) {
+    }
+
     /** A structure fell to {@code by}; {@code destroyer} is the player credited, if any. */
     default void structureDestroyed(Tower tower, LaneSites.Side by, @Nullable UUID destroyer) {
     }

@@ -17,6 +17,7 @@ import io.github.sx2xoox.mcpl.core.game.MatchTeam;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBotOptions;
 import io.github.sx2xoox.mcpl.game.siege.bot.SiegeBots;
+import io.github.sx2xoox.mcpl.game.siege.stats.SiegeStatsCommand;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
 import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.Participant;
@@ -33,14 +34,21 @@ import org.jspecify.annotations.Nullable;
  * The 공성전 commands: {@code /게임 시작 공성전} ({@code start siege}, admin), {@code /게임 시작 공성전 봇전 [팀당 인원]
  * [난이도]} ({@code start siege bots}, bots fill the teams), {@code /게임 리롤 · 점수 · 내정보 · 팀}
  * in a match ({@link MatchCommands}), and {@code /게임 공성전} ({@code siege}): help, the ability pool for admins
- * ({@code 능력풀 추가|제거|목록|초기화 [능력]}). The old {@code /게임 공성전 리롤 · 점수} still work.
+ * ({@code 능력풀 추가|제거|목록|초기화 [능력]}) and the balance records ({@code 통계}, {@link SiegeStatsCommand}).
+ * The old {@code /게임 공성전 리롤 · 점수} still work.
  */
 final class SiegeCommand {
 
     private final SiegeGame game;
 
+    private final SiegeStatsCommand stats;
+
     SiegeCommand(SiegeGame game) {
         this.game = game;
+        this.stats = new SiegeStatsCommand(game.messages(), game.statsStore(), game::statsSettings, id -> {
+            AbilityRegistry.Entry entry = game.superpower().registry().get(id);
+            return entry == null ? id : entry.info().name();
+        }, game.hub().plugin().getLogger());
     }
 
     private Messages messages() {
@@ -71,6 +79,7 @@ final class SiegeCommand {
                     .executes(ctx -> help(ctx.getSource().getSender()));
             node.then(Commands.literal(english ? "bots" : "봇").requires(registrar.admin())
                     .executes(ctx -> botStatus(ctx.getSource().getSender())));
+            node.then(stats.node(english, registrar.admin()));
             for (String name : List.of("능력풀", "pool")) {
                 LiteralArgumentBuilder<CommandSourceStack> pool = Commands.literal(name).requires(registrar.admin())
                         .executes(ctx -> poolList(ctx.getSource().getSender()));

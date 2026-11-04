@@ -131,6 +131,7 @@ help:
         - " <cmd:'/게임 증강 배속 ':'/게임 증강 배속 [1~4]'> <dark_gray>-</dark_gray> <gray>봇 경기의 시간 배속"
         - " <cmd:'/게임 공성전 능력풀 ':'/게임 공성전 능력풀 [목록|추가|제거|초기화]'> <dark_gray>-</dark_gray> <gray>공성전에서 나오는 능력"
         - " <cmd:'/게임 공성전 봇'> <dark_gray>-</dark_gray> <gray>공성전 봇전: 봇마다 직업·라인·레벨·체력·하는 일"
+        - " <cmd:'/게임 공성전 통계 ':'/게임 공성전 통계 [봇] [피해|건물|승률|KDA]'> <dark_gray>-</dark_gray> <gray>공성전 실전 밸런스 기록 (능력별 분당 피해 · KDA · 승률)"
     map:
       title: "<#ff7f50><bold>▸ 맵</bold>"
       play: []

@@ -76,6 +76,9 @@ src/main/java/io/github/sx2xoox/mcpl/
                                SiegeModifiers = per-player skill damage/taken/cooldown for shop items and buffs;
                                `./gradlew updateSiegeBalance` regenerates docs/siege-balance.md + siege-balance.yml
                                (SiegeBalanceReport fails while stale)
+    stats/                     balance records of real matches (docs/siege-v2.md §10): SiegeStats = the SiegeModule (round ×
+                               player × ability; nothing shown in play), SiegeStatsStore (stats/siege/*.csv + totals.yml),
+                               SiegeStatsCommand (/게임 공성전 통계, admins only), games.siege.stats.*
     tower/                     Tower (rules + Mannequin hitbox) and looks (TowerLook contract; ModelTowerLook = 3D models +
                                per-viewer vanilla fallback; v2 toy kingdom: look ids tower / core)
     bot/                       공성전 봇전 (docs/siege-v2.md §9): bot-only jobs (BotJob, SiegeBotSettings = games.siege.bots.*),

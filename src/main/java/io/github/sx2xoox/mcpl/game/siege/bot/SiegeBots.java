@@ -120,6 +120,8 @@ public final class SiegeBots implements SiegeModule, Listener {
     private long emptySince = -1;
     private boolean stopped;
     private int forwarding;
+    /** Depth of the bot skill hits landing now ({@link #isSkillStrike}). */
+    private int skillStrikes;
 
     public SiegeBots(SiegeMatch match, Setup setup, List<Seat> seats) {
         this.match = match;
@@ -853,16 +855,28 @@ public final class SiegeBots implements SiegeModule, Listener {
         }
         if (skill) {
             victim.setNoDamageTicks(0);
+            skillStrikes++;
         }
-        Mannequin body = bot.body;
-        if (victim instanceof Player && victim.getWorld().getDifficulty() == Difficulty.PEACEFUL) {
-            victim.damage(amount, DamageSource.builder(DamageType.MOB_ATTACK).withDirectEntity(body).build());
-            return;
+        try {
+            Mannequin body = bot.body;
+            if (victim instanceof Player && victim.getWorld().getDifficulty() == Difficulty.PEACEFUL) {
+                victim.damage(amount, DamageSource.builder(DamageType.MOB_ATTACK).withDirectEntity(body).build());
+                return;
+            }
+            double dealt = victim instanceof Player
+                    ? Creatures.beforeDifficulty(amount, victim.getWorld().getDifficulty()) : amount;
+            victim.damage(dealt, DamageSource.builder(DamageType.MOB_ATTACK).withCausingEntity(body)
+                    .withDirectEntity(body).build());
+        } finally {
+            if (skill) {
+                skillStrikes--;
+            }
         }
-        double dealt = victim instanceof Player ? Creatures.beforeDifficulty(amount, victim.getWorld().getDifficulty())
-                : amount;
-        victim.damage(dealt, DamageSource.builder(DamageType.MOB_ATTACK).withCausingEntity(body)
-                .withDirectEntity(body).build());
+    }
+
+    /** True while a bot's skill hit (not its basic attack) is landing (the balance records split them). */
+    public boolean isSkillStrike() {
+        return skillStrikes > 0;
     }
 
     /** Enemies (players, bots, minions; monsters only for {@code monsters}) within {@code radius} of {@code at}. */
