@@ -88,6 +88,9 @@ public final class SiegeMatch implements GameInstance {
     private @Nullable SiegeHud hud;
     private @Nullable SiegeProgress progress;
     private @Nullable Guidance guidance;
+    /** games.siege.hunger.*: full food and a fixed saturation for every fighter while the match runs. */
+    private boolean hungerLocked;
+    private float hungerSaturation = 1f;
     private @Nullable SiegeSounds sounds;
     private @Nullable DamageNumbers damageNumbers;
     private SiegeEconomy economy = SiegeEconomy.NONE;
@@ -157,6 +160,8 @@ public final class SiegeMatch implements GameInstance {
         holdChunks();
         score = new SiegeScore(settings, this::teamIndex);
         SiegeHudSettings hudSettings = SiegeHudSettings.read(session.gameConfig());
+        hungerLocked = hudSettings.lockHunger();
+        hungerSaturation = hudSettings.saturation();
         sounds = new SiegeSounds(session);
         guidance = new Guidance(session, messages);
         guidance.enabled(hudSettings.guidance());
@@ -227,6 +232,13 @@ public final class SiegeMatch implements GameInstance {
             }
             hud.tick();
             guidance().tick();
+        }
+        if (!stopped && hungerLocked) {
+            for (Player player : session.participants()) {
+                player.setFoodLevel(20);
+                player.setSaturation(hungerSaturation);
+                player.setExhaustion(0);
+            }
         }
     }
 

@@ -13,22 +13,29 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param damageNumberRange only players this close (blocks) see a damage number
  * @param guidance          the "▶ 지금 할 일" action bar line
  * @param tutorial          three titles and a chat summary at the start of the first round
+ * @param lockHunger        keeps every fighter's food bar full and saturation at {@code saturation}: no hunger, and
+ *                          a steady natural regeneration (saturation 1 = about 1/3 health a second)
+ * @param saturation        the saturation held while {@code lockHunger} is on (0 = 1 health per 4 seconds)
  */
 public record SiegeHudSettings(
         boolean namePlates,
         boolean damageNumbers,
         double damageNumberRange,
         boolean guidance,
-        boolean tutorial) {
+        boolean tutorial,
+        boolean lockHunger,
+        float saturation) {
 
     public static final String NAME_PLATES = "hud.name-plates";
     public static final String DAMAGE_NUMBERS = "hud.damage-numbers";
     public static final String DAMAGE_NUMBER_RANGE = "hud.damage-number-range";
     public static final String GUIDANCE = "hud.guidance";
     public static final String TUTORIAL = "hud.tutorial";
+    public static final String LOCK_HUNGER = "hunger.lock";
+    public static final String SATURATION = "hunger.saturation";
 
     /** Defaults (also used before a match read its section). */
-    public static final SiegeHudSettings DEFAULTS = new SiegeHudSettings(true, true, 24, true, true);
+    public static final SiegeHudSettings DEFAULTS = new SiegeHudSettings(true, true, 24, true, true, true, 1f);
 
     public static SiegeHudSettings read(ConfigurationSection c) {
         double range = c.getDouble(DAMAGE_NUMBER_RANGE, DEFAULTS.damageNumberRange);
@@ -37,7 +44,9 @@ public record SiegeHudSettings(
                 c.getBoolean(DAMAGE_NUMBERS, DEFAULTS.damageNumbers),
                 Double.isFinite(range) ? Math.max(1, Math.min(128, range)) : DEFAULTS.damageNumberRange,
                 c.getBoolean(GUIDANCE, DEFAULTS.guidance),
-                c.getBoolean(TUTORIAL, DEFAULTS.tutorial));
+                c.getBoolean(TUTORIAL, DEFAULTS.tutorial),
+                c.getBoolean(LOCK_HUNGER, DEFAULTS.lockHunger),
+                (float) Math.max(0, Math.min(20, c.getDouble(SATURATION, DEFAULTS.saturation))));
     }
 
     /** Declares the defaults (with Korean comments) under {@code games.siege.hud}. */
@@ -53,5 +62,10 @@ public record SiegeHudSettings(
         d.setComments(GUIDANCE, List.of("액션바에 '▶ 지금 할 일' 한 줄 안내"));
         d.set(TUTORIAL, DEFAULTS.tutorial);
         d.setComments(TUTORIAL, List.of("첫 라운드 준비 시간에 규칙 안내 (타이틀 3장 + 채팅 요약)"));
+        d.setComments("hunger", List.of("배고픔"));
+        d.set(LOCK_HUNGER, DEFAULTS.lockHunger);
+        d.setComments(LOCK_HUNGER, List.of("true 면 경기 중 배고픔이 닳지 않음 (항상 가득, 포화도는 아래 값으로 고정)"));
+        d.set(SATURATION, (double) DEFAULTS.saturation);
+        d.setComments(SATURATION, List.of("고정할 포화도. 자연 회복 속도: 1 = 초당 약 0.33(1분에 가득), 0 = 4초에 1, 6 이상 = 초당 2"));
     }
 }

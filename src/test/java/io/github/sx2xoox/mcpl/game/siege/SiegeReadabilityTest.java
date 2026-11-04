@@ -473,4 +473,17 @@ class SiegeReadabilityTest {
                 "a vanilla sword hit is replaced by the basic attack (평타, BasicAttackMatchTest)");
         assertTrue(match.abilities().basicAttack(attacker), "left-click fires the ability's basic attack");
     }
+
+    @Test
+    void hungerStaysFullWithAFixedSaturation() {
+        SiegeMatch match = start(2);
+        Player a = member(match, 0, 0);
+        a.setFoodLevel(5);
+        a.setSaturation(0);
+        a.setExhaustion(3.5f);
+        h.ticks(2);
+        assertEquals(20, a.getFoodLevel());
+        assertEquals(1f, a.getSaturation(), 1e-6);
+        assertEquals(0f, a.getExhaustion(), 1e-6);
+    }
 }
