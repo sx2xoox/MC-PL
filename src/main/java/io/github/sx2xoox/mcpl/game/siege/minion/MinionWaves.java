@@ -98,6 +98,8 @@ public final class MinionWaves implements Listener {
         private final Wave group;
         /** Lane progress where it was last seen ({@link Formation.Frame#progress()}). */
         private double progress;
+        /** The farthest lane progress it marched to: the leash anchor ({@link #anchor()}). */
+        private double reached = Double.NaN;
         private double movingSpeed;
         /** A ranged minion stepping back behind its front line while it shoots. */
         private boolean backing;
@@ -159,9 +161,17 @@ public final class MinionWaves implements Listener {
             return damage;
         }
 
-        /** The waypoint it last reached: the leash anchor. */
+        /**
+         * The lane point it last reached on the march (the farthest; before its first look, its spawn waypoint): the
+         * leash anchor. Not the last waypoint, which can lag up to a waypoint gap behind, so a wave would only see the
+         * enemy just past the next waypoint once it is on top of it.
+         */
         Location anchor() {
-            return path.get(Math.max(0, next - 1));
+            if (Double.isNaN(reached)) {
+                return path.get(Math.max(0, next - 1));
+            }
+            Formation.Vec spot = group.geo.at(reached, 0);
+            return new Location(body.getWorld(), spot.x(), height(path, group.geo, reached), spot.z());
         }
     }
 
@@ -207,7 +217,9 @@ public final class MinionWaves implements Listener {
             look.tick(minion.body, minion.kind.creature());
             mover.tick(minion.body);
             arrive(minion);
-            if ((now + minion.body.getEntityId()) % 5 == 0) {
+            if ((now + minion.body.getEntityId()) % 5 == 0 || minion.target == null && enemyMinionNear(minion)) {
+                // a marching minion with an enemy minion in sight looks every tick: two waves walking at each
+                // other close in fast, a look every 5 ticks would let them walk into each other's lines
                 think(minion);
             }
             if (minion.healthDirty) {
@@ -349,6 +361,10 @@ public final class MinionWaves implements Listener {
         for (Minion member : group.members) {
             Formation.Frame frame = group.geo.frame(vec(member.body.getLocation()), member.progress, FRAME_WINDOW);
             member.progress = frame.progress();
+            if (member.target == null) {
+                member.reached = Double.isNaN(member.reached) ? frame.progress()
+                        : Math.max(member.reached, frame.progress());
+            }
             Formation.Member seen = new Formation.Member(member.body.getEntityId(), member.kind, frame);
             members.add(seen);
             if (member.target == null) {
@@ -401,7 +417,7 @@ public final class MinionWaves implements Listener {
                 }
             } else {
                 minion.backing = false;
-                goTo(minion, engage(minion, target, stand, at), stats.speed());
+                goTo(minion, engage(minion, target, stand, at), stats.speed() * approach(minion, target, at));
             }
             minion.lastCheck = at;
             minion.checkedAt = now;
@@ -445,11 +461,42 @@ public final class MinionWaves implements Listener {
         // never a goal inside a building (the pathfinder cannot reach it, a stepped minion would walk in)
         Location goal = arena.clearOfStructures(wanted, margin(minion.body));
         if (minion.movingTo == null || Creatures.flatDistanceSquared(goal, minion.movingTo) > 0.25
-                || now - minion.movedAt >= 20) {
+                || Math.abs(speed - minion.movingSpeed) > 0.05 || now - minion.movedAt >= 20) {
             minion.movingTo = goal;
+            minion.movingSpeed = speed;
             minion.movedAt = now;
             mover.moveTo(minion.body, goal, speed);
         }
+    }
+
+    /**
+     * The speed factor of a minion walking up to {@code target} ({@link Formation#approach}): the two close in by its
+     * own step plus the enemy minion's step towards it (an enemy walking at it, the faster the two meet the earlier
+     * both slow down; one walking away is chased at full speed). Steps at the kinds' full speeds
+     * ({@link CreatureMover#STEP_PER_TICK}: braking does not shorten the brake). Full speed for anything else (players
+     * are chased, buildings stand).
+     */
+    private double approach(Minion minion, LivingEntity target, Location at) {
+        Minion enemy = minionOf(target);
+        if (enemy == null) {
+            return 1;
+        }
+        double range = settings.stats(minion.kind).range();
+        Location there = target.getLocation();
+        double gap = Math.sqrt(Creatures.flatDistanceSquared(at, there)) - range;
+        double closing = CreatureMover.STEP_PER_TICK * settings.stats(minion.kind).speed();
+        if (enemy.movingTo != null) {
+            Vector heading = enemy.movingTo.toVector().subtract(there.toVector()).setY(0);
+            Vector towards = at.toVector().subtract(there.toVector()).setY(0);
+            if (heading.lengthSquared() > 1.0E-6 && towards.lengthSquared() > 1.0E-6) {
+                closing += CreatureMover.STEP_PER_TICK * settings.stats(enemy.kind).speed()
+                        * heading.normalize().dot(towards.normalize());
+            }
+        }
+        if (closing <= 0) {
+            return 1;
+        }
+        return Formation.approach(gap, closing, settings.formation());
     }
 
     /**
@@ -630,7 +677,10 @@ public final class MinionWaves implements Listener {
         List<Minion> enemies = new ArrayList<>();
         for (Minion other : minions.values()) {
             if (other.side == minion.side) {
-                if (other.target instanceof Mob fought && other != minion) {
+                // only allies fighting the way it does crowd a target: archers shooting at the enemy soldier in
+                // front leave it to the soldiers (or a soldier would walk past it to an archer behind)
+                if (other.target instanceof Mob fought && other != minion
+                        && other.kind.ranged() == minion.kind.ranged()) {
                     fightersOn.merge(fought, 1, Integer::sum);
                 }
             } else if (other.body.isValid() && !other.body.isDead() && other.body.getWorld().equals(at.getWorld())
@@ -651,6 +701,20 @@ public final class MinionWaves implements Listener {
         }
         int chosen = Formation.pick(slot.lateral(), candidates, settings.formation());
         return chosen < 0 ? null : enemies.get(chosen).body;
+    }
+
+    /** Whether an enemy minion is within the aggro radius (a cheap look, no choice). */
+    private boolean enemyMinionNear(Minion minion) {
+        Location at = minion.body.getLocation();
+        double radius = settings.aggroRadius();
+        for (Minion other : minions.values()) {
+            if (other.side != minion.side && other.body.isValid() && !other.body.isDead()
+                    && other.body.getWorld().equals(at.getWorld())
+                    && Creatures.flatDistanceSquared(at, other.body.getLocation()) <= radius * radius) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean inLeash(Minion minion, LivingEntity target) {

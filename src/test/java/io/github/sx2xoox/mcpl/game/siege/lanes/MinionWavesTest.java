@@ -335,7 +335,8 @@ class MinionWavesTest extends LaneTestBase {
                 minion.body().remove();
             }
         }
-        run(30);
+        // the archer steps back from the soldier at its own speed while it shoots: the next blue waves finish it
+        run(80);
         assertTrue(other.body().isDead(), "killed by the BLUE minion");
         assertEquals(now, systems.gold().balance(hitter.getUniqueId()));
 

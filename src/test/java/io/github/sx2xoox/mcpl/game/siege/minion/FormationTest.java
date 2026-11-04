@@ -58,7 +58,7 @@ class FormationTest {
         assertEquals(1, slots.get(7).row());
         assertEquals(2, slots.get(3).row(), "the ranged row moves back");
         assertEquals(3, slots.get(5).row());
-        Formation.Settings narrow = new Formation.Settings(1.6, 3, 5, 2, 3, 1, 0.6, 1.25, 1.4, 1, 0.6, 1.5, false);
+        Formation.Settings narrow = new Formation.Settings(1.6, 3, 5, 2, 3, 1, 0.85, 1.25, 1.4, 1, 0.6, 1.5, false, 6, 0.5);
         List<Formation.Member> five = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             five.add(member(i, MinionKind.MELEE, 0, i));
@@ -108,6 +108,18 @@ class FormationTest {
         assertEquals(S.slowFactor(), Formation.pace(23, 0, front, S), E, "ahead");
         assertEquals(S.catchUpFactor(), Formation.pace(14, 2, front, S), E, "the cannon lags");
         assertEquals(1, Formation.pace(0, 0, Double.NaN, S), E, "nobody marching");
+    }
+
+    @Test
+    void walkingUpToAnEnemyBrakesBeforeTheReachTheFasterTheyCloseIn() {
+        // two minions closing in by 0.6 a tick: the brake starts 6 ticks (3.6 blocks) short of the reach
+        assertEquals(1, Formation.approach(5, 0.6, S), E, "far off: full speed");
+        assertEquals(0.5, Formation.approach(1.8, 0.6, S), E, "half way into the brake");
+        assertEquals(S.brakeFactor(), Formation.approach(0.2, 0.6, S), E, "at the edge: the slowest");
+        assertEquals(S.brakeFactor(), Formation.approach(0, 0.6, S), E, "in reach");
+        // alone (the enemy stands): half the closing speed, half the braking distance
+        assertEquals(1, Formation.approach(1.8, 0.3, S), E);
+        assertEquals(1, Formation.approach(3, 0, S), E, "nothing closes in");
     }
 
     @Test

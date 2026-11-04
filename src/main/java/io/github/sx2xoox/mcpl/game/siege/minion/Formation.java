@@ -18,6 +18,8 @@ import java.util.Map;
  *     </li>
  *     <li>{@link #front} and {@link #pace}: on the march every row keeps its distance behind the wave's front line: a
  *     member ahead of its place slows down, one behind it hurries.</li>
+ *     <li>{@link #approach}: walking up to an enemy minion it slows down just before its reach (the closing speed of
+ *     both counted), so fast waves stop face to face.</li>
  *     <li>{@link #pick}: an enemy facing the member's file, not one many allies already fight.</li>
  *     <li>{@link #standPoint}: where to fight from: melee just in front of the target, ranged near the end of their
  *     range, both on their own file as far as their reach allows (no crowding on one point, no spreading out).</li>
@@ -44,13 +46,16 @@ public final class Formation {
      * @param lateralWeight target choice: blocks of distance one block of file mismatch counts as
      * @param crowdPenalty  target choice: blocks of distance each ally already fighting a target counts as
      * @param knockback     minions knock each other back with their hits (vanilla); off keeps the lines
+     * @param brakeTicks    a minion walking up to an enemy minion slows down once it would get in reach within this
+     *                      many ticks at the speed the two close in ({@link #approach})
+     * @param brakeFactor   the slowest it walks then (speed factor, at the edge of its reach)
      */
     public record Settings(double rowSpacing, double fileSpacing, int perRow, double maxLateral, double lookahead,
             double paceSlack, double slowFactor, double catchUpFactor, double meleeStand, double rangedMargin,
-            double lateralWeight, double crowdPenalty, boolean knockback) {
+            double lateralWeight, double crowdPenalty, boolean knockback, double brakeTicks, double brakeFactor) {
 
-        public static final Settings DEFAULTS = new Settings(1.6, 2.0, 3, 2.5, 3.0, 1.0, 0.6, 1.25, 1.4, 1.0, 0.6,
-                1.5, false);
+        public static final Settings DEFAULTS = new Settings(1.6, 2.0, 3, 2.5, 3.0, 1.0, 0.85, 1.25, 1.4, 1.0, 0.6,
+                1.5, false, 6, 0.5);
     }
 
     /** A point on the ground plane. */
@@ -246,6 +251,21 @@ public final class Formation {
             return settings.catchUpFactor();
         }
         return 1;
+    }
+
+    /**
+     * The speed factor of a minion walking up to an enemy minion {@code gap} blocks short of its reach, the two closing
+     * in by {@code closing} blocks a tick (its own step plus the enemy's, when that one walks at it): full speed while
+     * the reach is more than {@link Settings#brakeTicks()} ticks away, then down in proportion to the
+     * {@link Settings#brakeFactor()}. Two fast waves meeting so stop at the edge of their reach, in front of each
+     * other, instead of walking into each other's lines before the stop is seen.
+     */
+    public static double approach(double gap, double closing, Settings settings) {
+        double brake = closing * settings.brakeTicks();
+        if (gap <= 0 || brake <= 1.0E-9) {
+            return gap <= 0 ? settings.brakeFactor() : 1;
+        }
+        return Math.clamp(gap / brake, settings.brakeFactor(), 1);
     }
 
     /** A target a member may choose. */

@@ -57,7 +57,9 @@ public record MinionSettings(
      * @param damage      damage of a hit (on minions, players and structures)
      * @param range       hit range
      * @param attackTicks between hits
-     * @param speed       walking speed (× the bodies' walk)
+     * @param speed       walking speed (× the bodies' walk, {@code Creatures.BODY_SPEED}); a vanilla mob's ground
+     *                    speed grows with its square: about 2.75 blocks a second at 1, 4.0 at 1.2, 5.4 at 1.4 (the old
+     *                    baby zombie soldier's pace)
      * @param scale       the toy's size (1 = as modelled; the body and the model both)
      * @param xp          experience for nearby enemies when it dies
      * @param knockback   blocks it slides when a player's or bot's blow pushes it (0 = it stands its ground)
@@ -83,9 +85,9 @@ public record MinionSettings(
     }
 
     private static final Map<MinionKind, Stats> DEFAULTS = Map.of(
-            MinionKind.MELEE, new Stats(22, 2.5, 2.2, 20, 1.0, 1.0, 6, 0.35),
-            MinionKind.RANGED, new Stats(15, 2.0, 7.0, 30, 1.0, 1.0, 6, 0.4),
-            MinionKind.CANNON, new Stats(60, 5.0, 5.5, 40, 0.8, 1.0, 15, 0.1));
+            MinionKind.MELEE, new Stats(22, 2.5, 2.2, 20, 1.4, 1.0, 6, 0.35),
+            MinionKind.RANGED, new Stats(15, 2.0, 7.0, 30, 1.4, 1.0, 6, 0.4),
+            MinionKind.CANNON, new Stats(60, 5.0, 5.5, 40, 1.2, 1.0, 15, 0.1));
 
     public static MinionSettings read(ConfigurationSection config) {
         Map<MinionKind, Stats> stats = new EnumMap<>(MinionKind.class);
@@ -150,7 +152,9 @@ public record MinionSettings(
                 Math.max(0, config.getDouble(p + "ranged-margin", d.rangedMargin())),
                 Math.max(0, config.getDouble(p + "lateral-weight", d.lateralWeight())),
                 Math.max(0, config.getDouble(p + "crowd-penalty", d.crowdPenalty())),
-                config.getBoolean(p + "knockback", d.knockback()));
+                config.getBoolean(p + "knockback", d.knockback()),
+                Math.max(0, config.getDouble(p + "brake-ticks", d.brakeTicks())),
+                Math.clamp(config.getDouble(p + "brake-factor", d.brakeFactor()), 0.1, 1));
     }
 
     public Stats stats(MinionKind kind) {
