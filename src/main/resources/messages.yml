@@ -97,7 +97,9 @@ help:
       play:
         - " <cmd:'/게임 목록'> <dark_gray>-</dark_gray> <gray>미니게임 목록"
         - " <cmd:'/게임 참가'> <dark_gray>/</dark_gray> <cmd:'/게임 관전'> <dark_gray>-</dark_gray> <gray>다음 경기 참가 / 관전 선택"
+        - " <cmd:'/게임 팀 선택'> <dark_gray>·</dark_gray> <cmd:'/게임 팀 목록':'목록'> <dark_gray>-</dark_gray> <gray>팀 고르기 (메뉴), 정해 둔 팀"
       admin:
+        - " <cmd:'/게임 팀 지정 ':'/게임 팀 지정 [플레이어] [팀]'> <dark_gray>·</dark_gray> <cmd:'/게임 팀 섞기':'섞기'> <dark_gray>·</dark_gray> <cmd:'/게임 팀 해제 ':'해제 [플레이어]'> <dark_gray>·</dark_gray> <cmd:'/게임 팀 초기화':'초기화'> <dark_gray>-</dark_gray> <gray>팀 정하기 (다음 판에도 유지)"
         - " <cmd:'/게임 중지'> <dark_gray>-</dark_gray> <gray>경기 강제 종료 및 복구"
         - " <cmd:'/게임 순환 ':'/게임 순환 [켜기|끄기|목록]'> <dark_gray>-</dark_gray> <gray>경기가 끝나면 다음 게임 자동 시작"
     match:
@@ -205,6 +207,35 @@ command:
   applies-next-match: "<gray>진행 중인 경기에는 적용되지 않고 다음 경기부터 적용됩니다."
   reloaded: "<green>설정을 다시 불러왔습니다. <dark_gray>(<ms>ms)"
 
+# ── 팀 고르기 (/게임 팀 선택|지정|해제|초기화|목록|섞기) ─────────────
+team:
+  chosen: "<gray>내 팀: <team>"
+  chosen-next: "<gray>내 팀: <team> <dark_gray>(다음 경기부터)"
+  assigned: "<white><player></white> <dark_gray>→</dark_gray> <team>"
+  assigned-you: "<gray>내 팀: <team> <dark_gray>(관리자 지정)"
+  unset-self: "<gray>내 팀: <white>자동 배정"
+  unset: "<white><player></white> <dark_gray>→</dark_gray> <white>자동 배정"
+  not-set: "<gray>정해 둔 팀이 없습니다."
+  reset: "<yellow>팀 지정을 모두 지웠습니다. <dark_gray>(<count>명)"
+  shuffled: "<green>대기 인원 <white><count></white>명을 무작위로 나눴습니다."
+  no-players: "<red>나눌 대기 인원이 없습니다."
+  list-header: "<gold>팀 지정 <dark_gray>· 나머지는 자동 배정"
+  list-entry: " <team> <dark_gray>(<count>)</dark_gray> <members>"
+  list-empty: "<gray>정해 둔 팀이 없습니다. 모두 자동 배정됩니다."
+  unknown: "<red>고를 수 없는 팀: <white><input></white> <gray>(<teams>)"
+  closed: "<red>지금 모드는 팀을 고를 수 없습니다."
+  choice-off: "<red>팀 선택이 꺼져 있습니다. <gray>관리자가 정합니다."
+  unknown-player: "<red>접속 중인 플레이어가 아닙니다: <white><input>"
+  menu:
+    title: "<dark_gray>팀 선택"
+    team-name: "<team> <dark_gray>(<count>명)"
+    member: "<gray>· <white><player>"
+    more: "<dark_gray>외 <count>명"
+    join: "<yellow>클릭하여 참가"
+    current: "<green>✔ 선택됨"
+    auto-name: "<white>자동 배정"
+    auto-lore: "<gray>남는 자리로 들어갑니다"
+
 # ── 경기 진행 ────────────────────────────────────────────────
 match:
   starting: "<game> <white>경기를 시작합니다! <gray>참가자 <white><count></white>명 · <white><seconds></white>초 후 시작"
@@ -214,6 +245,8 @@ match:
   start-title: "<gradient:#ffb347:#ff5e62><bold>START!</bold></gradient>"
   start-subtitle: "<game>"
   team-assigned: "<gray>당신은 <team><gray>입니다. 팀원: <members>"
+  team-pick-refused: "<yellow>고른 <team><yellow>은 이 모드에 없어 자동 배정됐습니다."
+  team-pick-moved: "<yellow>인원을 맞추느라 <team><yellow>으로 옮겼습니다."
   joined-countdown: "<green>+</green> <white><player></white><gray>님이 참가합니다. <dark_gray>(<count>명)"
   left-countdown: "<red>-</red> <white><player></white><gray>님이 빠졌습니다. <dark_gray>(<count>명)"
   joined-spectator: "<gray>진행 중인 <game><gray> 경기를 관전합니다. 경기가 끝나면 원래 상태로 돌아갑니다."
@@ -417,6 +450,16 @@ settings:
         - "<gray>팀당 인원입니다. 0이면 개인전입니다."
         - "<gray>팀전을 지원하는 게임(초능력전쟁)에만 적용됩니다."
       zero: "<aqua>개인전"
+    team-choice:
+      name: "팀 직접 선택"
+      lore:
+        - "<gray>플레이어가 <white>/게임 팀 선택</white>으로 팀을 고릅니다."
+        - "<gray>꺼도 관리자는 <white>/게임 팀 지정</white>으로 정할 수 있습니다."
+    team-balance:
+      name: "팀 인원 맞추기"
+      lore:
+        - "<gray>시작할 때 고른 팀의 인원 차이를 1명 이하로 맞춥니다."
+        - "<gray>끄면 고른 대로 (빈 팀만 채움, 봇전은 봇이 채움)."
     countdown:
       name: "카운트다운"
       lore:

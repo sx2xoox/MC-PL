@@ -9,6 +9,7 @@ import io.github.sx2xoox.mcpl.core.combat.CombatTracker;
 import io.github.sx2xoox.mcpl.core.command.GameCommand;
 import io.github.sx2xoox.mcpl.core.config.HubConfig;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
+import io.github.sx2xoox.mcpl.core.game.TeamPresets;
 import io.github.sx2xoox.mcpl.core.map.MapService;
 import io.github.sx2xoox.mcpl.core.pack.PackCheck;
 import io.github.sx2xoox.mcpl.core.pack.ResourcePackService;
@@ -16,6 +17,7 @@ import io.github.sx2xoox.mcpl.core.player.SnapshotStore;
 import io.github.sx2xoox.mcpl.core.ui.Messages;
 import io.github.sx2xoox.mcpl.core.ui.SettingsEditor;
 import io.github.sx2xoox.mcpl.core.ui.SettingsMenuListener;
+import io.github.sx2xoox.mcpl.core.ui.TeamMenuListener;
 import io.github.sx2xoox.mcpl.core.world.TempWorlds;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
@@ -37,6 +39,7 @@ import org.bukkit.plugin.java.JavaPlugin;
  *     <li>{@link #gameRules()} — temporary world game rules</li>
  *     <li>{@link #settings()} — the in-game settings menu and {@code /게임 설정} entries</li>
  *     <li>{@link #tempWorlds()} — throw-away worlds created for one match and deleted after it</li>
+ *     <li>{@link #teamPresets()} — team picks before a match ({@code /게임 팀 선택}, the team menu)</li>
  * </ul>
  */
 public final class Hub {
@@ -55,6 +58,8 @@ public final class Hub {
     private final HubListener listener;
     private final SettingsEditor settings;
     private final SettingsMenuListener settingsListener;
+    private final TeamPresets teamPresets;
+    private final TeamMenuListener teamMenuListener;
     private final ResourcePackService resourcePacks;
     private final PackCheck packCheck;
     private boolean enabled;
@@ -75,6 +80,8 @@ public final class Hub {
         this.listener = new HubListener(this);
         this.settings = new SettingsEditor(this);
         this.settingsListener = new SettingsMenuListener(this);
+        this.teamPresets = new TeamPresets(this);
+        this.teamMenuListener = new TeamMenuListener(this);
         this.resourcePacks = new ResourcePackService(plugin, config::resourcePack, messages);
         this.packCheck = new PackCheck(plugin, resourcePacks, messages);
     }
@@ -97,6 +104,7 @@ public final class Hub {
         tempBlocks.start();
         Bukkit.getPluginManager().registerEvents(listener, plugin);
         Bukkit.getPluginManager().registerEvents(settingsListener, plugin);
+        Bukkit.getPluginManager().registerEvents(teamMenuListener, plugin);
         maps.enable();
         resourcePacks.enable();
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -131,6 +139,7 @@ public final class Hub {
         resourcePacks.disable();
         HandlerList.unregisterAll(listener);
         HandlerList.unregisterAll(settingsListener);
+        HandlerList.unregisterAll(teamMenuListener);
         combat.clear();
     }
 
@@ -202,6 +211,11 @@ public final class Hub {
     /** The in-game settings: the menu ({@code /게임 설정}) and the entries of the hub and every mini-game. */
     public SettingsEditor settings() {
         return settings;
+    }
+
+    /** Team picks before a match: {@code /게임 팀 선택|지정|섞기} and the team menu. */
+    public TeamPresets teamPresets() {
+        return teamPresets;
     }
 
     /** A key in this plugin's namespace (attribute modifiers, PDC, ...). Modifiers in it are stripped on restore. */

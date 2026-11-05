@@ -16,7 +16,7 @@ import org.bukkit.entity.Player;
  * {@link TeamAssigner}); a free-for-all match has no teams at all ({@link GameSession#teams()} is empty).
  *
  * <p>Members are participant UUIDs, including eliminated and offline ones. Only the hub adds members (late joiners
- * go to the smallest team).
+ * go to their picked team, see {@link TeamPresets}, or the smallest one).
  */
 public final class MatchTeam {
 
@@ -93,6 +93,10 @@ public final class MatchTeam {
 
     void add(UUID playerId) {
         members.add(playerId);
+    }
+
+    void remove(UUID playerId) {
+        members.remove(playerId);
     }
 
     @Override

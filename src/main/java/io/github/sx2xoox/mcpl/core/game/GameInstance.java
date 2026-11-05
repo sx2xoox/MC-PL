@@ -140,6 +140,15 @@ public interface GameInstance {
     }
 
     /**
+     * True if this match fills its teams with {@link GameSession#addBot bots} (봇전): the hub then forms the teams from
+     * the players' picks as they are, even lopsided or with an empty team. Otherwise (default) it moves pickers so no
+     * team starts empty ({@code match.team-balance}: sizes within one).
+     */
+    default boolean botsFillTeams() {
+        return false;
+    }
+
+    /**
      * Clean up everything this instance created that the session does not own. Called exactly once (see class
      * docs), possibly without {@link #start()} having been called.
      */

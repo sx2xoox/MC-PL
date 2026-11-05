@@ -55,6 +55,18 @@ public final class SettingsEditor {
                 .path("match.team-size")
                 .range(0, HubConfig.MAX_TEAM_SIZE).steps(1, 4).integer().unit(Setting.Unit.PLAYERS)
                 .number(config::teamSize, value -> config.setTeamSize((int) value), 0);
+        Setting teamChoice = Setting.builder("hub.team-choice")
+                .command("팀선택", "teamchoice")
+                .icon(Material.WHITE_WOOL)
+                .text(messages, "settings.hub.team-choice")
+                .path("match.team-choice")
+                .toggle(config::teamChoice, config::setTeamChoice, true);
+        Setting teamBalance = Setting.builder("hub.team-balance")
+                .command("팀균형", "teambalance")
+                .icon(Material.SCAFFOLDING)
+                .text(messages, "settings.hub.team-balance")
+                .path("match.team-balance")
+                .toggle(config::teamBalance, config::setTeamBalance, true);
         Setting countdown = Setting.builder("hub.countdown")
                 .command("카운트다운", "countdown")
                 .icon(Material.BELL)
@@ -84,7 +96,7 @@ public final class SettingsEditor {
                         },
                         BlockDamageScope.MAP_WORLDS.name());
         return new SettingsSection("hub", Material.COMPARATOR, messages, "settings.hub.section",
-                List.of(team, countdown, terrain));
+                List.of(team, teamChoice, teamBalance, countdown, terrain));
     }
 
     /** Every section: the hub's first, then each mini-game's in registration order. */

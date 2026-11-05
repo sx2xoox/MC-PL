@@ -142,6 +142,24 @@ class SiegeMatchTest {
     // ------------------------------------------------------------------ tests
 
     @Test
+    void teamPicksPlayOnTheSideOfTheirColor() {
+        var players = h.join(4);
+        h.hub.teamPresets().set(players.get(0).getUniqueId(), "blue");
+        h.hub.teamPresets().set(players.get(1).getUniqueId(), "blue");
+        h.hub.teamPresets().set(players.get(2).getUniqueId(), "red");
+        try {
+            h.hub.games().start(siege, null);
+        } catch (GameStartException e) {
+            throw new AssertionError(e);
+        }
+        SiegeMatch match = untilFight(1);
+        assertEquals(LaneSites.Side.BLUE, match.side(players.get(0).getUniqueId()), "빨강/파랑 picks = RED/BLUE sides");
+        assertEquals(LaneSites.Side.BLUE, match.side(players.get(1).getUniqueId()));
+        assertEquals(LaneSites.Side.RED, match.side(players.get(2).getUniqueId()));
+        assertEquals(LaneSites.Side.RED, match.side(players.get(3).getUniqueId()), "the rest fill the other side");
+    }
+
+    @Test
     void sidesStructuresAndShields() {
         SiegeMatch match = start(2);
         Player a = member(match, 0);

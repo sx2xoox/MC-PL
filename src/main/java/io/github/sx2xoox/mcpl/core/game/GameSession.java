@@ -484,8 +484,32 @@ public final class GameSession {
         return true;
     }
 
+    /** The team this player picked ({@link TeamPresets}) if this match has it, else null. */
+    private @Nullable MatchTeam pickedTeam(UUID id) {
+        String pick = hub.teamPresets().get(id);
+        if (pick == null) {
+            return null;
+        }
+        for (MatchTeam team : teams) {
+            if (team.id().equals(pick)) {
+                return team;
+            }
+        }
+        return null;
+    }
+
+    /** True if the mode fills its teams with bots ({@link GameInstance#botsFillTeams()}). */
+    private boolean botsFillTeams() {
+        try {
+            return instance != null && instance.botsFillTeams();
+        } catch (RuntimeException e) {
+            log("botsFillTeams", e);
+            return false;
+        }
+    }
+
     /** The mode's {@link GameInstance#teamCount() fixed team count}, or 0. */
-    private int fixedTeamCount() {
+    public int fixedTeamCount() {
         if (instance == null) {
             return 0;
         }
@@ -1007,17 +1031,11 @@ public final class GameSession {
         }
         players = captured;
 
-        int teamSize = hub.config().teamSize();
-        int teamCount = fixedTeamCount();
-        if (game.supportsTeams() && teamCount >= 2) {
-            teams = TeamAssigner.spread(participants, teamCount, random);
-            for (MatchTeam team : teams) {
-                for (UUID member : team.members()) {
-                    teamByPlayer.put(member, team);
-                }
-            }
-        } else if (game.supportsTeams() && teamSize > 0) {
-            teams = TeamAssigner.assign(participants, teamSize, random);
+        TeamAssigner.Formation formation = null;
+        if (game.supportsTeams()) {
+            formation = TeamAssigner.form(participants, hub.teamPresets().all(), fixedTeamCount(),
+                    hub.config().teamSize(), hub.config().teamBalance(), botsFillTeams(), random);
+            teams = formation.teams();
             for (MatchTeam team : teams) {
                 for (UUID member : team.members()) {
                     teamByPlayer.put(member, team);
@@ -1052,6 +1070,9 @@ public final class GameSession {
         tick = 0;
         hub.settings().refreshMenus(); // open settings menus: changes now wait for the next match
         announceTeams();
+        if (formation != null) {
+            announcePickChanges(formation);
+        }
         Audience everyone = audience();
         Feedback.title(everyone, messages().get("match.start-title"),
                 messages().get("match.start-subtitle", Messages.tag("game", game.displayComponent())), 0, 30, 10);
@@ -1060,6 +1081,24 @@ public final class GameSession {
             instance.start();
         } catch (RuntimeException | LinkageError e) {
             fail("start", e);
+        }
+    }
+
+    /** Tells players whose team pick could not be kept where they ended up. */
+    private void announcePickChanges(TeamAssigner.Formation formation) {
+        for (UUID id : formation.refused()) {
+            Player player = Bukkit.getPlayer(id);
+            TeamAssigner.Entry pick = TeamAssigner.entry(String.valueOf(hub.teamPresets().get(id)));
+            if (player != null && pick != null) {
+                messages().send(player, "match.team-pick-refused", Messages.tag("team", pick.displayName()));
+            }
+        }
+        for (UUID id : formation.moved()) {
+            Player player = Bukkit.getPlayer(id);
+            MatchTeam team = teamByPlayer.get(id);
+            if (player != null && team != null) {
+                messages().send(player, "match.team-pick-moved", Messages.tag("team", team.displayName()));
+            }
         }
     }
 
@@ -1287,7 +1326,12 @@ public final class GameSession {
         stats.of(id);
         PlayerReset.reset(player, hub.snapshots().namespace());
         if (isTeamMode() && !teamByPlayer.containsKey(id)) {
-            MatchTeam team = TeamAssigner.addToSmallest(teams, id);
+            MatchTeam team = pickedTeam(id);
+            if (team != null) {
+                team.add(id);
+            } else {
+                team = TeamAssigner.addToSmallest(teams, id);
+            }
             teamByPlayer.put(id, team);
             boards.addTeamMember(team, id);
         }

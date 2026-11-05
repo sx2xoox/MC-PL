@@ -63,6 +63,8 @@ import org.jspecify.annotations.Nullable;
  * /게임 시작|start [모드 [옵션]]                          (admin; joining a practice: everyone) every start
  * /게임 중지|stop · 목록|list · 참가|join · 관전|spectate · 순환|rotation [켜기|끄기|목록]
  * /게임 리롤|reroll · 점수|score · 내정보|me · 팀|team      in a match, whatever the mode
+ * /게임 팀|team 선택|choose · 해제|unset · 목록|list · 지정|assign · 섞기|shuffle · 초기화|reset   team picks
+ *                                                     ({@link TeamCommand})
  * /게임 연습|practice &lt;도구&gt;                           tools of the running practice (허수아비 here, the rest
  *                                                     from the modes)
  * /게임 맵|map [&lt;맵&gt; [이동|tp | 다시짓기|rebuild] | 여기|here [반경] | 해제|clear]   (admin) battle maps, arena
@@ -169,8 +171,9 @@ public final class GameCommand {
         for (String name : List.of("내정보", "me")) {
             root.then(Commands.literal(name).executes(ctx -> myInfo(ctx.getSource().getSender())));
         }
+        TeamCommand teamCommand = new TeamCommand(hub);
         for (String name : List.of("팀", "team")) {
-            root.then(Commands.literal(name).executes(ctx -> team(ctx.getSource().getSender())));
+            root.then(teamCommand.build(name, ctx -> team(ctx.getSource().getSender()), ADMIN));
         }
         for (String name : List.of("맵", "map")) {
             root.then(mapNode(name));

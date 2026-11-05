@@ -319,6 +319,11 @@ public final class SiegeGame implements MiniGame {
         this.botRequestedAt = System.currentTimeMillis();
     }
 
+    /** True if the starting match will get bots ({@link #takeBotRequest} would return them). */
+    boolean hasBotRequest() {
+        return botRequest != null && System.currentTimeMillis() - botRequestedAt <= BOT_REQUEST_MILLIS;
+    }
+
     /** The bots asked for the starting match, cleared (null: a match without bots). */
     SiegeBots.@Nullable Setup takeBotRequest() {
         SiegeBots.Setup setup = botRequest;

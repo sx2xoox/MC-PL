@@ -20,6 +20,10 @@ public final class FakeGame implements MiniGame {
     private final String id;
     private final boolean teams;
     public final List<FakeInstance> instances = new ArrayList<>();
+    /** {@link GameInstance#teamCount()} of the next instances (0: the hub's team size). */
+    public int fixedTeams;
+    /** Whether a player joining the running match plays ({@link GameInstance#allowLateJoin}). */
+    public boolean lateJoin;
 
     public FakeGame(String id) {
         this(id, false);
@@ -62,7 +66,7 @@ public final class FakeGame implements MiniGame {
 
     @Override
     public GameInstance createInstance(GameSession session) {
-        FakeInstance instance = new FakeInstance(session);
+        FakeInstance instance = new FakeInstance(this, session);
         instances.add(instance);
         return instance;
     }
@@ -73,13 +77,25 @@ public final class FakeGame implements MiniGame {
 
     public static final class FakeInstance implements GameInstance {
         public final GameSession session;
+        private final FakeGame game;
         public int starts;
         public int ticks;
         public int stops;
         public final List<UUID> eliminated = new ArrayList<>();
 
-        FakeInstance(GameSession session) {
+        FakeInstance(FakeGame game, GameSession session) {
+            this.game = game;
             this.session = session;
+        }
+
+        @Override
+        public int teamCount() {
+            return game.fixedTeams;
+        }
+
+        @Override
+        public boolean allowLateJoin(Player player, boolean rejoining) {
+            return game.lateJoin;
         }
 
         @Override

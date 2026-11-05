@@ -149,6 +149,12 @@ public final class SiegeMatch implements GameInstance {
         return 2;
     }
 
+    /** 공성전 봇전: the bots fill both sides, so the players' team picks stand as they are. */
+    @Override
+    public boolean botsFillTeams() {
+        return game.hasBotRequest();
+    }
+
     @Override
     public void start() {
         settings = SiegeSettings.read(session.gameConfig());

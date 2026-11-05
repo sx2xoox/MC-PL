@@ -276,6 +276,12 @@ public final class AugmentMatch implements GameInstance, BotHost {
         return botSetup == null ? 0 : botSetup.teams();
     }
 
+    /** 봇전: the bots fill the teams, so the players' team picks stand as they are. */
+    @Override
+    public boolean botsFillTeams() {
+        return botSetup != null;
+    }
+
     /** The bots of a 봇전 match (null otherwise). */
     public @Nullable BotManager bots() {
         return bots;

@@ -69,6 +69,8 @@ public final class HubConfig {
     private int endingSeconds = 10;
     private int teamSize;
     private boolean fireworks = true;
+    private boolean teamChoice = true;
+    private boolean teamBalance = true;
     private boolean rotationEnabled;
     private List<String> rotationGames = List.of();
     private int intermissionSeconds = 30;
@@ -281,6 +283,8 @@ public final class HubConfig {
         endingSeconds = clamp(config.getInt("match.ending-seconds", 10), 0, 120);
         teamSize = clamp(config.getInt("match.team-size", 0), 0, MAX_TEAM_SIZE);
         fireworks = config.getBoolean("match.fireworks", true);
+        teamChoice = config.getBoolean("match.team-choice", true);
+        teamBalance = config.getBoolean("match.team-balance", true);
 
         rotationEnabled = config.getBoolean("rotation.enabled", false);
         List<String> games = new ArrayList<>();
@@ -391,6 +395,31 @@ public final class HubConfig {
     public void setTeamSize(int size) {
         teamSize = clamp(size, 0, MAX_TEAM_SIZE);
         raw().set("match.team-size", teamSize);
+        save();
+    }
+
+    /** Whether players may pick their own team ({@code /게임 팀 선택}); admins can always assign teams. */
+    public boolean teamChoice() {
+        return teamChoice;
+    }
+
+    public void setTeamChoice(boolean allowed) {
+        teamChoice = allowed;
+        raw().set("match.team-choice", allowed);
+        save();
+    }
+
+    /**
+     * Whether team picks are evened out at the start (sizes within one); off: kept as picked, only a team that would
+     * start empty gets a player (unless the mode's bots fill it).
+     */
+    public boolean teamBalance() {
+        return teamBalance;
+    }
+
+    public void setTeamBalance(boolean balance) {
+        teamBalance = balance;
+        raw().set("match.team-balance", balance);
         save();
     }
 
