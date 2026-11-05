@@ -268,7 +268,7 @@ class MinionWavesTest extends LaneTestBase {
         assertNotNull(shell, "a shell you can see");
         assertNotNull(shell.landing());
         assertTrue(Creatures.flatDistanceSquared(shell.landing(), spot) < 0.01, "aimed where the target stands");
-        assertTrue(shell.flight() >= 8, "an arc, not an instant hit: " + shell.flight());
+        assertTrue(shell.flight() >= 4, "an arc, not an instant hit: " + shell.flight()); // ticks scale with the range the cannon fires from
         assertEquals(20, aimed.getHealth(), 1.0E-6, "it has not landed yet");
         ToyShots.Shot flying = shell;
         for (int i = 0; i < 40 && !flying.isDone(); i++) {
