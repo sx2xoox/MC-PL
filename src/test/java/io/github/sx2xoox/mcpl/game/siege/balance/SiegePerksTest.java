@@ -131,6 +131,25 @@ class SiegePerksTest {
     }
 
     @Test
+    void tuningReplacesDefaultsInSiegeOnlyAndKeepsServerEdits() {
+        SiegeBalance balance = new SiegeBalance(SiegeBalanceSettings.defaults(), new SiegeModifiers());
+        SiegeTuning.Tune tune = SiegeTuning.of("magnet").stream()
+                .filter(t -> t.key().equals("push_distance")).findFirst().orElseThrow();
+        assertEquals(tune.value(), balance.param("magnet", 1, "push_distance", tune.from()), 1.0E-9,
+                "the default reads as the 공성전 value");
+        assertEquals(7.5, balance.param("magnet", 1, "push_distance", 7.5), 1.0E-9, "a server's own value is kept");
+        assertEquals(8, balance.param("earth", 1, AbilityInfo.COOLDOWN, 10), 1.0E-9, "cooldowns too");
+        assertEquals(1, balance.param("druid", 5, "ult_heal", 1.5), 1.0E-9, "tuned before the perks");
+        assertEquals(1.5, balance.param("druid", 6, "ult_heal", 1.5), 1.0E-9, "the level 6 perk adds to the tuned value");
+        MemoryConfiguration config = new MemoryConfiguration();
+        SiegeBalanceSettings.declareDefaults(config);
+        config.set(SiegeBalanceSettings.TUNING, false);
+        SiegeBalance off = new SiegeBalance(SiegeBalanceSettings.read(config), new SiegeModifiers());
+        assertEquals(tune.from(), off.param("magnet", 1, "push_distance", tune.from()), 1.0E-9, "tuning off");
+        assertEquals(1.0, balance.objectiveMultiplier(null), 1.0E-9);
+    }
+
+    @Test
     void settingsReadOverridesAndCanTurnTheBalanceOff() {
         MemoryConfiguration config = new MemoryConfiguration();
         SiegeBalanceSettings.declareDefaults(config);

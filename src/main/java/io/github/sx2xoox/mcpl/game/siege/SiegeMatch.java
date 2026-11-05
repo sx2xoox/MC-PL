@@ -456,17 +456,17 @@ public final class SiegeMatch implements GameInstance {
         }
 
         /**
-         * Players, summons and 봇전 bots (fighters like players): structures and the other modules' targets keep their
-         * own numbers.
+         * Players, summons and 봇전 bots (fighters like players) take the balance's factor; structures and the other
+         * modules' targets (minions, monsters) keep their own numbers but for the ability's objective correction.
          */
         @Override
         public double abilityDamageMultiplier(Player attacker, LivingEntity target, boolean ultimate) {
             UUID fighter = target instanceof Player player ? player.getUniqueId() : fighterOf(target);
-            if (fighter == null && isExtraTarget(target)) {
-                return 1.0;
-            }
             UUID id = attacker.getUniqueId();
             Participant participant = abilities == null ? null : abilities.participant(id);
+            if (fighter == null && isExtraTarget(target)) {
+                return balance.objectiveMultiplier(participant == null ? null : participant.abilityId());
+            }
             return balance.damageMultiplier(participant == null ? null : participant.abilityId(), balanceLevel(id),
                     id, fighter, ultimate);
         }

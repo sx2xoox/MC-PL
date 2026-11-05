@@ -64,8 +64,8 @@ public final class BerserkerAbility extends Ability {
                             + "옆으로 튕겨냅니다.",
                     7)
             .ultimate("광폭화",
-                    "{ult_duration}초간 힘 II와 신속 II를 얻고, 근접 공격과 돌진으로 입힌 피해의 {ult_lifesteal}%만큼 "
-                            + "체력을 회복합니다.")
+                    "{ult_duration}초간 힘(레벨 {ult_strength})과 신속 II를 얻고 근접 피해가 {ult_bonus}% 더 늘며, "
+                            + "근접 공격과 돌진으로 입힌 피해의 {ult_lifesteal}%만큼 체력을 회복합니다.")
             .ultimateNotStandalone()
             .param("rage_max", 50)
             .param("rage_health", 4)
@@ -73,6 +73,8 @@ public final class BerserkerAbility extends Ability {
             .param("charge_damage", 4)
             .param("ult_duration", 8)
             .param("ult_lifesteal", 30)
+            .param("ult_strength", 2)
+            .param("ult_bonus", 0)
             .build();
 
     private static final double TAU = Math.PI * 2;
@@ -200,6 +202,10 @@ public final class BerserkerAbility extends Ability {
             }
         }
         if (isFrenzied()) {
+            double bonus = Math.max(0, params().num("ult_bonus")) / 100.0;
+            if (bonus > 0) {
+                event.setDamage(event.getDamage() * (1 + bonus));
+            }
             scheduleLifesteal(event, victim);
         }
     }
@@ -786,8 +792,11 @@ public final class BerserkerAbility extends Ability {
         Player owner = player();
         long duration = Math.max(1, params().ticks("ult_duration"));
         int effectTicks = (int) Math.min(Integer.MAX_VALUE, duration);
-        owner.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, effectTicks, FRENZY_AMPLIFIER, false, true,
-                true));
+        int strength = (int) Math.round(params().num("ult_strength"));
+        if (strength > 0) {
+            owner.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, effectTicks, strength - 1, false, true,
+                    true));
+        }
         owner.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, effectTicks, FRENZY_AMPLIFIER, false, true,
                 true));
         frenzyUntil = ctx().currentTick() + duration;

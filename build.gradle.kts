@@ -119,6 +119,28 @@ tasks.register<Test>("basicAttackLab") {
     outputs.upToDateWhen { false }
 }
 
+tasks.register<Test>("siegeLab") {
+    description = "Measures every 공성전 pool ability in test matches (SiegeBalanceLab) into docs/siege-balance-lab.csv; " +
+        "-Pabilities=a,b re-measures only those. Run updateSiegeBalance afterwards."
+    group = "documentation"
+    useJUnitPlatform()
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    filter {
+        includeTestsMatching("*SiegeBalanceLab")
+    }
+    maxHeapSize = "2g"
+    systemProperty("mcpl.siegeLab", "true")
+    systemProperty("mcpl.siegeLab.abilities", (project.findProperty("abilities") ?: "").toString())
+    // -Pout=<file> -Puntuned=true: measure without the 공성전 tuning into another file (comparisons only)
+    systemProperty("mcpl.siegeLab.out", (project.findProperty("out") ?: "").toString())
+    systemProperty("mcpl.siegeLab.untuned", (project.findProperty("untuned") ?: "false").toString())
+    testLogging {
+        showStandardStreams = true
+    }
+    outputs.upToDateWhen { false }
+}
+
 tasks.register<Test>("updateBasicAttackDocs") {
     description = "Regenerates the basic attack (평타) table in docs/siege-v2.md §8 from BasicAttacks."
     group = "documentation"

@@ -58,9 +58,21 @@ public final class SiegeBalance {
         return factor;
     }
 
-    /** The value an owner at {@code level} reads for a param (its level perks, when they are on). */
+    /**
+     * The factor on one hit of {@code abilityId}'s ability damage on a building, minion or monster (they take no global
+     * factor or level scaling, only this correction).
+     */
+    public double objectiveMultiplier(@Nullable String abilityId) {
+        return settings.enabled() && abilityId != null ? settings.correction(abilityId).objective() : 1.0;
+    }
+
+    /**
+     * The value an owner at {@code level} reads for a param: the 공성전 tuning ({@link SiegeTuning}), then its level
+     * perks, when they are on (a perk adds to the tuned value).
+     */
     public double param(String abilityId, int level, String key, double value) {
-        return settings.perks() ? SiegePerks.apply(abilityId, level, key, value) : value;
+        double base = settings.enabled() && settings.tuning() ? SiegeTuning.apply(abilityId, key, value) : value;
+        return settings.perks() ? SiegePerks.apply(abilityId, level, key, base) : base;
     }
 
     /** The factor on {@code player}'s active cooldowns (items, buffs). */

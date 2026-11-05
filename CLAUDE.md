@@ -74,9 +74,12 @@ src/main/java/io/github/sx2xoox/mcpl/
                                readability parts: OverheadBar, DamageNumbers, SiegeSounds, Guidance; gold = SiegeEconomy)
     balance/                   ability balance in 공성전 only: SiegeBalance(+Settings) = global factor × per-ability correction
                                (generated siege-balance.yml) × level, SiegePerks = level 3/6/9 param perks (capped),
-                               SiegeModifiers = per-player skill damage/taken/cooldown for shop items and buffs;
-                               `./gradlew updateSiegeBalance` regenerates docs/siege-balance.md + siege-balance.yml
-                               (SiegeBalanceReport fails while stale)
+                               SiegeModifiers = per-player skill damage/taken/cooldown for shop items and buffs,
+                               SiegeTuning = 공성전-only param values, SiegeRoles = role per ability; the lab
+                               (`./gradlew siegeLab [-Pabilities=a,b]`, SiegeBalanceLab) measures every ability in test
+                               matches into docs/siege-balance-lab.csv, then `./gradlew updateSiegeBalance` scores it and
+                               regenerates docs/siege-balance.md + siege-balance.yml (SiegeBalanceReport fails while
+                               either is stale; re-run the lab for abilities whose params/tuning/perks changed)
     props/                     map model props (LaneSites#modelProps: pack models instead of block props, on invisible
                                footings): MapProps = the SiegeModule (item displays for the match, interpolated
                                spin/key/bob steps, removed in stop), PropModels = display table synced with
