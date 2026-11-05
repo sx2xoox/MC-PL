@@ -30,7 +30,10 @@ public final class AbilityWeaponModels {
             "spider", "pirate", "angler", "farmer", "batter",
             // batch 1 (tools/assetgen/models/weapons_b1.py)
             "ninja", "blade", "duelist", "archer", "sniper", "hunter", "lancer", "berserker", "guardian",
-            "fighter", "pyro", "frost", "thunder", "aero", "earth");
+            "fighter", "pyro", "frost", "thunder", "aero", "earth",
+            // batch 4 (tools/assetgen/models/weapons_b4.py, sized per weapon)
+            "minotaur", "medusa", "odin", "wukong", "ra", "titan", "monk", "gumiho", "bear", "octopus", "hydra",
+            "kiwarrior", "magicalgirl", "tengu", "druid", "shaman", "turtle", "crystal", "sonic", "tennis");
 
     /**
      * The vanilla swords an ability weapon is drawn as; the pack overrides their item definitions

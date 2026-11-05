@@ -176,3 +176,6 @@ WEAPONS.update(weapons_b2.WEAPONS)
 from models.weapons_b3 import WEAPONS as _B3  # noqa: E402  (batch 3: engineer .. batter)
 WEAPONS.update(_B3)
 WEAPONS.update(weapons_b1.WEAPONS_B1)     # batch 1: models/weapons_b1.py
+
+from models.weapons_b4 import WEAPONS as _B4  # noqa: E402  (batch 4: titan .. tennis, sized per weapon)
+WEAPONS.update(_B4)
