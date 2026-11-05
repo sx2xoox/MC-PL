@@ -141,6 +141,15 @@ public final class SiegeGame implements MiniGame {
         SiegeStatsSettings.declareDefaults(defaults);
     }
 
+    /**
+     * The defaults of the version before the 공성전 balance patch (levels, respawn, basic attacks) that a server which
+     * ran it still holds in {@code config.yml}: values never changed there move to today's defaults.
+     */
+    @Override
+    public void retiredConfigDefaults(ConfigurationSection defaults) {
+        SiegeRetiredDefaults.declare(defaults);
+    }
+
     @Override
     public GameInstance createInstance(GameSession session) {
         SiegeMatch match = new SiegeMatch(this, session);

@@ -86,7 +86,7 @@ class SiegeBalanceMatchTest {
         assertEquals(1, ctx.level(attacker), "level 1 at the start");
         assertEquals(4 * g, lost(ctx, attacker, defender, 4), 1.0E-6, "−35% at level 1");
 
-        match.progress().grant(attacker.getUniqueId(), 1600);
+        match.progress().grant(attacker.getUniqueId(), match.progress().settings().xpForLevel(9));
         assertEquals(9, ctx.level(attacker));
         assertEquals(4 * g * 1.6, lost(ctx, attacker, defender, 4), 1.0E-6, "+7.5% per level: ×1.6 at level 9");
 
@@ -103,7 +103,7 @@ class SiegeBalanceMatchTest {
         MatchHost host = match.abilities().host();
         assertNotNull(host);
         assertEquals(6, host.abilityParam(attacker, "pyro", "ult_radius", 6), 1.0E-9, "no perk at level 1");
-        match.progress().grant(attacker.getUniqueId(), 60 + 100 + 140 + 180 + 220);
+        match.progress().grant(attacker.getUniqueId(), match.progress().settings().xpForLevel(6));
         assertEquals(6, match.level(attacker.getUniqueId()));
         assertEquals(7, host.abilityParam(attacker, "pyro", "ult_radius", 6), 1.0E-9, "pyro level 6: vortex +1");
         assertEquals(1.9, host.abilityParam(attacker, "pyro", "fireball_radius", 1.5), 1.0E-9, "level 3 perk kept");

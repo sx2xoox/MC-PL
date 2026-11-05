@@ -274,7 +274,8 @@ final class BasicAttackRunner implements Listener {
                 state.queued = true;
                 ctx().runLater(player, wait, () -> {
                     state.queued = false;
-                    if (player.isOnline() && wields(player)) {
+                    // a click in the ready tick may have fired already (before this task ran): never a second attack
+                    if (player.isOnline() && wields(player) && session.tick() >= state.readyAt) {
                         fire(player, state);
                     }
                 });
@@ -1085,6 +1086,7 @@ final class BasicAttackRunner implements Listener {
             return 1.0;
         }
         double added = 0;
+        double effects = 0;
         double scalar = 0;
         double multiplied = 1;
         for (AttributeModifier modifier : attack.getModifiers()) {
@@ -1092,15 +1094,31 @@ final class BasicAttackRunner implements Listener {
                 continue;
             }
             switch (modifier.getOperation()) {
-                case ADD_NUMBER -> added += modifier.getAmount();
+                case ADD_NUMBER -> {
+                    if (isEffect(modifier.getKey())) {
+                        effects += modifier.getAmount();
+                    } else {
+                        added += modifier.getAmount();
+                    }
+                }
                 case ADD_SCALAR -> scalar += modifier.getAmount();
                 case MULTIPLY_SCALAR_1 -> multiplied *= 1 + modifier.getAmount();
             }
         }
         double reference = settings.bonusReference();
-        double flat = reference > 0 ? 1 + added / reference : 1;
+        double effectReference = settings.effectReference();
+        double flat = (reference > 0 ? 1 + added / reference : 1)
+                + (effectReference > 0 ? effects / effectReference : 0);
         double factor = flat * (1 + scalar) * multiplied;
         return Double.isFinite(factor) ? Math.max(0.1, factor) : 1.0;
+    }
+
+    /**
+     * True for the attack damage modifier of a potion effect (힘, 나약함: {@code minecraft:effect.*}). Vanilla sized
+     * them for a sword's whole hit, so a basic attack counts them against {@link BasicAttackSettings#effectReference}.
+     */
+    static boolean isEffect(NamespacedKey key) {
+        return NamespacedKey.MINECRAFT.equals(key.getNamespace()) && key.getKey().startsWith("effect.");
     }
 
     /** A slow or weaken from this attacker on {@code target}, replacing its previous one (never stacking). */

@@ -14,17 +14,17 @@ import org.jspecify.annotations.Nullable;
  */
 public enum ShopItem {
     CANDY(Category.BASIC, Material.COOKIE, null, 0, true, 50),
-    ARMOR_1(Category.BASIC, Material.LEATHER_CHESTPLATE, "armor", 1, false, 400),
-    ARMOR_2(Category.BASIC, Material.CHAINMAIL_CHESTPLATE, "armor", 2, false, 800),
-    ARMOR_3(Category.BASIC, Material.IRON_CHESTPLATE, "armor", 3, false, 1300),
-    WOODEN_SWORD(Category.ATTACK, Material.WOODEN_SWORD, "sword", 1, false, 350),
-    STEEL_SWORD(Category.ATTACK, Material.IRON_SWORD, "sword", 2, false, 850),
-    ORB(Category.ATTACK, Material.HEART_OF_THE_SEA, null, 0, false, 900),
+    ARMOR_1(Category.BASIC, Material.LEATHER_CHESTPLATE, "armor", 1, false, 350),
+    ARMOR_2(Category.BASIC, Material.CHAINMAIL_CHESTPLATE, "armor", 2, false, 850),
+    ARMOR_3(Category.BASIC, Material.IRON_CHESTPLATE, "armor", 3, false, 1450),
+    WOODEN_SWORD(Category.ATTACK, Material.WOODEN_SWORD, "sword", 1, false, 300),
+    STEEL_SWORD(Category.ATTACK, Material.IRON_SWORD, "sword", 2, false, 900),
+    ORB(Category.ATTACK, Material.HEART_OF_THE_SEA, null, 0, false, 700),
     SHOES(Category.UTILITY, Material.LEATHER_BOOTS, null, 0, false, 300),
-    HOURGLASS(Category.UTILITY, Material.CLOCK, null, 0, false, 800),
-    HAMMER(Category.SIEGE, Material.MACE, null, 0, false, 700),
+    HOURGLASS(Category.UTILITY, Material.CLOCK, null, 0, false, 550),
+    HAMMER(Category.SIEGE, Material.MACE, null, 0, false, 650),
     WARD(Category.VISION, Material.SPYGLASS, null, 0, true, 75),
-    REVIVE_CLOCK(Category.SURVIVAL, Material.RECOVERY_COMPASS, null, 0, false, 600);
+    REVIVE_CLOCK(Category.SURVIVAL, Material.RECOVERY_COMPASS, null, 0, false, 500);
 
     /** The shop's tabs. */
     public enum Category {

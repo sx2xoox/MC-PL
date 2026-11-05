@@ -92,13 +92,13 @@ class SiegeProgressTest {
     void theExperienceCurve() {
         SiegeProgressSettings s = SiegeProgressSettings.read(new MemoryConfiguration());
         assertEquals(9, s.maxLevel());
-        assertEquals(60, s.xpToNext(1));
-        assertEquals(100, s.xpToNext(2));
+        assertEquals(70, s.xpToNext(1));
+        assertEquals(135, s.xpToNext(2));
         assertEquals(0, s.xpForLevel(1));
-        assertEquals(60, s.xpForLevel(2));
-        assertEquals(1600, s.xpForLevel(9));
-        assertEquals(1, s.levelFor(59));
-        assertEquals(2, s.levelFor(60));
+        assertEquals(70, s.xpForLevel(2));
+        assertEquals(2380, s.xpForLevel(9));
+        assertEquals(1, s.levelFor(69));
+        assertEquals(2, s.levelFor(70));
         assertEquals(9, s.levelFor(1_000_000), "capped at the top level");
         assertEquals(0, s.bonusHealth(1));
         assertEquals(2, s.bonusHealth(2), 1.0E-9, "a heart every two levels");
@@ -107,10 +107,10 @@ class SiegeProgressTest {
         SiegeLevels levels = new SiegeLevels(s);
         UUID id = UUID.randomUUID();
         assertEquals(1, levels.level(id));
-        assertEquals(0, levels.add(id, 59));
-        assertEquals(2, levels.add(id, 101), "two levels at once");
+        assertEquals(0, levels.add(id, 69));
+        assertEquals(2, levels.add(id, 136), "two levels at once");
         assertEquals(3, levels.level(id));
-        assertEquals(140, levels.xpThisLevel(id));
+        assertEquals(200, levels.xpThisLevel(id));
         levels.reset();
         assertEquals(1, levels.level(id));
 
@@ -136,7 +136,7 @@ class SiegeProgressTest {
         assertEquals(1, host.abilityLevel(player), "abilities read the siege level");
 
         ((PlayerMock) player).getHeardSounds().clear();
-        match.addXp(id, 60);
+        match.addXp(id, 70);
         assertEquals(2, match.level(id));
         assertEquals(2, host.abilityLevel(player));
         assertEquals(22, maxHealth(player), 1.0E-9, "level 2: one more heart");
@@ -164,7 +164,7 @@ class SiegeProgressTest {
         while (((PlayerMock) player).nextComponentMessage() != null) {
             // drain
         }
-        match.addXp(player.getUniqueId(), 160);
+        match.addXp(player.getUniqueId(), 205);
         assertEquals(3, match.level(player.getUniqueId()));
         if (perk != null) {
             boolean seen = false;

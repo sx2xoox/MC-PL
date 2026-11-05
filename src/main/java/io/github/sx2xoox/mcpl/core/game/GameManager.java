@@ -89,7 +89,7 @@ public final class GameManager {
         }
         games.put(id, game);
         try {
-            hub.config().applyGameDefaults(id, game::configDefaults);
+            hub.config().applyGameDefaults(id, game::configDefaults, game::retiredConfigDefaults);
         } catch (RuntimeException e) {
             hub.plugin().getLogger().log(Level.WARNING, "Could not apply config defaults of " + id, e);
         }

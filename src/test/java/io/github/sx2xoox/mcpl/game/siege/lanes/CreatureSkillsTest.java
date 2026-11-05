@@ -89,7 +89,7 @@ class CreatureSkillsTest extends LaneTestBase {
         assertTrue(arena.sounds.contains(Sound.BLOCK_WOOL_HIT), "its tell: " + arena.sounds);
         run(16);
         assertTrue(skinEvents.contains("teddy slam"), skinEvents.toString());
-        assertEquals(15, player.getHealth(), 1.0E-6, "then the paws land: 5");
+        assertEquals(16, player.getHealth(), 1.0E-6, "then the paws land: 4");
     }
 
     @Test
@@ -110,8 +110,8 @@ class CreatureSkillsTest extends LaneTestBase {
         assertTrue(runUntil(30, () -> skinEvents.contains("teddy shockwave")), skinEvents.toString());
         assertEquals(20, front.getHealth(), 1.0E-6, "the jump: it lands with the stomp");
         run(CreatureModels.Attack.SHOCKWAVE.impact() + 1);
-        assertTrue(front.getHealth() <= 14 + 1.0E-6, "the target: 6");
-        assertTrue(behind.getHealth() <= 14 + 1.0E-6, "and whoever stands round it, behind too");
+        assertTrue(front.getHealth() <= 15 + 1.0E-6, "the target: 5");
+        assertTrue(behind.getHealth() <= 15 + 1.0E-6, "and whoever stands round it, behind too");
         assertEquals(20, far.getHealth(), 1.0E-6, "outside the circle: nothing");
         assertTrue(arena.sounds.contains(Sound.ENTITY_PLAYER_BIG_FALL), arena.sounds.toString());
     }
@@ -248,7 +248,7 @@ class CreatureSkillsTest extends LaneTestBase {
         assertEquals(20, front.getHealth(), 1.0E-6, "warned first");
         assertTrue(runUntil(30, () -> skinEvents.contains("dragon breath")), skinEvents.toString());
         run(CreatureModels.Attack.BREATH.impact() + 1);
-        assertTrue(front.getHealth() <= 10 + 1.0E-6, "in the cone: 10");
+        assertTrue(front.getHealth() <= 11 + 1.0E-6, "in the cone: 9");
         assertEquals(20, beside.getHealth(), 1.0E-6, "beside it, outside the cone");
     }
 
@@ -273,7 +273,7 @@ class CreatureSkillsTest extends LaneTestBase {
         double before = player.getHealth();
         player.setHealth(20);
         assertTrue(runUntil(60, () -> player.getHealth() < 20), "it bites");
-        assertEquals(10, player.getHealth(), 1.0E-6, "10 instead of 8 (before: " + before + ")");
+        assertEquals(12.5, player.getHealth(), 1.0E-6, "7.5 instead of 6 (before: " + before + ")");
         jungle().reset(dragon);
         assertTrue(skinEvents.contains("dragon calm"), "calm again at home");
         assertFalse(jungle().isEnraged(body));

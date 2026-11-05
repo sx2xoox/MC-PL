@@ -29,6 +29,7 @@ public record SiegeSettings(
         int respawnDeathsPerStep,
         int respawnStepTicks,
         int respawnMaxTicks,
+        int respawnLevelTicks,
         int protectionTicks,
         double spawnZoneRadius,
         double spawnZoneDamage,
@@ -64,6 +65,7 @@ public record SiegeSettings(
     public static final String RESPAWN_DEATHS_PER_STEP = "respawn.deaths-per-step";
     public static final String RESPAWN_STEP_SECONDS = "respawn.step-seconds";
     public static final String RESPAWN_MAX_SECONDS = "respawn.max-seconds";
+    public static final String RESPAWN_LEVEL_SECONDS = "respawn.per-level-seconds";
     public static final String PROTECTION_SECONDS = "respawn.protection-seconds";
     public static final String SPAWN_ZONE_RADIUS = "respawn.spawn-zone-radius";
     public static final String SPAWN_ZONE_DAMAGE = "respawn.spawn-zone-damage";
@@ -149,12 +151,13 @@ public record SiegeSettings(
                 ticks(c.getDouble(RESPAWN_SECONDS, 6), 0),
                 clamp(c.getInt(RESPAWN_DEATHS_PER_STEP, 3), 1, 100),
                 ticks(c.getDouble(RESPAWN_STEP_SECONDS, 1), 0),
-                ticks(c.getDouble(RESPAWN_MAX_SECONDS, 14), 0),
+                ticks(c.getDouble(RESPAWN_MAX_SECONDS, 18), 0),
+                ticks(c.getDouble(RESPAWN_LEVEL_SECONDS, 0.5), 0),
                 ticks(c.getDouble(PROTECTION_SECONDS, 3), 0),
                 Math.max(0, finite(c.getDouble(SPAWN_ZONE_RADIUS, 8), 8)),
                 Math.max(0, finite(c.getDouble(SPAWN_ZONE_DAMAGE, 4), 4)),
-                health(c.getDouble(OUTER_HEALTH, 1500)),
-                health(c.getDouble(INNER_HEALTH, 2000)),
+                health(c.getDouble(OUTER_HEALTH, 1200)),
+                health(c.getDouble(INNER_HEALTH, 1800)),
                 health(c.getDouble(CORE_HEALTH, 2500)),
                 Math.max(0, Math.min(10, finite(c.getDouble(HEALTH_BASE_SHARE, 0.25), 0.25))),
                 Math.max(0, Math.min(10, finite(c.getDouble(HEALTH_PER_ATTACKER, 0.25), 0.25))),
@@ -189,12 +192,23 @@ public record SiegeSettings(
     }
 
     /**
-     * Respawn delay of a player who died {@code deaths} times this round (this death included): base + one step per
-     * {@link #respawnDeathsPerStep} deaths, capped at {@link #respawnMaxTicks}, at least one second.
+     * Respawn delay of a level 1 player who died {@code deaths} times this round (this death included): see
+     * {@link #respawnDelay(int, int)}.
      */
     public int respawnDelay(int deaths) {
+        return respawnDelay(deaths, 1);
+    }
+
+    /**
+     * Respawn delay of a player of {@code level} who died {@code deaths} times this round (this death included): base
+     * + {@link #respawnLevelTicks} per level above 1 (a lost fight late in the round costs more, so a won one can
+     * break a building) + one step per {@link #respawnDeathsPerStep} deaths, capped at {@link #respawnMaxTicks}, at
+     * least one second.
+     */
+    public int respawnDelay(int deaths, int level) {
         int steps = Math.max(0, deaths) / respawnDeathsPerStep;
-        int delay = Math.min(Math.max(respawnTicks, respawnMaxTicks), respawnTicks + steps * respawnStepTicks);
+        int grown = respawnTicks + Math.max(0, level - 1) * respawnLevelTicks + steps * respawnStepTicks;
+        int delay = Math.min(Math.max(respawnTicks, respawnMaxTicks), grown);
         return Math.max(20, delay);
     }
 
@@ -236,15 +250,18 @@ public record SiegeSettings(
         d.set(RESPAWN_DEATHS_PER_STEP, 3);
         d.set(RESPAWN_STEP_SECONDS, 1);
         d.setComments(RESPAWN_DEATHS_PER_STEP, List.of("그 라운드에서 이만큼 죽을 때마다 부활 대기 +step-seconds초 (최대 max-seconds)"));
-        d.set(RESPAWN_MAX_SECONDS, 14);
+        d.set(RESPAWN_MAX_SECONDS, 18);
+        d.set(RESPAWN_LEVEL_SECONDS, 0.5);
+        d.setComments(RESPAWN_LEVEL_SECONDS, List.of(
+                "레벨마다 부활 대기 +이만큼(초): 1레벨 6초 → 9레벨 10초 (늦게 진 싸움일수록 상대가 건물을 부술 시간이 생김)"));
         d.set(PROTECTION_SECONDS, 3);
         d.setComments(PROTECTION_SECONDS, List.of("부활 직후 무적(초). 공격하면 풀립니다"));
         d.set(SPAWN_ZONE_RADIUS, 8);
         d.set(SPAWN_ZONE_DAMAGE, 4);
         d.setComments(SPAWN_ZONE_RADIUS, List.of("적 본진 부활 지점 반경(블록) 안에 들어온 적은 1초마다 spawn-zone-damage 피해"));
         d.setComments("towers", List.of("타워와 코어 (팀마다 라인당 타워 2개 + 코어 1개)"));
-        d.set(OUTER_HEALTH, 1500);
-        d.set(INNER_HEALTH, 2000);
+        d.set(OUTER_HEALTH, 1200);
+        d.set(INNER_HEALTH, 1800);
         d.set(CORE_HEALTH, 2500);
         d.setComments(OUTER_HEALTH, List.of("체력 (바깥 타워·안쪽 타워·코어, 상대 팀 3명 기준)"));
         d.set(HEALTH_BASE_SHARE, 0.25);

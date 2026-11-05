@@ -173,7 +173,7 @@ class SiegeShopTest extends LaneTestBase {
         click.callEvent();
         assertTrue(click.isCancelled(), "nothing is taken out of the menu");
         assertEquals(1, shop().count(blue.getUniqueId(), ShopItem.ORB), "bought by clicking");
-        assertEquals(5000 - 900, gold(blue));
+        assertEquals(5000 - 700, gold(blue));
 
         systems.endRound();
         assertEquals(0, count(Interaction.class), "the terminals go with the round");
@@ -185,14 +185,14 @@ class SiegeShopTest extends LaneTestBase {
         start(1, 1);
         Player blue = shopper(LaneSites.Side.BLUE, 0);
         assertSame(SiegeShop.Result.BOUGHT, shop().buy(blue, ShopItem.ARMOR_1));
-        assertEquals(600, gold(blue));
+        assertEquals(650, gold(blue));
         assertSame(SiegeShop.Result.OWNED, shop().buy(blue, ShopItem.ARMOR_1));
         assertSame(SiegeShop.Result.UPGRADED, shop().buy(blue, ShopItem.ARMOR_2));
-        assertEquals(200, gold(blue), "only the difference");
+        assertEquals(150, gold(blue), "only the difference");
         assertSame(SiegeShop.Result.OWNED, shop().buy(blue, ShopItem.ARMOR_1), "a better one is owned");
         assertEquals(1, shop().owned(blue.getUniqueId()).size(), "one slot for the whole line");
-        assertSame(SiegeShop.Result.NO_GOLD, shop().buy(blue, ShopItem.ARMOR_3), "500 for the upgrade");
-        assertEquals(200, gold(blue));
+        assertSame(SiegeShop.Result.NO_GOLD, shop().buy(blue, ShopItem.ARMOR_3), "600 for the upgrade");
+        assertEquals(150, gold(blue));
         systems.gold().add(blue.getUniqueId(), 2000, null);
         assertSame(SiegeShop.Result.BOUGHT, shop().buy(blue, ShopItem.SHOES));
         assertSame(SiegeShop.Result.OWNED, shop().buy(blue, ShopItem.SHOES), "shoes do not stack");
@@ -223,17 +223,18 @@ class SiegeShopTest extends LaneTestBase {
         shop().buy(blue, ShopItem.ORB);
         shop().buy(blue, ShopItem.HAMMER);
         shop().buy(blue, ShopItem.REVIVE_CLOCK);
-        assertEquals(armor + 6, blue.getAttribute(Attribute.ARMOR).getValue(), 1.0E-9);
-        assertEquals(attack + 3, blue.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), 1.0E-9);
+        assertEquals(armor + 10, blue.getAttribute(Attribute.ARMOR).getValue(), 1.0E-9);
+        assertEquals((attack + 1.5) * 1.08, blue.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), 1.0E-9,
+                "the steel sword adds 1.5, the orb 8 %");
         assertEquals(speed * 1.08, blue.getAttribute(Attribute.MOVEMENT_SPEED).getValue(), 1.0E-9);
-        assertEquals(-2, systems.respawnSeconds(blue.getUniqueId()), 1.0E-9);
+        assertEquals(-3, systems.respawnSeconds(blue.getUniqueId()), 1.0E-9);
         assertEquals(0, systems.respawnSeconds(red.getUniqueId()), 1.0E-9);
         assertEquals(armor, red.getAttribute(Attribute.ARMOR).getValue(), 1.0E-9, "the enemy has none of it");
 
-        // Ability damage: +10 % from the orb dealt by the buyer, −18 % taken by the buyer.
+        // Ability damage: +20 % from the orb dealt by the buyer, −18 % taken by the buyer.
         red.teleport(blue.getLocation().add(1, 0, 0));
         abilityHit(blue, red, 10);
-        assertEquals(20 - 11, red.getHealth(), 1.0E-6);
+        assertEquals(20 - 12, red.getHealth(), 1.0E-6);
         red.setHealth(20);
         abilityHit(red, blue, 10);
         assertEquals(20 - 8.2, blue.getHealth(), 1.0E-6);
@@ -242,15 +243,15 @@ class SiegeShopTest extends LaneTestBase {
         melee(red, blue, 5);
         assertTrue(blue.getHealth() >= 15 - 1.0E-6, "no skill reduction on melee");
 
-        // The hammer: +20 % on towers and cores, only for the buyer.
+        // The hammer: +25 % on towers and cores, only for the buyer.
         Zombie tower = h.flatWorld().spawn(red.getLocation().add(2, 0, 0), Zombie.class);
         arena.structures.get(LaneSites.Side.RED).add(tower);
         tower.getAttribute(Attribute.MAX_HEALTH).setBaseValue(100);
         tower.setHealth(100);
         melee(blue, tower, 10);
-        assertEquals(88, tower.getHealth(), 1.0E-6);
+        assertEquals(87.5, tower.getHealth(), 1.0E-6);
         melee(red, tower, 10);
-        assertEquals(78, tower.getHealth(), 1.0E-6);
+        assertEquals(77.5, tower.getHealth(), 1.0E-6);
     }
 
     @Test
@@ -259,9 +260,9 @@ class SiegeShopTest extends LaneTestBase {
         Player blue = shopper(LaneSites.Side.BLUE, 0);
         Player red = player(LaneSites.Side.RED, 0);
         shop().buy(blue, ShopItem.HOURGLASS);
-        assertEquals(0.10, systems.modifiers().cooldownReduction(blue.getUniqueId()), 1.0E-9);
+        assertEquals(0.20, systems.modifiers().cooldownReduction(blue.getUniqueId()), 1.0E-9);
         run(20);
-        assertEquals(0.1 / 0.9, arena.cooldownGiven.get(blue.getUniqueId()), 1.0E-9);
+        assertEquals(0.2 / 0.8, arena.cooldownGiven.get(blue.getUniqueId()), 1.0E-9);
         assertFalse(arena.cooldownGiven.containsKey(red.getUniqueId()));
     }
 

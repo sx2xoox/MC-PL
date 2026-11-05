@@ -243,6 +243,34 @@ class BasicAttackMatchTest {
         assertEquals(max(cast.enemy()) - 2 * hit, cast.enemy().getHealth(), 1.0E-6, "the kept click fired");
     }
 
+    /**
+     * "연타가 풀 차징보다 세면 안 됨": clicking every tick deals exactly what clicking when the attack is ready (the
+     * crosshair indicator full) deals, even when a kept early click and a click in the ready tick come together.
+     */
+    @Test
+    void clickingEveryTickNeverBeatsClickingWhenReady() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        SuperpowerMatch abilities = match.abilities();
+        int cooldown = BasicAttacks.FALLBACK.cooldown();
+        double[] dealt = new double[2];
+        for (int pattern = 0; pattern < 2; pattern++) {
+            h.ticks(cooldown + 30);
+            for (int t = 0; t < cooldown * 6; t++) {
+                place(match, cast.attacker(), 0, 0);
+                place(match, cast.enemy(), 2.5, 0);
+                // every tick, but not in the last ticks, whose kept click would fire one attack past the window
+                if (pattern == 1 ? t < cooldown * 6 - 3 : t % cooldown == 0) {
+                    abilities.basicAttack(cast.attacker());
+                }
+                h.ticks(1);
+                dealt[pattern] += max(cast.enemy()) - cast.enemy().getHealth();
+            }
+        }
+        assertTrue(dealt[0] > 0);
+        assertEquals(dealt[0], dealt[1], 1.0E-6, "clicking every tick = clicking when ready");
+    }
+
     @Test
     void vanillaSwordDamageIsNeverAddedOnTop() {
         SiegeMatch match = start(2);
@@ -276,7 +304,7 @@ class BasicAttackMatchTest {
         double base = BasicAttacks.FALLBACK.damage();
         int cooldown = BasicAttacks.FALLBACK.cooldown();
 
-        match.progress().grant(attacker.getUniqueId(), 1600);
+        match.progress().grant(attacker.getUniqueId(), match.progress().settings().xpForLevel(9));
         assertEquals(9, match.level(attacker.getUniqueId()));
         place(match, attacker, 0, 0);
         place(match, cast.enemy(), 2.5, 0);
@@ -295,6 +323,24 @@ class BasicAttackMatchTest {
         double expected = base * 1.6 * (1 + 3 / BasicAttackSettings.DEFAULT_BONUS_REFERENCE);
         assertEquals(expected, max(cast.enemy()) - cast.enemy().getHealth(), 1.0E-6,
                 "a +3 sword adds +3 to a 5-damage hit (proportionally), the weapon's own damage is not a bonus");
+    }
+
+    /** 힘 I (+3 attack damage) adds 20 % to a basic attack, not the 60 % a shop bonus of +3 would. */
+    @Test
+    void potionEffectsCountAgainstTheirOwnReference() {
+        SiegeMatch match = start(2);
+        Cast cast = cast(match);
+        Player attacker = cast.attacker();
+        double base = BasicAttacks.FALLBACK.damage();
+        AttributeInstance damage = attacker.getAttribute(Attribute.ATTACK_DAMAGE);
+        assertNotNull(damage);
+        damage.addModifier(new AttributeModifier(NamespacedKey.minecraft("effect.strength"), 3,
+                AttributeModifier.Operation.ADD_NUMBER, EquipmentSlotGroup.ANY));
+        place(match, attacker, 0, 0);
+        place(match, cast.enemy(), 2.5, 0);
+        assertTrue(match.abilities().basicAttack(attacker));
+        assertEquals(base * (1 + 3 / BasicAttackSettings.DEFAULT_EFFECT_REFERENCE),
+                max(cast.enemy()) - cast.enemy().getHealth(), 1.0E-6, "힘 I: +20 %");
     }
 
     @Test

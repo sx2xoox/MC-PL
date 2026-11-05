@@ -92,20 +92,20 @@ public final class BasicAttacks {
                         Sound.ITEM_AXE_STRIP, 1.8f, null)
                 .fx(Material.WHITE_STAINED_GLASS, Material.WHITE_CONCRETE, Material.IRON_AXE, SHARP, Spin.ROLL,
                         Signature.CLEAVER, 0.9f, "은빛 칼질 두 번 + 식칼 잔상"));
-        put(attack("ninja", "수리검 3연발", "수리검 세 개를 부채꼴로 던집니다. 가까울수록 많이 맞습니다.", PROJECTILE)
-                .damage(1.6).cooldown(16).range(16).hits(3, 0).angle(20).speed(1.4).radius(0.45)
+        put(attack("ninja", "수리검 3연발", "수리검 세 개를 좁은 부채꼴로 던집니다. 아주 멀면 양옆 것이 빗나갑니다.", PROJECTILE)
+                .damage(1.3).cooldown(16).range(16).hits(3, 0).angle(6).speed(1.4).radius(0.45)
                 .look(Particle.CRIT, 0xCBD5E1, Sound.ITEM_TRIDENT_THROW, 2.0f,
                         Sound.ITEM_TRIDENT_HIT, 1.9f, Material.NETHER_STAR)
                 .fx(Material.LIGHT_GRAY_STAINED_GLASS, Material.WHITE_CONCRETE, null, SHARP, Spin.FLAT,
                         Signature.NONE, 1.0f, "빙글빙글 도는 수리검 3개 + 은빛 꼬리"));
         put(attack("blade", "일섬", "긴 검을 넓게 그어 앞의 적들을 벱니다.", SWING)
-                .damage(5).cooldown(13).range(3.6).angle(100)
+                .damage(4.4).cooldown(13).range(3.6).angle(100)
                 .look(Particle.SWEEP_ATTACK, 0xE0F2FE, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.25f,
                         Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.3f, null)
                 .fx(Material.LIGHT_BLUE_STAINED_GLASS, Material.WHITE_CONCRETE, Material.DIAMOND_SWORD, SHARP, Spin.ROLL,
                         Signature.NONE, 1.15f, "하늘색 대형 반달 검기"));
         put(attack("duelist", "레이피어 찌르기", "한 걸음 내디디며 길게 찌릅니다.", THRUST)
-                .damage(4.8).cooldown(12).range(4.0).radius(0.5).pierce(1).effect(LUNGE, 0.35, 0)
+                .damage(4.6).cooldown(12).range(4.0).radius(0.5).pierce(1).effect(LUNGE, 0.35, 0)
                 .look(Particle.ENCHANTED_HIT, 0xFDE047, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.7f,
                         Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.6f, null)
                 .fx(Material.YELLOW_STAINED_GLASS, Material.WHITE_CONCRETE, Material.IRON_SWORD, SHARP, Spin.ROLL,
@@ -147,7 +147,7 @@ public final class BasicAttacks {
                 .fx(Material.YELLOW_STAINED_GLASS, Material.GOLD_BLOCK, Material.SHIELD, HEAVY, Spin.ROLL,
                         Signature.SHIELD, 0.9f, "방패가 앞으로 밀쳐 나가는 금빛 충격"));
         put(attack("fighter", "원투 펀치", "주먹을 빠르게 두 번 내지릅니다.", COMBO)
-                .damage(2.4).cooldown(12).range(2.8).angle(60).hits(2, 3)
+                .damage(2.3).cooldown(12).range(2.8).angle(60).hits(2, 3)
                 .look(Particle.CRIT, 0xFB923C, Sound.ENTITY_PLAYER_ATTACK_STRONG, 1.5f,
                         Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.2f, null)
                 .fx(Material.ORANGE_STAINED_GLASS, Material.WHITE_CONCRETE, null, LIGHT, Spin.ROLL,
@@ -178,7 +178,7 @@ public final class BasicAttacks {
                 .fx(Material.WHITE_STAINED_GLASS, Material.WHITE_CONCRETE, null, SHARP, Spin.ROLL,
                         Signature.NONE, 1.0f, "날아가는 바람 반달 칼날"));
         put(attack("earth", "땅 가시", "조준한 땅에서 잠시 뒤 돌가시가 솟습니다.", STRIKE)
-                .damage(4.5).cooldown(18).range(12).hits(1, 6).radius(1.4)
+                .damage(4.1).cooldown(18).range(12).hits(1, 6).radius(1.4)
                 .look(Particle.CRIT, 0x92400E, Sound.BLOCK_ROOTED_DIRT_BREAK, 0.8f,
                         Sound.BLOCK_POINTED_DRIPSTONE_LAND, 0.7f, Material.POINTED_DRIPSTONE)
                 .fx(Material.BROWN_STAINED_GLASS, Material.DRIPSTONE_BLOCK, null, HEAVY, Spin.ROLL,
@@ -233,14 +233,14 @@ public final class BasicAttacks {
                 .fx(Material.RED_STAINED_GLASS, Material.SHROOMLIGHT, null, MAGIC, Spin.ROLL,
                         Signature.CLAW, 1.0f, "지옥불 부채꼴 + 손톱 자국 세 줄"));
         put(attack("phoenix", "불사조 깃털", "불타는 깃털 두 개를 날려 적을 태웁니다.", PROJECTILE)
-                .damage(1.8).cooldown(14).range(14).hits(2, 0).angle(10).speed(1.4).radius(0.5)
+                .damage(1.7).cooldown(14).range(14).hits(2, 0).angle(4).speed(1.4).radius(0.5)
                 .effect(DOT, 0.6, 2)
                 .look(Particle.FLAME, 0xFB923C, Sound.ENTITY_BLAZE_SHOOT, 1.6f,
                         Sound.ITEM_FIRECHARGE_USE, 1.9f, Material.FEATHER)
                 .fx(Material.ORANGE_STAINED_GLASS, Material.SHROOMLIGHT, null, MAGIC, Spin.POINT,
                         Signature.NONE, 1.0f, "불타는 깃털 두 개 + 불꽃 꼬리"));
         put(attack("dragon", "용의 숨결", "짧은 숨결을 두 번 내뿜어 앞의 적을 태웁니다.", CONE)
-                .damage(2).cooldown(18).range(4.5).angle(50).hits(2, 4)
+                .damage(2.5).cooldown(18).range(4.5).angle(50).hits(2, 4)
                 .look(Particle.REVERSE_PORTAL, 0xA855F7, Sound.ENTITY_ENDER_DRAGON_SHOOT, 1.4f,
                         Sound.ENTITY_GHAST_SHOOT, 1.6f, null)
                 .fx(Material.PURPLE_STAINED_GLASS, Material.PEARLESCENT_FROGLIGHT, null, MAGIC, Spin.ROLL,
@@ -314,14 +314,14 @@ public final class BasicAttacks {
                 .fx(Material.RED_STAINED_GLASS, Material.WHITE_CONCRETE, null, MAGIC, Spin.ROLL,
                         Signature.MAGNET, 1.0f, "빨강·파랑 자력선 두 줄"));
         put(attack("chrono", "시곗바늘 투척", "시곗바늘 두 개를 던집니다. 맞은 적의 시간이 잠깐 느려집니다.", PROJECTILE)
-                .damage(1.7).cooldown(14).range(14).hits(2, 0).angle(12).speed(1.3).radius(0.45)
+                .damage(1.7).cooldown(14).range(14).hits(2, 0).angle(4).speed(1.3).radius(0.45)
                 .effect(SLOW, 0.12, 0.8)
                 .look(Particle.WAX_OFF, 0xFDE047, Sound.BLOCK_COMPARATOR_CLICK, 1.6f,
                         Sound.BLOCK_NOTE_BLOCK_BELL, 1.9f, Material.CLOCK)
                 .fx(Material.YELLOW_STAINED_GLASS, Material.GOLD_BLOCK, null, MAGIC, Spin.FLAT,
                         Signature.NONE, 0.9f, "빙글 도는 시계 두 개 + 금빛 꼬리"));
         put(attack("blink", "공간 절단", "조준한 곳의 공간을 그 자리에서 베어 냅니다.", STRIKE)
-                .damage(4).cooldown(16).range(7).hits(1, 0).radius(1.2)
+                .damage(3.6).cooldown(16).range(7).hits(1, 0).radius(1.2)
                 .look(Particle.PORTAL, 0xC084FC, Sound.ENTITY_ENDERMAN_TELEPORT, 1.8f,
                         Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1.6f, null)
                 .fx(Material.PURPLE_STAINED_GLASS, Material.PEARLESCENT_FROGLIGHT, null, SHARP, Spin.ROLL,
@@ -388,19 +388,19 @@ public final class BasicAttacks {
                 .fx(Material.YELLOW_STAINED_GLASS, Material.GOLD_BLOCK, null, SHARP, Spin.POINT,
                         Signature.RUNE, 1.1f, "날아가는 삼지창 + 맞은 적 위에 번쩍이는 금빛 룬 문자"));
         put(attack("wukong", "여의봉 3연격", "여의봉을 길게 휘둘러 앞을 세 번 연달아 칩니다.", COMBO)
-                .damage(2).cooldown(15).range(3.6).angle(110).hits(3, 4)
+                .damage(1.7).cooldown(15).range(3.6).angle(110).hits(3, 4)
                 .look(Particle.CRIT, 0xF59E0B, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.8f,
                         Sound.ENTITY_ZOMBIE_ATTACK_IRON_DOOR, 1.6f, null)
                 .fx(Material.ORANGE_STAINED_GLASS, Material.GOLD_BLOCK, null, HEAVY, Spin.ROLL,
                         Signature.STAFF, 1.1f, "양끝이 붉은 금빛 여의봉이 크게 휘도는 3연격"));
         put(attack("ra", "햇살 내리꽂기", "조준한 곳에 잠시 뒤 햇빛 기둥이 내리꽂혀 적을 태웁니다.", STRIKE)
-                .damage(4.5).cooldown(19).range(14).hits(1, 6).radius(1.5).effect(DOT, 0.8, 2)
+                .damage(4.0).cooldown(19).range(14).hits(1, 6).radius(1.5).effect(DOT, 0.8, 2)
                 .look(Particle.WAX_ON, 0xFDE047, Sound.BLOCK_BEACON_ACTIVATE, 1.8f,
                         Sound.ITEM_FIRECHARGE_USE, 0.8f, null)
                 .fx(Material.YELLOW_STAINED_GLASS, Material.OCHRE_FROGLIGHT, null, MAGIC, Spin.ROLL,
                         Signature.SUNBEAM, 1.1f, "예고 원 → 하늘에서 내리꽂히는 금빛 태양 기둥 + 빛 원반"));
         put(attack("gumiho", "여우불 3연발", "푸른 여우불 셋을 부채꼴로 날려 맞은 적을 태웁니다.", PROJECTILE)
-                .damage(1.6).cooldown(15).range(14).hits(3, 0).angle(24).speed(1.1).radius(0.5)
+                .damage(1.2).cooldown(15).range(14).hits(3, 0).angle(8).speed(1.1).radius(0.5)
                 .effect(DOT, 0.6, 2)
                 .look(Particle.SOUL_FIRE_FLAME, 0x7DD3FC, Sound.ENTITY_FOX_SCREECH, 1.6f,
                         Sound.PARTICLE_SOUL_ESCAPE, 1.6f, null)
@@ -420,7 +420,7 @@ public final class BasicAttacks {
                 .fx(Material.BROWN_STAINED_GLASS, Material.PACKED_MUD, null, HEAVY, Spin.ROLL,
                         Signature.QUAKE, 1.2f, "갈라지는 땅 + 퍼지는 흙먼지 고리 + 튀어 오르는 바위 조각"));
         put(attack("bear", "앞발 후려치기", "커다란 앞발로 묵직하게 후려쳐 적을 밀어냅니다.", SWING)
-                .damage(6).cooldown(17).range(3.0).angle(110).effect(KNOCKBACK, 0.35, 0)
+                .damage(5.8).cooldown(17).range(3.0).angle(110).effect(KNOCKBACK, 0.35, 0)
                 .look(Particle.SWEEP_ATTACK, 0x92400E, Sound.ENTITY_POLAR_BEAR_WARNING, 1.0f,
                         Sound.ENTITY_PLAYER_ATTACK_STRONG, 0.7f, null)
                 .fx(Material.BROWN_STAINED_GLASS, Material.HONEYCOMB_BLOCK, null, HEAVY, Spin.ROLL,
@@ -482,13 +482,13 @@ public final class BasicAttacks {
                 .fx(Material.WHITE_STAINED_GLASS, Material.RED_CONCRETE, null, MAGIC, Spin.FLAT,
                         Signature.TALISMAN, 1.0f, "빙글 날아가는 부적 + 맞은 적에 붙는 부적과 붉은 '勅'"));
         put(attack("crystal", "자수정 송곳", "조준한 땅에서 잠시 뒤 자수정 송곳이 솟습니다.", STRIKE)
-                .damage(4.2).cooldown(17).range(12).hits(1, 5).radius(1.3)
+                .damage(3.8).cooldown(17).range(12).hits(1, 5).radius(1.3)
                 .look(Particle.END_ROD, 0xC084FC, Sound.BLOCK_AMETHYST_CLUSTER_PLACE, 1.0f,
                         Sound.BLOCK_AMETHYST_CLUSTER_BREAK, 1.2f, Material.AMETHYST_CLUSTER)
                 .fx(Material.PURPLE_STAINED_GLASS, Material.AMETHYST_BLOCK, null, MAGIC, Spin.ROLL,
                         Signature.SHARDS, 1.0f, "예고 원 → 솟아오르는 자수정 송곳 + 흩어지는 수정 조각"));
         put(attack("sonic", "음파 파동", "앞으로 음파를 쏘아 줄지어 선 적을 모두 꿰뚫고 밀어냅니다.", THRUST)
-                .damage(3.8).cooldown(16).range(7).radius(0.7).effect(KNOCKBACK, 0.3, 0)
+                .damage(3.6).cooldown(16).range(7).radius(0.7).effect(KNOCKBACK, 0.3, 0)
                 .look(Particle.SCULK_CHARGE_POP, 0x29DFCB, Sound.ENTITY_WARDEN_SONIC_BOOM, 1.8f,
                         Sound.BLOCK_SCULK_SENSOR_CLICKING, 1.2f, null)
                 .fx(Material.CYAN_STAINED_GLASS, Material.SEA_LANTERN, null, MAGIC, Spin.ROLL,

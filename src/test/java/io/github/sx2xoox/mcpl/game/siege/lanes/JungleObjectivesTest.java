@@ -231,7 +231,7 @@ class JungleObjectivesTest extends LaneTestBase {
         assertEquals(gold + 90, systems.gold().balance(killer.getUniqueId()));
         for (Player buffed : new Player[] {killer, ally}) {
             assertTrue(jungle().hasBuff(buffed.getUniqueId(), ObjectiveKind.TEDDY));
-            assertEquals(0.10, systems.modifiers().total(buffed.getUniqueId(), LaneModifiers.Stat.SKILL_DAMAGE),
+            assertEquals(0.15, systems.modifiers().total(buffed.getUniqueId(), LaneModifiers.Stat.SKILL_DAMAGE),
                     1.0E-9);
         }
         assertFalse(jungle().hasBuff(enemy.getUniqueId(), ObjectiveKind.TEDDY), "never the enemy");
@@ -242,7 +242,7 @@ class JungleObjectivesTest extends LaneTestBase {
         run(1);
         assertFalse(jungle().hasBuff(killer.getUniqueId(), ObjectiveKind.TEDDY), "gone on death");
         assertEquals(0, systems.modifiers().total(killer.getUniqueId(), LaneModifiers.Stat.SKILL_DAMAGE), 1.0E-9);
-        assertEquals(attack - 2, killer.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), 1.0E-9);
+        assertEquals(attack - 1, killer.getAttribute(Attribute.ATTACK_DAMAGE).getValue(), 1.0E-9);
 
         systems.endRound();
         assertFalse(jungle().hasBuff(ally.getUniqueId(), ObjectiveKind.TEDDY), "gone at the round end");
@@ -268,7 +268,7 @@ class JungleObjectivesTest extends LaneTestBase {
         Player far = player(LaneSites.Side.BLUE, 1);
         Player blue = player(LaneSites.Side.BLUE, 0);
         JungleObjectives.Site dragon = site(null, ObjectiveKind.DRAGON);
-        assertEquals(400 * 1.25, dragon.mobs().getFirst().getHealth(), 1.0E-6, "+25 % for the 2nd player");
+        assertEquals(360 * 1.25, dragon.mobs().getFirst().getHealth(), 1.0E-6, "+25 % for the 2nd player");
         int blueGold = systems.gold().balance(blue.getUniqueId());
         int gold = systems.gold().balance(killer.getUniqueId());
         clear(dragon, killer);

@@ -32,6 +32,9 @@ public record SiegeProgressSettings(
     public static final String XP_KILL = "xp.kill";
     public static final String XP_ASSIST = "xp.assist";
     public static final String XP_TOWER = "xp.tower-destroyed";
+    /** Experience from level 1 to 2 and the more each further level needs (level 9 at about 15 minutes). */
+    public static final int DEFAULT_XP_FIRST = 70;
+    public static final int DEFAULT_XP_STEP = 65;
 
     /** Reads the live section; values out of range are clamped, missing ones use the defaults. */
     public static SiegeProgressSettings read(ConfigurationSection c) {
@@ -39,8 +42,8 @@ public record SiegeProgressSettings(
         return new SiegeProgressSettings(
                 c.getBoolean(LEVELS_ENABLED, true),
                 max,
-                clamp(c.getInt(XP_FIRST, 60), 1, 100_000),
-                clamp(c.getInt(XP_STEP, 40), 0, 100_000),
+                clamp(c.getInt(XP_FIRST, DEFAULT_XP_FIRST), 1, 100_000),
+                clamp(c.getInt(XP_STEP, DEFAULT_XP_STEP), 0, 100_000),
                 clamp(c.getInt(HEALTH_EVERY, 2), 1, 30),
                 Math.max(0, Math.min(20, finite(c.getDouble(HEALTH_PER_STEP, 2), 2))),
                 xp(c, XP_PASSIVE, 1),
@@ -89,11 +92,11 @@ public record SiegeProgressSettings(
         d.setComments(LEVELS_ENABLED, List.of("false 면 레벨 없이 모두 최고 레벨로 시작 (체력 보너스 없음)"));
         d.set(MAX_LEVEL, 9);
         d.setComments(MAX_LEVEL, List.of("최대 레벨"));
-        d.set(XP_FIRST, 60);
-        d.set(XP_STEP, 40);
+        d.set(XP_FIRST, DEFAULT_XP_FIRST);
+        d.set(XP_STEP, DEFAULT_XP_STEP);
         d.setComments(XP_FIRST, List.of(
                 "레벨업에 필요한 경험치: 1→2 레벨은 xp-first, 그다음부터 레벨마다 xp-step 씩 더 필요",
-                "(기본값: 60, 100, 140, 180 … 9레벨까지 누적 1600)"));
+                "(기본값: 70, 135, 200, 265 … 9레벨까지 누적 2380, 평균 약 15분)"));
         d.set(HEALTH_EVERY, 2);
         d.set(HEALTH_PER_STEP, 2);
         d.setComments(HEALTH_EVERY, List.of("이 레벨마다 최대 체력 +health-per-step (2 = 하트 1칸)"));

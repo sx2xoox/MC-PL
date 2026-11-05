@@ -107,22 +107,26 @@ class SiegeRulesTest {
     }
 
     @Test
-    void respawnDelayGrowsWithDeathsUpToFourteenSeconds() {
+    void respawnDelayGrowsWithDeathsAndLevelsUpToEighteenSeconds() {
         SiegeSettings s = defaults();
         assertEquals(120, s.respawnDelay(1), "6 s");
         assertEquals(120, s.respawnDelay(2));
         assertEquals(140, s.respawnDelay(3), "+1 s every 3 deaths");
         assertEquals(160, s.respawnDelay(6));
         assertEquals(280, s.respawnDelay(24), "14 s");
-        assertEquals(280, s.respawnDelay(60), "capped at 14 s");
+        assertEquals(360, s.respawnDelay(60), "capped at 18 s");
+        assertEquals(130, s.respawnDelay(1, 2), "+0.5 s a level");
+        assertEquals(200, s.respawnDelay(1, 9), "level 9: 10 s");
+        assertEquals(220, s.respawnDelay(3, 9));
+        assertEquals(360, s.respawnDelay(30, 9), "capped at 18 s");
     }
 
     @Test
     void structureHealthScalesWithTheEnemyTeam() {
         SiegeSettings s = defaults();
-        assertEquals(1500, s.structureHealth(Tower.Kind.OUTER, 3), 1.0E-9, "configured for three enemies");
-        assertEquals(750, s.structureHealth(Tower.Kind.OUTER, 1), 1.0E-9);
-        assertEquals(3000, s.structureHealth(Tower.Kind.INNER, 5), 1.0E-9);
+        assertEquals(1200, s.structureHealth(Tower.Kind.OUTER, 3), 1.0E-9, "configured for three enemies");
+        assertEquals(600, s.structureHealth(Tower.Kind.OUTER, 1), 1.0E-9);
+        assertEquals(2700, s.structureHealth(Tower.Kind.INNER, 5), 1.0E-9);
         assertEquals(2500 * 2.25, s.structureHealth(Tower.Kind.CORE, 8), 1.0E-9);
     }
 

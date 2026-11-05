@@ -260,6 +260,9 @@ public record BasicAttack(String id, String name, String description, Shape shap
         }
     }
 
+    /** A projectile fan this narrow (degrees) still lands every projectile on one enemy at about 8 blocks. */
+    public static final double NARROW_FAN = 8;
+
     public BasicAttack {
         cooldown = Math.max(1, cooldown);
         hits = Math.max(1, hits);
@@ -274,12 +277,13 @@ public record BasicAttack(String id, String name, String description, Shape shap
 
     /**
      * Damage of one attack to one target when it lands: every combo hit, shot and cone pulse, every projectile of a
-     * volley, two of a fan (the usual share at fighting range), the first target of a chain.
+     * volley and of a narrow fan (all of it lands at fighting range), two of a wide fan (the usual share), the first
+     * target of a chain.
      */
     public double damagePerAttack() {
         return switch (shape) {
             case COMBO, SHOT, CONE -> damage * hits;
-            case PROJECTILE -> interval > 0 || angle <= 0 ? damage * hits : damage * Math.min(hits, 2);
+            case PROJECTILE -> interval > 0 || angle <= NARROW_FAN ? damage * hits : damage * Math.min(hits, 2);
             default -> damage;
         };
     }

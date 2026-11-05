@@ -41,7 +41,7 @@
 - 건물 = 모양(`TowerLook`) + 보이지 않는 피격 판정(마네킹) + **머리 위 체력 막대**(`OverheadBar`). 상대 진영의 **근접 공격과
   능력 피해**(그리고 미니언, 기능이 `SiegeMatch#damageStructure`로)만 체력을 깎습니다. 능력에게 건물은 상대 진영에게만 적이고,
   보호막 건물은 적이 아닙니다. 자기 건물은 때릴 수 없습니다.
-- 체력(상대 3명 기준): 바깥 1500, 안쪽 2000, 코어 2500. 실제 체력 = 설정 체력 × (`health-base-share` 0.25 +
+- 체력(상대 3명 기준): 바깥 1200, 안쪽 1800, 코어 2500. 실제 체력 = 설정 체력 × (`health-base-share` 0.25 +
   `health-per-attacker` 0.25 × 상대 팀 인원). 1명이면 0.5배, 5명이면 1.5배, 8명이면 2.25배.
 - 10초 동안 피해를 받지 않고 적이 반경 안에 없으면 초당 최대 체력의 1%씩 회복합니다.
 - **타워 공격**: 타워(코어 제외)는 1.5초마다 10블록 안의 적 하나에게 4 피해(팀 색 입자 줄기 + 화살 소리). 기능(미니언)이
@@ -93,7 +93,7 @@
 - 죽으면 탈락하지 않고 **부활 대기** 후 **자기 본진**(맵의 `LaneSites#spawns(side)`, 8곳 이상)에서 다시 시작합니다. 대기 중에는
   관전(가능하면 살아 있는 팀원 시점). 능력·게이지·남은 쿨타임은 유지, 체력은 가득. 화면에는 `사망!` 타이틀과 `5초 후 부활`
   부제가 1초마다 줄어들고 0이 되면 부활합니다(`GameSession`, 모든 모드 공통; 다른 타이틀에 덮여도 다음 초에 다시 보임).
-- 대기 시간: 기본 6초, 그 라운드에서 3번 죽을 때마다 +1초, 최대 14초(기능이 `SiegeModule#respawnTicks`로 줄일 수 있음: 부활 시계).
+- 대기 시간: 기본 6초, 1레벨 위로 레벨마다 +0.5초(9레벨 10초), 그 라운드에서 3번 죽을 때마다 +1초, 최대 18초(기능이 `SiegeModule#respawnTicks`로 줄일 수 있음: 부활 시계).
 - 부활 직후 3초 무적(공격하면 해제). 상대 본진 부활 지점 반경 8블록 안에 들어온 적은 1초마다 4 피해와 "당장 나가세요"
   안내(스폰 킬 방지).
 - 아이템은 떨어지지 않습니다. 킷은 라운드가 바뀔 때만 새로 지급.
@@ -204,17 +204,17 @@
 | `ability-pool` | 4절의 70종 | 능력풀 (빈 목록 = 켜진 모든 능력) |
 | `points.kill` / `assist` / `assist-seconds` | 2 / 1 / 8 | 처치·도움 |
 | `points.tower` | 8 | 적 타워 파괴 |
-| `respawn.seconds` / `deaths-per-step` / `step-seconds` / `max-seconds` | 6 / 3 / 1 / 14 | 부활 대기 |
+| `respawn.seconds` / `per-level-seconds` / `deaths-per-step` / `step-seconds` / `max-seconds` | 6 / 0.5 / 3 / 1 / 18 | 부활 대기 (레벨마다 +0.5초, 사망 3번마다 +1초) |
 | `respawn.protection-seconds` | 3 | 부활 무적 |
 | `respawn.spawn-zone-radius` / `spawn-zone-damage` | 8 / 4 | 스폰 킬 방지 구역 |
-| `towers.outer-health` / `inner-health` / `core-health` | 1500 / 2000 / 2500 | 건물 체력(상대 3명 기준) |
+| `towers.outer-health` / `inner-health` / `core-health` | 1200 / 1800 / 2500 | 건물 체력(상대 3명 기준) |
 | `towers.health-base-share` / `health-per-attacker` | 0.25 / 0.25 | 상대 인원에 따른 체력 배율 |
 | `towers.regen-delay-seconds` / `regen-per-second` | 10 / 0.01 | 비전투 회복 |
 | `towers.warning-cooldown-seconds` | 8 | "공격받는 중" 경고 간격 |
 | `towers.attack-damage` / `attack-seconds` / `attack-range` | 4 / 1.5 / 10 | 타워 공격 (0 = 공격 안 함) |
 | `towers.hitbox-scale` | 2.5 | 피격 판정 크기 |
 | `levels.enabled` / `max` | true / 9 | 레벨 사용 / 최대 레벨 |
-| `levels.xp-first` / `xp-step` | 60 / 40 | 1→2레벨 경험치 / 레벨마다 더 필요한 양 |
+| `levels.xp-first` / `xp-step` | 70 / 65 | 1→2레벨 경험치 / 레벨마다 더 필요한 양 |
 | `levels.health-every-levels` / `health-per-step` | 2 / 2 | 이 레벨마다 최대 체력 +2(하트 1칸) |
 | `xp.passive-per-second` | 1 | 싸우는 동안 초당 기본 경험치 |
 | `xp.kill` / `assist` | 30 / 15 | 처치 / 도움 (본인) |
@@ -382,7 +382,8 @@ resource-pack:
 - 최대 체력: 2레벨마다 +1칸(9레벨이면 +4칸).
 - 능력 피해: 레벨당 +7.5%(9레벨 ×1.6), 3·6·9레벨에 능력마다 추가 효과 하나(레벨업 때 채팅으로 `✦ 추가 효과 6레벨: 불바다 범위
   +1블록`). 자세한 수치는 `docs/siege-balance.md`.
-- 필요 경험치: 1→2 60, 그다음부터 40씩 더(100, 140 … 340), 9레벨까지 모두 1600.
+- 필요 경험치: 1→2 70, 그다음부터 65씩 더(135, 200 … 525), 9레벨까지 모두 2380 — 평균 플레이어가 약 15분에 9레벨
+  (예전 60/40·1600은 약 10분에 9레벨이라 라운드 절반을 최고 레벨로 보냈음; 성장 모델은 docs/siege-v2.md §11).
 
 | 얻는 방법 | 경험치 (기본) | 받는 사람 |
 |---|---|---|

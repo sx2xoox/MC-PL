@@ -541,8 +541,10 @@ public final class SiegeShop implements Listener {
         boolean shoes = count(id, ShopItem.SHOES) > 0;
         AttributeBonus.set(player, Attribute.MOVEMENT_SPEED, key("shoes"), shoes ? settings.shoesSpeed() : 0,
                 AttributeModifier.Operation.ADD_SCALAR);
-        modifiers.set(id, "shop:orb", LaneModifiers.Stat.SKILL_DAMAGE,
-                count(id, ShopItem.ORB) > 0 ? settings.orbSkill() : 0);
+        boolean orb = count(id, ShopItem.ORB) > 0;
+        modifiers.set(id, "shop:orb", LaneModifiers.Stat.SKILL_DAMAGE, orb ? settings.orbSkill() : 0);
+        AttributeBonus.set(player, Attribute.ATTACK_DAMAGE, key("orb"), orb ? settings.orbAttack() : 0,
+                AttributeModifier.Operation.ADD_SCALAR);
         modifiers.set(id, "shop:hourglass", LaneModifiers.Stat.COOLDOWN,
                 count(id, ShopItem.HOURGLASS) > 0 ? settings.hourglass() : 0);
         modifiers.set(id, "shop:hammer", LaneModifiers.Stat.STRUCTURE_DAMAGE,

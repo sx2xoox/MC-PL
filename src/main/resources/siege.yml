@@ -347,27 +347,27 @@ shop:
     armor_1:
       name: "<white>장난감 갑옷 I"
       lore:
-        - "<gray>방어 +2, 스킬 피해 <green>-6%"
+        - "<gray>방어 +4, 스킬 피해 <green>-6%"
     armor_2:
       name: "<white>장난감 갑옷 II"
       lore:
-        - "<gray>방어 +4, 스킬 피해 <green>-12%"
+        - "<gray>방어 +7, 스킬 피해 <green>-12%"
     armor_3:
       name: "<white>장난감 갑옷 III"
       lore:
-        - "<gray>방어 +6, 스킬 피해 <green>-18%"
+        - "<gray>방어 +10, 스킬 피해 <green>-18%"
     wooden_sword:
       name: "<red>나무검"
       lore:
-        - "<gray>평타 피해 +1.5"
+        - "<gray>평타 피해 +0.75"
     steel_sword:
       name: "<red>강철검"
       lore:
-        - "<gray>평타 피해 +3"
+        - "<gray>평타 피해 +1.5"
     orb:
       name: "<light_purple>마법 구슬"
       lore:
-        - "<gray>스킬 피해 <red>+10%"
+        - "<gray>스킬 피해 <red>+20%</red>, 평타 피해 <red>+8%"
     shoes:
       name: "<yellow>태엽 신발"
       lore:
@@ -375,11 +375,11 @@ shop:
     hourglass:
       name: "<yellow>모래시계 장신구"
       lore:
-        - "<gray>쿨타임 -10%"
+        - "<gray>쿨타임 -20%"
     hammer:
       name: "<gold>망치 장갑"
       lore:
-        - "<gray>타워·코어 피해 +20%"
+        - "<gray>타워·코어 피해 +25%"
     ward:
       name: "<aqua>망원경 와드"
       lore:
@@ -388,4 +388,4 @@ shop:
     revive_clock:
       name: "<green>부활 시계"
       lore:
-        - "<gray>부활 시간 -2초"
+        - "<gray>부활 시간 -3초"

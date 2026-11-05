@@ -560,7 +560,7 @@ public final class SiegeMatch implements GameInstance {
 
     /** The respawn delay (ticks) of a participant now: the deaths of this round, then what the modules change. */
     public int respawnTicks(UUID id) {
-        int delay = settings.respawnDelay(score().roundDeaths(id));
+        int delay = settings.respawnDelay(score().roundDeaths(id), level(id));
         for (SiegeModule module : modules) {
             delay = Math.max(20, module.respawnTicks(id, delay));
         }

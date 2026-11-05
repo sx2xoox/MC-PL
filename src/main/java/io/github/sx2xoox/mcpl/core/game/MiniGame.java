@@ -120,6 +120,16 @@ public interface MiniGame {
     }
 
     /**
+     * Declares defaults of an earlier version whose value has changed since (only those keys), so a server that ran
+     * that version, whose {@code config.yml} still holds the old defaults, gets the new ones where the owner never
+     * changed them. Needed only for servers from before the defaults bookkeeping of
+     * {@link io.github.sx2xoox.mcpl.core.config.HubConfig#applyGameDefaults(String, java.util.function.Consumer,
+     * java.util.function.Consumer)}; later changes are found without it.
+     */
+    default void retiredConfigDefaults(ConfigurationSection defaults) {
+    }
+
+    /**
      * Adds mode-specific subcommands under {@code /게임} (e.g. {@code /게임 능력 ...}). Called every time the command
      * tree is (re)built, so create fresh builders each call.
      */

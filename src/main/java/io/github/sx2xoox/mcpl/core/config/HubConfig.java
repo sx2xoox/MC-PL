@@ -558,11 +558,39 @@ public final class HubConfig {
      * @return true if the file changed
      */
     public boolean applyGameDefaults(String gameId, Consumer<ConfigurationSection> declarer) {
+        return applyGameDefaults(gameId, declarer, null);
+    }
+
+    /**
+     * {@link #applyGameDefaults(String, Consumer)} that also moves stale defaults forward. Every default written to
+     * the file stays there, so a later version that changes a default would never reach a server that ran an older
+     * one. The defaults each game declared last time are kept in {@code .bundled/game-defaults/<id>.yml} (like the
+     * message files' {@code .bundled} copies): a value that still equals what was declared then (the owner never
+     * changed it) follows the new default; a value the owner changed is kept. A server without that copy yet (it ran
+     * a version from before this bookkeeping) compares with {@code retired}: the defaults of the last version without
+     * it (only keys whose default changed since need to be declared there).
+     *
+     * @param retired declares earlier defaults for a server without the copy (null: nothing to compare with)
+     * @return true if the file changed
+     */
+    public boolean applyGameDefaults(String gameId, Consumer<ConfigurationSection> declarer,
+                                     @Nullable Consumer<ConfigurationSection> retired) {
         MemoryConfiguration scratch = new MemoryConfiguration();
         ConfigurationSection defaults = scratch.createSection("defaults");
         declarer.accept(defaults);
         ConfigurationSection target = gameSection(gameId);
+        File snapshot = defaultsSnapshot(gameId);
+        ConfigurationSection before;
+        if (snapshot.isFile()) {
+            before = YamlConfiguration.loadConfiguration(snapshot);
+        } else {
+            before = scratch.createSection("retired");
+            if (retired != null) {
+                retired.accept(before);
+            }
+        }
         boolean changed = false;
+        List<String> upgraded = new ArrayList<>();
         for (String key : defaults.getKeys(true)) {
             if (defaults.isConfigurationSection(key)) {
                 if (!target.isConfigurationSection(key)) {
@@ -576,11 +604,52 @@ public final class HubConfig {
                 target.set(key, defaults.get(key));
                 target.setComments(key, defaults.getComments(key));
                 changed = true;
+            } else if (before.isSet(key) && !before.isConfigurationSection(key)
+                    && sameValue(target.get(key), before.get(key))
+                    && !sameValue(defaults.get(key), before.get(key))) {
+                target.set(key, defaults.get(key));
+                upgraded.add(key);
+                changed = true;
             }
         }
+        int failed = failedSaves;
         if (changed) {
             save();
         }
+        if (!upgraded.isEmpty()) {
+            plugin.getLogger().info("games." + gameId + ": " + upgraded.size()
+                    + " setting(s) still at an earlier default now use this version's default");
+        }
+        if (writable && failedSaves == failed) {
+            writeDefaultsSnapshot(snapshot, defaults);
+        }
         return changed;
+    }
+
+    private File defaultsSnapshot(String gameId) {
+        return new File(new File(new File(plugin.getDataFolder(), ".bundled"), "game-defaults"), gameId + ".yml");
+    }
+
+    private void writeDefaultsSnapshot(File snapshot, ConfigurationSection defaults) {
+        YamlConfiguration copy = new YamlConfiguration();
+        for (String key : defaults.getKeys(true)) {
+            if (!defaults.isConfigurationSection(key)) {
+                copy.set(key, defaults.get(key));
+            }
+        }
+        try {
+            Files.createDirectories(snapshot.toPath().toAbsolutePath().getParent());
+            Files.writeString(snapshot.toPath(), copy.saveToString(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            plugin.getLogger().log(Level.WARNING, "Could not write " + snapshot, e);
+        }
+    }
+
+    /** Equal settings values: numbers by value (YAML reads 6 and 6.0 differently), anything else as is. */
+    static boolean sameValue(@Nullable Object a, @Nullable Object b) {
+        if (a instanceof Number x && b instanceof Number y) {
+            return Double.compare(x.doubleValue(), y.doubleValue()) == 0;
+        }
+        return java.util.Objects.equals(a, b);
     }
 }

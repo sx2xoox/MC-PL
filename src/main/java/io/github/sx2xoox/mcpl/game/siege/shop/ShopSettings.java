@@ -20,6 +20,7 @@ import org.bukkit.configuration.ConfigurationSection;
  * @param armorSkill      장난감 갑옷 1·2·3단계: ability damage taken reduction
  * @param swordDamage     나무검 / 강철검: melee damage
  * @param orbSkill        마법 구슬: ability damage
+ * @param orbAttack       마법 구슬: basic attack damage (a share, like the dragon buff)
  * @param shoesSpeed      태엽 신발: movement speed
  * @param hourglass       모래시계 장신구: cooldown reduction
  * @param hammer          망치 장갑: tower and core damage
@@ -43,6 +44,7 @@ public record ShopSettings(
         double[] armorSkill,
         double[] swordDamage,
         double orbSkill,
+        double orbAttack,
         double shoesSpeed,
         double hourglass,
         double hammer,
@@ -70,26 +72,27 @@ public record ShopSettings(
                 Math.max(1, config.getInt(PATH + "candy.count", 3)),
                 Math.max(1, config.getInt(PATH + "candy.stack", 9)),
                 new double[] {
-                    config.getDouble(PATH + "armor.points-1", 2),
-                    config.getDouble(PATH + "armor.points-2", 4),
-                    config.getDouble(PATH + "armor.points-3", 6)},
+                    config.getDouble(PATH + "armor.points-1", 4),
+                    config.getDouble(PATH + "armor.points-2", 7),
+                    config.getDouble(PATH + "armor.points-3", 10)},
                 new double[] {
                     config.getDouble(PATH + "armor.skill-reduction-1", 0.06),
                     config.getDouble(PATH + "armor.skill-reduction-2", 0.12),
                     config.getDouble(PATH + "armor.skill-reduction-3", 0.18)},
                 new double[] {
-                    config.getDouble(PATH + "sword.damage-1", 1.5),
-                    config.getDouble(PATH + "sword.damage-2", 3)},
-                config.getDouble(PATH + "orb.skill-damage", 0.10),
+                    config.getDouble(PATH + "sword.damage-1", 0.75),
+                    config.getDouble(PATH + "sword.damage-2", 1.5)},
+                config.getDouble(PATH + "orb.skill-damage", 0.20),
+                config.getDouble(PATH + "orb.attack-damage", 0.08),
                 config.getDouble(PATH + "shoes.speed", 0.08),
-                config.getDouble(PATH + "hourglass.cooldown", 0.10),
-                config.getDouble(PATH + "hammer.structure-damage", 0.20),
+                config.getDouble(PATH + "hourglass.cooldown", 0.20),
+                config.getDouble(PATH + "hammer.structure-damage", 0.25),
                 config.getDouble(PATH + "ward.radius", 12),
                 ticks(config.getDouble(PATH + "ward.seconds", 90)),
                 Math.max(1, config.getInt(PATH + "ward.count", 2)),
                 Math.max(1, config.getInt(PATH + "ward.stack", 4)),
                 Math.max(1, config.getInt(PATH + "ward.placed", 3)),
-                config.getDouble(PATH + "revive-clock.seconds", -2),
+                config.getDouble(PATH + "revive-clock.seconds", -3),
                 Math.max(1, ticks(config.getDouble(PATH + "recall.seconds", 8))));
     }
 

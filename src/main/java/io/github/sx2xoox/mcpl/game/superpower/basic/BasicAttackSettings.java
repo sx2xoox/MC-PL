@@ -35,11 +35,14 @@ import org.jspecify.annotations.Nullable;
  * @param damageScale    factor on every basic attack's damage
  * @param bonusReference the hit damage at which a +1 attack damage bonus adds exactly +1 (a hit of {@code d} gains
  *                       {@code bonus × d / reference}); 0 ignores attack damage bonuses
+ * @param effectReference the same for potion effects (힘 +3 a level, 나약함 −4): vanilla made them for a sword's
+ *                       whole damage, so they count against a larger hit (15: 힘 I = +20 %, 힘 II = +40 %,
+ *                       나약함 I = −27 %); 0 ignores them
  * @param attacks        every configured attack by ability id
  * @param feel           combo, critical hits and the display budget
  */
 public record BasicAttackSettings(boolean enabled, double damageScale, double bonusReference,
-                                  Map<String, BasicAttack> attacks, Feel feel) {
+                                  double effectReference, Map<String, BasicAttack> attacks, Feel feel) {
 
     /**
      * How basic attacks feel beyond their numbers: a combo whose last attack ({@code comboLength}-th in a row, each
@@ -103,6 +106,8 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
     public static final String BONUS_REFERENCE = "bonus-reference";
     public static final String ATTACKS = "attacks";
     public static final double DEFAULT_BONUS_REFERENCE = 5.0;
+    public static final String EFFECT_REFERENCE = "effect-reference";
+    public static final double DEFAULT_EFFECT_REFERENCE = 15.0;
 
     /** Per-attack keys (seconds for {@code cooldown} and {@code effect-seconds}, ticks for {@code interval}). */
     public static final String SHAPE = "shape";
@@ -126,12 +131,14 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
 
     /** Every default, on. */
     public static BasicAttackSettings defaults() {
-        return new BasicAttackSettings(true, 1.0, DEFAULT_BONUS_REFERENCE, BasicAttacks.defaults(), Feel.DEFAULT);
+        return new BasicAttackSettings(true, 1.0, DEFAULT_BONUS_REFERENCE, DEFAULT_EFFECT_REFERENCE,
+                BasicAttacks.defaults(), Feel.DEFAULT);
     }
 
     /** The table switched off (the ability weapon stays a plain sword). */
     public static BasicAttackSettings off() {
-        return new BasicAttackSettings(false, 1.0, DEFAULT_BONUS_REFERENCE, BasicAttacks.defaults(), Feel.DEFAULT);
+        return new BasicAttackSettings(false, 1.0, DEFAULT_BONUS_REFERENCE, DEFAULT_EFFECT_REFERENCE,
+                BasicAttacks.defaults(), Feel.DEFAULT);
     }
 
     /** The basic attack of {@code abilityId}: its own, or the fallback. */
@@ -163,6 +170,8 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
                 clamp(section.getDouble(DAMAGE_SCALE, 1.0), 0, 10, 1.0),
                 clamp(section.getDouble(BONUS_REFERENCE, DEFAULT_BONUS_REFERENCE), 0, 100,
                         DEFAULT_BONUS_REFERENCE),
+                clamp(section.getDouble(EFFECT_REFERENCE, DEFAULT_EFFECT_REFERENCE), 0, 100,
+                        DEFAULT_EFFECT_REFERENCE),
                 attacks, readFeel(section));
     }
 
@@ -217,6 +226,10 @@ public record BasicAttackSettings(boolean enabled, double damageScale, double bo
         d.setComments(p + ENABLED, List.of("false 면 능력 무기가 평범한 검처럼 휘둘러집니다"));
         d.set(p + DAMAGE_SCALE, 1.0);
         d.setComments(p + DAMAGE_SCALE, List.of("모든 평타 피해 배율 (방어구 적용 전, 레벨 보정은 따로 곱함)"));
+        d.set(p + EFFECT_REFERENCE, DEFAULT_EFFECT_REFERENCE);
+        d.setComments(p + EFFECT_REFERENCE, List.of(
+                "포션 효과(힘 +3/레벨, 나약함 −4/레벨)가 평타에 붙는 비율: 한 타 피해가 이 값일 때 +1 = 피해 +1",
+                "(15: 힘 I +20%, 힘 II +40%, 나약함 I −27%). 0 이면 포션 효과 무시"));
         d.set(p + BONUS_REFERENCE, DEFAULT_BONUS_REFERENCE);
         d.setComments(p + BONUS_REFERENCE, List.of(
                 "공격력 보너스(상점 검, 버프)가 평타에 붙는 비율: 한 타 피해가 이 값일 때 보너스 +1 = 피해 +1",

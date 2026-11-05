@@ -128,4 +128,44 @@ class HubConfigTest {
         manager.setPrefersSpectating(server.addPlayer("User"), true);
         assertEquals(broken, Files.readString(players.toPath()));
     }
+
+    /**
+     * A default that changed between versions reaches a server whose file still holds the old one, unless the owner
+     * changed it: through the retired defaults the first time, through the snapshot of the last declared defaults
+     * afterwards.
+     */
+    @Test
+    void staleDefaultsFollowTheNewOnesButOwnerValuesStay() {
+        HubConfig config = hub.config();
+        config.updateGameSection("upgrade", s -> {
+            s.set("a", 6); // an old default nobody touched (as YAML may read it: a whole number)
+            s.set("b", 3); // the owner's own value
+            s.set("c", 1.5);
+        });
+        assertTrue(config.applyGameDefaults("upgrade", d -> {
+            d.set("a", 5.0);
+            d.set("b", 5.0);
+            d.set("c", 1.5);
+            d.set("d", 2);
+        }, retired -> {
+            retired.set("a", 6.0);
+            retired.set("b", 4.0);
+        }));
+        assertEquals(5.0, config.gameSection("upgrade").getDouble("a"), 1.0E-9, "the retired default moved on");
+        assertEquals(3, config.gameSection("upgrade").getDouble("b"), 1.0E-9, "the owner's value stays");
+        assertEquals(2, config.gameSection("upgrade").getInt("d"), "a new key is added");
+
+        // next version: the snapshot remembers 5.0 / 5.0 / 1.5 / 2 as the last declared defaults
+        config.updateGameSection("upgrade", s -> s.set("c", 9));
+        config.applyGameDefaults("upgrade", d -> {
+            d.set("a", 4.0);
+            d.set("b", 4.0);
+            d.set("c", 2.0);
+            d.set("d", 3);
+        }, retired -> retired.set("a", 99));
+        assertEquals(4.0, config.gameSection("upgrade").getDouble("a"), 1.0E-9);
+        assertEquals(3, config.gameSection("upgrade").getDouble("b"), 1.0E-9);
+        assertEquals(9, config.gameSection("upgrade").getDouble("c"), 1.0E-9, "changed by the owner since");
+        assertEquals(3, config.gameSection("upgrade").getInt("d"));
+    }
 }

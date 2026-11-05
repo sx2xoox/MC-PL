@@ -110,12 +110,12 @@ public record JungleSettings(
             ObjectiveKind.MICE, Map.of(SCATTER, new Skill(2.5, 4.5, 0, 10, 220, 20, 1.7)),
             // the basic paw slam (its damage and interval are the kind's): a circle of radius ahead; strength = push
             ObjectiveKind.TEDDY, Map.of(SLAM, new Skill(0, 1.8, 0, 14, 0, 0, 0.3),
-                    SHOCKWAVE, new Skill(6, 4.5, 0, 24, 200, 0, 0.8)),
+                    SHOCKWAVE, new Skill(5, 4.5, 0, 24, 200, 0, 0.8)),
             // the basic throw (the kind's damage, range, interval): keeps radius away; strength = the hand's speed,
             // effect = the slow on a hit; the blink: radius away, below strength of its health
             ObjectiveKind.RABBIT, Map.of(THROW, new Skill(0, 3.5, 0, 0, 0, 30, 0.8),
                     BLINK, new Skill(0, 7, 0, 12, 160, 0, 0.5)),
-            ObjectiveKind.DRAGON, Map.of(BREATH, new Skill(10, 8, 70, 24, 160, 0, 0),
+            ObjectiveKind.DRAGON, Map.of(BREATH, new Skill(9, 8, 70, 24, 160, 0, 0),
                     TAIL, new Skill(7, 5.5, 0, 20, 200, 0, 0.6),
                     GUST, new Skill(3, 8, 0, 16, 260, 0, 1.4)),
             ObjectiveKind.FOUNTAIN, Map.of(),
@@ -124,11 +124,11 @@ public record JungleSettings(
     private static final Map<ObjectiveKind, Kind> DEFAULTS = Map.of(
             ObjectiveKind.JELLY, new Kind(3, 18, 2, 1, 1.0, 1.8, 25, 600, 1200, 12, 30, 1, 0, 0, 0.5),
             ObjectiveKind.MICE, new Kind(4, 10, 1.5, 1, 1.4, 1.6, 15, 600, 1200, 12, 30, 1, 0, 0, 0.6),
-            ObjectiveKind.TEDDY, new Kind(1, 90, 5, 1, 0.75, 2.6, 30, 1200, 3000, 14, 80, 3, 1800, 0, 0.15),
+            ObjectiveKind.TEDDY, new Kind(1, 80, 4, 1, 0.75, 2.6, 30, 1200, 3000, 14, 80, 3, 1800, 0, 0.15),
             ObjectiveKind.RABBIT, new Kind(1, 70, 3, 1, 1.3, 8, 30, 1200, 3000, 14, 80, 3, 1800, 0, 0.35),
             ObjectiveKind.FOUNTAIN, new Kind(0, 0, 0, 1, 1, 0, 0, 1200, 1800, 0, 40, 2, 0, 160, 0),
             ObjectiveKind.TELESCOPE, new Kind(0, 0, 0, 1, 1, 0, 0, 1200, 2400, 0, 40, 2, 0, 160, 0),
-            ObjectiveKind.DRAGON, new Kind(1, 400, 8, 1, 0.8, 4, 40, 6000, 6000, 20, 300, 10, 2400, 0, 0));
+            ObjectiveKind.DRAGON, new Kind(1, 360, 6, 1, 0.8, 4, 40, 6000, 6000, 20, 300, 10, 2400, 0, 0));
 
     public static JungleSettings read(ConfigurationSection config) {
         Map<ObjectiveKind, Kind> kinds = new EnumMap<>(ObjectiveKind.class);
@@ -175,8 +175,8 @@ public record JungleSettings(
                 config.getDouble(PATH + "share-radius", 12),
                 ticks(config.getDouble(PATH + "reset-seconds", 8)),
                 kinds,
-                config.getDouble(PATH + "teddy.buff-attack", 2),
-                config.getDouble(PATH + "teddy.buff-skill", 0.10),
+                config.getDouble(PATH + "teddy.buff-attack", 1),
+                config.getDouble(PATH + "teddy.buff-skill", 0.15),
                 config.getDouble(PATH + "rabbit.buff-cooldown", 0.20),
                 config.getDouble(PATH + "fountain.heal", 8),
                 ticks(config.getDouble(PATH + "fountain.regen-seconds", 10)),

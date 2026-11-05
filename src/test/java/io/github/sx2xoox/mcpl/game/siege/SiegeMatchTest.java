@@ -167,17 +167,17 @@ class SiegeMatchTest {
         assertFalse(outerTop.isShielded());
         assertTrue(innerTop.isShielded(), "the inner tower waits for its lane's outer tower");
         assertTrue(core.isShielded());
-        assertEquals(750, outerTop.maxHealth(), 1.0E-9, "one enemy: half the configured health");
+        assertEquals(600, outerTop.maxHealth(), 1.0E-9, "one enemy: half the configured health");
 
         MatchContext ctx = ctx(match);
         assertTrue(ctx.isEnemy(a, hitbox(outerTop)), "the enemy's tower is a target");
         assertFalse(ctx.isEnemy(b, hitbox(outerTop)), "never the owner's");
         assertFalse(ctx.isEnemy(a, hitbox(innerTop)), "a shielded tower is no target");
         ctx.damage(a, hitbox(outerTop), 50);
-        assertEquals(700, outerTop.health(), 1.0E-6, "ability damage hits the tower");
+        assertEquals(550, outerTop.health(), 1.0E-6, "ability damage hits the tower");
         assertTrue(hitbox(outerTop).getHealth() > 0, "the hitbox itself is never hurt");
         ctx.damage(b, hitbox(outerTop), 50);
-        assertEquals(700, outerTop.health(), 1.0E-6, "the owner cannot hurt its own tower");
+        assertEquals(550, outerTop.health(), 1.0E-6, "the owner cannot hurt its own tower");
         match.hitTower(innerTop, a, 100);
         assertEquals(innerTop.maxHealth(), innerTop.health(), 1.0E-6, "the shield holds");
 
@@ -320,7 +320,7 @@ class SiegeMatchTest {
         assertEquals("pyro", match.abilityInfo(a.getUniqueId()).id());
         String third = io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.describe("pyro", 3);
         assertTrue(lines(match, a).contains(third), "level 1: the level 3 perk " + lines(match, a));
-        match.progress().grant(a.getUniqueId(), 60 + 100);
+        match.progress().grant(a.getUniqueId(), match.progress().settings().xpForLevel(3));
         assertEquals(3, match.level(a.getUniqueId()));
         String sixth = io.github.sx2xoox.mcpl.game.siege.balance.SiegePerks.describe("pyro", 6);
         assertTrue(lines(match, a).contains(sixth), "level 3: the level 6 perk " + lines(match, a));
@@ -449,7 +449,7 @@ class SiegeMatchTest {
         assertEquals(5, sizeA + sizeB);
         assertEquals(1, Math.abs(sizeA - sizeB), "2 against 3");
         LaneSites.Side sideB = match.sideOf(1);
-        assertEquals(1500 * (0.25 + 0.25 * sizeA),
+        assertEquals(1200 * (0.25 + 0.25 * sizeA),
                 structure(match, sideB, Tower.Kind.OUTER, LaneSites.Lane.TOP).maxHealth(), 1.0E-6,
                 "structure health follows the enemy team's size");
         assertTeamsHaveUniqueAbilities(match);
@@ -492,7 +492,7 @@ class SiegeMatchTest {
         assertEquals(0, match.teams().get(1).size(), "no bots: the other team stays empty");
         Player solo = member(match, 0);
         LaneSites.Side enemySide = enemy(match.side(solo.getUniqueId()));
-        assertEquals(750, structure(match, enemySide, Tower.Kind.OUTER, LaneSites.Lane.TOP).maxHealth(), 1.0E-9);
+        assertEquals(600, structure(match, enemySide, Tower.Kind.OUTER, LaneSites.Lane.TOP).maxHealth(), 1.0E-9);
         h.ticks(100);
         assertTrue(match.session().isRunning(), "an empty team does not lose at once");
         match.hitTower(structure(match, enemySide, Tower.Kind.OUTER, LaneSites.Lane.TOP), solo, 10_000);
