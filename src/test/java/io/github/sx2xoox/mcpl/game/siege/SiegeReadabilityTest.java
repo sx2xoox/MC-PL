@@ -170,7 +170,7 @@ class SiegeReadabilityTest {
         Tower inner = SiegeMatchTest.structure(match, outer.owner(), Tower.Kind.INNER, LaneSites.Lane.TOP);
         assertTrue(Scenario.plain(inner.bar().text()).startsWith("🛡"), "a shielded tower's bar says so");
         match.hitTower(outer, a, 500);
-        assertTrue(Scenario.plain(outer.bar().text()).endsWith(" 250"), Scenario.plain(outer.bar().text()));
+        assertTrue(Scenario.plain(outer.bar().text()).endsWith(" 100"), Scenario.plain(outer.bar().text()));
         match.hitTower(outer, a, 10_000);
         assertTrue(outer.bar() == null, "a destroyed tower's bar is gone");
         assertFalse(Scenario.plain(inner.bar().text()).startsWith("🛡"), "the shield went down");

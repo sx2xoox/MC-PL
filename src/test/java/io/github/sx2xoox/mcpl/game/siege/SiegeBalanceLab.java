@@ -75,7 +75,6 @@ class SiegeBalanceLab {
     static final int PROBE_TICKS = 10;
     static final double KEEP_HEALTH = 0.7;
     static final double[] DISTANCES = {26, 18, 12, 8, 5, 3};
-    static final Map<Integer, Integer> XP = Map.of(1, 0, 6, 700, 9, 1600);
     /** Vanilla's attack damage modifiers of strength and weakness (per level), which MockBukkit leaves out. */
     static final double STRENGTH_PER_LEVEL = 3;
     static final double WEAKNESS_PER_LEVEL = -4;
@@ -328,7 +327,7 @@ class SiegeBalanceLab {
         }
 
         private void grant(Player player) {
-            int xp = XP.get(level);
+            int xp = match.progress().settings().xpForLevel(level);
             if (xp > 0) {
                 match.progress().grant(player.getUniqueId(), xp);
             }

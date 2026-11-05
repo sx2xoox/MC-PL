@@ -18,7 +18,15 @@ Target users: streamers and ordinary friend groups. Player-facing text is Korean
 - `docs/augments.md` is generated the same way from every `AugmentInfo` and `BonusCondition`: run
   `./gradlew updateAugmentDocs` after changing them (`AugmentDocsTest` fails while it is stale).
 - The 공성전 basic attack (평타) table in `docs/siege-v2.md` §8 is generated from `BasicAttacks`: run
-  `./gradlew updateBasicAttackDocs` after changing them (`BasicAttackDocsTest` fails while it is stale).
+  `./gradlew updateBasicAttackDocs` after changing them (`BasicAttackDocsTest` fails while it is stale), then
+  `./gradlew basicAttackLab [-Pattacks=a,b]` (`BasicAttackLab`, ~8 min) re-measures them in test matches into
+  `docs/basic-attack-lab.md` and checks the role rules (melee 5.5–8.3/s, ranged 3–5.5, pack hitters less).
+- Game settings declared in `config.yml` keep old defaults on servers; `HubConfig#applyGameDefaults` moves values
+  still equal to the last declared default (snapshot in `.bundled/game-defaults/<id>.yml`) to the new one. For
+  servers from before the snapshot, list the previous value of a changed default in
+  `MiniGame#retiredConfigDefaults` (공성전: `SiegeRetiredDefaults`).
+- 공성전 growth/economy/tempo intent (levels, gold, shop value per gold, towers vs respawn): `SiegeEconomyModelTest`
+  (docs/siege-v2.md §11); re-check it after changing levels, gold, shop, minion, jungle or structure defaults.
 - 공성전 creature attack motions (`CreatureModels.Attack` keyframes) are exported as the game's poses to
   `tools/assetgen/models/creature_attacks.json`: run `./gradlew updateCreatureAttacks` after changing them
   (`CreatureAttacksExportTest` fails while it is stale); `tools/assetgen/attack_preview.py <dir>` draws GIFs from it.
