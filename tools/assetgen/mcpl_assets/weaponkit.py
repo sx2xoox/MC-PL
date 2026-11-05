@@ -91,6 +91,7 @@ class Weapon:
     def __init__(self, name):
         self.model = Model(name)
         self.size = 1.0     # hand pose size multiplier (1 = a LENGTH-long weapon is ~1.1x a vanilla sword)
+        self.size_first = None  # first person only (None = size): a huge weapon stays smaller on the own screen
 
     # --- raw boxes ---------------------------------------------------------------------------------
 
@@ -348,7 +349,7 @@ class Weapon:
 
     def finish(self):
         """Sets the shared display preset and returns the model."""
-        self.model.display = display(self.model, self.size)
+        self.model.display = display(self.model, self.size, self.size_first)
         return self.model
 
 
@@ -381,14 +382,16 @@ FIXED_ROTATION = (0, 180, DIAGONAL)   # item frames show the back of the icon
 GROUND_ROTATION = (0, 0, DIAGONAL)
 
 
-def display(model, size=1.0):
-    """The shared display preset (see the module comment); size scales the hand poses only."""
+def display(model, size=1.0, size_first=None):
+    """The shared display preset (see the module comment); size scales the hand poses only (size_first: the first
+    person ones, default size), the hand stays on the grip."""
     span = _bounds(model)
     length = max(LENGTH, span[:, 1].max() - span[:, 1].min())
-    k = size * HAND_SCALE * LENGTH / length
     out = {}
     grip = np.array([8, GRIP_Y, 8], float)
     for ctx, (hrot, htr, hs) in HANDHELD.items():
+        mult = size_first if size_first is not None and ctx.startswith("first") else size
+        k = mult * HAND_SCALE * LENGTH / length
         rot = business_side((hrot[0], hrot[1], hrot[2] + DIAGONAL))
         s = hs * k
         target = np.array(htr) + rot_xyz(*hrot) @ ((np.array(SPRITE_GRIP) - 8) * hs)

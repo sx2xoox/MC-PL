@@ -103,7 +103,19 @@ players without the pack, and every normal sword, look vanilla. The weapon also 
 `Weapon.finish()` writes the same `display` for every weapon: the vanilla sword pose (`item/handheld.json`) turned
 so the upright weapon lies on the sword sprite's diagonal with the hand on the grip (first/third person, both hands),
 and GUI / ground / item-frame transforms fitted to the model's bounds. Weapons longer than the reference shrink in
-hand so all of them look about 1.1× a vanilla sword; `w.size` scales the hand poses only if a weapon really needs it.
+hand so all of them look about 1.1× a vanilla sword; `w.size` scales the hand poses (the hand stays on the grip) so the
+size follows the weapon's character, and `w.size_first` overrides it in first person so a huge weapon never covers the
+own screen (GUI / ground / frame stay fitted to the slot):
+
+| tier | `w.size` (`size_first`) | weapons |
+|---|---|---|
+| huge | 1.3–1.9 (1.05–1.15) | reaper 1.9 (1.0), lancer 1.7, dragon 1.6, berserker 1.5, demon / thunder / earth 1.45, guardian / dokkaebi 1.4, pirate / batter 1.3 |
+| large | 1.2 | blacksmith, magma, mech, necromancer, hydro |
+| normal | 1.0 | the rest |
+| small | 0.85–0.9 | hunter, ninja, venom, chef, hacker, magnet, werewolf 0.9; fighter, gunslinger, shadow, blink, bomber 0.85 |
+
+A huge weapon also needs a shape that reads at that size (the reaper's scythe: a long snath held near its end, a blade
+about half as long sweeping out and down).
 
 ## 장난감 왕국 모델 (공성전 v2: buildings, landmarks, creatures)
 

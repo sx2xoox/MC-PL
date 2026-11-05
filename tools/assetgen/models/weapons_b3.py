@@ -77,6 +77,7 @@ def hacker():
             tex = "w_venom" if (r, c) == (6, 3) else "w_ivory"
             w.both_flats(f"key{r}_{c}", (x, y, 1.0), (x + 1.25, y + 1.5, 1.375), tex)
     w.both_flats("space", (-3.0, 11.25, 1.0), (-1.75, 18.75, 1.375), "w_ivory")
+    w.size = 0.9  # small: a short sword
     return w.finish()
 
 
@@ -108,6 +109,7 @@ def mech():
         w.both_flats(f"flute{n}", (x - s * 0.2, y0 + 0.25, s / 2), (x + s * 0.2, y1 - 0.25, s / 2 + 0.125),
                      "w_iron_dark")
     w.centred("point", 26.0, 27.25, 0.5, 0.5, "w_steel_edge")
+    w.size = 1.2  # large: a war hammer
     return w.finish()
 
 
@@ -133,6 +135,7 @@ def bomber():
     w.box("fuse_b", (0.25, 24.75, -0.25), (1.25, 25.25, 0.25), "w_leather")
     w.box("fuse_c", (0.75, 25.25, -0.25), (1.25, 26.0, 0.25), "w_leather")
     w.edge_strip("spark", (0.375, 26.0, -0.625), (1.625, 27.25, 0.625), "w_heat")
+    w.size = 0.85  # small: a stick grenade
     return w.finish()
 
 
@@ -183,6 +186,7 @@ def magnet():
     w.box("nail", (2.75, 24.25, -0.25), (6.75, 24.75, 0.25), "w_iron", rotation=("z", 22.5, (2.75, 24.25, 0)))
     w.box("nail_head", (2.5, 23.75, -0.625), (3.0, 25.25, 0.625), "w_iron",
           rotation=("z", 22.5, (2.75, 24.25, 0)))
+    w.size = 0.9  # small: a hand magnet
     return w.finish()
 
 
@@ -237,6 +241,7 @@ def blink():
         w.box(f"rift{n}", (dx - 2.25, y + 0.375, -0.125), (dx + 2.25, y + 0.875, 0.125), "w_rift", glow=True)
     w.box("tip_a", (-1.25, 23.0, -0.375), (0.25, 24.75, 0.375), "w_steel")
     w.box("tip_b", (-0.875, 24.75, -0.25), (-0.125, 26.25, 0.25), "w_steel_edge")
+    w.size = 0.85  # small: a dagger
     return w.finish()
 
 
@@ -296,6 +301,7 @@ def venom():
     w.box("cord", (-1.875, 18.5, -0.125), (-1.625, 20.5, 0.125), "w_leather")
     w.box("vial_neck", (-2.25, 17.5, -0.375), (-1.25, 18.5, 0.375), "w_cork")
     w.box("vial", (-2.75, 14.75, -0.75), (-0.75, 17.5, 0.75), "w_venom")
+    w.size = 0.9  # small: a kris
     return w.finish()
 
 
@@ -361,6 +367,8 @@ def pirate():
     w.box("upper_spine", (-1.5, 16.5, -0.5625), (-1.25, 22.5, 0.5625), "w_iron", rotation=bend)
     w.box("clip", (-1.0, 23.5, -0.25), (2.75, 24.5, 0.25), "w_steel_edge", rotation=bend)
     w.box("point", (0.5, 24.5, -0.25), (2.75, 25.75, 0.25), "w_steel_edge", rotation=bend)
+    w.size = 1.3  # huge: a broad cutlass
+    w.size_first = 1.05  # smaller on the own screen
     return w.finish()
 
 
@@ -443,6 +451,8 @@ def batter():
     w.centred("end", 25.0, 25.75, 3.0, 3.0, "w_ash")
     w.both_flats("label", (-0.75, 18.0, 1.75), (0.75, 21.5, 1.875), "w_wood_dark")
     w.both_flats("label_dot", (-0.25, 19.25, 1.875), (0.25, 20.25, 2.0), "w_ivory")
+    w.size = 1.3  # huge: a full-size bat
+    w.size_first = 1.05  # smaller on the own screen
     return w.finish()
 
 

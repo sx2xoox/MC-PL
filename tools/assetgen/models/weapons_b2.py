@@ -55,6 +55,7 @@ def hydro():
         w.box(f"side_barb_{tag}", (lo, 21.0, -0.5), (hi, 22.0, 0.5), "w_verdigris")
         w.centred(f"side_point_{tag}", 22.0, 24.0, 0.75, 0.75, "w_verdigris", x=x)
         w.centred(f"side_tip_{tag}", 24.0, 24.75, 0.375, 0.375, "w_steel_edge", x=x)
+    w.size = 1.2  # large: a trident
     return w.finish()
 
 
@@ -84,6 +85,7 @@ def magma():
     w.edge_strip("crack_side_r", (4.5, 17.0, -0.375), (4.5625, 19.5, 0.375), "w_heat")
     w.edge_strip("crack_side_l", (-4.3125, 18.0, -0.375), (-4.25, 20.5, 0.375), "w_heat")
     w.edge_strip("crater", (-1.5, 25.25, -1.25), (0.25, 25.375, 1.25), "w_heat")
+    w.size = 1.2  # large: a maul
     return w.finish()
 
 
@@ -145,6 +147,7 @@ def shadow():
             w.box(f"edge_{tag}{n}", (lo, y0, -0.25), (hi, y1, 0.25), "w_steel_edge")
     w.centred("point", 19.0, 20.75, 0.75, 0.5, "w_steel_edge")
     w.centred("needle", 20.75, 21.75, 0.375, 0.375, "w_steel_edge")
+    w.size = 0.85  # small: a dagger
     return w.finish()
 
 
@@ -185,27 +188,35 @@ def vampire():
 
 
 def reaper():
+    """The grim reaper's war scythe: a long black snath held near its end and a big curved blade sweeping out and down
+    from the top, so it reads as a scythe (not a hoe) and stands taller than its owner in hand (w.size)."""
     w = Weapon("weapon/reaper")
     w.group("snath")
-    w.pommel(-2.0, w=2.25, d=2.25, h=1.0, tex="w_iron_dark")
-    w.grip(-2.0, 5.0, 1.75, 1.75, tex="w_wrap_shade")
-    w.centred("snath", 5.0, 25.0, 1.5, 1.5, "w_lacquer")
-    # the side grip (nib) of a war scythe, pointing back, bound with bone rings
-    w.box("nib", (-3.5, 10.0, -0.5), (-0.75, 11.0, 0.5), "w_lacquer")
-    w.box("nib_cap", (-4.0, 9.875, -0.625), (-3.5, 11.125, 0.625), "w_bone")
-    w.box("nib_band", (-1.0, 9.75, -0.875), (1.0, 11.25, 0.875), "w_bone")
-    w.collar("bone_ring", 5.0, 2.0, 2.0, 0.75, "w_bone")
-    w.collar("socket", 23.0, 2.0, 2.0, 2.75, "w_bone")
+    w.pommel(-4.0, w=2.5, d=2.5, h=1.25, tex="w_iron_dark", cap="w_bone")
+    w.grip(-4.0, 6.0, 2.0, 2.0, tex="w_wrap_shade")
+    w.collar("bone_ring", 6.0, 2.25, 2.25, 0.75, "w_bone")
+    w.centred("snath", 6.75, 26.5, 1.75, 1.75, "w_lacquer")
+    # the side grip (nib) of a war scythe, pointing back, bound with a bone ring
+    w.box("nib", (-4.5, 14.5, -0.625), (-0.875, 15.75, 0.625), "w_lacquer")
+    w.box("nib_cap", (-5.0, 14.375, -0.75), (-4.5, 15.875, 0.75), "w_bone")
+    w.box("nib_band", (-1.125, 14.25, -1.0), (1.125, 16.0, 1.0), "w_bone")
+    w.collar("socket", 26.5, 2.5, 2.5, 2.5, "w_bone")
+    w.centred("socket_cap", 29.0, 29.75, 1.75, 1.75, "w_iron_dark")
     # a torn black rag tied under the blade
-    w.box("rag_knot", (-1.125, 21.75, -1.0), (1.125, 22.75, 1.0), "w_shade")
-    w.box("rag_long", (-1.5, 17.5, -0.125), (-0.75, 21.75, 0.125), "w_shade")
-    w.box("rag_short", (-2.5, 19.0, -0.125), (-1.5, 21.75, 0.125), "w_shade")
-    # the blade: a long curve of dark iron sweeping out and down towards +x, its honed edge on the inside
+    w.box("rag_knot", (-1.25, 24.25, -1.125), (1.25, 25.5, 1.125), "w_shade")
+    w.box("rag_long", (-1.875, 18.5, -0.125), (-1.25, 24.25, 0.125), "w_shade")
+    w.box("rag_short", (-2.875, 20.75, -0.125), (-1.875, 24.25, 0.125), "w_shade")
+    # the blade: a long curve of dark iron sweeping out to +x and down at the tip, the honed edge on the inside (the
+    # path is the edge line; the iron bands lie outside it, thicker and fewer towards the spine: a tapering blade)
     w.group("blade")
-    path = [(0, 3.0), (-22.5, 3.0), (-45, 2.75), (-67.5, 2.5), (-90, 1.5)]
-    w.curve("blade", (0.5, 24.75), path, (2.75, 2.25, 1.75, 1.25, 0.75), 0.75, "w_iron_dark")
-    w.curve("edge", (0.75, 24.75), [(0, 2.875)] + path[1:], 0.625, 0.5, "w_steel_edge", offset=-1.375)
-    w.box("blade_heel", (-0.875, 24.0, -0.5), (0.75, 26.0, 0.5), "w_iron_dark")
+    path = [(22.5, 3.0), (0, 7.0), (-22.5, 6.0), (-45, 4.0), (-67.5, 2.5), (-90, 2.0)]
+    start = (0.75, 26.25)
+    w.curve("edge", start, path, 0.75, 0.5, "w_steel_edge")
+    w.curve("blade", start, path, 1.5, 0.75, "w_iron_dark", offset=1.0)
+    w.curve("blade_mid", start, path[:5], 1.5, 1.0, "w_iron_dark", offset=2.25)
+    w.curve("spine", start, path[:3], 1.25, 1.25, "w_iron_dark", offset=3.5)
+    w.size = 1.9            # huge: about as long as its owner is tall in third person (the tip just clears the ground)
+    w.size_first = 1.0      # but it must not cover the own screen
     return w.finish()
 
 
@@ -241,6 +252,7 @@ def necromancer():
     w.centred("flame_0", y + 7.0, y + 8.5, 2.0, 1.5, "w_ghost", glow=True)
     w.centred("flame_1", y + 8.5, y + 9.75, 1.25, 1.0, "w_ghost", glow=True, x=0.25)
     w.centred("flame_2", y + 9.75, y + 10.5, 0.5, 0.5, "w_ghost", glow=True, x=0.5)
+    w.size = 1.2  # large: a staff
     return w.finish()
 
 
@@ -274,6 +286,8 @@ def demon():
             lo, hi = sorted((side * x0, side * x1))
             w.box(f"tooth_{tag}{n}", (lo, y0, -0.25), (hi, y1, 0.25), "w_steel")
     w.both_flats("vein", (-0.25, 8.0, 0.5), (0.25, 21.0, 0.5625), "w_soulfire", glow=True)
+    w.size = 1.45  # huge: a hellblade
+    w.size_first = 1.1  # smaller on the own screen
     return w.finish()
 
 
@@ -341,6 +355,8 @@ def dragon():
     w.both_flats("inlay", (0.75, 19.0, 0.5), (1.5, 19.75, 0.5625), "w_brass")
     w.box("notch", (-2.25, 21.0, -0.25), (-1.0, 22.0, 0.25), "w_steel")
     w.box("notch_tip", (-2.75, 21.75, -0.25), (-2.0, 23.0, 0.25), "w_steel")
+    w.size = 1.6  # huge: a pole glaive
+    w.size_first = 1.15  # smaller on the own screen
     return w.finish()
 
 
@@ -366,6 +382,7 @@ def werewolf():
         w.centred(f"claw_root{n}", 13.75, top + 1.0, 1.5, 1.5, "w_horn", x=x)
         w.curve(f"claw{n}", (x, top + 0.75), [(90, 4.5 + (1.0 if n == 1 else 0)), (67.5, 3.0), (45, 2.0),
                                               (22.5, 1.5)], (1.25, 1.0, 0.75, 0.5), 1.0 + 0.25 * (n == 1), "w_bone")
+    w.size = 0.9  # small: claws on a fist
     return w.finish()
 
 
@@ -406,6 +423,8 @@ def dokkaebi():
                                         (8.0, 1, "w_wood"))):
         knob(f"side_knob{n}", 0, y, side, False, tex)
     w.centred("top_knob", 25.5, 26.25, 1.0, 1.0, "w_wood")
+    w.size = 1.4  # huge: a giant's club
+    w.size_first = 1.1  # smaller on the own screen
     return w.finish()
 
 

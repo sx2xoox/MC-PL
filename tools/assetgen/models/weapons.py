@@ -103,6 +103,7 @@ def blacksmith():
     w.centred("eye_top", 23.0, 23.5, 1.75, 1.75, "w_wood")
     w.centred("wedge", 23.5, 23.75, 0.5, 1.75, "w_iron_dark")
     w.rivets("head_rivet", [(-2.0, 22.0), (2.0, 22.0), (-2.0, 17.5), (2.0, 17.5)], 2.75, tex="w_iron_dark")
+    w.size = 1.2  # large: a forge hammer
     return w.finish()
 
 
@@ -136,6 +137,7 @@ def gunslinger():
     w.blade("blade", 19.5, 27.5, -0.25, 2.25, 0.75, steps=[(25.0, 0.5)], edge_tex="w_steel_edge", edge_w=0.5,
             tip=(2.0, 0.5))
     w.both_flats("fuller", (0.125, 20.0, 0.375), (0.625, 26.5, 0.4375), "w_iron")
+    w.size = 0.85  # small: a revolver
     return w.finish()
 
 
@@ -156,6 +158,7 @@ def chef():
     w.box("edge", (5.75, 7.5, -0.25), (6.5, 22.5, 0.25), "w_steel_edge")
     w.box("heel", (5.75, 7.0, -0.25), (6.5, 7.5, 0.25), "w_steel")
     w.box("top_bevel", (-1.5, 22.5, -0.375), (6.5, 23.0, 0.375), "w_steel_edge")
+    w.size = 0.9  # small: a cleaver
     return w.finish()
 
 

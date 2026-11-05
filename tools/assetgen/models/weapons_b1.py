@@ -59,6 +59,7 @@ def ninja():
         w.strut(f"star{n}", (-2.0 * sx, cy - 2.0), (2.0 * sx, cy + 2.0), 1.75, 0.25, "w_steel", z=z)
         w.strut(f"star_tip{n}", (-2.75 * sx, cy - 2.75), (2.75 * sx, cy + 2.75), 0.75, 0.125, "w_steel_edge", z=z)
     w.box("star_hub", (-0.75, -12.5, -0.375), (0.75, -11.0, 0.375), "w_iron_dark")
+    w.size = 0.9  # small: a hand sickle
     return w.finish()
 
 
@@ -192,6 +193,7 @@ def hunter():
         y = 7.25 + n * 1.5
         w.box(f"tooth{n}", (-1.75, y, -0.25), (-0.875, y + 0.875, 0.25), "w_steel",
               rotation=("z", 45, (-1.3125, y + 0.4375, 0)))
+    w.size = 0.9  # small: a knife
     return w.finish()
 
 
@@ -216,6 +218,8 @@ def lancer():
         w.centred(f"leaf{n}", y0, y1, wd, 0.75, "w_steel")
     w.centred("ridge", 22.0, 30.5, 0.5, 1.0, "w_steel_edge")
     w.centred("point", 30.5, 31.75, 0.5, 0.5, "w_steel_edge")
+    w.size = 1.7  # huge: a spear longer than its owner is tall
+    w.size_first = 1.15  # smaller on the own screen
     return w.finish()
 
 
@@ -248,6 +252,8 @@ def berserker():
     w.centred("spike", 21.5, 23.5, 1.5, 1.5, "w_iron")
     w.centred("spike_tip", 23.5, 25.0, 0.75, 0.75, "w_steel_edge")
     w.rivets("eye_rivet", [(0, 16.0), (0, 20.0)], 1.5, tex="w_iron")
+    w.size = 1.5  # huge: a two-handed war axe
+    w.size_first = 1.15  # smaller on the own screen
     return w.finish()
 
 
@@ -280,6 +286,8 @@ def guardian():
                   x=x * 0.75, z=z * 0.75)
     w.centred("band_top", 24.0, 24.75, 2.25, 2.25, "w_gold")
     w.centred("finial", 24.75, 26.0, 1.0, 1.0, "w_gold")
+    w.size = 1.4  # huge: a heavy mace behind a shield plate
+    w.size_first = 1.1  # smaller on the own screen
     return w.finish()
 
 
@@ -303,6 +311,7 @@ def fighter():
         z0 = -2.375 + n * 1.1875
         w.box(f"knuckle{n}", (-2.0, 13.0, z0 + 0.0625), (3.0, 13.875, z0 + 1.125), "w_glove")
         w.box(f"stud{n}", (-0.25, 13.875, z0 + 0.3125), (1.25, 14.375, z0 + 0.875), "w_steel")
+    w.size = 0.85  # small: a glove
     return w.finish()
 
 
@@ -380,6 +389,8 @@ def thunder():
         w.both_flats(name, (frm[0], frm[1], 2.5), (to[0], to[1], 2.625), "w_spark", glow=True)
     # crackling arcs over the top of the head
     w.box("arc", (-6.0, 15.25, -0.125), (6.0, 17.25, 0.125), "w_arc", glow=True)
+    w.size = 1.45  # huge: a storm hammer
+    w.size_first = 1.1  # smaller on the own screen
     return w.finish()
 
 
@@ -435,6 +446,8 @@ def earth():
     w.both_flats("moss_a", (-2.5, 10.0, 1.125), (-0.5, 11.5, 1.375), "w_moss")
     w.box("moss_b", (1.25, 17.5, 0.9375), (3.0, 18.25, 1.25), "w_moss")
     w.box("moss_top", (-1.5, 25.25, -0.5), (0.25, 25.5, 0.75), "w_moss")
+    w.size = 1.45  # huge: a rock-crowned earth-splitter
+    w.size_first = 1.1  # smaller on the own screen
     return w.finish()
 
 
