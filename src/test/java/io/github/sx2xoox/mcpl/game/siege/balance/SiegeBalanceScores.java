@@ -35,12 +35,17 @@ final class SiegeBalanceScores {
     static final double W_SIEGE = 0.20;
     static final double W_TEAM = 0.25;
     static final double CLIP = 3;
+    /**
+     * The share of a fight a melee kit spends swinging at its target (S5 swings for 12 s straight at 2.5 blocks): what
+     * its buffs of basic attacks and its lifesteal count for.
+     */
+    static final double MELEE_UPTIME = 0.7;
 
     /** One ability's metrics at one level (corrections applied). */
     record Metrics(String id, int level, double dps, double burst3, double cc, double hard, double survival,
                    double invuln, double mobility, double range, double support, double aoeExtra, double tower,
                    double waveTime, double jungleTime, double knock, double sustainFlat, double prevented,
-                   double probeDps, double health) {
+                   double probeDps, double health, double basicBoost, double lifesteal) {
     }
 
     /** One ability's scores at one level. */
@@ -118,12 +123,18 @@ final class SiegeBalanceScores {
         // at melee range a kit may do more: buffs of the next hits or of melee (미미르의 샘, 거대화), close-range hits
         double ultValue = Math.max(ultDamage, row.get("ultMelee"));
         double skill30 = Math.max(row.get("dmg30"), 2.5 * row.get("skillMelee"));
-        double dps = (skill30 * c.skill() + ULT_SHARE * ultValue * c.ultimate()) / 30 * real;
-        double burst = Math.max(window(row.s1(), 3) * c.skill(), window(row.s2(), 3) * b) * real;
+        // buffs of basic attacks (S5): passives on missing health, the active's and the ultimate's; the corrections do
+        // not touch basic attack damage, so this part stays whatever the correction is
+        double boost = basicBoost(row);
+        double dps = (skill30 * c.skill() + ULT_SHARE * ultValue * c.ultimate()) / 30 * real + boost;
+        double ultBoost = Math.max(0, row.get("ultBasic") - row.get("basicHalf"));
+        double burst = Math.max(window(row.s1(), 3) * c.skill(), window(row.s2(), 3) * b) * real
+                + MELEE_UPTIME * Math.max(ultBoost / 4, healthBoost(row) / 4);
         double cc = ccOf(row, "30") + ULT_SHARE * Math.max(0, ccOf(row, "U") - ccOf(row, "12"));
         double hard = row.get("hard30") + ULT_SHARE * Math.max(0, row.get("hardU") - row.get("hard12"));
+        double lifesteal = lifesteal(row);
         double flat = row.get("heal30") + row.get("shield30") + 0.5 * row.get("bonusHp")
-                + ULT_SHARE * ultPart(row, "heal", "shield") - 0.5 * row.get("selfCost30");
+                + ULT_SHARE * ultPart(row, "heal", "shield") - 0.5 * row.get("selfCost30") + lifesteal;
         double prevented = row.get("prevented30") + ULT_SHARE * ultPart(row, "prevented");
         double survival = flat + prevented;
         double invuln = row.get("invuln30") + ULT_SHARE * ultPart(row, "invuln");
@@ -143,7 +154,32 @@ final class SiegeBalanceScores {
         double probeDps = Math.max(0.1, row.get("probe") / 0.5);
         return new Metrics(row.id(), level, dps, burst, cc, hard, survival, invuln, mobility, row.get("range"),
                 support, aoeExtra, tower, waveTime, jungleTime, knock, Math.max(0, flat) / 30, prevented / 30, probeDps,
-                health(level));
+                health(level), boost, lifesteal);
+    }
+
+    /** S5: what basic attacks gain over a fight from losing health (the mean of 100/50/25% over 100%), per 12 s. */
+    static double healthBoost(SiegeLabData.Row row) {
+        double full = row.get("basicFull");
+        return Math.max(0, (full + row.get("basicHalf") + row.get("basicLow")) / 3 - full);
+    }
+
+    /**
+     * Damage per second that the kit adds to its own basic attacks in a fight: losing health, the active on cooldown
+     * and the ultimate (once per {@link #ULT_PERIOD}), for {@link #MELEE_UPTIME} of the fight. Basic attacks
+     * themselves (the 평타 table) are the same for every kit here and left out.
+     */
+    static double basicBoost(SiegeLabData.Row row) {
+        double half = row.get("basicHalf");
+        double skill = Math.max(0, row.get("skillBasic") - half);
+        double ult = Math.max(0, row.get("ultBasic") - half);
+        return MELEE_UPTIME * ((healthBoost(row) + skill) / 12 + ULT_SHARE * ult / 30);
+    }
+
+    /** Healing from hitting in melee over a 30 s fight (S5 minus the duel's own healing), for the melee uptime. */
+    static double lifesteal(SiegeLabData.Row row) {
+        double skill = Math.max(0, row.get("steal") - row.get("heal12"));
+        double ult = Math.max(0, row.get("stealU") - row.get("healU"));
+        return MELEE_UPTIME * (skill * 30 / 12 + ULT_SHARE * ult);
     }
 
     /** Seconds {@code a} needs to kill {@code b} in the duel model. */

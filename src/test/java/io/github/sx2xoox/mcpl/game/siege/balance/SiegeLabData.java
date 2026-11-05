@@ -32,7 +32,7 @@ import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityRegistry;
 public final class SiegeLabData {
 
     /** Bump when the lab's scenarios or measurements change. */
-    public static final int LAB_VERSION = 2;
+    public static final int LAB_VERSION = 3;
     public static final Path FILE = Path.of("docs", "siege-balance-lab.csv");
     public static final List<Integer> LEVELS = List.of(1, 6, 9);
 
@@ -56,8 +56,9 @@ public final class SiegeLabData {
             "aoe1", "aoe3", "aoe5",
             // S4: an enemy outer tower, the ultimate + active on cooldown for 20 s
             "tower20",
-            // S5: basic attacks on one enemy at 2.5 blocks for 12 s, and what the ultimate / the active on cooldown add
-            "melee12", "ultMelee", "skillMelee",
+            // S5: basic attacks on one enemy at 2.5 blocks for 12 s at 100% / 50% / 25% health; at 50% after the
+            // ultimate and with the active on cooldown (basic attack and ability damage apart), lifesteal heals there
+            "basicFull", "basicHalf", "basicLow", "ultBasic", "ultMelee", "skillBasic", "skillMelee", "steal", "stealU",
             // the probe's damage on the attacker before its ability (what "prevented" is measured against)
             "probe");
 

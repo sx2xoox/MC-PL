@@ -67,6 +67,34 @@ class SiegeBalanceReport {
     static final double SIEGE_MIN = 0.75;
     static final double SIEGE_MAX = 1.35;
     static final int ITERATIONS = 80;
+    /**
+     * A kit whose buffs of its own basic attacks ({@link SiegeBalanceScores#basicBoost}) are at least this share of its
+     * damage per second (6레벨, corrections 1), and at least {@link #MELEE_KIT_MIN} a second, is a "평타 강화형": the
+     * corrections only touch ability damage, so raising them would make the kit stronger without touching what made it
+     * weak or strong. Its skill and ultimate
+     * corrections stay at or under {@link #MELEE_KIT_MAX}; a weak one is fixed through {@link SiegeTuning} instead.
+     */
+    static final double MELEE_KIT_SHARE = 0.25;
+    static final double MELEE_KIT_MIN = 0.4;
+    static final double MELEE_KIT_MAX = 1.0;
+
+    /** A correction chosen by hand: the solver keeps it as it is (through every {@code updateSiegeBalance}). */
+    record Pinned(Correction correction, String reason) {
+    }
+
+    /**
+     * Corrections decided by hand (real-match feedback the lab cannot see): the solver never moves them and
+     * {@code siege-balance.yml} always carries them.
+     */
+    static final Map<String, Pinned> PINNED = pinned();
+
+    private static Map<String, Pinned> pinned() {
+        Map<String, Pinned> out = new LinkedHashMap<>();
+        out.put("berserker", new Pinned(new Correction(0.8, 0.8, 1.0),
+                "실전 피드백(보정 1에서도 매우 강함): 힘은 분노·광폭화가 키우는 평타라 보정을 올리지 않음. 돌진만 조금 낮추고 "
+                        + "분노·광폭화 수치는 SiegeTuning 으로 낮춤"));
+        return out;
+    }
 
     private static final Path DOCS = Path.of("docs", "siege-balance.md");
     private static final Path YAML = Path.of("src", "main", "resources", SiegeBalanceSettings.RESOURCE);
@@ -89,7 +117,7 @@ class SiegeBalanceReport {
 
     /** Everything the report shows. */
     record Report(List<Row> rows, Map<String, Correction> corrections, Result before, Result after,
-                  Map<String, SiegeRealStats.Entry> real, Map<String, Double> calibration) {
+                  Map<String, SiegeRealStats.Entry> real, Map<String, Double> calibration, SiegeLabData.Table lab) {
     }
 
     @Test
@@ -174,7 +202,7 @@ class SiegeBalanceReport {
         Result before = SiegeBalanceScores.evaluate(lab, ids, Map.of(), calibration);
         Map<String, Correction> corrections = solve(rows, lab, ids, calibration);
         Result after = SiegeBalanceScores.evaluate(lab, ids, corrections, calibration);
-        return new Report(rows, corrections, before, after, real, calibration);
+        return new Report(rows, corrections, before, after, real, calibration, lab);
     }
 
     /** The model numbers of every pool ability and the burst caps on its corrections. */
@@ -226,8 +254,10 @@ class SiegeBalanceReport {
             byId.put(row.info().id(), row);
             f.put(row.info().id(), new double[] {1, 1, 1});
         }
+        Map<String, Boolean> meleeKits = meleeKits(lab, ids);
         for (String id : ids) {
             limit(id, f.get(id), byId.get(id), lab, calibration);
+            hold(id, f.get(id), meleeKits.get(id));
         }
         for (int iteration = 0; iteration < ITERATIONS; iteration++) {
             Result result = SiegeBalanceScores.evaluate(lab, ids, corrections(f, false), calibration);
@@ -269,9 +299,45 @@ class SiegeBalanceReport {
                     c[2] *= Math.max(0.85, Math.min(1.15, Math.pow(target / siege, 0.8)));
                 }
                 limit(id, c, byId.get(id), lab, calibration);
+                hold(id, c, meleeKits.get(id));
             }
         }
         return corrections(f, true);
+    }
+
+    /** The 평타 강화형 cap ({@link #MELEE_KIT_MAX}) and the hand-picked corrections ({@link #PINNED}). */
+    private static void hold(String id, double[] c, boolean meleeKit) {
+        if (meleeKit) {
+            c[0] = Math.min(c[0], MELEE_KIT_MAX);
+            c[1] = Math.min(c[1], MELEE_KIT_MAX);
+        }
+        Pinned pin = PINNED.get(id);
+        if (pin != null) {
+            c[0] = pin.correction().skill();
+            c[1] = pin.correction().ultimate();
+            c[2] = pin.correction().objective();
+        }
+    }
+
+    /** The share of a kit's damage per second (6레벨, corrections 1) that comes from buffing its own basic attacks. */
+    static double meleeShare(SiegeLabData.Table lab, String id) {
+        SiegeLabData.Row six = lab.row(id, 6);
+        Metrics m = SiegeBalanceScores.metrics(six, Correction.NONE, 1.0);
+        return m.dps() < 1.0E-9 ? 0 : m.basicBoost() / m.dps();
+    }
+
+    /** Whether {@code id} is a 평타 강화형 ({@link #MELEE_KIT_SHARE}, {@link #MELEE_KIT_MIN}). */
+    static boolean meleeKit(SiegeLabData.Table lab, String id) {
+        Metrics m = SiegeBalanceScores.metrics(lab.row(id, 6), Correction.NONE, 1.0);
+        return meleeShare(lab, id) >= MELEE_KIT_SHARE - 1.0E-9 && m.basicBoost() >= MELEE_KIT_MIN - 1.0E-9;
+    }
+
+    static Map<String, Boolean> meleeKits(SiegeLabData.Table lab, List<String> ids) {
+        Map<String, Boolean> out = new LinkedHashMap<>();
+        for (String id : ids) {
+            out.put(id, meleeKit(lab, id));
+        }
+        return out;
     }
 
     /** Holds factors to their range and to the bursts caps of the model and of the lab (levels 1 and 9). */
@@ -372,6 +438,10 @@ class SiegeBalanceReport {
             out.append("  # ").append(row.info().name()).append(" (").append(before.role().label()).append("): 점수 ")
                     .append(num(rel(before.total(), report.before().median()))).append("→")
                     .append(num(rel(after.total(), report.after().median()))).append("% (중앙값 대비)\n");
+            Pinned pin = PINNED.get(id);
+            if (pin != null) {
+                out.append("  # 수동 결정(SiegeBalanceReport.PINNED, 재생성해도 유지): ").append(pin.reason()).append("\n");
+            }
             out.append("  ").append(id).append(":\n");
             out.append("    skill: ").append(num(c.skill())).append("\n");
             out.append("    ultimate: ").append(num(c.ultimate())).append("\n");
@@ -411,6 +481,7 @@ class SiegeBalanceReport {
         renderLevels(out, report);
         renderDuels(out, report);
         renderTuning(out, report);
+        renderMelee(out, report);
         renderExceptions(out, report);
         renderMechanics(out, report);
         renderReal(out, report);
@@ -432,11 +503,17 @@ class SiegeBalanceReport {
         out.append("| 궁극기 12초 | 0초 궁극기 + 쿨마다 액티브, 결투 거리와 4블록 중 나은 쪽 | 궁극기 몫 = 이 장면 − 결투 첫 12초 |\n");
         out.append("| 밀집 10초 | 적 5명이 1.2블록 안에 모임, 궁극기 + 액티브 | 대상별 피해 → 광역(둘째 이후 대상 합) |\n");
         out.append("| 타워 20초 | 적 바깥 타워 5블록 앞(타워는 쏘지 않음), 궁극기 + 액티브 | 건물 피해 |\n");
-        out.append("| 근접 12초 | 2.5블록에서 평타만 / 먼저 궁극기 / 쿨마다 액티브 | 평타만보다 더 준 피해 = 근접에서의 궁극기·액티브 몫(평타 강화 포함) |\n\n");
+        out.append("| 근접 12초 | 2.5블록에서 평타만(공격자 체력 100·50·25%로 고정) / 50%에서 먼저 궁극기 / 50%에서 쿨마다 액티브. ")
+                .append("평타 피해와 능력 피해를 따로 셈, 힘·나약함 효과는 바닐라처럼 공격력에 반영(MockBukkit 보완), 치명타 끔 | ")
+                .append("평타 강화(잃은 체력 비례 패시브, 액티브·궁극기의 평타 버프), 근접 흡혈, 근접에서의 궁극기·액티브 능력 피해 |\n\n");
         out.append("### 지표 (30초 싸움 기준)\n\n");
         out.append("- 궁극기는 ").append(num(SiegeBalanceScores.ULT_PERIOD)).append("초에 한 번(싸움 중 게이지 + 재충전 잠금) → 30초에 ×")
                 .append(num(SiegeBalanceScores.ULT_SHARE)).append(".\n");
         out.append("- **지속딜** = (30초 스킬 피해 + 궁극기 몫) / 30초. 스킬·궁극기 몫은 근접(평타와 함께) 장면이 더 크면 그쪽(다음 적중 강화·근접 강화 능력). **폭딜** = 아무 3초 동안 가장 큰 피해(액티브 한 번, 또는 궁극기 + 액티브).\n");
+        out.append("- **평타 강화** = 근접 장면에서 키트가 자기 평타에 더한 피해: (체력 100·50·25% 평균 − 100%) + (액티브 − 50%) ")
+                .append("는 12초마다, (궁극기 − 50%)는 궁극기 주기마다, 싸움의 ").append(num(SiegeBalanceScores.MELEE_UPTIME * 100))
+                .append("%를 근접에서 휘두른다고 봄. 지속딜에 더하고(능력 보정이 안 곱해짐), 궁극기·패시브 몫의 3초분은 폭딜에도 더함. ")
+                .append("**근접 흡혈** = 그 장면의 회복 − 결투의 회복, 같은 비율로 생존에 더함.\n");
         out.append("- **통제** = 강한 통제(기절·속박·이동 잠금·공중에 뜸) ×1 + 침묵 ×").append(num(SiegeBalanceScores.SILENCE_WEIGHT))
                 .append(" + 약한 통제(감속 비율·실명·점프 잠금) ×").append(num(SiegeBalanceScores.SOFT_WEIGHT)).append(" (초).\n");
         out.append("- **생존** = 자기 회복 + 보호막(흡수) + 시험타에서 막은 피해 + 늘어난 최대 체력 ×0.5 − 자해 ×0.5. **무적** = 시험타를 거의 안 받은 초.\n");
@@ -475,7 +552,11 @@ class SiegeBalanceReport {
                 .append(").\n");
         out.append("- 폭딜 상한(모델·랩 둘 다): 1레벨에서 어떤 시전도 3초 폭딜 ").append(num(BURST_CAP))
                 .append("(체력의 40%) 이하, 9레벨(특성 포함)은 ").append(num(BURST_CAP_9)).append("(체력 28의 50%) 이하(테스트).\n");
-        out.append("- 피해로 못 고치는 원인(긴 통제·무적·넉백·쿨타임)은 `SiegeTuning`(공성전 전용 수치, 아래 표)로 고칩니다.\n\n");
+        out.append("- 피해로 못 고치는 원인(긴 통제·무적·넉백·쿨타임)은 `SiegeTuning`(공성전 전용 수치, 아래 표)로 고칩니다.\n");
+        out.append("- **평타 강화형**(지속딜의 ").append(num(MELEE_KIT_SHARE * 100))
+                .append("% 이상, 초당 ").append(num(MELEE_KIT_MIN)).append(" 이상이 자기 평타 강화): 스킬·궁 보정 최대 ").append(num(MELEE_KIT_MAX))
+                .append(". 보정은 능력 피해에만 곱해져 강함·약함의 원인(평타 버프)을 못 고치므로, 약하면 `SiegeTuning` 으로 고칩니다.\n");
+        out.append("- **수동 결정**(`SiegeBalanceReport.PINNED`): 실전 피드백처럼 랩이 못 보는 근거로 정한 보정은 자동 산출이 덮어쓰지 않습니다(아래 표).\n\n");
     }
 
     private static void renderSummary(StringBuilder out, Report report) {
@@ -629,6 +710,36 @@ class SiegeBalanceReport {
         out.append("\n");
     }
 
+    private static void renderMelee(StringBuilder out, Report report) {
+        out.append("## 평타 강화형·수동 결정\n\n");
+        out.append("6레벨, 보정 1 기준. 평타 강화 = 지속딜 중 자기 평타 강화 몫(초당), 비율 = 그 몫 / 지속딜. ")
+                .append("평타 강화형은 스킬·궁 보정 최대 ").append(num(MELEE_KIT_MAX)).append(".\n\n");
+        out.append("| 능력 | 평타 강화 (초당) | 비율 | 근접 흡혈 (30초) | 평타 강화형 | 보정 스킬/궁/건물 | 수동 결정 |\n")
+                .append("|---|---|---|---|---|---|---|\n");
+        SiegeLabData.Table lab = report.lab();
+        int count = 0;
+        for (Row row : report.rows()) {
+            String id = row.info().id();
+            Metrics m = SiegeBalanceScores.metrics(lab.row(id, 6), Correction.NONE, 1.0);
+            double share = meleeShare(lab, id);
+            Pinned pin = PINNED.get(id);
+            if (share < 0.1 && m.lifesteal() < 3 && pin == null) {
+                continue;
+            }
+            count++;
+            Correction c = report.corrections().get(id);
+            out.append("| ").append(row.info().name()).append(" | ").append(num(m.basicBoost())).append(" | ")
+                    .append(num(100 * share)).append("% | ").append(num(m.lifesteal())).append(" | ")
+                    .append(meleeKit(lab, id) ? "예" : "-").append(" | ").append(num(c.skill()))
+                    .append(" / ").append(num(c.ultimate())).append(" / ").append(num(c.objective())).append(" | ")
+                    .append(pin == null ? "-" : pin.reason()).append(" |\n");
+        }
+        if (count == 0) {
+            out.append("| (없음) | | | | | | |\n");
+        }
+        out.append("\n");
+    }
+
     private static void renderTuning(StringBuilder out, Report report) {
         out.append("## 공성전 전용 수치 (`SiegeTuning`)\n\n");
         out.append("공성전만 `abilities.yml` 기본값 대신 읽는 수치입니다(서버가 그 수치를 직접 고쳤으면 서버 값). ")
@@ -664,8 +775,9 @@ class SiegeBalanceReport {
         out.put("turtle", "등껍질(뒤에서 오는 피해 −50%)·가시 반사는 정면 시험타로 안 잡힘. 궁극기 지속·쿨타임은 손봄");
         out.put("odin", "후긴과 무닌(복수 피해)은 맞아야 켜짐. 쿨타임은 줄임");
         out.put("magicalgirl", "지원 대역 밖: 하트 회복이 아군 한 명 기준이라 낮게 잡힘(실제로는 튕기며 여러 명)");
-        out.put("chef", "폭딜 대역 밖: 지속형 전사(프라이팬 기절 + 만찬 회복), 폭딜 대신 생존·지원");
-        out.put("duelist", "결투 표식은 평타 피해 증가라 능력 보정이 안 들음(표식 30→15%로 낮춤), 폭딜 0. 남은 +14%는 평타 밸런스 뒤 다시 측정");
+        out.put("chef", "만찬은 아군 전체의 힘 I·회복이라 팀 몫이 큼(랩은 아군 한 명): 식탁 지속·회복은 줄임, 보정 바닥");
+        out.put("hunter", "지속딜 대역 경계(1.0): 지속딜의 약 3분의 1이 사냥 개시(궁극기)의 평타 강화라 능력 보정으로 못 낮춤, 점수는 목표 안");
+        out.put("duelist", "능력 피해가 없어(결투 표식·일기토는 평타 강화) 보정이 아무것도 안 바꿈, 폭딜 0. 표식은 랩의 평타 강화로 재서 맞춤(20%)");
         return out;
     }
 

@@ -15,13 +15,16 @@ import io.github.sx2xoox.mcpl.core.map.lanes.LaneSites;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeBalanceSettings;
 import io.github.sx2xoox.mcpl.game.siege.balance.SiegeLabData;
 import io.github.sx2xoox.mcpl.game.siege.tower.Tower;
+import io.github.sx2xoox.mcpl.game.superpower.basic.BasicAttackSettings;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.MatchContext;
 import io.github.sx2xoox.mcpl.game.superpower.runtime.SuperpowerMatch;
 import io.github.sx2xoox.mcpl.game.superpower.support.MatchHarness;
 import io.github.sx2xoox.mcpl.game.superpower.support.world.FlatWorld;
 import org.bukkit.Location;
+import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -54,7 +57,14 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
  *     first 12 s.</li>
  *     <li>S3 cluster, 10 s: five enemies within 1.2 blocks of the spot; ultimate + active.</li>
  *     <li>S4 tower, 20 s: 5 blocks before an enemy outer tower (it does not shoot back); ultimate + active.</li>
+ *     <li>S5 melee, 12 s: basic attacks at 2.5 blocks with the attacker kept at 100%, 50% and 25% health (what a
+ *     passive on missing health adds), and at 50% after the ultimate / with the active on cooldown; basic attack and
+ *     ability damage are counted apart (the per-ability corrections only touch ability damage), and the attacker's
+ *     healing there (lifesteal).</li>
  * </ol>
+ *
+ * <p>MockBukkit keeps potion effects without their attribute modifiers, so the lab adds the vanilla ones of strength
+ * (+3 attack damage per level) and weakness (−4 per level) every tick: a basic attack reads them like on a server.
  */
 @EnabledIfSystemProperty(named = "mcpl.siegeLab", matches = "true")
 class SiegeBalanceLab {
@@ -66,6 +76,11 @@ class SiegeBalanceLab {
     static final double KEEP_HEALTH = 0.7;
     static final double[] DISTANCES = {26, 18, 12, 8, 5, 3};
     static final Map<Integer, Integer> XP = Map.of(1, 0, 6, 700, 9, 1600);
+    /** Vanilla's attack damage modifiers of strength and weakness (per level), which MockBukkit leaves out. */
+    static final double STRENGTH_PER_LEVEL = 3;
+    static final double WEAKNESS_PER_LEVEL = -4;
+    static final NamespacedKey STRENGTH_KEY = NamespacedKey.minecraft("effect.strength");
+    static final NamespacedKey WEAKNESS_KEY = NamespacedKey.minecraft("effect.weakness");
 
     @Test
     void measure() throws IOException {
@@ -114,6 +129,8 @@ class SiegeBalanceLab {
         final List<Player> enemies = new ArrayList<>();
         /** Damage per enemy (by uuid) this tick. */
         final Map<UUID, Double> tickDamage = new HashMap<>();
+        /** The basic attack part of {@link #tickDamage} on the first enemy this tick. */
+        double tickBasic;
         Location center;
         double probeBase;
 
@@ -130,6 +147,9 @@ class SiegeBalanceLab {
             if (victim instanceof Player player && enemies.contains(victim)) {
                 double dealt = event.getFinalDamage();
                 tickDamage.merge(victim.getUniqueId(), dealt, Double::sum);
+                if (ctx.isBasicHit() && victim == enemies.getFirst()) {
+                    tickBasic += dealt;
+                }
                 if (dealt >= player.getHealth() - 1) {
                     event.setDamage(Math.max(0, player.getHealth() - 1));
                 }
@@ -191,12 +211,20 @@ class SiegeBalanceLab {
                 m.put("aoe3", cluster[0] + cluster[1] + cluster[2]);
                 m.put("aoe5", Arrays.stream(cluster).sum());
                 m.put("tower20", tower());
-                double plain = melee(false, false);
-                double boosted = melee(true, false);
-                double skilled = melee(false, true);
-                m.put("melee12", plain);
-                m.put("ultMelee", Math.max(0, boosted - plain));
-                m.put("skillMelee", Math.max(0, skilled - plain));
+                Melee full = melee(1.0, false, false);
+                Melee half = melee(0.5, false, false);
+                Melee low = melee(0.25, false, false);
+                Melee frenzy = melee(0.5, true, false);
+                Melee skilled = melee(0.5, false, true);
+                m.put("basicFull", full.basic);
+                m.put("basicHalf", half.basic);
+                m.put("basicLow", low.basic);
+                m.put("ultBasic", frenzy.basic);
+                m.put("ultMelee", frenzy.ability);
+                m.put("skillBasic", skilled.basic);
+                m.put("skillMelee", skilled.ability);
+                m.put("steal", skilled.heal);
+                m.put("stealU", frenzy.heal);
                 return new SiegeLabData.Row(id, level, m, s1.perSecond(30), s2.perSecond(12));
             } finally {
                 h.close();
@@ -240,6 +268,9 @@ class SiegeBalanceLab {
             config.set(SiegeProgressSettings.XP_PASSIVE, 0);
             // -Dmcpl.siegeLab.untuned=true: measure without the 공성전 tuning (to compare, into another file)
             config.set(SiegeBalanceSettings.TUNING, !Boolean.getBoolean("mcpl.siegeLab.untuned"));
+            // no random critical basic attacks: S5 compares runs of basic attacks
+            config.set(String.join(".", SiegeMatch.BASIC_ATTACKS, BasicAttackSettings.CRITICAL,
+                    BasicAttackSettings.CRIT_CHANCE), 0);
             config.set("minions.enabled", false);
             config.set("jungle.enabled", false);
             String path = SiegeBalanceSettings.ABILITIES + "." + id;
@@ -363,7 +394,7 @@ class SiegeBalanceLab {
                     if (!cast && t < 10) {
                         cast = abilities.useActive(attacker).succeeded();
                     }
-                    h.ticks(1);
+                    step();
                     damage += tickDamage.getOrDefault(target.getUniqueId(), 0.0);
                     control += hard(target) ? 1 / 20.0 : 0;
                     heal(target);
@@ -546,7 +577,7 @@ class SiegeBalanceLab {
                 }
                 aim(attacker, target);
                 aim(target, attacker);
-                h.ticks(1);
+                step();
                 d.damage.add(t, tickDamage.getOrDefault(target.getUniqueId(), 0.0));
                 // control on the target
                 if (hard(target)) {
@@ -628,7 +659,7 @@ class SiegeBalanceLab {
                     abilities.useActive(attacker);
                 }
                 aim(attacker, target);
-                h.ticks(1);
+                step();
                 tickDamage.forEach((uuid, damage) -> total.merge(uuid, damage, Double::sum));
                 for (Player enemy : enemies) {
                     heal(enemy);
@@ -644,25 +675,35 @@ class SiegeBalanceLab {
             return out;
         }
 
-        // ------------------------------------------------------------ S5: melee (basic attacks) with the ultimate
+        // ------------------------------------------------------------ S5: melee (basic attacks) and their buffs
+
+        /** One S5 run: basic attack damage, ability damage (on the target) and the attacker's own healing. */
+        record Melee(double basic, double ability, double heal) {
+        }
 
         /**
-         * Damage on one enemy at 2.5 blocks over 12 s of basic attacks: alone, after the ultimate, or with the active
-         * on cooldown (what a buff of the next hits or of melee adds, with the casts' own hits).
+         * 12 s of basic attacks on one enemy at 2.5 blocks with the attacker kept at {@code health} of its maximum:
+         * plain, after the ultimate, or with the active on cooldown (what a buff of the next hits or of melee adds, and
+         * the casts' own hits).
          */
-        private double melee(boolean ultimate, boolean active) {
+        private Melee melee(double health, boolean ultimate, boolean active) {
             reset();
             Location spotA = at(-6, 0);
             Location spotE = at(-3.5, 0);
             Player target = enemies.getFirst();
             place(attacker, spotA, -90);
+            place(ally, at(-8, 0), -90);
             place(target, spotE, 90);
             parkOthers(target);
             h.ticks(2);
+            double basic = 0;
             double total = 0;
+            double heal = 0;
             boolean ult = !ultimate;
+            keep(attacker, health);
             for (int t = 0; t < 240; t++) {
                 tickDamage.clear();
+                tickBasic = 0;
                 if (!ult && t < 40) {
                     aim(attacker, target);
                     abilities.setGauge(attacker, 100);
@@ -678,14 +719,20 @@ class SiegeBalanceLab {
                     aim(attacker, target);
                 }
                 abilities.basicAttack(attacker);
-                h.ticks(1);
-                total += tickDamage.getOrDefault(target.getUniqueId(), 0.0);
+                double set = attacker.isDead() ? 0 : attacker.getHealth();
+                step();
+                double dealt = tickDamage.getOrDefault(target.getUniqueId(), 0.0);
+                total += dealt;
+                basic += Math.min(dealt, tickBasic);
+                if (!attacker.isDead()) {
+                    heal += Math.max(0, attacker.getHealth() - set);
+                }
                 for (Player enemy : enemies) {
                     heal(enemy);
                 }
-                keep(attacker);
+                keep(attacker, health);
             }
-            return total;
+            return new Melee(basic, Math.max(0, total - basic), heal);
         }
 
         // ------------------------------------------------------------ S4: tower
@@ -730,13 +777,44 @@ class SiegeBalanceLab {
                     abilities.useActive(attacker);
                 }
                 aim(attacker, hitbox);
-                h.ticks(1);
+                step();
                 keep(attacker);
             }
             return before - tower.health();
         }
 
         // ------------------------------------------------------------ helpers
+
+        /**
+         * One tick, after giving every fighter the vanilla attack damage modifiers of its strength and weakness
+         * effects (MockBukkit keeps the effects only).
+         */
+        private void step() {
+            for (Player player : allFighters()) {
+                syncEffect(player, PotionEffectType.STRENGTH, STRENGTH_KEY, STRENGTH_PER_LEVEL);
+                syncEffect(player, PotionEffectType.WEAKNESS, WEAKNESS_KEY, WEAKNESS_PER_LEVEL);
+            }
+            h.ticks(1);
+        }
+
+        private static void syncEffect(Player player, PotionEffectType type, NamespacedKey key, double perLevel) {
+            AttributeInstance attack = player.getAttribute(Attribute.ATTACK_DAMAGE);
+            if (attack == null) {
+                return;
+            }
+            var effect = player.isDead() ? null : player.getPotionEffect(type);
+            double amount = effect == null ? 0 : perLevel * (effect.getAmplifier() + 1);
+            AttributeModifier current = attack.getModifier(key);
+            if (current != null && Math.abs(current.getAmount() - amount) < 1.0E-9) {
+                return;
+            }
+            if (current != null) {
+                attack.removeModifier(key);
+            }
+            if (amount != 0) {
+                attack.addModifier(new AttributeModifier(key, amount, AttributeModifier.Operation.ADD_NUMBER));
+            }
+        }
 
         private boolean hard(Player target) {
             return ctx.isMovementLocked(target, null) || target.hasPotionEffect(PotionEffectType.LEVITATION);
@@ -779,8 +857,12 @@ class SiegeBalanceLab {
         }
 
         private void keep(Player player) {
+            keep(player, KEEP_HEALTH);
+        }
+
+        private void keep(Player player, double share) {
             if (!player.isDead()) {
-                player.setHealth(KEEP_HEALTH * MatchContextAccess.maxHealth(player));
+                player.setHealth(Math.max(1, share * MatchContextAccess.maxHealth(player)));
             }
         }
 

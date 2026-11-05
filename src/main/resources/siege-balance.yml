@@ -3,312 +3,328 @@
 # skill = 액티브·패시브 피해, ultimate = 궁극기 피해 (전체 배율 balance.ability-damage 0.65 위에 곱함),
 # objective = 건물·미니언·정글 몬스터에게 주는 능력 피해 (전체 배율 없음). 점수·계산: docs/siege-balance.md
 abilities:
-  # 경찰 (서포터): 점수 -21.91→-3.33% (중앙값 대비)
+  # 경찰 (서포터): 점수 -22.18→-2.72% (중앙값 대비)
   police:
     skill: 1.3
     ultimate: 1.3
     objective: 1
-  # 광부 (마법): 점수 -33.36→-4.09% (중앙값 대비)
+  # 광부 (마법): 점수 -16.91→6.24% (중앙값 대비)
   miner:
-    skill: 1.5
-    ultimate: 0.85
-    objective: 1.7
-  # 대장장이 (전사): 점수 30.66→1.17% (중앙값 대비)
+    skill: 1.15
+    ultimate: 1.05
+    objective: 1.4
+  # 대장장이 (전사): 점수 46.52→1.83% (중앙값 대비)
   blacksmith:
-    skill: 0.55
-    ultimate: 0.55
+    skill: 0.3
+    ultimate: 0.3
     objective: 1.45
-  # 총잡이 (원거리): 점수 16.14→4.67% (중앙값 대비)
+  # 총잡이 (원거리): 점수 13.11→4.95% (중앙값 대비)
   gunslinger:
     skill: 1
     ultimate: 0.4
     objective: 0.95
-  # 요리사 (전사): 점수 37.27→4.79% (중앙값 대비)
+  # 요리사 (전사): 점수 37.15→12.78% (중앙값 대비)
   chef:
-    skill: 0.45
-    ultimate: 0.45
-    objective: 1
-  # 검성 (전사): 점수 61.14→-3.65% (중앙값 대비)
-  blade:
-    skill: 0.7
+    skill: 0.3
     ultimate: 0.3
-    objective: 0.55
-  # 궁수 (원거리): 점수 105.46→-1.08% (중앙값 대비)
+    objective: 1.4
+  # 닌자 (암살): 점수 -10.88→2.89% (중앙값 대비)
+  ninja:
+    skill: 1.1
+    ultimate: 1.1
+    objective: 1
+  # 검성 (전사): 점수 66.37→-3.18% (중앙값 대비)
+  blade:
+    skill: 0.6
+    ultimate: 0.3
+    objective: 0.5
+  # 궁수 (원거리): 점수 95.64→-4.39% (중앙값 대비)
   archer:
     skill: 0.3
     ultimate: 0.3
     objective: 0.4
-  # 저격수 (원거리): 점수 15.82→-9.86% (중앙값 대비)
+  # 저격수 (원거리): 점수 22.59→0.98% (중앙값 대비)
   sniper:
     skill: 0.55
     ultimate: 1
     objective: 0.75
-  # 사냥꾼 (서포터): 점수 -1.91→-8.99% (중앙값 대비)
+  # 사냥꾼 (서포터): 점수 -3.73→-3.06% (중앙값 대비)
   hunter:
-    skill: 0.75
-    ultimate: 0.75
+    skill: 0.8
+    ultimate: 0.8
     objective: 2.5
-  # 창술사 (전사): 점수 34.02→-5.52% (중앙값 대비)
+  # 창술사 (전사): 점수 31.28→-5.37% (중앙값 대비)
   lancer:
     skill: 0.75
     ultimate: 0.35
     objective: 0.7
-  # 광전사 (전사): 점수 -50.33→1.98% (중앙값 대비)
+  # 광전사 (전사): 점수 -0.16→2.47% (중앙값 대비)
+  # 수동 결정(SiegeBalanceReport.PINNED, 재생성해도 유지): 실전 피드백(보정 1에서도 매우 강함): 힘은 분노·광폭화가 키우는 평타라 보정을 올리지 않음. 돌진만 조금 낮추고 분노·광폭화 수치는 SiegeTuning 으로 낮춤
   berserker:
-    skill: 1.8
-    ultimate: 1.8
-    objective: 2.45
-  # 수호자 (탱커): 점수 11.1→5.72% (중앙값 대비)
+    skill: 0.8
+    ultimate: 0.8
+    objective: 1
+  # 수호자 (탱커): 점수 -1.86→5.76% (중앙값 대비)
   guardian:
-    skill: 0.65
-    ultimate: 0.65
+    skill: 1
+    ultimate: 1
     objective: 1.3
-  # 격투가 (전사): 점수 -10.04→-5.3% (중앙값 대비)
+  # 격투가 (전사): 점수 1.02→2.8% (중앙값 대비)
   fighter:
-    skill: 1.4
-    ultimate: 0.35
+    skill: 1
+    ultimate: 0.75
     objective: 1.3
-  # 화염술사 (마법): 점수 94.71→0.59% (중앙값 대비)
+  # 화염술사 (마법): 점수 99.03→0% (중앙값 대비)
   pyro:
-    skill: 0.4
+    skill: 0.3
     ultimate: 0.3
     objective: 0.4
-  # 뇌신 (마법): 점수 55.58→-2.35% (중앙값 대비)
+  # 뇌신 (마법): 점수 66.67→-7.99% (중앙값 대비)
   thunder:
-    skill: 0.85
+    skill: 0.6
     ultimate: 0.3
-    objective: 0.55
-  # 바람술사 (마법): 점수 -27.97→0.03% (중앙값 대비)
+    objective: 0.5
+  # 바람술사 (마법): 점수 -27.83→0.1% (중앙값 대비)
   aero:
     skill: 1.3
     ultimate: 1.3
-    objective: 0.95
-  # 대지술사 (탱커): 점수 -14.81→-11.41% (중앙값 대비)
+    objective: 0.9
+  # 대지술사 (탱커): 점수 -19.4→-9.31% (중앙값 대비)
   earth:
-    skill: 0.95
-    ultimate: 0.95
+    skill: 1.05
+    ultimate: 1.05
     objective: 1
-  # 용암술사 (마법): 점수 104.56→0.56% (중앙값 대비)
+  # 수류술사 (마법): 점수 -13.05→0.87% (중앙값 대비)
+  hydro:
+    skill: 1.1
+    ultimate: 0.9
+    objective: 1
+  # 용암술사 (마법): 점수 103.64→2.74% (중앙값 대비)
   magma:
     skill: 0.35
     ultimate: 0.3
     objective: 0.4
-  # 그림자 (암살): 점수 -51.69→-42.38% (중앙값 대비)
+  # 빛의 사도 (마법): 점수 2.02→-0.36% (중앙값 대비)
+  light:
+    skill: 0.85
+    ultimate: 0.85
+    objective: 1
+  # 그림자 (암살): 점수 -60.7→-56.3% (중앙값 대비)
   shadow:
     skill: 1.8
     ultimate: 0.8
     objective: 1
-  # 흡혈귀 (전사): 점수 18.41→1.05% (중앙값 대비)
+  # 흡혈귀 (전사): 점수 29.05→-0.38% (중앙값 대비)
   vampire:
-    skill: 0.6
-    ultimate: 0.6
+    skill: 0.55
+    ultimate: 0.55
     objective: 1
-  # 사신 (전사): 점수 -27.4→-0.02% (중앙값 대비)
+  # 사신 (전사): 점수 -34.57→5.48% (중앙값 대비)
   reaper:
-    skill: 1.3
-    ultimate: 1.3
+    skill: 1.5
+    ultimate: 1.5
     objective: 1.4
-  # 사령술사 (원거리): 점수 -12.25→0.4% (중앙값 대비)
+  # 사령술사 (원거리): 점수 -24.18→-0.62% (중앙값 대비)
   necromancer:
-    skill: 1.15
+    skill: 1.3
     ultimate: 0.75
     objective: 1
-  # 악마 (전사): 점수 32.55→4.25% (중앙값 대비)
+  # 악마 (전사): 점수 31.84→4.14% (중앙값 대비)
   demon:
     skill: 0.7
     ultimate: 0.3
-    objective: 0.85
-  # 불사조 (암살): 점수 -59.4→-45.61% (중앙값 대비)
+    objective: 0.8
+  # 불사조 (암살): 점수 -60.45→-47.15% (중앙값 대비)
   phoenix:
     skill: 1.8
     ultimate: 1.15
-    objective: 1.8
-  # 드래곤 (전사): 점수 -14.95→-0.06% (중앙값 대비)
+    objective: 1.7
+  # 드래곤 (전사): 점수 -11.86→-4.37% (중앙값 대비)
   dragon:
-    skill: 1.1
-    ultimate: 1.1
-    objective: 1
-  # 늑대인간 (전사): 점수 -18.5→-7.65% (중앙값 대비)
-  werewolf:
     skill: 0.95
     ultimate: 0.95
+    objective: 1
+  # 늑대인간 (전사): 점수 3.83→2.83% (중앙값 대비)
+  werewolf:
+    skill: 0.7
+    ultimate: 0.7
     objective: 1.95
-  # 도깨비 (전사): 점수 20.87→-2.66% (중앙값 대비)
+  # 도깨비 (전사): 점수 29.77→3.06% (중앙값 대비)
   dokkaebi:
-    skill: 0.6
-    ultimate: 0.6
+    skill: 0.5
+    ultimate: 0.5
     objective: 1.4
-  # 음유시인 (서포터): 점수 47.6→7.22% (중앙값 대비)
+  # 음유시인 (서포터): 점수 41.15→7.65% (중앙값 대비)
   bard:
     skill: 0.3
     ultimate: 0.3
     objective: 0.75
-  # 연금술사 (서포터): 점수 1.99→1.7% (중앙값 대비)
+  # 연금술사 (서포터): 점수 29.5→7.13% (중앙값 대비)
   alchemist:
-    skill: 0.9
-    ultimate: 0.9
+    skill: 0.3
+    ultimate: 0.3
     objective: 1.05
-  # 공학자 (마법): 점수 -6.05→3.42% (중앙값 대비)
+  # 공학자 (마법): 점수 -10.51→1.16% (중앙값 대비)
   engineer:
     skill: 1
     ultimate: 1
     objective: 1.3
-  # 해커 (서포터): 점수 -28.07→-2.16% (중앙값 대비)
+  # 해커 (서포터): 점수 -20.23→-4.58% (중앙값 대비)
   hacker:
-    skill: 1.4
-    ultimate: 1.4
+    skill: 1.15
+    ultimate: 1.15
     objective: 1
-  # 메카 (전사): 점수 0.37→3.82% (중앙값 대비)
+  # 메카 (전사): 점수 9.32→4.42% (중앙값 대비)
   mech:
-    skill: 0.95
-    ultimate: 0.95
+    skill: 0.75
+    ultimate: 0.75
     objective: 1
-  # 폭탄마 (마법): 점수 24.96→-1.9% (중앙값 대비)
+  # 폭탄마 (마법): 점수 20.42→-0.17% (중앙값 대비)
   bomber:
     skill: 1
-    ultimate: 0.6
+    ultimate: 0.65
     objective: 1
-  # 중력술사 (서포터): 점수 -39.53→-19.8% (중앙값 대비)
+  # 중력술사 (서포터): 점수 -43.93→-32.48% (중앙값 대비)
   gravity:
     skill: 1.8
     ultimate: 1.3
     objective: 1
-  # 자석술사 (마법): 점수 7.13→3.32% (중앙값 대비)
+  # 자석술사 (마법): 점수 0.16→2.97% (중앙값 대비)
   magnet:
-    skill: 0.85
-    ultimate: 0.85
+    skill: 0.9
+    ultimate: 0.9
     objective: 1
-  # 스피드스터 (암살): 점수 -4.92→-6.39% (중앙값 대비)
+  # 스피드스터 (암살): 점수 -5.18→-5.52% (중앙값 대비)
   speedster:
     skill: 1.1
     ultimate: 0.55
-    objective: 0.85
-  # 독술사 (마법): 점수 -15.84→1.12% (중앙값 대비)
+    objective: 0.8
+  # 독술사 (마법): 점수 -20→-2.11% (중앙값 대비)
   venom:
     skill: 1.15
     ultimate: 1.15
     objective: 0.9
-  # 거미 (서포터): 점수 38.27→2.26% (중앙값 대비)
+  # 거미 (서포터): 점수 29.64→6.45% (중앙값 대비)
   spider:
-    skill: 0.5
-    ultimate: 0.5
+    skill: 0.4
+    ultimate: 0.4
     objective: 1
-  # 해적 (원거리): 점수 4.12→3.05% (중앙값 대비)
+  # 해적 (원거리): 점수 -2.5→-1.64% (중앙값 대비)
   pirate:
     skill: 1
     ultimate: 0.75
     objective: 1
-  # 낚시꾼 (원거리): 점수 24.04→2.75% (중앙값 대비)
+  # 낚시꾼 (원거리): 점수 20.57→0.9% (중앙값 대비)
   angler:
     skill: 0.9
-    ultimate: 0.55
-    objective: 0.75
-  # 농부 (전사): 점수 59.07→8.11% (중앙값 대비)
+    ultimate: 0.6
+    objective: 0.7
+  # 농부 (전사): 점수 41.25→4.77% (중앙값 대비)
   farmer:
-    skill: 0.3
-    ultimate: 0.3
+    skill: 0.45
+    ultimate: 0.45
     objective: 1
-  # 야구선수 (원거리): 점수 -35.69→-3.43% (중앙값 대비)
+  # 야구선수 (원거리): 점수 -21.53→-0.16% (중앙값 대비)
   batter:
-    skill: 1.65
-    ultimate: 1.7
+    skill: 1.3
+    ultimate: 1.3
     objective: 1.05
-  # 미노타우로스 (전사): 점수 -0.37→-1.85% (중앙값 대비)
+  # 미노타우로스 (전사): 점수 8.42→6.22% (중앙값 대비)
   minotaur:
-    skill: 0.85
-    ultimate: 0.85
+    skill: 0.75
+    ultimate: 0.75
     objective: 1
-  # 메두사 (마법): 점수 -27.15→5.54% (중앙값 대비)
+  # 메두사 (마법): 점수 -30.05→0.35% (중앙값 대비)
   medusa:
     skill: 1.5
     ultimate: 1.5
     objective: 2.1
-  # 오딘 (전사): 점수 -35.25→-15.64% (중앙값 대비)
+  # 오딘 (전사): 점수 -45.9→-14.68% (중앙값 대비)
   odin:
-    skill: 1.25
-    ultimate: 1.15
+    skill: 1.6
+    ultimate: 1.25
     objective: 1.4
-  # 제천대성 (전사): 점수 -17.7→-3.84% (중앙값 대비)
+  # 제천대성 (전사): 점수 -14.85→-0.78% (중앙값 대비)
   wukong:
-    skill: 1.3
-    ultimate: 0.7
-    objective: 1
-  # 태양신 라 (마법): 점수 21.82→0.14% (중앙값 대비)
-  ra:
-    skill: 0.6
-    ultimate: 0.6
-    objective: 1.3
-  # 구미호 (암살): 점수 -26.57→-3.63% (중앙값 대비)
-  gumiho:
-    skill: 1.45
-    ultimate: 0.95
-    objective: 1.6
-  # 히드라 (전사): 점수 -16.75→-1.07% (중앙값 대비)
-  hydra:
     skill: 1.15
+    ultimate: 0.85
+    objective: 1
+  # 태양신 라 (마법): 점수 14.13→4.34% (중앙값 대비)
+  ra:
+    skill: 0.7
     ultimate: 0.7
     objective: 1.3
-  # 거인 (전사): 점수 2.76→-5.91% (중앙값 대비)
+  # 구미호 (암살): 점수 -33.27→-1.34% (중앙값 대비)
+  gumiho:
+    skill: 1.65
+    ultimate: 0.85
+    objective: 1.7
+  # 히드라 (전사): 점수 -17.88→-2.03% (중앙값 대비)
+  hydra:
+    skill: 1.05
+    ultimate: 1.05
+    objective: 1.25
+  # 거인 (전사): 점수 9.6→3.71% (중앙값 대비)
   titan:
-    skill: 0.75
-    ultimate: 0.75
+    skill: 0.65
+    ultimate: 0.65
     objective: 1
-  # 곰 (탱커): 점수 13.48→-5.08% (중앙값 대비)
+  # 곰 (탱커): 점수 13.22→-1.45% (중앙값 대비)
   bear:
-    skill: 0.6
-    ultimate: 0.6
+    skill: 0.55
+    ultimate: 0.55
     objective: 2.5
-  # 문어 (마법): 점수 11.35→5.32% (중앙값 대비)
+  # 문어 (마법): 점수 5.03→0% (중앙값 대비)
   octopus:
     skill: 0.85
     ultimate: 0.85
     objective: 1
-  # 거북이 (탱커): 점수 -31.48→-18.25% (중앙값 대비)
+  # 거북이 (탱커): 점수 -35.69→-20.92% (중앙값 대비)
   turtle:
     skill: 1
     ultimate: 1
     objective: 2.5
-  # 무도가 (전사): 점수 -22.14→-10.33% (중앙값 대비)
+  # 무도가 (전사): 점수 -31.62→-8.76% (중앙값 대비)
   monk:
-    skill: 1.15
+    skill: 1.4
     ultimate: 0.85
     objective: 1
-  # 기공 전사 (마법): 점수 4.18→0.02% (중앙값 대비)
+  # 기공 전사 (마법): 점수 1.67→0.7% (중앙값 대비)
   kiwarrior:
     skill: 1
     ultimate: 0.3
     objective: 1.1
-  # 마법소녀 (서포터): 점수 5.19→5.13% (중앙값 대비)
+  # 마법소녀 (서포터): 점수 3.68→3.01% (중앙값 대비)
   magicalgirl:
-    skill: 0.9
-    ultimate: 0.9
+    skill: 0.85
+    ultimate: 0.85
     objective: 1
-  # 텐구 (암살): 점수 -51.11→-17.5% (중앙값 대비)
+  # 텐구 (암살): 점수 -52.12→-15.89% (중앙값 대비)
   tengu:
     skill: 1.8
     ultimate: 1.15
     objective: 2.5
-  # 테니스 천재 (원거리): 점수 -2.97→3.16% (중앙값 대비)
+  # 테니스 천재 (원거리): 점수 -6.53→-0.15% (중앙값 대비)
   tennis:
     skill: 1.15
     ultimate: 0.7
-    objective: 1
-  # 식물술사 (서포터): 점수 28.24→11.17% (중앙값 대비)
+    objective: 0.95
+  # 식물술사 (서포터): 점수 28→11.47% (중앙값 대비)
   druid:
     skill: 0.3
     ultimate: 0.3
     objective: 1
-  # 무당 (서포터): 점수 16.83→6.39% (중앙값 대비)
+  # 무당 (서포터): 점수 12.27→6.21% (중앙값 대비)
   shaman:
     skill: 0.65
     ultimate: 0.65
     objective: 1
-  # 크리스탈술사 (마법): 점수 20.38→-3.26% (중앙값 대비)
+  # 크리스탈술사 (마법): 점수 11.52→-2.63% (중앙값 대비)
   crystal:
-    skill: 0.75
-    ultimate: 0.75
+    skill: 0.85
+    ultimate: 0.8
     objective: 0.7
-  # 음파술사 (마법): 점수 12.19→4.42% (중앙값 대비)
+  # 음파술사 (마법): 점수 6.81→0.39% (중앙값 대비)
   sonic:
     skill: 0.85
     ultimate: 0.85
