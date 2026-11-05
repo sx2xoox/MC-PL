@@ -18,17 +18,19 @@ import org.bukkit.configuration.file.YamlConfiguration;
  * {@link SiegeModifiers}. Normal 초능력전쟁 never reads it.
  *
  * <p>The per-ability corrections ({@code balance.abilities.<id>.skill} for the active and passive skills,
- * {@code .ultimate} for the ultimate) default to the bundled {@value #RESOURCE}, which {@code ./gradlew
- * updateSiegeBalance} generates from every pool ability's params together with docs/siege-balance.md.
+ * {@code .ultimate} for the ultimate, {@code .objective} for any ability damage on buildings, minions and monsters)
+ * default to the bundled {@value #RESOURCE}, which {@code ./gradlew updateSiegeBalance} generates from the balance lab's
+ * measurements ({@code ./gradlew siegeLab}) together with docs/siege-balance.md.
  *
  * @param enabled        false: abilities hit as in 초능력전쟁 (no global factor, corrections or level scaling)
  * @param abilityDamage  the global factor (0.65 = −35%)
  * @param damagePerLevel extra ability damage per level above 1 (0.075 = +7.5%, level 9 = +60%)
  * @param perks          whether the level 3/6/9 perks ({@link SiegePerks}) apply
+ * @param tuning         whether the 공성전 param tuning ({@link SiegeTuning}) applies
  * @param corrections    per-ability corrections; abilities missing here use 1.0
  */
 public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double damagePerLevel, boolean perks,
-                                   Map<String, Correction> corrections) {
+                                   boolean tuning, Map<String, Correction> corrections) {
 
     /** The bundled generated corrections. */
     public static final String RESOURCE = "siege-balance.yml";
@@ -39,11 +41,15 @@ public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double
     public static final String ABILITY_DAMAGE = "balance.ability-damage";
     public static final String DAMAGE_PER_LEVEL = "balance.damage-per-level";
     public static final String PERKS = "balance.level-perks";
+    public static final String TUNING = "balance.tuning";
     public static final String ABILITIES = "balance.abilities";
 
-    /** One ability's correction on top of the global factor. */
-    public record Correction(double skill, double ultimate) {
-        public static final Correction NONE = new Correction(1, 1);
+    /**
+     * One ability's correction: {@code skill} / {@code ultimate} on top of the global factor for hits on players,
+     * {@code objective} for its hits on buildings, minions and monsters (which take no global factor).
+     */
+    public record Correction(double skill, double ultimate, double objective) {
+        public static final Correction NONE = new Correction(1, 1, 1);
 
         /** The factor for a hit of the ultimate ({@code ultimate}) or of the other skills. */
         public double factor(boolean ultimate) {
@@ -57,7 +63,7 @@ public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double
 
     /** The settings with every default (the bundled corrections). */
     public static SiegeBalanceSettings defaults() {
-        return new SiegeBalanceSettings(true, DEFAULT_ABILITY_DAMAGE, DEFAULT_DAMAGE_PER_LEVEL, true,
+        return new SiegeBalanceSettings(true, DEFAULT_ABILITY_DAMAGE, DEFAULT_DAMAGE_PER_LEVEL, true, true,
                 bundledCorrections());
     }
 
@@ -75,7 +81,8 @@ public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double
                 Correction base = corrections.getOrDefault(id, Correction.NONE);
                 corrections.put(id, new Correction(
                         factor(section.getDouble(id + ".skill", base.skill()), base.skill()),
-                        factor(section.getDouble(id + ".ultimate", base.ultimate()), base.ultimate())));
+                        factor(section.getDouble(id + ".ultimate", base.ultimate()), base.ultimate()),
+                        factor(section.getDouble(id + ".objective", base.objective()), base.objective())));
             }
         }
         return new SiegeBalanceSettings(
@@ -84,6 +91,7 @@ public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double
                 Math.max(0, Math.min(1, finite(c.getDouble(DAMAGE_PER_LEVEL, DEFAULT_DAMAGE_PER_LEVEL),
                         DEFAULT_DAMAGE_PER_LEVEL))),
                 c.getBoolean(PERKS, true),
+                c.getBoolean(TUNING, true),
                 corrections);
     }
 
@@ -100,16 +108,20 @@ public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double
         d.setComments(DAMAGE_PER_LEVEL, List.of("1레벨 위로 레벨마다 늘어나는 능력 피해 (0.075 = 7.5%, 9레벨 +60%)"));
         d.set(PERKS, true);
         d.setComments(PERKS, List.of("3·6·9레벨 추가 효과 (능력별 한 줄, 레벨업 때 안내)"));
+        d.set(TUNING, true);
+        d.setComments(TUNING, List.of(
+                "공성전 전용 능력 수치 조정 (쿨타임·통제·보호막 등, 표: docs/siege-balance.md). false 면 abilities.yml 그대로"));
         YamlConfiguration bundled = bundled();
         ConfigurationSection abilities = bundled.getConfigurationSection("abilities");
         d.setComments(ABILITIES, List.of(
-                "능력별 보정 (skill = 액티브·패시브, ultimate = 궁극기). 1 이 기본, 0.5 면 그 능력 피해 절반",
-                "기본값은 ./gradlew updateSiegeBalance 가 능력 수치에서 계산합니다 (한 번에 체력 40% 이상 못 깎게, 10초 피해 튀는 능력 조정)"));
+                "능력별 보정 (skill = 액티브·패시브, ultimate = 궁극기, objective = 건물·미니언·몬스터에게). 1 이 기본, 0.5 면 절반",
+                "기본값은 ./gradlew updateSiegeBalance 가 밸런스 랩 측정값에서 계산합니다 (전체 점수를 중앙값 가까이, 폭딜 상한 안에서)"));
         if (abilities != null) {
             for (String id : abilities.getKeys(false)) {
                 String path = ABILITIES + "." + id;
                 d.set(path + ".skill", abilities.getDouble(id + ".skill", 1));
                 d.set(path + ".ultimate", abilities.getDouble(id + ".ultimate", 1));
+                d.set(path + ".objective", abilities.getDouble(id + ".objective", 1));
                 List<String> comments = abilities.getComments(id);
                 if (!comments.isEmpty()) {
                     d.setComments(path, comments);
@@ -124,7 +136,8 @@ public record SiegeBalanceSettings(boolean enabled, double abilityDamage, double
         if (abilities != null) {
             for (String id : abilities.getKeys(false)) {
                 corrections.put(id, new Correction(factor(abilities.getDouble(id + ".skill", 1), 1),
-                        factor(abilities.getDouble(id + ".ultimate", 1), 1)));
+                        factor(abilities.getDouble(id + ".ultimate", 1), 1),
+                        factor(abilities.getDouble(id + ".objective", 1), 1)));
             }
         }
         return corrections;
