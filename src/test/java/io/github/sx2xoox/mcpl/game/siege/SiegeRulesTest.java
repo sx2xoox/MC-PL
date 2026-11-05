@@ -49,7 +49,7 @@ class SiegeRulesTest {
         assertEquals(8, s.towerPoints());
         assertEquals(3 * 20, s.protectionTicks());
         assertEquals(SiegeSettings.DEFAULT_POOL, s.abilityPool());
-        assertEquals(50, SiegeSettings.DEFAULT_POOL.size());
+        assertEquals(70, SiegeSettings.DEFAULT_POOL.size());
         assertEquals(1, s.rerolls());
     }
 
@@ -180,5 +180,25 @@ class SiegeRulesTest {
         MemoryConfiguration custom = new MemoryConfiguration();
         custom.set(SiegeSettings.ABILITY_POOL, List.of("police", "miner"));
         assertEquals(List.of("police", "miner"), SiegeSettings.read(custom).abilityPool());
+    }
+
+    @Test
+    void aSavedFiftyPoolBecomesTheSeventyButAnEditedOneStays() {
+        List<String> fifty = new java.util.ArrayList<>(SiegeSettings.DEFAULT_POOL.subList(0, 50));
+        java.util.Collections.reverse(fifty);
+        MemoryConfiguration old = new MemoryConfiguration();
+        old.set(SiegeSettings.ABILITY_POOL, fifty);
+        assertEquals(SiegeSettings.DEFAULT_POOL, SiegeSettings.read(old).abilityPool(), "the old default, any order");
+
+        List<String> edited = new java.util.ArrayList<>(SiegeSettings.DEFAULT_POOL.subList(0, 49));
+        edited.add("minotaur");
+        MemoryConfiguration custom = new MemoryConfiguration();
+        custom.set(SiegeSettings.ABILITY_POOL, edited);
+        assertEquals(edited, SiegeSettings.read(custom).abilityPool(), "a pool the owner changed is kept");
+
+        List<String> fewer = new java.util.ArrayList<>(SiegeSettings.DEFAULT_POOL.subList(0, 49));
+        MemoryConfiguration trimmed = new MemoryConfiguration();
+        trimmed.set(SiegeSettings.ABILITY_POOL, fewer);
+        assertEquals(fewer, SiegeSettings.read(trimmed).abilityPool(), "one taken out of the 50 is kept as it is");
     }
 }

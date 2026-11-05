@@ -975,6 +975,10 @@ public final class MatchContext implements AbilityContext {
         if (instance == null || closed || !Double.isFinite(amount)) {
             return key;
         }
+        if (attribute == Attribute.SCALE && !target.equals(owner) && match.keepsSize(target)) {
+            // a building or creature model of the host keeps its size (its hitbox must match what is drawn)
+            return key;
+        }
         instance.addModifier(new AttributeModifier(key, amount, operation, EquipmentSlotGroup.ANY));
         if (attribute == Attribute.MAX_HEALTH) {
             clampHealth(target);

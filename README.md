@@ -304,7 +304,7 @@
   - 허브 설정: 순환 목록과 대기 시간, 경기장, 카운트다운, 팀 인원, 월드 보호 항목, 능력의 지형 파괴
     (`protection.ability-block-damage`: `OFF` / `MAP_WORLDS`(기본, 전투 맵에서만) / `ALL_WORLDS`, 경기당 상한)
   - 초능력전쟁 설정(`games.superpower`): 능력 배정 방식, 리롤 횟수, 준비 시간, 제한 시간, 기본 킷, 궁극기 게이지 충전량, 자기장 타이밍, 파티클 양 배율, 팀원 능력 공개(`show-team-abilities`)
-  - 초능력 공성전 설정(`games.siege`): 판 수, 목표 점수, 반 길이, 능력풀(기본 50종), 점수, 총공세, 부활, 타워 체력(공격팀 인원에 따라). 목록은 [docs/siege.md](docs/siege.md)
+  - 초능력 공성전 설정(`games.siege`): 판 수, 목표 점수, 반 길이, 능력풀(기본 70종), 점수, 총공세, 부활, 타워 체력(공격팀 인원에 따라). 목록은 [docs/siege.md](docs/siege.md)
   - 하늘(`games.superpower.sky`, 전투 맵에서만): 낮과 밤(`day-night`), 비 올 확률(`rain-chance`, 기본 0.35), 비 시간(`rain-seconds`의 `min`·`max`, 기본 60~120초)
   - 보급 상자(`games.superpower.loot`): 켜기/끄기, 상자 수(참가자당 개수, 최소·최대), 일반·희귀 비율, 상자마다 아이템 수,
     아이템 목록(`pool`), 보급 상자 수와 낙하 시간, 궁극기 결정 충전량. 아이템 목록은 `"아이템 [개수 또는 최소-최대] [weight=가중치]"`

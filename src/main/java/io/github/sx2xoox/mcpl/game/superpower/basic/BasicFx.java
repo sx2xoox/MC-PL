@@ -134,12 +134,17 @@ public final class BasicFx {
                 scale(0.07f * size, 0.8f, 1, 0.7f, 0.4f, 0));
         if (fx.signature() == Signature.SHIELD) {
             shieldBash(out, fx, size);
+        } else if (fx.signature() == Signature.STAFF) {
+            staff(out, fx, radius, width, side, roll, sweep, size, finisher);
         } else if (fx.weapon() != null) {
             weaponSweep(out, fx.weapon(), radius * 0.62f, width, side, roll, sweep, 0.95f * size, 0);
             if (fx.signature() == Signature.CLEAVER) {
                 weaponSweep(out, fx.weapon(), radius * 0.62f, width, side, roll, sweep, 0.72f * size, 1);
                 weaponSweep(out, fx.weapon(), radius * 0.62f, width, side, roll, sweep, 0.5f * size, 2);
             }
+        }
+        if (fx.signature() == Signature.PAW) {
+            paw(out, fx, clamp(range * 0.75f, 1.2f, 2.6f), side, size, sweep, finisher);
         }
         if (finisher) {
             if (fx.weight() == Weight.HEAVY) {
@@ -178,6 +183,10 @@ public final class BasicFx {
             }
             return out;
         }
+        if (fx.signature() == Signature.SONAR) {
+            sonar(out, fx, end, size, moment.finisher());
+            return out;
+        }
         float width = 0.075f * size;
         float[] reachAt = {0.35f, 1, 1, 1, 1};
         float[] thin = {0.8f, 1, 0.6f, 0.3f, 0};
@@ -197,6 +206,9 @@ public final class BasicFx {
         out.add(block(fx.core(), 0, core));
         out.add(block(fx.glow(), 0, glow));
         out.add(block(fx.core(), 0, tip));
+        if (fx.signature() == Signature.HORNS) {
+            horns(out, fx, end, size);
+        }
         if (fx.weapon() != null) {
             float far = 0.5f + end * 0.45f;
             out.add(item(fx.weapon(), 0, pointing(new float[] {0.7f, far, far + 0.1f, far, far * 0.8f},
@@ -226,6 +238,18 @@ public final class BasicFx {
             out.add(block(fx.glow(), 0, beam(x + 0.1f, end, width * 2.2f, fade)));
             out.add(block(Material.BLUE_STAINED_GLASS, 0, beam(x - 0.1f, end, width * 2.2f, fade)));
             out.add(block(fx.core(), 0, beam(x, end, width * 0.7f, fade)));
+        } else if (fx.signature() == Signature.STONE) {
+            // two snake-eye glares side by side, a gold slit in each
+            for (float eye : new float[] {0.09f, -0.09f}) {
+                out.add(block(fx.glow(), 0, beam(x + eye, end, width * 1.8f, fade)));
+                out.add(block(fx.core(), 0, beam(x + eye, end, width * 0.55f, fade)));
+            }
+            List<Pose> slit = new ArrayList<>();
+            for (float s : new float[] {0.3f, 1, 1, 0.7f, 0}) {
+                slit.add(new Pose(new Vector3f(x, 0.02f, 0.35f), NONE, new Vector3f(0.05f * s, 0.32f * s, 0.05f)
+                        .mul(size)));
+            }
+            out.add(block(Material.GOLD_BLOCK, 0, slit));
         } else {
             out.add(block(fx.core(), 0, beam(x, end, width, fade)));
             out.add(block(fx.glow(), 0, beam(x, end, width * 2.6f, fade)));
@@ -286,6 +310,26 @@ public final class BasicFx {
         if (fx.signature() == Signature.CLAW && sub == 0) {
             claw(out, fx, range * 0.7f, moment.side(), size, 1);
         }
+        if (fx.signature() == Signature.FEATHERS || fx.signature() == Signature.INK) {
+            boolean feathers = fx.signature() == Signature.FEATHERS;
+            int count = feathers ? 4 : 3;
+            for (int i = 0; i < count; i++) {
+                float yaw = -angle / 2 + angle * (i + 0.5f) / count + (random.nextFloat() - 0.5f) * 10;
+                float pitch = (random.nextFloat() - 0.3f) * 14;
+                Vector3f step = new Quaternionf().rotateY(rad(yaw)).rotateX(rad(-pitch))
+                        .transform(new Vector3f(0, 0, range / 6f));
+                List<Pose> poses = new ArrayList<>();
+                for (int f = 0; f < 7; f++) {
+                    Vector3f at = new Vector3f(step).mul(f + 0.8f).add(0, feathers ? 0.04f * f : -0.03f * f * f, 0);
+                    Quaternionf turn = feathers ? new Quaternionf().rotateZ(rad(70 * f + 40 * i)).rotateX(rad(30 * f))
+                            : new Quaternionf().rotateXYZ(0.5f * f, 0.7f * f, 0);
+                    float s = (feathers ? 0.55f : 0.22f) * size * (f < 5 ? 1 : 0.6f);
+                    poses.add(new Pose(at, turn, uniform(s)));
+                }
+                poses.add(poses.getLast().gone());
+                out.add(feathers ? item(Material.FEATHER, 1, poses) : block(fx.core(), 1, poses));
+            }
+        }
         return out;
     }
 
@@ -295,6 +339,10 @@ public final class BasicFx {
         List<FxSprite> out = new ArrayList<>();
         float size = fx.size() * moment.boost();
         float range = (float) attack.range() * (moment.finisher() ? 1.1f : 1f);
+        if (fx.signature() == Signature.QUAKE) {
+            quake(out, fx, range, size, new Random(moment.seed() * 13 + 5));
+            return out;
+        }
         arc(out, fx.glow(), 12, 0, 0, 1, 360, 0, NONE, new Vector3f(), false,
                 scale(range, 0.15f, 0.45f, 0.75f, 1.0f, 1.08f), new float[] {1, 1, 1, 1, 1},
                 scale(0.5f * size, 1, 0.8f, 0.6f, 0.4f, 0), scale(0.3f * size, 1, 1.3f, 1.15f, 0.7f, 0));
@@ -366,6 +414,14 @@ public final class BasicFx {
         float size = fx.size() * moment.boost();
         float radius = (float) attack.radius() * moment.boost();
         Material spike = attack.palette().item();
+        if (fx.signature() == Signature.SUNBEAM) {
+            sunbeam(out, fx, radius, size);
+            return out;
+        }
+        if (fx.signature() == Signature.VINES) {
+            vines(out, fx, radius, size, new Random(moment.seed() * 7 + 11));
+            return out;
+        }
         if (spike == null) {
             Vector3f middle = new Vector3f(0, 1.0f, 0);
             float reach = 0.9f * size;
@@ -400,6 +456,16 @@ public final class BasicFx {
             out.add(block(spike, center ? 0 : 1, poses));
         }
         groundRing(out, fx.glow(), 0, 0.05f, 0.3f, radius * 1.1f, 0.3f * size);
+        if (fx.signature() == Signature.SHARDS) {
+            Random random = new Random(moment.seed() * 19 + 7);
+            for (int i = 0; i < 6; i++) {
+                double a = Math.toRadians(i * 60 + random.nextInt(40));
+                Vector3f velocity = new Vector3f((float) Math.sin(a) * 0.2f, 0.28f + random.nextFloat() * 0.1f,
+                        (float) Math.cos(a) * 0.2f);
+                out.add(block(i % 2 == 0 ? fx.core() : fx.glow(), 1,
+                        toss(new Vector3f(0, 0.9f * size, 0), velocity, 0.05f, 7, 0.16f * size)));
+            }
+        }
         return out;
     }
 
@@ -456,6 +522,10 @@ public final class BasicFx {
         }
         side.normalize();
         Vector3f up = new Vector3f(side).cross(direction).normalize();
+        if (fx.signature() == Signature.FANGS) {
+            serpent(out, fx, to, side, up, pieces, size, random.nextBoolean() ? 1 : -1);
+            return out;
+        }
         List<Vector3f> points = new ArrayList<>();
         for (int i = 0; i <= pieces; i++) {
             Vector3f point = new Vector3f(to).mul((float) i / pieces);
@@ -601,9 +671,118 @@ public final class BasicFx {
                 poses.add(poses.getLast().gone());
                 out.add(text(word, finisher ? 0xFF6A3D : 0xFFD84A, 0, poses));
             }
+            case TENNIS -> {
+                boolean finisher = moment.finisher();
+                word(out, finisher ? "<bold><#FF8A3D>에이스!" : "<bold><#D9F99D>퐁!", finisher ? 0xFF8A3D : 0xD9F99D,
+                        finisher ? 1.5f : 0.95f);
+            }
+            case RUNE -> {
+                String[] runes = {"ᚠ", "ᚢ", "ᚦ", "ᚱ", "ᚷ", "ᛟ"};
+                String rune = runes[random.nextInt(runes.length)];
+                List<Pose> poses = new ArrayList<>();
+                float[] grow = {0.6f, 1.6f, 1.4f, 1.3f, 1.3f, 1.25f, 1.2f, 1.1f, 0.8f};
+                for (int f = 0; f < grow.length; f++) {
+                    poses.add(new Pose(new Vector3f(0, 0.75f + 0.04f * f, -0.3f), NONE, uniform(grow[f] * size)));
+                }
+                poses.add(poses.getLast().gone());
+                out.add(text("<bold><#FDE68A>" + rune, 0xFDE68A, 0, poses));
+                ring(out, Material.YELLOW_STAINED_GLASS, 8, 1, new Vector3f(0, 0, -0.25f), facing(),
+                        new float[] {0.3f, 0.55f, 0.7f, 0.75f}, 0.04f * size, 0.07f * size);
+            }
+            case STONE, SHARDS, HORNS, SHELL -> {
+                Material chip = switch (fx.signature()) {
+                    case STONE -> Material.STONE;
+                    case SHARDS -> Material.AMETHYST_BLOCK;
+                    case HORNS -> Material.COARSE_DIRT;
+                    default -> Material.GREEN_CONCRETE;
+                };
+                int count = fx.signature() == Signature.STONE ? 5 : 4;
+                for (int i = 0; i < count; i++) {
+                    double a = Math.toRadians(360.0 * i / count + random.nextInt(40));
+                    Vector3f velocity = new Vector3f((float) Math.cos(a) * 0.14f, 0.12f + 0.12f * (float) Math.max(0,
+                            Math.sin(a)) + random.nextFloat() * 0.06f, -0.08f - random.nextFloat() * 0.05f);
+                    out.add(block(chip, 0, toss(new Vector3f(0, 0, -0.3f), velocity, 0.045f, 8, 0.13f * size)));
+                }
+                if (fx.signature() == Signature.STONE) {
+                    // a grey crust closing over the front for a moment, then cracking off
+                    List<Pose> crust = new ArrayList<>();
+                    for (float s : new float[] {0.3f, 0.75f, 0.8f, 0.8f, 0.78f, 0.5f, 0}) {
+                        crust.add(new Pose(new Vector3f(0, 0, -0.38f), new Quaternionf().rotateZ(rad(45)),
+                                new Vector3f(s * size, s * size, 0.04f)));
+                    }
+                    out.add(block(Material.LIGHT_GRAY_STAINED_GLASS, 0, crust));
+                }
+            }
+            case INK -> {
+                List<Pose> splat = new ArrayList<>();
+                for (float s : new float[] {0.4f, 0.9f, 0.85f, 0.85f, 0.8f, 0.75f, 0.65f, 0.45f, 0}) {
+                    splat.add(new Pose(new Vector3f(0, -0.05f, -0.37f), new Quaternionf().rotateZ(rad(20)),
+                            new Vector3f(s * size, s * 0.8f * size, 0.03f)));
+                }
+                out.add(block(Material.BLACK_CONCRETE, 0, splat));
+                for (int i = 0; i < 3; i++) {
+                    out.add(block(Material.BLACK_CONCRETE, 1, toss(new Vector3f((i - 1) * 0.2f, -0.2f, -0.38f),
+                            new Vector3f(0, 0.02f, -0.02f), 0.035f, 8, 0.08f * size)));
+                }
+            }
+            case FANGS -> {
+                for (int i = 0; i < 2; i++) {
+                    out.add(block(Material.LIME_CONCRETE, 0, toss(new Vector3f((i == 0 ? 0.12f : -0.12f), 0.1f, -0.35f),
+                            new Vector3f(0, 0.03f, -0.03f), 0.04f, 8, 0.08f * size)));
+                }
+            }
+            case HEARTS -> {
+                for (int i = 0; i < 3; i++) {
+                    List<Pose> heart = new ArrayList<>();
+                    float x = (i - 1) * 0.35f;
+                    for (int f = 0; f < 9; f++) {
+                        heart.add(new Pose(new Vector3f(x * (1 + 0.15f * f), 0.3f + 0.12f * f, -0.3f), NONE,
+                                uniform((f == 0 ? 0.6f : 1.1f - 0.04f * f) * size)));
+                    }
+                    heart.add(heart.getLast().gone());
+                    out.add(text("<bold>❤", i == 1 ? 0xFF4F9A : 0xFF9AC8, i == 1 ? 0 : 1, heart));
+                }
+            }
+            case TALISMAN -> {
+                List<Pose> paper = new ArrayList<>();
+                List<Pose> seal = new ArrayList<>();
+                float[] grow = {0.5f, 1.0f, 0.95f, 0.95f, 0.95f, 0.95f, 0.9f, 0.9f, 0.85f, 0.6f};
+                for (int f = 0; f < grow.length; f++) {
+                    paper.add(new Pose(new Vector3f(0, 0.15f, -0.4f), new Quaternionf().rotateZ(rad(-8)),
+                            uniform(0.6f * grow[f] * size)));
+                    seal.add(new Pose(new Vector3f(0, 0.55f + 0.02f * f, -0.45f), NONE, uniform(1.1f * grow[f] * size)));
+                }
+                paper.add(paper.getLast().gone());
+                seal.add(seal.getLast().gone());
+                out.add(item(Material.PAPER, 0, paper));
+                out.add(text("<bold><#DC2626>勅", 0xDC2626, 0, seal));
+            }
+            case FOXFIRE -> {
+                for (int i = 0; i < 2; i++) {
+                    List<Pose> wisp = new ArrayList<>();
+                    for (int f = 0; f < 8; f++) {
+                        float sway = (float) Math.sin(f * 0.9f + i * 2) * 0.12f;
+                        wisp.add(new Pose(new Vector3f((i == 0 ? 0.2f : -0.2f) + sway, 0.1f + 0.14f * f, -0.25f),
+                                new Quaternionf().rotateY(rad(30 * f)), uniform((0.2f - 0.015f * f) * size)));
+                    }
+                    wisp.add(wisp.getLast().gone());
+                    out.add(block(fx.glow(), i, wisp));
+                }
+            }
             default -> {
             }
         }
+    }
+
+    /** A camera-facing word popping over the hit and drifting up. */
+    private static void word(List<FxSprite> out, String word, int color, float base) {
+        List<Pose> poses = new ArrayList<>();
+        float[] grow = {0.7f, 1.3f, 1.2f, 1.2f, 1.2f, 1.2f, 1.15f, 1.1f, 1.0f};
+        for (int f = 0; f < grow.length; f++) {
+            poses.add(new Pose(new Vector3f(0, 1.0f + 0.05f * f, -0.2f), NONE, uniform(grow[f] * base)));
+        }
+        poses.add(poses.getLast().gone());
+        out.add(text(word, color, 0, poses));
     }
 
     // =================================================================== projectiles
@@ -623,6 +802,20 @@ public final class BasicFx {
         Material item = attack.palette().item();
         if (item != null) {
             parts.add(new Part(Kind.ITEM, item, new Pose(new Vector3f(), NONE, uniform(0.55f * size)), true));
+        } else if (fx.signature() == Signature.PALM) {
+            // a palm print of wind facing the flight: the palm, four fingers, a thumb, a bright heart
+            parts.add(new Part(Kind.BLOCK, fx.glow(), new Pose(new Vector3f(0, -0.05f, 0), NONE,
+                    new Vector3f(0.5f, 0.5f, 0.08f).mul(size)), false));
+            for (int i = 0; i < 4; i++) {
+                float x = (-0.18f + 0.12f * i) * size;
+                float tall = (i == 1 || i == 2 ? 0.34f : 0.27f) * size;
+                parts.add(new Part(Kind.BLOCK, fx.glow(), new Pose(new Vector3f(x, 0.2f * size + tall / 2, 0), NONE,
+                        new Vector3f(0.1f * size, tall, 0.08f * size)), false));
+            }
+            parts.add(new Part(Kind.BLOCK, fx.glow(), new Pose(new Vector3f(0.31f * size, -0.02f * size, 0),
+                    new Quaternionf().rotateZ(rad(-40)), new Vector3f(0.1f, 0.26f, 0.08f).mul(size)), false));
+            parts.add(new Part(Kind.BLOCK, fx.core(), new Pose(new Vector3f(0, -0.05f, -0.02f), NONE,
+                    new Vector3f(0.22f, 0.22f, 0.1f).mul(size)), false));
         } else if (fx.weight() == Weight.SHARP) {
             List<FxSprite> crescent = new ArrayList<>();
             float radius = 0.55f * size;
@@ -687,6 +880,39 @@ public final class BasicFx {
                     }
                     bit.add(bit.getLast().gone());
                     out.add(text("<bold>" + ((tick / 3) % 2 == 0 ? "1" : "0"), 0x4ADE80, 0, bit));
+                }
+            }
+            case HEARTS -> {
+                streak(out, fx, back, size);
+                if (tick % 3 == 1) {
+                    List<Pose> heart = new ArrayList<>();
+                    for (int f = 0; f < 7; f++) {
+                        heart.add(new Pose(new Vector3f(back).mul(0.5f).add(0, 0.07f * f, 0), NONE,
+                                uniform((0.75f - 0.05f * f) * size)));
+                    }
+                    heart.add(heart.getLast().gone());
+                    out.add(text("<bold>❤", (tick / 3) % 2 == 0 ? 0xFF4F9A : 0xFFB3D1, 0, heart));
+                }
+            }
+            case FOXFIRE -> {
+                streak(out, fx, back, size);
+                Random random = new Random(moment.seed() * 3 + tick);
+                List<Pose> wisp = new ArrayList<>();
+                Vector3f at = new Vector3f(back).mul(0.4f).add((random.nextFloat() - 0.5f) * 0.2f, 0,
+                        (random.nextFloat() - 0.5f) * 0.2f);
+                for (int f = 0; f < 6; f++) {
+                    wisp.add(new Pose(new Vector3f(at).add(0, 0.09f * f, 0), new Quaternionf().rotateY(rad(35 * f)),
+                            uniform((0.15f - 0.02f * f) * size)));
+                }
+                wisp.add(wisp.getLast().gone());
+                out.add(block(tick % 2 == 0 ? fx.core() : fx.glow(), 0, wisp));
+            }
+            case KI -> {
+                streak(out, fx, back, size);
+                if (tick % 3 == 0 && back.lengthSquared() > 1.0E-4f) {
+                    Quaternionf plane = aimFrame(back.x(), back.y(), back.z()).mul(facing());
+                    ring(out, fx.glow(), 6, 0, new Vector3f(back).mul(0.5f), plane,
+                            new float[] {0.2f * size, 0.4f * size, 0.55f * size}, 0.04f * size, 0.08f * size);
                 }
             }
             default -> {
@@ -801,6 +1027,227 @@ public final class BasicFx {
         }
         ring(out, fx.glow(), 8, 1, new Vector3f(0, -0.1f, 1.75f), facing(), new float[] {0.3f, 0.7f, 1.0f},
                 0.08f * size, 0.16f * size);
+    }
+
+    /**
+     * A long staff sweeping the arc instead of a blade (제천대성): a gold rod from behind the shoulder out past the
+     * slash with red bands at both ends, a bit longer on the finisher.
+     */
+    private static void staff(List<FxSprite> out, Fx fx, float radius, float width, int side, Quaternionfc tilt,
+                              int sweep, float size, boolean finisher) {
+        int steps = Math.max(3, sweep + 2);
+        float reach = radius * (finisher ? 1.5f : 1.3f);
+        List<Pose> rod = new ArrayList<>();
+        List<Pose> tip = new ArrayList<>();
+        List<Pose> butt = new ArrayList<>();
+        for (int f = 0; f < steps; f++) {
+            float t = Math.min(1f, f / (float) (steps - 2));
+            float theta = side * (-width / 2 + width * t);
+            Vector3f direction = tilt.transform(new Vector3f((float) Math.sin(rad(theta)), 0,
+                    (float) Math.cos(rad(theta))));
+            Vector3f from = new Vector3f(direction).mul(-0.5f * size).add(0, -0.05f, 0);
+            Vector3f to = new Vector3f(direction).mul(reach).add(0, -0.05f, 0);
+            rod.add(along(from, to, 0.1f * size));
+            tip.add(along(new Vector3f(direction).mul(reach - 0.32f * size).add(0, -0.05f, 0), to, 0.15f * size));
+            butt.add(along(from, new Vector3f(direction).mul(-0.2f * size).add(0, -0.05f, 0), 0.15f * size));
+        }
+        rod.add(rod.getLast().gone());
+        tip.add(tip.getLast().gone());
+        butt.add(butt.getLast().gone());
+        out.add(block(fx.core(), 0, rod));
+        out.add(block(Material.RED_CONCRETE, 0, tip));
+        out.add(block(Material.RED_CONCRETE, 0, butt));
+    }
+
+    /** A huge paw print slamming flat at the end of the swing, four toes over the pad; claws on the finisher. */
+    private static void paw(List<FxSprite> out, Fx fx, float distance, int side, float size, int sweep,
+                            boolean finisher) {
+        float[] pop = {0.4f, 1.2f, 1.0f, 1.0f, 0.95f, 0.8f, 0.5f};
+        float[] slam = {-0.6f, 0, 0, 0, 0, 0, 0};
+        float big = (finisher ? 1.3f : 1f) * size;
+        Vector3f pad = new Vector3f(0.15f * side, -0.1f, distance);
+        List<Pose> body = new ArrayList<>();
+        for (int f = 0; f < pop.length; f++) {
+            body.add(new Pose(new Vector3f(pad).add(0, 0, slam[f]), NONE,
+                    new Vector3f(0.62f * pop[f], 0.5f * pop[f], 0.08f).mul(big)));
+        }
+        body.add(body.getLast().gone());
+        out.add(block(fx.core(), sweep, body));
+        float[][] toes = {{-0.3f, 0.3f}, {-0.1f, 0.42f}, {0.1f, 0.42f}, {0.3f, 0.3f}};
+        for (float[] toe : toes) {
+            List<Pose> poses = new ArrayList<>();
+            for (int f = 0; f < pop.length; f++) {
+                poses.add(new Pose(new Vector3f(pad).add(toe[0] * big, toe[1] * big, slam[f]), NONE,
+                        new Vector3f(0.17f * pop[f], 0.17f * pop[f], 0.08f).mul(big)));
+            }
+            poses.add(poses.getLast().gone());
+            out.add(block(fx.core(), sweep, poses));
+        }
+        if (finisher) {
+            claw(out, fx, distance + 0.15f, side, size * 1.1f, sweep + 1);
+        }
+    }
+
+    /** Two bull horns goring forward with a thrust, dust kicked up behind the feet. */
+    private static void horns(List<FxSprite> out, Fx fx, float end, float size) {
+        float[] reach = {0.35f, 1, 1, 0.9f, 0.7f};
+        float[] thin = {0.8f, 1, 1, 0.7f, 0.4f};
+        for (int s = -1; s <= 1; s += 2) {
+            List<Pose> root = new ArrayList<>();
+            List<Pose> point = new ArrayList<>();
+            for (int f = 0; f < reach.length; f++) {
+                float z = 0.6f + (end - 0.6f) * reach[f] * 0.85f;
+                Vector3f base = new Vector3f(0.3f * s, 0.25f, 0.45f + (z - 0.6f) * 0.25f);
+                Vector3f mid = new Vector3f(0.5f * s, 0.42f, 0.5f + (z - 0.5f) * 0.6f);
+                Vector3f tip = new Vector3f(0.2f * s, 0.6f, z);
+                root.add(along(base, mid, 0.17f * size * thin[f]));
+                point.add(along(mid, tip, 0.1f * size * thin[f]));
+            }
+            root.add(root.getLast().gone());
+            point.add(point.getLast().gone());
+            out.add(block(Material.BONE_BLOCK, 0, root));
+            out.add(block(fx.core(), 0, point));
+        }
+        for (int i = 0; i < 3; i++) {
+            out.add(block(fx.glow(), 0, toss(new Vector3f((i - 1) * 0.3f, -1.2f, 0.1f),
+                    new Vector3f((i - 1) * 0.05f, 0.07f, -0.12f), 0.01f, 6, 0.3f * size)));
+        }
+    }
+
+    /** Warden-like sonic rings racing down the line, growing as they go, over a thin core. */
+    private static void sonar(List<FxSprite> out, Fx fx, float end, float size, boolean finisher) {
+        out.add(block(fx.core(), 0, beam(0, end, 0.05f * size, new float[] {1, 0.8f, 0.5f, 0.2f, 0})));
+        int rings = finisher ? 4 : 3;
+        for (int k = 0; k < rings; k++) {
+            float z = 0.9f + (end - 0.9f) * k / (rings - 1);
+            float grow = (1 + 0.3f * k) * size;
+            ring(out, fx.glow(), 8, k, new Vector3f(0, 0, z), facing(),
+                    new float[] {0.2f * grow, 0.42f * grow, 0.58f * grow, 0.66f * grow}, 0.05f * size, 0.09f * size);
+        }
+    }
+
+    /** A ground slam around the attacker (chest frame): cracks, a rushing ring of dust and rubble jumping up. */
+    private static void quake(List<FxSprite> out, Fx fx, float range, float size, Random random) {
+        float ground = -1.06f;
+        groundRing(out, fx.glow(), 0, ground, 0.4f, range, 0.5f * size);
+        groundRing(out, fx.core(), 1, ground + 0.02f, 0.3f, range * 0.65f, 0.2f * size);
+        for (int i = 0; i < 5; i++) {
+            double a = Math.toRadians(i * 72 + random.nextInt(30));
+            Vector3f direction = new Vector3f((float) Math.sin(a), 0, (float) Math.cos(a));
+            Vector3f to = new Vector3f(direction).mul(range * (0.7f + 0.3f * random.nextFloat())).add(0, ground, 0);
+            out.add(block(Material.BLACK_STAINED_GLASS, 0, cut(new Vector3f(0, ground, 0), to, 0.1f * size)));
+        }
+        for (int i = 0; i < 6; i++) {
+            double a = Math.toRadians(i * 60 + random.nextInt(40));
+            Vector3f direction = new Vector3f((float) Math.sin(a), 0, (float) Math.cos(a));
+            Vector3f from = new Vector3f(direction).mul(range * 0.55f).add(0, ground + 0.1f, 0);
+            Vector3f velocity = new Vector3f(direction).mul(0.06f).add(0, 0.28f + random.nextFloat() * 0.08f, 0);
+            out.add(block(i % 2 == 0 ? Material.COBBLESTONE : fx.core(), 1,
+                    toss(from, velocity, 0.06f, 7, 0.26f * size)));
+        }
+    }
+
+    /** A pillar of sunlight crashing down on the spot (ground frame): a gold column, a bright core and a disc. */
+    private static void sunbeam(List<FxSprite> out, Fx fx, float radius, float size) {
+        float tall = 7f;
+        float[] wide = {0.35f, 1.0f, 0.95f, 0.8f, 0.55f, 0.3f};
+        float[] drop = {0.3f, 1, 1, 1, 1, 1};
+        List<Pose> column = new ArrayList<>();
+        List<Pose> core = new ArrayList<>();
+        List<Pose> disc = new ArrayList<>();
+        for (int f = 0; f < wide.length; f++) {
+            float h = tall * drop[f];
+            float w = radius * 0.9f * size * wide[f];
+            column.add(new Pose(new Vector3f(0, tall - h / 2, 0), NONE, new Vector3f(w, h, w)));
+            core.add(new Pose(new Vector3f(0, tall - h / 2, 0), new Quaternionf().rotateY(rad(45)),
+                    new Vector3f(w * 0.35f, h, w * 0.35f)));
+            disc.add(new Pose(new Vector3f(0, 0.04f, 0), new Quaternionf().rotateY(rad(15 * f)),
+                    new Vector3f(2 * radius * wide[f], 0.05f, 2 * radius * wide[f])));
+        }
+        column.add(column.getLast().gone());
+        core.add(core.getLast().gone());
+        disc.add(disc.getLast().gone());
+        out.add(block(fx.core(), 0, core));
+        out.add(block(fx.glow(), 0, column));
+        out.add(block(fx.glow(), 1, disc));
+        groundRing(out, fx.glow(), 1, 0.06f, 0.3f, radius * 1.3f, 0.3f * size);
+        for (int i = 0; i < 4; i++) {
+            double a = Math.toRadians(i * 90 + 45);
+            out.add(block(fx.core(), 1, toss(new Vector3f(0, 0.2f, 0), new Vector3f((float) Math.sin(a) * 0.12f,
+                    0.3f, (float) Math.cos(a) * 0.12f), 0.04f, 7, 0.12f * size)));
+        }
+    }
+
+    /** Thorny vines coiling up out of the ground (ground frame) and bursting into leaves. */
+    private static void vines(List<FxSprite> out, Fx fx, float radius, float size, Random random) {
+        float[] rise = {0.2f, 0.7f, 1.2f, 1.5f, 1.5f, 1.4f, 1.0f, 0.5f};
+        for (int i = 0; i < 5; i++) {
+            boolean center = i == 0;
+            double a = Math.toRadians(i * 90 + random.nextInt(30));
+            float r = center ? 0 : radius * 0.6f;
+            float x = (float) Math.sin(a) * r;
+            float z = (float) Math.cos(a) * r;
+            float height = (center ? 1.4f : 1.0f) * size;
+            List<Pose> stalk = new ArrayList<>();
+            for (int f = 0; f < rise.length; f++) {
+                float h = rise[f] * height;
+                Quaternionf lean = new Quaternionf().rotateY(rad(40 * f + 70 * i)).rotateX(rad(center ? 0 : 12));
+                stalk.add(new Pose(new Vector3f(x, h / 2, z), lean, new Vector3f(0.16f * size, h, 0.16f * size)));
+            }
+            stalk.add(stalk.getLast().gone());
+            out.add(block(fx.core(), center ? 0 : 1, stalk));
+        }
+        groundRing(out, fx.glow(), 0, 0.05f, 0.3f, radius * 1.1f, 0.3f * size);
+        for (int i = 0; i < 4; i++) {
+            double a = Math.toRadians(i * 90 + random.nextInt(60));
+            out.add(block(Material.AZALEA_LEAVES, 2, toss(new Vector3f(0, 1.3f * size, 0),
+                    new Vector3f((float) Math.sin(a) * 0.14f, 0.18f, (float) Math.cos(a) * 0.14f), 0.04f, 7,
+                    0.24f * size)));
+        }
+    }
+
+    /** A green serpent writhing from the anchor to {@code to}, its white fangs bared at the end. */
+    private static void serpent(List<FxSprite> out, Fx fx, Vector3fc to, Vector3fc side, Vector3fc up, int pieces,
+                                float size, int flip) {
+        out.add(block(fx.glow(), 0, segmentPoses(new Vector3f(), new Vector3f(to), 0.22f * size,
+                new float[] {1, 0.6f, 0})));
+        Vector3f last = new Vector3f();
+        float[] thick = {0.6f, 1, 1, 0.6f, 0};
+        for (int i = 1; i <= pieces; i++) {
+            float t = (float) i / pieces;
+            float wave = (float) Math.sin(t * Math.PI * 2) * 0.32f * flip * (1 - t * 0.5f);
+            Vector3f point = new Vector3f(to).mul(t).add(new Vector3f(side).mul(wave))
+                    .add(new Vector3f(up).mul((float) Math.sin(t * Math.PI) * 0.15f));
+            out.add(block(fx.core(), 0, segmentPoses(last, point, 0.11f * size * (1.2f - 0.4f * t), thick)));
+            last = point;
+        }
+        Vector3f direction = new Vector3f(to).normalize();
+        Quaternionf point = new Quaternionf().rotationTo(new Vector3f(0, 0, 1), direction);
+        for (int s = -1; s <= 1; s += 2) {
+            List<Pose> fang = new ArrayList<>();
+            for (float g : new float[] {0.5f, 1, 1, 0.7f, 0}) {
+                fang.add(new Pose(new Vector3f(to).add(new Vector3f(up).mul(0.12f * s)).sub(new Vector3f(direction)
+                        .mul(0.15f)), point, new Vector3f(0.07f, 0.07f, 0.24f).mul(g * size)));
+            }
+            out.add(block(Material.WHITE_CONCRETE, 1, fang));
+        }
+    }
+
+    /** A fading streak from where a projectile was a tick ago (the usual trail). */
+    private static void streak(List<FxSprite> out, Fx fx, Vector3fc back, float size) {
+        if (back.lengthSquared() > 1.0E-4f) {
+            out.add(block(fx.glow(), 0, segmentPoses(new Vector3f(back), new Vector3f(), 0.14f * size,
+                    new float[] {1, 0.6f, 0.25f, 0})));
+        }
+    }
+
+    /** A small cube thrown from {@code from} at {@code velocity} (blocks per tick) under gravity, shrinking. */
+    private static List<Pose> toss(Vector3fc from, Vector3fc velocity, float gravity, int frames, float size) {
+        List<Pose> poses = new ArrayList<>();
+        for (Pose pose : flight(new Vector3f(velocity), gravity, frames, size)) {
+            poses.add(new Pose(new Vector3f(pose.center()).add(from), pose.rotation(), pose.size()));
+        }
+        return poses;
     }
 
     /** The weapon item swinging along the arc, its tip outwards; {@code lag} ticks behind (ghosts). */

@@ -343,6 +343,94 @@ final class SiegeBalanceModels {
                 .a(0.2, n(p, "fastball_damage") + n(p, "head_bonus")).hard(n(p, "head_stun"))
                 .u(n(p, "ult_windup"), n(p, "ult_damage"))
                 .range(n(p, "fastball_range")).note("헤드샷, 홈런 낙하 피해(바닐라) 제외"));
+        // ----------------------------------------------------------------- the 20 added with v2's 70
+        m("minotaur", p -> new B()
+                .a(1.0, n(p, "counter_damage")).hard(n(p, "taunt_duration"))
+                .us(0.3, n(p, "rush_cooldown"), Math.floor(n(p, "maze_duration") / n(p, "rush_cooldown")) + 1,
+                        n(p, "rush_damage"))
+                .range(n(p, "cloth_range")).note("도발을 강한 통제로 셈, 들이받기(근접) 제외, 미궁 돌진 전부"));
+        m("medusa", p -> new B()
+                .a(n(p, "gaze_windup") + n(p, "petrify_duration"), n(p, "petrify_damage"))
+                .hard(n(p, "petrify_duration"))
+                .u(n(p, "stare_time") + n(p, "ult_petrify"), n(p, "ult_damage")).hard(n(p, "ult_petrify"))
+                .range(n(p, "gaze_range")).note("석화 해제 피해, 뱀머리(근접 반격) 제외"));
+        m("odin", p -> new B()
+                .a(0.5, n(p, "rune_damage"))
+                .u(n(p, "spear_range") / n(p, "spear_speed") * 0.5, n(p, "spear_damage"))
+                .range(n(p, "sight_radius")).note("궁니르를 쳐 내지 못함, 까마귀 복수 제외"));
+        m("wukong", p -> new B()
+                .a(0.2, n(p, "pole_damage")).a(0.2, n(p, "pin_damage")).hard(n(p, "pin_stagger"))
+                .u(n(p, "pillar_rise"), n(p, "pillar_damage")).soft(n(p, "pillar_flat"))
+                .range(n(p, "pole_length")).note("벽에 끼움, 휘두르기(근접) 제외"));
+        m("ra", p -> new B()
+                .a(n(p, "ray_delay"), n(p, "ray_damage")).soft(n(p, "heat_time"))
+                .us(0.5, 0.5, n(p, "barque_time") / 0.5, n(p, "barque_damage")).soft(n(p, "barque_time"))
+                .range(n(p, "ray_range")).note("태양의 배: 빛 속에 계속"));
+        m("gumiho", p -> new B()
+                .as(0.5, 0.1, n(p, "fire_per_target"), n(p, "fire_damage"))
+                .u(0.5, n(p, "bead_damage"))
+                .us(0.5 + n(p, "bead_drain_time") / 4, n(p, "bead_drain_time") / 4, 4, n(p, "bead_drain") / 4)
+                .soft(n(p, "bead_drain_time")).range(n(p, "fire_range")).note("여우불 최대 수가 한 명에게"));
+        m("hydra", p -> new B()
+                .a(0, n(p, "bite_damage")).as(0.3, 0.1, 2, n(p, "extra_bite_damage"))
+                .us(0.8, n(p, "ult_duration") / n(p, "glob_max_hits"), n(p, "glob_max_hits"), n(p, "glob_damage"))
+                .range(n(p, "bite_range")).note("머리 3개가 한 명에게, 독(바닐라) 제외"));
+        m("titan", p -> new B()
+                .a(0.8, n(p, "slam_damage")).range(n(p, "leap_distance")).note("거대화는 근접 강화"));
+        m("bear", p -> new B()
+                .a(n(p, "paw_windup"), n(p, "paw_damage")).hard(n(p, "paw_knockdown"))
+                .u(2.0, n(p, "rude_roar_damage")).range(n(p, "paw_range"))
+                .note("동면을 억지로 깨운 포효, 분노는 근접 강화"));
+        m("octopus", p -> new B()
+                .a(0.4, n(p, "shot_damage")).soft(n(p, "shot_blind"))
+                .u(n(p, "kraken_delay"), n(p, "grab_damage"))
+                .u(n(p, "kraken_delay") + n(p, "kraken_hold"), n(p, "slam_damage"))
+                .hard(n(p, "kraken_hold") + n(p, "slam_slow")).range(n(p, "shot_range"))
+                .note("촉수에 잡혀 들렸다 내리쳐짐(구속 포함)"));
+        m("turtle", p -> new B()
+                .a(0.3, n(p, "spin_damage")).range(n(p, "spin_distance")).utility()
+                .note("탱커: 궁극기 가시 반사는 받은 피해에 따름"));
+        m("monk", p -> new B()
+                .a(0.3, n(p, "palm_damage"))
+                .us(0.3, n(p, "ult_duration") / n(p, "ult_hits"), n(p, "ult_hits"), n(p, "ult_hit_damage"))
+                .u(0.3 + n(p, "ult_duration"), n(p, "ult_final_damage")).hard(n(p, "ult_duration"))
+                .range(n(p, "palm_range")).note("연환격(근접) 제외"));
+        m("kiwarrior", p -> new B()
+                .a(n(p, "charge_max") + 0.5, n(p, "big_damage"))
+                .u(n(p, "gather_time") + 1, n(p, "ult_damage") + n(p, "bonus_max") * n(p, "bonus_damage"))
+                .range(n(p, "big_range")).note("가득 모은 큰 기탄, 구슬 최대 단계"));
+        m("magicalgirl", p -> new B()
+                .a(0.3, n(p, "heart_damage"))
+                .uSkill(1.5, n(p, "girl_cooldown"), Math.floor(n(p, "girl_duration") / n(p, "girl_cooldown")),
+                        n(p, "heart_damage"))
+                .u(n(p, "transform_time") + n(p, "girl_duration") + n(p, "finale_delay"),
+                        n(p, "finale_damage") + n(p, "finale_ally_bonus") * n(p, "finale_ally_max"))
+                .range(n(p, "heart_range")).utility().note("변신 중 하트 스틱 연사 + 마지막 하트(아군 최대)"));
+        m("tengu", p -> new B()
+                .a(0, n(p, "fan_damage"))
+                .us(n(p, "ult_windup") + 1, Math.max(1.2, n(p, "stomp_cooldown")),
+                        n(p, "ult_duration") / Math.max(1.2, n(p, "stomp_cooldown")), n(p, "stomp_damage"))
+                .range(n(p, "fan_range")).note("소인국: 1.2초마다 짓밟기, 크기 변화(근접 증감) 제외"));
+        m("tennis", p -> new B()
+                .a(n(p, "serve_toss") + 0.2, n(p, "serve_damage"))
+                .u(1.2, n(p, "smash_damage")).u(1.6, n(p, "bounce_damage"))
+                .range(n(p, "serve_range")).note("랠리(받아치기) 제외, 튕긴 공 한 번"));
+        m("druid", p -> new B()
+                .a(n(p, "snare_delay"), n(p, "snare_damage")).hard(n(p, "root_duration"))
+                .us(1, n(p, "ult_interval"), zone(n(p, "ult_duration")) / n(p, "ult_interval"), n(p, "ult_thorns"))
+                .soft(zone(n(p, "ult_duration"))).range(n(p, "snare_range")).utility().note("독(바닐라) 제외"));
+        m("shaman", p -> new B()
+                .a(0.3, n(p, "totem_damage")).soft(zone(n(p, "totem_duration")))
+                .us(1, 1, zone(n(p, "gut_duration")), n(p, "gut_damage"))
+                .range(n(p, "totem_range")).utility().note("받는 피해 증가·약화 제외"));
+        m("crystal", p -> new B()
+                .a(0.3, n(p, "spike_damage"))
+                .u(n(p, "prison_duration"), n(p, "shatter_damage")).hard(n(p, "prison_duration"))
+                .range(n(p, "spike_length")));
+        m("sonic", p -> new B()
+                .a(n(p, "boom_charge"), n(p, "boom_damage"))
+                .u(0.3, n(p, "ult_damage")).hard(n(p, "ult_silence")).soft(n(p, "ult_darkness"))
+                .range(n(p, "boom_range")).note("침묵은 강한 통제, 어둠은 약한 통제로 셈"));
     }
 
     private SiegeBalanceModels() {

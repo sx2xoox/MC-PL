@@ -85,8 +85,8 @@ public record SiegeSettings(
 
     public static final int MAX_SECONDS = 3600;
     /**
-     * The default ability pool: 50 abilities that each have a 3D weapon (AbilityWeaponModels); owners change it with
-     * {@code /게임 공성전 능력풀}.
+     * The default ability pool: 70 abilities, each with its own basic attack (BasicAttacks) and a 3D weapon
+     * (AbilityWeaponModels); owners change it with {@code /게임 공성전 능력풀}.
      */
     public static final List<String> DEFAULT_POOL = List.of(
             // jobs and weapons
@@ -100,10 +100,25 @@ public record SiegeSettings(
             "healer", "bard", "alchemist",
             // tech, space-time, venom, the sea and the field
             "engineer", "hacker", "mech", "bomber", "gravity", "magnet", "chrono", "blink", "speedster", "venom",
-            "spider", "pirate", "angler", "farmer", "batter");
+            "spider", "pirate", "angler", "farmer", "batter",
+            // myth and legend
+            "minotaur", "medusa", "odin", "wukong", "ra", "gumiho", "hydra",
+            // beasts and giants
+            "titan", "bear", "octopus", "turtle",
+            // fighters and shows
+            "monk", "kiwarrior", "magicalgirl", "tengu", "tennis",
+            // nature, spirits, crystal and sound
+            "druid", "shaman", "crystal", "sonic");
 
     /** The first default pool (five jobs): a config still holding exactly it predates the 50 and gets the new default. */
     static final Set<String> FIRST_DEFAULT_POOL = Set.of("police", "miner", "blacksmith", "gunslinger", "chef");
+    /** The second default pool (the first 50): a config still holding exactly it gets the 70 of today. */
+    static final Set<String> SECOND_DEFAULT_POOL = Set.copyOf(DEFAULT_POOL.subList(0, 50));
+
+    /** True if {@code pool} is exactly an earlier default (any order), which a server never chose on purpose. */
+    static boolean isOldDefault(List<String> pool, Set<String> old) {
+        return pool.size() == old.size() && old.containsAll(pool);
+    }
 
     /** Reads the live section; values out of range are clamped, missing ones use the defaults. */
     public static SiegeSettings read(ConfigurationSection c) {
@@ -114,7 +129,7 @@ public record SiegeSettings(
                 pool.add(trimmed);
             }
         }
-        if (pool.size() == FIRST_DEFAULT_POOL.size() && FIRST_DEFAULT_POOL.containsAll(pool)) {
+        if (isOldDefault(pool, FIRST_DEFAULT_POOL) || isOldDefault(pool, SECOND_DEFAULT_POOL)) {
             pool.clear();
             pool.addAll(DEFAULT_POOL);
         }

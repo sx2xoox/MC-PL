@@ -2143,6 +2143,11 @@ public final class SuperpowerMatch implements GameInstance {
         return host != null && host.isExtraTarget(entity);
     }
 
+    /** True for a target of the {@link MatchHost} that abilities may not grow or shrink ({@link MatchHost#keepsSize}). */
+    boolean keepsSize(Entity entity) {
+        return host != null && host.isExtraTarget(entity) && host.keepsSize(entity);
+    }
+
     boolean isHostEnemy(Player owner, Entity entity) {
         return host != null && host.isExtraEnemy(owner, entity);
     }

@@ -242,6 +242,66 @@ public final class SiegePerks {
         add("batter", p(3, "fastball_range", 5, Kind.RANGE, "강속구 사거리"),
                 p(6, "crit_bonus", 10, Kind.PERCENT, "클린 히트 추가 피해"),
                 p(9, "fastball_damage", 1, Kind.DAMAGE, "강속구 피해"));
+        add("minotaur", p(3, "cloth_range", 3, Kind.RANGE, "붉은 천 사거리"),
+                p(6, "maze_duration", 1.5, Kind.DURATION, "미궁 지속"),
+                p(9, "counter_damage", 1, Kind.DAMAGE, "뿔 받기 피해"));
+        add("medusa", p(3, "gaze_range", 2, Kind.RANGE, "석화의 시선 거리"),
+                p(6, "ult_radius", 3, Kind.AREA, "고르곤의 눈 범위"),
+                p(9, "petrify_damage", 0.75, Kind.DAMAGE, "석화 해제 피해"));
+        add("odin", p(3, "sight_time", 1, Kind.DURATION, "미미르의 샘 지속"),
+                p(6, "rune_damage", 1, Kind.DAMAGE, "지혜의 일격 추가 피해"),
+                p(9, "spear_damage", 1.5, Kind.DAMAGE, "궁니르 피해"));
+        add("wukong", p(3, "pole_length", 2, Kind.RANGE, "여의봉 길이"),
+                p(6, "sweep_share", 10, Kind.PERCENT, "휘두르기 주변 피해"),
+                p(9, "pillar_damage", 1.5, Kind.DAMAGE, "여의봉 천주 피해"));
+        add("ra", p(3, "ray_range", 4, Kind.RANGE, "태양 광선 사거리"),
+                p(6, "barque_time", 1.5, Kind.DURATION, "태양의 배 지속"),
+                p(9, "ray_damage", 1, Kind.DAMAGE, "태양 광선 피해"));
+        add("gumiho", p(3, "fire_range", 3, Kind.RANGE, "여우불 사거리"),
+                p(6, "fire_per_target", 1, Kind.COUNT, "적 하나에 가는 여우불 수"),
+                p(9, "bead_drain", 1.5, Kind.DAMAGE, "여우구슬 흡수 피해"));
+        add("hydra", p(3, "bite_range", 1.5, Kind.RANGE, "머리 물기 범위"),
+                p(6, "ult_duration", 1.5, Kind.DURATION, "아홉 머리 지속"),
+                p(9, "bite_damage", 1, Kind.DAMAGE, "머리 물기 피해"));
+        add("titan", p(3, "slam_radius", 0.75, Kind.AREA, "대지 강타 범위"),
+                p(6, "ult_duration", 2, Kind.DURATION, "거대화 지속"),
+                p(9, "slam_damage", 1, Kind.DAMAGE, "대지 강타 피해"));
+        add("bear", p(3, "paw_range", 1, Kind.RANGE, "곰 발바닥 거리"),
+                p(6, "sleep_heal", 0.5, Kind.HEAL, "동면 회복"),
+                p(9, "paw_damage", 1, Kind.DAMAGE, "곰 발바닥 피해"));
+        add("octopus", p(3, "shot_range", 4, Kind.RANGE, "먹물 발사 사거리"),
+                p(6, "puddle_radius", 0.75, Kind.AREA, "먹물 웅덩이 범위"),
+                p(9, "slam_damage", 1, Kind.DAMAGE, "크라켄 내리치기 피해"));
+        add("turtle", p(3, "spin_distance", 3, Kind.RANGE, "껍질 회전 거리"),
+                p(6, "ult_duration", 1.5, Kind.DURATION, "거대 등껍질 지속"),
+                p(9, "spin_damage", 1, Kind.DAMAGE, "껍질 회전 피해"));
+        add("monk", p(3, "palm_range", 3, Kind.RANGE, "장풍 사거리"),
+                p(6, "ult_final_damage", 1, Kind.DAMAGE, "백열권 마지막 장타 피해"),
+                p(9, "palm_damage", 1, Kind.DAMAGE, "장풍 피해"));
+        add("kiwarrior", p(3, "big_radius", 0.5, Kind.AREA, "큰 기탄 범위"),
+                p(6, "small_count", 1, Kind.COUNT, "작은 기탄 수"),
+                p(9, "ult_damage", 2, Kind.DAMAGE, "모두의 기 피해"));
+        add("magicalgirl", p(3, "heart_range", 4, Kind.RANGE, "하트 스틱 사거리"),
+                p(6, "heart_heal", 1, Kind.HEAL, "하트 회복"),
+                p(9, "bounces", 1, Kind.COUNT, "하트 튕김 횟수"));
+        add("tengu", p(3, "fan_range", 1.5, Kind.RANGE, "요술 부채 거리"),
+                p(6, "shrink_duration", 1, Kind.DURATION, "작게 만들기 지속"),
+                p(9, "stomp_damage", 0.75, Kind.DAMAGE, "짓밟기 피해"));
+        add("tennis", p(3, "serve_range", 5, Kind.RANGE, "서브 사거리"),
+                p(6, "bounce_count", 1, Kind.COUNT, "스매시 튕김 횟수"),
+                p(9, "smash_damage", 1.5, Kind.DAMAGE, "점프 스매시 피해"));
+        add("druid", p(3, "snare_range", 4, Kind.RANGE, "덩굴 속박 사거리"),
+                p(6, "ult_heal", 0.5, Kind.HEAL, "생명의 숲 회복"),
+                p(9, "snare_damage", 0.75, Kind.DAMAGE, "덩굴 속박 피해"));
+        add("shaman", p(3, "totem_radius", 1, Kind.AREA, "장승 범위"),
+                p(6, "totem_heal", 0.25, Kind.HEAL, "장승 회복"),
+                p(9, "gut_duration", 2, Kind.DURATION, "굿판 지속"));
+        add("crystal", p(3, "spike_length", 3, Kind.RANGE, "크리스탈 가시 거리"),
+                p(6, "shard_duration", 2, Kind.DURATION, "공명 크리스탈 유지"),
+                p(9, "shatter_damage", 1.5, Kind.DAMAGE, "크리스탈 감옥 파쇄 피해"));
+        add("sonic", p(3, "boom_range", 3, Kind.RANGE, "음파 폭발 거리"),
+                p(6, "ult_radius", 3, Kind.AREA, "어둠의 장막 범위"),
+                p(9, "boom_damage", 1, Kind.DAMAGE, "음파 폭발 피해"));
     }
 
     private SiegePerks() {

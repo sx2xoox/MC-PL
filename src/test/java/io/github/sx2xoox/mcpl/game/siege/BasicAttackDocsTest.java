@@ -152,7 +152,7 @@ class BasicAttackDocsTest {
                     .append(" | ").append(effect(attack)).append(" | ").append(attack.fx().scene()).append(" | ")
                     .append(attack.description()).append(" |\n");
         }
-        out.append("\n50종 한 줄 요약:\n\n");
+        out.append("\n").append(BasicAttacks.defaults().size()).append("종 한 줄 요약:\n\n");
         List<String> lines = new ArrayList<>();
         for (BasicAttack attack : BasicAttacks.defaults().values()) {
             AbilityRegistry.Entry entry = registry.get(attack.id());

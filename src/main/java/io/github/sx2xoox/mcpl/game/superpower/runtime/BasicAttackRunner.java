@@ -1025,6 +1025,7 @@ final class BasicAttackRunner implements Listener {
             case HEAVY -> sound(at, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 0.7f, 0.5f);
             case MAGIC -> sound(at, Sound.BLOCK_AMETHYST_CLUSTER_HIT, 1.4f, 0.45f);
         }
+        signatureSound(at, attack.fx().signature(), moment);
         if (moment.crit()) {
             sound(at, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.8f);
             sound(at, Sound.BLOCK_ANVIL_LAND, 2.0f, 0.25f);
@@ -1032,6 +1033,35 @@ final class BasicAttackRunner implements Listener {
         if (moment.finisher()) {
             sound(at, weight == Weight.HEAVY ? Sound.ITEM_MACE_SMASH_GROUND : Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK,
                     weight == Weight.HEAVY ? 1.2f : 0.9f, 0.6f);
+        }
+    }
+
+    /** The job's own hit layer (signatures that sound like something: horns, stone, a bell, a racket, ...). */
+    private static void signatureSound(Location at, BasicAttack.Signature signature, Moment moment) {
+        boolean finisher = moment.finisher();
+        switch (signature) {
+            case HORNS -> sound(at, Sound.ENTITY_RAVAGER_STEP, 0.8f, 0.6f);
+            case STONE -> sound(at, Sound.BLOCK_STONE_BREAK, 0.9f, 0.5f);
+            case RUNE -> sound(at, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 1.5f, 0.5f);
+            case STAFF -> sound(at, Sound.BLOCK_BAMBOO_WOOD_HIT, 0.7f, 0.5f);
+            case SUNBEAM -> sound(at, Sound.BLOCK_BEACON_POWER_SELECT, 1.7f, 0.4f);
+            case QUAKE -> sound(at, Sound.BLOCK_DEEPSLATE_BREAK, 0.6f, 0.6f);
+            case PALM -> sound(at, Sound.ENTITY_WIND_CHARGE_WIND_BURST, 1.3f, 0.45f);
+            case FOXFIRE -> sound(at, Sound.ITEM_FIRECHARGE_USE, 1.8f, 0.35f);
+            case PAW -> sound(at, Sound.ENTITY_HOGLIN_ATTACK, 0.9f, 0.5f);
+            case INK -> sound(at, Sound.ENTITY_GLOW_SQUID_SQUIRT, 1.1f, 0.45f);
+            case FANGS -> sound(at, Sound.ENTITY_EVOKER_FANGS_ATTACK, 1.5f, 0.45f);
+            case KI -> sound(at, Sound.ENTITY_BREEZE_SHOOT, 0.8f, 0.45f);
+            case HEARTS -> sound(at, Sound.ENTITY_ALLAY_ITEM_GIVEN, 1.6f, 0.5f);
+            case FEATHERS -> sound(at, Sound.ENTITY_PARROT_FLY, 1.2f, 0.5f);
+            case VINES -> sound(at, Sound.BLOCK_AZALEA_LEAVES_BREAK, 0.9f, 0.6f);
+            case TALISMAN -> sound(at, Sound.ITEM_BOOK_PAGE_TURN, 1.4f, 0.6f);
+            case SHELL -> sound(at, Sound.ENTITY_TURTLE_SHAMBLE, 1.2f, 0.6f);
+            case SHARDS -> sound(at, Sound.BLOCK_AMETHYST_BLOCK_BREAK, 1.4f, 0.55f);
+            case SONAR -> sound(at, Sound.ENTITY_WARDEN_ATTACK_IMPACT, 1.6f, 0.4f);
+            case TENNIS -> sound(at, Sound.ENTITY_ARROW_HIT_PLAYER, finisher ? 1.2f : 1.7f, finisher ? 0.6f : 0.4f);
+            default -> {
+            }
         }
     }
 

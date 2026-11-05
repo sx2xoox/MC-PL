@@ -428,6 +428,15 @@ public final class SiegeMatch implements GameInstance {
             return balanceLevel(player.getUniqueId());
         }
 
+        /**
+         * Buildings, minions and jungle creatures keep their size against shrinking and growing skills (텐구): their
+         * model is drawn at a fixed size; 봇전 bots fight like players and may be shrunk.
+         */
+        @Override
+        public boolean keepsSize(Entity entity) {
+            return towerOf(entity) != null || fighterOf(entity) == null;
+        }
+
         /** A building is aimed at, reached and seen as drawn: its whole box, not only its hitbox. */
         @Override
         public @Nullable BoundingBox targetBounds(Entity entity) {

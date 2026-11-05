@@ -197,7 +197,47 @@ public record BasicAttack(String id, String name, String description, Shape shap
         /** The shield bashes forward with the swing (수호자). */
         SHIELD,
         /** Lightning branches flicker around every jump (뇌신). */
-        BOLT
+        BOLT,
+        /** Two bull horns gore forward with the thrust and kick up dust (미노타우로스). */
+        HORNS,
+        /** Twin snake-eye glares, and a crust of stone cracks off whoever is hit (메두사). */
+        STONE,
+        /** A golden rune flares over whoever is hit (오딘). */
+        RUNE,
+        /** A long golden staff sweeps the arc instead of a blade (제천대성). */
+        STAFF,
+        /** A pillar of sunlight crashes down on the spot (태양신 라). */
+        SUNBEAM,
+        /** The ground cracks and rubble jumps up around the slam (거인). */
+        QUAKE,
+        /** The projectile is a flying palm print of wind (무도가). */
+        PALM,
+        /** Fox-fire wisps float up behind the flame (구미호). */
+        FOXFIRE,
+        /** A huge paw print slams down at the end of the swing (곰). */
+        PAW,
+        /** Ink splats on whoever is hit and drips off (문어). */
+        INK,
+        /** A green serpent writhes from target to target and bares its fangs (히드라). */
+        FANGS,
+        /** Ki rings ripple out behind the blast (기공 전사). */
+        KI,
+        /** Hearts trail the shot and burst out of every hit (마법소녀). */
+        HEARTS,
+        /** Thorny vines coil up out of the ground and burst into leaves (식물술사). */
+        VINES,
+        /** Feathers whirl out with the gust (텐구). */
+        FEATHERS,
+        /** A talisman sticks to whoever is hit with a red seal (무당). */
+        TALISMAN,
+        /** Scutes chip off the shell on every hit (거북이). */
+        SHELL,
+        /** Amethyst shards burst out of the spikes and every hit (크리스탈술사). */
+        SHARDS,
+        /** Sonic rings race down the line, growing as they go (음파술사). */
+        SONAR,
+        /** "퐁!" over every hit, "에이스!" on the finisher (테니스 천재). */
+        TENNIS
     }
 
     /**

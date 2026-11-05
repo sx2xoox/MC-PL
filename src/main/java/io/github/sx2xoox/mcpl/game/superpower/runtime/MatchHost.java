@@ -110,6 +110,15 @@ public interface MatchHost {
     }
 
     /**
+     * Whether {@code entity} keeps its size against abilities that grow or shrink what they hit ({@code SCALE}
+     * modifiers, e.g. 텐구's fan): the host's buildings and creatures whose model and hitbox must stay as drawn. False
+     * by default.
+     */
+    default boolean keepsSize(Entity entity) {
+        return false;
+    }
+
+    /**
      * Whether rays and lines of sight pass {@code block} although it is solid: blocks that only stop bodies (the
      * barrier walls of 공성전 buildings, so the building behind them can still be seen and hit). False by default.
      */
