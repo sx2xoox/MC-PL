@@ -139,6 +139,12 @@ public final class AugmentGame implements MiniGame {
         io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.declareDefaults(defaults);
     }
 
+    /** Bot defaults of the first 봇전 version (cap 15) that a server which ran it still holds untouched. */
+    @Override
+    public void retiredConfigDefaults(ConfigurationSection defaults) {
+        BotSettings.declareRetiredDefaults(defaults);
+    }
+
     @Override
     public ProtectionSettings protection(ProtectionSettings configured) {
         return UNPROTECTED;

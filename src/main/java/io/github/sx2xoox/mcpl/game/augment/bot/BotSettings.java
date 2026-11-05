@@ -177,6 +177,17 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         return (index + 1) + " 봇";
     }
 
+    /**
+     * The bot defaults the first 증강 봇전 version wrote to {@code config.yml} (cap 15, 15 names): a server that still
+     * holds exactly them never chose them, so they move to today's defaults (see
+     * {@link io.github.sx2xoox.mcpl.core.config.HubConfig#applyGameDefaults}).
+     */
+    public static void declareRetiredDefaults(ConfigurationSection d) {
+        d.set(MAX, 15);
+        d.set(NAMES, List.of("철수", "영희", "민수", "지민", "서연", "도윤", "하준", "지우", "수아", "예준", "시우", "하은",
+                "유진", "현우", "다은"));
+    }
+
     /** Declares the defaults (with Korean comments) in {@code games.augment}. */
     public static void declareDefaults(ConfigurationSection d) {
         d.setComments("bots", List.of(

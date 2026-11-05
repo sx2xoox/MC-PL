@@ -168,4 +168,22 @@ class HubConfigTest {
         assertEquals(9, config.gameSection("upgrade").getDouble("c"), 1.0E-9, "changed by the owner since");
         assertEquals(3, config.gameSection("upgrade").getInt("d"));
     }
+
+    @Test
+    void theFirstAugmentBotCapOf15MovesToTheNewDefault() {
+        HubConfig config = hub.config();
+        config.updateGameSection("augbots", s -> io.github.sx2xoox.mcpl.game.augment.bot.BotSettings
+                .declareRetiredDefaults(s));
+        config.applyGameDefaults("augbots", io.github.sx2xoox.mcpl.game.augment.bot.BotSettings::declareDefaults,
+                io.github.sx2xoox.mcpl.game.augment.bot.BotSettings::declareRetiredDefaults);
+        org.bukkit.configuration.ConfigurationSection s = config.gameSection("augbots");
+        assertEquals(30, s.getInt(io.github.sx2xoox.mcpl.game.augment.bot.BotSettings.MAX), "untouched 15 follows");
+        assertTrue(s.getStringList("bots.names").size() > 15, "the old 15 names follow too");
+
+        config.updateGameSection("augbots2", t -> t.set(io.github.sx2xoox.mcpl.game.augment.bot.BotSettings.MAX, 20));
+        config.applyGameDefaults("augbots2", io.github.sx2xoox.mcpl.game.augment.bot.BotSettings::declareDefaults,
+                io.github.sx2xoox.mcpl.game.augment.bot.BotSettings::declareRetiredDefaults);
+        assertEquals(20, config.gameSection("augbots2").getInt(io.github.sx2xoox.mcpl.game.augment.bot.BotSettings.MAX),
+                "the owner's cap stays");
+    }
 }
