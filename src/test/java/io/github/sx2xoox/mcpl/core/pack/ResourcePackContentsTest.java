@@ -201,18 +201,10 @@ class ResourcePackContentsTest {
         assertEquals(SiegeSettings.DEFAULT_POOL.size(), new HashSet<>(SiegeSettings.DEFAULT_POOL).size(),
                 "the 공성전 default pool lists an ability twice");
         for (String id : SiegeSettings.DEFAULT_POOL) {
-            assertTrue(AbilityWeaponModels.modeled().contains(id) || AWAITING_WEAPONS.contains(id),
+            assertTrue(AbilityWeaponModels.modeled().contains(id),
                     "공성전 pool ability without a weapon: " + id);
         }
     }
-
-    /**
-     * The 20 pool abilities added with the 70 whose 3D weapons are being made (weapons.py, AbilityWeaponModels); they
-     * use the vanilla sword until then. Take an id out once its weapon is in the pack.
-     */
-    private static final Set<String> AWAITING_WEAPONS = Set.of("minotaur", "medusa", "odin", "wukong", "ra", "gumiho",
-            "hydra", "titan", "bear", "octopus", "turtle", "monk", "kiwarrior", "magicalgirl", "tengu", "tennis",
-            "druid", "shaman", "crystal", "sonic");
 
     /**
      * The ability sword keeps a vanilla item model for everyone; the pack's override of that sword selects the 3D weapon
