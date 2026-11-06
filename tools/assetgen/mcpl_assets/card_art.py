@@ -4,26 +4,36 @@ top-left, one ramp step of bevel, a dark outline); `augment_cards.py` writes the
 illustrations painted by `augment_icons.py` (`icon_kit`).
 """
 
+import colorsys
 import math
 
 from PIL import Image, ImageDraw
 
+from . import palette
 from .palette import add_ramps, ramp, size
 
 add_ramps({
     "card_ink":    (282, 0.040, 0.26, 0.14, 5, False),  # the card's lacquered panel
     "card_silver": (245, 0.022, 0.70, 0.46, 5, False),  # silver frame
     "card_gold":   (88, 0.120, 0.72, 0.46, 5, True),    # gold frame
-    "prism_cyan":  (205, 0.110, 0.74, 0.42, 5, True),   # prism frame: the colour runs round the border
-    "prism_violet": (300, 0.120, 0.66, 0.42, 5, True),
-    "prism_pink":  (352, 0.110, 0.72, 0.42, 5, True),
     "ic_red":      (25, 0.165, 0.56, 0.36, 4, True),
     "ic_white":    (85, 0.010, 0.90, 0.16, 3, False),
     "ic_sky":      (230, 0.110, 0.68, 0.36, 4, True),
 })
 
+# The tier colours (the user's reference: the reverted pack screen's slot frames). Silver: a clean cold silver from
+# almost white down to cool grey; gold: pale cream yellow down to deep gold; prism: a bright rainbow running round
+# the border (see prism_colour). Dark to light, five steps each; they replace the generated ramps of the same name.
+TIER_PALETTE = {
+    "card_silver": ["#4E5866", "#6E7884", "#8E98A4", "#C4CCD6", "#F0F4F8"],
+    "card_gold": ["#6E4C14", "#9A7020", "#C89A2C", "#E8C460", "#F4E4A0"],
+}
+for _name, _hexes in TIER_PALETTE.items():
+    palette.PALETTE[_name] = [tuple(int(h[i:i + 2], 16) for i in (1, 3, 5)) for h in _hexes]
+
 CLEAR = (0, 0, 0, 0)
 OUTLINE = ramp("card_ink", 0)
+CREAM = (0xFF, 0xF6, 0xDE, 255)
 
 
 def top(name):
@@ -119,7 +129,8 @@ NAME_BAND = (MARGIN + 58, MARGIN + 72)    # top, bottom (y)
 DESC_PANEL = (MARGIN + 76, MARGIN + 134)  # top, bottom (y)
 
 TIER_RAMP = {"silver": "card_silver", "gold": "card_gold", "prism": None}
-PRISM = ("prism_cyan", "prism_violet", "prism_pink")
+# prism: (saturation, value) per step, dark to light
+PRISM_STEPS = ((0.85, 0.58), (0.80, 0.78), (0.68, 0.96), (0.48, 1.0), (0.26, 1.0))
 
 
 def _inside_body(x, y, inset=0):
@@ -141,12 +152,55 @@ def _edge_distance(x, y):
     return 12
 
 
-def tier_colour(tier, step, x=0, y=0):
+def prism_colour(hue, step):
+    """A bright rainbow colour: `hue` in degrees, `step` 0 (dark) .. 4 (light)."""
+    sat, val = PRISM_STEPS[max(0, min(4, int(step)))]
+    r, g, b = colorsys.hsv_to_rgb((hue % 360) / 360, sat, val)
+    return (round(r * 255), round(g * 255), round(b * 255), 255)
+
+
+def prism_hue(x, y):
+    """The hue at (x, y) of the frame, running clockwise round the border: top orange -> yellow -> lime, right green
+    -> teal -> blue, bottom blue -> violet -> magenta, left pink -> apricot; None at the corners (cream)."""
+    u = (x - MARGIN) / (BODY_W - 1)
+    v = (y - MARGIN) / (BODY_H - 1)
+    dt, db = y - MARGIN, MARGIN + BODY_H - 1 - y
+    dl, dr = x - MARGIN, MARGIN + BODY_W - 1 - x
+    if min(dt, db) + min(dl, dr) < CUT + 3:
+        return None
+    nearest = min(dt, db, dl, dr)
+    u, v = max(0.0, min(1.0, u)), max(0.0, min(1.0, v))
+    if nearest == dt:
+        return 30 + 65 * u
+    if nearest == dr:
+        return 120 + 100 * v
+    if nearest == db:
+        return 220 + 95 * (1 - u)
+    return 330 + 60 * (1 - v)
+
+
+def tier_colour(tier, step, x=0, y=0, hue=None):
+    """A tier colour at frame position (x, y): silver and gold light up towards the top-left, prism by `hue` (or
+    the rainbow round the border)."""
+    step = max(0, min(4, step))
     if tier == "prism":
-        t = ((x - MARGIN) / BODY_W * 0.6 + (y - MARGIN) / BODY_H * 0.9) % 1.0
-        name = PRISM[int(t * 3) % 3]
-        return ramp(name, step)
-    return ramp(TIER_RAMP[tier], step)
+        if hue is None:
+            hue = prism_hue(x, y)
+        if hue is None:
+            return CREAM if step >= 2 else prism_colour(35, step + 1)
+        return prism_colour(hue, step)
+    colours = palette.PALETTE[TIER_RAMP[tier]]
+    diag = max(0.0, min(1.0, ((x - MARGIN) / BODY_W + (y - MARGIN) / BODY_H) / 2))
+    t = max(0.0, min(4.0, step + (0.5 - diag) * 1.4))
+    i = min(3, int(t))
+    f = t - i
+    a, b = colours[i], colours[i + 1]
+    return tuple(round(a[k] + (b[k] - a[k]) * f) for k in range(3)) + (255,)
+
+
+def _ring_hue(cx, cy, x, y):
+    """Prism rings: the rainbow by angle (orange at the top, clockwise)."""
+    return (30 + math.degrees(math.atan2(x - cx, cy - y))) % 360
 
 
 def frame(tier, lit=False):
@@ -168,7 +222,7 @@ def frame(tier, lit=False):
                         px[x, y] = (r, g, b, alpha)
                 continue
             if d == 0:
-                c = tier_colour(tier, 0 + boost, x, y)
+                c = ramp("card_ink", 0)
             elif d == 1:
                 c = tier_colour(tier, 2 + boost, x, y)
             elif d == 2:
@@ -202,10 +256,17 @@ def frame(tier, lit=False):
         for r in range(mr + 2, mr + 7):
             x, y = round(mx + r * math.cos(ra)), round(my + r * math.sin(ra))
             if _edge_distance(x, y) >= 6 and y < NAME_BAND[0] - 1:
-                px[x, y] = tier_colour(tier, 1 + boost, x, y)
-    d.ellipse((mx - mr - 1, my - mr - 1, mx + mr + 1, my + mr + 1), fill=tier_colour(tier, 0, mx, my - mr))
-    d.ellipse((mx - mr, my - mr, mx + mr, my + mr), fill=tier_colour(tier, 3 + boost, mx, my - mr))
-    d.ellipse((mx - mr + 2, my - mr + 2, mx + mr - 2, my + mr - 2), fill=tier_colour(tier, 1, mx, my))
+                px[x, y] = tier_colour(tier, 1 + boost, x, y, _ring_hue(mx, my, x, y) if tier == "prism" else None)
+    ring = {0: (mr + 1, 0), 1: (mr, 3 + boost), 2: (mr - 2, 1)}
+    for _, (radius, step) in sorted(ring.items()):
+        for yy in range(my - radius, my + radius + 1):
+            for xx in range(mx - radius, mx + radius + 1):
+                if (xx - mx) ** 2 + (yy - my) ** 2 <= (radius + 0.5) ** 2:
+                    hue = _ring_hue(mx, my, xx, yy) if tier == "prism" else None
+                    # silver / gold: lit from the top-left like the border
+                    lx = MARGIN + (xx - (mx - radius)) / (2 * radius + 1) * BODY_W
+                    ly = MARGIN + (yy - (my - radius)) / (2 * radius + 1) * BODY_H
+                    px[xx, yy] = tier_colour(tier, step, lx, ly, hue)
     d.ellipse((mx - mr + 3, my - mr + 3, mx + mr - 3, my + mr - 3), fill=ramp("card_ink", 0))
     d.ellipse((mx - mr + 6, my - mr + 6, mx + mr - 6, my + mr - 6), fill=ramp("card_ink", 1 + boost))
     # gems breaking the border, top and bottom
@@ -219,11 +280,16 @@ def frame(tier, lit=False):
     t0, t1 = NAME_BAND
     x0, x1 = MARGIN + 6, MARGIN + BODY_W - 7
     d.rectangle((x0, t0, x1, t1), fill=ramp("card_ink", 0))
-    d.line((x0 + 2, t0, x1 - 2, t0), fill=tier_colour(tier, 3 + boost, x0, t0))
-    d.line((x0 + 2, t1, x1 - 2, t1), fill=tier_colour(tier, 1 + boost, x0, t1))
+    def band_hue(x):
+        return 30 + 300 * (x - x0) / (x1 - x0) if tier == "prism" else None
+
+    for x in range(x0 + 2, x1 - 1):
+        px[x, t0] = tier_colour(tier, 3 + boost, x, MARGIN, band_hue(x))
+        px[x, t1] = tier_colour(tier, 1 + boost, x, MARGIN + BODY_H, band_hue(x))
     for ex in (x0, x1):
         cy = (t0 + t1) // 2
-        d.polygon([(ex, cy - 4), (ex + 4, cy), (ex, cy + 4), (ex - 4, cy)], fill=tier_colour(tier, 3 + boost, ex, cy))
+        d.polygon([(ex, cy - 4), (ex + 4, cy), (ex, cy + 4), (ex - 4, cy)],
+                  fill=tier_colour(tier, 3 + boost, ex, cy, band_hue(ex)))
     # description panel
     p0, p1 = DESC_PANEL
     d.rectangle((MARGIN + 7, p0, MARGIN + BODY_W - 8, p1), fill=ramp("card_ink", 0))
@@ -304,6 +370,10 @@ RIBBON_W, RIBBON_H = 176, 18
 def ribbon(tier):
     im = Image.new("RGBA", (RIBBON_W, RIBBON_H), CLEAR)
     px = im.load()
+
+    def rib_hue(x):
+        return 20 + 310 * x / (RIBBON_W - 1) if tier == "prism" else None
+
     for y in range(RIBBON_H):
         for x in range(RIBBON_W):
             edge = min(x, RIBBON_W - 1 - x)
@@ -312,15 +382,15 @@ def ribbon(tier):
                 if edge < (RIBBON_H // 2 - notch) // 2:
                     continue
             if y == 0 or y == RIBBON_H - 1:
-                px[x, y] = tier_colour(tier, 0, x * 0.6, y)
+                px[x, y] = tier_colour(tier, 0, x * 0.6, y, rib_hue(x))
             elif y == 1:
-                px[x, y] = tier_colour(tier, 4, x * 0.6, y)
+                px[x, y] = tier_colour(tier, 4, x * 0.6, y, rib_hue(x))
             elif y == RIBBON_H - 2:
-                px[x, y] = tier_colour(tier, 1, x * 0.6, y)
+                px[x, y] = tier_colour(tier, 1, x * 0.6, y, rib_hue(x))
             elif 14 <= edge < RIBBON_W // 2 and 3 <= y <= RIBBON_H - 4:
                 px[x, y] = ramp("card_ink", 1 if y < RIBBON_H // 2 else 0)
             else:
-                px[x, y] = tier_colour(tier, 2 if (x + y) % 2 else 3, x * 0.6, y)
+                px[x, y] = tier_colour(tier, 2 if (x + y) % 2 else 3, x * 0.6, y, rib_hue(x))
     return im
 
 

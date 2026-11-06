@@ -382,7 +382,7 @@ def preview(out_dir):
         return [table[i] for i in ids]
 
     shots = [
-        ("cards_silver_gui2.png", 2, "silver", pick("iron_body", "feather_fall", "sharp_edge"), -1, 2, 27, 0),
+        ("cards_silver_highlight_gui2.png", 2, "silver", pick("iron_body", "feather_fall", "sharp_edge"), 2, 2, 27, 0),
         ("cards_gold_highlight_gui2.png", 2, "gold", pick("bloodthirst", "double_jump", "smith_blessing"), 1, 2, 18,
          1),
         ("cards_prism_highlight_gui3.png", 3, "prism", pick("phoenix_feather", "wings", "war_god"), 0, 1, 4, 0),
@@ -394,7 +394,7 @@ def preview(out_dir):
         hud(screen, gui)
         draw_cards(screen, tier, cards, hl, rerolls, seconds, 30, "1번째 라운드" if tier != "prism" else "보너스: 첫 번째 피",
                    queued)
-        screen.convert("RGB").save(out_dir / name.replace(".png", "_v4.png"))
+        screen.convert("RGB").save(out_dir / name.replace(".png", "_v5.png"))
     # every icon, 4x, with its name
     items = sorted(augments())
     cols = 10
@@ -407,14 +407,14 @@ def preview(out_dir):
         ic = glyph_image(f"icon_{aid}.png").resize((ICON_PX * 2, ICON_PX * 2), Image.NEAREST)
         sheet.alpha_composite(ic, (x + (cell - ICON_PX * 2) // 2, y))
         d.text((x + cell / 2 - text_width(name) * 1, y + 142), name, font=font, fill=(255, 255, 255, 255))
-    sheet.save(out_dir / "icons_v4.png")
+    sheet.save(out_dir / "icons_v5.png")
     # the frames, normal and lit, 3x
     fr = Image.new("RGBA", (6 * 112 * 3 + 50, 160 * 3 + 20), (34, 30, 44, 255))
     for i, tier in enumerate(TIERS):
         for j, lit in enumerate((False, True)):
             im = glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png").resize((336, 480), Image.NEAREST)
             fr.alpha_composite(im, (10 + (i * 2 + j) * 345, 10))
-    fr.save(out_dir / "frames_v4.png")
+    fr.save(out_dir / "frames_v5.png")
     print(f"previews -> {out_dir}")
 
 
