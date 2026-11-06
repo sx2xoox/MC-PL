@@ -36,6 +36,12 @@ final class PlayerState {
     long cardsOffer = -1;
     /** The highlighted card, kept while the cards are folded; -1 for none. */
     int cardHighlight = -1;
+    /**
+     * The hotbar slot held before the cards came up, or -1: while they are up the player holds
+     * {@link AugmentMatch#CARDS_SLOT} (so every card's number key changes the slot and is heard), and gets this one back
+     * when they close.
+     */
+    int cardsHeldSlot = -1;
     /** The controls of the cards were explained in chat (once per match). */
     boolean cardsExplained;
 

@@ -89,10 +89,67 @@ class AugmentCardsTest {
                 .filter(d -> d.getScoreboardTags().contains(OfferCards.TAG)).toList();
     }
 
+    /** A number key as the client sends it: nothing for the slot already held, else the change (kept unless cancelled). */
     private boolean key(Player player, int slot) {
-        PlayerItemHeldEvent event = new PlayerItemHeldEvent(player, 8, slot);
+        int held = player.getInventory().getHeldItemSlot();
+        if (held == slot) {
+            return false;
+        }
+        PlayerItemHeldEvent event = new PlayerItemHeldEvent(player, held, slot);
         h.server.getPluginManager().callEvent(event);
+        if (!event.isCancelled()) {
+            player.getInventory().setHeldItemSlot(slot);
+        }
         return event.isCancelled();
+    }
+
+    private boolean wheel(Player player, int step) {
+        return key(player, Math.floorMod(player.getInventory().getHeldItemSlot() + step, 9));
+    }
+
+    /** The number key of the slot held before the cards came up still picks its card (no same-slot silence). */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+    void theKeyOfTheSlotHeldBeforeStillPicksAndTheSlotComesBack(int start) {
+        a.getInventory().setHeldItemSlot(start);
+        AugmentMatch match = roundOpen();
+        assertEquals(AugmentMatch.CARDS_SLOT, a.getInventory().getHeldItemSlot(), "a neutral slot while choosing");
+        AugmentInfo wanted = match.currentOffer(a.getUniqueId()).cards().get(start);
+        assertTrue(key(a, start), "heard although it was the held slot");
+        assertEquals(start, match.cards(a.getUniqueId()).highlight());
+        assertTrue(key(a, start), "the same key again");
+        assertEquals(List.of(wanted), match.augments(a.getUniqueId()));
+        assertEquals(start, a.getInventory().getHeldItemSlot(), "the slot held before comes back");
+    }
+
+    @Test
+    void theWheelMovesTheHighlightAndFoldingGivesTheSlotBack() {
+        a.getInventory().setHeldItemSlot(4);
+        AugmentMatch match = roundOpen();
+        assertTrue(wheel(a, 1));
+        assertEquals(0, match.cards(a.getUniqueId()).highlight(), "down from none: the first card");
+        assertTrue(wheel(a, 1));
+        assertEquals(1, match.cards(a.getUniqueId()).highlight());
+        assertTrue(wheel(a, -1));
+        assertTrue(wheel(a, -1));
+        assertEquals(2, match.cards(a.getUniqueId()).highlight(), "wraps round");
+        assertEquals(AugmentMatch.CARDS_SLOT, a.getInventory().getHeldItemSlot());
+
+        assertTrue(drop(a));
+        assertEquals(4, a.getInventory().getHeldItemSlot(), "folded: the own slot again");
+        assertTrue(swap(a));
+        assertEquals(AugmentMatch.CARDS_SLOT, a.getInventory().getHeldItemSlot(), "unfolded: neutral again");
+        assertTrue(swap(a), "F picks the kept highlight");
+        assertEquals(1, match.augments(a.getUniqueId()).size());
+        assertEquals(4, a.getInventory().getHeldItemSlot());
+    }
+
+    @Test
+    void theTimeOutGivesTheSlotBack() {
+        a.getInventory().setHeldItemSlot(2);
+        roundOpen();
+        h.ticks(5 * 20 + 20);
+        assertEquals(2, a.getInventory().getHeldItemSlot(), "after the timeout");
     }
 
     private boolean swap(Player player) {
@@ -121,7 +178,8 @@ class AugmentCardsTest {
         assertNull(match.cards(b.getUniqueId()));
 
         List<TextDisplay> displays = cardDisplays();
-        assertEquals(3 * 5 + 6, displays.size(), "frame, icon, name, description, key per card + 6 screen pieces");
+        assertEquals(3 * 6 + 6, displays.size(),
+                "frame, icon, name, description, key, reroll mark per card + 6 screen pieces");
         for (TextDisplay display : displays) {
             assertEquals(a, display.getVehicle(), "rides the owner (follows the camera smoothly)");
             assertFalse(display.isVisibleByDefault(), "nobody else sees it");
@@ -177,7 +235,7 @@ class AugmentCardsTest {
         assertEquals(1, match.rerollsLeft(a.getUniqueId()));
         assertTrue(match.augments(a.getUniqueId()).isEmpty(), "a reroll picks nothing");
         h.ticks(10);
-        assertEquals(21, cardDisplays().size(), "the same cards, flipped");
+        assertEquals(24, cardDisplays().size(), "the same cards, flipped");
     }
 
     @Test

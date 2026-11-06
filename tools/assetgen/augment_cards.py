@@ -140,25 +140,30 @@ def write():
 # ====================================================================== preview (same layout as OfferCards.java)
 
 W, H = 1920, 1080
-CARD_H = 0.432             # card body height, in screen heights (FOV 70)
+CARD_H = 0.53              # card body height, in screen heights (FOV 70)
 TX = CARD_H / 144          # one frame texel
-CARD_GAP = 0.035
-CARD_Y = 0.0               # the whole set (ribbon .. hints) is centred on the screen
+CARD_GAP = 0.03
+# The set (ribbon .. hints) is up-down balanced round CARD_Y, which sits a little above the screen centre so the set
+# clears the boss bar (top) and the armour / heart rows (bottom) at GUI scale 3.
+CARD_Y = 0.046
 MAX_ROW = 1.30
-NAME_UNIT = 2.8 / 1080     # font unit sizes (px at 1080p)
-DESC_UNIT = 2.6 / 1080
-INFO_UNIT = 3.0 / 1080     # info line and seconds: on a dark plate
+NAME_UNIT = 3.9 / 1080     # font unit sizes (px at 1080p)
+NAME_W = 82                # texels the name may take (a longer name gets a smaller unit)
+DESC_UNIT = 3.3 / 1080
+INFO_UNIT = 3.4 / 1080     # info line and seconds: on a dark plate
 HINT_UNIT = 3.8 / 1080     # the controls: big, on a dark plate
 PLATE = (16, 16, 24, 160)  # the text displays' background colour (ARGB 0xA0101018)
 ICON_Y, NAME_Y, DESC_MID = 40, 7, -33        # texels from the body centre (up); the description is centred
 DESC_W, DESC_LINES = 78, 6
-HIGHLIGHT_SCALE = 1.10     # grows round the card centre
-# above the cards: the ribbon and the info line; below: the key caps, the timer, the hints (same extent both ways)
-RIBBON_Y = CARD_Y + CARD_H / 2 + 0.136
-INFO_Y = CARD_Y + CARD_H / 2 + 0.066
-FOOTER_Y = CARD_Y - CARD_H / 2 - 0.066
-BAR_Y = CARD_Y - CARD_H / 2 - 0.105
-HINT_Y = CARD_Y - CARD_H / 2 - 0.143
+HIGHLIGHT_SCALE = 1.06     # grows round the card centre
+# Above the cards the ribbon; on each card's bottom edge its key cap (+ the reroll mark); below the cards one row with
+# the info (right of it ends at the bar), the timer bar and the seconds, then the controls. Same extent both ways.
+FOOTER_DY = -72            # texels from the card centre: the key cap sits on the bottom edge
+REROLL_DX = 18             # texels right of the key cap
+RIBBON_Y = CARD_Y + CARD_H / 2 + 0.098
+BAR_Y = CARD_Y - CARD_H / 2 - 0.070
+HINT_Y = CARD_Y - CARD_H / 2 - 0.113
+ROW_GAP = 0.012            # between the bar and the info / seconds
 
 UNIFONT = "/usr/share/fonts/opentype/unifont/unifont.otf"
 
@@ -310,6 +315,7 @@ def hud(screen, gui):
     for i in range(10):
         hx = x0 + i * 8 * g
         d.rectangle((hx, xp_y - 11 * g, hx + 7 * g, xp_y - 4 * g), fill=(220, 30, 30, 255))
+        d.rectangle((hx, xp_y - 21 * g, hx + 7 * g, xp_y - 14 * g), fill=(200, 205, 215, 255))   # armour
         fx = x0 + hb_w - (i + 1) * 8 * g
         d.rectangle((fx, xp_y - 11 * g, fx + 7 * g, xp_y - 4 * g), fill=(170, 110, 50, 255))
     bb_w = 182 * g
@@ -348,7 +354,8 @@ def draw_cards(screen, tier, cards, highlight=-1, rerolls=2, seconds=23, total=3
         y = CARD_Y
         paste_scaled(screen, glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png"), x, y, TX, s)
         paste_scaled(screen, glyph_image(f"icon_{aid}.png"), x, y + ICON_Y * TX * s, TX, s * ICON_H / ICON_PX)
-        draw_text(screen, name, x, y + NAME_Y * TX * s, NAME_UNIT, bold=True, factor=s)
+        name_unit = min(NAME_UNIT, NAME_W * TX / max(1, text_width(name, True)))
+        draw_text(screen, name, x, y + NAME_Y * TX * s, name_unit, bold=True, factor=s)
         kind_ko = {v: k2 for k2, v in KIND.items()}[kind]
         tier_colour = {"silver": (201, 214, 223), "gold": (255, 200, 61), "prism": (213, 140, 255)}[tier]
         units = DESC_W * TX / DESC_UNIT
@@ -358,20 +365,21 @@ def draw_cards(screen, tier, cards, highlight=-1, rerolls=2, seconds=23, total=3
         for j, (line, colour) in enumerate(lines):
             draw_text(screen, line, x, top - (j * 10 + 4.5) * DESC_UNIT * s, DESC_UNIT, colour, factor=s)
         key = glyph_image(f"key_{i + 1}{'_lit' if lit else ''}.png")
-        fy = FOOTER_Y
+        fy = y + FOOTER_DY * TX * s
+        paste_scaled(screen, key, x, fy, TX, s)
         if rerolls > 0:
-            paste_scaled(screen, key, x - 10 * TX * k, fy, TX, k)
-            paste_scaled(screen, glyph_image(f"reroll{'_lit' if lit else ''}.png"), x + 10 * TX * k, fy, TX, k)
-        else:
-            paste_scaled(screen, key, x, fy, TX, k)
+            paste_scaled(screen, glyph_image(f"reroll{'_lit' if lit else ''}.png"), x + REROLL_DX * TX * s, fy, TX, s)
     tier_ko = {"silver": "실버", "gold": "골드", "prism": "프리즘"}[tier]
     paste_scaled(screen, glyph_image(f"ribbon_{tier}.png"), 0, RIBBON_Y, TX)
     draw_text(screen, f"증강 선택 · {tier_ko}", 0, RIBBON_Y, NAME_UNIT, bold=True)
     info = f"{source} · 리롤 {rerolls}회" + (f" · 다음 증강 {queued}개" if queued else "")
-    draw_text(screen, info, 0, INFO_Y, INFO_UNIT, (225, 225, 225), background=True)
+    bar_half = card_art.BAR_W / 2 * TX
+    draw_text(screen, info, -(bar_half + ROW_GAP + text_width(info) * INFO_UNIT / 2), BAR_Y, INFO_UNIT,
+              (225, 225, 225), background=True)
     level = round(card_art.BAR_STEPS * seconds / total)
     paste_scaled(screen, glyph_image(f"bar_{level:02d}.png"), 0, BAR_Y, TX)
-    draw_text(screen, f"{seconds}초", (card_art.BAR_W / 2 + 4) * TX + 14 * INFO_UNIT, BAR_Y, INFO_UNIT,
+    secs = f"{seconds}초"
+    draw_text(screen, secs, bar_half + ROW_GAP + text_width(secs, True) * INFO_UNIT / 2, BAR_Y, INFO_UNIT,
               (255, 85, 85) if seconds <= 5 else (255, 255, 255), bold=True, background=True)
     keys = [("k", str(n)) for n in range(1, len(cards) + 1)]
     parts = keys + [("t", " 선택  ")] + [("k", "f"), ("t", " 확정  ")]
@@ -396,13 +404,17 @@ def preview(out_dir):
         ("cards_prism_highlight_gui3.png", 3, "prism", pick("phoenix_feather", "wings", "war_god"), 0, 1, 4, 0),
         ("cards_gold_4_gui3.png", 3, "gold", pick("triple_shot", "executioner", "gambler", "still_cloak"), 3, 0, 12,
          0),
+        ("cards_silver_4_gui2.png", 2, "silver", pick("midas_pick", "night_eyes", "lumberjack", "venom"), 0, 2, 9,
+         2),
+        ("cards_silver_highlight_gui3.png", 3, "silver", pick("iron_body", "feather_fall", "sharp_edge"), 1, 2, 27,
+         0),
     ]
     for name, gui, tier, cards, hl, rerolls, seconds, queued in shots:
         screen = backdrop()
         hud(screen, gui)
         draw_cards(screen, tier, cards, hl, rerolls, seconds, 30, "1번째 라운드" if tier != "prism" else "보너스: 첫 번째 피",
                    queued)
-        screen.convert("RGB").save(out_dir / name.replace(".png", "_v6.png"))
+        screen.convert("RGB").save(out_dir / name.replace(".png", "_v8.png"))
     # every icon, 4x, with its name
     items = sorted(augments())
     cols = 10
@@ -415,14 +427,14 @@ def preview(out_dir):
         ic = glyph_image(f"icon_{aid}.png").resize((ICON_PX * 2, ICON_PX * 2), Image.NEAREST)
         sheet.alpha_composite(ic, (x + (cell - ICON_PX * 2) // 2, y))
         d.text((x + cell / 2 - text_width(name) * 1, y + 142), name, font=font, fill=(255, 255, 255, 255))
-    sheet.save(out_dir / "icons_v6.png")
+    sheet.save(out_dir / "icons_v8.png")
     # the frames, normal and lit, 3x
     fr = Image.new("RGBA", (6 * 112 * 3 + 50, 160 * 3 + 20), (34, 30, 44, 255))
     for i, tier in enumerate(TIERS):
         for j, lit in enumerate((False, True)):
             im = glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png").resize((336, 480), Image.NEAREST)
             fr.alpha_composite(im, (10 + (i * 2 + j) * 345, 10))
-    fr.save(out_dir / "frames_v6.png")
+    fr.save(out_dir / "frames_v8.png")
     print(f"previews -> {out_dir}")
 
 

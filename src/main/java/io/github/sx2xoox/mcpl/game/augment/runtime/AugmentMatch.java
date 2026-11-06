@@ -1176,10 +1176,37 @@ public final class AugmentMatch implements GameInstance, BotHost {
             state.cardsOffer = offer.id();
             state.cardHighlight = -1;
         }
+        holdNeutralSlot(player, state);
         state.cards = new OfferCards(this, player, game.hub().plugin(), offer, state.cardHighlight);
         if (!state.cardsExplained) {
             state.cardsExplained = true;
             messages().send(player, "offer.cards-how", Messages.tag("count", offer.cards().size()));
+        }
+    }
+
+    /**
+     * The hotbar slot held while the cards are up: no card's number key (at most 5 cards) nor a wheel step from it
+     * (slots 7 and 9) picks a card, so pressing the key of the slot the player held before still works.
+     */
+    public static final int CARDS_SLOT = 7;
+
+    private void holdNeutralSlot(Player player, PlayerState state) {
+        int held = player.getInventory().getHeldItemSlot();
+        if (state.cardsHeldSlot < 0) {
+            state.cardsHeldSlot = held;
+        }
+        if (held != CARDS_SLOT) {
+            player.getInventory().setHeldItemSlot(CARDS_SLOT);
+        }
+    }
+
+    /** The cards closed: the player holds the slot they held before them again. */
+    private void releaseNeutralSlot(PlayerState state) {
+        int slot = state.cardsHeldSlot;
+        state.cardsHeldSlot = -1;
+        Player player = org.bukkit.Bukkit.getPlayer(state.id);
+        if (slot >= 0 && player != null && player.getInventory().getHeldItemSlot() == CARDS_SLOT) {
+            player.getInventory().setHeldItemSlot(slot);
         }
     }
 
@@ -1198,6 +1225,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         state.cards = null;
         cards.leave(picked);
         leavingCards.add(cards);
+        releaseNeutralSlot(state);
     }
 
     private void tickCards() {
@@ -1206,6 +1234,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 state.cards.tick();
                 if (state.cards.done()) {
                     state.cards = null;
+                    releaseNeutralSlot(state);
                 }
             }
         }
@@ -1485,6 +1514,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (state.cards != null) {
             state.cards.remove();
             state.cards = null;
+            releaseNeutralSlot(state);
         }
         if (state.dialog != null) {
             state.dialog = null;

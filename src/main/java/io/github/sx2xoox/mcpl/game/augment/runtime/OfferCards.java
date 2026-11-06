@@ -43,16 +43,21 @@ public final class OfferCards {
     // ── layout (same numbers as tools/assetgen/augment_cards.py) ─────────────────────────────────────────
     static final double DEPTH = 0.5;
     static final double SCREEN = 2 * DEPTH * Math.tan(Math.toRadians(35)); // blocks per screen height at DEPTH
-    static final double CARD_H = 0.432;
+    static final double CARD_H = 0.53;
     static final double TX = CARD_H / 144;
-    static final double CARD_GAP = 0.035;
-    /** The whole set (ribbon .. hints) is centred on the screen, up-down balanced round the cards. */
-    static final double CARD_Y = 0.0;
+    static final double CARD_GAP = 0.03;
+    /**
+     * The set (ribbon .. hints) is up-down balanced round the cards' centre, which sits a little above the screen
+     * centre so the set clears the boss bar (top) and the armour and heart rows (bottom) at GUI scale 3.
+     */
+    static final double CARD_Y = 0.046;
     static final double MAX_ROW = 1.30;
-    static final double NAME_UNIT = 2.8 / 1080;
-    static final double DESC_UNIT = 2.6 / 1080;
+    static final double NAME_UNIT = 3.9 / 1080;
+    /** Texels a name may take: a longer one gets a smaller unit. */
+    static final double NAME_W = 82;
+    static final double DESC_UNIT = 3.3 / 1080;
     /** The info line and the seconds: larger, on a dark plate. */
-    static final double INFO_UNIT = 3.0 / 1080;
+    static final double INFO_UNIT = 3.4 / 1080;
     /** The controls: big, on a dark plate (they must read at a glance while playing). */
     static final double HINT_UNIT = 3.8 / 1080;
     /** The dark plate behind the info, seconds and controls lines. */
@@ -63,12 +68,16 @@ public final class OfferCards {
     static final double DESC_MID = -33;
     static final double DESC_W = 78;
     static final int DESC_LINES = 6;
-    static final double HIGHLIGHT_SCALE = 1.10;
-    static final double RIBBON_Y = CARD_Y + CARD_H / 2 + 0.136;
-    static final double INFO_Y = CARD_Y + CARD_H / 2 + 0.066;
-    static final double FOOTER_Y = CARD_Y - CARD_H / 2 - 0.066;
-    static final double BAR_Y = CARD_Y - CARD_H / 2 - 0.105;
-    static final double HINT_Y = CARD_Y - CARD_H / 2 - 0.143;
+    static final double HIGHLIGHT_SCALE = 1.06;
+    /** The key cap sits on the card's bottom edge (texels from the card centre), the reroll mark right of it. */
+    static final double FOOTER_DY = -72;
+    static final double REROLL_DX = 18;
+    /** Above the cards the ribbon; below them one row (info · timer bar · seconds), then the controls. */
+    static final double RIBBON_Y = CARD_Y + CARD_H / 2 + 0.098;
+    static final double BAR_Y = CARD_Y - CARD_H / 2 - 0.070;
+    static final double HINT_Y = CARD_Y - CARD_H / 2 - 0.113;
+    /** Between the bar and the info / seconds. */
+    static final double ROW_GAP = 0.012;
     /** Ticks a leaving set of cards (picked, folded) animates before it is removed. */
     static final int LEAVE_TICKS = 11;
     /** Interpolation of every transformation update (the client eases between the server's ticks). */
@@ -90,9 +99,9 @@ public final class OfferCards {
     private final class Layer {
         final TextDisplay display;
         final int card;
-        final double x;
+        double x;
         final double y;
-        final double unit;
+        double unit;
         final double depth;
         final Anchor anchor;
         int lines = 1;
@@ -129,6 +138,7 @@ public final class OfferCards {
     private final Layer[] names;
     private final Layer[] descriptions;
     private final Layer[] footers;
+    private final Layer[] rerollMarks;
     private Layer title;
     private Layer info;
     private Layer bar;
@@ -159,6 +169,7 @@ public final class OfferCards {
         this.names = new Layer[n];
         this.descriptions = new Layer[n];
         this.footers = new Layer[n];
+        this.rerollMarks = new Layer[n];
         build();
         tick(); // place everything (hidden: the cards pop in over the next ticks)
     }
@@ -199,19 +210,22 @@ public final class OfferCards {
             AugmentInfo card = shown.get(i);
             frames[i] = add(new Layer(i, 0, 0, TX, DEPTH, Anchor.GLYPH, CardGlyphs.frame(offer.tier(), false), false));
             icons[i] = add(new Layer(i, 0, ICON_Y * TX, TX, DEPTH - 0.002, Anchor.GLYPH, icon(card), false));
-            names[i] = add(new Layer(i, 0, NAME_Y * TX, NAME_UNIT, DEPTH - 0.003, Anchor.TEXT, name(card), true));
+            names[i] = add(new Layer(i, 0, NAME_Y * TX, nameUnit(card), DEPTH - 0.003, Anchor.TEXT, name(card),
+                    true));
             descriptions[i] = add(new Layer(i, 0, DESC_MID * TX, DESC_UNIT, DEPTH - 0.003, Anchor.TEXT_MIDDLE,
                     Component.empty(), true));
             describe(i, card);
-            footers[i] = add(new Layer(i, 0, FOOTER_Y - CARD_Y, TX, DEPTH - 0.003, Anchor.GLYPH, footer(i, false),
-                    false));
+            footers[i] = add(new Layer(i, 0, FOOTER_DY * TX, TX, DEPTH - 0.004, Anchor.GLYPH,
+                    CardGlyphs.key(i + 1, false), false));
+            rerollMarks[i] = add(new Layer(i, REROLL_DX * TX, FOOTER_DY * TX, TX, DEPTH - 0.004, Anchor.GLYPH,
+                    rerollMark(false), false));
         }
         add(new Layer(-1, 0, RIBBON_Y, TX, DEPTH, Anchor.GLYPH, CardGlyphs.ribbon(offer.tier()), false));
         title = add(new Layer(-1, 0, RIBBON_Y, NAME_UNIT, DEPTH - 0.003, Anchor.TEXT, match.messages().get(
                 "offer.cards-title", Messages.tag("tier", OfferMenu.tierName(match.messages(), offer.tier()))), true));
-        info = add(new Layer(-1, 0, INFO_Y, INFO_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
+        info = add(new Layer(-1, 0, BAR_Y, INFO_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
         bar = add(new Layer(-1, 0, BAR_Y, TX, DEPTH, Anchor.GLYPH, CardGlyphs.bar(1), false));
-        seconds = add(new Layer(-1, (CardGlyphs.BAR_W / 2.0 + 4) * TX + 14 * INFO_UNIT, BAR_Y, INFO_UNIT,
+        seconds = add(new Layer(-1, 0, BAR_Y, INFO_UNIT,
                 DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
         hint = add(new Layer(-1, 0, HINT_Y, HINT_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
         refreshTexts();
@@ -260,6 +274,22 @@ public final class OfferCards {
         return glyph != null ? glyph : Component.text("◆", info.tier().color());
     }
 
+    /** The name's unit: {@link #NAME_UNIT}, smaller if the name is longer than {@link #NAME_W}. */
+    static double nameUnit(AugmentInfo info) {
+        int width = Math.max(1, OfferDialog.width(info.name(), true));
+        return Math.min(NAME_UNIT, NAME_W * TX / width);
+    }
+
+    /** Puts a one-line text layer's left (leftOf = false) or right edge {@link #ROW_GAP} beside the timer bar. */
+    private void besideBar(Layer layer, Component text, boolean right, boolean bold) {
+        String plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                .serialize(text);
+        double half = (OfferDialog.width(plain, bold) + 2) / 2.0 * layer.unit;
+        double edge = CardGlyphs.BAR_W / 2.0 * TX + ROW_GAP;
+        layer.x = right ? edge + half : -(edge + half);
+        layer.display.text(text);
+    }
+
     private static Component name(AugmentInfo info) {
         return Component.text(info.name(), NamedTextColor.WHITE).decoration(TextDecoration.BOLD, true);
     }
@@ -278,12 +308,9 @@ public final class OfferCards {
         layer.display.text(Component.join(JoinConfiguration.newlines(), lines));
     }
 
-    private Component footer(int i, boolean lit) {
-        Component key = CardGlyphs.key(i + 1, lit);
-        if (match.rerollsLeft(player.getUniqueId()) <= 0) {
-            return key;
-        }
-        return Component.empty().append(key).append(CardGlyphs.space(4)).append(CardGlyphs.reroll(lit));
+    /** The reroll mark next to a key cap while rerolls are left. */
+    private Component rerollMark(boolean lit) {
+        return match.rerollsLeft(player.getUniqueId()) > 0 ? CardGlyphs.reroll(lit) : Component.empty();
     }
 
     /** Info, hints and footers (rerolls left, offers waiting); called when they may have changed. */
@@ -292,8 +319,8 @@ public final class OfferCards {
         int queued = Math.max(0, match.pendingOffers(player.getUniqueId()) - 1);
         Component waiting = queued > 0 ? match.messages().get("offer.cards-queued", Messages.tag("count", queued))
                 : Component.empty();
-        info.display.text(match.messages().get("offer.cards-info", Messages.tag("source", offer.source()),
-                Messages.tag("rerolls", rerolls), Messages.tag("queued", waiting)));
+        besideBar(info, match.messages().get("offer.cards-info", Messages.tag("source", offer.source()),
+                Messages.tag("rerolls", rerolls), Messages.tag("queued", waiting)), false, false);
         Component keys = Component.empty();
         for (int i = 1; i <= shown.size(); i++) {
             keys = keys.append(CardGlyphs.smallKey((char) ('0' + i)));
@@ -305,7 +332,7 @@ public final class OfferCards {
         if (rerolls != shownRerolls) {
             shownRerolls = rerolls;
             for (int i = 0; i < shown.size(); i++) {
-                footers[i].display.text(footer(i, i == highlight));
+                rerollMarks[i].display.text(rerollMark(i == highlight));
             }
         }
     }
@@ -317,8 +344,8 @@ public final class OfferCards {
         bar.display.text(CardGlyphs.bar(ticksLeft / total));
         if (secs != shownSeconds) {
             shownSeconds = secs;
-            seconds.display.text(match.messages().get(secs <= 5 ? "offer.cards-seconds-urgent" : "offer.cards-seconds",
-                    Messages.tag("seconds", secs)));
+            besideBar(seconds, match.messages().get(secs <= 5 ? "offer.cards-seconds-urgent" : "offer.cards-seconds",
+                    Messages.tag("seconds", secs)), true, true);
         }
     }
 
@@ -347,7 +374,8 @@ public final class OfferCards {
 
     private void light(int i, boolean lit) {
         frames[i].display.text(CardGlyphs.frame(offer.tier(), lit));
-        footers[i].display.text(footer(i, lit));
+        footers[i].display.text(CardGlyphs.key(i + 1, lit));
+        rerollMarks[i].display.text(rerollMark(lit));
     }
 
     /** Card {@code index} was redrawn (the offer holds the new card): it flips out and back with its new face. */
@@ -423,6 +451,7 @@ public final class OfferCards {
                 shown.set(i, card);
                 icons[i].display.text(icon(card));
                 names[i].display.text(name(card));
+                names[i].unit = nameUnit(card);
                 describe(i, card);
             }
         }
