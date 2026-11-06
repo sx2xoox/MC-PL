@@ -865,6 +865,10 @@ public final class BotManager implements Listener {
                 && event instanceof EntityDamageByEntityEvent byEntity && bot.block(host.clock(), byEntity.getDamager())) {
             event.setCancelled(true);
         }
+        if (bot != null && event.getCause() == EntityDamageEvent.DamageCause.PROJECTILE
+                && bot.blockArrow(host.clock(), attackerBody(event))) {
+            event.setCancelled(true);
+        }
     }
 
     /** The living body that dealt {@code event} (the shooter of a projectile), or null. */

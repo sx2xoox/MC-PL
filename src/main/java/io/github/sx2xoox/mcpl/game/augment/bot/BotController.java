@@ -73,6 +73,22 @@ public final class BotController {
     static final double DODGE_MIN = 7;
     static final int DODGE_TICKS = 24;
     static final double DODGE_STEP = 3;
+    /** Ticks between two looks at how to deal with a perched enemy. */
+    static final int PERCH_REPLAN = 10;
+    /** Off a pillar, an enemy up high counts as out of reach only this close (horizontally). */
+    static final double PERCH_NEAR = 8;
+    /** Blocks from its spot under a perched enemy within which it stops zig-zagging and goes straight in. */
+    static final double PERCH_DODGE_UNTIL = 5;
+    /** How far out (horizontally) it shoots back at an enemy on a pillar. */
+    static final double PERCH_SHOOT_DISTANCE = 9;
+    /** How far out it waits, out of their sight, for a perched enemy it cannot answer to come down. */
+    static final double PERCH_COVER_DISTANCE = 24;
+    /** Blocks it keeps away from an enemy holding a lava bucket while its sword recharges. */
+    static final double LAVA_SPACING = 5.5;
+    /** How close an enemy must be to have poured the lava it stands in (a bucket's reach and a step). */
+    static final double POUR_REACH = 6;
+    /** How long it keeps out of reach of an enemy who poured lava on it. */
+    static final int POURER_TICKS = 20 * 20;
     /** Hit and back: how far beyond its reach it waits while recharging, and how many ticks before the charge is full
      * it steps in again (a sprint step covers about a block). */
     static final double SPACE_OUT = 0.8;
@@ -303,6 +319,33 @@ public final class BotController {
     /** The pit cell it fills under itself once it has jumped (climbing out of a trap pit). */
     private int @Nullable [] pitCell;
     private long pitSince;
+    /** Its answer to an enemy out of its sword's reach up high ({@link Perch}), re-planned every few ticks. */
+    private Perch.@Nullable Plan perch;
+    private @Nullable UUID perchFor;
+    private long perchAt;
+    /** When the block under a perched enemy's feet breaks (it is "mining" it), or -1. */
+    private long chopAt = -1;
+    /** The cell of its own pillar it fills once it has jumped (climbing up beside a perched enemy). */
+    private int @Nullable [] climbCell;
+    private long climbSince;
+    /** Answers to perched enemies by kind, and blocks broken from under them (for tests and the real-server check). */
+    private final Map<Perch.Response, Integer> perchAnswers = new java.util.EnumMap<>(Perch.Response.class);
+    private int chops;
+    /** The cell it heads for out of lava, fire or magma, and until when that holds. */
+    private int @Nullable [] escapeCell;
+    private long escapeUntil;
+    /** What it is escaping ("lava", "fire", "hurt"), for the log. */
+    private String escapeWhy = "lava";
+    /** Times it got out of lava, fire or the like, and fights it moved away from lava first. */
+    private int dangerEscapes;
+    private int lavaSidesteps;
+    private int arrowsBlocked;
+    /** The spot away from lava it fights from, and until when. */
+    private @Nullable Location lavaClear;
+    private long lavaCheckAt;
+    /** The enemy that poured lava on it, and until when it keeps out of their bucket's reach. */
+    private @Nullable UUID pourer;
+    private long pourerUntil;
 
     BotController(UUID id, String name, BotDifficulty difficulty, BotManager manager, BotHost host, BotProfile profile,
                   Random random, int offset) {
@@ -347,6 +390,26 @@ public final class BotController {
     /** Times it got itself out of powder snow. */
     public int snowEscapes() {
         return snowEscapes;
+    }
+
+    /** Answers to perched enemies so far, by kind. */
+    public Map<Perch.Response, Integer> perchAnswers() {
+        return perchAnswers;
+    }
+
+    /** Blocks broken from under perched enemies. */
+    public int chops() {
+        return chops;
+    }
+
+    /** Times it stepped out of lava, fire or the like. */
+    public int dangerEscapes() {
+        return dangerEscapes;
+    }
+
+    /** Fights it first moved away from nearby lava for. */
+    public int lavaSidesteps() {
+        return lavaSidesteps;
     }
 
     /** True while it digs, climbs or bridges its way out of a spot the pathfinder cannot leave. */
@@ -483,6 +546,8 @@ public final class BotController {
                 escapeSnow(now, b); // it freezes in there: out first
             } else if (inTrapPit(b)) {
                 climbOutOfPit(now, b); // a trapper's hidden pit: out of it first
+            } else if (!legacy && inDanger(now, b)) {
+                fleeDanger(now, b); // lava, fire, magma: out of it before anything else
             } else {
                 act(now, b);
                 progress(now, b);
@@ -592,6 +657,130 @@ public final class BotController {
         if (legs.isOnGround() || Hazards.inPowderSnow(at)) {
             legs.setVelocity(legs.getVelocity().setY(0.42));
         }
+    }
+
+    /**
+     * True while its feet are somewhere that hurts ({@link Danger}: lava or fire in or under them, magma, a berry bush)
+     * (in the fight; while farming lava and fire only) or it burns with water a few steps away, and until it has reached
+     * the way out it picked.
+     */
+    private boolean inDanger(long now, BotBody b) {
+        Location at = b.legs().getLocation();
+        if (!at.getWorld().equals(host.world())) {
+            return false;
+        }
+        if (escapeCell != null && now < escapeUntil) {
+            return true;
+        }
+        escapeCell = null;
+        Hazards.WorldGrid grid = new Hazards.WorldGrid(at.getWorld());
+        boolean lava = inLava(b.legs());
+        Danger.Level harm = Danger.harm(grid, at.getBlockX(), at.getBlockY(), at.getBlockZ());
+        // while farming only lava and fire count (a berry bush or magma by its base is no reason to drop the build)
+        if (lava || harm == Danger.Level.BURN || harm == Danger.Level.HURT && host.fight()) {
+            escapeWhy = lava ? "lava" : harm == Danger.Level.BURN ? "fire" : "hurt";
+            if (lava && (pourer == null || now >= pourerUntil)) {
+                suspectPourer(now, at);
+            }
+            return true;
+        }
+        if (host.fight() && b.body().getFireTicks() > 20 && !b.body().isInWater() && (now + offset) % 10 == 0) {
+            // burning: water within a few steps puts the fire out (a player jumps into the lake)
+            int[] wet = Danger.escape(grid, at.getBlockX(), at.getBlockY(), at.getBlockZ(), 5, true);
+            if (wet != null && grid.liquid(wet[0], wet[1], wet[2])) {
+                escapeCell = wet;
+                escapeUntil = now + 40;
+                dangerEscapes++;
+                manager.stats().hazard(id, "water");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Lava on its feet with an enemy within a bucket's reach: that enemy poured it. It keeps out of their reach for
+     * {@link #POURER_TICKS} (they refill the bucket and pour again), whatever they hold meanwhile.
+     */
+    private void suspectPourer(long now, Location at) {
+        Seen nearest = null;
+        for (Seen seen : memory.values()) {
+            if (now - seen.tick() <= 40 && seen.entity().getWorld() == at.getWorld()
+                    && seen.entity().getLocation().distance(at) <= POUR_REACH
+                    && (nearest == null || seen.distance() < nearest.distance())) {
+                nearest = seen;
+            }
+        }
+        if (nearest != null) {
+            pourer = nearest.entity().getUniqueId();
+            pourerUntil = now + POURER_TICKS;
+            manager.stats().hazard(id, "pourer");
+        }
+    }
+
+    /** Its feet or head in lava (by the blocks: what the legs stand in). */
+    private static boolean inLava(Entity legs) {
+        Block feet = legs.getLocation().getBlock();
+        return feet.getType() == Material.LAVA || feet.getRelative(0, 1, 0).getType() == Material.LAVA;
+    }
+
+    /**
+     * Gets out of lava, fire or a berry bush at once: to the nearest safe cell ({@link Danger#escape}, water first while
+     * burning), steering the legs straight there while in a liquid (the pathfinder will not plan a way out of lava)
+     * and jumping up out of it, else walking there. It still hits whoever is in reach and eats when low.
+     */
+    void fleeDanger(long now, BotBody b) {
+        WanderingTrader legs = b.legs();
+        Location at = legs.getLocation();
+        Mannequin self = b.body();
+        int[] cell = escapeCell;
+        if (cell == null) {
+            Hazards.WorldGrid grid = new Hazards.WorldGrid(at.getWorld());
+            cell = Danger.escape(grid, at.getBlockX(), at.getBlockY(), at.getBlockZ(), 6,
+                    self.getFireTicks() > 0 && !inLava(legs));
+            if (cell == null) {
+                cell = Danger.escape(grid, at.getBlockX(), at.getBlockY(), at.getBlockZ(), 10, false);
+            }
+            if (cell == null) {
+                if (legs.isOnGround() || inLava(legs)) {
+                    legs.setVelocity(legs.getVelocity().setY(0.42)); // nowhere safe in sight: up and out at least
+                }
+                return;
+            }
+            escapeCell = cell;
+            escapeUntil = now + 30;
+            dangerEscapes++;
+            manager.stats().hazard(id, "escape-" + escapeWhy);
+        }
+        double dx = cell[0] + 0.5 - at.getX();
+        double dz = cell[2] + 0.5 - at.getZ();
+        if (at.getBlockX() == cell[0] && at.getBlockZ() == cell[2] && Math.abs(at.getY() - cell[1]) < 1.2
+                && dx * dx + dz * dz < 0.12) {
+            escapeCell = null; // out
+            return;
+        }
+        boolean direct = inLava(legs) || legs.isInWater() || Math.abs(dx) + Math.abs(dz) <= 2.5;
+        if (direct) {
+            if (legs.getPathfinder().hasPath()) {
+                legs.getPathfinder().stopPathfinding();
+            }
+            goal = null;
+            double length = Math.hypot(dx, dz);
+            double speed = inLava(legs) ? 0.3 : 0.24;
+            Vector push = length < 1.0E-3 ? new Vector() : new Vector(dx / length * speed, 0, dz / length * speed);
+            double vy = legs.getVelocity().getY();
+            if (inLava(legs) || legs.isInWater()) {
+                vy = Math.max(vy, cell[1] >= at.getBlockY() ? 0.34 : 0.1); // swim up the bank
+            } else if (legs.isOnGround() && cell[1] > at.getBlockY()) {
+                vy = 0.42;
+            }
+            legs.setVelocity(push.setY(vy));
+            faceAlong(new double[] {dx, 0, dz});
+        } else {
+            goTo(now, new Location(at.getWorld(), cell[0] + 0.5, cell[1], cell[2] + 0.5), Gait.RUSH);
+        }
+        eatIfLow(now, self);
+        swingAtAnyone(now, self);
     }
 
     /** Its feet are down one of the trappers' hidden pits (a pressure plate is a trap you only step on). */
@@ -1133,7 +1322,11 @@ public final class BotController {
                     think(now);
                     return;
                 }
-                sneak = engage(now, b, self, target, where(d.target(), target, now));
+                Location at = where(d.target(), target, now);
+                if (answerPerch(now, b, self, target, at)) {
+                    break; // up on a pillar: chop it, climb, shoot back or take cover
+                }
+                sneak = engage(now, b, self, target, at);
             }
             case KITE -> {
                 if (target == null) {
@@ -1141,6 +1334,9 @@ public final class BotController {
                     return;
                 }
                 Location at = where(d.target(), target, now);
+                if (answerPerch(now, b, self, target, at)) {
+                    break;
+                }
                 kiteMove(now, self, at, target);
                 face(self, target.getEyeLocation());
                 if (!shoot(now, b, self, target)) {
@@ -1716,7 +1912,10 @@ public final class BotController {
         if (now >= dodgeCheckAt) {
             dodgeCheckAt = now + profile.reactionTicks() + 2;
             for (Seen seen : memory.values()) {
-                if (seen.inSight() && now - seen.tick() <= 5 && seen.distance() > DODGE_MIN
+                // a shooter up on a pillar is dodged however close: it shoots straight down
+                boolean above = !legacy && seen.entity().getLocation().getY() - self.getLocation().getY()
+                        >= Perch.HIGH;
+                if (seen.inSight() && now - seen.tick() <= 5 && (seen.distance() > DODGE_MIN || above)
                         && manager.aimingAt(seen.entity(), self)) {
                     if (random.nextDouble() < profile.dodgeChance()) {
                         dodgeFrom = seen.entity();
@@ -2058,6 +2257,25 @@ public final class BotController {
             goTo(now, behind, distance < 8 ? Gait.SNEAK : Gait.WALK);
             return true;
         }
+        if (clearOfLava(now, self, target)) {
+            return false; // out of knockback range of the lava first
+        }
+        boolean pours = !legacy && (holdsLava(target) || target.getUniqueId().equals(pourer) && now < pourerUntil);
+        if (pours && distance < LAVA_SPACING + 2 && loadout.bow() && arrows() > 0 && brain.bowRange() > 0) {
+            // a bucket of lava in their hand (or they just poured one on it): a bow fight from beyond its reach
+            goTo(now, dodge(now, self, away(self.getLocation(), at, LAVA_SPACING + 3)),
+                    distance < LAVA_SPACING ? Gait.SPRINT : Gait.WALK);
+            face(self, target.getEyeLocation());
+            if (!shoot(now, b, self, target)) {
+                tryMelee(now, self, target);
+            }
+            return false;
+        }
+        if (pours && distance < LAVA_SPACING && distance > REACH + 0.3 && nextSwing - now > 2) {
+            // no bow: out of the bucket's reach while the sword recharges, in again to strike
+            goTo(now, dodge(now, self, away(self.getLocation(), at, LAVA_SPACING + 1.5)), Gait.SPRINT);
+            return false;
+        }
         BotPersonality who = traits.personality();
         throwWeb(now, self, target);
         if (distance > REACH + 0.6) {
@@ -2112,6 +2330,291 @@ public final class BotController {
         }
         eatIfLow(now, self);
         return false;
+    }
+
+    // =================================================================== perched enemies and lava
+
+    /**
+     * Its answer to {@code target} standing up out of its sword's reach ({@link Perch}): a player who pillars up to
+     * shoot down. It breaks the block under their feet (from the ground, or after pillaring up beside them), shoots
+     * back from a few blocks off, or gets out of their line of fire, instead of standing under them. False if the
+     * target is not perched (the fight goes on as usual).
+     */
+    private boolean answerPerch(long now, BotBody b, Mannequin self, LivingEntity target, Location at) {
+        WanderingTrader legs = b.legs();
+        Location me = legs.getLocation();
+        if (legacy || at.getWorld() != me.getWorld() || !me.getWorld().equals(host.world())) {
+            return false;
+        }
+        double dy = at.getY() - me.getY();
+        Perch.Plan plan = perch;
+        int[] base = plan == null ? null : plan.stand();
+        boolean climbing = climbCell != null || plan != null && plan.response() == Perch.Response.CLIMB
+                && base != null && me.getY() > base[1] + 0.5;
+        if (dy < Perch.HIGH && !climbing) {
+            perch = null;
+            chopAt = -1;
+            return false;
+        }
+        if (plan == null || now >= perchAt + PERCH_REPLAN || !target.getUniqueId().equals(perchFor)) {
+            Hazards.WorldGrid grid = new Hazards.WorldGrid(me.getWorld());
+            int tx = at.getBlockX();
+            int ty = (int) Math.floor(at.getY() + 0.01);
+            int tz = at.getBlockZ();
+            int column = Perch.column(grid, tx, ty, tz);
+            int[] oldChop = plan == null ? null : plan.chop();
+            Perch.Plan next;
+            if (climbing && plan != null && plan.response() == Perch.Response.CLIMB && oldChop != null
+                    && oldChop[0] == tx && oldChop[1] == ty - 1 && oldChop[2] == tz) {
+                next = plan; // on its way up beside the same column
+            } else if (column < 2 && Math.hypot(at.getX() - me.getX(), at.getZ() - me.getZ()) > PERCH_NEAR
+                    || !Perch.perched(dy, column, column < 2 && reachable(legs, at))) {
+                // far off on a hill: the usual chase (the path check costs, and height matters only close by)
+                next = Perch.Plan.NONE;
+            } else {
+                int arrows = loadout.bow() && brain.bowRange() > 0 ? arrows() : 0;
+                next = Perch.plan(grid, me.getBlockX(), me.getBlockY(), me.getBlockZ(), tx, ty, tz, arrows,
+                        Math.max(0, blocks() - spareBlocks()));
+            }
+            if (plan == null || plan.response() != next.response()) {
+                perchAnswers.merge(next.response(), 1, Integer::sum);
+                if (next.response() != Perch.Response.NONE) {
+                    manager.stats().hazard(id, "perch-" + next.response().name().toLowerCase(java.util.Locale.ROOT));
+                }
+                chopAt = -1;
+            }
+            perch = next;
+            perchFor = target.getUniqueId();
+            perchAt = now;
+            plan = next;
+        }
+        if (plan.response() == Perch.Response.NONE) {
+            return false;
+        }
+        if (recovering()) {
+            endRecovery(now); // its own way up is the answer below, not the stuck walker's
+        }
+        switch (plan.response()) {
+            case CHOP -> chopUnder(now, b, self, target, plan);
+            case CLIMB -> climbBeside(now, b, self, target, plan);
+            case SHOOT -> {
+                double[] spot = Perch.shootSpot(me.getX(), me.getZ(), at.getX(), at.getZ(), PERCH_SHOOT_DISTANCE);
+                Location stand = ground(me.getWorld(), spot[0], spot[1]);
+                double off = Math.hypot(me.getX() - at.getX(), me.getZ() - at.getZ());
+                if (Math.abs(off - PERCH_SHOOT_DISTANCE) > 3 || !self.hasLineOfSight(target)) {
+                    goTo(now, dodge(now, self, insideSafe(stand) ? stand : me), off < 4 ? Gait.RUSH : Gait.SPRINT);
+                } else {
+                    Location step = dodge(now, self, me);
+                    if (step != me) {
+                        goTo(now, step, Gait.WALK);
+                    } else {
+                        stop();
+                    }
+                }
+                face(self, target.getEyeLocation());
+                if (!shoot(now, b, self, target)) {
+                    shieldUp(now, self, target);
+                }
+            }
+            case COVER -> {
+                if (drawStart >= 0) {
+                    drawStart = -1;
+                    b.hold(false, loadout.sword());
+                }
+                double off = Math.hypot(me.getX() - at.getX(), me.getZ() - at.getZ());
+                if (off < PERCH_COVER_DISTANCE || self.hasLineOfSight(target)) {
+                    goTo(now, dodge(now, self, away(me, at, PERCH_COVER_DISTANCE + 4)), Gait.SPRINT);
+                } else {
+                    stop(); // out of their sight: wait for them to come down
+                    face(self, target.getEyeLocation());
+                }
+            }
+            default -> {
+                return false;
+            }
+        }
+        eatIfLow(now, self);
+        return true;
+    }
+
+    /** True if the pathfinder can walk the legs to {@code at} (checked only for enemies up high). */
+    private static boolean reachable(WanderingTrader legs, Location at) {
+        var path = legs.getPathfinder().findPath(at);
+        return path != null && path.canReachFinalPoint();
+    }
+
+    /**
+     * Walks to the spot beside a perched enemy's column ({@link Perch.Response#CHOP}) and breaks the block under
+     * their feet after the time a player takes to mine it ({@link #mineTicks}), its shield up while it mines.
+     */
+    private void chopUnder(long now, BotBody b, Mannequin self, LivingEntity target, Perch.Plan plan) {
+        int[] stand = plan.stand();
+        int[] chop = plan.chop();
+        if (stand == null || chop == null) {
+            return;
+        }
+        Location me = b.legs().getLocation();
+        boolean there = Math.abs(me.getX() - (stand[0] + 0.5)) < 0.8 && Math.abs(me.getZ() - (stand[2] + 0.5)) < 0.8
+                && Math.abs(me.getY() - stand[1]) < 1.1;
+        if (!there) {
+            chopAt = -1;
+            goTo(now, approach(now, self, new Location(me.getWorld(), stand[0] + 0.5, stand[1], stand[2] + 0.5)),
+                    Gait.RUSH);
+            face(self, target.getEyeLocation());
+            return;
+        }
+        stop();
+        mine(now, self, target, chop);
+    }
+
+    /**
+     * Pillars up beside a perched enemy's column ({@link Perch.Response#CLIMB}): from the foot cell it jumps and puts a
+     * block under itself, again, until the block under their feet is within reach, then breaks it.
+     */
+    private void climbBeside(long now, BotBody b, Mannequin self, LivingEntity target, Perch.Plan plan) {
+        int[] foot = plan.stand();
+        int[] chop = plan.chop();
+        if (foot == null || chop == null) {
+            return;
+        }
+        WanderingTrader legs = b.legs();
+        Location me = legs.getLocation();
+        int[] cell = climbCell;
+        if (cell != null) {
+            // jumped: the block goes under the feet once they are above it
+            if (me.getY() >= cell[1] + 1.05 || now - climbSince > 14) {
+                climbCell = null;
+                if (blocks() <= 0 || !placeAny(self, cell[0], cell[1], cell[2], material(BasePlanner.Part.WALL))) {
+                    perch = null; // out of blocks or the cell is taken: think again
+                }
+            }
+            return;
+        }
+        boolean onColumn = Math.abs(me.getX() - (foot[0] + 0.5)) < 0.6 && Math.abs(me.getZ() - (foot[2] + 0.5)) < 0.6
+                && me.getY() >= foot[1] - 0.5;
+        if (!onColumn) {
+            chopAt = -1;
+            goTo(now, approach(now, self, new Location(me.getWorld(), foot[0] + 0.5, foot[1], foot[2] + 0.5)),
+                    Gait.RUSH);
+            face(self, target.getEyeLocation());
+            return;
+        }
+        stop();
+        if (Perch.reaches(me.getBlockX(), me.getY(), me.getBlockZ(), chop)) {
+            mine(now, self, target, chop);
+            return;
+        }
+        if (!legs.isOnGround() || blocks() <= 0) {
+            return;
+        }
+        int[] next = {foot[0], me.getBlockY(), foot[2]};
+        if (self.getWorld().getBlockAt(next[0], next[1] + 2, next[2]).getType().isSolid()) {
+            perch = null; // no room above: think again
+            return;
+        }
+        // jump and put a block where the feet were
+        climbCell = next;
+        climbSince = now;
+        legs.setVelocity(new Vector(0, 0.42, 0));
+        face(self, new Location(me.getWorld(), next[0] + 0.5, next[1] - 0.5, next[2] + 0.5));
+    }
+
+    /**
+     * The way to a spot under a perched enemy: zig-zagging out of their line of fire while still well off, straight in
+     * for the last few blocks (a zig-zag there never arrives, and a shot from above is hard to dodge anyway).
+     */
+    private Location approach(long now, Mannequin self, Location spot) {
+        Location me = self.getLocation();
+        double flat = Math.hypot(spot.getX() - me.getX(), spot.getZ() - me.getZ());
+        return flat > PERCH_DODGE_UNTIL ? dodge(now, self, spot) : spot;
+    }
+
+    /** Mines {@code block} (in reach) like a player: looking at it for {@link #mineTicks}, then it breaks. */
+    private void mine(long now, Mannequin self, LivingEntity target, int[] block) {
+        Block cell = self.getWorld().getBlockAt(block[0], block[1], block[2]);
+        if (!cell.getType().isSolid() || Hazards.UNBREAKABLE.contains(cell.getType())
+                || !host.arena().contains(cell.getLocation().add(0.5, 0, 0.5))) {
+            perch = null;
+            chopAt = -1;
+            return;
+        }
+        face(self, cell.getLocation().add(0.5, 0.5, 0.5));
+        if (chopAt < 0) {
+            chopAt = now + mineTicks();
+            shieldUp(now, self, target);
+            return;
+        }
+        if (now < chopAt) {
+            if ((now & 3) == 0) {
+                self.swingMainHand();
+            }
+            shieldUp(now, self, target);
+            return;
+        }
+        if (self.isHandRaised()) {
+            self.clearActiveItem();
+        }
+        dig(cell);
+        chops++;
+        manager.stats().hazard(id, "chop");
+        chopAt = -1;
+        perch = null;
+    }
+
+    /** Ticks a player takes to break a block with its tools (the better, the quicker; dirt, stone with a pick). */
+    int mineTicks() {
+        return digTicks() * 2;
+    }
+
+    /** Holds its shield up towards {@code target} while it draws a bow on it (blocks the arrow; see {@link #block}). */
+    private void shieldUp(long now, Mannequin self, LivingEntity target) {
+        if (!loadout.shield() || drawStart >= 0 || !manager.aimingAt(target, self)) {
+            return;
+        }
+        if (!self.isHandRaised()) {
+            self.startUsingItem(EquipmentSlot.OFF_HAND);
+        }
+        shieldUpUntil = now + 10;
+    }
+
+    /**
+     * Lava next to the fight: a knockback (or a step of flowing lava) would put it in. It first moves to the nearest
+     * spot with no lava within {@link Danger#MARGIN} blocks and fights from there; true while it does.
+     */
+    private boolean clearOfLava(long now, Mannequin self, LivingEntity target) {
+        if (legacy) {
+            return false;
+        }
+        Location me = self.getLocation();
+        if (now >= lavaCheckAt) {
+            lavaCheckAt = now + 4;
+            Hazards.WorldGrid grid = new Hazards.WorldGrid(me.getWorld());
+            if (!Danger.lavaWithin(grid, me.getBlockX(), me.getBlockY(), me.getBlockZ(), Danger.MARGIN)) {
+                lavaClear = null;
+            } else if (lavaClear == null || lavaClear.distanceSquared(me) < 0.5) {
+                int[] cell = Danger.escape(grid, me.getBlockX(), me.getBlockY(), me.getBlockZ(), 6, false);
+                lavaClear = cell == null ? null : new Location(me.getWorld(), cell[0] + 0.5, cell[1], cell[2] + 0.5);
+                if (lavaClear != null) {
+                    lavaSidesteps++;
+                    manager.stats().hazard(id, "lavaStep");
+                }
+            }
+        }
+        Location clear = lavaClear;
+        if (clear == null) {
+            return false;
+        }
+        goTo(now, clear, Gait.SPRINT);
+        face(self, target.getEyeLocation());
+        tryMelee(now, self, target);
+        return true;
+    }
+
+    /** True if {@code entity} holds a lava bucket (about to pour it). */
+    static boolean holdsLava(LivingEntity entity) {
+        var equipment = entity.getEquipment();
+        return equipment != null && (equipment.getItemInMainHand().getType() == Material.LAVA_BUCKET
+                || equipment.getItemInOffHand().getType() == Material.LAVA_BUCKET);
     }
 
     // =================================================================== fighting
@@ -2305,6 +2808,34 @@ public final class BotController {
         nextShieldAt = now + 30;
         b.body().getWorld().playSound(b.body().getLocation(), Sound.ITEM_SHIELD_BLOCK, 1f, 1f);
         return true;
+    }
+
+    /**
+     * Called before an arrow lands: true if its shield, held up towards the shooter (a player's shield blocks what
+     * comes from in front, whatever the angle), took it.
+     */
+    boolean blockArrow(long now, @Nullable Entity shooter) {
+        BotBody b = body;
+        if (legacy || b == null || !loadout.shield() || shooter == null || !b.body().isHandRaised()
+                || now > shieldUpUntil) {
+            return false;
+        }
+        Mannequin self = b.body();
+        Vector facing = self.getEyeLocation().getDirection();
+        Vector to = shooter.getLocation().add(0, 1.5, 0).toVector().subtract(self.getEyeLocation().toVector());
+        if (facing.lengthSquared() < 1.0E-6 || to.lengthSquared() < 1.0E-6
+                || facing.normalize().dot(to.normalize()) < 0.3) {
+            return false;
+        }
+        arrowsBlocked++;
+        manager.stats().hazard(id, "shieldArrow");
+        self.getWorld().playSound(self.getLocation(), Sound.ITEM_SHIELD_BLOCK, 1f, 1f);
+        return true;
+    }
+
+    /** Arrows its shield took. */
+    public int arrowsBlocked() {
+        return arrowsBlocked;
     }
 
     // =================================================================== building

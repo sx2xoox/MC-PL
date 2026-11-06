@@ -91,7 +91,7 @@ public final class Hazards {
     }
 
     /** {@link Recovery.Grid} over a Bukkit world. */
-    record WorldGrid(World world) implements Recovery.Grid {
+    record WorldGrid(World world) implements Recovery.Grid, Danger.Fires {
         @Override
         public boolean solid(int x, int y, int z) {
             return world.getBlockAt(x, y, z).getType().isSolid() && !hazard(x, y, z);
@@ -120,6 +120,24 @@ public final class Hazards {
         public boolean hazard(int x, int y, int z) {
             Material type = world.getBlockAt(x, y, z).getType();
             return HAZARDS.contains(type) && type != Material.LAVA;
+        }
+
+        @Override
+        public boolean fire(int x, int y, int z) {
+            Material type = world.getBlockAt(x, y, z).getType();
+            return type == Material.FIRE || type == Material.SOUL_FIRE || type == Material.CAMPFIRE
+                    || type == Material.SOUL_CAMPFIRE;
+        }
+
+        @Override
+        public boolean hot(int x, int y, int z) {
+            return world.getBlockAt(x, y, z).getType() == Material.MAGMA_BLOCK;
+        }
+
+        @Override
+        public boolean prickly(int x, int y, int z) {
+            Material type = world.getBlockAt(x, y, z).getType();
+            return type == Material.SWEET_BERRY_BUSH;
         }
     }
 }

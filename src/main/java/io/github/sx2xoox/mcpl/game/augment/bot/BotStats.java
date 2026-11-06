@@ -38,6 +38,8 @@ public final class BotStats {
         /** The brain it played in an A/B measurement ("new", "legacy"), empty otherwise. */
         String variant = "";
         final Map<Behaviour, Integer> behaviours = new EnumMap<>(Behaviour.class);
+        /** Answers to dangers: lava escapes, pillar chops, perch answers, arrows on its shield (by name). */
+        final Map<String, Integer> hazards = new TreeMap<>();
 
         Line(String name, String difficulty, String personality) {
             this.name = name;
@@ -63,6 +65,14 @@ public final class BotStats {
         Line l = lines.get(key);
         if (l != null) {
             l.variant = variant;
+        }
+    }
+
+    /** {@code key} answered a danger ({@code what}: "escape", "chop", "perch-SHOOT", ...). */
+    public void hazard(Object key, String what) {
+        Line l = lines.get(key);
+        if (l != null) {
+            l.hazards.merge(what, 1, Integer::sum);
         }
     }
 
@@ -162,9 +172,10 @@ public final class BotStats {
             out.add(e.getKey() + ": " + summary(e.getValue()));
         }
         for (Line l : lines.values()) {
-            out.add(String.format(Locale.ROOT, "%s [%s·%s] place=%d kills=%d %s death=%s behaviours=%s%s", l.name,
+            out.add(String.format(Locale.ROOT, "%s [%s·%s] place=%d kills=%d %s death=%s behaviours=%s%s%s", l.name,
                     l.difficulty, l.personality, l.place, l.kills, numbers(List.of(l)), l.death.isEmpty() ? "-"
-                            : l.death, l.behaviours, l.variant.isEmpty() ? "" : " brain=" + l.variant));
+                            : l.death, l.behaviours, l.hazards.isEmpty() ? "" : " hazards=" + l.hazards,
+                    l.variant.isEmpty() ? "" : " brain=" + l.variant));
         }
         return out;
     }
