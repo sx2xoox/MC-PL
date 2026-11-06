@@ -1,0 +1,224 @@
+{
+  "model": {
+    "type": "minecraft:select",
+    "property": "minecraft:custom_model_data",
+    "index": 0,
+    "cases": [
+      {
+        "when": "toy_armor/blue_0",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_blue_0"
+        }
+      },
+      {
+        "when": "toy_armor/blue_1",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_blue_1"
+        }
+      },
+      {
+        "when": "toy_armor/blue_2",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_blue_2"
+        }
+      },
+      {
+        "when": "toy_armor/blue_3",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_blue_3"
+        }
+      },
+      {
+        "when": "toy_armor/red_0",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_red_0"
+        }
+      },
+      {
+        "when": "toy_armor/red_1",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_red_1"
+        }
+      },
+      {
+        "when": "toy_armor/red_2",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_red_2"
+        }
+      },
+      {
+        "when": "toy_armor/red_3",
+        "model": {
+          "type": "minecraft:model",
+          "model": "mcpl:item/toy_armor/helmet_red_3"
+        }
+      }
+    ],
+    "fallback": {
+      "type": "minecraft:select",
+      "cases": [
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_quartz_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:quartz"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_iron_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:iron"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_netherite_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:netherite"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_redstone_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:redstone"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_copper_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:copper"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_gold_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:gold"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_emerald_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:emerald"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_diamond_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:diamond"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_lapis_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:lapis"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_amethyst_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:amethyst"
+        },
+        {
+          "model": {
+            "type": "minecraft:model",
+            "model": "minecraft:item/leather_helmet_resin_trim",
+            "tints": [
+              {
+                "type": "minecraft:dye",
+                "default": -6265536
+              }
+            ]
+          },
+          "when": "minecraft:resin"
+        }
+      ],
+      "fallback": {
+        "type": "minecraft:model",
+        "model": "minecraft:item/leather_helmet",
+        "tints": [
+          {
+            "type": "minecraft:dye",
+            "default": -6265536
+          }
+        ]
+      },
+      "property": "minecraft:trim_material"
+    }
+  }
+}

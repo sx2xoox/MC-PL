@@ -1,0 +1,302 @@
+package io.github.sx2xoox.mcpl.game.augment.runtime;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.function.Function;
+
+import io.github.sx2xoox.mcpl.core.ui.Messages;
+import io.github.sx2xoox.mcpl.game.augment.api.Augment;
+import io.github.sx2xoox.mcpl.game.augment.api.AugmentContext;
+import io.github.sx2xoox.mcpl.game.augment.api.AugmentInfo;
+import io.github.sx2xoox.mcpl.game.augment.api.AugmentTier;
+import io.github.sx2xoox.mcpl.game.augment.api.Params;
+import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Item;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlotGroup;
+import org.bukkit.inventory.ItemStack;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * One augment owned by one player: the {@link AugmentContext} handed to it, and everything it created (attribute
+ * modifiers, tracked entities), removed together in {@link #remove()}.
+ */
+final class AugmentSlot implements AugmentContext {
+
+    private final AugmentMatch match;
+    private final UUID owner;
+    private final AugmentInfo info;
+    private final Params params;
+    private final Augment augment;
+    private final Map<Attribute, NamespacedKey> modifiers = new LinkedHashMap<>();
+    private final List<Entity> entities = new ArrayList<>();
+    private boolean removed;
+
+    AugmentSlot(AugmentMatch match, UUID owner, AugmentInfo info, Params params,
+                Function<AugmentContext, Augment> factory) {
+        this.match = match;
+        this.owner = owner;
+        this.info = info;
+        this.params = params;
+        this.augment = factory.apply(this);
+    }
+
+    Augment augment() {
+        return augment;
+    }
+
+    boolean isRemoved() {
+        return removed;
+    }
+
+    /** Calls {@code onRemove} (owner online), then removes its modifiers and entities. Idempotent. */
+    void remove() {
+        if (removed) {
+            return;
+        }
+        removed = true;
+        LivingEntity player = match.body(owner);
+        if (player == null && match.isBotId(owner)) {
+            player = deadBotBody();
+        }
+        if (player != null) {
+            // an offline owner is restored from their snapshot when they come back (plugin modifiers stripped)
+            try {
+                augment.onRemove();
+            } catch (RuntimeException e) {
+                match.log("onRemove of " + info.id(), e);
+            }
+            for (Map.Entry<Attribute, NamespacedKey> entry : modifiers.entrySet()) {
+                AttributeInstance instance = player.getAttribute(entry.getKey());
+                if (instance != null && instance.getModifier(entry.getValue()) != null) {
+                    instance.removeModifier(entry.getValue());
+                }
+            }
+            clampHealth(player);
+        }
+        modifiers.clear();
+        for (Entity entity : entities) {
+            if (entity.isValid()) {
+                entity.remove();
+            }
+        }
+        entities.clear();
+    }
+
+    // =================================================================== AugmentContext
+
+    @Override
+    public Player player() {
+        if (match.isBotId(owner)) {
+            throw new IllegalStateException(info.id() + " asked for the player of a bot (not forBots)");
+        }
+        Player player = Bukkit.getPlayer(owner);
+        if (player == null) {
+            throw new IllegalStateException("the owner of " + info.id() + " is offline");
+        }
+        return player;
+    }
+
+    @Override
+    public LivingEntity owner() {
+        LivingEntity body = match.body(owner);
+        if (body == null && match.isBotId(owner)) {
+            body = deadBotBody();
+        }
+        if (body == null) {
+            throw new IllegalStateException("the owner of " + info.id() + " is not in play");
+        }
+        return body;
+    }
+
+    @Override
+    public boolean isBot() {
+        return match.isBotId(owner);
+    }
+
+    @Override
+    public boolean practice() {
+        return match.mode() == MatchMode.PRACTICE;
+    }
+
+    @Override
+    public java.util.List<LivingEntity> rivals() {
+        LivingEntity body = owner();
+        return match.rivals(owner, body.getWorld());
+    }
+
+    @Override
+    public AugmentInfo info() {
+        return info;
+    }
+
+    @Override
+    public Params params() {
+        return params;
+    }
+
+    @Override
+    public long tick() {
+        return match.clock();
+    }
+
+    @Override
+    public boolean isEnemy(@Nullable Entity entity) {
+        return match.isEnemy(owner, entity);
+    }
+
+    @Override
+    public boolean pvp() {
+        return match.phase() == MatchPhase.FIGHT;
+    }
+
+    @Override
+    public void addModifier(Attribute attribute, double amount, AttributeModifier.Operation operation) {
+        if (removed || !Double.isFinite(amount)) {
+            return;
+        }
+        LivingEntity player = owner();
+        AttributeInstance instance = player.getAttribute(attribute);
+        if (instance == null) {
+            return;
+        }
+        NamespacedKey key = match.game().hub().key("augment_" + info.id() + "_"
+                + attribute.getKey().getKey().replace('.', '_'));
+        if (instance.getModifier(key) != null) {
+            instance.removeModifier(key);
+        }
+        instance.addModifier(new AttributeModifier(key, amount, operation, EquipmentSlotGroup.ANY));
+        modifiers.put(attribute, key);
+        if (attribute == Attribute.MAX_HEALTH) {
+            clampHealth(player);
+        }
+    }
+
+    /** A bot's body that just died (its augments are removed right after). */
+    private @Nullable LivingEntity deadBotBody() {
+        io.github.sx2xoox.mcpl.game.augment.bot.BotManager bots = match.bots();
+        io.github.sx2xoox.mcpl.game.augment.bot.BotController bot = bots == null ? null : bots.bot(owner);
+        return bot == null || bot.body() == null ? null : bot.body().body();
+    }
+
+    private static void clampHealth(LivingEntity player) {
+        AttributeInstance max = player.getAttribute(Attribute.MAX_HEALTH);
+        if (max != null && !player.isDead() && player.getHealth() > max.getValue()) {
+            player.setHealth(max.getValue());
+        }
+    }
+
+    @Override
+    public void give(ItemStack... items) {
+        if (removed || items.length == 0 || isBot()) {
+            return; // a bot has no inventory
+        }
+        Player player = player();
+        Map<Integer, ItemStack> leftover = player.getInventory().addItem(items);
+        for (ItemStack rest : leftover.values()) {
+            Item dropped = player.getWorld().dropItem(player.getLocation(), rest);
+            dropped.setPickupDelay(0);
+        }
+    }
+
+    @Override
+    public <T extends Entity> T track(T entity) {
+        if (removed) {
+            entity.remove();
+            return entity;
+        }
+        entities.removeIf(e -> !e.isValid());
+        entities.add(entity);
+        return match.session().track(entity);
+    }
+
+    @Override
+    public void actionBar(String key, TagResolver... resolvers) {
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null) {
+            match.messages().actionBar(player, key, resolvers);
+        }
+    }
+
+    @Override
+    public void message(String key, TagResolver... resolvers) {
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null) {
+            match.messages().send(player, key, resolvers);
+        }
+    }
+
+    @Override
+    public void damage(LivingEntity target, double amount) {
+        if (!removed) {
+            match.damage(owner, target, amount);
+        }
+    }
+
+    @Override
+    public <T extends Entity> T summon(T entity) {
+        track(entity);
+        if (!removed) {
+            match.session().combat().registerOwner(entity, owner);
+        }
+        return entity;
+    }
+
+    @Override
+    public void showOnlyToOwner(Entity entity) {
+        entity.setVisibleByDefault(false);
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null) {
+            player.showEntity(match.game().hub().plugin(), entity);
+        }
+    }
+
+    @Override
+    public <T extends Entity> T trackForOwner(T entity) {
+        if (entity.isVisibleByDefault()) {
+            entity.setVisibleByDefault(false);
+        }
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null && !removed) {
+            player.showEntity(match.game().hub().plugin(), entity);
+        }
+        return track(entity);
+    }
+
+    @Override
+    public NamespacedKey key(String name) {
+        return match.game().hub().key("augment_" + info.id() + "_" + name);
+    }
+
+    @Override
+    public void addRerolls(int count) {
+        if (!removed) {
+            match.addRerolls(owner, count);
+        }
+    }
+
+    @Override
+    public void offer(AugmentTier tier) {
+        Player player = Bukkit.getPlayer(owner);
+        if (player != null && !removed) {
+            match.offer(player, tier, match.messages().get("source.augment",
+                    Messages.tag("augment", OfferMenu.name(info))));
+        }
+    }
+
+    @Override
+    public @Nullable AugmentInfo grantRandom(AugmentTier tier) {
+        Player player = Bukkit.getPlayer(owner);
+        return player == null || removed ? null : match.grantRandom(player, tier);
+    }
+}

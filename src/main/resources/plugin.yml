@@ -1,0 +1,14 @@
+name: MCPL
+version: '${version}'
+main: io.github.sx2xoox.mcpl.MCPLPlugin
+api-version: '26.3'
+description: 고전 마인크래프트 미니게임 리마스터 모음 (초능력전쟁 외)
+authors: [sx2xoox]
+website: https://github.com/sx2xoox/MC-PL
+permissions:
+  mcpl.admin:
+    description: 게임 시작/중지, 설정, 경기장 관리
+    default: op
+  mcpl.play:
+    description: 게임 참가/관전, 정보 확인
+    default: true
