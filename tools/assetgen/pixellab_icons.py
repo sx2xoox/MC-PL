@@ -1,14 +1,20 @@
 """Generates the 증강 card icons with PixelLab (https://api.pixellab.ai/v2, pixel art from text).
 
-    python3 -I tools/assetgen/pixellab_icons.py <out dir> [augment id ...] [--seed N]   # raw 64 x 64 candidates
+    python3 -I tools/assetgen/pixellab_icons.py <out dir> [augment id ...] [--seed N]   # raw 32 x 32 candidates
 
 The prompts, the endpoint and every parameter are in tools/assetgen/augment_icons/prompts.json (an icon's own "seed" or
-"params" override the shared ones). Look at each candidate, copy the ones to keep to
-tools/assetgen/augment_icons/<augment id>.png (the raw API output, committed) and record a changed seed or prompt in
-prompts.json. augment_cards.py cleans them up for the font (mcpl_assets/pixel_icons.py: alpha, outline, size).
+"params" override the shared ones). The set's look is the shared "style": a casual mobile-game sticker (chubby rounded
+everyday objects and toys, bright pastels with one vivid accent, thick dark outline, no faces), 32 x 32 so the pixels
+stay big and cute on the card. Each prompt is one plain object read from the augment's name and effect (a toaster for
+자동 제련, a cardboard box for 잠복): no weapons-and-chalices fantasy, no pedestal, ground or lettering.
+
+Look at each candidate, copy the ones to keep to tools/assetgen/augment_icons/<augment id>.png (the raw API output,
+committed) and record a changed seed or prompt in prompts.json. augment_cards.py cleans them up for the font
+(mcpl_assets/pixel_icons.py: alpha, outline, 2x size).
 
 The API key is never in this repository: requests carry `Authorization: Bearer $PIXELLAB_API_KEY` (or a dummy value
-where a proxy adds the real key). Server errors (5xx) are retried; they cost no generation.
+where a proxy adds the real key). Server errors (5xx) and "too many concurrent jobs" (429) are retried; they cost no
+generation.
 """
 
 import base64
@@ -26,7 +32,7 @@ PROMPTS = HERE / "augment_icons" / "prompts.json"
 API = "https://api.pixellab.ai"
 
 
-def post(path, body, tries=5):
+def post(path, body, tries=10):
     key = os.environ.get("PIXELLAB_API_KEY", "dummy")
     for attempt in range(tries):
         req = urllib.request.Request(API + path, data=json.dumps(body).encode(), method="POST",
@@ -35,8 +41,8 @@ def post(path, body, tries=5):
             return json.load(urllib.request.urlopen(req, timeout=300))
         except urllib.error.HTTPError as e:
             detail = e.read()[:300]
-            if e.code >= 500 and attempt < tries - 1:
-                time.sleep(8 * (attempt + 1))
+            if (e.code >= 500 or e.code == 429) and attempt < tries - 1:
+                time.sleep(6 + 4 * attempt)
                 continue
             raise RuntimeError(f"HTTP {e.code}: {detail}") from None
         except (urllib.error.URLError, TimeoutError):

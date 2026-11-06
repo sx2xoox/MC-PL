@@ -1,10 +1,11 @@
-"""The 증강 card icons drawn by PixelLab (tools/assetgen/pixellab_icons.py; raw 64 x 64 outputs committed in
+"""The 증강 card icons drawn by PixelLab (tools/assetgen/pixellab_icons.py; raw 32 x 32 outputs committed in
 tools/assetgen/augment_icons/<augment id>.png), cleaned up the same way for every icon so they read as one set:
 
-- hard alpha (no half-transparent fringe left by the background removal) and no stray specks of a few pixels;
-- cropped to the art and centred on a SIZE x SIZE canvas; art reaching outside the medallion circle (radius RADIUS
-  round the centre) or wider than MAX_SIDE is scaled down (nearest neighbour) to fit;
-- one uniform 1 px dark outline round the silhouette wherever the edge pixel is not dark already.
+- hard alpha (no half-transparent fringe left by the background removal) and no stray single pixels;
+- one uniform 1 px dark outline round the silhouette wherever the edge pixel is not dark already;
+- cropped to the art, shown SCALE times bigger (nearest neighbour, so every art pixel stays a crisp SCALE x SCALE
+  square) and centred on a SIZE x SIZE canvas: 2 canvas pixels per card texel, as tall on the card as before. Art
+  reaching outside the medallion's dark well (radius RADIUS round the centre) is scaled down at its own resolution.
 
 `augment_icons.py` (the painted icons) stays as the fallback for an augment without a PixelLab icon.
 """
@@ -15,11 +16,12 @@ from pathlib import Path
 from PIL import Image
 
 DIR = Path(__file__).resolve().parent.parent / "augment_icons"
-SIZE = 72            # canvas (font glyph PNG, shown 36 font units tall), the size of the painted icons
-RADIUS = 33.5        # the medallion's inner circle, in canvas pixels round the centre
-MAX_SIDE = 66
+SOURCE = 32          # raw PixelLab icon size
+SCALE = 2            # canvas pixels per art pixel
+SIZE = 72            # canvas (font glyph PNG, shown 36 font units tall)
+RADIUS = 39          # the medallion's dark well (19 card texels), in canvas pixels round the centre
 OUTLINE = (18, 14, 26, 255)
-SPECK = 4            # opaque islands smaller than this many pixels are dropped
+SPECK = 2            # opaque islands smaller than this many art pixels are dropped
 
 
 def available():
@@ -71,37 +73,41 @@ def _dark(p):
     return p[3] and 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] < 60
 
 
-def fit(im):
-    """Crops to the art and centres it on the canvas, scaled down only when it leaves the circle (1 px kept for the
-    outline)."""
-    box = im.getbbox()
-    art = im.crop(box)
+def outline(im):
+    """The art cropped with a 1 px margin and a 1 px dark ring outside the silhouette where the silhouette's own edge
+    is not dark (4-neighbourhood)."""
+    l, t, r, b = im.getbbox()
+    src = Image.new("RGBA", (r - l + 2, b - t + 2), (0, 0, 0, 0))
+    src.alpha_composite(im.crop((l, t, r, b)), (1, 1))
+    out = src.copy()
+    sp, dp = src.load(), out.load()
+    w, h = src.size
+    for y in range(h):
+        for x in range(w):
+            if sp[x, y][3]:
+                continue
+            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= nx < w and 0 <= ny < h and sp[nx, ny][3] and not _dark(sp[nx, ny]):
+                    dp[x, y] = OUTLINE
+                    break
+    return out.crop(out.getbbox())
+
+
+def fit(art):
+    """Shows the art SCALE times bigger, centred on the canvas; scaled down at its own resolution only when it would
+    leave the medallion's well."""
     w, h = art.size
     px = art.load()
     far = max(((x + 0.5 - w / 2) ** 2 + (y + 0.5 - h / 2) ** 2) ** 0.5
-              for y in range(h) for x in range(w) if px[x, y][3])
-    k = min(1.0, (RADIUS - 1) / far, (MAX_SIDE - 2) / max(w, h))
+              for y in range(h) for x in range(w) if px[x, y][3]) * SCALE
+    k = min(1.0, RADIUS / far, SIZE / (max(w, h) * SCALE))
     if k < 1.0:
         art = art.resize((max(1, round(w * k)), max(1, round(h * k))), Image.NEAREST)
+    big = art.resize((art.width * SCALE, art.height * SCALE), Image.NEAREST)
     canvas = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    canvas.alpha_composite(art, ((SIZE - art.width) // 2, (SIZE - art.height) // 2))
+    canvas.alpha_composite(big, ((SIZE - big.width) // 2, (SIZE - big.height) // 2))
     return canvas
 
 
-def outline(im):
-    """A 1 px dark ring outside the silhouette where the silhouette's own edge is not dark (4-neighbourhood)."""
-    out = im.copy()
-    src, dst = im.load(), out.load()
-    for y in range(SIZE):
-        for x in range(SIZE):
-            if src[x, y][3]:
-                continue
-            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-                if 0 <= nx < SIZE and 0 <= ny < SIZE and src[nx, ny][3] and not _dark(src[nx, ny]):
-                    dst[x, y] = OUTLINE
-                    break
-    return out
-
-
 def icon(augment_id):
-    return outline(fit(clean(Image.open(DIR / f"{augment_id}.png"))))
+    return fit(outline(clean(Image.open(DIR / f"{augment_id}.png"))))

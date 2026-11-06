@@ -44,7 +44,7 @@ public final class CardGlyphs {
     public static final int FRAME_W = 112;
     public static final int FRAME_H = 160;
     /**
-     * Icon glyph height; its PNG is 72 x 72 (two pixels per font unit): PixelLab pixel art from
+     * Icon glyph height; its PNG is 72 x 72 (two pixels per font unit): 32 x 32 PixelLab pixel art (shown 2x) from
      * tools/assetgen/augment_icons/, cleaned up by tools/assetgen/mcpl_assets/pixel_icons.py.
      */
     public static final int ICON_SIZE = 36;
