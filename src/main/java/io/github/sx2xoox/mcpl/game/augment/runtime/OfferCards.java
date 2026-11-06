@@ -43,15 +43,20 @@ public final class OfferCards {
     // ── layout (same numbers as tools/assetgen/augment_cards.py) ─────────────────────────────────────────
     static final double DEPTH = 0.5;
     static final double SCREEN = 2 * DEPTH * Math.tan(Math.toRadians(35)); // blocks per screen height at DEPTH
-    static final double CARD_H = 0.36;
+    static final double CARD_H = 0.432;
     static final double TX = CARD_H / 144;
     static final double CARD_GAP = 0.035;
     /** The whole set (ribbon .. hints) is centred on the screen, up-down balanced round the cards. */
     static final double CARD_Y = 0.0;
     static final double MAX_ROW = 1.30;
-    static final double NAME_UNIT = 2.3 / 1080;
-    static final double DESC_UNIT = 2.1 / 1080;
-    static final double HINT_UNIT = 1.9 / 1080;
+    static final double NAME_UNIT = 2.8 / 1080;
+    static final double DESC_UNIT = 2.6 / 1080;
+    /** The info line and the seconds: larger, on a dark plate. */
+    static final double INFO_UNIT = 3.0 / 1080;
+    /** The controls: big, on a dark plate (they must read at a glance while playing). */
+    static final double HINT_UNIT = 3.8 / 1080;
+    /** The dark plate behind the info, seconds and controls lines. */
+    static final Color PLATE = Color.fromARGB(0xA0, 0x10, 0x10, 0x18);
     static final double ICON_Y = 40;
     static final double NAME_Y = 7;
     /** Centre of the description panel; the text is centred in it. */
@@ -59,11 +64,11 @@ public final class OfferCards {
     static final double DESC_W = 78;
     static final int DESC_LINES = 6;
     static final double HIGHLIGHT_SCALE = 1.10;
-    static final double RIBBON_Y = CARD_Y + CARD_H / 2 + 0.1045;
-    static final double INFO_Y = CARD_Y + CARD_H / 2 + 0.052;
-    static final double FOOTER_Y = CARD_Y - CARD_H / 2 - 0.055;
-    static final double BAR_Y = CARD_Y - CARD_H / 2 - 0.091;
-    static final double HINT_Y = CARD_Y - CARD_H / 2 - 0.118;
+    static final double RIBBON_Y = CARD_Y + CARD_H / 2 + 0.136;
+    static final double INFO_Y = CARD_Y + CARD_H / 2 + 0.066;
+    static final double FOOTER_Y = CARD_Y - CARD_H / 2 - 0.066;
+    static final double BAR_Y = CARD_Y - CARD_H / 2 - 0.105;
+    static final double HINT_Y = CARD_Y - CARD_H / 2 - 0.143;
     /** Ticks a leaving set of cards (picked, folded) animates before it is removed. */
     static final int LEAVE_TICKS = 11;
     /** Interpolation of every transformation update (the client eases between the server's ticks). */
@@ -94,13 +99,18 @@ public final class OfferCards {
         @Nullable Transformation sent;
 
         Layer(int card, double x, double y, double unit, double depth, Anchor anchor, Component text, boolean shadow) {
+            this(card, x, y, unit, depth, anchor, text, shadow, false);
+        }
+
+        Layer(int card, double x, double y, double unit, double depth, Anchor anchor, Component text, boolean shadow,
+              boolean plate) {
             this.card = card;
             this.x = x;
             this.y = y;
             this.unit = unit;
             this.depth = depth;
             this.anchor = anchor;
-            this.display = spawn(text, shadow);
+            this.display = spawn(text, shadow, plate);
         }
     }
 
@@ -199,11 +209,11 @@ public final class OfferCards {
         add(new Layer(-1, 0, RIBBON_Y, TX, DEPTH, Anchor.GLYPH, CardGlyphs.ribbon(offer.tier()), false));
         title = add(new Layer(-1, 0, RIBBON_Y, NAME_UNIT, DEPTH - 0.003, Anchor.TEXT, match.messages().get(
                 "offer.cards-title", Messages.tag("tier", OfferMenu.tierName(match.messages(), offer.tier()))), true));
-        info = add(new Layer(-1, 0, INFO_Y, HINT_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true));
+        info = add(new Layer(-1, 0, INFO_Y, INFO_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
         bar = add(new Layer(-1, 0, BAR_Y, TX, DEPTH, Anchor.GLYPH, CardGlyphs.bar(1), false));
-        seconds = add(new Layer(-1, (CardGlyphs.BAR_W / 2.0 + 4) * TX + 12 * HINT_UNIT, BAR_Y, HINT_UNIT,
-                DEPTH - 0.003, Anchor.TEXT, Component.empty(), true));
-        hint = add(new Layer(-1, 0, HINT_Y, HINT_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true));
+        seconds = add(new Layer(-1, (CardGlyphs.BAR_W / 2.0 + 4) * TX + 14 * INFO_UNIT, BAR_Y, INFO_UNIT,
+                DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
+        hint = add(new Layer(-1, 0, HINT_Y, HINT_UNIT, DEPTH - 0.003, Anchor.TEXT, Component.empty(), true, true));
         refreshTexts();
     }
 
@@ -212,7 +222,7 @@ public final class OfferCards {
         return layer;
     }
 
-    private TextDisplay spawn(Component text, boolean shadow) {
+    private TextDisplay spawn(Component text, boolean shadow, boolean plate) {
         Location at = player.getLocation();
         at.setYaw(0);
         at.setPitch(0);
@@ -222,7 +232,7 @@ public final class OfferCards {
             d.addScoreboardTag(TAG);
             d.setBillboard(Display.Billboard.CENTER);
             d.setBrightness(new Display.Brightness(15, 15));
-            d.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+            d.setBackgroundColor(plate ? PLATE : Color.fromARGB(0, 0, 0, 0));
             d.setDefaultBackground(false);
             d.setShadowed(shadow);
             d.setSeeThrough(false);

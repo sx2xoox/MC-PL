@@ -867,6 +867,9 @@ FONT_5X7 = {
     "3": ["XXXX.", "....X", "....X", ".XXX.", "....X", "....X", "XXXX."],
     "4": ["...X.", "..XX.", ".X.X.", "X..X.", "XXXXX", "...X.", "...X."],
     "5": ["XXXXX", "X....", "XXXX.", "....X", "....X", "X...X", ".XXX."],
+    "F": ["XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "X...."],
+    "Q": [".XXX.", "X...X", "X...X", "X...X", "X.X.X", "X..X.", ".XX.X"],
+    "^": ["..X..", ".XXX.", "XX.XX", "X...X", "..X..", "..X..", "..X.."],
 }
 
 
@@ -890,13 +893,14 @@ def keycap(label, lit=False):
 
 
 def small_key(label):
-    """An inline key cap for the hint line (11 x 9, sits on the text line)."""
-    w = 11 if label != "^" else 9
-    im = Image.new("RGBA", (w, 9), CLEAR)
+    """An inline key cap for the hint line (13 x 11, sits on the text line: ascent 9)."""
+    w = 13
+    im = Image.new("RGBA", (w, 11), CLEAR)
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((0, 0, w - 1, 8), 2, fill=ramp("card_ink", 0))
-    d.rounded_rectangle((1, 0, w - 2, 7), 1, fill=ramp("card_silver", 3))
-    _glyph_text(im.load(), (w - 3) // 2, 1, FONT_3X5[label], ramp("card_ink", 0))
+    d.rounded_rectangle((0, 0, w - 1, 10), 2, fill=ramp("card_ink", 0))
+    d.rounded_rectangle((1, 0, w - 2, 9), 2, fill=ramp("card_silver", 3))
+    d.line((2, 0, w - 3, 0), fill=ramp("card_silver", 4))
+    _glyph_text(im.load(), 4, 1, FONT_5X7[label], ramp("card_ink", 0))
     return im
 
 

@@ -14,7 +14,7 @@ Keep the code points and glyph sizes in sync with CardGlyphs.java (AugmentCardsT
   card frames U+E100 + tier (silver 0, gold 1, prism 2), lit (highlighted) U+E108 + tier: 112 x 160, ascent 78
   key caps U+E110 + n - 1 (n = 1..5), lit U+E118 + n - 1: 16 x 16, ascent 6; reroll mark U+E11E, lit U+E11F
   title ribbons U+E120 + tier: 176 x 18, ascent 7; timer bar U+E130 + level (0..20): 122 x 8, ascent 2
-  small inline key caps U+E150.. for 1 2 3 4 5 F Q ^(shift): 9 high, ascent 8; augment icons U+E200 + i: 32 x 32,
+  small inline key caps U+E150.. for 1 2 3 4 5 F Q ^(shift): 13 x 11, ascent 9; augment icons U+E200 + i: 32 x 32,
   ascent 14 (i = position in the icon table, sorted by augment id)
 Every centred glyph has 2 + ascent - height / 2 = 0 (the plugin centres a glyph on its text display that way) and a
 nearly invisible pixel (alpha 1) in its last column, so the client measures every glyph of a kind as wide as its PNG.
@@ -88,7 +88,7 @@ def glyphs():
         out[f"bar_{level:02d}.png"] = (card_art.timer_bar(level), BAR + level, 2)
     for i, label in enumerate(SMALL_KEYS):
         name = {"^": "shift"}.get(label, label.lower())
-        out[f"small_key_{name}.png"] = (card_art.small_key(label), SMALL_KEY + i, 8)
+        out[f"small_key_{name}.png"] = (card_art.small_key(label), SMALL_KEY + i, 9)
     for i, (aid, _, _, kind, _) in enumerate(sorted(augments())):
         out[f"icon_{aid}.png"] = (card_art.icon(aid, kind), ICON + i, 14)
     return {name: (pin(im), cp, ascent) for name, (im, cp, ascent) in out.items()}
@@ -129,23 +129,25 @@ def write():
 # ====================================================================== preview (same layout as OfferCards.java)
 
 W, H = 1920, 1080
-CARD_H = 0.36              # card body height, in screen heights (FOV 70)
+CARD_H = 0.432             # card body height, in screen heights (FOV 70)
 TX = CARD_H / 144          # one frame texel
 CARD_GAP = 0.035
 CARD_Y = 0.0               # the whole set (ribbon .. hints) is centred on the screen
 MAX_ROW = 1.30
-NAME_UNIT = 2.3 / 1080
-DESC_UNIT = 2.1 / 1080
-HINT_UNIT = 1.9 / 1080
+NAME_UNIT = 2.8 / 1080     # font unit sizes (px at 1080p)
+DESC_UNIT = 2.6 / 1080
+INFO_UNIT = 3.0 / 1080     # info line and seconds: on a dark plate
+HINT_UNIT = 3.8 / 1080     # the controls: big, on a dark plate
+PLATE = (16, 16, 24, 160)  # the text displays' background colour (ARGB 0xA0101018)
 ICON_Y, NAME_Y, DESC_MID = 40, 7, -33        # texels from the body centre (up); the description is centred
 DESC_W, DESC_LINES = 78, 6
 HIGHLIGHT_SCALE = 1.10     # grows round the card centre
 # above the cards: the ribbon and the info line; below: the key caps, the timer, the hints (same extent both ways)
-RIBBON_Y = CARD_Y + CARD_H / 2 + 0.1045
-INFO_Y = CARD_Y + CARD_H / 2 + 0.052
-FOOTER_Y = CARD_Y - CARD_H / 2 - 0.055
-BAR_Y = CARD_Y - CARD_H / 2 - 0.091
-HINT_Y = CARD_Y - CARD_H / 2 - 0.118
+RIBBON_Y = CARD_Y + CARD_H / 2 + 0.136
+INFO_Y = CARD_Y + CARD_H / 2 + 0.066
+FOOTER_Y = CARD_Y - CARD_H / 2 - 0.066
+BAR_Y = CARD_Y - CARD_H / 2 - 0.105
+HINT_Y = CARD_Y - CARD_H / 2 - 0.143
 
 UNIFONT = "/usr/share/fonts/opentype/unifont/unifont.otf"
 
@@ -203,7 +205,15 @@ def paste_scaled(screen, im, cx, cy, unit, factor=1.0):
     screen.alpha_composite(big, (round(x - w / 2), round(y - h / 2)))
 
 
-def draw_text(screen, text, cx, cy, unit, colour=(255, 255, 255), bold=False, anchor="center", factor=1.0):
+def plate(screen, x, y, w, u):
+    """The dark background of a text display: one unit round the text block."""
+    layer = Image.new("RGBA", screen.size, (0, 0, 0, 0))
+    ImageDraw.Draw(layer).rectangle((x - u, y - u, x + w + u, y + 9 * u), fill=PLATE)
+    screen.alpha_composite(layer)
+
+
+def draw_text(screen, text, cx, cy, unit, colour=(255, 255, 255), bold=False, anchor="center", factor=1.0,
+              background=False):
     u = unit * H * factor
     font = ImageFont.truetype(UNIFONT, max(6, round(8 * u * 2) // 2 * 1))
     d = ImageDraw.Draw(screen)
@@ -212,6 +222,8 @@ def draw_text(screen, text, cx, cy, unit, colour=(255, 255, 255), bold=False, an
     if anchor == "center":
         x -= w / 2
     y -= 4.5 * u
+    if background:
+        plate(screen, x, y, w, u)
     shadow = tuple(c // 4 for c in colour)
     for ox in ((0, 0.5) if bold else (0,)):
         d.text((x + u + ox * u, y + u), text, font=font, fill=shadow)
@@ -225,17 +237,19 @@ def draw_rich(screen, parts, cy, unit):
     width = sum(text_width(t) if kind == "t" else glyph_image(f"small_key_{t}.png").width + 1 for kind, t in parts)
     x = W / 2 - width * u / 2
     _, y = to_px(0, cy)
+    plate(screen, x, y - 4.5 * u, width * u, u)
     font = ImageFont.truetype(UNIFONT, max(6, round(8 * u)))
     d = ImageDraw.Draw(screen)
     for kind, t in parts:
         if kind == "t":
-            d.text((x + u, y - 4.5 * u + u), t, font=font, fill=(50, 50, 50))
-            d.text((x, y - 4.5 * u), t, font=font, fill=(205, 205, 205))
+            colour = (255, 255, 255) if t.strip() not in ("+", "웅크리기+") else (190, 190, 190)
+            d.text((x + u, y - 4.5 * u + u), t, font=font, fill=tuple(c // 4 for c in colour))
+            d.text((x, y - 4.5 * u), t, font=font, fill=colour)
             x += text_width(t) * u
         else:
             im = glyph_image(f"small_key_{t}.png")
             big = im.resize((round(im.width * u), round(im.height * u)), Image.NEAREST)
-            screen.alpha_composite(big, (round(x), round(y - 5.5 * u)))
+            screen.alpha_composite(big, (round(x), round(y - 6.5 * u)))
             x += (im.width + 1) * u
 
 
@@ -343,15 +357,15 @@ def draw_cards(screen, tier, cards, highlight=-1, rerolls=2, seconds=23, total=3
     paste_scaled(screen, glyph_image(f"ribbon_{tier}.png"), 0, RIBBON_Y, TX)
     draw_text(screen, f"증강 선택 · {tier_ko}", 0, RIBBON_Y, NAME_UNIT, bold=True)
     info = f"{source} · 리롤 {rerolls}회" + (f" · 다음 증강 {queued}개" if queued else "")
-    draw_text(screen, info, 0, INFO_Y, HINT_UNIT, (190, 190, 190))
+    draw_text(screen, info, 0, INFO_Y, INFO_UNIT, (225, 225, 225), background=True)
     level = round(card_art.BAR_STEPS * seconds / total)
     paste_scaled(screen, glyph_image(f"bar_{level:02d}.png"), 0, BAR_Y, TX)
-    draw_text(screen, f"{seconds}초", (card_art.BAR_W / 2 + 4) * TX + 6 * HINT_UNIT * 2, BAR_Y, HINT_UNIT, (255, 85, 85) if seconds <= 5 else (255, 255, 255),
-              bold=True)
+    draw_text(screen, f"{seconds}초", (card_art.BAR_W / 2 + 4) * TX + 14 * INFO_UNIT, BAR_Y, INFO_UNIT,
+              (255, 85, 85) if seconds <= 5 else (255, 255, 255), bold=True, background=True)
     keys = [("k", str(n)) for n in range(1, len(cards) + 1)]
-    parts = keys + [("t", " 고르기·한 번 더 누르면 확정   ")] + [("k", "f"), ("t", " 확정   ")]
+    parts = keys + [("t", " 선택  ")] + [("k", "f"), ("t", " 확정  ")]
     if rerolls > 0:
-        parts += [("k", "shift"), ("t", "+"), ("k", "1"), ("t", " 다시 뽑기   ")]
+        parts += [("t", "웅크리기+"), ("k", "1"), ("t", " 리롤  ")]
     parts += [("k", "q"), ("t", " 접기")]
     draw_rich(screen, parts, HINT_Y, HINT_UNIT)
 
@@ -377,7 +391,7 @@ def preview(out_dir):
         hud(screen, gui)
         draw_cards(screen, tier, cards, hl, rerolls, seconds, 30, "1번째 라운드" if tier != "prism" else "보너스: 첫 번째 피",
                    queued)
-        screen.convert("RGB").save(out_dir / name.replace(".png", "_v2.png"))
+        screen.convert("RGB").save(out_dir / name.replace(".png", "_v3.png"))
     # every icon, 4x, with its name
     items = sorted(augments())
     cols = 10
@@ -390,14 +404,14 @@ def preview(out_dir):
         ic = glyph_image(f"icon_{aid}.png").resize((128, 128), Image.NEAREST)
         sheet.alpha_composite(ic, (x + 11, y + 2))
         d.text((x + cell / 2 - text_width(name) * 1, y + 130), name, font=font, fill=(255, 255, 255, 255))
-    sheet.save(out_dir / "icons_v2.png")
+    sheet.save(out_dir / "icons_v3.png")
     # the frames, normal and lit, 3x
     fr = Image.new("RGBA", (6 * 112 * 3 + 50, 160 * 3 + 20), (34, 30, 44, 255))
     for i, tier in enumerate(TIERS):
         for j, lit in enumerate((False, True)):
             im = glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png").resize((336, 480), Image.NEAREST)
             fr.alpha_composite(im, (10 + (i * 2 + j) * 345, 10))
-    fr.save(out_dir / "frames_v2.png")
+    fr.save(out_dir / "frames_v3.png")
     print(f"previews -> {out_dir}")
 
 

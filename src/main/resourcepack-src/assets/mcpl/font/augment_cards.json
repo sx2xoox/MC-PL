@@ -404,8 +404,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_1.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue150"
       ]
@@ -413,8 +413,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_2.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue151"
       ]
@@ -422,8 +422,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_3.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue152"
       ]
@@ -431,8 +431,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_4.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue153"
       ]
@@ -440,8 +440,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_5.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue154"
       ]
@@ -449,8 +449,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_f.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue155"
       ]
@@ -458,8 +458,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_q.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue156"
       ]
@@ -467,8 +467,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/small_key_shift.png",
-      "height": 9,
-      "ascent": 8,
+      "height": 11,
+      "ascent": 9,
       "chars": [
         "\ue157"
       ]

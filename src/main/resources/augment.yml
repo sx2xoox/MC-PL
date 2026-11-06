@@ -97,13 +97,13 @@ offer:
   reminder: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>/게임 증강</white> · <white><seconds>초</white> 뒤 무작위"
   # 화면 앞에 뜨는 카드 (games.augment.augments.ui: CARDS, 리소스팩을 받은 플레이어)
   cards-title: "<white><bold>증강 선택</bold></white> <gray>·</gray> <tier>"
-  cards-info: "<gray><source></gray><dark_gray> · </dark_gray><gray>리롤 <white><rerolls></white>회</gray><queued>"
-  cards-queued: "<dark_gray> · </dark_gray><gray>다음 증강 <white><count></white>개</gray>"
+  cards-info: "<white><source></white><gray> · </gray><white>리롤 <yellow><rerolls></yellow>회</white><queued>"
+  cards-queued: "<gray> · </gray><white>다음 증강 <yellow><count></yellow>개</white>"
   cards-seconds: "<white><bold><seconds>초"
   cards-seconds-urgent: "<red><bold><seconds>초"
   # <keys> <f> <sneak> <one> <q> = 키 모양 그림
-  cards-hint: "<keys> <gray>고르기 · 한 번 더 누르면 확정</gray>   <f> <gray>확정</gray>   <sneak><white>+</white><one> <gray>다시 뽑기</gray>   <q> <gray>접기</gray>"
-  cards-hint-no-reroll: "<keys> <gray>고르기 · 한 번 더 누르면 확정</gray>   <f> <gray>확정</gray>   <q> <gray>접기</gray>"
+  cards-hint: "<keys> <white>선택</white>  <f> <white>확정</white>  <gray>웅크리기+</gray><one> <white>리롤</white>  <q> <white>접기</white>"
+  cards-hint-no-reroll: "<keys> <white>선택</white>  <f> <white>확정</white>  <q> <white>접기</white>"
   cards-how: "<gray>증강 카드: 움직이면서 <white>숫자 키 1~<count></white>로 고르고, <white>같은 숫자를 한 번 더</white> 또는 <white>F</white>를 누르면 확정. <white>웅크리기+숫자</white> = 그 카드만 다시 뽑기, <white>Q</white> = 카드 접기 (<white>F</white>로 다시 펼치기)."
   cards-folded: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>F</white> 카드 펼치기 · <white><seconds>초</white> 뒤 무작위"
   cards-choose-first: "<yellow>숫자 키로 카드를 먼저 고르세요 <gray>(같은 숫자를 한 번 더 누르면 확정)"
