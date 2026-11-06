@@ -139,9 +139,13 @@ public final class AugmentGame implements MiniGame {
         io.github.sx2xoox.mcpl.game.augment.bot.BotChat.Settings.declareDefaults(defaults);
     }
 
-    /** Bot defaults of the first 봇전 version (cap 15) that a server which ran it still holds untouched. */
+    /**
+     * Earlier defaults that a server which ran an older version still holds untouched: the first augment rounds
+     * (5/12/20/30 min), the dialog pick screen, the first 봇전 cap (15).
+     */
     @Override
     public void retiredConfigDefaults(ConfigurationSection defaults) {
+        AugmentSettings.declareRetiredDefaults(defaults);
         BotSettings.declareRetiredDefaults(defaults);
     }
 
@@ -359,6 +363,19 @@ public final class AugmentGame implements MiniGame {
     public OfferDialogs offerDialogs() {
         return offerDialogs;
     }
+
+    /** Who has the resource pack (the floating cards need it): the hub's pack service, or {@link #packsOverride}. */
+    public io.github.sx2xoox.mcpl.core.pack.PackAudience packs() {
+        io.github.sx2xoox.mcpl.core.pack.PackAudience override = packsOverride;
+        return override != null ? override : hub.resourcePacks();
+    }
+
+    /** Who has the resource pack, for tests; null = the hub's pack service. */
+    public void packsOverride(io.github.sx2xoox.mcpl.core.pack.@org.jspecify.annotations.Nullable PackAudience packs) {
+        this.packsOverride = packs;
+    }
+
+    private io.github.sx2xoox.mcpl.core.pack.@org.jspecify.annotations.Nullable PackAudience packsOverride;
 
     /** Replaces how dialogs are shown (tests: MockBukkit cannot build Paper dialogs). */
     public void offerDialogs(OfferDialogs dialogs) {

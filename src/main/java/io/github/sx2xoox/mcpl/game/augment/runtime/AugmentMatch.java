@@ -68,8 +68,9 @@ import org.jspecify.annotations.Nullable;
  * One match of 증강 야생전 (see {@code docs/augment.md}): {@link MatchPhase#PREPARING} while the fresh world
  * generates, {@link MatchPhase#FARMING} (survival, no PvP), then {@link MatchPhase#FIGHT} (PvP, the world border
  * shrinks) until one player or team is left. Augments are offered in timed rounds and for special achievements
- * ({@link BonusTracker}); each player picks one of three cards in a dialog ({@link OfferDialog}) or, with
- * {@code augments.ui: CHEST}, a chest menu ({@link OfferMenu}).
+ * ({@link BonusTracker}); each player picks one of three cards floating in front of the camera while playing
+ * ({@link OfferCards}, the default {@code augments.ui: CARDS}, players with the resource pack), in a dialog
+ * ({@link OfferDialog}) or, with {@code augments.ui: CHEST}, a chest menu ({@link OfferMenu}).
  */
 public final class AugmentMatch implements GameInstance, BotHost {
 
@@ -80,6 +81,8 @@ public final class AugmentMatch implements GameInstance, BotHost {
     private final AugmentConfig.Snapshot config;
     private final Map<UUID, PlayerState> players = new LinkedHashMap<>();
     private final Set<BonusCondition> claimed = EnumSet.noneOf(BonusCondition.class);
+    /** Floating cards animating away after a pick, a timeout or a fold. */
+    private final List<OfferCards> leavingCards = new ArrayList<>();
     private final BonusTracker bonus;
     private final MatchHud hud;
     private MatchPhase phase = MatchPhase.PREPARING;
@@ -505,6 +508,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
             }
         }
         tickOffers();
+        tickCards();
         tickAugments();
         if (bots != null) {
             bots.tick(clock);
@@ -669,6 +673,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (bots != null) {
             bots.dispose();
         }
+        for (OfferCards cards : leavingCards) {
+            cards.remove();
+        }
+        leavingCards.clear();
         for (PlayerState state : players.values()) {
             closeMenu(state);
             state.offers.clear();
@@ -1057,6 +1065,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             if (state.dialog != null && state.dialog == state.current()) {
                 showDialog(player, state, state.dialog); // the dialog says how many more wait
             }
+            if (state.cards != null) {
+                state.cards.refreshTexts();
+            }
         }
     }
 
@@ -1110,7 +1121,13 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (!offer.started()) {
             offer.deadline(clock + settings.choiceTicks());
         }
-        if (settings.offerUi() == AugmentSettings.OfferUi.DIALOG) {
+        if (usesCards(player)) {
+            showCards(player, state, offer);
+            Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 0.8f, 1.3f);
+            Feedback.play(player, Sound.ITEM_BOOK_PAGE_TURN, 1f, 0.9f);
+            return true;
+        }
+        if (settings.offerUi() != AugmentSettings.OfferUi.CHEST) {
             showDialog(player, state, offer);
             Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 0.8f, 1.3f);
             return true;
@@ -1121,6 +1138,202 @@ public final class AugmentMatch implements GameInstance, BotHost {
         player.openInventory(menu.getInventory());
         Feedback.play(player, Sound.BLOCK_ENCHANTMENT_TABLE_USE, 0.8f, 1.3f);
         return true;
+    }
+
+    /** The floating cards are this player's pick screen: {@code augments.ui: CARDS} and the resource pack loaded. */
+    boolean usesCards(Player player) {
+        return settings.offerUi() == AugmentSettings.OfferUi.CARDS && game.packs().hasPack(player);
+    }
+
+    /** Shows the floating cards of {@code offer} (keeps them if they already show it). */
+    private void showCards(Player player, PlayerState state, Offer offer) {
+        if (state.cards != null && state.cards.offer() == offer) {
+            state.cards.refreshTexts();
+            return;
+        }
+        if (state.cards != null) {
+            state.cards.remove();
+        }
+        if (state.cardsOffer != offer.id()) {
+            state.cardsOffer = offer.id();
+            state.cardHighlight = -1;
+        }
+        state.cards = new OfferCards(this, player, game.hub().plugin(), offer, state.cardHighlight);
+        if (!state.cardsExplained) {
+            state.cardsExplained = true;
+            messages().send(player, "offer.cards-how", Messages.tag("count", offer.cards().size()));
+        }
+    }
+
+    /** The floating cards of the player, or null (tests). */
+    public @Nullable OfferCards cards(UUID player) {
+        PlayerState state = players.get(player);
+        return state == null ? null : state.cards;
+    }
+
+    /** Lets the player's cards animate away ({@code picked} rises, -1 = all fall) instead of vanishing. */
+    private void dismissCards(PlayerState state, int picked) {
+        OfferCards cards = state.cards;
+        if (cards == null) {
+            return;
+        }
+        state.cards = null;
+        cards.leave(picked);
+        leavingCards.add(cards);
+    }
+
+    private void tickCards() {
+        for (PlayerState state : players.values()) {
+            if (state.cards != null) {
+                state.cards.tick();
+                if (state.cards.done()) {
+                    state.cards = null;
+                }
+            }
+        }
+        leavingCards.removeIf(cards -> {
+            cards.tick();
+            return cards.done();
+        });
+    }
+
+    /**
+     * A hotbar key (or the mouse wheel) while the cards are up: a number key highlights that card and, pressed again,
+     * picks it; with sneak it rerolls that card; the wheel moves the highlight.
+     *
+     * @return true if the key was used (the held slot stays)
+     */
+    public boolean cardsKey(Player player, int newSlot, int previousSlot) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || state.cards == null || stopped || !session.isInPlay(player)) {
+            return false;
+        }
+        OfferCards cards = state.cards;
+        Offer offer = cards.offer();
+        if (offer != state.current()) {
+            return false;
+        }
+        int count = offer.cards().size();
+        if (newSlot < count) {
+            if (player.isSneaking()) {
+                rerollCard(player, newSlot);
+            } else if (!cards.highlight(newSlot)) {
+                pick(player, offer.cards().get(newSlot));
+            } else {
+                highlighted(player, state, newSlot);
+            }
+            return true;
+        }
+        int step = Math.floorMod(newSlot - previousSlot, 9) == 1 ? 1
+                : Math.floorMod(previousSlot - newSlot, 9) == 1 ? -1 : 0;
+        if (step != 0) {
+            cards.moveHighlight(step);
+            highlighted(player, state, cards.highlight());
+        }
+        return true;
+    }
+
+    private void highlighted(Player player, PlayerState state, int index) {
+        state.cardHighlight = index;
+        Feedback.play(player, Sound.UI_BUTTON_CLICK, 0.35f, 1.7f);
+    }
+
+    /**
+     * The swap-hands key (F): picks the highlighted card while the cards are up; unfolds folded cards.
+     *
+     * @return true if it was used (the hands stay)
+     */
+    public boolean cardsConfirm(Player player) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || stopped || !session.isInPlay(player) || state.current() == null) {
+            return false;
+        }
+        if (state.cards == null) {
+            if (!usesCards(player) || state.choosing()) {
+                return false;
+            }
+            return openMenu(player);
+        }
+        Offer offer = state.cards.offer();
+        int index = state.cards.highlight();
+        if (index < 0 || offer != state.current()) {
+            messages().actionBar(player, "offer.cards-choose-first");
+            return true;
+        }
+        pick(player, offer.cards().get(index));
+        return true;
+    }
+
+    /**
+     * The drop key (Q) while the cards are up: folds them away (the offer waits, F or /게임 증강 brings them back).
+     *
+     * @return true if it was used (nothing is dropped)
+     */
+    public boolean cardsFold(Player player) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || state.cards == null || stopped) {
+            return false;
+        }
+        state.cardHighlight = state.cards.highlight();
+        dismissCards(state, -1);
+        Offer offer = state.current();
+        if (offer != null) {
+            messages().actionBar(player, "offer.cards-folded", Messages.tag("seconds", secondsLeft(offer)));
+        }
+        Feedback.play(player, Sound.ITEM_BOOK_PAGE_TURN, 0.8f, 0.7f);
+        return true;
+    }
+
+    /** Redraws one card of the current offer (one reroll), keeping the others. */
+    public boolean rerollCard(Player player, int index) {
+        PlayerState state = players.get(player.getUniqueId());
+        if (state == null || stopped) {
+            return false;
+        }
+        Offer offer = state.current();
+        if (offer == null || index < 0 || index >= offer.cards().size()) {
+            return false;
+        }
+        if (state.rerolls <= 0) {
+            messages().send(player, "offer.no-rerolls");
+            Feedback.play(player, Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            return false;
+        }
+        List<AugmentInfo> replacement = draw(state, offer.tier(), offer.cards());
+        AugmentInfo fresh = null;
+        for (AugmentInfo candidate : replacement) {
+            if (!offer.cards().contains(candidate)) {
+                fresh = candidate;
+                break;
+            }
+        }
+        if (fresh == null) {
+            messages().send(player, "offer.none-left");
+            return false;
+        }
+        state.rerolls--;
+        List<AugmentInfo> cards = new ArrayList<>(offer.cards());
+        cards.set(index, fresh);
+        offer.cards(cards);
+        if (state.cards != null && state.cards.offer() == offer) {
+            state.cards.rerolled(index);
+            state.cards.refreshTexts();
+        }
+        if (state.menu != null && state.menu.offer() == offer) {
+            state.menu.render(config::params, state.rerolls);
+        }
+        if (state.dialog == offer) {
+            showDialog(player, state, offer);
+        }
+        messages().send(player, "offer.rerolled", Messages.tag("count", state.rerolls));
+        Feedback.play(player, Sound.ITEM_BOOK_PAGE_TURN, 1f, 1.3f);
+        hud.update();
+        return true;
+    }
+
+    /** Seconds a player has to pick, in ticks. */
+    long choiceTicks() {
+        return settings.choiceTicks();
     }
 
     /** Shows (again) the pick dialog of the player's current offer, with the cards and countdown as they are now. */
@@ -1187,6 +1400,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
             return false;
         }
         state.offers.pollFirst();
+        if (state.cards != null && state.cards.offer() == offer) {
+            dismissCards(state, offer.cards().indexOf(card));
+            Feedback.play(player, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1f, 1.2f);
+        }
         closeMenu(state);
         grant(player, state, card, false);
         if (state.current() != null && !state.choosing()) { // an augment may have queued and opened one
@@ -1222,6 +1439,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (state.dialog == offer) {
             showDialog(player, state, offer);
         }
+        if (state.cards != null && state.cards.offer() == offer) {
+            state.cards.rerolledAll();
+            state.cards.refreshTexts();
+        }
         messages().send(player, "offer.rerolled", Messages.tag("count", state.rerolls));
         Feedback.play(player, Sound.ITEM_BOOK_PAGE_TURN, 1f, 1.1f);
         return true;
@@ -1243,6 +1464,10 @@ public final class AugmentMatch implements GameInstance, BotHost {
     private void closeMenu(PlayerState state) {
         OfferMenu menu = state.menu;
         state.menu = null;
+        if (state.cards != null) {
+            state.cards.remove();
+            state.cards = null;
+        }
         if (state.dialog != null) {
             state.dialog = null;
             Player player = org.bukkit.Bukkit.getPlayer(state.id);
@@ -1275,6 +1500,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             if (clock >= offer.deadline()) {
                 AugmentInfo card = offer.cards().get(session.random().nextInt(offer.cards().size()));
                 state.offers.pollFirst();
+                if (state.cards != null && state.cards.offer() == offer) {
+                    dismissCards(state, offer.cards().indexOf(card));
+                }
                 closeMenu(state);
                 grant(player, state, card, true);
                 if (state.current() != null && !state.choosing()) {
@@ -1284,14 +1512,19 @@ public final class AugmentMatch implements GameInstance, BotHost {
             }
             if (clock % 20 == 0) {
                 long seconds = secondsLeft(offer);
-                if (state.menu != null) {
+                if (state.cards != null) {
+                    if (seconds <= 5) {
+                        Feedback.play(player, Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.6f);
+                    }
+                } else if (state.menu != null) {
                     state.menu.updateClock(seconds);
                 } else if (state.dialog == offer) {
                     if (OfferDialog.REFRESH_AT.contains(seconds)) {
                         showDialog(player, state, offer); // the countdown in the dialog is a fixed text
                     }
                 } else {
-                    messages().actionBar(player, "offer.reminder", Messages.tag("seconds", seconds));
+                    messages().actionBar(player, usesCards(player) ? "offer.cards-folded" : "offer.reminder",
+                            Messages.tag("seconds", seconds));
                 }
             }
         }
@@ -1398,6 +1631,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
         state.rerolls += count;
         if (state.menu != null) {
             state.menu.render(config::params, state.rerolls);
+        }
+        if (state.cards != null) {
+            state.cards.refreshTexts();
         }
         Player owner = org.bukkit.Bukkit.getPlayer(player);
         if (state.dialog != null && state.dialog == state.current() && owner != null) {

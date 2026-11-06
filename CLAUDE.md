@@ -121,7 +121,8 @@ src/main/java/io/github/sx2xoox/mcpl/
     ui/ menu/ command/         ability item/texts/reveal, CHOICE menu, /게임 능력 commands
   game/augment/                증강 야생전 (AugmentGame = the MiniGame + its fresh world per match, AugmentSettings = games.augment.*)
     api/ augments/ bonus/      augment contract (Augment, AugmentContext, AugmentInfo, Params), one class per augment, bonus conditions
-    config/ runtime/ command/  augments.yml, the match (phases, offers/card menu, bonus tracker, HUD), /게임 증강
+    config/ runtime/ command/  augments.yml, the match (phases, offers: floating pack cards OfferCards (default, glyphs
+                               of tools/assetgen/augment_cards.py) / dialog / chest menu, bonus tracker, HUD), /게임 증강
     bot/                       봇전 bots: pure brain (utility AI), gear schedule, base planner, ballistics, aim/turn math +
                                Bukkit body/controller/manager (chunk tickets, border damage); 봇 관전전 = AugmentSpectateGame
                                (MiniGame#spectatorsOnly) + runtime/SpectatorView; 봇전 팀전 = pure TeamTactics +

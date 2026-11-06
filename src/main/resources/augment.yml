@@ -95,6 +95,18 @@ offer:
   dialog-later: "<gray>나중에 고르기"
   dialog-later-tooltip: "<gray>창을 닫습니다 (ESC도 같음).<newline><white>/게임 증강</white> 으로 다시 열 수 있고, 시간이 지나면 무작위로 받습니다."
   reminder: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>/게임 증강</white> · <white><seconds>초</white> 뒤 무작위"
+  # 화면 앞에 뜨는 카드 (games.augment.augments.ui: CARDS, 리소스팩을 받은 플레이어)
+  cards-title: "<white><bold>증강 선택</bold></white> <gray>·</gray> <tier>"
+  cards-info: "<gray><source></gray><dark_gray> · </dark_gray><gray>리롤 <white><rerolls></white>회</gray><queued>"
+  cards-queued: "<dark_gray> · </dark_gray><gray>다음 증강 <white><count></white>개</gray>"
+  cards-seconds: "<white><bold><seconds>초"
+  cards-seconds-urgent: "<red><bold><seconds>초"
+  # <keys> <f> <sneak> <one> <q> = 키 모양 그림
+  cards-hint: "<keys> <gray>고르기 · 한 번 더 누르면 확정</gray>   <f> <gray>확정</gray>   <sneak><white>+</white><one> <gray>다시 뽑기</gray>   <q> <gray>접기</gray>"
+  cards-hint-no-reroll: "<keys> <gray>고르기 · 한 번 더 누르면 확정</gray>   <f> <gray>확정</gray>   <q> <gray>접기</gray>"
+  cards-how: "<gray>증강 카드: 움직이면서 <white>숫자 키 1~<count></white>로 고르고, <white>같은 숫자를 한 번 더</white> 또는 <white>F</white>를 누르면 확정. <white>웅크리기+숫자</white> = 그 카드만 다시 뽑기, <white>Q</white> = 카드 접기 (<white>F</white>로 다시 펼치기)."
+  cards-folded: "<yellow>증강 선택 대기 중</yellow> <gray>· <white>F</white> 카드 펼치기 · <white><seconds>초</white> 뒤 무작위"
+  cards-choose-first: "<yellow>숫자 키로 카드를 먼저 고르세요 <gray>(같은 숫자를 한 번 더 누르면 확정)"
 
 # ── 보너스 증강 ──────────────────────────────────────────────
 bonus:
@@ -364,9 +376,11 @@ settings:
   ui:
     name: "증강 선택 화면"
     lore:
-      - "<gray>대화창: 카드가 나란히 뜨는 선택 화면 (기본)"
+      - "<gray>카드: 화면 앞에 카드가 떠서 움직이면서 고르기 (기본, 리소스팩)"
+      - "<gray>대화창: 카드가 나란히 뜨는 선택 화면 (리소스팩 없는 사람도)"
       - "<gray>상자: 예전 상자 메뉴 (대화창이 안 보이는 클라이언트용)"
     option:
+      cards: "<light_purple>카드"
       dialog: "<aqua>대화창"
       chest: "<gold>상자"
   rerolls:

@@ -34,7 +34,7 @@ import org.jspecify.annotations.Nullable;
  * @param rerolls              rerolls per player per match
  * @param rounds               timed augment rounds, in order
  * @param bonusEnabled         special achievements grant extra augments
- * @param offerUi              how cards are shown: a dialog screen (default) or the chest menu
+ * @param offerUi              how cards are shown: floating pack cards (default), a dialog screen or the chest menu
  * @param farmingInvulnerable  real matches: participants (players and bots) take no damage while farming
  * @param farmingNoHunger      real matches: players' food and saturation stay full while farming
  * @param startKit             what every player gets when the farming starts (empty = nothing)
@@ -96,18 +96,27 @@ public record AugmentSettings(
 
     /** How a player sees and picks the cards of an offer. */
     public enum OfferUi {
+        /**
+         * Resource pack cards floating in front of the camera while the player keeps playing (League of Legends
+         * Arena style, {@code runtime/OfferCards}); players without the pack get the {@link #DIALOG}.
+         */
+        CARDS,
         /** A dialog screen (Paper dialog API): cards side by side, like League of Legends' augment pick. */
         DIALOG,
         /** The 3-row chest menu (for clients or proxies that cannot show dialogs). */
         CHEST;
 
-        /** The UI named {@code raw} (case-insensitive), or null. */
+        /** The UI named {@code raw} (case-insensitive; the reverted {@code PACK} screen reads as cards), or null. */
         public static @Nullable OfferUi parse(@Nullable String raw) {
             if (raw == null) {
                 return null;
             }
+            String name = raw.trim();
+            if (name.equalsIgnoreCase("PACK")) {
+                return CARDS;
+            }
             for (OfferUi ui : values()) {
-                if (ui.name().equalsIgnoreCase(raw.trim())) {
+                if (ui.name().equalsIgnoreCase(name)) {
                     return ui;
                 }
             }
@@ -193,6 +202,27 @@ public record AugmentSettings(
                 round(1080, 10, 45, 45));
     }
 
+    /**
+     * The rounds of the first versions (5, 12, 20 and 30 minutes, the last two after the farming): a server that ran
+     * one still has them in its {@code config.yml}.
+     */
+    static List<Map<String, Object>> retiredRounds() {
+        return List.of(
+                round(300, 70, 25, 5),
+                round(720, 40, 45, 15),
+                round(1200, 20, 50, 30),
+                round(1800, 10, 45, 45));
+    }
+
+    /**
+     * Earlier defaults that a server which ran an older version still holds untouched ({@code HubConfig} moves them to
+     * today's): the first rounds, and the dialog that was the pick screen before the floating cards.
+     */
+    public static void declareRetiredDefaults(ConfigurationSection d) {
+        d.set(ROUNDS, retiredRounds());
+        d.set(OFFER_UI, OfferUi.DIALOG.name());
+    }
+
     private static Map<String, Object> round(int at, int silver, int gold, int prism) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("at", at);
@@ -257,9 +287,10 @@ public record AugmentSettings(
         d.setComments(CHOICE, List.of(
                 "카드 3장 중 하나를 고르는 제한 시간(초). 시간이 지나면 무작위로 하나를 받습니다. (5~300)",
                 "메뉴를 닫았다면 /게임 증강 으로 다시 열 수 있습니다."));
-        d.set(OFFER_UI, OfferUi.DIALOG.name());
+        d.set(OFFER_UI, OfferUi.CARDS.name());
         d.setComments(OFFER_UI, List.of(
-                "카드 선택 화면: DIALOG = 대화창(리그 오브 레전드처럼 카드가 나란히, 기본), CHEST = 상자 메뉴.",
+                "카드 선택 화면: CARDS = 화면 앞에 리소스팩 카드가 떠서 움직이면서 고르기(롤 아레나처럼, 기본),",
+                "DIALOG = 대화창(카드가 나란히), CHEST = 상자 메뉴. CARDS 는 리소스팩을 받은 플레이어에게만, 나머지는 대화창.",
                 "대화창이 보이지 않는 클라이언트(오래된 버전, 일부 프록시)가 있다면 CHEST 로 바꾸세요."));
         d.set(REROLLS, 2);
         d.setComments(REROLLS, List.of("경기당 리롤 횟수 (보이는 카드 3장을 다시 뽑기, 0~10)"));
@@ -307,11 +338,11 @@ public record AugmentSettings(
     }
 
     private static OfferUi readOfferUi(ConfigurationSection s, Logger logger) {
-        String raw = s.getString(OFFER_UI, OfferUi.DIALOG.name());
+        String raw = s.getString(OFFER_UI, OfferUi.CARDS.name());
         OfferUi ui = OfferUi.parse(raw);
         if (ui == null) {
-            logger.warning("games.augment." + OFFER_UI + ": unknown UI '" + raw + "', using DIALOG");
-            return OfferUi.DIALOG;
+            logger.warning("games.augment." + OFFER_UI + ": unknown UI '" + raw + "', using CARDS");
+            return OfferUi.CARDS;
         }
         return ui;
     }

@@ -9,11 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.List;
+import java.util.Map;
 
 import io.github.sx2xoox.mcpl.MCPLPlugin;
 import io.github.sx2xoox.mcpl.core.FakeGame;
 import io.github.sx2xoox.mcpl.core.Hub;
 import io.github.sx2xoox.mcpl.core.game.GameManager;
+import io.github.sx2xoox.mcpl.game.augment.AugmentSettings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -185,5 +188,87 @@ class HubConfigTest {
                 io.github.sx2xoox.mcpl.game.augment.bot.BotSettings::declareRetiredDefaults);
         assertEquals(20, config.gameSection("augbots2").getInt(io.github.sx2xoox.mcpl.game.augment.bot.BotSettings.MAX),
                 "the owner's cap stays");
+    }
+
+    /** The augment rounds of the first versions as a server's config.yml holds them (whole numbers, one a decimal). */
+    private static final String OLD_ROUNDS = """
+            games:
+              augrounds:
+                augments:
+                  ui: DIALOG
+                  rounds:
+                  - at: 300
+                    silver: 70
+                    gold: 25
+                    prism: 5
+                  - at: 720
+                    silver: 40
+                    gold: 45
+                    prism: 15
+                  - at: 1200.0
+                    silver: 20
+                    gold: 50
+                    prism: 30
+                  - at: 1800
+                    silver: 10
+                    gold: 45
+                    prism: 45
+            """;
+
+    private AugmentSettings augmentSettings(String game) {
+        return AugmentSettings.read(hub.config().gameSection(game), plugin.getLogger());
+    }
+
+    /** "증강 주는 시간이 예전이랑 똑같다": untouched 5/12/20/30 min rounds (and the dialog) follow the new defaults. */
+    @Test
+    void theFirstAugmentRoundsMoveToTheNewDefaults() throws IOException {
+        Files.writeString(file.toPath(), OLD_ROUNDS);
+        hub.config().load();
+        assertEquals(300 * 20, augmentSettings("augrounds").rounds().getFirst().atTicks(), "as the server had it");
+
+        hub.config().applyGameDefaults("augrounds", AugmentSettings::declareDefaults,
+                AugmentSettings::declareRetiredDefaults);
+        hub.config().load(); // as the file reads after a restart
+        AugmentSettings settings = augmentSettings("augrounds");
+        assertEquals(List.of(180L * 20, 480L * 20, 780L * 20, 1080L * 20),
+                settings.rounds().stream().map(AugmentSettings.Round::atTicks).toList(), "3, 8, 13 and 18 minutes");
+        assertEquals(AugmentSettings.OfferUi.CARDS, settings.offerUi());
+
+        // an owner's own rounds stay
+        Files.writeString(file.toPath(), OLD_ROUNDS.replace("at: 300", "at: 240").replace("augrounds", "augown"));
+        hub.config().load();
+        hub.config().applyGameDefaults("augown", AugmentSettings::declareDefaults,
+                AugmentSettings::declareRetiredDefaults);
+        assertEquals(240 * 20, augmentSettings("augown").rounds().getFirst().atTicks());
+    }
+
+    /**
+     * A server that already ran a version with the defaults copy (which did not list the rounds as retired) kept the
+     * old rounds: the retired rounds are compared once more, and only once (an owner's later pick stays).
+     */
+    @Test
+    void retiredDefaultsAddedLaterStillReachAServerWithTheDefaultsCopy() throws IOException {
+        Files.writeString(file.toPath(), OLD_ROUNDS);
+        hub.config().load();
+        hub.config().applyGameDefaults("augrounds", AugmentSettings::declareDefaults, null);
+        assertEquals(300 * 20, augmentSettings("augrounds").rounds().getFirst().atTicks(), "the old bug");
+
+        hub.config().applyGameDefaults("augrounds", AugmentSettings::declareDefaults,
+                AugmentSettings::declareRetiredDefaults);
+        assertEquals(180 * 20, augmentSettings("augrounds").rounds().getFirst().atTicks(), "fixed on the next start");
+        assertEquals(AugmentSettings.OfferUi.CARDS, augmentSettings("augrounds").offerUi());
+
+        hub.config().setGameValue("augrounds", AugmentSettings.OFFER_UI, "DIALOG");
+        hub.config().applyGameDefaults("augrounds", AugmentSettings::declareDefaults,
+                AugmentSettings::declareRetiredDefaults);
+        assertEquals(AugmentSettings.OfferUi.DIALOG, augmentSettings("augrounds").offerUi(),
+                "the owner chose the dialog again after the upgrade");
+    }
+
+    @Test
+    void sameValueComparesListsOfMapsByNumberValue() {
+        assertTrue(HubConfig.sameValue(List.of(Map.of("at", 300, "x", "a")), List.of(Map.of("at", 300.0, "x", "a"))));
+        assertFalse(HubConfig.sameValue(List.of(Map.of("at", 300)), List.of(Map.of("at", 301))));
+        assertFalse(HubConfig.sameValue(List.of(1, 2), List.of(1)));
     }
 }

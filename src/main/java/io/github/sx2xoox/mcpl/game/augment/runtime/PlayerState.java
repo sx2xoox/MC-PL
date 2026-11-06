@@ -30,6 +30,14 @@ final class PlayerState {
     @Nullable OfferMenu menu;
     /** The offer whose pick dialog the player sees (until they pick, close it or it is replaced), or null. */
     @Nullable Offer dialog;
+    /** The floating cards the player sees (augments.ui: CARDS), or null (none, or folded away). */
+    @Nullable OfferCards cards;
+    /** The offer {@link #cardHighlight} belongs to. */
+    long cardsOffer = -1;
+    /** The highlighted card, kept while the cards are folded; -1 for none. */
+    int cardHighlight = -1;
+    /** The controls of the cards were explained in chat (once per match). */
+    boolean cardsExplained;
 
     PlayerState(UUID id, int rerolls) {
         this.id = id;
@@ -67,7 +75,7 @@ final class PlayerState {
 
     /** A card menu or dialog is open (a new offer waits for it instead of opening its own). */
     boolean choosing() {
-        return menu != null || dialog != null;
+        return menu != null || dialog != null || cards != null;
     }
 
     @Nullable Offer current() {

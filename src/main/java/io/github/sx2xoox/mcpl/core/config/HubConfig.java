@@ -9,8 +9,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 
@@ -596,8 +600,11 @@ public final class HubConfig {
      * one. The defaults each game declared last time are kept in {@code .bundled/game-defaults/<id>.yml} (like the
      * message files' {@code .bundled} copies): a value that still equals what was declared then (the owner never
      * changed it) follows the new default; a value the owner changed is kept. A server without that copy yet (it ran
-     * a version from before this bookkeeping) compares with {@code retired}: the defaults of the last version without
-     * it (only keys whose default changed since need to be declared there).
+     * a version from before this bookkeeping) compares with {@code retired}: earlier defaults (only keys whose default
+     * changed need to be declared there). A retired key is compared once per server, also when the copy exists
+     * (a version may list a default that an earlier version with the copy already wrote): the copy remembers the
+     * retired keys it has compared ({@value #RETIRED_CHECKED}), so an owner who sets an old default again later keeps
+     * it.
      *
      * @param retired declares earlier defaults for a server without the copy (null: nothing to compare with)
      * @return true if the file changed
@@ -609,15 +616,12 @@ public final class HubConfig {
         declarer.accept(defaults);
         ConfigurationSection target = gameSection(gameId);
         File snapshot = defaultsSnapshot(gameId);
-        ConfigurationSection before;
-        if (snapshot.isFile()) {
-            before = YamlConfiguration.loadConfiguration(snapshot);
-        } else {
-            before = scratch.createSection("retired");
-            if (retired != null) {
-                retired.accept(before);
-            }
+        ConfigurationSection retiredDefaults = scratch.createSection("retired");
+        if (retired != null) {
+            retired.accept(retiredDefaults);
         }
+        ConfigurationSection before = snapshot.isFile() ? YamlConfiguration.loadConfiguration(snapshot) : null;
+        Set<String> checked = before == null ? Set.of() : new HashSet<>(before.getStringList(RETIRED_CHECKED));
         boolean changed = false;
         List<String> upgraded = new ArrayList<>();
         for (String key : defaults.getKeys(true)) {
@@ -633,12 +637,19 @@ public final class HubConfig {
                 target.set(key, defaults.get(key));
                 target.setComments(key, defaults.getComments(key));
                 changed = true;
-            } else if (before.isSet(key) && !before.isConfigurationSection(key)
-                    && sameValue(target.get(key), before.get(key))
-                    && !sameValue(defaults.get(key), before.get(key))) {
-                target.set(key, defaults.get(key));
-                upgraded.add(key);
-                changed = true;
+            } else {
+                Object current = target.get(key);
+                boolean stale = before != null && before.isSet(key) && !before.isConfigurationSection(key)
+                        && sameValue(current, before.get(key));
+                if (!stale && !checked.contains(key) && retiredDefaults.isSet(key)
+                        && !retiredDefaults.isConfigurationSection(key)) {
+                    stale = sameValue(current, retiredDefaults.get(key));
+                }
+                if (stale && !sameValue(defaults.get(key), current)) {
+                    target.set(key, defaults.get(key));
+                    upgraded.add(key);
+                    changed = true;
+                }
             }
         }
         int failed = failedSaves;
@@ -650,21 +661,33 @@ public final class HubConfig {
                     + " setting(s) still at an earlier default now use this version's default");
         }
         if (writable && failedSaves == failed) {
-            writeDefaultsSnapshot(snapshot, defaults);
+            List<String> retiredKeys = new ArrayList<>();
+            for (String key : retiredDefaults.getKeys(true)) {
+                if (!retiredDefaults.isConfigurationSection(key)) {
+                    retiredKeys.add(key);
+                }
+            }
+            writeDefaultsSnapshot(snapshot, defaults, retiredKeys);
         }
         return changed;
     }
+
+    /** Key of the defaults copy listing the retired defaults already compared (not a game setting). */
+    static final String RETIRED_CHECKED = "_retired-checked";
 
     private File defaultsSnapshot(String gameId) {
         return new File(new File(new File(plugin.getDataFolder(), ".bundled"), "game-defaults"), gameId + ".yml");
     }
 
-    private void writeDefaultsSnapshot(File snapshot, ConfigurationSection defaults) {
+    private void writeDefaultsSnapshot(File snapshot, ConfigurationSection defaults, List<String> retiredKeys) {
         YamlConfiguration copy = new YamlConfiguration();
         for (String key : defaults.getKeys(true)) {
             if (!defaults.isConfigurationSection(key)) {
                 copy.set(key, defaults.get(key));
             }
+        }
+        if (!retiredKeys.isEmpty()) {
+            copy.set(RETIRED_CHECKED, retiredKeys.stream().sorted().toList());
         }
         try {
             Files.createDirectories(snapshot.toPath().toAbsolutePath().getParent());
@@ -674,10 +697,39 @@ public final class HubConfig {
         }
     }
 
-    /** Equal settings values: numbers by value (YAML reads 6 and 6.0 differently), anything else as is. */
+    /**
+     * Equal settings values: numbers by value (YAML reads 6 and 6.0 differently), lists and maps (a list of maps such
+     * as the augment rounds) element by element with the same rule, anything else as is.
+     */
     static boolean sameValue(@Nullable Object a, @Nullable Object b) {
         if (a instanceof Number x && b instanceof Number y) {
             return Double.compare(x.doubleValue(), y.doubleValue()) == 0;
+        }
+        if (a instanceof List<?> x && b instanceof List<?> y) {
+            if (x.size() != y.size()) {
+                return false;
+            }
+            for (int i = 0; i < x.size(); i++) {
+                if (!sameValue(x.get(i), y.get(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof Map<?, ?> x && b instanceof Map<?, ?> y) {
+            Map<String, Object> left = new HashMap<>();
+            x.forEach((k, v) -> left.put(String.valueOf(k), v));
+            Map<String, Object> right = new HashMap<>();
+            y.forEach((k, v) -> right.put(String.valueOf(k), v));
+            if (!left.keySet().equals(right.keySet())) {
+                return false;
+            }
+            for (Map.Entry<String, Object> entry : left.entrySet()) {
+                if (!sameValue(entry.getValue(), right.get(entry.getKey()))) {
+                    return false;
+                }
+            }
+            return true;
         }
         return java.util.Objects.equals(a, b);
     }

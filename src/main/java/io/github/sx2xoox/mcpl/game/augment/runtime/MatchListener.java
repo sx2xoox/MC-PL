@@ -24,8 +24,10 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerExpChangeEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
@@ -171,6 +173,32 @@ final class MatchListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH)
     public void onToggleFlight(PlayerToggleFlightEvent event) {
         match.forEachAugment(event.getPlayer(), "onToggleFlight", augment -> augment.onToggleFlight(event));
+    }
+
+    // =================================================================== floating cards (augments.ui: CARDS)
+
+    /** Number keys pick a card (sneak: reroll it), the wheel moves the highlight; the held item stays. */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onCardKey(PlayerItemHeldEvent event) {
+        if (match.cardsKey(event.getPlayer(), event.getNewSlot(), event.getPreviousSlot())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /** F picks the highlighted card or unfolds the cards (sneak + F stays with the augments, e.g. 점멸). */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onCardConfirm(PlayerSwapHandItemsEvent event) {
+        if (!event.getPlayer().isSneaking() && match.cardsConfirm(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    /** Q folds the cards away instead of dropping the held item. */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onCardFold(PlayerDropItemEvent event) {
+        if (match.cardsFold(event.getPlayer())) {
+            event.setCancelled(true);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
