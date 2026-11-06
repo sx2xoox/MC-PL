@@ -57,6 +57,44 @@ class BotBrainForecastTest {
         assertTrue(CombatModel.winChance(IRON.withHealth(14), diamond) < 0.1);
     }
 
+    /**
+     * The cost of a decision with 39 contacts (a 40-bot match), with and without the forecast: printed for the
+     * performance notes; the forecast must stay a small part of a tick (50 ms).
+     */
+    @Test
+    void aDecisionWithTheForecastStaysCheap() {
+        java.util.Random random = new java.util.Random(3);
+        List<Contact> many = new java.util.ArrayList<>();
+        List<Contact> plain = new java.util.ArrayList<>();
+        for (int i = 0; i < 39; i++) {
+            CombatModel.Stats s = CombatModel.Stats.plain(5 + random.nextInt(16), 20, random.nextInt(21), 0, 6);
+            UUID id = new UUID(1, i);
+            double distance = 5 + random.nextDouble() * 60;
+            many.add(new Contact(id, distance, s.health(), 20, 30, true, false, false, false, false, false, s));
+            plain.add(new Contact(id, distance, s.health(), 20, 30, true, false, false, false, false, false));
+        }
+        Gear.Loadout iron = Gear.at(0.6);
+        BotBrain brain = new BotBrain(BotProfile.preset(BotDifficulty.HELL));
+        double[] micros = new double[2];
+        for (int round = 0; round < 2; round++) {
+            for (int variant = 0; variant < 2; variant++) {
+                List<Contact> contacts = variant == 0 ? many : plain;
+                Situation s = new Situation(true, 0, 20, 0, 20, 3, true, iron.score(), true, 64, 100, true, 50, 12,
+                        false, true, Double.POSITIVE_INFINITY, false, false, null, null, contacts, 0.3, false, 39, 0,
+                        variant == 0 ? IRON : null);
+                int n = 2000;
+                long start = System.nanoTime();
+                for (int i = 0; i < n; i++) {
+                    brain.decide(s);
+                }
+                micros[variant] = (System.nanoTime() - start) / 1000.0 / n;
+            }
+        }
+        System.out.printf(java.util.Locale.ROOT, "[brain-cost] one decision, 39 contacts: forecast %.1f µs, "
+                + "gear score %.1f µs%n", micros[0], micros[1]);
+        assertTrue(micros[0] < 1000, "a decision takes well under a millisecond: " + micros[0]);
+    }
+
     @Test
     void itTakesAFightTheGearScoreCalledEvenWhenItsSwordWins() {
         // the same gear score, but the enemy's is all armor and a fist (no sword in hand): an easy kill

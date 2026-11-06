@@ -737,7 +737,20 @@ public final class BotBrain {
         if (me == null || them == null) {
             return myPower / Math.max(1, power(c.health(), perceived(c.gear())));
         }
-        return CombatModel.advantage(me, perceived(them));
+        return CombatModel.advantage(me, prior(perceived(them), me));
+    }
+
+    /**
+     * What it cannot see on them (how well they swing, how many apples they carry) it takes to be as good as its own:
+     * a top player never counts on a weaker enemy. Without this a bot with seven apples and perfect crits thought
+     * every enemy had one apple and average crits and took fights it lost.
+     */
+    CombatModel.Stats prior(CombatModel.Stats them, CombatModel.Stats me) {
+        return new CombatModel.Stats(them.health(), them.maxHealth(), them.armor(), them.toughness(), them.damage(),
+                Math.min(them.swingTicks(), me.swingTicks()), Math.max(them.hitChance(), me.hitChance()),
+                Math.max(them.critChance(), me.critChance()), them.outgoing(), them.taken(), them.flatPerHit(),
+                them.trueDps(), them.lifesteal(), them.thorns(), them.execute(),
+                Math.max(them.apples(), Math.min(3, profile.goldenApples())), them.extraLives());
     }
 
     /** How it reads someone's duel numbers: exact with a perfect read, else blurred towards full iron. */
