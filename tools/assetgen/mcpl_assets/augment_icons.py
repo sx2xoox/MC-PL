@@ -1,5 +1,5 @@
-"""The 증강 card icons: one illustrated composition per augment, painted with `icon_kit` (vector shapes on a
-supersampled canvas, lit from the top-left, reduced to 72 x 72 pixel art with cel shading, selective outlines and
+"""The painted 증강 card icons, now the fallback for an augment without a PixelLab icon (mcpl_assets/pixel_icons.py):
+one illustrated composition per augment, painted with `icon_kit` (vector shapes on a supersampled canvas, lit from the top-left, reduced to 72 x 72 pixel art with cel shading, selective outlines and
 manual anti-aliasing). `augment_cards.py` turns them into font glyphs (shown 36 font units tall in the card medallion).
 
 Each recipe draws one readable symbol of what the augment does (이단 점프 = a winged boot, 피의 갈증 = a goblet

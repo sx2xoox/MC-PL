@@ -1,0 +1,208 @@
+{
+  "endpoint": "/v2/create-image-pixflux",
+  "style": "game ability icon, fantasy RPG augment icon, centered single object, bold readable silhouette, rich cel shading, soft rim light, top-left light source, vibrant saturated colors, clean dark outline, ",
+  "params": {
+    "image_size": {
+      "width": 64,
+      "height": 64
+    },
+    "no_background": true,
+    "text_guidance_scale": 8,
+    "outline": "single color black outline",
+    "shading": "detailed shading",
+    "detail": "highly detailed"
+  },
+  "seed": 7,
+  "icons": {
+    "auto_smelt": {
+      "prompt": "shiny iron ingot bar lying on top of bright orange campfire flames"
+    },
+    "beast_friend": {
+      "prompt": "head of a friendly white wolf dog with a red collar, front view"
+    },
+    "berserker_pact": {
+      "prompt": "bloody red battle axe crossed over a cracked red heart"
+    },
+    "blast_arrow": {
+      "prompt": "long arrow with a steel arrowhead and red fletching flying diagonally up right, a round orange explosion blast where its tip hits",
+      "seed": 21
+    },
+    "blink": {
+      "prompt": "magic purple spiral swirl vortex of teleportation energy with magenta sparkles, flat front view",
+      "seed": 21
+    },
+    "bloodthirst": {
+      "prompt": "golden chalice overflowing with glowing red blood, drops spilling"
+    },
+    "clairvoyance": {
+      "prompt": "glowing purple crystal ball orb with a mystic eye inside it"
+    },
+    "cobweb_trap": {
+      "prompt": "white sticky spider web with a small black spider in the middle"
+    },
+    "collector": {
+      "prompt": "fan of three glowing magic tarot cards with gold borders"
+    },
+    "combo": {
+      "prompt": "three parallel white diagonal sword slash marks with a yellow impact burst"
+    },
+    "diamond_vein": {
+      "prompt": "cluster of three faceted cyan diamond gemstones, sparkles",
+      "seed": 21
+    },
+    "double_jump": {
+      "prompt": "winged leather boot with small white feathered wings, cyan air swirl under it"
+    },
+    "earth_blessing": {
+      "prompt": "emerald green pickaxe with a curved two-pointed pick head, its wooden handle wrapped in leafy vines, diagonal",
+      "seed": 21
+    },
+    "enchant_kit": {
+      "prompt": "stack of three thick spell books glowing with purple enchantment magic"
+    },
+    "executioner": {
+      "prompt": "huge dark executioner axe with a white skull on the blade"
+    },
+    "feast": {
+      "prompt": "big roasted meat drumstick on a silver plate with a small red heart above"
+    },
+    "feather_fall": {
+      "prompt": "single soft white feather floating gently downward, diagonal"
+    },
+    "fire_blade": {
+      "prompt": "steel sword pointing up diagonally with its blade engulfed in orange flames"
+    },
+    "footsteps": {
+      "prompt": "pair of glowing red footprints"
+    },
+    "fortress": {
+      "prompt": "gray stone castle keep tower with battlements and a small blue flag, stone bricks down to a flat bottom edge, front view"
+    },
+    "frost_arrow": {
+      "prompt": "wooden arrow with white fletching and a pale blue ice crystal arrowhead, diagonal, snowflakes around it",
+      "seed": 21
+    },
+    "gale": {
+      "prompt": "swirling cyan gust of wind with a green leaf blowing in it"
+    },
+    "gambler": {
+      "prompt": "two white dice with red dots tumbling"
+    },
+    "giant": {
+      "prompt": "huge stone iron golem giant standing, front view, with red upward arrows beside it"
+    },
+    "heavy_hitter": {
+      "prompt": "heavy spiked iron morning star mace, diagonal"
+    },
+    "high_jump": {
+      "prompt": "bouncy green slime cube jumping with a white upward arrow above it"
+    },
+    "hunter_compass": {
+      "prompt": "round silver compass with a red needle pointing up right"
+    },
+    "iron_body": {
+      "prompt": "big red heart encased in a shiny steel iron frame with rivets"
+    },
+    "iron_bundle": {
+      "prompt": "open brown burlap sack full of shiny silver iron ingots, a loaf of bread leaning on it",
+      "seed": 21
+    },
+    "lucky_coin": {
+      "prompt": "shiny gold coin with a green four-leaf clover stamped on it"
+    },
+    "lucky_pick": {
+      "prompt": "iron pickaxe with a green four-leaf clover beside it"
+    },
+    "lumberjack": {
+      "prompt": "iron axe chopped into an upright oak wood log"
+    },
+    "midas_pick": {
+      "prompt": "golden pickaxe with a curved two-pointed pick head and a wooden handle, diagonal, glittering gold sparkles"
+    },
+    "miner_touch": {
+      "prompt": "iron pickaxe with a curved two-pointed pick head, diagonal, striking a small cracked stone block, white sparks"
+    },
+    "netherite_scrap": {
+      "prompt": "single dark netherite ingot, trapezoid metal bar, dark charcoal gray with a purple sheen"
+    },
+    "night_eyes": {
+      "prompt": "brown owl face with huge glowing yellow eyes, front view"
+    },
+    "pearls": {
+      "prompt": "glossy dark teal ender pearl sphere with a glowing green center"
+    },
+    "phoenix_feather": {
+      "prompt": "glowing phoenix feather made of fire, orange and gold flames"
+    },
+    "potion_bag": {
+      "prompt": "three round glass potion bottles, red, blue and purple, bundled together"
+    },
+    "quiver": {
+      "prompt": "brown leather quiver full of arrows with white feather fletching"
+    },
+    "rations": {
+      "prompt": "glowing golden apple next to a cooked brown steak, side by side",
+      "seed": 21
+    },
+    "regen_heart": {
+      "prompt": "red heart surrounded by a glowing green healing aura and green plus signs"
+    },
+    "rewind": {
+      "prompt": "golden pocket watch with a white face and black hands, a large blue circular arrow ring behind the watch pointing counterclockwise"
+    },
+    "shadow_strike": {
+      "prompt": "black dagger wreathed in purple shadow smoke"
+    },
+    "sharp_edge": {
+      "prompt": "gleaming steel sword pointing up diagonally with a bright glint on its sharp edge"
+    },
+    "shield_master": {
+      "prompt": "wooden heater shield with an iron rim and a round iron boss, front view"
+    },
+    "smith_blessing": {
+      "prompt": "iron anvil with a blacksmith hammer on it and orange sparks"
+    },
+    "sniper": {
+      "prompt": "round blue sniper scope crosshair reticle with an arrow through it"
+    },
+    "sprinter": {
+      "prompt": "blue running boot with a yellow lightning bolt and white speed lines"
+    },
+    "still_cloak": {
+      "prompt": "bright violet hooded cloak with an empty dark hood and two glowing cyan eyes, front view",
+      "seed": 21
+    },
+    "swimmer": {
+      "prompt": "teal mermaid fish tail fin splashing out of blue water"
+    },
+    "thick_skin": {
+      "prompt": "green turtle shell, top view"
+    },
+    "thorns": {
+      "prompt": "iron chestplate armor covered with sharp green thorn spikes"
+    },
+    "treasure_sense": {
+      "prompt": "glowing magic eye surrounded by sparkling gold nuggets and cyan diamonds",
+      "seed": 21
+    },
+    "triple_shot": {
+      "prompt": "three arrows flying side by side in a fan spread, diagonal"
+    },
+    "vengeful": {
+      "prompt": "glowing cyan ghost skull with blue soul flames"
+    },
+    "venom": {
+      "prompt": "curved black scorpion stinger dripping green poison"
+    },
+    "war_god": {
+      "prompt": "golden spartan helmet with red crest, crossed swords behind"
+    },
+    "wings": {
+      "prompt": "large pair of gray-violet membrane glider wings spread wide and symmetric, joined at the middle by a small leather strap, no body",
+      "seed": 7
+    },
+    "xp_spring": {
+      "prompt": "round glass bottle of glowing green liquid with floating green orbs"
+    }
+  }
+}
