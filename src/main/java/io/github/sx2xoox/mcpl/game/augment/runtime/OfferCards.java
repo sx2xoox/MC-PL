@@ -46,23 +46,24 @@ public final class OfferCards {
     static final double CARD_H = 0.36;
     static final double TX = CARD_H / 144;
     static final double CARD_GAP = 0.035;
-    static final double CARD_Y = 0.18;
+    /** The whole set (ribbon .. hints) is centred on the screen, up-down balanced round the cards. */
+    static final double CARD_Y = 0.0;
     static final double MAX_ROW = 1.30;
     static final double NAME_UNIT = 2.3 / 1080;
     static final double DESC_UNIT = 2.1 / 1080;
     static final double HINT_UNIT = 1.9 / 1080;
-    static final double ICON_Y = 36;
-    static final double NAME_Y = 1.5;
-    static final double DESC_TOP = -12;
+    static final double ICON_Y = 40;
+    static final double NAME_Y = 7;
+    /** Centre of the description panel; the text is centred in it. */
+    static final double DESC_MID = -33;
     static final double DESC_W = 78;
     static final int DESC_LINES = 6;
     static final double HIGHLIGHT_SCALE = 1.10;
-    static final double HIGHLIGHT_LIFT = 0.014;
-    static final double RIBBON_Y = CARD_Y + CARD_H / 2 + 0.045;
-    static final double FOOTER_Y = CARD_Y - CARD_H / 2 - 0.032;
-    static final double INFO_Y = -0.075;
-    static final double BAR_Y = -0.102;
-    static final double HINT_Y = -0.13;
+    static final double RIBBON_Y = CARD_Y + CARD_H / 2 + 0.1045;
+    static final double INFO_Y = CARD_Y + CARD_H / 2 + 0.052;
+    static final double FOOTER_Y = CARD_Y - CARD_H / 2 - 0.055;
+    static final double BAR_Y = CARD_Y - CARD_H / 2 - 0.091;
+    static final double HINT_Y = CARD_Y - CARD_H / 2 - 0.118;
     /** Ticks a leaving set of cards (picked, folded) animates before it is removed. */
     static final int LEAVE_TICKS = 11;
     /** Interpolation of every transformation update (the client eases between the server's ticks). */
@@ -76,8 +77,8 @@ public final class OfferCards {
         GLYPH,
         /** One text line, centred. */
         TEXT,
-        /** A block of text lines, placed by its top centre. */
-        TEXT_TOP
+        /** A block of text lines, placed by its centre. */
+        TEXT_MIDDLE
     }
 
     /** One text display: where it sits (relative to its card's centre, or on the screen) and how big a unit is. */
@@ -189,7 +190,7 @@ public final class OfferCards {
             frames[i] = add(new Layer(i, 0, 0, TX, DEPTH, Anchor.GLYPH, CardGlyphs.frame(offer.tier(), false), false));
             icons[i] = add(new Layer(i, 0, ICON_Y * TX, TX, DEPTH - 0.002, Anchor.GLYPH, icon(card), false));
             names[i] = add(new Layer(i, 0, NAME_Y * TX, NAME_UNIT, DEPTH - 0.003, Anchor.TEXT, name(card), true));
-            descriptions[i] = add(new Layer(i, 0, DESC_TOP * TX, DESC_UNIT, DEPTH - 0.003, Anchor.TEXT_TOP,
+            descriptions[i] = add(new Layer(i, 0, DESC_MID * TX, DESC_UNIT, DEPTH - 0.003, Anchor.TEXT_MIDDLE,
                     Component.empty(), true));
             describe(i, card);
             footers[i] = add(new Layer(i, 0, FOOTER_Y - CARD_Y, TX, DEPTH - 0.003, Anchor.GLYPH, footer(i, false),
@@ -469,7 +470,7 @@ public final class OfferCards {
             }
             default -> {
                 ax = 1;
-                ay = 10.0 * layer.lines - 1;
+                ay = (10.0 * layer.lines - 1) / 2;
             }
         }
         Vector3f translation = new Vector3f(
@@ -516,7 +517,7 @@ public final class OfferCards {
 
     private double cardLift(int i) {
         double appear = clamp((age - 2 - 2.0 * i) / 8.0);
-        double lift = -0.06 * (1 - easeOut(appear)) + HIGHLIGHT_LIFT * glow[i];
+        double lift = -0.06 * (1 - easeOut(appear)); // the highlight grows round the centre, no lift
         if (leaveAt >= 0) {
             double l = age - leaveAt;
             lift += i == picked ? 0.06 * easeOut(clamp(l / 8.0)) : -0.10 * clamp(l / 6.0);

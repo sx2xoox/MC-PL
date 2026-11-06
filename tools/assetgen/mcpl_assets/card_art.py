@@ -734,9 +734,11 @@ FRAME_W, FRAME_H = 112, 160
 MARGIN = 8
 BODY_W, BODY_H = 96, 144
 CUT = 7                                   # chamfered corners
-MEDALLION = (56, MARGIN + 36, 22)         # centre x, centre y, radius
-NAME_BAND = (MARGIN + 63, MARGIN + 78)    # top, bottom (y)
-DESC_PANEL = (MARGIN + 82, MARGIN + 134)  # top, bottom (y)
+# Up-down balanced: the medallion and the name band fill the upper half (4 px from the inner border to the ring), the
+# description panel the lower half (4 px to the inner border); gems and corner marks mirror top and bottom.
+MEDALLION = (56, MARGIN + 32, 22)         # centre x, centre y, radius
+NAME_BAND = (MARGIN + 58, MARGIN + 72)    # top, bottom (y)
+DESC_PANEL = (MARGIN + 76, MARGIN + 134)  # top, bottom (y)
 
 TIER_RAMP = {"silver": "card_silver", "gold": "card_gold", "prism": None}
 PRISM = ("prism_cyan", "prism_violet", "prism_pink")
@@ -799,9 +801,10 @@ def frame(tier, lit=False):
                 c = ramp("card_ink", 0)
             else:
                 # the lacquered panel: lighter near the top, in bands (no smooth gradient)
-                band = 3 if y < MARGIN + 30 else 2 if y < MARGIN + 70 else 1
-                if lit:
-                    band = min(4, band + 1) if y < MARGIN + 30 else band
+                edge_y = min(y - MARGIN, MARGIN + BODY_H - 1 - y)
+                band = 3 if edge_y < 26 else 2
+                if lit and edge_y < 26:
+                    band = 4
                 c = ramp("card_ink", band)
                 if d == 5 and lit:
                     r, g, b, _ = tier_colour(tier, 3, x, y)
@@ -827,12 +830,13 @@ def frame(tier, lit=False):
     d.ellipse((mx - mr + 2, my - mr + 2, mx + mr - 2, my + mr - 2), fill=tier_colour(tier, 1, mx, my))
     d.ellipse((mx - mr + 3, my - mr + 3, mx + mr - 3, my + mr - 3), fill=ramp("card_ink", 0))
     d.ellipse((mx - mr + 6, my - mr + 6, mx + mr - 6, my + mr - 6), fill=ramp("card_ink", 1 + boost))
-    # top gem breaking the border
-    gx, gy = FRAME_W // 2, MARGIN + 1
-    d.polygon([(gx, gy - 6), (gx + 6, gy), (gx, gy + 6), (gx - 6, gy)], fill=tier_colour(tier, 0, gx, gy))
-    d.polygon([(gx, gy - 5), (gx + 5, gy), (gx, gy + 5), (gx - 5, gy)], fill=tier_colour(tier, 3 + boost, gx, gy))
-    d.polygon([(gx, gy - 5), (gx + 5, gy), (gx, gy)], fill=tier_colour(tier, 4, gx, gy))
-    px[gx - 2, gy - 1] = ramp("ic_white", 2)
+    # gems breaking the border, top and bottom
+    gx = FRAME_W // 2
+    for gy in (MARGIN + 1, MARGIN + BODY_H - 2):
+        d.polygon([(gx, gy - 6), (gx + 6, gy), (gx, gy + 6), (gx - 6, gy)], fill=tier_colour(tier, 0, gx, gy))
+        d.polygon([(gx, gy - 5), (gx + 5, gy), (gx, gy + 5), (gx - 5, gy)], fill=tier_colour(tier, 3 + boost, gx, gy))
+        d.polygon([(gx, gy - 5), (gx + 5, gy), (gx, gy)], fill=tier_colour(tier, 4, gx, gy))
+        px[gx - 2, gy - 1] = ramp("ic_white", 2)
     # name band: a darker strip with tier lines and diamond end caps
     t0, t1 = NAME_BAND
     x0, x1 = MARGIN + 6, MARGIN + BODY_W - 7
@@ -846,12 +850,6 @@ def frame(tier, lit=False):
     p0, p1 = DESC_PANEL
     d.rectangle((MARGIN + 7, p0, MARGIN + BODY_W - 8, p1), fill=ramp("card_ink", 0))
     d.rectangle((MARGIN + 8, p0 + 1, MARGIN + BODY_W - 9, p1 - 1), fill=ramp("card_ink", 1 + boost))
-    # tier pips under the panel: one, two or three diamonds
-    pips = {"silver": 1, "gold": 2, "prism": 3}[tier]
-    py = p1 + 5
-    for i in range(pips):
-        cx = FRAME_W // 2 + (i - (pips - 1) / 2) * 8
-        d.polygon([(cx, py - 2), (cx + 2, py), (cx, py + 2), (cx - 2, py)], fill=tier_colour(tier, 3 + boost, cx, py))
     return im
 
 

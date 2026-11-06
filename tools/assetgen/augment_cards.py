@@ -132,17 +132,20 @@ W, H = 1920, 1080
 CARD_H = 0.36              # card body height, in screen heights (FOV 70)
 TX = CARD_H / 144          # one frame texel
 CARD_GAP = 0.035
-CARD_Y = 0.18
+CARD_Y = 0.0               # the whole set (ribbon .. hints) is centred on the screen
 MAX_ROW = 1.30
 NAME_UNIT = 2.3 / 1080
 DESC_UNIT = 2.1 / 1080
 HINT_UNIT = 1.9 / 1080
-ICON_Y, NAME_Y, DESC_TOP = 36, 1.5, -12      # texels from the body centre (up)
+ICON_Y, NAME_Y, DESC_MID = 40, 7, -33        # texels from the body centre (up); the description is centred
 DESC_W, DESC_LINES = 78, 6
-HIGHLIGHT_SCALE, HIGHLIGHT_LIFT = 1.10, 0.014
-RIBBON_Y = CARD_Y + CARD_H / 2 + 0.045
-FOOTER_Y = CARD_Y - CARD_H / 2 - 0.032
-INFO_Y, BAR_Y, HINT_Y = -0.075, -0.102, -0.13
+HIGHLIGHT_SCALE = 1.10     # grows round the card centre
+# above the cards: the ribbon and the info line; below: the key caps, the timer, the hints (same extent both ways)
+RIBBON_Y = CARD_Y + CARD_H / 2 + 0.1045
+INFO_Y = CARD_Y + CARD_H / 2 + 0.052
+FOOTER_Y = CARD_Y - CARD_H / 2 - 0.055
+BAR_Y = CARD_Y - CARD_H / 2 - 0.091
+HINT_Y = CARD_Y - CARD_H / 2 - 0.118
 
 UNIFONT = "/usr/share/fonts/opentype/unifont/unifont.otf"
 
@@ -317,7 +320,7 @@ def draw_cards(screen, tier, cards, highlight=-1, rerolls=2, seconds=23, total=3
         x, k = row[i]
         lit = i == highlight
         s = k * (HIGHLIGHT_SCALE if lit else 1.0)
-        y = CARD_Y + (HIGHLIGHT_LIFT if lit else 0)
+        y = CARD_Y
         paste_scaled(screen, glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png"), x, y, TX, s)
         paste_scaled(screen, glyph_image(f"icon_{aid}.png"), x, y + ICON_Y * TX * s, TX, s)
         draw_text(screen, name, x, y + NAME_Y * TX * s, NAME_UNIT, bold=True, factor=s)
@@ -326,11 +329,11 @@ def draw_cards(screen, tier, cards, highlight=-1, rerolls=2, seconds=23, total=3
         units = DESC_W * TX / DESC_UNIT
         lines = [("◆ " + kind_ko, tier_colour)] + [(l, (235, 235, 235)) for l in
                                                    wrap(re.sub(r"\(.*?\)", "", description), units, DESC_LINES - 1)]
-        top = y + DESC_TOP * TX * s
+        top = y + DESC_MID * TX * s + (10 * len(lines) - 1) / 2 * DESC_UNIT * s
         for j, (line, colour) in enumerate(lines):
             draw_text(screen, line, x, top - (j * 10 + 4.5) * DESC_UNIT * s, DESC_UNIT, colour, factor=s)
         key = glyph_image(f"key_{i + 1}{'_lit' if lit else ''}.png")
-        fy = FOOTER_Y + (HIGHLIGHT_LIFT if lit else 0)
+        fy = FOOTER_Y
         if rerolls > 0:
             paste_scaled(screen, key, x - 10 * TX * k, fy, TX, k)
             paste_scaled(screen, glyph_image(f"reroll{'_lit' if lit else ''}.png"), x + 10 * TX * k, fy, TX, k)
@@ -374,7 +377,7 @@ def preview(out_dir):
         hud(screen, gui)
         draw_cards(screen, tier, cards, hl, rerolls, seconds, 30, "1번째 라운드" if tier != "prism" else "보너스: 첫 번째 피",
                    queued)
-        screen.convert("RGB").save(out_dir / name)
+        screen.convert("RGB").save(out_dir / name.replace(".png", "_v2.png"))
     # every icon, 4x, with its name
     items = sorted(augments())
     cols = 10
@@ -387,14 +390,14 @@ def preview(out_dir):
         ic = glyph_image(f"icon_{aid}.png").resize((128, 128), Image.NEAREST)
         sheet.alpha_composite(ic, (x + 11, y + 2))
         d.text((x + cell / 2 - text_width(name) * 1, y + 130), name, font=font, fill=(255, 255, 255, 255))
-    sheet.save(out_dir / "icons.png")
+    sheet.save(out_dir / "icons_v2.png")
     # the frames, normal and lit, 3x
     fr = Image.new("RGBA", (6 * 112 * 3 + 50, 160 * 3 + 20), (34, 30, 44, 255))
     for i, tier in enumerate(TIERS):
         for j, lit in enumerate((False, True)):
             im = glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png").resize((336, 480), Image.NEAREST)
             fr.alpha_composite(im, (10 + (i * 2 + j) * 345, 10))
-    fr.save(out_dir / "frames.png")
+    fr.save(out_dir / "frames_v2.png")
     print(f"previews -> {out_dir}")
 
 
