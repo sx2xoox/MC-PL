@@ -40,10 +40,11 @@ public final class CardGlyphs {
     public static final int SMALL_KEY = 0xE150;
     public static final int ICON = 0xE200;
 
-    /** Glyph sizes (PNG pixels = font units). */
+    /** Glyph sizes (font units; PNG pixels = font units except the icons). */
     public static final int FRAME_W = 112;
     public static final int FRAME_H = 160;
-    public static final int ICON_SIZE = 32;
+    /** Icon glyph height; its PNG is 72 x 72 (two pixels per font unit, tools/assetgen/mcpl_assets/augment_icons.py). */
+    public static final int ICON_SIZE = 36;
     public static final int KEY_SIZE = 16;
     public static final int RIBBON_W = 176;
     public static final int RIBBON_H = 18;

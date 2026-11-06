@@ -14,8 +14,9 @@ Keep the code points and glyph sizes in sync with CardGlyphs.java (AugmentCardsT
   card frames U+E100 + tier (silver 0, gold 1, prism 2), lit (highlighted) U+E108 + tier: 112 x 160, ascent 78
   key caps U+E110 + n - 1 (n = 1..5), lit U+E118 + n - 1: 16 x 16, ascent 6; reroll mark U+E11E, lit U+E11F
   title ribbons U+E120 + tier: 176 x 18, ascent 7; timer bar U+E130 + level (0..20): 122 x 8, ascent 2
-  small inline key caps U+E150.. for 1 2 3 4 5 F Q ^(shift): 13 x 11, ascent 9; augment icons U+E200 + i: 32 x 32,
-  ascent 14 (i = position in the icon table, sorted by augment id)
+  small inline key caps U+E150.. for 1 2 3 4 5 F Q ^(shift): 13 x 11, ascent 9; augment icons U+E200 + i: 72 x 72 PNGs
+  shown 36 units tall (height 36, ascent 16; twice the detail of the card texels; i = position in the icon table,
+  sorted by augment id), painted by mcpl_assets/augment_icons.py
 Every centred glyph has 2 + ascent - height / 2 = 0 (the plugin centres a glyph on its text display that way) and a
 nearly invisible pixel (alpha 1) in its last column, so the client measures every glyph of a kind as wide as its PNG.
 """
@@ -30,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from mcpl_assets import card_art  # noqa: E402
+from mcpl_assets import augment_icons, card_art  # noqa: E402
 from mcpl_assets.palette import ramp  # noqa: E402
 
 REPO = HERE.parent.parent
@@ -45,6 +46,7 @@ NEG, POS = 0xE000, 0xE010
 FRAME, FRAME_LIT = 0xE100, 0xE108
 KEY, KEY_LIT, REROLL, REROLL_LIT = 0xE110, 0xE118, 0xE11E, 0xE11F
 RIBBON, BAR, SMALL_KEY, ICON = 0xE120, 0xE130, 0xE150, 0xE200
+ICON_PX, ICON_H = 72, 36     # icon PNG size and its glyph height (font units): 2 pixels per card texel
 SMALL_KEYS = ("1", "2", "3", "4", "5", "F", "Q", "^")
 KIND = {"능력치": "STAT", "자원": "RESOURCE", "전투": "COMBAT", "기동": "MOBILITY", "양날의 검": "TRADEOFF", "특수": "SPECIAL"}
 TIER_KO = {"실버": "silver", "골드": "gold", "프리즘": "prism"}
@@ -73,7 +75,7 @@ def pin(im):
 
 
 def glyphs():
-    """{file name: (image, code point, ascent)}."""
+    """{file name: (image, code point, ascent, height)}."""
     out = {}
     for i, tier in enumerate(TIERS):
         out[f"frame_{tier}.png"] = (card_art.frame(tier), FRAME + i, 78)
@@ -89,9 +91,10 @@ def glyphs():
     for i, label in enumerate(SMALL_KEYS):
         name = {"^": "shift"}.get(label, label.lower())
         out[f"small_key_{name}.png"] = (card_art.small_key(label), SMALL_KEY + i, 9)
-    for i, (aid, _, _, kind, _) in enumerate(sorted(augments())):
-        out[f"icon_{aid}.png"] = (card_art.icon(aid, kind), ICON + i, 14)
-    return {name: (pin(im), cp, ascent) for name, (im, cp, ascent) in out.items()}
+    out = {name: (im, cp, ascent, im.height) for name, (im, cp, ascent) in out.items()}
+    for i, (aid, _, _, _, _) in enumerate(sorted(augments())):
+        out[f"icon_{aid}.png"] = (augment_icons.icon(aid, ICON_PX), ICON + i, ICON_H // 2 - 2, ICON_H)
+    return {name: (pin(im), cp, ascent, h) for name, (im, cp, ascent, h) in out.items()}
 
 
 def font_json(table):
@@ -100,21 +103,21 @@ def font_json(table):
         advances[chr(NEG + i)] = -(1 << i)
         advances[chr(POS + i)] = 1 << i
     providers = [{"type": "space", "advances": advances}]
-    for name, (im, cp, ascent) in sorted(table.items(), key=lambda e: e[1][1]):
-        providers.append({"type": "bitmap", "file": f"mcpl:font/augment_cards/{name}", "height": im.height,
+    for name, (im, cp, ascent, height) in sorted(table.items(), key=lambda e: e[1][1]):
+        providers.append({"type": "bitmap", "file": f"mcpl:font/augment_cards/{name}", "height": height,
                           "ascent": ascent, "chars": [chr(cp)]})
     return {"providers": providers}
 
 
 def write():
+    missing = sorted(set(a[0] for a in augments()) - set(augment_icons.ICONS))
+    assert not missing, f"augments without an icon recipe in augment_icons.ICONS: {missing}"
     table = glyphs()
-    missing = sorted(set(a[0] for a in augments()) - set(card_art.ICONS))
-    assert not missing, f"augments without an icon recipe in card_art.ICONS: {missing}"
     TEXTURES.mkdir(parents=True, exist_ok=True)
     for stale in TEXTURES.glob("*.png"):
         if stale.name not in table:
             stale.unlink()
-    for name, (im, _, _) in table.items():
+    for name, (im, _, _, _) in table.items():
         im.save(TEXTURES / name, optimize=True)
     FONT_JSON.parent.mkdir(parents=True, exist_ok=True)
     FONT_JSON.write_text(json.dumps(font_json(table), ensure_ascii=True, indent=2) + "\n")
@@ -336,7 +339,7 @@ def draw_cards(screen, tier, cards, highlight=-1, rerolls=2, seconds=23, total=3
         s = k * (HIGHLIGHT_SCALE if lit else 1.0)
         y = CARD_Y
         paste_scaled(screen, glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png"), x, y, TX, s)
-        paste_scaled(screen, glyph_image(f"icon_{aid}.png"), x, y + ICON_Y * TX * s, TX, s)
+        paste_scaled(screen, glyph_image(f"icon_{aid}.png"), x, y + ICON_Y * TX * s, TX, s * ICON_H / ICON_PX)
         draw_text(screen, name, x, y + NAME_Y * TX * s, NAME_UNIT, bold=True, factor=s)
         kind_ko = {v: k2 for k2, v in KIND.items()}[kind]
         tier_colour = {"silver": (201, 214, 223), "gold": (255, 200, 61), "prism": (213, 140, 255)}[tier]
@@ -391,27 +394,27 @@ def preview(out_dir):
         hud(screen, gui)
         draw_cards(screen, tier, cards, hl, rerolls, seconds, 30, "1번째 라운드" if tier != "prism" else "보너스: 첫 번째 피",
                    queued)
-        screen.convert("RGB").save(out_dir / name.replace(".png", "_v3.png"))
+        screen.convert("RGB").save(out_dir / name.replace(".png", "_v4.png"))
     # every icon, 4x, with its name
     items = sorted(augments())
     cols = 10
-    cell = 150
+    cell = 160
     sheet = Image.new("RGBA", (cols * cell, ((len(items) + cols - 1) // cols) * cell), (34, 30, 44, 255))
     font = ImageFont.truetype(UNIFONT, 16)
     d = ImageDraw.Draw(sheet)
     for i, (aid, name, tier, kind, _) in enumerate(items):
         x, y = (i % cols) * cell, (i // cols) * cell
-        ic = glyph_image(f"icon_{aid}.png").resize((128, 128), Image.NEAREST)
-        sheet.alpha_composite(ic, (x + 11, y + 2))
-        d.text((x + cell / 2 - text_width(name) * 1, y + 130), name, font=font, fill=(255, 255, 255, 255))
-    sheet.save(out_dir / "icons_v3.png")
+        ic = glyph_image(f"icon_{aid}.png").resize((ICON_PX * 2, ICON_PX * 2), Image.NEAREST)
+        sheet.alpha_composite(ic, (x + (cell - ICON_PX * 2) // 2, y))
+        d.text((x + cell / 2 - text_width(name) * 1, y + 142), name, font=font, fill=(255, 255, 255, 255))
+    sheet.save(out_dir / "icons_v4.png")
     # the frames, normal and lit, 3x
     fr = Image.new("RGBA", (6 * 112 * 3 + 50, 160 * 3 + 20), (34, 30, 44, 255))
     for i, tier in enumerate(TIERS):
         for j, lit in enumerate((False, True)):
             im = glyph_image(f"frame_{tier}{'_lit' if lit else ''}.png").resize((336, 480), Image.NEAREST)
             fr.alpha_composite(im, (10 + (i * 2 + j) * 345, 10))
-    fr.save(out_dir / "frames_v3.png")
+    fr.save(out_dir / "frames_v4.png")
     print(f"previews -> {out_dir}")
 
 

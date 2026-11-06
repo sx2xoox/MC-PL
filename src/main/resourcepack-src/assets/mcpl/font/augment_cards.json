@@ -476,8 +476,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_auto_smelt.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue200"
       ]
@@ -485,8 +485,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_beast_friend.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue201"
       ]
@@ -494,8 +494,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_berserker_pact.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue202"
       ]
@@ -503,8 +503,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_blast_arrow.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue203"
       ]
@@ -512,8 +512,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_blink.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue204"
       ]
@@ -521,8 +521,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_bloodthirst.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue205"
       ]
@@ -530,8 +530,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_clairvoyance.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue206"
       ]
@@ -539,8 +539,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_cobweb_trap.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue207"
       ]
@@ -548,8 +548,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_collector.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue208"
       ]
@@ -557,8 +557,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_combo.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue209"
       ]
@@ -566,8 +566,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_diamond_vein.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue20a"
       ]
@@ -575,8 +575,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_double_jump.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue20b"
       ]
@@ -584,8 +584,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_earth_blessing.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue20c"
       ]
@@ -593,8 +593,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_enchant_kit.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue20d"
       ]
@@ -602,8 +602,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_executioner.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue20e"
       ]
@@ -611,8 +611,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_feast.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue20f"
       ]
@@ -620,8 +620,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_feather_fall.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue210"
       ]
@@ -629,8 +629,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_fire_blade.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue211"
       ]
@@ -638,8 +638,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_footsteps.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue212"
       ]
@@ -647,8 +647,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_fortress.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue213"
       ]
@@ -656,8 +656,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_frost_arrow.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue214"
       ]
@@ -665,8 +665,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_gale.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue215"
       ]
@@ -674,8 +674,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_gambler.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue216"
       ]
@@ -683,8 +683,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_giant.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue217"
       ]
@@ -692,8 +692,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_heavy_hitter.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue218"
       ]
@@ -701,8 +701,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_high_jump.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue219"
       ]
@@ -710,8 +710,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_hunter_compass.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue21a"
       ]
@@ -719,8 +719,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_iron_body.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue21b"
       ]
@@ -728,8 +728,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_iron_bundle.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue21c"
       ]
@@ -737,8 +737,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_lucky_coin.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue21d"
       ]
@@ -746,8 +746,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_lucky_pick.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue21e"
       ]
@@ -755,8 +755,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_lumberjack.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue21f"
       ]
@@ -764,8 +764,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_midas_pick.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue220"
       ]
@@ -773,8 +773,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_miner_touch.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue221"
       ]
@@ -782,8 +782,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_netherite_scrap.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue222"
       ]
@@ -791,8 +791,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_night_eyes.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue223"
       ]
@@ -800,8 +800,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_pearls.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue224"
       ]
@@ -809,8 +809,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_phoenix_feather.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue225"
       ]
@@ -818,8 +818,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_potion_bag.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue226"
       ]
@@ -827,8 +827,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_quiver.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue227"
       ]
@@ -836,8 +836,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_rations.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue228"
       ]
@@ -845,8 +845,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_regen_heart.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue229"
       ]
@@ -854,8 +854,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_rewind.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue22a"
       ]
@@ -863,8 +863,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_shadow_strike.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue22b"
       ]
@@ -872,8 +872,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_sharp_edge.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue22c"
       ]
@@ -881,8 +881,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_shield_master.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue22d"
       ]
@@ -890,8 +890,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_smith_blessing.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue22e"
       ]
@@ -899,8 +899,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_sniper.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue22f"
       ]
@@ -908,8 +908,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_sprinter.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue230"
       ]
@@ -917,8 +917,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_still_cloak.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue231"
       ]
@@ -926,8 +926,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_swimmer.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue232"
       ]
@@ -935,8 +935,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_thick_skin.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue233"
       ]
@@ -944,8 +944,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_thorns.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue234"
       ]
@@ -953,8 +953,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_treasure_sense.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue235"
       ]
@@ -962,8 +962,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_triple_shot.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue236"
       ]
@@ -971,8 +971,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_vengeful.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue237"
       ]
@@ -980,8 +980,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_venom.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue238"
       ]
@@ -989,8 +989,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_war_god.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue239"
       ]
@@ -998,8 +998,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_wings.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue23a"
       ]
@@ -1007,8 +1007,8 @@
     {
       "type": "bitmap",
       "file": "mcpl:font/augment_cards/icon_xp_spring.png",
-      "height": 32,
-      "ascent": 14,
+      "height": 36,
+      "ascent": 16,
       "chars": [
         "\ue23b"
       ]
