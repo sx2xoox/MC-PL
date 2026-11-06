@@ -16,6 +16,10 @@ import org.jspecify.annotations.Nullable;
  * (how well it reads a target's gear), how eager it is ({@code aggression}), when it thinks it needs to heal and how
  * far it shoots. How well the chosen behaviour is executed (reaction, aim, crits, building speed) is
  * {@link BotController}'s part.
+ *
+ * <p>Who is stronger comes from the {@link CombatModel} duel forecast when the situation carries duel numbers (its
+ * own: gear, augments, skill, apples; theirs: what shows on them); without them (the earlier brain, kept for the A/B
+ * measurement, and the scenario tests written for it) it compares gear-score "power" as before.
  */
 public final class BotBrain {
 

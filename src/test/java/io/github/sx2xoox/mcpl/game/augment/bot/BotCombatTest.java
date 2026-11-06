@@ -85,5 +85,8 @@ class BotCombatTest {
         assertTrue(normal.contains("hits/taken=1/4"), normal);
         assertTrue(normal.contains("apples=1"), normal);
         assertTrue(lines.stream().anyMatch(l -> l.startsWith("영희 [normal·tank] place=2") && l.contains("death=bot")));
+        assertTrue(lines.stream().noneMatch(l -> l.contains("brain=")), "no brain tag outside an A/B measurement");
+        stats.variant("a", "legacy");
+        assertTrue(stats.report().stream().anyMatch(l -> l.startsWith("철수 [hard·hunter]") && l.endsWith(" brain=legacy")));
     }
 }
