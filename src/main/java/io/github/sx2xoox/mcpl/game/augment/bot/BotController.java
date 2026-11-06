@@ -625,6 +625,11 @@ public final class BotController {
             pitCell = new int[] {at.getBlockX(), at.getBlockY(), at.getBlockZ()};
             pitSince = now;
             clearHazard(at.getBlock()); // the bush at the bottom
+            // and a cobweb thrown over the pit: under it every jump stalls and it stayed down there for good (a real
+            // match ended in a half-hour stalemate: the last two, one under a web in a pit, the other unable to reach)
+            for (int up = 1; up <= 3; up++) {
+                clearHazard(at.getBlock().getRelative(0, up, 0));
+            }
             legs.setVelocity(new Vector(0, 0.42, 0));
         }
     }

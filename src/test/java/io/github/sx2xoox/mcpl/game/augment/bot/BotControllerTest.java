@@ -83,6 +83,21 @@ class BotControllerTest {
     }
 
     @Test
+    void outOfAHiddenPitItClearsTheWebThrownOverIt() {
+        BotController bot = fightingBot("보통");
+        WanderingTrader legs = bot.body().legs();
+        admin.teleport(legs.getLocation().add(0, 0, 30));
+        Location feet = legs.getLocation();
+        World world = feet.getWorld();
+        world.getBlockAt(feet.getBlockX(), feet.getBlockY() - 1, feet.getBlockZ()).setType(Material.STONE);
+        org.bukkit.block.Block web = world.getBlockAt(feet.getBlockX(), feet.getBlockY() + 2, feet.getBlockZ());
+        web.setType(Material.COBWEB);
+        ((EntityMock) legs).setOnGround(true);
+        bot.climbOutOfPit(h.match().clock(), bot.body());
+        assertTrue(web.getType().isAir(), "the lid over the pit is gone (under it every jump stalled)");
+    }
+
+    @Test
     void itSwimsWithItsHeadUpTowardsWhereItGoes() {
         BotController bot = fightingBot("보통");
         WanderingTrader legs = bot.body().legs();
