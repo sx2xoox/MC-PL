@@ -243,6 +243,11 @@ public final class BotBrain {
     /** A visible enemy this close with this little health is a sure kill (worth staying outside the border for). */
     static final double SURE_KILL_REACH = 4;
     static final double SURE_KILL_HEALTH = 4;
+    /**
+     * With duel numbers, how much the forecast win chance moves the engage score while many rivals are left (per unit
+     * of win chance away from 55 %).
+     */
+    static final double PICKY = 60;
     /** In the final zone with at most this many enemies left, nobody hides, waits or runs any more. */
     static final int SHOWDOWN_RIVALS = 3;
     /** How much more a survivor wants to stay sealed in its burrow while more than {@link #SHOWDOWN_RIVALS} are left. */
@@ -416,6 +421,16 @@ public final class BotBrain {
             }
             if (c.trapped()) {
                 engage += traits.traps() ? 30 : 15; // stuck in a web: punish it
+            }
+            Double win = wins.get(c.id());
+            if (win != null && !showdown && !c.fightingOther()) {
+                // many rivals left and early: only the fights the forecast says it wins (every fight costs health and
+                // apples and draws the next rival); a fight it clearly loses is left while it is not yet in melee
+                double crowd = clamp((s.rivalsLeft() - SHOWDOWN_RIVALS) / 6.0, 0, 1) * (1 - p);
+                engage += PICKY * (win - 0.55) * crowd;
+                if (win < 0.4 && c.distance() > SURE_KILL_REACH + 2 && crowd > 0) {
+                    out.add(new Decision(Behaviour.AVOID, c.id(), (55 + 60 * (0.5 - win)) * crowd));
+                }
             }
             if (home) {
                 if (c.distance() < 6 && hurtRatio < 0.4 && advantage > 1.2) {

@@ -96,6 +96,20 @@ class BotBrainForecastTest {
     }
 
     @Test
+    void earlyWithManyRivalsItSkipsAFightItLosesButTheLastFewFightItOut() {
+        BotBrain brain = new BotBrain(BotProfile.preset(BotDifficulty.HELL));
+        CombatModel.Stats better = CombatModel.Stats.plain(20, 20, 19, 4, 7);
+        Contact c = contact(15, 20, better, Gear.at(1.0).score());
+        assertTrue(CombatModel.winChance(brain.advantage(situation(IRON, 20, c, null, 100), c, 1)) < 0.4);
+        Decision early = brain.decide(situation(IRON, 20, c, null, 100));
+        assertEquals(Behaviour.AVOID, early.behaviour(), early.toString());
+        Gear.Loadout iron = Gear.at(0.6);
+        Situation showdown = new Situation(true, 0, 20, 0, 20, 3, true, iron.score(), true, 64, 100, true, 5, 12, false,
+                true, Double.POSITIVE_INFINITY, false, false, null, null, List.of(c), 1, true, 2, 0, IRON);
+        assertNotEquals(Behaviour.AVOID, brain.decide(showdown).behaviour(), "the last few fight it out");
+    }
+
+    @Test
     void itTakesAFightTheGearScoreCalledEvenWhenItsSwordWins() {
         // the same gear score, but the enemy's is all armor and a fist (no sword in hand): an easy kill
         CombatModel.Stats armoredFist = CombatModel.Stats.plain(20, 20, 20, 0, 1);
