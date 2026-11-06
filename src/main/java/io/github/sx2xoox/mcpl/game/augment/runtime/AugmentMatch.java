@@ -1009,7 +1009,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (cards.isEmpty()) {
             return null;
         }
-        AugmentInfo info = cards.getFirst();
+        AugmentInfo info = botPick(bot, cards);
         AugmentRegistry.Entry entry = game.registry().get(info.id());
         if (entry == null) {
             return null;
@@ -1021,11 +1021,28 @@ public final class AugmentMatch implements GameInstance, BotHost {
         } catch (RuntimeException e) {
             log("onGrant of " + info.id() + " (bot)", e);
         }
+        bots.augmentGranted(bot, info.id(), config.params(info).values());
         hud.update();
         if (chat != null) {
             chat.augmentGranted(bot, info);
         }
         return info;
+    }
+
+    /** The card a bot takes of the ones it drew (it reads them like a player, see {@code AugmentValues}). */
+    private AugmentInfo botPick(UUID bot, List<AugmentInfo> cards) {
+        List<io.github.sx2xoox.mcpl.game.augment.bot.AugmentValues.Card> offer = new ArrayList<>(cards.size());
+        for (AugmentInfo card : cards) {
+            offer.add(new io.github.sx2xoox.mcpl.game.augment.bot.AugmentValues.Card(card.id(),
+                    config.params(card).values()));
+        }
+        String id = bots == null ? null : bots.pickAugment(bot, offer);
+        for (AugmentInfo card : cards) {
+            if (card.id().equals(id)) {
+                return card;
+            }
+        }
+        return cards.getFirst();
     }
 
     /** Gives a bot a specific augment (tests, admin tools); false if it cannot own it. */
@@ -1043,6 +1060,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         } catch (RuntimeException e) {
             log("onGrant of " + info.id() + " (bot)", e);
         }
+        bots.augmentGranted(bot, info.id(), config.params(info).values());
         return true;
     }
 

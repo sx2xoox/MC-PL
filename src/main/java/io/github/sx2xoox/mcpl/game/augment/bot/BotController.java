@@ -139,6 +139,15 @@ public final class BotController {
     private final Random random;
     private final int offset;
     private @Nullable BotBody body;
+    /**
+     * It plays the earlier brain (gear-score power, drag-free bow aim, the first card): the A/B measurement of the
+     * new one against it (system property {@code mcpl.bots.ab}, half the bots), never in a normal match.
+     */
+    private boolean legacy;
+    /** The augments it owns (id → configured numbers), for its duel forecast and its next pick. */
+    private final Map<String, Map<String, Double>> augments = new java.util.LinkedHashMap<>();
+    /** What its augments do that the body's attributes do not show ({@link AugmentValues.Effect#eventOnly}). */
+    private AugmentValues.Effect augmentEffect = AugmentValues.Effect.NONE;
     private Gear.Loadout loadout = Gear.at(0);
     private int apples;
     private boolean applesGiven;
@@ -805,7 +814,7 @@ public final class BotController {
             }
             double distance = rival.getLocation().distance(at);
             boolean heard = distance <= (rival.isSneaking() ? SNEAK_HEARING : HEARING);
-            boolean seen = distance <= SIGHT && self.hasLineOfSight(rival);
+            boolean seen = distance <= SIGHT && manager.sees(self, rival, distance, now);
             // a glowing rival (everyone glows in the final zone) shows through walls, to players and bots alike
             boolean glowing = !seen && distance <= SIGHT && glows(rival);
             if (heard && !seen) {
@@ -855,7 +864,7 @@ public final class BotController {
             contacts.add(new Contact(entry.getKey(), distance, rival.getHealth() + rival.getAbsorptionAmount(),
                     maxHealth(rival), manager.gearOf(rival), visible, manager.fightingOther(entry.getKey(), id, now),
                     seen.distance() < seen.previous() - 0.5, holdsBow(rival), grudges.containsKey(entry.getKey()),
-                    seen.tick() == now && webbed(rival)));
+                    seen.tick() == now && webbed(rival), legacy ? null : manager.combatOf(rival)));
         }
         // the nearer of where the border is now and where it will be once it could have walked in (the farther out,
         // the earlier it heads in: terrain makes the way longer than the straight line)
@@ -876,7 +885,81 @@ public final class BotController {
                 zone, host.finalHalf(),
                 baseBuilt, baseDone, baseDistance, baseSafe, highGround(at),
                 current == null ? null : current.behaviour(), current == null ? null : current.target(), contacts,
-                host.pressure(), finale(), host.rivals(id, self.getWorld()).size(), idle(now));
+                host.pressure(), finale(), host.rivals(id, self.getWorld()).size(), idle(now),
+                legacy ? null : selfStats(self, now));
+    }
+
+    // =================================================================== duel forecast and augments
+
+    /** True while it plays the earlier brain (A/B measurement). */
+    public boolean legacy() {
+        return legacy;
+    }
+
+    void legacy(boolean value) {
+        legacy = value;
+    }
+
+    /** The share of its melee swings that land (its aim error). */
+    double hitChance() {
+        return Math.max(0.5, Math.min(1, 1 - profile.aimError() / 25.0));
+    }
+
+    double critChance() {
+        return traits.personality() == BotPersonality.BERSERKER ? Math.max(0.95, profile.critChance())
+                : profile.critChance();
+    }
+
+    /** Its own duel numbers now: health, its gear and augments, its skill and the apples it may eat. */
+    CombatModel.Stats selfStats(Mannequin self, long now) {
+        CombatModel.Stats base = new CombatModel.Stats(self.getHealth() + self.getAbsorptionAmount(),
+                maxHealth(self), loadout.armorPoints() + bonus(Attribute.ARMOR),
+                loadout.toughness() + bonus(Attribute.ARMOR_TOUGHNESS), swingDamage(), profile.attackTicks(),
+                hitChance(), critChance(), 1, 1, 0, 0, 0, 0, 1, now >= nextAppleAt ? apples : 0, 0);
+        return base.with(augmentEffect);
+    }
+
+    /** It got an augment (a card it picked, or one handed to it). */
+    void augmentGranted(String augment, Map<String, Double> params) {
+        augments.put(augment, Map.copyOf(params));
+        augmentEffect = AugmentValues.total(augments).eventOnly();
+    }
+
+    /** The augments it owns (id → numbers). */
+    public Map<String, Map<String, Double>> augments() {
+        return java.util.Collections.unmodifiableMap(augments);
+    }
+
+    /**
+     * The card it takes of {@code cards}: the earlier brain the first one; else by {@link AugmentValues#pick}, valued
+     * with the gear it will fight in (the schedule at the fight start, its pace), its skill and apples, its style (how
+     * much it fights with the bow, lives off its legs, expects kills). An easy bot reads the cards less well.
+     */
+    @Nullable String pickAugment(List<AugmentValues.Card> cards) {
+        if (cards.isEmpty()) {
+            return null;
+        }
+        if (legacy) {
+            return cards.getFirst().id();
+        }
+        Gear.Loadout fightGear = Gear.at(Math.max(host.gearFloor(), profile.gearPace()));
+        CombatModel.Stats me = new CombatModel.Stats(20, 20, fightGear.armorPoints(), fightGear.toughness(),
+                fightGear.sword().damage() * profile.damageScale(), profile.attackTicks(), hitChance(), critChance(),
+                1, 1, 0, 0, 0, 0, 1, Math.min(2, profile.goldenApples()), 0);
+        BotPersonality who = traits.personality();
+        double bowShare = brain.bowRange() <= 0 || who == BotPersonality.BERSERKER ? 0
+                : who == BotPersonality.ARCHER ? 0.8 : who == BotPersonality.NOMAD ? 0.6 : 0.25;
+        double mobility = who == BotPersonality.HUNTER || who == BotPersonality.NOMAD ? 0.8
+                : who == BotPersonality.ASSASSIN ? 0.6 : who == BotPersonality.TANK || who == BotPersonality.FORTRESS
+                ? 0.1 : 0.3;
+        double randomShare = switch (difficulty) {
+            case EASY -> 0.5;
+            case NORMAL -> 0.2;
+            case HARD -> 0.05;
+            case HELL -> 0;
+        };
+        return AugmentValues.pick(cards, me, augments, AugmentValues.Effect.NONE, bowShare, mobility,
+                2 * brain.aggression(), randomShare, random);
     }
 
     /**
@@ -2083,14 +2166,12 @@ public final class BotController {
         nextSwing = now + profile.attackTicks();
         spaceOut = random.nextDouble() < profile.spacing();
         self.swingMainHand();
-        double hitChance = Math.max(0.5, Math.min(1, 1 - profile.aimError() / 25.0));
-        if (random.nextDouble() >= hitChance) {
+        if (random.nextDouble() >= hitChance()) {
             manager.stats().swing(id, false, false);
             self.getWorld().playSound(self.getLocation(), Sound.ENTITY_PLAYER_ATTACK_WEAK, 0.6f, 1f);
             return true;
         }
-        boolean crit = random.nextDouble() < (traits.personality() == BotPersonality.BERSERKER
-                ? Math.max(0.95, profile.critChance()) : profile.critChance());
+        boolean crit = random.nextDouble() < critChance();
         manager.stats().swing(id, true, crit);
         if (self.isHandRaised()) {
             self.clearActiveItem(); // the shield comes down to swing
@@ -2137,9 +2218,11 @@ public final class BotController {
         Location eye = self.getEyeLocation();
         Location aim = target.getLocation().add(0, target.getHeight() * 0.6, 0);
         Vector velocity = manager.motion(target); // its real movement (a walking player's velocity is ~0)
-        double[] launch = Ballistics.launch(new double[] {eye.getX(), eye.getY(), eye.getZ()},
-                new double[] {aim.getX(), aim.getY(), aim.getZ()},
-                new double[] {velocity.getX(), velocity.getY(), velocity.getZ()}, profile.bowSkill());
+        double[] from = {eye.getX(), eye.getY() - 0.1, eye.getZ()}; // an arrow leaves just under the eye
+        double[] to = {aim.getX(), aim.getY(), aim.getZ()};
+        double[] moving = {velocity.getX(), velocity.getY(), velocity.getZ()};
+        double[] launch = legacy ? Ballistics.launchSimple(from, to, moving, profile.bowSkill())
+                : Ballistics.launch(from, to, moving, profile.bowSkill());
         faceAlong(launch); // the camera follows the lead and the arc while drawing
         if (now - drawStart < DRAW_TICKS) {
             return true;
@@ -2159,7 +2242,14 @@ public final class BotController {
     }
 
     private void eatIfLow(long now, Mannequin self) {
-        if (apples <= 0 || now < nextAppleAt || self.getHealth() > brain.healAt()) {
+        if (apples <= 0 || now < nextAppleAt) {
+            return;
+        }
+        // a good player also eats in the middle of a trade it is not clearly winning, as soon as its absorption is
+        // gone and it is down a third (it keeps two apples back for the heal at the end)
+        boolean trading = !legacy && apples >= 3 && self.getAbsorptionAmount() <= 0
+                && self.getHealth() < maxHealth(self) * 0.67 && lastFightAt >= 0 && now - lastFightAt < 40;
+        if (self.getHealth() > brain.healAt() && !trading) {
             return;
         }
         apples--;

@@ -83,10 +83,19 @@ public final class BotBrain {
      * @param hasBow        holds or carries a bow (visible in hand)
      * @param grudge        it hurt this bot or killed someone near it (an avenger hunts it down)
      * @param trapped       stuck in a cobweb right now (easy to hit, cannot get away)
+     * @param stats         their duel numbers as seen on them (armor, sword, hearts) for the {@link CombatModel}, or
+     *                      null: the brain then compares the gear score as before
      */
     public record Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
                           boolean fightingOther, boolean approaching, boolean hasBow, boolean grudge,
-                          boolean trapped) {
+                          boolean trapped, CombatModel.@Nullable Stats stats) {
+
+        /** A contact without duel numbers (the gear score only). */
+        public Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
+                       boolean fightingOther, boolean approaching, boolean hasBow, boolean grudge, boolean trapped) {
+            this(id, distance, health, maxHealth, gear, visible, fightingOther, approaching, hasBow, grudge, trapped,
+                    null);
+        }
 
         /** A contact that is not stuck in a web. */
         public Contact(UUID id, double distance, double health, double maxHealth, double gear, boolean visible,
@@ -132,19 +141,34 @@ public final class BotBrain {
      * @param rivalsLeft       enemies still in play (known or not; the sidebar shows it to everyone)
      * @param idle             0..1, how long it has gone without a fight (1: a minute or more): an idle bot goes
      *                         looking for one
+     * @param self             its own duel numbers (gear, skill, augments, apples) for the {@link CombatModel}, or
+     *                         null: it compares gear scores as before
      */
     public record Situation(boolean fight, double farmingLeft, double health, double absorption, double maxHealth,
                             int apples, boolean appleReady, double gear, boolean hasBow, int blocks,
                             double borderMargin, boolean borderShrinking, double zoneDistance, double zoneRadius,
                             boolean baseBuilt, boolean baseDone, double baseDistance, boolean baseSafe,
                             boolean highGround, @Nullable Behaviour current, @Nullable UUID currentTarget,
-                            List<Contact> contacts, double pressure, boolean finale, int rivalsLeft, double idle) {
+                            List<Contact> contacts, double pressure, boolean finale, int rivalsLeft, double idle,
+                            CombatModel.@Nullable Stats self) {
 
         public Situation {
             contacts = List.copyOf(contacts);
             pressure = Double.isFinite(pressure) ? Math.max(0, Math.min(1, pressure)) : 0;
             idle = Double.isFinite(idle) ? Math.max(0, Math.min(1, idle)) : 0;
             rivalsLeft = Math.max(rivalsLeft, 0);
+        }
+
+        /** A situation without duel numbers (the brain compares gear scores). */
+        public Situation(boolean fight, double farmingLeft, double health, double absorption, double maxHealth,
+                         int apples, boolean appleReady, double gear, boolean hasBow, int blocks,
+                         double borderMargin, boolean borderShrinking, double zoneDistance, double zoneRadius,
+                         boolean baseBuilt, boolean baseDone, double baseDistance, boolean baseSafe,
+                         boolean highGround, @Nullable Behaviour current, @Nullable UUID currentTarget,
+                         List<Contact> contacts, double pressure, boolean finale, int rivalsLeft, double idle) {
+            this(fight, farmingLeft, health, absorption, maxHealth, apples, appleReady, gear, hasBow, blocks,
+                    borderMargin, borderShrinking, zoneDistance, zoneRadius, baseBuilt, baseDone, baseDistance,
+                    baseSafe, highGround, current, currentTarget, contacts, pressure, finale, rivalsLeft, idle, null);
         }
 
         /** A situation outside the final zone, many rivals left and just out of a fight. */
@@ -223,6 +247,8 @@ public final class BotBrain {
     private final BotProfile profile;
     private final BotPersonality.Traits traits;
     private final java.util.Random random;
+    /** The forecast win chance against each contact at the last decision (with duel numbers only). */
+    private final java.util.Map<UUID, Double> wins = new java.util.HashMap<>();
     /** A gambler's current mood: a random swing per behaviour, re-rolled now and then (not every decision). */
     private final java.util.EnumMap<Behaviour, Double> mood = new java.util.EnumMap<>(Behaviour.class);
 
@@ -264,6 +290,7 @@ public final class BotBrain {
 
     /** The options when {@code allies} teammates fight next to it: they take on that many of the enemies near. */
     private List<Decision> scored(Situation s, int allies) {
+        wins.clear();
         List<Decision> out = new ArrayList<>();
         double hp = s.health() + s.absorption();
         boolean low = s.health() <= healAt();
@@ -321,7 +348,10 @@ public final class BotBrain {
         }
         boolean inBowRange = false; // a sniper knows someone it could shoot: no waiting in the zone
         for (Contact c : s.contacts()) {
-            double advantage = myPower / Math.max(1, power(c.health(), perceived(c.gear())));
+            double advantage = advantage(s, c, myPower);
+            if (s.self() != null && c.stats() != null) {
+                wins.put(c.id(), CombatModel.winChance(advantage));
+            }
             double hurtRatio = c.health() / Math.max(1, c.maxHealth());
             int others = Math.max(0, near - (c.distance() <= NEAR ? 1 : 0) - allies);
             if (c.fightingOther()) {
@@ -495,7 +525,7 @@ public final class BotBrain {
             return out;
         }
         for (Contact c : s.contacts()) {
-            if (c.visible() && c.distance() <= SURE_KILL_REACH && c.health() <= SURE_KILL_HEALTH) {
+            if (c.visible() && c.distance() <= SURE_KILL_REACH && c.health() <= finisher(s, c)) {
                 out.add(c.id());
             }
         }
@@ -681,7 +711,8 @@ public final class BotBrain {
             boolean same = d.behaviour() == s.current()
                     && (d.target() == null || d.target().equals(s.currentTarget()));
             boolean committed = same && d.behaviour() == Behaviour.ENGAGE && d.target() != null;
-            out.add(same ? new Decision(d.behaviour(), d.target(), d.score() + (committed ? COMMITTED : STICKY)) : d);
+            double keep = committed ? COMMITTED * commitment(d.target()) : STICKY;
+            out.add(same ? new Decision(d.behaviour(), d.target(), d.score() + keep) : d);
         }
         out.sort((a, b) -> Double.compare(b.score(), a.score()));
         return out;
@@ -690,6 +721,53 @@ public final class BotBrain {
     /** How the bot sees someone's gear: exact with a perfect read, else blurred towards the average. */
     double perceived(double gear) {
         return gear * profile.gearRead() + Gear.AVERAGE * (1 - profile.gearRead());
+    }
+
+    /**
+     * Its kill-time advantage over {@code c} (1 = even): the {@link CombatModel} forecast when both duel numbers are
+     * known (what it reads off them blurred by its {@code gear-read}), else its power over theirs as before.
+     */
+    double advantage(Situation s, Contact c, double myPower) {
+        CombatModel.Stats me = s.self();
+        CombatModel.Stats them = c.stats();
+        if (me == null || them == null) {
+            return myPower / Math.max(1, power(c.health(), perceived(c.gear())));
+        }
+        return CombatModel.advantage(me, perceived(them));
+    }
+
+    /** How it reads someone's duel numbers: exact with a perfect read, else blurred towards full iron. */
+    CombatModel.Stats perceived(CombatModel.Stats them) {
+        double read = profile.gearRead();
+        return new CombatModel.Stats(them.health(), them.maxHealth(), them.armor() * read + 15 * (1 - read),
+                them.toughness() * read, them.damage() * read + 6 * (1 - read), them.swingTicks(), them.hitChance(),
+                them.critChance(), them.outgoing(), them.taken(), them.flatPerHit(), them.trueDps(),
+                them.lifesteal(), them.thorns(), them.execute(), them.apples(), them.extraLives());
+    }
+
+    /**
+     * The health at or below which {@code c} dies to its next plain hit (with duel numbers; at least
+     * {@link #SURE_KILL_HEALTH}).
+     */
+    double finisher(Situation s, Contact c) {
+        CombatModel.Stats me = s.self();
+        CombatModel.Stats them = c.stats();
+        if (me == null || them == null) {
+            return SURE_KILL_HEALTH;
+        }
+        CombatModel.Stats seen = perceived(them);
+        double hit = CombatModel.afterArmor(me.damage() * me.outgoing() * seen.taken(), seen.armor(),
+                seen.toughness()) + me.flatPerHit();
+        return Math.max(SURE_KILL_HEALTH, Math.min(10, hit));
+    }
+
+    /**
+     * How much of the {@link #COMMITTED} bonus a fight keeps: all of it while it is winning, none once the forecast says
+     * it is losing badly (a good player leaves a lost trade instead of dying in it).
+     */
+    private double commitment(@Nullable UUID target) {
+        Double win = target == null ? null : wins.get(target);
+        return win == null ? 1 : clamp((win - 0.15) / 0.25, 0, 1);
     }
 
     /**

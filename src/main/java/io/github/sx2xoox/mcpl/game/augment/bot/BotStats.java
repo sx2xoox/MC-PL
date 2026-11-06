@@ -35,6 +35,8 @@ public final class BotStats {
         int apples;
         int place;
         String death = "";
+        /** The brain it played in an A/B measurement ("new", "legacy"), empty otherwise. */
+        String variant = "";
         final Map<Behaviour, Integer> behaviours = new EnumMap<>(Behaviour.class);
 
         Line(String name, String difficulty, String personality) {
@@ -54,6 +56,14 @@ public final class BotStats {
     /** Starts counting for {@code key} (its participant id). */
     public void add(Object key, String name, String difficulty, String personality) {
         lines.putIfAbsent(key, new Line(name, difficulty, personality));
+    }
+
+    /** {@code key} plays brain {@code variant} (A/B measurement): its line says so. */
+    public void variant(Object key, String variant) {
+        Line l = lines.get(key);
+        if (l != null) {
+            l.variant = variant;
+        }
     }
 
     /** The counters of {@code key}, or null if it is not a bot. */
@@ -152,9 +162,9 @@ public final class BotStats {
             out.add(e.getKey() + ": " + summary(e.getValue()));
         }
         for (Line l : lines.values()) {
-            out.add(String.format(Locale.ROOT, "%s [%s·%s] place=%d kills=%d %s death=%s behaviours=%s", l.name,
+            out.add(String.format(Locale.ROOT, "%s [%s·%s] place=%d kills=%d %s death=%s behaviours=%s%s", l.name,
                     l.difficulty, l.personality, l.place, l.kills, numbers(List.of(l)), l.death.isEmpty() ? "-"
-                            : l.death, l.behaviours));
+                            : l.death, l.behaviours, l.variant.isEmpty() ? "" : " brain=" + l.variant));
         }
         return out;
     }

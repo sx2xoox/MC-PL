@@ -86,6 +86,33 @@ public final class BotManager implements Listener {
     /** Bots killed by the world border (measurement: should stay 0). */
     private int borderDeaths;
     private final BotStats stats = new BotStats();
+    /**
+     * A/B measurement (system property {@code mcpl.bots.ab}, never set on a normal server): {@code true} = every second
+     * bot plays the earlier brain ({@link BotController#legacy}), {@code legacy} = all of them (the performance
+     * baseline); the stats say which brain each bot played.
+     */
+    private final String abTest = System.getProperty("mcpl.bots.ab", "");
+    /** Line-of-sight answers by pair of bodies (symmetric: one ray serves both bots), see {@link #sees}. */
+    private final Map<SightKey, long[]> sight = new HashMap<>();
+    /** Off only to measure what the shared sight saves (system property {@code mcpl.bots.sight-cache=false}). */
+    private final boolean sightCache = !"false".equals(System.getProperty("mcpl.bots.sight-cache"));
+    /** Rays cast for the bots' sight (for the performance line). */
+    private long rays;
+    private long sightAsks;
+
+    /** A pair of bodies, the smaller id first. */
+    private record SightKey(UUID a, UUID b) {
+        static SightKey of(UUID x, UUID y) {
+            return x.compareTo(y) <= 0 ? new SightKey(x, y) : new SightKey(y, x);
+        }
+    }
+
+    /** Server time the bots took (all of them, per tick), for the performance line of the log. */
+    private long tickNanos;
+    private long tickCount;
+    private long tickMaxNanos;
+    private long fightNanos;
+    private long fightTicks;
     private final MotionTracker motion = new MotionTracker();
 
     public BotManager(BotHost host, BotSettings settings, BotDifficulty difficulty) {
@@ -189,6 +216,11 @@ public final class BotManager implements Listener {
                     personality == null ? BotPersonality.Traits.NEUTRAL : personality.traits(own), own,
                     i * 7 + own.nextInt(5)));
             stats.add(id, name, difficulty.key(), personality == null ? "-" : personality.key());
+            if (abTest.equals("true") || abTest.equals("legacy")) {
+                boolean old = abTest.equals("legacy") || i % 2 == 1;
+                bots.get(id).legacy(old);
+                stats.variant(id, old ? "legacy" : "new");
+            }
             out.add(id);
         }
         return out;
@@ -217,6 +249,10 @@ public final class BotManager implements Listener {
         }
         List<String> out = new ArrayList<>(stats.report());
         out.add("borderDeaths=" + borderDeaths);
+        out.add(String.format(java.util.Locale.ROOT, "perf: bots=%d avgTickMs=%.3f fightAvgTickMs=%.3f maxTickMs=%.2f"
+                        + " sightRays=%d/%d sightCache=%s", bots.size(), tickCount == 0 ? 0 : tickNanos / 1.0E6 / tickCount,
+                fightTicks == 0 ? 0 : fightNanos / 1.0E6 / fightTicks, tickMaxNanos / 1.0E6, rays, sightAsks,
+                sightCache));
         return out;
     }
 
@@ -349,10 +385,19 @@ public final class BotManager implements Listener {
                 track(player, clock);
             }
         }
+        long started = System.nanoTime();
         for (BotController bot : List.copyOf(bots.values())) {
             if (session.isAlive(bot.id())) {
                 bot.tick(clock);
             }
+        }
+        long took = System.nanoTime() - started;
+        tickNanos += took;
+        tickCount++;
+        tickMaxNanos = Math.max(tickMaxNanos, took);
+        if (host.fight()) {
+            fightNanos += took;
+            fightTicks++;
         }
         if (clock % 20 == 0) {
             holdChunks();
@@ -591,6 +636,74 @@ public final class BotManager implements Listener {
         }
         return out;
     }
+
+    /**
+     * The duel numbers of {@code entity} as a player sees them on it: its hearts, the armor it wears and the sword in
+     * its hand; its skill and apples are unknown (average: a fully charged swing, most land, half are crits, one
+     * apple). Its augments are unknown too, beyond what shows (more hearts, more armor).
+     */
+    CombatModel.Stats combatOf(LivingEntity entity) {
+        UUID id = botOf(entity);
+        BotController bot = id == null ? null : bots.get(id);
+        double armor;
+        double toughness;
+        double damage;
+        if (bot != null) {
+            armor = bot.loadout().armorPoints();
+            toughness = bot.loadout().toughness();
+            damage = bot.loadout().sword().damage();
+        } else {
+            armor = value(entity, Attribute.ARMOR);
+            toughness = value(entity, Attribute.ARMOR_TOUGHNESS);
+            damage = Math.max(1, value(entity, Attribute.ATTACK_DAMAGE));
+        }
+        return new CombatModel.Stats(entity.getHealth() + entity.getAbsorptionAmount(),
+                BotController.maxHealth(entity), armor, toughness, damage, 12, 0.85, 0.5, 1, 1, 0, 0, 0, 0, 1, 1, 0);
+    }
+
+    /** The card bot {@code id} takes of {@code cards} ({@link BotController#pickAugment}); null: none or no bot. */
+    public @Nullable String pickAugment(UUID id, List<AugmentValues.Card> cards) {
+        BotController bot = bots.get(id);
+        return bot == null ? null : bot.pickAugment(cards);
+    }
+
+    /** Bot {@code id} got augment {@code augment} with these numbers (it reckons with it in its fights). */
+    public void augmentGranted(UUID id, String augment, Map<String, Double> params) {
+        BotController bot = bots.get(id);
+        if (bot != null) {
+            bot.augmentGranted(augment, params);
+        }
+    }
+
+    /**
+     * Whether {@code viewer} sees {@code target} ({@code distance} blocks away): a ray between their eyes, shared by
+     * both sides of the pair and reused for a moment (this tick within {@link #SIGHT_NEAR} blocks, a few ticks farther
+     * out: a player also needs a moment to spot someone far off). With 40 bots of quick reactions the rays were the
+     * bulk of the bots' server time.
+     */
+    boolean sees(LivingEntity viewer, LivingEntity target, double distance, long now) {
+        sightAsks++;
+        if (!sightCache) {
+            rays++;
+            return viewer.hasLineOfSight(target);
+        }
+        SightKey key = SightKey.of(viewer.getUniqueId(), target.getUniqueId());
+        long[] known = sight.get(key);
+        long ttl = distance <= SIGHT_NEAR ? 1 : distance <= 32 ? 3 : 5;
+        if (known != null && now - known[0] < ttl && now >= known[0]) {
+            return known[1] != 0;
+        }
+        rays++;
+        boolean seen = viewer.hasLineOfSight(target);
+        sight.put(key, new long[] {now, seen ? 1 : 0});
+        if (sight.size() > 4096) {
+            sight.values().removeIf(v -> now - v[0] > 20 || now < v[0]);
+        }
+        return seen;
+    }
+
+    /** Within this many blocks a bot's sight is fresh every tick (a fight is close). */
+    static final double SIGHT_NEAR = 16;
 
     /** The gear score of a combatant as others see it (a bot's gear, a player's armor and weapon). */
     double gearOf(LivingEntity entity) {
