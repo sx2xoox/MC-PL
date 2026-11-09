@@ -22,6 +22,13 @@ import org.jspecify.annotations.Nullable;
  * A failed, refused, unreadable or stale answer (older than two intervals) is dropped and the orders lapse after
  * three intervals without a fresh answer, so a dead connection leaves a plain bot. A card offer that is not answered
  * within {@code augment-wait-seconds} is decided by the bot's own pick.
+ *
+ * <p>It listens ({@code bots.claude.listen}, {@link ClaudeEars}): chat lines that reach it go into its next request as
+ * data, at most {@link #HEARD_MAX}, each once (a failed request hands them on to the next). An {@code @클로드} call
+ * brings that request forward ({@code quick-reply-gap-seconds} after the last one at the soonest, within the per-minute
+ * and per-match caps; never a second request at a time). The answer's {@code reply} is said in chat to that player,
+ * by name, at most once per {@code reply-cooldown-seconds} per player; {@link ClaudeFilter} drops lines that cross the
+ * line.
  */
 final class ClaudeCommander {
 
@@ -31,8 +38,26 @@ final class ClaudeCommander {
     }
 
     private record Pending(Future<ClaudeService.Result> future, long sentAt, long staleAt, ClaudeSnapshot snapshot,
-                           @Nullable Offer offer) {
+                           @Nullable Offer offer, List<Heard> heard) {
     }
+
+    /**
+     * A chat line that reached it.
+     *
+     * @param at   when it was said ({@link BotHost#clock()} ticks)
+     * @param call an {@code @클로드} call (wants a quick answer); else a mention or a line said near it
+     */
+    record Heard(java.util.UUID speaker, String name, String text, long at, boolean call) {
+    }
+
+    /** Chat lines sent with one request at most. */
+    static final int HEARD_MAX = 6;
+    /** Longest chat line sent (characters). */
+    static final int HEARD_CHARS = 120;
+    /** A chat line older than this is dropped (ticks). */
+    static final long HEARD_TTL = 60 * 20;
+    /** Lines waiting at most (the oldest go first). */
+    static final int HEARD_KEPT = 12;
 
     /** The most events kept between two requests. */
     static final int EVENTS_MAX = 10;
@@ -53,6 +78,14 @@ final class ClaudeCommander {
     private long nextCall;
     private long nextChat;
     private boolean stopped;
+    private final Deque<Heard> heard = new ArrayDeque<>();
+    /** An @클로드 call is waiting for a quick answer. */
+    private boolean quick;
+    private long lastSent = Long.MIN_VALUE / 4;
+    /** When the requests brought forward in the last minute went out. */
+    private final Deque<Long> quickTimes = new ArrayDeque<>();
+    /** When it last answered each player. */
+    private final Map<java.util.UUID, Long> repliedAt = new java.util.HashMap<>();
 
     ClaudeCommander(BotController bot, ClaudeService service, BotHost host) {
         this.bot = bot;
@@ -98,6 +131,27 @@ final class ClaudeCommander {
     }
 
     /**
+     * A chat line reached it ({@link BotManager} routes them, main thread). A call asks for a quick answer. Nothing
+     * once stopped or with {@code listen} off.
+     */
+    void hear(Heard line) {
+        if (stopped || !settings.listen()) {
+            return;
+        }
+        ledger.heard++;
+        heard.addLast(line);
+        while (heard.size() > HEARD_KEPT) {
+            heard.removeFirst();
+        }
+        quick |= line.call();
+    }
+
+    /** Lines waiting for its next request (tests). */
+    int heardWaiting() {
+        return heard.size();
+    }
+
+    /**
      * A card offer: the answer goes to {@code then} on the main thread, the bot's own {@code fallback} pick if no
      * usable answer comes within {@code augment-wait-seconds}.
      */
@@ -127,6 +181,7 @@ final class ClaudeCommander {
                 pending = null;
                 p.future().cancel(true);
                 ledger.stale++;
+                unheard(p);
                 if (p.offer() != null) {
                     fallback(p.offer());
                 }
@@ -140,18 +195,57 @@ final class ClaudeCommander {
         if (pending != null || bot.body() == null) {
             return;
         }
+        while (!heard.isEmpty() && now - heard.peekFirst().at() > HEARD_TTL) {
+            heard.removeFirst();
+        }
         if (!offers.isEmpty()) {
             send(now, offers.removeFirst());
         } else if (now >= nextCall) {
             send(now, null);
+        } else if (quickAllowed(now)) {
+            quickTimes.addLast(now);
+            ledger.quickCalls++;
+            send(now, null);
         }
+    }
+
+    /**
+     * An @클로드 call is waiting and the request may come early: the last one went out long enough ago, no back-off
+     * (rate limit, bad key) holds the next one, and the caps leave room.
+     */
+    private boolean quickAllowed(long now) {
+        if (!quick) {
+            return false;
+        }
+        boolean called = false;
+        for (Heard h : heard) {
+            called |= h.call();
+        }
+        if (!called) {
+            quick = false; // its call went out (or expired) already
+            return false;
+        }
+        while (!quickTimes.isEmpty() && now - quickTimes.peekFirst() >= 60 * 20) {
+            quickTimes.removeFirst();
+        }
+        return now - lastSent >= settings.quickGapTicks() && nextCall - now <= interval()
+                && ledger.quickCalls < settings.quickMax() && quickTimes.size() < settings.quickPerMinute();
     }
 
     private void send(long now, @Nullable Offer offer) {
         ClaudeSnapshot snapshot = bot.snapshot(now, eventLines(), service::augmentName);
         events.clear();
+        List<Heard> lines = new ArrayList<>();
+        while (!heard.isEmpty() && lines.size() < HEARD_MAX) {
+            lines.add(heard.removeLast()); // the newest
+        }
+        java.util.Collections.reverse(lines);
+        List<ClaudePrompt.Heard> said = new ArrayList<>(lines.size());
+        for (Heard h : lines) {
+            said.add(new ClaudePrompt.Heard(h.name(), h.text(), Math.max(0, (now - h.at()) / 20), h.call()));
+        }
         String user = ClaudePrompt.user(snapshot, notes, offer == null ? null : offer.cards(),
-                offer == null ? "" : offer.round());
+                offer == null ? "" : offer.round(), said);
         Future<ClaudeService.Result> future = service.submit(user);
         if (future == null) {
             if (offer != null) {
@@ -160,9 +254,23 @@ final class ClaudeCommander {
             return;
         }
         ledger.calls++;
+        quick = false;
+        lastSent = now;
         long staleAt = offer != null ? offer.deadline() : now + 2 * interval();
-        pending = new Pending(future, now, staleAt, snapshot, offer);
+        pending = new Pending(future, now, staleAt, snapshot, offer, List.copyOf(lines));
         nextCall = now + interval();
+    }
+
+    /** The lines a request carried that got no usable answer wait for the next one. */
+    private void unheard(Pending p) {
+        List<Heard> lines = p.heard();
+        for (int i = lines.size() - 1; i >= 0 && !stopped; i--) {
+            heard.addFirst(lines.get(i));
+            quick |= lines.get(i).call();
+        }
+        while (heard.size() > HEARD_KEPT) {
+            heard.removeFirst();
+        }
     }
 
     private List<String> eventLines() {
@@ -180,6 +288,10 @@ final class ClaudeCommander {
             result = null;
         } catch (ExecutionException | java.util.concurrent.CancellationException e) {
             result = null;
+        }
+        if (result == null || result.failure() != null || result.reply() == null
+                || !result.reply().stopReason().equals("end_turn")) {
+            unheard(p);
         }
         if (result == null || result.failure() != null || result.reply() == null) {
             ClaudeClient.Failure failure = result == null || result.failure() == null
@@ -217,6 +329,7 @@ final class ClaudeCommander {
         }
         ClaudeDecision decision = ClaudeDecision.parse(reply.text());
         if (decision == null) {
+            unheard(p);
             ledger.badAnswers++;
             if (p.offer() != null) {
                 fallback(p.offer());
@@ -247,11 +360,55 @@ final class ClaudeCommander {
                 fallback(offer);
             }
         }
+        if (reply(d, p, now)) {
+            return; // one line per answer
+        }
         if (settings.chat() && !d.chat().isBlank() && now >= nextChat) {
             nextChat = now + settings.chatCooldownTicks();
+            if (!ClaudeFilter.allows(d.chat())) {
+                ledger.filtered++;
+                return;
+            }
             ledger.chats++;
             host.botSays(bot.id(), d.chat());
         }
+    }
+
+    /**
+     * Says the answer's {@code reply} to the player it names, if that player spoke in this request, the reply cooldown
+     * for them is over and the filter lets it through. The line calls them by name. True when it was said.
+     */
+    private boolean reply(ClaudeDecision d, Pending p, long now) {
+        if (!settings.listen() || d.reply().isBlank() || d.replyTo().isBlank()) {
+            return false;
+        }
+        Heard to = null;
+        String wanted = ClaudeEars.squash(d.replyTo());
+        for (Heard h : p.heard()) {
+            if (h.name().equals(d.replyTo()) || ClaudeEars.squash(h.name()).equals(wanted)) {
+                to = h;
+            }
+        }
+        if (to == null) {
+            return false;
+        }
+        Long last = repliedAt.get(to.speaker());
+        if (last != null && now - last < settings.replyCooldownTicks()) {
+            return false;
+        }
+        String line = d.reply();
+        if (!ClaudeEars.squash(line).contains(ClaudeEars.squash(to.name()))) {
+            line = to.name() + ", " + line;
+        }
+        line = ClaudeDecision.oneLine(line, ClaudeDecision.CHAT_MAX + 20);
+        if (!ClaudeFilter.allows(line)) {
+            ledger.filtered++;
+            return false;
+        }
+        repliedAt.put(to.speaker(), now);
+        ledger.replies++;
+        host.botSays(bot.id(), line);
+        return true;
     }
 
     private void fallback(Offer offer) {
@@ -274,6 +431,8 @@ final class ClaudeCommander {
             p.future().cancel(true);
         }
         offers.clear();
+        heard.clear();
+        quick = false;
         orders = ClaudeOrders.NONE;
         ordersUntil = -1;
     }

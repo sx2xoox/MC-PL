@@ -43,6 +43,14 @@ public final class ClaudeLedger {
     int augmentPicks;
     int augmentFallbacks;
     int chats;
+    /** Chat lines it heard (calls, mentions, lines said near it). */
+    int heard;
+    /** Answers to players said in chat. */
+    int replies;
+    /** Lines (chat or reply) the filter dropped. */
+    int filtered;
+    /** Requests brought forward by an @클로드 call. */
+    int quickCalls;
     final Map<String, Integer> goals = new TreeMap<>();
 
     void reply(ClaudeClient.Reply reply, long nanos) {
@@ -92,6 +100,22 @@ public final class ClaudeLedger {
         return augmentFallbacks;
     }
 
+    public int heard() {
+        return heard;
+    }
+
+    public int replies() {
+        return replies;
+    }
+
+    public int filtered() {
+        return filtered;
+    }
+
+    public int quickCalls() {
+        return quickCalls;
+    }
+
     public long inputTokens() {
         return inputTokens;
     }
@@ -125,9 +149,10 @@ public final class ClaudeLedger {
     public String summary(String model) {
         return String.format(Locale.ROOT, "calls=%d answered=%d failed=%d%s stale=%d refusals=%d bad=%d "
                         + "avgLatencyMs=%.0f tokens in/out/cacheRead/cacheWrite=%d/%d/%d/%d cost=$%.4f augments=%d "
-                        + "(fallback %d) chats=%d goals=%s", calls, answered, failures(),
+                        + "(fallback %d) chats=%d heard=%d replies=%d filtered=%d quick=%d goals=%s",
+                calls, answered, failures(),
                 failures.isEmpty() ? "" : failures.toString(), stale, refusals, badAnswers, averageLatencyMillis(),
                 inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, cost(model), augmentPicks,
-                augmentFallbacks, chats, goals);
+                augmentFallbacks, chats, heard, replies, filtered, quickCalls, goals);
     }
 }

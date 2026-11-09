@@ -56,7 +56,8 @@ class ClaudeDecisionTest {
         Map<String, Object> schema = ClaudePrompt.schema();
         assertEquals("object", schema.get("type"));
         assertEquals(false, schema.get("additionalProperties"));
-        assertEquals(List.of("goal", "target", "range", "augment", "notes", "chat", "reason"), schema.get("required"));
+        assertEquals(List.of("goal", "target", "range", "augment", "notes", "chat", "reply_to", "reply", "reason"),
+                schema.get("required"));
     }
 
     @Test
@@ -93,7 +94,7 @@ class ClaudeDecisionTest {
         assertEquals("", none.resolveKey(name -> null));
         assertEquals("env-key", none.resolveKey(name -> name.equals(ClaudeSettings.KEY_ENV) ? "env-key" : null));
         ClaudeSettings set = new ClaudeSettings(true, 1, "claude-opus-5-5", "low", 160, 400, 240, 15_000, 2048, false,
-                900, "[Claude] ", "sk-secret", "", true);
+                900, "[Claude] ", "sk-secret", "", true, true, 24, 200, 60, 6, 60);
         assertEquals("sk-secret", set.resolveKey(name -> "env-key"));
         assertFalse(set.toString().contains("sk-secret"));
         assertEquals(1, set.defaultBots());

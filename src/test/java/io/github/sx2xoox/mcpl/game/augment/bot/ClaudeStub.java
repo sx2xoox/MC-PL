@@ -96,6 +96,12 @@ final class ClaudeStub implements AutoCloseable {
 
     /** The JSON text of an answer the schema allows. */
     static String decision(String goal, String target, String range, String augment, String notes, String chat) {
+        return decision(goal, target, range, augment, notes, chat, "", "");
+    }
+
+    /** The JSON text of an answer that also answers {@code replyTo}. */
+    static String decision(String goal, String target, String range, String augment, String notes, String chat,
+                           String replyTo, String reply) {
         JsonObject o = new JsonObject();
         o.addProperty("goal", goal);
         o.addProperty("target", target);
@@ -104,6 +110,8 @@ final class ClaudeStub implements AutoCloseable {
         o.addProperty("notes", notes);
         o.addProperty("chat", chat);
         o.addProperty("reason", "stub");
+        o.addProperty("reply_to", replyTo);
+        o.addProperty("reply", reply);
         return o.toString();
     }
 

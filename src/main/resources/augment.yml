@@ -212,6 +212,7 @@ bots:
   won-reason: "모든 사람이 탈락해 살아남은 봇이 이겼습니다"
   # Claude 봇 (games.augment.bots.claude.*): <count> 수, <mark> 이름 앞 표시
   claude-joined: "<gray>그중 <white><count></white>명은 <light_purple>Claude 봇</light_purple>입니다 (이름 앞 <white><mark></white>): 증강 선택과 큰 작전은 Claude가 정합니다."
+  claude-listen: "<gray>채팅에 <white>@클로드 할 말</white>을 치면 Claude 봇이 대답합니다 (게임 얘기만, 도발 주의)."
   claude-off: "<gray>Claude 봇은 API 키나 SDK가 없어 보통 봇으로 뜁니다 (서버 콘솔 참고)."
   # 봇 채팅 한 줄 (플레이어 채팅처럼): <name> 봇 이름, <message> 문구 (augment-bots-chat.yml)
   chat-line: "\\<<name>> <message>"

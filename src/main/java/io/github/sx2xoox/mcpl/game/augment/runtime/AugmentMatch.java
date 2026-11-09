@@ -471,6 +471,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
             if (claudeBots > 0) {
                 announce(messages().prefixed("bots.claude-joined", Messages.tag("count", claudeBots),
                         Messages.tag("mark", botSetup.settings().claude().namePrefix().trim())));
+                if (bots.claudeListening()) {
+                    announce(messages().prefixed("bots.claude-listen"));
+                }
             } else if (bots.claudeStatus() != null) {
                 announce(messages().prefixed("bots.claude-off"));
             }

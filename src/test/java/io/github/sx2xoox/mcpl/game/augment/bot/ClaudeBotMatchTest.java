@@ -189,8 +189,8 @@ class ClaudeBotMatchTest {
         assertTrue(commander.ledger().augmentFallbacks() >= 1);
         stub.responder = seen -> ClaudeStub.message("refusal", "", 0);
         tickUntil(() -> commander.ledger().refusals() >= 1, 20_000, "a refusal");
+        // (no fast-forward here: the bots die at the border soon after PvP, and the answer needs real time to arrive)
         stub.responder = seen -> ClaudeStub.ok("not json");
-        h.ticks(200);
         tickUntil(() -> commander.ledger().badAnswers >= 1, 20_000, "an unreadable answer");
         assertNull(commander.orders(match.clock()));
         assertNotNull(claude.decision(), "it keeps thinking on its own");

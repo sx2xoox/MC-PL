@@ -19,7 +19,8 @@ final class ClaudeStatsFile {
 
     static final String HEADER = "time,game,model,effort,bot,difficulty,personality,claude,place,kills,survived_s,"
             + "damage_dealt,damage_taken,augments,calls,answered,failed,stale,refusals,avg_latency_ms,input_tokens,"
-            + "output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,augment_picks,augment_fallbacks,goals";
+            + "output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,augment_picks,augment_fallbacks,goals,"
+            + "heard,replies,filtered,quick_calls";
 
     /** One bot's row. */
     record Row(String bot, String difficulty, String personality, String claude, int place, int kills,
@@ -48,7 +49,10 @@ final class ClaudeStatsFile {
                     l == null ? "" : Long.toString(l.cacheWriteTokens()),
                     l == null ? "" : String.format(Locale.ROOT, "%.5f", l.cost(model)),
                     l == null ? "" : Integer.toString(l.augmentPicks()),
-                    l == null ? "" : Integer.toString(l.augmentFallbacks()), l == null ? "" : csv(l.goals.toString())));
+                    l == null ? "" : Integer.toString(l.augmentFallbacks()), l == null ? "" : csv(l.goals.toString()),
+                    l == null ? "" : Integer.toString(l.heard()), l == null ? "" : Integer.toString(l.replies()),
+                    l == null ? "" : Integer.toString(l.filtered()),
+                    l == null ? "" : Integer.toString(l.quickCalls())));
         }
         return out;
     }

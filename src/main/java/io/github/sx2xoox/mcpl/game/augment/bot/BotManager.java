@@ -118,6 +118,8 @@ public final class BotManager implements Listener {
     private final int claudeBots;
     private @Nullable ClaudeService claude;
     private ClaudeService.@Nullable Status claudeStatus;
+    /** The Claude bots' ears on the chat ({@code bots.claude.listen}; null: off or no Claude bot). */
+    private @Nullable ClaudeEars ears;
     /** Where the API key is looked up when {@code api-key} is empty (tests replace it). */
     private static volatile java.util.function.Function<String, String> environment = System::getenv;
     /** When each bot went out ({@link BotHost#clock()} ticks), for the stats file. */
@@ -254,6 +256,11 @@ public final class BotManager implements Listener {
                 stats.variant(id, old ? "legacy" : "new");
             }
             out.add(id);
+        }
+        if (claude != null && settings.claude().listen() && ears == null
+                && bots.values().stream().anyMatch(BotController::claude)) {
+            ears = new ClaudeEars();
+            session.registerListener(ears); // unregistered with the session's other listeners when the match ends
         }
         return out;
     }
@@ -491,6 +498,9 @@ public final class BotManager implements Listener {
         }
         long took = System.nanoTime() - started;
         if (claude != null) {
+            if (ears != null) {
+                hear(clock);
+            }
             for (BotController bot : bots.values()) {
                 ClaudeCommander commander = bot.commander();
                 if (commander == null) {
@@ -698,8 +708,91 @@ public final class BotManager implements Listener {
         byEntity.clear();
     }
 
+    /**
+     * Hands the chat lines the ears caught to the Claude bots they reach (main thread): only lines of this match's
+     * players and spectators. An {@code @클로드} call goes to the bot it names, else the one nearest the speaker; a
+     * mention reaches the bot it names (every Claude bot for "클로드"); any other line reaches the Claude bots within
+     * {@code hear-range} of the speaker.
+     */
+    private void hear(long clock) {
+        List<ClaudeEars.Said> lines = ears.drain();
+        if (lines.isEmpty()) {
+            return;
+        }
+        List<BotController> listening = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        String prefix = settings.claude().namePrefix();
+        for (BotController bot : bots.values()) {
+            ClaudeCommander commander = bot.commander();
+            if (commander != null && !commander.stopped() && session.isAlive(bot.id()) && bot.body() != null) {
+                listening.add(bot);
+                names.add(bot.name().startsWith(prefix) ? bot.name().substring(prefix.length()) : bot.name());
+            }
+        }
+        if (listening.isEmpty()) {
+            return;
+        }
+        long now = System.nanoTime();
+        for (ClaudeEars.Said said : lines) {
+            org.bukkit.entity.Player speaker = org.bukkit.Bukkit.getPlayer(said.speaker());
+            if (speaker == null || bots.containsKey(said.speaker()) || !session.isMember(speaker)) {
+                continue; // someone outside this match
+            }
+            String text = ClaudeDecision.oneLine(said.text(), ClaudeCommander.HEARD_CHARS);
+            if (text.isBlank()) {
+                continue;
+            }
+            long at = clock - Math.max(0, (now - said.nanos()) / 50_000_000L);
+            String name = session.plainName(said.speaker());
+            ClaudeEars.Address address = ClaudeEars.address(text, names);
+            org.bukkit.Location where = speaker.getLocation();
+            if (address != null && address.call()) {
+                BotController to = address.bot() >= 0 ? listening.get(address.bot()) : nearest(listening, where);
+                to.commander().hear(new ClaudeCommander.Heard(said.speaker(), name, text, at, true));
+                continue;
+            }
+            double range = settings.claude().hearRange();
+            for (int i = 0; i < listening.size(); i++) {
+                BotController bot = listening.get(i);
+                boolean mentioned = address != null && (address.bot() < 0 || address.bot() == i);
+                org.bukkit.Location body = bot.body().body().getLocation();
+                boolean near = body.getWorld().equals(where.getWorld()) && body.distanceSquared(where) <= range * range;
+                if (mentioned || near) {
+                    bot.commander().hear(new ClaudeCommander.Heard(said.speaker(), name, text, at, false));
+                }
+            }
+        }
+    }
+
+    /** The bot nearest {@code where} (the first one when none is in its world). */
+    private static BotController nearest(List<BotController> bots, org.bukkit.Location where) {
+        BotController best = bots.getFirst();
+        double bestDistance = Double.MAX_VALUE;
+        for (BotController bot : bots) {
+            org.bukkit.Location body = bot.body().body().getLocation();
+            if (body.getWorld().equals(where.getWorld()) && body.distanceSquared(where) < bestDistance) {
+                bestDistance = body.distanceSquared(where);
+                best = bot;
+            }
+        }
+        return best;
+    }
+
+    /** The Claude bots hear the chat and answer ({@code bots.claude.listen}). */
+    public boolean claudeListening() {
+        return ears != null;
+    }
+
+    /** The Claude bots' ears (null: not listening). */
+    @Nullable ClaudeEars ears() {
+        return ears;
+    }
+
     /** Stops every Claude commander and closes the connection: calls in flight are cancelled, the threads end. */
     private void closeClaude() {
+        if (ears != null) {
+            ears.close();
+        }
         for (BotController bot : bots.values()) {
             ClaudeCommander commander = bot.commander();
             if (commander != null) {
