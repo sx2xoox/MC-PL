@@ -267,7 +267,8 @@ public final class AugmentGame implements MiniGame {
                 bots = AugmentMatch.BotSetup.of(botSettings, botSettings.difficulty(), botSettings.count());
             }
             if (mode == MatchMode.SPECTATE && bots.count() < 2) {
-                bots = AugmentMatch.BotSetup.of(bots.settings(), bots.lineup().getFirst(), 2); // a fight needs two
+                bots = AugmentMatch.BotSetup.of(bots.settings(), bots.lineup().getFirst(), 2)
+                        .withClaude(bots.claude()); // a fight needs two
             }
         }
         AugmentMatch match = new AugmentMatch(this, session, wild, read, mode,

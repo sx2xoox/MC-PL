@@ -114,6 +114,14 @@ public final class BotManager implements Listener {
     private long fightNanos;
     private long fightTicks;
     private final MotionTracker motion = new MotionTracker();
+    /** Claude bots asked for (the first bots of the lineup), and the connection they share (null: none or no key). */
+    private final int claudeBots;
+    private @Nullable ClaudeService claude;
+    private ClaudeService.@Nullable Status claudeStatus;
+    /** Where the API key is looked up when {@code api-key} is empty (tests replace it). */
+    private static volatile java.util.function.Function<String, String> environment = System::getenv;
+    /** When each bot went out ({@link BotHost#clock()} ticks), for the stats file. */
+    private final Map<UUID, Long> outAt = new HashMap<>();
 
     public BotManager(BotHost host, BotSettings settings, BotDifficulty difficulty) {
         this(host, settings, List.of(difficulty), false, false);
@@ -127,6 +135,15 @@ public final class BotManager implements Listener {
      */
     public BotManager(BotHost host, BotSettings settings, List<BotDifficulty> lineup, boolean tagged,
                       boolean keepLoaded) {
+        this(host, settings, lineup, tagged, keepLoaded, 0);
+    }
+
+    /**
+     * @param claudeBots how many of the bots (the first ones) are Claude bots ({@link ClaudeCommander}); they play as
+     *                   plain bots when there is no API key or the SDK did not load
+     */
+    public BotManager(BotHost host, BotSettings settings, List<BotDifficulty> lineup, boolean tagged,
+                      boolean keepLoaded, int claudeBots) {
         if (lineup.isEmpty()) {
             throw new IllegalArgumentException("no bots");
         }
@@ -139,6 +156,7 @@ public final class BotManager implements Listener {
         this.random = session.random();
         this.namespace = session.hub().key("bot").getNamespace();
         this.teams = new BotTeams(this, session, settings.team());
+        this.claudeBots = Math.max(0, Math.min(claudeBots, lineup.size()));
     }
 
     /** The shared minds of the teams (봇전 팀전; inactive in free-for-all). */
@@ -201,13 +219,22 @@ public final class BotManager implements Listener {
     public List<UUID> register() {
         int wanted = Math.max(0, Math.min(Math.min(settings.max(), BotSettings.HARD_MAX), lineup.size()));
         List<@Nullable BotPersonality> personalities = BotPersonality.lineup(settings.personalities(), wanted, random);
+        int claudeWanted = Math.min(claudeBots, wanted);
+        if (claudeWanted > 0 && claude == null && claudeStatus == null) {
+            ClaudeService.Outcome outcome = ClaudeService.create(settings.claude(),
+                    session.hub().plugin().getLogger(), host.augmentCatalog(), claudeWanted, environment);
+            claudeStatus = outcome.status();
+            claude = outcome.service();
+        }
         List<UUID> out = new ArrayList<>();
         for (int i = 0; i < wanted; i++) {
             UUID id = UUID.randomUUID();
             BotDifficulty difficulty = lineup.get(i);
             BotPersonality personality = personalities.get(i);
-            String name = settings.name(i);
-            if (!session.addBot(id, tagged ? settings.name(i, difficulty, personality) : name)) {
+            boolean commanded = claude != null && i < claudeWanted;
+            String prefix = commanded ? settings.claude().namePrefix() : "";
+            String name = prefix + settings.name(i);
+            if (!session.addBot(id, tagged ? prefix + settings.name(i, difficulty, personality) : name)) {
                 continue;
             }
             Random own = new Random(random.nextLong());
@@ -216,6 +243,11 @@ public final class BotManager implements Listener {
                     personality == null ? BotPersonality.Traits.NEUTRAL : personality.traits(own), own,
                     i * 7 + own.nextInt(5)));
             stats.add(id, name, difficulty.key(), personality == null ? "-" : personality.key());
+            if (commanded) {
+                BotController made = bots.get(id);
+                made.commander(new ClaudeCommander(made, claude, host));
+                stats.variant(id, "claude");
+            }
             if (abTest.equals("true") || abTest.equals("legacy")) {
                 boolean old = abTest.equals("legacy") || i % 2 == 1;
                 bots.get(id).legacy(old);
@@ -249,11 +281,77 @@ public final class BotManager implements Listener {
         }
         List<String> out = new ArrayList<>(stats.report());
         out.add("borderDeaths=" + borderDeaths);
+        out.addAll(claudeReport());
         out.add(String.format(java.util.Locale.ROOT, "perf: bots=%d avgTickMs=%.3f fightAvgTickMs=%.3f maxTickMs=%.2f"
                         + " sightRays=%d/%d sightCache=%s", bots.size(), tickCount == 0 ? 0 : tickNanos / 1.0E6 / tickCount,
                 fightTicks == 0 ? 0 : fightNanos / 1.0E6 / fightTicks, tickMaxNanos / 1.0E6, rays, sightAsks,
                 sightCache));
         return out;
+    }
+
+    /**
+     * The Claude bots' lines for {@code [bots end]} (calls, latency, failures, tokens, estimated cost, place, kills,
+     * survival) and the stats file ({@code bots.claude.stats}); nothing if no Claude bots were asked for.
+     */
+    private List<String> claudeReport() {
+        if (claudeBots == 0 || claudeStatus == null) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        ClaudeSettings cs = settings.claude();
+        if (claude == null) {
+            out.add("claude: " + claudeBots + " asked for, " + claudeStatus.key() + ": played as plain bots");
+        }
+        int calls = 0;
+        double cost = 0;
+        List<ClaudeStatsFile.Row> rows = new ArrayList<>();
+        for (BotController bot : bots.values()) {
+            ClaudeCommander commander = bot.commander();
+            ClaudeLedger ledger = commander == null ? null : commander.ledger();
+            BotStats.Line line = stats.line(bot.id());
+            long survived = outAt.getOrDefault(bot.id(), host.clock()) / 20;
+            int place = line == null ? 0 : line.place;
+            int kills = line == null ? 0 : line.kills;
+            if (ledger != null) {
+                calls += ledger.calls();
+                cost += ledger.cost(cs.model());
+                out.add("claude " + bot.name() + ": " + ledger.summary(cs.model()) + " place=" + place + " kills="
+                        + kills + " survived=" + survived + "s");
+            }
+            rows.add(new ClaudeStatsFile.Row(bot.name(), bot.difficulty().key(),
+                    bot.personality() == null ? "-" : bot.personality().key(),
+                    ledger != null ? "yes" : bot.id().equals(firstClaudeCandidate(bot)) ? claudeStatus.key() : "no",
+                    place, kills, survived, line == null ? 0 : line.dealt, line == null ? 0 : line.taken,
+                    List.copyOf(bot.augments().keySet()), ledger));
+        }
+        if (claude != null) {
+            out.add(String.format(java.util.Locale.ROOT, "claude total: model=%s effort=%s bots=%d calls=%d cost=$%.4f",
+                    cs.model(), cs.effort(), Math.min(claudeBots, bots.size()), calls, cost));
+        }
+        if (cs.stats()) {
+            try {
+                java.nio.file.Path file = ClaudeStatsFile.write(session.hub().plugin().getDataFolder().toPath()
+                        .resolve("stats").resolve("augment-claude"), session.game().id(), cs.model(), cs.effort(), rows);
+                out.add("claude stats: " + file);
+            } catch (java.io.IOException | RuntimeException e) {
+                out.add("claude stats: not written (" + e.getClass().getSimpleName() + ")");
+            }
+        }
+        return out;
+    }
+
+    /** {@code bot} itself if it is one of the bots that were asked to be Claude bots (they come first), else null. */
+    private @Nullable UUID firstClaudeCandidate(BotController bot) {
+        int index = 0;
+        for (UUID id : bots.keySet()) {
+            if (index++ >= claudeBots) {
+                return null;
+            }
+            if (id.equals(bot.id())) {
+                return id;
+            }
+        }
+        return null;
     }
 
     /**
@@ -392,6 +490,19 @@ public final class BotManager implements Listener {
             }
         }
         long took = System.nanoTime() - started;
+        if (claude != null) {
+            for (BotController bot : bots.values()) {
+                ClaudeCommander commander = bot.commander();
+                if (commander == null) {
+                    continue;
+                }
+                if (session.isAlive(bot.id()) && bot.body() != null) {
+                    commander.tick(clock); // polls its answer, sends the next request (the call runs elsewhere)
+                } else {
+                    commander.stop();
+                }
+            }
+        }
         tickNanos += took;
         tickCount++;
         tickMaxNanos = Math.max(tickMaxNanos, took);
@@ -576,6 +687,7 @@ public final class BotManager implements Listener {
     /** Removes every bot entity (match end, stop, plugin disable). */
     public void dispose() {
         disposed = true;
+        closeClaude();
         releaseChunks();
         for (BotController bot : bots.values()) {
             BotBody body = bot.body();
@@ -584,6 +696,60 @@ public final class BotManager implements Listener {
             }
         }
         byEntity.clear();
+    }
+
+    /** Stops every Claude commander and closes the connection: calls in flight are cancelled, the threads end. */
+    private void closeClaude() {
+        for (BotController bot : bots.values()) {
+            ClaudeCommander commander = bot.commander();
+            if (commander != null) {
+                commander.stop();
+            }
+        }
+        if (claude != null) {
+            claude.close();
+        }
+    }
+
+    /** The Claude connection of this match (null: no Claude bots, no key or no SDK). */
+    @Nullable ClaudeService claude() {
+        return claude;
+    }
+
+    /** Why the Claude bots asked for are (not) Claude bots, null if none were asked for. */
+    public ClaudeService.@Nullable Status claudeStatus() {
+        return claudeStatus;
+    }
+
+    /** Claude bots asked for. */
+    public int claudeBots() {
+        return claudeBots;
+    }
+
+    /** Tests: the environment the API key is looked up in when {@code api-key} is empty (null: the real one). */
+    static void environment(java.util.function.@Nullable Function<String, String> lookup) {
+        environment = lookup == null ? System::getenv : lookup;
+    }
+
+    /**
+     * Bot {@code id}'s card of {@code cards}, later: a Claude bot asks the API and hands its answer (or its own pick
+     * if none comes in time) to {@code then} on the main thread. False for a plain bot (pick now with
+     * {@link #pickAugment}).
+     */
+    public boolean pickAugmentLater(UUID id, List<AugmentValues.Card> cards, String round,
+                                    java.util.function.Consumer<String> then) {
+        BotController bot = bots.get(id);
+        ClaudeCommander commander = bot == null ? null : bot.commander();
+        if (commander == null || commander.stopped() || claude == null || claude.closed() || cards.isEmpty()) {
+            return false;
+        }
+        String fallback = bot.pickAugment(cards);
+        List<ClaudePrompt.Card> offer = new ArrayList<>(cards.size());
+        for (AugmentValues.Card card : cards) {
+            offer.add(new ClaudePrompt.Card(card.id(), claude.augmentName(card.id()), claude.augmentTier(card.id())));
+        }
+        commander.offer(offer, fallback == null ? cards.getFirst().id() : fallback, round, host.clock(), then);
+        return true;
     }
 
     // =================================================================== queries
@@ -964,6 +1130,10 @@ public final class BotManager implements Listener {
             borderDeaths++;
         }
         UUID killer = session.combat().lastAttackerId(id, CombatTracker.DEFAULT_WINDOW_TICKS);
+        outAt.put(id, host.clock());
+        if (bot.commander() != null) {
+            bot.commander().stop();
+        }
         stats.died(id, session.aliveIds().size(), last == null ? "?" : last.getDamageSource().getDamageType()
                 == DamageType.OUTSIDE_BORDER ? "border" : killer != null ? (isBot(killer) ? "bot" : "player")
                 + (last.getCause() == EntityDamageEvent.DamageCause.PROJECTILE ? "-arrow" : "")
@@ -979,6 +1149,13 @@ public final class BotManager implements Listener {
                     && witness.body().getWorld().equals(dead.getWorld())
                     && witness.body().getLocation().distanceSquared(dead.getLocation()) < 32 * 32) {
                 other.grudge(killer, host.clock()); // a kill nearby is not forgotten
+            }
+            ClaudeCommander commander = other.commander();
+            if (commander != null && killer != null && witness != null && witness.valid()
+                    && witness.body().getWorld().equals(dead.getWorld())
+                    && witness.body().getLocation().distanceSquared(dead.getLocation()) < 48 * 48) {
+                commander.event(other.id().equals(killer) ? "you killed " + bot.name()
+                        : session.plainName(killer) + " killed " + bot.name() + " nearby");
             }
         }
 

@@ -8,6 +8,7 @@ version = "0.1.0"
 
 val paperApiVersion: String by project
 val mockBukkitVersion: String by project
+val anthropicSdkVersion: String by project
 
 repositories {
     mavenCentral()
@@ -18,9 +19,13 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     // the server's own netty (the resource pack served on the game port, core.pack.SamePortHost); Paper 26.3's version
     compileOnly("io.netty:netty-transport:4.2.16.Final")
+    // the official Claude API SDK for the 증강 봇전 Claude bot (game.augment.bot.claude): loaded by the server at runtime
+    // from plugin.yml `libraries:` (not shaded, the jar stays small); keep both versions in sync
+    compileOnly("com.anthropic:anthropic-java:$anthropicSdkVersion")
 
     testImplementation("io.papermc.paper:paper-api:$paperApiVersion")
     testImplementation("io.netty:netty-transport:4.2.16.Final")
+    testImplementation("com.anthropic:anthropic-java:$anthropicSdkVersion")
     testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.3:$mockBukkitVersion")
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -53,7 +58,7 @@ val resourcePack = tasks.register<JavaExec>("resourcePack") {
 }
 
 tasks.processResources {
-    val props = mapOf("version" to project.version)
+    val props = mapOf("version" to project.version, "anthropicSdkVersion" to anthropicSdkVersion)
     inputs.properties(props)
     filteringCharset = Charsets.UTF_8.name()
     filesMatching("plugin.yml") {

@@ -260,6 +260,8 @@ public final class BotBrain {
     private final java.util.Map<UUID, Double> wins = new java.util.HashMap<>();
     /** A gambler's current mood: a random swing per behaviour, re-rolled now and then (not every decision). */
     private final java.util.EnumMap<Behaviour, Double> mood = new java.util.EnumMap<>(Behaviour.class);
+    /** A Claude bot's standing orders ({@link ClaudeCommander}), or null. */
+    private @Nullable ClaudeOrders orders;
 
     /** The plain utility AI (no personality). */
     public BotBrain(BotProfile profile) {
@@ -620,12 +622,34 @@ public final class BotBrain {
 
     /** The best option. */
     public Decision decide(Situation s) {
-        return options(s).getFirst();
+        return decide(s, null);
     }
 
-    /** The best option for a bot of a team (null {@code team}: free-for-all, as {@link #decide(Situation)}). */
+    /**
+     * The best option for a bot of a team (null {@code team}: free-for-all), after the {@link #orders} of a Claude bot
+     * (which never beat getting back inside the border or a sure kill).
+     */
     public Decision decide(Situation s, @Nullable TeamView team) {
-        return options(s, team).getFirst();
+        List<Decision> options = options(s, team);
+        ClaudeOrders given = orders;
+        if (given != null && !given.none()) {
+            options = borderFirst(given.weigh(options, s), sureKills(s));
+        }
+        return options.getFirst();
+    }
+
+    /** A Claude bot's standing orders, weighed into every decision (null: none, the plain brain). */
+    public void orders(@Nullable ClaudeOrders orders) {
+        this.orders = orders;
+    }
+
+    public @Nullable ClaudeOrders orders() {
+        return orders;
+    }
+
+    /** The forecast win chance against {@code id} at the last decision (with duel numbers only), or null. */
+    public @Nullable Double forecast(UUID id) {
+        return wins.get(id);
     }
 
     /** Engage bonus for the enemy the team is hitting (focus fire). */

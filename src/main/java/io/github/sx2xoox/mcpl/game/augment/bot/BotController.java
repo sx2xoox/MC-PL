@@ -346,6 +346,8 @@ public final class BotController {
     /** The enemy that poured lava on it, and until when it keeps out of their bucket's reach. */
     private @Nullable UUID pourer;
     private long pourerUntil;
+    /** The Claude bot's commander (its big decisions come from the Claude API), null for a plain bot. */
+    private @Nullable ClaudeCommander commander;
 
     BotController(UUID id, String name, BotDifficulty difficulty, BotManager manager, BotHost host, BotProfile profile,
                   Random random, int offset) {
@@ -430,6 +432,10 @@ public final class BotController {
      */
     void struck(UUID who, @Nullable LivingEntity by, long now) {
         grudge(who, now);
+        if (commander != null && !who.equals(id)) {
+            commander.event(host.session().plainName(who) + " hit you" + (by == null ? ""
+                    : holdsBow(by) ? " (bow in hand)" : holdsLava(by) ? " (lava bucket in hand)" : ""));
+        }
         BotBody b = body;
         if (by == null || b == null || who.equals(id) || !by.getWorld().equals(b.body().getWorld())) {
             return;
@@ -714,6 +720,9 @@ public final class BotController {
         if (nearest != null) {
             pourer = nearest.entity().getUniqueId();
             pourerUntil = now + POURER_TICKS;
+            if (commander != null) {
+                commander.event(host.session().plainName(pourer) + " poured lava on you");
+            }
             manager.stats().hazard(id, "pourer");
         }
     }
@@ -966,7 +975,110 @@ public final class BotController {
         perceive(now, b);
         BotBrain.TeamView team = manager.teams().active()
                 ? manager.teams().view(id, b.body().getLocation(), host.fight(), now) : null;
+        ClaudeCommander boss = commander;
+        brain.orders(boss == null ? null : boss.orders(now));
         decision = brain.decide(situation(now, b), team);
+    }
+
+    /** Makes it a Claude bot. */
+    void commander(@Nullable ClaudeCommander commander) {
+        this.commander = commander;
+    }
+
+    /** Its Claude commander, null for a plain bot. */
+    @Nullable ClaudeCommander commander() {
+        return commander;
+    }
+
+    /** True for a Claude bot (its big decisions come from the Claude API). */
+    public boolean claude() {
+        return commander != null;
+    }
+
+    /** The brain (tests). */
+    BotBrain brain() {
+        return brain;
+    }
+
+    /**
+     * What it knows right now, as plain data for its Claude commander (main thread): itself, the match and every
+     * enemy in its memory (seen, heard, or told by a teammate; nothing more).
+     *
+     * @param events      what happened since the last snapshot
+     * @param augmentName the name of an augment id
+     */
+    ClaudeSnapshot snapshot(long now, List<String> events, java.util.function.Function<String, String> augmentName) {
+        BotBody b = body;
+        Mannequin self = b == null ? null : b.body();
+        Location at = self == null ? null : self.getLocation();
+        List<ClaudeSnapshot.Rival> rivals = new ArrayList<>();
+        if (at != null) {
+            for (Map.Entry<UUID, Seen> entry : memory.entrySet()) {
+                Seen seen = entry.getValue();
+                LivingEntity rival = seen.entity();
+                if (rival.isDead() || seen.at().getWorld() != at.getWorld()) {
+                    continue;
+                }
+                boolean fresh = now - seen.tick() <= 2;
+                double distance = fresh ? seen.distance() : seen.at().distance(at);
+                Double win = brain.forecast(entry.getKey());
+                rivals.add(new ClaudeSnapshot.Rival(entry.getKey(), host.session().plainName(entry.getKey()),
+                        distance, seen.at().getY() - at.getY(), rival.getHealth() + rival.getAbsorptionAmount(),
+                        maxHealth(rival), (int) Math.round(manager.combatOf(rival).armor()), weaponOf(rival),
+                        fresh && seen.inSight(), holdsBow(rival), holdsLava(rival),
+                        manager.fightingOther(entry.getKey(), id, now), seen.distance() < seen.previous() - 0.5,
+                        grudges.containsKey(entry.getKey()), win == null ? -1 : win,
+                        Math.max(0, (now - seen.tick()) / 20)));
+            }
+        }
+        rivals.sort(java.util.Comparator.comparingDouble(ClaudeSnapshot.Rival::distance));
+        if (rivals.size() > 8) {
+            rivals = new ArrayList<>(rivals.subList(0, 8));
+        }
+        List<String> owned = new ArrayList<>();
+        for (String augment : augments.keySet()) {
+            owned.add(augmentName.apply(augment));
+        }
+        BotStats.Line line = manager.stats().line(id);
+        BotPersonality who = traits.personality();
+        ClaudeSnapshot.Self me = new ClaudeSnapshot.Self(name, difficulty.key(), who == null ? "neutral" : who.key(),
+                self == null ? 0 : self.getHealth(), self == null ? 20 : maxHealth(self),
+                self == null ? 0 : self.getAbsorptionAmount(), host.fight() ? apples : profile.goldenApples(), arrows(),
+                blocks(), loadout.armorPoints(), gearText(), loadout.bow(), loadout.shield(), owned, baseText(at),
+                line == null ? 0 : line.kills, at != null && highGround(at));
+        Decision current = decision;
+        String doing = current == null ? "nothing yet" : current.behaviour().name()
+                + (current.target() == null ? "" : " -> " + host.session().plainName(current.target()));
+        double zone = at == null ? 0 : Math.hypot(at.getX() - host.borderCenterX(), at.getZ() - host.borderCenterZ());
+        return new ClaudeSnapshot(host.fight(), host.farmingTicksLeft() / 20 / Math.max(1, host.timeScale()),
+                host.fightSeconds(), host.augmentRoundsLeft(), host.nextAugmentRoundSeconds(), host.borderShrinking(),
+                host.borderHalfIn(0), host.finalHalf(), zone, host.session().aliveCount(), me, rivals, events, doing);
+    }
+
+    private static String weaponOf(LivingEntity entity) {
+        if (entity.getEquipment() == null) {
+            return "fist";
+        }
+        Material held = entity.getEquipment().getItemInMainHand().getType();
+        return held.isAir() ? "fist" : held.name().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private String gearText() {
+        return loadout.armor(1).name().toLowerCase(java.util.Locale.ROOT) + " armor, "
+                + loadout.sword().name().toLowerCase(java.util.Locale.ROOT) + " sword";
+    }
+
+    private String baseText(@Nullable Location at) {
+        BasePlanner.Plan plan = base;
+        if (plan == null) {
+            return traits.builds() || follower() ? (baseFailed ? "failed (no site)" : "no site yet")
+                    : "none (does not build)";
+        }
+        double distance = at == null ? 0 : Math.hypot(at.getX() - (plan.x() + 0.5), at.getZ() - (plan.z() + 0.5));
+        String state = baseFinished() ? "finished" : String.format(java.util.Locale.ROOT, "building %d/%d", built,
+                plan.placements().size());
+        return String.format(java.util.Locale.ROOT, "%s, %.0f blocks away%s", state, distance,
+                !relocating && baseSafeFor(plan) ? "" : ", NOT safe from the border");
     }
 
     /**

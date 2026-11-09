@@ -81,6 +81,30 @@ public interface BotHost {
     /** The participant credited with a damage event (a player, a bot, their projectiles), or null. */
     @Nullable UUID attackerOf(EntityDamageEvent event);
 
+    /** Real seconds since PvP started (0 before). */
+    default long fightSeconds() {
+        return 0;
+    }
+
+    /** Augment rounds still to come. */
+    default int augmentRoundsLeft() {
+        return 0;
+    }
+
+    /** Real seconds to the next augment round (-1: none left). */
+    default long nextAugmentRoundSeconds() {
+        return -1;
+    }
+
+    /** Every augment a bot can own (the Claude bot's catalog). */
+    default List<ClaudePrompt.AugmentLine> augmentCatalog() {
+        return List.of();
+    }
+
+    /** A Claude bot says {@code text} (plain text, one line) in chat like the other bots' lines. */
+    default void botSays(UUID bot, String text) {
+    }
+
     /** A bot's body died: credit the kill, strip its augments, eliminate it, check for a winner. */
     void botDied(UUID bot, LivingEntity body, @Nullable UUID killer, @Nullable EntityDamageEvent lastDamage);
 }

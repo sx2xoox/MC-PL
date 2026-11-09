@@ -97,6 +97,9 @@ public final class BotCommand {
                 out.add(difficulty.koreanName());
             }
         }
+        if (!word.isEmpty() && CLAUDE_WORDS.getFirst().startsWith(word)) {
+            out.add(CLAUDE_WORDS.getFirst());
+        }
         return out;
     }
 
@@ -202,6 +205,36 @@ public final class BotCommand {
         }
     }
 
+    /** A word anywhere in the options that mixes Claude bots into the match ({@code bots.claude.count} of them). */
+    static final List<String> CLAUDE_WORDS = List.of("클로드", "claude");
+
+    /**
+     * The options without the Claude word ("지옥 5 클로드" → "지옥 5", asked).
+     *
+     * @param rest  the other options
+     * @param asked the Claude word was there
+     */
+    public record ClaudeAsk(String rest, boolean asked) {
+
+        public static ClaudeAsk parse(String input) {
+            List<String> kept = new ArrayList<>();
+            boolean asked = false;
+            for (String word : input.trim().split("\\s+")) {
+                if (CLAUDE_WORDS.contains(word.toLowerCase(java.util.Locale.ROOT))) {
+                    asked = true;
+                } else if (!word.isEmpty()) {
+                    kept.add(word);
+                }
+            }
+            return new ClaudeAsk(String.join(" ", kept), asked);
+        }
+
+        /** {@code setup} with the Claude bots asked for (else as configured). */
+        public AugmentMatch.BotSetup apply(AugmentMatch.BotSetup setup) {
+            return asked ? setup.withClaude(setup.settings().claude().askedBots()) : setup;
+        }
+    }
+
     /** The first word that turns the options into 봇전 팀전 ("팀 3 4 보통"). */
     static final List<String> TEAM_WORDS = List.of("팀", "팀전", "team", "teams");
 
@@ -265,10 +298,12 @@ public final class BotCommand {
         }
     }
 
-    private int start(CommandSender sender, String input, boolean spectate) {
+    private int start(CommandSender sender, String typed, boolean spectate) {
+        ClaudeAsk claude = ClaudeAsk.parse(typed);
+        String input = claude.rest();
         TeamOptions team = TeamOptions.parse(input);
         if (team != null) {
-            return startTeams(sender, team, spectate);
+            return startTeams(sender, team, spectate, claude);
         }
         Options options = Options.parse(input);
         if (options.error() != null) {
@@ -285,7 +320,7 @@ public final class BotCommand {
         if (spectate && lineup.size() < 2) {
             lineup.add(lineup.getFirst()); // a fight needs two
         }
-        AugmentMatch.BotSetup setup = new AugmentMatch.BotSetup(settings, lineup);
+        AugmentMatch.BotSetup setup = claude.apply(new AugmentMatch.BotSetup(settings, lineup));
         game.requestBots(setup);
         MiniGame mode = spectate ? game.spectateGame() : game.botGame();
         try {
@@ -300,7 +335,7 @@ public final class BotCommand {
         return Command.SINGLE_SUCCESS;
     }
 
-    private int startTeams(CommandSender sender, TeamOptions team, boolean spectate) {
+    private int startTeams(CommandSender sender, TeamOptions team, boolean spectate, ClaudeAsk claude) {
         if (team.difficulty().error() != null) {
             game.messages().send(sender, "bots.team-bad-option", Messages.tag("input", team.difficulty().error()));
             return 0;
@@ -317,7 +352,8 @@ public final class BotCommand {
                     Messages.tag("places", team.teamSize(settings) * team.teamCount(settings)));
             return 0;
         }
-        AugmentMatch.BotSetup setup = new AugmentMatch.BotSetup(settings, lineup, team.teamCount(settings));
+        AugmentMatch.BotSetup setup = claude.apply(new AugmentMatch.BotSetup(settings, lineup,
+                team.teamCount(settings)));
         game.requestBots(setup);
         MiniGame mode = spectate ? game.spectateGame() : game.botGame();
         try {

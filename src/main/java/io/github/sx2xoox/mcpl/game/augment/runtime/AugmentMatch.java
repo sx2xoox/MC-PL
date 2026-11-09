@@ -123,8 +123,9 @@ public final class AugmentMatch implements GameInstance, BotHost {
      * @param settings {@code games.augment.bots}
      * @param lineup   the difficulty of each bot (how many and how well they play)
      * @param teams    봇전 팀전: exactly this many teams (humans spread over them, bots fill them), 0 otherwise
+     * @param claude   how many of the bots (the first ones) are Claude bots ({@code bots.claude.*})
      */
-    public record BotSetup(BotSettings settings, List<BotDifficulty> lineup, int teams) {
+    public record BotSetup(BotSettings settings, List<BotDifficulty> lineup, int teams, int claude) {
 
         public BotSetup {
             lineup = List.copyOf(lineup);
@@ -132,10 +133,21 @@ public final class AugmentMatch implements GameInstance, BotHost {
                 throw new IllegalArgumentException("no bots");
             }
             teams = teams >= 2 ? teams : 0;
+            claude = Math.max(0, Math.min(claude, lineup.size()));
+        }
+
+        /** A setup with the configured Claude bots ({@code bots.claude.enabled}: {@code count}, else none). */
+        public BotSetup(BotSettings settings, List<BotDifficulty> lineup, int teams) {
+            this(settings, lineup, teams, settings.claude().defaultBots());
         }
 
         public BotSetup(BotSettings settings, List<BotDifficulty> lineup) {
             this(settings, lineup, 0);
+        }
+
+        /** This setup with {@code count} Claude bots. */
+        public BotSetup withClaude(int count) {
+            return new BotSetup(settings, lineup, teams, count);
         }
 
         /** {@code count} bots of one difficulty. */
@@ -197,7 +209,7 @@ public final class AugmentMatch implements GameInstance, BotHost {
         this.botSetup = botSetup;
         boolean spectate = mode == MatchMode.SPECTATE;
         this.bots = botSetup != null ? new BotManager(this, botSetup.settings(), botSetup.lineup(),
-                spectate || botSetup.mixed(), true) : null;
+                spectate || botSetup.mixed(), true, mode == MatchMode.PRACTICE ? 0 : botSetup.claude()) : null;
         this.spectators = spectate && bots != null ? new SpectatorView(this, bots, botSetup.settings().spectate())
                 : null;
         this.chat = bots != null && mode != MatchMode.PRACTICE ? new BotChatFeed(this, bots,
@@ -451,6 +463,16 @@ public final class AugmentMatch implements GameInstance, BotHost {
             } else {
                 announce(messages().prefixed("bots.joined", Messages.tag("count", bots.all().size()),
                         Messages.tag("difficulty", botSetup.describe())));
+            }
+            int claudeBots = 0;
+            for (io.github.sx2xoox.mcpl.game.augment.bot.BotController bot : bots.all()) {
+                claudeBots += bot.claude() ? 1 : 0;
+            }
+            if (claudeBots > 0) {
+                announce(messages().prefixed("bots.claude-joined", Messages.tag("count", claudeBots),
+                        Messages.tag("mark", botSetup.settings().claude().namePrefix().trim())));
+            } else if (bots.claudeStatus() != null) {
+                announce(messages().prefixed("bots.claude-off"));
             }
             if (botSetup.teams() > 0 && session.isTeamMode()) {
                 announce(messages().prefixed("bots.team-joined", Messages.tag("teams", session.teams().size())));
@@ -899,6 +921,47 @@ public final class AugmentMatch implements GameInstance, BotHost {
         }
     }
 
+    @Override
+    public long fightSeconds() {
+        return fightTicks() / 20 / Math.max(1, timeScale);
+    }
+
+    @Override
+    public int augmentRoundsLeft() {
+        return isPractice() ? 0 : Math.max(0, settings.rounds().size() - nextRound);
+    }
+
+    @Override
+    public long nextAugmentRoundSeconds() {
+        if (isPractice() || nextRound >= settings.rounds().size()) {
+            return -1;
+        }
+        return realTicks(Math.max(0, settings.rounds().get(nextRound).atTicks() - time)) / 20;
+    }
+
+    @Override
+    public List<io.github.sx2xoox.mcpl.game.augment.bot.ClaudePrompt.AugmentLine> augmentCatalog() {
+        List<io.github.sx2xoox.mcpl.game.augment.bot.ClaudePrompt.AugmentLine> out = new ArrayList<>();
+        for (AugmentRegistry.Entry entry : game.registry().all()) {
+            AugmentInfo info = entry.info();
+            if (info.forBots() && config.isEnabled(info.id())) {
+                String description = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                        .serialize(net.kyori.adventure.text.minimessage.MiniMessage.miniMessage()
+                                .deserialize(config.params(info).render(info.description())));
+                out.add(new io.github.sx2xoox.mcpl.game.augment.bot.ClaudePrompt.AugmentLine(info.id(), info.name(),
+                        info.tier().key(), description));
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public void botSays(UUID bot, String text) {
+        if (chat != null) {
+            chat.free(bot, text);
+        }
+    }
+
     /** Match-clock ticks since PvP started. */
     long fightTicks() {
         return phase == MatchPhase.FIGHT ? time - fightStart : 0;
@@ -1009,7 +1072,33 @@ public final class AugmentMatch implements GameInstance, BotHost {
         if (cards.isEmpty()) {
             return null;
         }
-        AugmentInfo info = botPick(bot, cards);
+        if (bots.pickAugmentLater(bot, botCards(cards), "round " + roundsPlayed + ", " + tier.key() + " tier",
+                id -> grantPicked(bot, cards, id))) {
+            return null; // a Claude bot: its answer (or its own pick in time) comes back on the main thread
+        }
+        return grantPicked(bot, cards, botPick(bot, cards).id());
+    }
+
+    /** Grants bot {@code bot} the card {@code id} of {@code cards} (another one it does not own yet if it does). */
+    private @Nullable AugmentInfo grantPicked(UUID bot, List<AugmentInfo> cards, String id) {
+        PlayerState state = players.get(bot);
+        if (state == null || stopped || bots == null || bots.body(bot) == null) {
+            return null;
+        }
+        AugmentInfo info = null;
+        for (AugmentInfo card : cards) {
+            if (card.id().equals(id) && !state.owns(card)) {
+                info = card;
+            }
+        }
+        for (AugmentInfo card : cards) {
+            if (info == null && !state.owns(card)) {
+                info = card; // it got that one meanwhile (another round): the next card
+            }
+        }
+        if (info == null) {
+            return null;
+        }
         AugmentRegistry.Entry entry = game.registry().get(info.id());
         if (entry == null) {
             return null;
@@ -1029,14 +1118,18 @@ public final class AugmentMatch implements GameInstance, BotHost {
         return info;
     }
 
-    /** The card a bot takes of the ones it drew (it reads them like a player, see {@code AugmentValues}). */
-    private AugmentInfo botPick(UUID bot, List<AugmentInfo> cards) {
+    private List<io.github.sx2xoox.mcpl.game.augment.bot.AugmentValues.Card> botCards(List<AugmentInfo> cards) {
         List<io.github.sx2xoox.mcpl.game.augment.bot.AugmentValues.Card> offer = new ArrayList<>(cards.size());
         for (AugmentInfo card : cards) {
             offer.add(new io.github.sx2xoox.mcpl.game.augment.bot.AugmentValues.Card(card.id(),
                     config.params(card).values()));
         }
-        String id = bots == null ? null : bots.pickAugment(bot, offer);
+        return offer;
+    }
+
+    /** The card a bot takes of the ones it drew (it reads them like a player, see {@code AugmentValues}). */
+    private AugmentInfo botPick(UUID bot, List<AugmentInfo> cards) {
+        String id = bots == null ? null : bots.pickAugment(bot, botCards(cards));
         for (AugmentInfo card : cards) {
             if (card.id().equals(id)) {
                 return card;

@@ -415,6 +415,23 @@ final class BotChatFeed {
         return Component.text(bot != null ? bot.name() : session().plainName(id));
     }
 
+    /**
+     * A Claude bot's own line ({@code bots.claude.chat}): shown like the other bot lines, as plain text (never parsed
+     * as MiniMessage), with the same overall pace as the other lines.
+     */
+    public void free(UUID id, String text) {
+        BotController bot = bots.bot(id);
+        if (bot == null || text.isBlank()) {
+            return;
+        }
+        Component full = session().name(id);
+        Component speaker = Component.text(bot.name()).color(full.color()).hoverEvent(HoverEvent.showText(full));
+        Component chatLine = match.messages().get("bots.chat-line", Messages.tag("name", speaker),
+                Messages.tag("message", Component.text(text)));
+        match.announce(chatLine);
+        Bukkit.getConsoleSender().sendMessage(chatLine);
+    }
+
     private void say(UUID id, Trigger trigger, Map<String, Component> tags) {
         BotController bot = bots.bot(id);
         if (bot == null) {

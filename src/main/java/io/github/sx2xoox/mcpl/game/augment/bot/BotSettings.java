@@ -22,10 +22,11 @@ import org.bukkit.configuration.MemoryConfiguration;
  * @param spectate    봇 관전전 ({@code bots.spectate.*})
  * @param personalities how often each {@link BotPersonality} is drawn (0 = never)
  * @param team        봇전 팀전 ({@code bots.team.*})
+ * @param claude      the Claude bot ({@code bots.claude.*})
  */
 public record BotSettings(int count, BotDifficulty difficulty, int max, List<String> names, List<String> skins,
                           double moveSpeed, Map<BotDifficulty, BotProfile> profiles, Spectate spectate,
-                          Map<BotPersonality, Double> personalities, Team team) {
+                          Map<BotPersonality, Double> personalities, Team team, ClaudeSettings claude) {
 
     /**
      * The {@code games.augment.bots.team.*} settings of 봇전 팀전 ({@code /게임 시작 증강 봇전 팀 [팀당 인원] [팀 수]}).
@@ -221,6 +222,7 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
                 "trapper 트래퍼 · assassin 암살자 · tank 탱커 · avenger 복수귀 · gambler 도박사 · nomad 유목민"));
         Spectate.declareDefaults(d);
         Team.declareDefaults(d);
+        ClaudeSettings.declareDefaults(d);
     }
 
     /** Reads the live {@code games.augment} section; invalid values fall back to the defaults. */
@@ -256,6 +258,6 @@ public record BotSettings(int count, BotDifficulty difficulty, int max, List<Str
         return new BotSettings(Math.max(1, Math.min(max, s.getInt(COUNT, 5))),
                 difficulty != null ? difficulty : BotDifficulty.NORMAL, max, names, skins,
                 Double.isFinite(speed) ? Math.max(0.05, Math.min(1.0, speed)) : 0.32, profiles,
-                Spectate.read(s), personalities, Team.read(s));
+                Spectate.read(s), personalities, Team.read(s), ClaudeSettings.read(s));
     }
 }
