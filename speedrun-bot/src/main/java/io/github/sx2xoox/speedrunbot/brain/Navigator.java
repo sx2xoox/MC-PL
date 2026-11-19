@@ -142,6 +142,29 @@ public final class Navigator {
         };
     }
 
+    /** Standing on dry ground (feet cell not water, floor solid and not water), within r blocks of p. */
+    public static Goal dry(BlockPos p, double r, WorldMemory mem) {
+        return new Goal() {
+            public String key() {
+                return "dry" + p.asLong();
+            }
+
+            public boolean done(int x, int y, int z) {
+                double dx = x - p.getX(), dz = z - p.getZ();
+                if (dx * dx + dz * dz > r * r) {
+                    return false;
+                }
+                BlockState here = mem.get(x, y, z), floor = mem.get(x, y - 1, z);
+                return here != null && floor != null && !Blocks2.isWater(here) && Blocks2.pass(here) == Blocks2.Pass.PASS
+                        && Blocks2.standable(floor) && !Blocks2.isWater(floor);
+            }
+
+            public double h(int x, int y, int z) {
+                return 0;
+            }
+        };
+    }
+
     /** Feet at or above the given height (anywhere): back up to the surface. */
     public static Goal above(int y0) {
         return new Goal() {

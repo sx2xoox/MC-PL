@@ -93,12 +93,26 @@ public final class TreasureHunt {
                     }
                 }
             }
-            if (n >= 6 && wet >= 2 && n > bestN) {
+            if (n >= 6 && wet >= 2 && n > bestN && p.getY() >= 35 && p.getY() <= 70 && bigWater(mem, p)) {
                 bestN = n;
                 best = p;
             }
         }
         return best;
+    }
+
+    /** A sea or a big lake around (many water sources seen near it): a mineshaft beside a spring is no shipwreck. */
+    private static boolean bigWater(WorldMemory mem, BlockPos p) {
+        int n = 0;
+        LongIterator it = mem.of(WorldMemory.Kind.WATER_SOURCE).iterator();
+        while (it.hasNext()) {
+            long l = it.nextLong();
+            int dx = BlockPos.unpackLongX(l) - p.getX(), dz = BlockPos.unpackLongZ(l) - p.getZ();
+            if (dx * dx + dz * dz <= 144 && BlockPos.unpackLongY(l) >= 55 && ++n >= 25) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean wetOrLow(WorldMemory mem, BlockPos q) {

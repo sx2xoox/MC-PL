@@ -65,6 +65,11 @@ core (순수 로직, MC 무관): MiningTime, Igt, InputLimits, PerceptionRules, 
 | 사람 입력만 | 시점 회전 45°/틱(900°/s), 피치 35°/틱, 블록 도달 4.5칸, 엔티티 3칸, 사용 클릭 4틱 간격(바닐라 itemUseCooldown), 화면 클릭 2틱(100ms) 간격, 화면 열기 2틱, 핫바 변경 1회/틱, 공격·사용 1회/틱, 달리기는 배고픔 > 6이고 앞으로 갈 때만 | `turningIsRateLimitedAlongTheShortestWay` |
 | 채굴 시간 = 바닐라 | 서버 interaction manager를 거침 + 클라이언트식 float 누적 + 5틱 쿨다운 (`MiningTime`이 같은 식으로 비용 추정) | `stoneWithWoodenPickaxe` 외 4개 (float 누적 때문에 원목 맨손 61틱 등 실제 클라이언트 값) |
 | IGT | `Igt`: 봇 접속 틱부터 서버 틱 수 / 20. SpeedRunIGT(1.16.1)는 일시정지·로딩을 뺀 월드 진입~최종 이벤트 시간이고 봇은 일시정지가 없으므로 같다. 서버가 틱당 50ms를 넘겨도(MSPT>50) IGT는 틱 기준이라 영향 없고, MSPT는 결과에 따로 기록 | `igtCountsServerTicksFromWorldEntry` |
+| 물 속 시야 (2단계) | 시야 광선이 물 블록을 16칸 넘게 지나가면 끝난다(바닐라 클라이언트의 물 안개). 난파선·바다 바닥도 이 거리 안에서만 보인다 | `Phase2LogicTest.waterFogEndsSightRays` |
+| 지도 읽기 (2단계) | 보물 지도는 손에 들었을 때 화면에 그려지는 표식(자기 표식, 빨간 X, 지도 축척)만 `BotSenses.heldMap()`으로 읽는다. X 위치 = 자기 위치 + (X 표식 − 자기 표식) × 축척. 자기 표식이 지도 밖이면 방향만 안다. 구조물 위치 조회 없음 | `treasureMapPointsAtTheChunkOffsetNineNine`(바닐라 표식 공식으로 검증), `offMapPlayerOnlyGetsADirection` |
+| 좌표 (2단계) | 자기 좌표(F3, 사람도 언제나 볼 수 있음)로 보물을 청크 안 9,9 칸에서 판다(1.16 매장 보물 위치 규칙, 사람 러너와 같은 지식) | 같은 테스트 |
+| 상자·구조물 (2단계) | 상자는 시야 광선에 걸린 것만 연다(`Looter`). 난파선은 물속/물가에 붙은 가공 목재(판자·계단·반블록·울타리·다락문) 묶음을 본 것으로 판단 | 코드 구조 |
+| 아이템 사용 규칙 (2단계) | 우클릭은 바닐라 서버 경로 그대로: 블록이 클릭을 먹으면(레드스톤 광석이 빛남 등) 손의 아이템은 쓰이지 않는다 → 그런 면에는 양동이를 붓지 않는다 | 실전 디버깅(주조 단계) |
 | 요새 삼각측량 | 3단계에서 엔더 눈 두 번 던지기로 구현 예정(눈 엔티티의 비행 방향만 관찰) | - |
 | 비교용 완화 모드 | `-Dsrb.fair=false` 또는 `run_batch.py --relaxed`: FOV 무시(구 전체 광선) + 40틱마다 주변 24칸 정육면체 직접 읽기. 비교 측정 전용 | - |
 

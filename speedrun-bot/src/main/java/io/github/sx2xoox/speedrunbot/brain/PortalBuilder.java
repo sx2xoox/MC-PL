@@ -198,6 +198,7 @@ public final class PortalBuilder {
             }
         }
         state = recoverFrom != null ? State.RECOVER : State.NONE;
+        badStands.clear();
         plan = null;
         sub = 0;
         subTicks = 0;
@@ -345,14 +346,34 @@ public final class PortalBuilder {
 
     private boolean goStand(Cell stand) {
         BlockPos f = b.feet();
-        if (f.equals(bp(stand)) && b.s.onGround()) {
+        if (badStands.contains(stand)) {
+            // that stand cell failed before: any other stand cell of the plan within reach does as well
+            for (Cell o : plan.standCells()) {
+                if (!badStands.contains(o)) {
+                    stand = o;
+                    break;
+                }
+            }
+        }
+        if (f.equals(bp(stand)) && (b.s.onGround() || b.s.inWater())) {
             return true;
         }
+        for (Cell o : plan.standCells()) {
+            if (f.equals(bp(o)) && (b.s.onGround() || b.s.inWater()) && !badStands.contains(o) && f.getSquaredDistance(bp(stand)) <= 4) {
+                return true; // a neighbouring stand cell reaches as well
+            }
+        }
         if (b.mover.go(Navigator.at(bp(stand))) == Mover.Status.FAILED) {
-            restartSite("stand_unreachable");
+            badStands.add(stand);
+            b.mover.reset();
+            if (badStands.size() >= plan.standCells().size()) {
+                restartSite("stand_unreachable");
+            }
         }
         return false;
     }
+
+    private final java.util.Set<Cell> badStands = new java.util.HashSet<>();
 
     private void station() {
         Cell st = plan.waterStation();

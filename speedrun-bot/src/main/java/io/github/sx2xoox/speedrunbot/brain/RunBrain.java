@@ -221,7 +221,7 @@ public final class RunBrain {
      */
     private void watchdog() {
         BlockPos f = mover.feet();
-        long key = f.asLong() * 31 + inventoryHash();
+        long key = BlockPos.asLong(f.getX(), f.getY() >> 2, f.getZ()) * 31 + inventoryHash(); // bobbing in water is no progress
         if (key != progressKey || smelter.smelting() || bench.busy()) {
             progressKey = key;
             lastProgressTick = now();
@@ -992,6 +992,7 @@ public final class RunBrain {
     }
 
     private long noStraightUntil;
+    private int wetTicks;
     private BlockPos lavaDescentStart;
     private int lavaDescentTicks;
 
@@ -1125,6 +1126,15 @@ public final class RunBrain {
             return;
         }
         BlockPos f = mover.feet();
+        if (s.inWater() && ++wetTicks > 40) {
+            // swimming: no way to dig from here; get onto dry ground first
+            act = "out of the water";
+            if (mover.go(Navigator.dry(f, 16, mem)) != Mover.Status.FAILED) {
+                return;
+            }
+        } else if (!s.inWater()) {
+            wetTicks = 0;
+        }
         int detour = p.getInt("dig.oreDetour");
         if (ironTotal() < ironNeeded()) {
             BlockPos ore = nearestBlock(f, detour, st -> st.getBlock() == Blocks.IRON_ORE);
@@ -1328,9 +1338,10 @@ public final class RunBrain {
         if (collect()) {
             return;
         }
-        if (gravelBreaks > p.getInt("gravel.maxBreaks") * 2) {
-            fail("no_flint");
-            return;
+        if (gravelBreaks > p.getInt("gravel.maxBreaks") * 2 && !inv.has(Items.GRAVEL)) {
+            // unlucky with this gravel: look for more (gravel is common in caves, rivers and on beaches)
+            trace("no flint from " + gravelBreaks + " gravel breaks; looking for more gravel");
+            gravelBreaks = 0;
         }
         BlockPos f = mover.feet();
         BlockPos gr = nearestBlock(f, 24, st -> st.getBlock() == Blocks.GRAVEL);
