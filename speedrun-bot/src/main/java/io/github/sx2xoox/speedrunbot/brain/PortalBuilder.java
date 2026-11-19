@@ -239,8 +239,15 @@ public final class PortalBuilder {
         return false;
     }
 
+    /** The run's watchdog saw no progress twice at one spot while building. */
+    void stalledAgain() {
+        if (state == State.CARVE || state == State.STATION || state == State.CAST || state == State.INTERIOR) {
+            restartSite("stalled");
+        }
+    }
+
     private void restartSite(String why) {
-        if ((why.equals("unreachable") || why.equals("mine_failed") || why.equals("stand_unreachable") || why.startsWith("no_water_face")
+        if ((why.equals("unreachable") || why.equals("mine_failed") || why.equals("stalled") || why.equals("stand_unreachable") || why.startsWith("no_water_face")
                 || why.startsWith("pocket_open")) && softFail(why)) {
             return;
         }
@@ -436,7 +443,7 @@ public final class PortalBuilder {
     }
 
     private void carve() {
-        if (subTicks > 2400) {
+        if (subTicks > 1400) {
             restartSite("carve_timeout");
             return;
         }

@@ -290,8 +290,12 @@ public final class RunBrain {
             if (caveTarget != null) {
                 markVisited(caveTarget);
             }
-            if (lastStallPos != null && lastStallPos.getSquaredDistance(f) < 9 && now() - lastStallTick < 1500 && !portal.active()) {
-                trace("stalled at the same spot again: avoiding " + mover.stalledAgain());
+            if (lastStallPos != null && lastStallPos.getSquaredDistance(f) < 9 && now() - lastStallTick < 1500) {
+                if (!portal.active()) {
+                    trace("stalled at the same spot again: avoiding " + mover.stalledAgain());
+                } else {
+                    portal.stalledAgain(); // a site whose next step cannot be done from here: another site
+                }
             }
             target = null;
             caveTarget = null;
