@@ -14,9 +14,9 @@ public final class PerceptionRules {
     public static final double H_FOV_DEG = Math.toDegrees(2 * Math.atan(Math.tan(Math.toRadians(V_FOV_DEG / 2)) * 16.0 / 9.0));
     /**
      * Water fog: a sight ray that has passed through this many water blocks ends (the vanilla client fogs water out
-     * within roughly 15-25 blocks; the lower end is used).
+     * within roughly 15-30 blocks; seen from above the surface the sea floor shows to about this depth).
      */
-    public static final int WATER_VIEW_BLOCKS = 16;
+    public static final int WATER_VIEW_BLOCKS = 24;
 
     /** True when a ray that crossed {@code waterBlocks} water cells may still go on (always in relaxed mode). */
     public boolean seesThroughWater(int waterBlocks) {

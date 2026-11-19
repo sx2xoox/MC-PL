@@ -75,11 +75,33 @@ public final class DevSetup {
         BlockPos target = null;
         if (start.equals("lava") || start.equals("lavalow")) {
             target = findLava(w, p.getBlockPos(), start.equals("lavalow"));
+        } else if (start.equals("ship")) {
+            // test fixture: next to the nearest shipwreck (the structure locator is harness-only)
+            BlockPos q = w.locateStructure(net.minecraft.world.gen.feature.StructureFeature.SHIPWRECK, p.getBlockPos(), 8, false);
+            if (q != null) {
+                w.getChunk(q.getX() >> 4, q.getZ() >> 4);
+                int top = w.getTopY(Heightmap.Type.MOTION_BLOCKING, q.getX() + 8, q.getZ() + 8);
+                target = new BlockPos(q.getX() + 8, top, q.getZ() + 8);
+                applied += "ship=" + q.getX() + "," + q.getZ() + ";";
+                // fixture report: where the wreck's planks really are (to check what the bot can see)
+                int found = 0;
+                BlockPos any = null;
+                for (BlockPos r : BlockPos.iterate(q.add(-8, 30, -8), q.add(40, 75, 40))) {
+                    if (w.getBlockState(r).isIn(net.minecraft.tag.BlockTags.PLANKS) || w.getBlockState(r).isIn(net.minecraft.tag.BlockTags.WOODEN_STAIRS)) {
+                        found++;
+                        if (any == null) {
+                            any = r.toImmutable();
+                        }
+                    }
+                }
+                applied += "wreckwood=" + found + "@" + any + ";";
+            }
+            start = "shipx";
         } else {
             String[] xyz = start.split(",");
             target = new BlockPos(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2]));
         }
-        if (target != null && !start.startsWith("lava")) {
+        if (target != null && !start.startsWith("lava") && !start.equals("shipx")) {
             // a fixed test spot may be inside rock: clear a pocket (test fixture only)
             w.getChunk(target.getX() >> 4, target.getZ() >> 4);
             w.setBlockState(target, Blocks.AIR.getDefaultState());

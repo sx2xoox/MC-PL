@@ -22,6 +22,8 @@
   "gravel.maxBreaks": 14.0,
   "treasure.shipDist": 64.0,
   "treasure.shipTicks": 1600.0,
+  "treasure.seaSources": 150.0,
+  "treasure.scoutTicks": 700.0,
   "treasure.maxTicks": 4800.0,
   "route.treasureBaseSec": 110.0,
   "loot.chestDist": 20.0,

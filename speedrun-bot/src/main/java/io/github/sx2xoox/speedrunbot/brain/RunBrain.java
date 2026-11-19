@@ -33,7 +33,7 @@ import java.util.function.Predicate;
  * Numbers that steer it come from {@link Params} (tuned by tools/tune.py).
  */
 public final class RunBrain {
-    public enum Goal { SCAN, WOOD, WOOD_TOOLS, TREASURE, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
+    public enum Goal { SCAN, WOOD, WOOD_TOOLS, SCOUT, TREASURE, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
 
     final BotSenses s;
     final Controls c;
@@ -363,6 +363,10 @@ public final class RunBrain {
         if (route == RouteSelector.Route.TREASURE && !treasure.finished() && ironTotal() < ironNeeded()) {
             return Goal.TREASURE;
         }
+        if (route != RouteSelector.Route.TREASURE && !scoutDone && inv.buckets() == 0 && ironTotal() < ironNeeded()
+                && (goal == Goal.SCOUT || seaSeen())) {
+            return Goal.SCOUT; // an ocean at the spawn: a short look for a shipwreck before digging (the runners' ocean route)
+        }
         if (goal != Goal.PORTAL && chestWorthLooting() != null) {
             return Goal.LOOT;
         }
@@ -409,6 +413,102 @@ public final class RunBrain {
     private BlockPos shipPos;
     private long lastShipLook;
     private BlockPos lootChest;
+
+    private boolean scoutDone;
+    private int scoutTicks;
+    private Boolean seaSeenCache;
+
+    /** Many water sources at sea level around the spawn: an ocean or a big lake shore. */
+    private boolean seaSeen() {
+        if (seaSeenCache == null && goalTicks > 0) {
+            int n = 0;
+            it.unimi.dsi.fastutil.longs.LongIterator it = mem.of(WorldMemory.Kind.WATER_SOURCE).iterator();
+            while (it.hasNext()) {
+                long l = it.nextLong();
+                int y = BlockPos.unpackLongY(l);
+                if (y >= 58 && y <= 63 && BlockPos.fromLong(l).getSquaredDistance(spawn) < 80 * 80) {
+                    n++;
+                }
+            }
+            seaSeenCache = n >= p.getInt("treasure.seaSources");
+            trace("sea level water sources near the spawn: " + n + (seaSeenCache ? " (ocean: scouting for a wreck)" : ""));
+        }
+        return seaSeenCache != null && seaSeenCache;
+    }
+
+    /** Swims out over the sea looking down for a wreck for a short while (bounded by treasure.scoutTicks). */
+    private void scout() {
+        act = "scout";
+        if (scoutTicks % 20 == 0) {
+            lastShipLook = 0; // look for the wreck more often than on the normal route
+            watchForShip();
+        }
+        if (scoutTicks % 200 == 0) {
+            trace("scouting: worked wood seen " + mem.count(WorldMemory.Kind.WOODWORK) + ", chests " + mem.count(WorldMemory.Kind.CHEST));
+        }
+        if (route == RouteSelector.Route.TREASURE || ++scoutTicks > p.getInt("treasure.scoutTicks")) {
+            scoutDone = true;
+            trace("scouting done: " + (route == RouteSelector.Route.TREASURE ? "wreck found" : "no wreck seen"));
+            return;
+        }
+        BlockPos f = mover.feet();
+        if (exploreTarget == null || exploreTarget.squaredDistanceTo(Vec3d.ofCenter(f)) < 9 || subTicks > 300) {
+            // head for the water and then along it: the farthest seen sea-level water within 40 blocks, a new one each leg
+            BlockPos w = null;
+            double bd = -1;
+            it.unimi.dsi.fastutil.longs.LongIterator it = mem.of(WorldMemory.Kind.WATER_SOURCE).iterator();
+            int k = 0;
+            while (it.hasNext() && k < 4000) {
+                long l = it.nextLong();
+                k++;
+                int y = BlockPos.unpackLongY(l);
+                if (y < 58 || y > 63) {
+                    continue;
+                }
+                BlockPos q = BlockPos.fromLong(l);
+                double d = q.getSquaredDistance(f);
+                if (d < 40 * 40 && d > bd && rng.nextInt(4) == 0) {
+                    bd = d;
+                    w = q;
+                }
+            }
+            exploreTarget = w == null ? null : Vec3d.ofCenter(w);
+            subTicks = 0;
+            if (w == null) {
+                scoutDone = true;
+                return;
+            }
+        }
+        if (diveTicks > 0) {
+            // dive: sink while turning and looking down (wrecks lie on the sea floor, deeper than one sees from above)
+            diveTicks--;
+            c.sink();
+            c.lookAngles(s.yaw() + 12f, 55f);
+            if (diveTicks == 0 || s.air() < 140) {
+                diveTicks = 0;
+                surfaceTicks = 60;
+            }
+            return;
+        }
+        if (surfaceTicks > 0) {
+            surfaceTicks--;
+            c.lookAngles(s.yaw() + 8f, -30f);
+            c.move(0.3f, 0f, true, false, false);
+            return;
+        }
+        Mover.Status st = mover.go(Navigator.near(new BlockPos(exploreTarget), 2));
+        if (s.inWater() && (st != Mover.Status.RUNNING || subTicks % 200 == 199)) {
+            diveTicks = 150;
+            exploreTarget = null;
+            return;
+        }
+        if (subTicks % 30 < 12) {
+            c.lookAngles(s.yaw() + 30f, 45f); // look down into the water around
+        }
+    }
+
+    private int diveTicks;
+    private int surfaceTicks;
 
     /** Later in the run a wreck may come into view (walking for wood): switch to the treasure route then. */
     private void watchForShip() {
@@ -491,6 +591,9 @@ public final class RunBrain {
                 break;
             case WOOD_TOOLS:
                 woodTools();
+                break;
+            case SCOUT:
+                scout();
                 break;
             case TREASURE:
                 if (!treasure.active()) {

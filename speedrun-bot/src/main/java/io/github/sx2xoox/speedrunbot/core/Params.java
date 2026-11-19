@@ -51,7 +51,9 @@ public final class Params {
         d.put("gravel.maxBreaks", 14.0);         // gravel to break for flint before giving up
         // --- treasure route (shipwreck -> map -> buried treasure) ---
         d.put("treasure.shipDist", 64.0);        // go for a shipwreck seen within this distance
-        d.put("treasure.shipTicks", 1600.0);     // give up searching a wreck for chests after this
+        d.put("treasure.shipTicks", 1600.0);
+        d.put("treasure.seaSources", 150.0);     // sea-level water sources seen near the spawn that count as an ocean
+        d.put("treasure.scoutTicks", 700.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
         d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
         d.put("route.treasureBaseSec", 110.0);   // expected seconds to iron via the treasure route (plus the walk)
         d.put("loot.chestDist", 20.0);           // open a chest seen this close while iron is still missing
