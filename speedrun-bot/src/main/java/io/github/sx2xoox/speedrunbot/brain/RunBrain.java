@@ -648,6 +648,11 @@ public final class RunBrain {
     void craftAtTable(Predicate<Item> out, int count, String name) {
         java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
         needs.add(new Workbench.Need(name, out, count, true));
+        if (!bench.busy() && !name.equals("stone_pickaxe") && inv.count(Items.STONE_PICKAXE) + inv.count(Items.IRON_PICKAXE) < 2
+                && inv.cobble() >= 3 + (name.equals("furnace") ? 8 : 0) && (inv.count(Items.STICK) >= 2 || inv.planks() >= 6)) {
+            // a spare pickaxe while the table is open anyway (one wears out after 131 blocks, deep underground)
+            needs.add(new Workbench.Need("spare_pickaxe", i -> i == Items.STONE_PICKAXE, inv.count(Items.STONE_PICKAXE) + 1, true));
+        }
         if (bench.run(needs) == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("no_")) {
             craftFailures++;
             if (bench.error().contains("wood") && woodRefills < 3) {
@@ -989,8 +994,9 @@ public final class RunBrain {
         Vec3d pos = s.pos();
         double cx = f.getX() + 0.5 - pos.x, cz = f.getZ() + 0.5 - pos.z;
         if (st != null && (Blocks2.isLava(st) || Blocks2.isWater(st) || a.lavaNextTo(below) || Blocks2.pass(st) == Blocks2.Pass.FORBID)) {
-            trace("fluid below the shaft at " + below + ": staircase for a while");
-            noStraightUntil = now() + 400;
+            trace("fluid below the shaft at " + below + ": staircase from here on");
+            noStraightUntil = now() + 2400;
+            turn();
             return;
         }
         if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
@@ -1156,7 +1162,7 @@ public final class RunBrain {
         if (route == RouteSelector.Route.SURFACE_CAST && why.equals("iron")) {
             targetY = Math.max(targetY, 40);
         }
-        if (exploreCave(f, targetY)) {
+        if (exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
             return;
         }
         if (f.getY() > targetY && p.get("dig.straightDown") > 0 && f.getY() > Math.max(targetY, p.getInt("dig.straightMinY"))
@@ -1208,7 +1214,7 @@ public final class RunBrain {
      * Walks known caves toward their unseen parts (frontier exploration on memory) and looks around at each stop:
      * cave walls show far more ore than a tunnel's two walls. False when no cave frontier is known nearby.
      */
-    private boolean exploreCave(BlockPos f, int targetY) {
+    private boolean exploreCave(BlockPos f, int targetY, int maxY) {
         if (lookAround > 0) {
             lookAround--;
             c.lookAngles(s.yaw() + 45f, lookAround % 8 < 4 ? 20f : -10f);
@@ -1221,7 +1227,7 @@ public final class RunBrain {
             lastCaveSearch = now();
             // caves are under the ground: well below the height the run started at (trees and overhangs are no caves)
             io.github.sx2xoox.speedrunbot.core.Cell cell = frontier().best(f.getX(), f.getY(), f.getZ(), targetY,
-                    Math.min(spawn.getY() - p.getInt("cave.belowSurface"), 60), caveVisited::contains);
+                    Math.min(Math.min(spawn.getY() - p.getInt("cave.belowSurface"), 60), maxY), caveVisited::contains);
             if (cell == null) {
                 return false;
             }
@@ -1406,9 +1412,10 @@ public final class RunBrain {
             return;
         }
         BlockPos f = mover.feet();
-        if (s.inWater() && inv.has(Items.BUCKET)) {
-            // standing in water: scoop a source right here (the one at the feet or the head, or any touching us)
-            for (BlockPos q : new BlockPos[]{f, f.up(), f.down(), f.north(), f.south(), f.east(), f.west()}) {
+        if (inv.has(Items.BUCKET)) {
+            // water right here (in it, above the head, beside us): scoop it without walking
+            for (BlockPos q : new BlockPos[]{f, f.up(), f.up(2), f.down(), f.north(), f.south(), f.east(), f.west(), f.up().north(),
+                    f.up().south(), f.up().east(), f.up().west()}) {
                 if (isWaterSource(q)) {
                     if (a.equip(Items.BUCKET) == Actions.Status.DONE) {
                         Vec3d aim = Vec3d.ofCenter(q);

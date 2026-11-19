@@ -339,6 +339,10 @@ public final class Workbench {
             } else if (needsSticks && b.inv().count(Items.STICK) < 2 && b.inv().logs() > 0) {
                 subCraft = clickRecipe(i -> ItemTags.PLANKS.contains(i), tableGrid);
             } else {
+                if (n.name.startsWith("spare_")) {
+                    needIndex++; // optional extra: skip it
+                    return Actions.Status.RUNNING;
+                }
                 return fail("no_recipe_" + n.name);
             }
             if (subCraft) {

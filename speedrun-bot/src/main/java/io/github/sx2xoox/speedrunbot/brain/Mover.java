@@ -389,9 +389,12 @@ public final class Mover {
      */
     public Status climb(int y0) {
         BlockPos f = feet();
-        if (f.getY() >= y0 && s.onGround()) {
+        if (f.getY() >= y0 && s.onGround() && canStepOut(f)) {
             climbPhase = 0;
             return Status.ARRIVED;
+        }
+        if (f.getY() > y0 + 12) {
+            return Status.FAILED; // a tall wall; let the caller walk
         }
         BlockPos head = f.up(2);
         BlockState hs = mem.get(head);
@@ -435,6 +438,18 @@ public final class Mover {
             }
         }
         return Status.RUNNING;
+    }
+
+    /** Some side cell is open at feet and head height (out of the climbing shaft). */
+    private boolean canStepOut(BlockPos f) {
+        for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+            BlockState a1 = mem.get(f.getX() + d[0], f.getY(), f.getZ() + d[1]);
+            BlockState a2 = mem.get(f.getX() + d[0], f.getY() + 1, f.getZ() + d[1]);
+            if (a1 != null && a2 != null && Blocks2.pass(a1) == Blocks2.Pass.PASS && Blocks2.pass(a2) == Blocks2.Pass.PASS) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Known lava touching the feet or head cell (sides, below, above). */

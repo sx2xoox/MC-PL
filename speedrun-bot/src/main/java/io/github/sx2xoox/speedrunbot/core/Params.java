@@ -40,13 +40,14 @@ public final class Params {
         d.put("dig.gravelDetour", 10.0);         // max detour for gravel (flint) while digging
         d.put("iron.needed", 4.0);               // bucket (3) + flint and steel (1)
         d.put("iron.seenDist", 40.0);            // walk to iron ore seen in the open this far away
-        d.put("dig.ironY", 35.0);                // feet Y of the staircase / tunnel while looking for iron
+        d.put("dig.ironY", 50.0);                // feet Y of the staircase / tunnel while looking for iron
         d.put("dig.straightDown", 1.0);          // 1 = dig a 1x1 shaft straight down (fast) above dig.straightMinY
-        d.put("dig.straightMinY", 24.0);         // below this the staircase is used (lava at y <= 10 in caves)
+        d.put("dig.straightMinY", 45.0);         // below this the staircase is used (lava at y <= 10 in caves)
         d.put("cave.radius", 24.0);              // frontier search radius in caves
         d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height
         d.put("cave.perUnknown", 0.8);           // frontier bonus per unseen cell around it
-        d.put("cave.belowSurface", 8.0);         // cave frontiers must be this far below the starting height
+        d.put("cave.belowSurface", 8.0);
+        d.put("cave.lavaAbove", 10.0);           // looking for lava: only caves at most this far above the lava level         // cave frontiers must be this far below the starting height
         d.put("gravel.maxBreaks", 14.0);         // gravel to break for flint before giving up
         // --- treasure route (shipwreck -> map -> buried treasure) ---
         d.put("treasure.shipDist", 64.0);        // go for a shipwreck seen within this distance
