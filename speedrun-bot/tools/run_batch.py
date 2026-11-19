@@ -45,9 +45,9 @@ def prepare_slot(template, slot_dir, mod_jar):
     mods = os.path.join(slot_dir, "mods")
     os.makedirs(mods, exist_ok=True)
     for f in os.listdir(mods):
-        if f.startswith("speedrun-bot"):
-            os.remove(os.path.join(mods, f))
-    shutil.copy(mod_jar, mods)
+        if f.endswith(".jar"):
+            os.remove(os.path.join(mods, f))  # any earlier bot jar (two copies of the mod: the loader picks one)
+    shutil.copy(mod_jar, os.path.join(mods, "speedrun-bot.jar"))
 
 
 def run_one(args, slot, slot_dir, seed, label):

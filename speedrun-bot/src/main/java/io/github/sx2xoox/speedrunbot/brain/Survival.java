@@ -60,6 +60,8 @@ public final class Survival {
         return new Vec3d(-Math.sin(Math.toRadians(b.s.yaw())) * -1, 0, Math.cos(Math.toRadians(b.s.yaw())) * -1);
     }
     private int huntTicks;
+    private int lookTicks;
+    private int lookedForAttacker = -1;
 
     public Survival(RunBrain b) {
         this.b = b;
@@ -188,8 +190,24 @@ public final class Survival {
                 return true;
             }
         }
+        // hit by something not in view (a zombie behind us): turn around to see it, as a player would
+        if (ticks - lastHurtTick < 24 && !b.s.inLava() && !b.s.onFire() && lastHurtTick != lookedForAttacker) {
+            if (lookTicks == 0) {
+                b.trace("hit by something out of view: looking around");
+            }
+            interruptScreens();
+            b.c.lookAngles(b.s.yaw() + 45f, 5f);
+            if (++lookTicks >= 8) {
+                lookTicks = 0;
+                lookedForAttacker = lastHurtTick;
+            }
+            return true;
+        }
+        lookTicks = 0;
         // 4. food
-        if (b.s.food() <= b.p.getInt("food.eatBelow") && !b.s.screenOpen() && !b.bench.busy() && !b.smelter.screenBusy()) {
+        // hurt: health comes back only with the food bar at 18+, so eat earlier then (a run died at 2 hp with 8 bread)
+        boolean regen = b.s.health() < 12 && b.s.food() < 18;
+        if ((b.s.food() <= b.p.getInt("food.eatBelow") || regen) && !b.s.screenOpen() && !b.bench.busy() && !b.smelter.screenBusy()) {
             int slot = Actions.findSlot(b.s.inventory(), st -> st.getItem().isFood());
             if (slot >= 0) {
                 if (b.a.equip(st -> st.getItem().isFood()) == Actions.Status.DONE && b.c.use()) {
@@ -198,7 +216,7 @@ public final class Survival {
                 }
                 return true;
             }
-            if (b.s.food() <= 6) {
+            if (b.s.food() <= 6 || (regen && b.s.food() <= 12)) {
                 return huntAnimal();
             }
         }

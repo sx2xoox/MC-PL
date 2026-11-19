@@ -113,6 +113,10 @@ public final class PortalBuilder {
                             }
                             sc += dl * 2 + Math.sqrt(f.getSquaredDistance(stand.x, stand.y, stand.z, true)) * 0.3
                                     + Math.abs(origin.y - lavaPos.getY()) * 6; // the room floor at the lava's level: fetching is a short walk
+                            if (sc - bestScore < 15) {
+                                // lava scooped from a stand cell without walking: fetching was the slowest step of casting
+                                sc -= Math.min(10, scoopableFrom(pl)) * 1.5;
+                            }
                             if (sc < bestScore) {
                                 bestScore = sc;
                                 best = pl;
@@ -123,6 +127,34 @@ public final class PortalBuilder {
             }
         }
         return best;
+    }
+
+    /** Known lava sources whose top a stand cell's eye reaches over a clear line (4.3 blocks). */
+    private int scoopableFrom(PortalPlan pl) {
+        int n = 0;
+        java.util.List<Vec3d> eyes = new ArrayList<>();
+        for (Cell s : pl.standCells()) {
+            eyes.add(eyeOf(s));
+        }
+        Cell mid = pl.at(2, 1, 2);
+        for (int dx = -6; dx <= 6; dx++) {
+            for (int dz = -6; dz <= 6; dz++) {
+                for (int dy = -4; dy <= 2; dy++) {
+                    BlockState st = b.mem.get(mid.x + dx, mid.y + dy, mid.z + dz);
+                    if (st == null || !Blocks2.isLavaSource(st) || !openAbove(b.mem.get(mid.x + dx, mid.y + dy + 1, mid.z + dz))) {
+                        continue;
+                    }
+                    Vec3d top = new Vec3d(mid.x + dx + 0.5, mid.y + dy + 0.9, mid.z + dz + 0.5);
+                    for (Vec3d e : eyes) {
+                        if (e.distanceTo(top) <= 4.3 && clearLine(e, top, new Cell(mid.x + dx, mid.y + dy, mid.z + dz))) {
+                            n++;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return n;
     }
 
     private double score(PortalPlan pl) {
@@ -200,6 +232,7 @@ public final class PortalBuilder {
             b.mover.reset();
             b.mover.forgetAvoid();
             badStands.clear();
+            plugTicks = 0;
             subTicks = Math.min(subTicks, 300);
             return true;
         }
@@ -207,7 +240,8 @@ public final class PortalBuilder {
     }
 
     private void restartSite(String why) {
-        if ((why.equals("unreachable") || why.equals("mine_failed") || why.equals("stand_unreachable")) && softFail(why)) {
+        if ((why.equals("unreachable") || why.equals("mine_failed") || why.equals("stand_unreachable") || why.startsWith("no_water_face")
+                || why.startsWith("pocket_open")) && softFail(why)) {
             return;
         }
         b.trace("portal site failed: " + why);
@@ -530,6 +564,15 @@ public final class PortalBuilder {
                     }
                 }
             }
+            if ((pick == null || !pick.equals(stand)) && b.now() - lastStandNote > 100) {
+                lastStandNote = b.now();
+                StringBuilder sb = new StringBuilder();
+                for (Cell o : plan.standCells()) {
+                    sb.append(' ').append(o).append(badStands.contains(o) ? " bad" : "").append(blindStands.contains(o) ? " blind" : "")
+                            .append(faceSeenFrom(eyeOf(o), target) ? " sees" : " no");
+                }
+                b.trace("stand for " + target + ": wanted " + stand + ", picked " + pick + " |" + sb);
+            }
             if (pick == null && !blindStands.isEmpty()) {
                 blindStands.clear();
             }
@@ -609,6 +652,7 @@ public final class PortalBuilder {
     private final java.util.Set<Cell> openingsAccepted = new java.util.HashSet<>();
     private int lastSub = -1;
     private int blindCell = -1;
+    private long lastStandNote;
     private int searchTicks;
     private BlockPos fetchSrc;
     private int fetchTicks;
