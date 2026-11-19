@@ -46,5 +46,6 @@
   "food.eatBelow": 12.0,
   "safety.relocate": 0.0,
   "lava.hearing": 1.0,
-  "water.springs": 1.0
+  "water.springs": 1.0,
+  "route.flintLate": 1.0
 }

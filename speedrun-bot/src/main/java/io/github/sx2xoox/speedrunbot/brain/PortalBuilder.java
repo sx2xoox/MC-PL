@@ -43,6 +43,11 @@ public final class PortalBuilder {
         return state != State.NONE;
     }
 
+    /** The frame is finished and only the lighter is missing. */
+    public boolean waitingForLighter() {
+        return state == State.LIGHT && !b.inv().lighter();
+    }
+
     public boolean waterPlaced() {
         return waterPlaced;
     }
@@ -207,6 +212,7 @@ public final class PortalBuilder {
         }
         b.trace("portal site failed: " + why);
         softFailures = 0;
+        obsidian = 0; // the next site starts empty (a stale count let the next site's failures pass as soft)
         noFaceTicks = 0;
         lastFailure = why;
         if (lava != null) {
@@ -870,6 +876,10 @@ public final class PortalBuilder {
             b.split("portal_lit");
             state = State.ENTER;
             subTicks = 0;
+            return;
+        }
+        if (!b.inv().lighter()) {
+            subTicks = 0; // the frame waits while the brain gets flint (gravel) and crafts the lighter
             return;
         }
         if (subTicks > 400) {

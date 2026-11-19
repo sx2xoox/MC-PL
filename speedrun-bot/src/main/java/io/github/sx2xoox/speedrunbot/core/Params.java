@@ -46,7 +46,8 @@ public final class Params {
         d.put("lava.shaftMinY", 13.0);
         d.put("safety.relocate", 0.0);
         d.put("lava.hearing", 1.0);
-        d.put("water.springs", 1.0);             // 1 = also scoop water sources open at a side (springs in cave walls)              // 1 = dig toward lava heard (sounds as a player hears them)           // 1 = walk away after two stalls at one spot (measured: no gain)           // with the water bucket the shaft goes down to here looking for lava
+        d.put("water.springs", 1.0);
+        d.put("route.flintLate", 1.0);           // 1 = water and lava before the flint (gravel on the way down)             // 1 = also scoop water sources open at a side (springs in cave walls)              // 1 = dig toward lava heard (sounds as a player hears them)           // 1 = walk away after two stalls at one spot (measured: no gain)           // with the water bucket the shaft goes down to here looking for lava
         d.put("cave.radius", 24.0);              // frontier search radius in caves
         d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height
         d.put("cave.perUnknown", 0.8);           // frontier bonus per unseen cell around it

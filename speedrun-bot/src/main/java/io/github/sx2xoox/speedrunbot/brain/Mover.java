@@ -277,6 +277,18 @@ public final class Mover {
         if (jump) {
             c.jump();
         }
+        if (step.move == Navigator.Move.SWIM_UP && s.inWater() && f.getY() == t.getY() - 1 && s.pos().y > t.getY() - 0.75
+                && index + 1 < path.steps.size()) {
+            // bobbing at the surface: the feet never reach the air cell above the water; the next step (onto the
+            // shore, jumping while swimming) takes us out
+            BlockState ts = mem.get(t);
+            if (ts == null || !Blocks2.isWater(ts)) {
+                index++;
+                stuck = 0;
+                bestDist = Double.MAX_VALUE;
+                return StepResult.OK;
+            }
+        }
         if (f.equals(t) && (hd < 0.35 || (straight && index + 1 < path.steps.size() && hd < 0.7)) && (s.onGround() || s.inWater())) {
             index++;
             stuck = 0;

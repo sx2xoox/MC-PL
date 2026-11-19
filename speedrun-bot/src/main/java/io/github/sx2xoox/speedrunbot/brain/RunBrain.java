@@ -461,6 +461,13 @@ public final class RunBrain {
                 && goal != Goal.WOOD_TOOLS && (goal == Goal.STONE_PICK || goalTicks > 20)) {
             return Goal.STONE_PICK; // the pickaxe wore out (tunnels, the portal room): a new one before anything else
         }
+        if (portal.waitingForLighter()) {
+            // the frame is done but the flint was left for later: get it now (gravel near the portal)
+            if (inv.count(Items.IRON_INGOT) < 1 && !smelter.smelting()) {
+                return Goal.SMELT;
+            }
+            return inv.has(Items.FLINT) ? Goal.IRON_TOOLS : Goal.FLINT;
+        }
         if (portal.active()) {
             return Goal.PORTAL;
         }
@@ -519,10 +526,14 @@ public final class RunBrain {
             if (!inv.has(Items.FLINT) && smelter.smelting()) {
                 return Goal.SMELT; // the bucket is made; flint is looked for next to the furnace meanwhile
             }
-            if (!inv.has(Items.FLINT)) {
+            if (!inv.has(Items.FLINT) && (p.get("route.flintLate") <= 0 || inv.count(Items.IRON_INGOT) < 1)) {
                 return Goal.FLINT;
             }
-            return Goal.IRON_TOOLS;
+            if (inv.has(Items.FLINT)) {
+                return Goal.IRON_TOOLS;
+            }
+            // flint later: gravel is picked up on the way down to the lava (caves have plenty); the lighter is only
+            // needed once the frame stands
         }
         if (!inv.has(Items.WATER_BUCKET) && !portal.waterPlaced()) {
             return Goal.WATER;
