@@ -201,6 +201,10 @@ public final class RunBrain {
             Goal next = choose();
             if (next != goal) {
                 trace("goal " + goal + " -> " + next + " after " + goalTicks + "t inv=" + inv.summary());
+                if (next == Goal.PORTAL && goal == Goal.LAVA) {
+                    BlockPos uw = mem.nearest(WorldMemory.Kind.WATER_SOURCE, mover.feet(), 48, l -> BlockPos.unpackLongY(l) < 40);
+                    trace("underground water near the lava: " + (uw == null ? "none" : uw + " at " + Math.round(Math.sqrt(uw.getSquaredDistance(mover.feet())))));
+                }
                 goal = next;
                 goalTicks = 0;
                 sub = 0;
@@ -274,6 +278,9 @@ public final class RunBrain {
             }
             if (caveTarget != null) {
                 markVisited(caveTarget);
+            }
+            if (lastStallPos != null && lastStallPos.getSquaredDistance(f) < 9 && now() - lastStallTick < 1500 && !portal.active()) {
+                trace("stalled at the same spot again: avoiding " + mover.stalledAgain());
             }
             target = null;
             caveTarget = null;
@@ -506,7 +513,7 @@ public final class RunBrain {
             return Goal.LOOT;
         }
         if (!inv.stonePick()) {
-            return inv.cobble() >= 3 * p.getInt("stone.picks") || (inv.cobble() >= 3 && goal == Goal.COBBLE && goalTicks > 400)
+            return inv.cobble() >= 3 * p.getInt("stone.picks") + 2 || (inv.cobble() >= 3 && goal == Goal.COBBLE && goalTicks > 400)
                     ? Goal.STONE_PICK : Goal.COBBLE;
         }
         boolean needIron = ironTotal() < ironNeeded();
@@ -756,11 +763,11 @@ public final class RunBrain {
                 }
                 break;
             case COBBLE:
-                cobble(3 * p.getInt("stone.picks"));
+                cobble(3 * p.getInt("stone.picks") + 2); // + a stone sword (caves: zombies, skeletons)
                 break;
             case STONE_PICK:
                 // a spare pickaxe now saves a table later (one wears out after 131 blocks)
-                craftAtTable(st -> st == Items.STONE_PICKAXE, inv.cobble() >= 6 ? p.getInt("stone.picks") : 1, "stone_pickaxe");
+                craftStonePicks();
                 break;
             case IRON:
                 iron();
@@ -807,6 +814,9 @@ public final class RunBrain {
         }
         lastLogs = logs;
         BlockPos f = mover.feet();
+        if (target == null && collectWoodDrops(f)) {
+            return;
+        }
         if (target == null || !(isLog(target) || isPlanks(target)) || badTargets.contains(target.asLong())) {
             target = mem.nearest(WorldMemory.Kind.LOG, f, 160, l -> !badTargets.contains(l) && BlockPos.unpackLongY(l) <= f.getY() + 6);
             if (target == null || target.getSquaredDistance(f) > 24 * 24) {
@@ -845,6 +855,50 @@ public final class RunBrain {
         } else if (st == Actions.Status.DONE) {
             target = null; // next log; drops are collected by walking under the tree
         }
+    }
+
+    /** Log drops seen lying around (item entities in view), remembered for a while once out of view. */
+    private final java.util.Map<Integer, Vec3d> woodDrops = new java.util.HashMap<>();
+    private final java.util.Map<Integer, Long> woodDropSeen = new java.util.HashMap<>();
+    private int dropWalkTicks;
+
+    /**
+     * Picks up the logs mined so far once no more log is in reach from where we stand (the drops fall to the trunk's
+     * foot, out of the pickup range of a player mining from 4 blocks away; runs walked off to the next tree without them).
+     */
+    private boolean collectWoodDrops(BlockPos f) {
+        for (net.minecraft.entity.ItemEntity it : perception.visible(net.minecraft.entity.ItemEntity.class, 12,
+                e -> e.getStack().getItem().isIn(ItemTags.LOGS))) {
+            woodDrops.put(it.getEntityId(), it.getPos());
+            woodDropSeen.put(it.getEntityId(), now());
+        }
+        Vec3d me = s.pos();
+        woodDrops.entrySet().removeIf(e -> now() - woodDropSeen.get(e.getKey()) > 400 || e.getValue().squaredDistanceTo(me) < 1.0);
+        if (woodDrops.isEmpty()) {
+            dropWalkTicks = 0;
+            return false;
+        }
+        BlockPos next = mem.nearest(WorldMemory.Kind.LOG, f, 6, l -> !badTargets.contains(l) && BlockPos.unpackLongY(l) <= f.getY() + 6);
+        if (next != null && Navigator.reach(next, 4.2).done(f.getX(), f.getY(), f.getZ())) {
+            return false; // more logs from here first
+        }
+        if (++dropWalkTicks > 160) {
+            woodDrops.clear(); // could not get there (a drop on a ledge, in leaves)
+            dropWalkTicks = 0;
+            return false;
+        }
+        Vec3d best = null;
+        for (Vec3d v : woodDrops.values()) {
+            if (best == null || v.squaredDistanceTo(me) < best.squaredDistanceTo(me)) {
+                best = v;
+            }
+        }
+        act = "log drops";
+        BlockPos at = new BlockPos(best);
+        if (mover.go(Navigator.near(at, 0.5)) == Mover.Status.FAILED) {
+            woodDrops.values().remove(best);
+        }
+        return true;
     }
 
     private boolean isPlanks(BlockPos p) {
@@ -921,6 +975,29 @@ public final class RunBrain {
             }
         }
     }
+
+    /** Stone pickaxes, and a stone sword in the same table session when the cobble is there (2 more blocks). */
+    private void craftStonePicks() {
+        int picks = inv.cobble() >= 6 ? p.getInt("stone.picks") : 1;
+        if (!bench.busy() && !inv.has(Items.STONE_SWORD) && inv.cobble() >= 3 * picks + 2 && !swordTried) {
+            java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
+            needs.add(new Workbench.Need("stone_pickaxe", st -> st == Items.STONE_PICKAXE, picks, true));
+            needs.add(new Workbench.Need("stone_sword", st -> st == Items.STONE_SWORD, 1, true));
+            swordSession = true;
+            if (bench.run(needs) == Actions.Status.FAILED) {
+                swordTried = true; // no sword then; the pickaxes alone below
+            }
+            return;
+        }
+        if (swordSession && bench.busy()) {
+            bench.run(null);
+            return;
+        }
+        craftAtTable(st -> st == Items.STONE_PICKAXE, picks, "stone_pickaxe");
+    }
+
+    private boolean swordTried;
+    private boolean swordSession;
 
     private boolean needWood;
     private int woodRefills;
@@ -1455,6 +1532,56 @@ public final class RunBrain {
         lookAhead();
     }
 
+    /** One step of a staircase up in digDir (clear the head room, the step and the space above it, then step up). */
+    private void stairUpStep() {
+        act = "stairs up";
+        if (collect() || escaping()) {
+            return;
+        }
+        BlockPos f = mover.feet();
+        BlockPos col = f.offset(digDir);
+        BlockPos[] cells = {f.up(2), col.up(2), col.up()};
+        for (BlockPos cell : new BlockPos[]{f.up(2), f.up(3), col.up(), col.up(2), col.up(3)}) {
+            BlockState st = mem.get(cell);
+            if (st != null && (Blocks2.isLava(st) || Blocks2.isWater(st) || Blocks2.pass(st) == Blocks2.Pass.FORBID || Blocks2.falls(st))) {
+                turn();
+                return;
+            }
+        }
+        BlockState step = mem.get(col);
+        if (step != null && !Blocks2.standable(step)) {
+            // nothing to step onto: put a block there (or turn)
+            if (inv.throwaways() > 0 && Blocks2.pass(step) == Blocks2.Pass.PASS && ++holeTicks < 60) {
+                if (a.place(col, Actions::isThrowaway) == Actions.Status.FAILED) {
+                    holeTicks = 60;
+                }
+                return;
+            }
+            holeTicks = 0;
+            turn();
+            return;
+        }
+        for (BlockPos cell : cells) {
+            if (a.solid(cell) || mem.get(cell) == null) {
+                if (a.lavaNextTo(cell)) {
+                    turn(); // opening it would let the lava in
+                    return;
+                }
+                Actions.Status st = a.mine(cell, false);
+                if (st == Actions.Status.FAILED) {
+                    turn();
+                }
+                if (st != Actions.Status.DONE) {
+                    return;
+                }
+            }
+        }
+        mover.go(Navigator.at(col.up()));
+        lookAhead();
+    }
+
+    private int probeUntilLen;
+    private long probeUntilTick;
     private long lastTurnTick;
     private int holeTicks;
     private int turnStreak;
@@ -1560,7 +1687,7 @@ public final class RunBrain {
                     if (digDir != toward && now() - lastTurnTick > 100) {
                         digDir = toward;
                     }
-                } else {
+                } else if (known.getSquaredDistance(f) > 6 * 6) {
                     act = "approach lava " + known;
                     if (mover.go(Navigator.near(known, 5)) == Mover.Status.FAILED) {
                         badTargets.add(known.asLong());
@@ -1569,16 +1696,41 @@ public final class RunBrain {
                 }
             }
         }
+        boolean probing = why.equals("lava") && tunnelLen < probeUntilLen && now() < probeUntilTick;
+        if (probing && f.getY() <= targetY + 8) {
+            tunnelStep();
+            return;
+        }
         if (why.equals("lava") && portal.chooseLava() == null && lavaHeardAt != null && p.get("lava.hearing") > 0) {
             // not seen but heard: turn the tunnel toward the sound (the tunnel's own checks keep it out of lava:
             // digging straight at the sound through unknown rock opened lava onto the bot). Close to the guess
             // without seeing anything, the guess is spent: look around and listen again.
             double dx = lavaHeardAt.x - f.getX() - 0.5, dz = lavaHeardAt.z - f.getZ() - 0.5;
+            double dyHeard = lavaHeardAt.y - f.getY();
+            if (dyHeard > 2.5 && f.getY() < 50) {
+                // the lava is above the tunnel (a pool higher up in the rock): climb toward its level, a tunnel at
+                // the lava level never sees it (runs heard lava at y 18 for minutes from a tunnel at y 12)
+                if (dx * dx + dz * dz >= 4) {
+                    Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+                    if (digDir != toward && now() - lastTurnTick > 60) {
+                        digDir = toward;
+                        trace("climbing toward the lava heard around " + new BlockPos(lavaHeardAt));
+                    }
+                }
+                if (exploreCave(f, f.getY() + 1, (int) Math.round(lavaHeardAt.y) + 3) && caveTarget != null && caveTarget.getY() > f.getY()) {
+                    return;
+                }
+                stairUpStep();
+                return;
+            }
             if (dx * dx + dz * dz < 9) {
-                trace("heard lava spot " + new BlockPos(lavaHeardAt) + " reached without seeing lava");
+                // the guess is rough along the line of hearing (distance by loudness): go on through it for a few
+                // blocks (each mined face shows what is behind) before the guess is spent
+                trace("heard lava spot " + new BlockPos(lavaHeardAt) + " reached without seeing lava: probing on " + digDir);
                 lavaHeard.clear();
                 lavaHeardAt = null;
-                lookAround = 16;
+                probeUntilLen = tunnelLen + 5;
+                probeUntilTick = now() + 300;
             } else {
                 Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
                 if (digDir != toward && now() - lastTurnTick > 60) {

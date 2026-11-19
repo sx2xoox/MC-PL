@@ -22,6 +22,25 @@ public final class Mover {
     private final Actions a;
     private final WorldMemory mem;
     private final LongOpenHashSet avoid = new LongOpenHashSet();
+    /** Steps that stalled the bot twice at the same spot: kept out of plans even after {@link #forgetAvoid}. */
+    private final LongOpenHashSet stickyAvoid = new LongOpenHashSet();
+    private long noPillarUntil;
+
+    /**
+     * The watchdog saw the bot stall at the same spot again with the same plan: keep the step it was trying out of the
+     * next plans (and pillaring off for a while when that was the step), so the next plan differs.
+     */
+    public String stalledAgain() {
+        Navigator.Step step = path != null && index < path.steps.size() ? path.steps.get(index) : null;
+        if (step == null) {
+            return "no step";
+        }
+        stickyAvoid.add(step.to.asLong());
+        if (step.move == Navigator.Move.PILLAR || step.move == Navigator.Move.SWIM_UP) {
+            noPillarUntil = s.gameTick() + 600;
+        }
+        return step.toString();
+    }
 
     private Navigator.Goal goal;
     private Navigator.Path path;
@@ -110,7 +129,8 @@ public final class Mover {
     }
 
     private boolean plan(BlockPos f) {
-        boolean pillar = Actions.count(s.inventory(), Actions::isThrowaway) > 0;
+        boolean pillar = Actions.count(s.inventory(), Actions::isThrowaway) > 0 && s.gameTick() >= noPillarUntil;
+        avoid.addAll(stickyAvoid);
         Navigator nav = new Navigator(mem, s.inventory(), pillar, true, avoid, 1.3);
         Navigator.Path p = nav.find(f, goal, 12000);
         plans++;
@@ -262,10 +282,14 @@ public final class Mover {
         boolean straight = step.move == Navigator.Move.WALK || step.move == Navigator.Move.DIAG;
         boolean sprint = straight && runAhead() >= 3 && !s.inWater();
         boolean jump = false;
-        if (step.move == Navigator.Move.UP && hd < 1.6 && s.onGround()) {
+        // bobbing at the surface the feet are briefly out of the water and off the ground: still "in the water" for
+        // jumping (holding jump while pushing against a one-high bank lifts the player out, as in vanilla)
+        BlockState under = mem.get(f.down());
+        boolean wet = s.inWater() || (!s.onGround() && under != null && Blocks2.isWater(under));
+        if (step.move == Navigator.Move.UP && hd < 1.6 && (s.onGround() || wet)) {
             jump = true;
         }
-        if (step.move == Navigator.Move.SWIM_UP || (s.inWater() && t.getY() >= f.getY())) {
+        if (step.move == Navigator.Move.SWIM_UP || (wet && t.getY() >= f.getY())) {
             jump = true;
         } else if (s.inWater() && t.getY() < f.getY()) {
             c.sink();

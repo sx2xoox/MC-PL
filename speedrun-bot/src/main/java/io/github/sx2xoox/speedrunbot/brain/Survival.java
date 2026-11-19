@@ -158,9 +158,7 @@ public final class Survival {
                     b.c.move(1f, 0f, b.s.horizontalCollision(), false, false);
                 }
                 if (attackCooldown == 0 && d < 3.2 && b.c.aimed(aim, 15f)) {
-                    b.a.equip(Survival::weapon);
-                    b.c.attackEntity();
-                    attackCooldown = 12;
+                    hit();
                 }
                 return true;
             }
@@ -179,9 +177,7 @@ public final class Survival {
                     } else {
                         b.c.lookAt(aim);
                         if (attackCooldown == 0 && b.c.aimed(aim, 15f)) {
-                            b.a.equip(Survival::weapon);
-                            b.c.attackEntity();
-                            attackCooldown = 12;
+                            hit();
                         }
                     }
                 } else {
@@ -232,6 +228,22 @@ public final class Survival {
             }
         }
         return true;
+    }
+
+    /**
+     * One full-strength hit: the sword when there is one (1.16 attack cooldown: a hit before the weapon recharged
+     * does a fraction of the damage; sword 13 ticks, pickaxe 17).
+     */
+    private void hit() {
+        boolean sword = Actions.findSlot(b.s.inventory(), st -> st.getItem() instanceof net.minecraft.item.SwordItem) >= 0;
+        java.util.function.Predicate<ItemStack> w = sword ? st -> st.getItem() instanceof net.minecraft.item.SwordItem : Survival::weapon;
+        if (!w.test(b.s.inventory().getMainHandStack())) {
+            b.a.equip(w);
+            attackCooldown = sword ? 13 : 17; // switching items restarts the attack cooldown
+            return;
+        }
+        b.c.attackEntity();
+        attackCooldown = sword ? 13 : 17;
     }
 
     private static boolean weapon(ItemStack st) {

@@ -26,7 +26,7 @@ public final class Params {
     static {
         Map<String, Double> d = new LinkedHashMap<>();
         // --- wood ---
-        d.put("wood.logs", 6.0);                 // logs before crafting (table + pick + sticks + spare planks)
+        d.put("wood.logs", 5.0);                 // logs before crafting (table + pick + sticks + spare planks)
         d.put("wood.maxSearchTicks", 1200.0);    // give up looking for trees after this
         d.put("craft.spareWood", 4.0);           // keep the table when planks for a new one + this spare are missing
         d.put("craft.tableReuseDist", 16.0);    // walk back to a known table only within this distance
@@ -75,7 +75,7 @@ public final class Params {
         d.put("portal.approachDist", 20.0);     // walk/dig to within this distance of seen lava before choosing a site
         d.put("portal.maxLavaDist", 9.0);
         d.put("portal.minSources", 12.0);        // build next to a pool with at least this many seen sources...
-        d.put("portal.poolSearchTicks", 900.0);  // ...unless none was found for this long        // site must be within this distance of a lava source
+        d.put("portal.poolSearchTicks", 400.0);  // ...unless none was found for this long        // site must be within this distance of a lava source
         d.put("portal.waterSearchDist", 64.0);   // max distance to walk back for water
         // --- safety ---
         d.put("safety.stallTicks", 300.0);       // no movement and no inventory change this long: restart the step
