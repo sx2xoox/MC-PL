@@ -218,8 +218,6 @@ public final class RunBrain {
     // ------------------------------------------------------------------ hearing
 
     private final java.util.ArrayDeque<double[]> lavaHeard = new java.util.ArrayDeque<>();
-    private BlockPos earGoal;
-    private int earTicks;
     private Vec3d lavaHeardAt;
 
     /** Lava sounds (rough direction and distance, as a human hears them) averaged into a guess where lava is. */
@@ -371,6 +369,10 @@ public final class RunBrain {
             return false;
         }
         unstickTicks--;
+        if (portal.active() || lavaSeenNear(mover.feet(), 8)) {
+            unstickTicks = 0; // never walk blindly next to a lava pool (two runs walked into one)
+            return false;
+        }
         {
             // never walk blindly into lava or over an unseen drop (a stall next to a lava pool killed runs)
             BlockPos f = mover.feet();
@@ -1556,28 +1558,23 @@ public final class RunBrain {
                 }
             }
         }
-        if (why.equals("lava") && portal.chooseLava() == null && lavaHeardAt != null && p.get("lava.hearing") > 0
-                && f.getY() <= Math.max(targetY + 6, lavaHeardAt.y + 6)) {
-            // not seen but heard: dig straight toward where the sound seemed to come from (the lava has air above
-            // it, so a cave is there); arriving there without seeing it, the guess is spent and we listen again
-            BlockPos goal = new BlockPos(lavaHeardAt);
-            if (earGoal == null || earGoal.getSquaredDistance(goal) > 9) {
-                earGoal = goal;
-                earTicks = 0;
-                trace("digging toward the lava heard around " + goal);
+        if (why.equals("lava") && portal.chooseLava() == null && lavaHeardAt != null && p.get("lava.hearing") > 0) {
+            // not seen but heard: turn the tunnel toward the sound (the tunnel's own checks keep it out of lava:
+            // digging straight at the sound through unknown rock opened lava onto the bot). Close to the guess
+            // without seeing anything, the guess is spent: look around and listen again.
+            double dx = lavaHeardAt.x - f.getX() - 0.5, dz = lavaHeardAt.z - f.getZ() - 0.5;
+            if (dx * dx + dz * dz < 9) {
+                trace("heard lava spot " + new BlockPos(lavaHeardAt) + " reached without seeing lava");
+                lavaHeard.clear();
+                lavaHeardAt = null;
+                lookAround = 16;
+            } else {
+                Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+                if (digDir != toward && now() - lastTurnTick > 60) {
+                    digDir = toward;
+                    trace("tunnel toward the lava heard around " + new BlockPos(lavaHeardAt));
+                }
             }
-            act = "toward heard lava";
-            Mover.Status st = ++earTicks > 600 ? Mover.Status.FAILED : mover.go(Navigator.near(earGoal, 2.5));
-            if (st == Mover.Status.RUNNING) {
-                return;
-            }
-            trace("heard lava spot " + earGoal + (st == Mover.Status.ARRIVED ? " reached" : " not reached") + " without seeing lava");
-            lavaHeard.clear();
-            lavaHeardAt = null;
-            earGoal = null;
-            lookAround = 16;
-            mover.reset();
-            return;
         }
         if (route == RouteSelector.Route.SURFACE_CAST && why.equals("iron")) {
             targetY = Math.max(targetY, 40);

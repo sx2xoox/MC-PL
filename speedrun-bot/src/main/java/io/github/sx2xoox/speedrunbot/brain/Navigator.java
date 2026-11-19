@@ -362,6 +362,20 @@ public final class Navigator {
         return c;
     }
 
+    private boolean lavaAround(int x, int y, int z, int r) {
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    BlockState s = mem.get(x + dx, y + dy, z + dz);
+                    if (s != null && Blocks2.isLava(s)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean isWaterAt(int x, int y, int z) {
         BlockState s = mem.get(x, y, z);
         return s != null && Blocks2.isWater(s);
@@ -462,6 +476,9 @@ public final class Navigator {
         }
         // dig down
         double dd = clearCost(x, y - 1, z, true);
+        if (!Double.isInfinite(dd) && dd > 0 && mem.get(x, y - 2, z) == null && lavaAround(x, y - 2, z, 3)) {
+            dd = Double.POSITIVE_INFINITY; // digging blind into the floor next to a lava pool: what is under it may be lava
+        }
         if (!Double.isInfinite(dd) && dd > 0) {
             relax(n, x, y - 1, z, 4 + dd + floorCost(x, y - 2, z), Move.DIG_DOWN, nodes, open, goal);
         }
