@@ -453,6 +453,10 @@ public final class RunBrain {
         if (goal == Goal.SCAN) {
             chooseRoute();
         }
+        if (!inv.pickaxe() && inv.cobble() >= 3 && inv.planks() + inv.logs() * 4 >= 5 && goal != Goal.SCAN && goal != Goal.WOOD
+                && goal != Goal.WOOD_TOOLS && (goal == Goal.STONE_PICK || goalTicks > 20)) {
+            return Goal.STONE_PICK; // the pickaxe wore out (tunnels, the portal room): a new one before anything else
+        }
         if (portal.active()) {
             return Goal.PORTAL;
         }
@@ -1955,7 +1959,8 @@ public final class RunBrain {
             }
             return Actions.Status.RUNNING;
         }
-        Vec3d aim = new Vec3d(src.getX() + 0.5, src.getY() + 0.9, src.getZ() + 0.5);
+        // a source's surface is 8/9 high: aim into it, not over it (grazing rays from above missed)
+        Vec3d aim = new Vec3d(src.getX() + 0.5, src.getY() + 0.6, src.getZ() + 0.5);
         c.lookAt(aim);
         net.minecraft.util.hit.HitResult h = s.fluidCrosshair();
         boolean onSource = false;

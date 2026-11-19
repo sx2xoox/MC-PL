@@ -116,7 +116,7 @@ public final class Navigator {
                     return false;
                 }
                 double ex = x + 0.5, ey = y + 1.62, ez = z + 0.5;
-                double tx = p.getX() + 0.5, ty = p.getY() + 0.9, tz = p.getZ() + 0.5;
+                double tx = p.getX() + 0.5, ty = p.getY() + 0.6, tz = p.getZ() + 0.5;
                 double dx = tx - ex, dy = ty - ey, dz = tz - ez;
                 if (dx * dx + dy * dy + dz * dz > reach * reach) {
                     return false;
