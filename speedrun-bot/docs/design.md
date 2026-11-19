@@ -1,0 +1,181 @@
+# speedrun-bot 설계 (1단계)
+
+목표: Minecraft Java 1.16.1 RSG(무작위 시드)에서 엔더드래곤까지 IGT 10분 이하. 방식: 게임 상태를 코드로 읽고 사람이
+낼 수 있는 입력으로 조종하는 봇. 루트(무엇을 어떤 순서로)는 코드이고, 판단 수치(얼마나 모을지, 어디까지 우회할지,
+루트 선택 가중치)는 `params.json`으로 분리해 수천 시드 반복 실행으로 자동 튜닝한다("학습"). 화면 픽셀 기반 신경망이
+아니다.
+
+이 문서: §1 아키텍처, §2 공정 규칙, §3 오버월드 루트(1단계), §4 하네스와 튜닝, §5 측정 결과, §6 단계 계획,
+§7 클라이언트 포팅 계획, §8 한계와 다음 일.
+
+## 1. 아키텍처
+
+```
+          ┌──────────── brain (공용: 서버 전용 클래스에 의존하지 않음) ────────────┐
+          │ RunBrain: 목표 선택(나무→도구→철→제련→양동이·라이터→물→용암→포탈)      │
+          │ Workbench(제작 세션) · PortalBuilder · Mover(경로 따라가기) · Actions     │
+          │ Navigator(A*, 기억 지도 위)  ·  Perception(시야 광선) → WorldMemory      │
+          │ Controls: 사람 입력 상한(회전 속도, 클릭 간격) 적용                      │
+          └───────────────▲───────────────────────────────┬────────────────────────┘
+               BotSenses (본 것·자기 상태)            BotInputs (키·마우스·레시피북)
+          ┌───────────────┴───────────────────────────────▼────────────────────────┐
+          │ server: ServerBot = FakePlayer(ServerPlayerEntity 하위) + FakeConnection │
+          │ (나중) client: ClientPlayerEntity 입력 주입 + ClientWorld  (§7)          │
+          └─────────────────────────────────────────────────────────────────────────┘
+core (순수 로직, MC 무관): MiningTime, Igt, InputLimits, PerceptionRules, Params, RouteSelector, PortalPlan, Cell
+```
+
+**왜 Fabric 1.16.1 서버 + 가짜 플레이어인가.** 봇이 진짜 `ServerPlayerEntity`라서 이동 물리(점프·달리기·낙하),
+채굴 시간(서버 `ServerPlayerInteractionManager`의 진행 검사), 피해, 허기, 인벤토리·제작(스크린 핸들러), 포탈 이동이
+전부 바닐라 코드 그대로다. 봇이 따로 흉내 내는 것은 "클라이언트가 보내는 입력"뿐이다. 클라이언트(LWJGL/렌더링)가
+없어 헤드리스로 여러 서버를 병렬 실행할 수 있다. 착안은 Carpet mod의 `/player` 가짜 플레이어(MIT)이고 코드는
+1.16.1 Yarn 이름으로 새로 작성했다(`server/FakePlayer`, `FakeConnection`).
+
+- 가짜 플레이어: 실제 서버 플레이어는 클라이언트 패킷이 움직이지만, 가짜 플레이어는 `tick()`에서 `playerTick()`을
+  돌려 서버가 직접 `LivingEntity#tickMovement → travel`로 움직인다. 5틱마다 청크 시야 갱신(`updateCameraPosition`).
+  서버 플레이어는 낙하 피해를 클라이언트 보고로 받기 때문에 `fall()`을 `handleFall()`로 연결했다. `stepHeight`는
+  클라이언트 값 0.6(서버 기본 1.0이 아님).
+- 입력 구현(`ServerBot`): 이동 = `forwardSpeed/sidewaysSpeed/jumping/sprinting/sneaking`, 시점 = yaw/pitch, 채굴 =
+  바닐라 클라이언트와 같은 진행 누적(매 틱 `calcBlockBreakingDelta`를 float로 더해 1 이상이면 STOP_DESTROY_BLOCK,
+  이어서 5틱 쿨다운) → 서버는 자기 틱 수로 다시 검사하므로 빨리 캘 수 없다. 우클릭 = `interactBlock/interactItem`
+  (크로스헤어 = `rayTrace(4.5)`), 화면 = `onSlotClick`, 레시피북 = `fillInputSlots`(레시피북에 해금된 레시피만).
+- 틱 워프: `MinecraftServer#shouldKeepTicking`을 믹스인으로 바꿔 틱 사이에 잠자지 않는다(Carpet `/tick warp`와 같은
+  방식). 틱 자체는 그대로 다 실행되므로 게임 동작과 틱 기반 IGT는 바뀌지 않는다. 실측 약 100~200 TPS(4 CPU, 서버
+  4개 병렬 시).
+- 런 1회 = 서버 시작 1회(`BotRuntime`): 첫 틱에 봇이 접속(일반 플레이어처럼 월드 스폰에서, `spawnRadius 0`으로
+  재현성 확보), 매 틱 두뇌 실행, 끝나면 결과 JSON 한 줄을 쓰고 JVM 종료(월드는 버린다).
+
+**두뇌를 인터페이스 뒤에 둔 이유.** 같은 봇을 나중에 사용자 화면(1.16.1 Fabric 클라이언트 싱글플레이)에서 그대로
+돌리기 위해서다. `brain/`은 `BotInputs`(사람이 클라이언트에서 낼 수 있는 단위의 입력: 이동/점프/달리기/웅크리기,
+시점, 공격 누름·엔티티 공격, 사용, 핫바, 인벤토리 열기, 화면 슬롯 클릭, 레시피북 클릭, 화면 닫기)와
+`BotSenses`(자기 상태·인벤토리·열린 화면·크로스헤어·게임 틱 + `Perception`만 쓰는 블록/엔티티 접근)만 본다.
+`brain/` 패키지는 `ServerPlayerEntity`, `ServerWorld` 등 서버 전용 클래스를 import하지 않는다(블록 상태, 아이템,
+스크린 핸들러 같은 공용 클래스만 사용). 또 빌드가 서버 jar만 보고 컴파일하므로(`serverOnlyMinecraftJar`) 클라이언트
+전용 메서드가 섞이면 컴파일이 실패한다.
+
+**참고한 설계.** 길찾기는 Baritone(LGPL)의 개념(이동 종류별 비용, 채굴 시간을 비용으로, 부분 경로 후 재계획)을
+참고했지만 코드는 새로 썼다. MC-PL 증강 봇(`game/augment/bot`)에서 "순수 판단기 + 몸(컨트롤러) 분리" 구조를 가져왔다.
+
+## 2. 공정 규칙 (기본 켜짐)
+
+| 규칙 | 구현 | 테스트 |
+|---|---|---|
+| 본 것만 안다 | `Perception`: 매 틱 눈 위치에서 시야(세로 FOV 70°, 16:9 → 가로 약 102°) 안으로 무작위 광선 220개 + 크로스헤어 광선 1개. 광선은 불투명 정육면체와 용암에서 멈추고, 지나간/멈춘 블록만 `WorldMemory`에 기록. 렌더 거리(기본 10청크) 상한, 로드 안 된 청크에서 정지. 몸에 닿는 3×4×3 블록은 항상 감지 | `CoreLogicTest.viewFrustumAndRenderDistance`, `sampledRaysStayInsideTheFrustum` |
+| 세계를 직접 보지 않는다 | 판단·길찾기·목표 선택은 `WorldMemory`만 읽음. 청크 스캔, 구조물 위치 조회, 시드 읽기, 월드 생성 미리 실행 없음. 엔티티도 시야 안 + 블록 시선이 트인 것만 | 코드 구조(`brain`은 `BotSenses.blockAt`을 `Perception`에서만 호출) |
+| 사람 입력만 | 시점 회전 45°/틱(900°/s), 피치 35°/틱, 블록 도달 4.5칸, 엔티티 3칸, 사용 클릭 4틱 간격(바닐라 itemUseCooldown), 화면 클릭 2틱(100ms) 간격, 화면 열기 2틱, 핫바 변경 1회/틱, 공격·사용 1회/틱, 달리기는 배고픔 > 6이고 앞으로 갈 때만 | `turningIsRateLimitedAlongTheShortestWay` |
+| 채굴 시간 = 바닐라 | 서버 interaction manager를 거침 + 클라이언트식 float 누적 + 5틱 쿨다운 (`MiningTime`이 같은 식으로 비용 추정) | `stoneWithWoodenPickaxe` 외 4개 (float 누적 때문에 원목 맨손 61틱 등 실제 클라이언트 값) |
+| IGT | `Igt`: 봇 접속 틱부터 서버 틱 수 / 20. SpeedRunIGT(1.16.1)는 일시정지·로딩을 뺀 월드 진입~최종 이벤트 시간이고 봇은 일시정지가 없으므로 같다. 서버가 틱당 50ms를 넘겨도(MSPT>50) IGT는 틱 기준이라 영향 없고, MSPT는 결과에 따로 기록 | `igtCountsServerTicksFromWorldEntry` |
+| 요새 삼각측량 | 3단계에서 엔더 눈 두 번 던지기로 구현 예정(눈 엔티티의 비행 방향만 관찰) | - |
+| 비교용 완화 모드 | `-Dsrb.fair=false` 또는 `run_batch.py --relaxed`: FOV 무시(구 전체 광선) + 40틱마다 주변 24칸 정육면체 직접 읽기. 비교 측정 전용 | - |
+
+결정성: 봇의 무작위(광선 샘플, 탐색 방향)는 시드 기반 `Random`이다. 서버 쪽 무작위(몹 스폰, 드롭, 자갈→부싯돌
+확률)는 바닐라 그대로라 같은 시드도 런마다 결과가 조금 다르다.
+
+## 3. 오버월드 → 네더 진입 루트 (1단계)
+
+### 3.1 목표 순서 (`RunBrain.choose`)
+
+1. **SCAN** (`surface.scanTicks`): 제자리에서 주변을 둘러봄 → 루트 선택기 입력 수집.
+2. **WOOD**: 기억 지도의 가장 가까운 원목(발 높이+6 이하)으로 가서 캔다. 없으면 무작위 방향 탐색. `wood.logs`개.
+3. **WOOD_TOOLS** (Workbench 세션): 원목 → 판자(레시피북), 2×2에서 제작대, 설치, 막대·나무 곡괭이.
+4. **COBBLE → STONE_PICK**: 노출된 돌을 캐거나 1×2 계단식으로 파 내려감. 돌 곡괭이 `stone.picks`개(131블록 내구도).
+5. **IRON**: `dig.targetY`까지 계단식 하강 후 1×2 터널. 보이는 철광석(우회 `dig.oreDetour`), 자갈(`dig.gravelDetour`),
+   석탄을 캔다. 철 4개(양동이 3 + 부싯돌과 부시 1).
+6. **SMELT**: 화로 제작·설치, 광석 + 연료(석탄 → 판자 순) 투입, 대기, 꺼냄.
+7. **IRON_TOOLS**: 양동이, (부싯돌이 있으면) 부싯돌과 부시. 부싯돌은 자갈을 캐고, 자갈만 나오면 내려놓고 다시 캐서
+   얻는다(1회 10%).
+8. **WATER**: 기억 지도의 물 원천(위가 트인 것)으로 가서 양동이에 담음.
+9. **LAVA**: 위가 트인 용암 원천을 기억 지도에서 찾음. 없으면 지하 탐색 계속.
+10. **PORTAL** (`PortalBuilder`): 아래 3.3 버킷 주조.
+11. 포탈에 들어가 네더 도착 → 성공.
+
+같은 순서가 두 루트를 다룬다. 루트 선택기(`RouteSelector`, 단위 테스트 있음)는 SCAN 뒤 기대 시간(초) 모델로
+고른다: `DIG_CAST` = `route.digBaseSec` + 물까지 거리 × `route.secPerBlock`; `SURFACE_CAST`(지표 용암 웅덩이가
+`surface.lavaMaxDist` 안에 보일 때) = `route.surfaceBaseSec` + 용암 거리 + 모자란 철 × `route.ironMissingSec` + 용암~물
+거리 × 2. SURFACE_CAST는 철을 위해 y≈40까지만 내려가고 그 웅덩이 옆에 포탈을 짓는다. 가중치는 튜닝 대상.
+
+### 3.2 이동과 채굴
+
+- `Navigator`: 기억 지도 위 A*. 모르는 칸은 로봇 항법의 free-space 가정(몸 칸은 통과 가능, 바닥은 있다고 보되 작은
+  추가 비용) → 새로 보이는 대로 재계획. 이동: 8방향 걷기, 1칸 오르기(점프), 1~3칸 내려가기(첫 칸은 파기 허용 =
+  계단), 아래로 파기, 기둥 쌓기, 수영. 막힌 칸은 가진 도구 중 가장 빠른 것의 바닐라 채굴 틱을 비용으로 판다. 용암을
+  여는 파기는 금지, 용암 옆 칸은 큰 비용.
+- `Mover`: 경로를 입력으로 따라감(조준·전진·달리기·점프, 막힌 칸은 위부터 캠), 막힘·이탈·낙하 위험이면 재계획.
+- `Actions.mine`: 가장 빠른 도구 장착 → 블록 면 중심 조준 → 크로스헤어가 그 블록이면 공격 누름. 사이에 풀·잎 같은
+  가림막이 있으면 그것부터 캔다(사람처럼 계속 조준한 채).
+- `Workbench`: 제작 세션 하나가 시작~끝까지 화면을 소유(제작대가 바로 옆에 없으면 새로 설치, 판자·막대 부족분을
+  먼저 제작). 클릭은 모두 `Controls`의 간격 제한을 받는다.
+
+### 3.3 버킷 포탈 주조 (`core/PortalPlan` + `brain/PortalBuilder`)
+
+양동이 하나로 단단한 암반 속에 4×5 틀(모서리 제외 흑요석 10개)을 만든다.
+
+1. 용암 원천에서 `portal.maxLavaDist` 안, 틀·내부·뒤판이 아는 한 전부 단단한 블록이고 용암·물·떨어지는 블록이
+   붙어 있지 않은 자리를 고른다(4방향 × 좌우 × 높이 탐색, 모르는 칸이 적을수록 좋음).
+2. 틀 앞에 방(앞 1칸 깊이, 서 있는 줄 2칸 높이)을 판다. 서 있는 줄 바닥에 물 대기 구멍(1칸)을 파고 물을 부어 둔다.
+3. 틀 칸마다(바닥 2 → 양 기둥 아래부터 6 → 위 2): (바닥은 앞 바닥 구멍을 먼저 파고) 그 칸을 파서 주머니를 만든다
+   — 다섯 면이 암반·흑요석이라 용암이 앞쪽 말고는 흐를 데가 없다. 빈 양동이로 용암 원천을 떠 와서 주머니 안쪽
+   면을 클릭해 붓고, 바로 물 대기 구멍의 물을 떠서 주머니 앞 칸에 붓는다(물이 닿은 용암 원천 = 흑요석; 용암은
+   30틱 뒤에야 흐르므로 그 전에 닿는다). 물을 다시 떠서 대기 구멍에 돌려놓는다. 바닥 구멍은 조약돌로 메운다.
+4. 내부 6칸을 캐고, 아래 흑요석 윗면에 부싯돌과 부시 → 포탈 → 들어감.
+
+계획의 기하(틀 10칸, 주조 순서, 각 칸이 부을 때 막혀 있어야 할 이웃이 방에 속하지 않음 등)는
+`CoreLogicTest.portalPlanGeometry`, `castOrderKeepsEachPocketClosed`가 검사한다.
+
+## 4. 하네스와 튜닝
+
+- `tools/setup_server.py --accept-eula`: Fabric server launcher(로더 0.20.1)를 받고 한 번 띄워 1.16.1 서버 jar와
+  라이브러리를 받아 `work/template`을 만든다. EULA는 사용자가 직접 동의해야 하며 플래그 없이는 `eula.txt`를 쓰지
+  않는다.
+- `tools/run_batch.py`: 슬롯(서버 디렉터리) N개를 병렬로 돌린다. 시드마다 `server.properties`(시드, 포트, view-distance
+  10, easy) 작성 → `world` 삭제 → 서버 실행 → 봇 1회 런 → 결과 JSON → CSV/JSONL 누적. 판단 로그(`--trace-dir`)는
+  목표 전환, 구간 기록, 10초마다 상태(위치·체력·배고픔·인벤토리)를 남겨 실패 원인을 찾는 데 쓴다.
+- 결과 CSV: 시드, 성공, 실패 이유, 루트, 최종 IGT, 구간 IGT(`first_log, wooden_pickaxe, stone_pickaxe, first_iron,
+  furnace, iron_ingots, bucket, flint, flint_and_steel, water_bucket, portal_site, portal_room, obsidian_10, portal_lit,
+  in_portal, nether`), MSPT 평균·최대, 실제 걸린 시간.
+- `tools/tune.py`: 교차 엔트로피 방식(CMA-ES의 단순형). `tools/param_space.json`의 범위를 [0,1]로 정규화하고, 세대마다
+  현재 평균 주변에서 후보를 뽑아 **같은 고정 시드 집합**(`tools/seeds_tune.txt`, 공통 난수로 분산 감소)에서 돌린다.
+  점수(낮을수록 좋음) = 네더 진입이면 IGT 초, 아니면 제한 시간 + 못 간 구간마다 60초. 상위(elite) 후보 쪽으로 평균과
+  표준편차를 옮긴다. 0세대에는 기준(현재 기본값)이 반드시 포함된다. 아직 네더 진입이 드물기 때문에 "구간 도달"
+  점수가 기울기를 준다.
+
+## 5. 측정 결과
+
+측정 환경: 4 CPU, 15GB RAM, JDK 17(서버), 서버 4개 병렬, view-distance 10, 난이도 easy, IGT 제한 10분(12000틱).
+평가 시드 집합 `tools/seeds_eval.txt`(48개, 고정 무작위), 튜닝 시드 집합 `tools/seeds_tune.txt`(8개, 별도).
+
+(아래 표는 측정 후 채움)
+
+## 6. 단계 계획
+
+1. **(이번) 오버월드 → 네더 진입**: 기반, 공정 규칙, 하네스, 버킷 주조 루트, 튜닝 루프.
+2. **네더**: 바스티온 찾기(시야 기반: 블랙스톤·금 블록·바스티온 특유 블록 군집), 금괴 → 피글린 물물교환으로 엔더 진주
+   (금 투척, 교환 대기·회수, 몹 회피), 요새 탐색(네더 요새 벽돌 군집, 직선 탐색 + 시야), 블레이즈 막대(스포너 근처
+   전투), 귀환 포탈(네더 포탈 재사용 또는 새로 주조). 판단 수치: 진주·막대 목표 개수, 교환 시간 상한, 탐색 방향 가중치.
+3. **엔드**: 엔더 눈 제작, 오버월드에서 눈 두 번 던져 삼각측량(관찰된 비행 방향 두 직선의 교점), 요새 진입·엔드 포탈
+   방 찾기(지하 탐색), 드래곤 원사이클(침대 폭발 또는 수정 처리 후 원사이클, 1.16.1 기준). 각 단계는 같은 하네스에서
+   구간 IGT로 측정·튜닝.
+
+## 7. 클라이언트 포팅 계획 (사용자 화면에서 같은 봇 돌리기)
+
+이번 단계에서는 만들지 않는다. 두뇌(`brain/`, `core/`)는 그대로 쓰고 `BotInputs`/`BotSenses`의 클라이언트 구현만 추가한다.
+
+- 입력(`ClientBotInputs`): 이동·점프·달리기·웅크리기는 `KeyBinding`의 눌림 상태를 매 틱 설정(또는
+  `ClientPlayerEntity.input`(`KeyboardInput`)을 덮어쓰는 믹스인) → 클라이언트 예측 이동과 서버 검증이 바닐라 그대로
+  일어난다. 시점은 `player.yaw/pitch`(마우스 이동과 같은 효과). 공격 누름은 `options.keyAttack` 상태(블록 채굴은
+  `ClientPlayerInteractionManager`가 직접 진행) 또는 `attackBlock/updateBlockBreakingProgress` 호출. 사용은
+  `interactBlock/interactItem`(= `doItemUse`), 핫바는 `inventory.selectedSlot`, 화면은 `clickSlot`,
+  `clickRecipe`(레시피북), `closeHandledScreen`, 인벤토리는 `InventoryScreen` 열기.
+- 인지(`ClientBotSenses`): `ClientWorld`의 로드된 청크에서 블록 상태, `MinecraftClient.crosshairTarget`, 자기 상태는
+  `ClientPlayerEntity`, 열린 화면은 `player.currentScreenHandler`, 레시피북은 `ClientRecipeBook`, 게임 틱은
+  `world.getTime()` 또는 클라이언트 틱 카운터(IGT는 SpeedRunIGT와 같은 기준으로 계산).
+- 차이점과 대응: (1) 클라이언트 예측 이동 — 입력 결과가 서버와 1틱 어긋날 수 있다(경로 추종은 이미 위치 피드백
+  기반). (2) 화면 열기 지연 — 제작대·화로를 우클릭하면 서버 응답(OpenScreen 패킷)까지 1~2틱+핑이 걸린다:
+  `Controls`의 화면 열기 대기 상수를 실제 열림 확인으로 바꾼다(지금도 열린 화면 타입을 확인하고 진행). (3) 슬롯
+  클릭은 클라이언트가 예측하고 서버가 확정 → 결과 확인 후 다음 클릭. (4) 렌더 거리·청크 로딩은 클라이언트 설정을
+  따름(공정 규칙의 렌더 거리와 동일). (5) 틱 워프 없음(실시간), 싱글플레이 통합 서버. (6) 사람이 언제든 끼어들 수
+  있게 키 하나로 봇 정지/재개.
+
+## 8. 한계와 다음 일
+
+(측정 후 채움)

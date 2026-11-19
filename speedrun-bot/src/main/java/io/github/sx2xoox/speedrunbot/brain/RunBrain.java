@@ -251,7 +251,8 @@ public final class RunBrain {
             return Goal.WOOD_TOOLS;
         }
         if (!inv.stonePick()) {
-            return inv.cobble() >= 3 ? Goal.STONE_PICK : Goal.COBBLE;
+            return inv.cobble() >= 3 * p.getInt("stone.picks") || (inv.cobble() >= 3 && goal == Goal.COBBLE && goalTicks > 400)
+                    ? Goal.STONE_PICK : Goal.COBBLE;
         }
         boolean needIron = ironTotal() < ironNeeded();
         if (needIron) {
@@ -325,10 +326,11 @@ public final class RunBrain {
                 woodTools();
                 break;
             case COBBLE:
-                cobble(3);
+                cobble(3 * p.getInt("stone.picks"));
                 break;
             case STONE_PICK:
-                craftAtTable(st -> st == Items.STONE_PICKAXE, 1, "stone_pickaxe");
+                // a spare pickaxe now saves a table later (one wears out after 131 blocks)
+                craftAtTable(st -> st == Items.STONE_PICKAXE, inv.cobble() >= 6 ? p.getInt("stone.picks") : 1, "stone_pickaxe");
                 break;
             case IRON:
                 iron();
@@ -856,7 +858,7 @@ public final class RunBrain {
             }
         }
         if (!inv.lighter() && !inv.has(Items.FLINT) && inv.count(Items.GRAVEL) == 0) {
-            BlockPos gr = nearestBlock(f, 5, st -> st.getBlock() == Blocks.GRAVEL);
+            BlockPos gr = nearestBlock(f, p.getInt("dig.gravelDetour"), st -> st.getBlock() == Blocks.GRAVEL);
             if (gr != null) {
                 target = gr;
                 subTicks = 0;

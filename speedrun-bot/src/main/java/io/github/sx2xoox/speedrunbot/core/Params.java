@@ -31,10 +31,12 @@ public final class Params {
         d.put("craft.tableReuseDist", 6.0);     // walk back to a known table only within this distance
         // --- stone ---
         d.put("stone.cobble", 12.0);             // cobble to collect (pick 3 + furnace 8 + spare)
+        d.put("stone.picks", 2.0);              // stone pickaxes crafted at once (one wears out after 131 blocks)
         // --- descent / underground search ---
         d.put("dig.targetY", 12.0);              // feet Y of the mining tunnel (cave lava is at y <= 10)
         d.put("dig.oreDetour", 7.0);             // max detour (blocks) to mine a seen ore while digging
         d.put("dig.tunnelMax", 220.0);           // give up the tunnel after this many blocks
+        d.put("dig.gravelDetour", 10.0);         // max detour for gravel (flint) while digging
         d.put("iron.needed", 4.0);               // bucket (3) + flint and steel (1)
         d.put("gravel.maxBreaks", 14.0);         // gravel to break for flint before giving up
         // --- surface route ---

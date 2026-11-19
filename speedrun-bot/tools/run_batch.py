@@ -136,6 +136,13 @@ def main():
         mod = os.path.join(libs, sorted(cands)[-1])
     if args.trace_dir:
         os.makedirs(args.trace_dir, exist_ok=True)
+    os.makedirs(args.work, exist_ok=True)
+    import fcntl
+    lock = open(os.path.join(args.work, ".lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        ap.error("another run_batch.py is using %s (one batch per work dir)" % args.work)
 
     jobs = queue.Queue()
     for s in seeds:

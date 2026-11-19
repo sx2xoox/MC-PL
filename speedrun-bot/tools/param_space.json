@@ -1,0 +1,14 @@
+{
+  "wood.logs": {"min": 4, "max": 9, "int": true},
+  "stone.picks": {"min": 1, "max": 2, "int": true},
+  "dig.targetY": {"min": 11, "max": 40, "int": true},
+  "dig.oreDetour": {"min": 3, "max": 12, "int": true},
+  "dig.gravelDetour": {"min": 4, "max": 16, "int": true},
+  "craft.tableReuseDist": {"min": 3, "max": 12},
+  "surface.scanTicks": {"min": 20, "max": 120, "int": true},
+  "surface.lavaMaxDist": {"min": 24, "max": 120},
+  "route.digBaseSec": {"min": 80, "max": 220},
+  "route.surfaceBaseSec": {"min": 60, "max": 200},
+  "route.ironMissingSec": {"min": 5, "max": 60},
+  "portal.maxLavaDist": {"min": 5, "max": 14}
+}
