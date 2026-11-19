@@ -172,12 +172,7 @@ public final class Actions {
      */
     public Status mine(BlockPos p, boolean needDrop) {
         BlockState st = mem.get(p);
-        if (st == null) {
-            // unknown: look at it so perception tells us
-            c.lookAt(Vec3d.ofCenter(p));
-            return ++mineTicks > 20 ? Status.FAILED : Status.RUNNING;
-        }
-        if (Blocks2.pass(st) != Blocks2.Pass.SOLID) {
+        if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
             mineTarget = null;
             mineTicks = 0;
             return Status.DONE;
@@ -194,28 +189,49 @@ public final class Actions {
         if (s.eyePos().squaredDistanceTo(Vec3d.ofCenter(p)) > 4.9 * 4.9) {
             return Status.FAILED;
         }
+        if (s.screenOpen()) {
+            return Status.RUNNING; // a screen session owns the hands; it closes the screen itself
+        }
+        // unknown cells (inside rock) are aimed at through whatever is in front: that block is mined first
+        Vec3d aim = st == null ? Vec3d.ofCenter(p) : aimTarget(p);
+        c.lookAt(aim);
         HitResult h = s.crosshair();
-        BlockPos aimPos = p;
+        BlockPos aimPos = null;
         if (h instanceof BlockHitResult && h.getType() == HitResult.Type.BLOCK) {
             BlockPos hp = ((BlockHitResult) h).getBlockPos();
-            if (!hp.equals(p) && c.aimed(aimTarget(p), 2f)) {
+            if (hp.equals(p)) {
+                aimPos = p;
+            } else if (c.aimed(aim, 3f)) {
                 BlockState hs = mem.get(hp);
-                if (hs != null && !Blocks2.isLava(hs) && !Blocks2.isWater(hs) && (Blocks2.pass(hs) == Blocks2.Pass.SOLID || hs.getHardness(net.minecraft.world.EmptyBlockView.INSTANCE, BlockPos.ORIGIN) == 0f)) {
+                if (hs != null && (Blocks2.isLava(hs) || Blocks2.pass(hs) == Blocks2.Pass.FORBID)) {
+                    return Status.FAILED;
+                }
+                if (hs != null && !Blocks2.isWater(hs) && (Blocks2.pass(hs) == Blocks2.Pass.SOLID
+                        || hs.getHardness(net.minecraft.world.EmptyBlockView.INSTANCE, BlockPos.ORIGIN) == 0f)) {
                     aimPos = hp; // obstruction: mine it first
                     lastObstruction = hp;
                 }
             }
+        } else if (st == null && c.aimed(aim, 3f) && mineTicks > 20) {
+            return Status.FAILED; // nothing there to hit within reach
+        }
+        if (aimPos == null) {
+            return Status.RUNNING;
+        }
+        BlockState hit = mem.get(aimPos);
+        if (hit != null && io.github.sx2xoox.speedrunbot.core.MiningTime.ticksWithCooldown(Blocks2.bestDelta(hit, s.inventory())) > 600) {
+            return Status.FAILED; // cannot break it with what we carry (obsidian with a stone pickaxe...)
+        }
+        if (lavaNextTo(aimPos)) {
+            return Status.FAILED; // opening it would let lava in
         }
         BlockState target = mem.get(aimPos);
         int tool = target == null ? -1 : Blocks2.bestToolSlot(target, s.inventory(), needDrop && aimPos.equals(p));
         if (tool >= 0) {
             Status e = equip(st2 -> ItemStack.areItemsEqual(st2, s.inventory().getStack(tool)));
             if (e == Status.RUNNING) {
-                c.lookAt(aimTarget(p));
                 return Status.RUNNING;
             }
-        } else if (tool == -1 && !aimPos.equals(p)) {
-            // obstruction by hand
         } else if (tool == -1 && !s.inventory().getMainHandStack().isEmpty() && s.inventory().getMainHandStack().isDamageable()) {
             // a tool that does not help: switch to an empty hand or a non-tool if there is one in the hotbar
             for (int i = 0; i < 9; i++) {
@@ -225,20 +241,25 @@ public final class Actions {
                 }
             }
         }
-        if (s.screenOpen()) {
-            c.closeScreen();
-            return Status.RUNNING;
-        }
-        c.lookAt(aimTarget(p));
-        HitResult h2 = s.crosshair();
         if (mineTicks % 40 == 39) {
-            debug.accept("mine " + p + " aim=" + aimPos + " hit=" + (h2 instanceof BlockHitResult ? ((BlockHitResult) h2).getBlockPos() + "/" + h2.getType() : h2.getType())
-                    + " held=" + s.inventory().getMainHandStack() + " ground=" + s.onGround());
+            debug.accept("mine " + p + " aim=" + aimPos + " held=" + s.inventory().getMainHandStack() + " ground=" + s.onGround());
         }
-        if (h2 instanceof BlockHitResult && h2.getType() == HitResult.Type.BLOCK && ((BlockHitResult) h2).getBlockPos().equals(aimPos)) {
-            c.attack(true);
-}
+        c.attack(true);
         return Status.RUNNING;
+    }
+
+    /** True when a known lava block touches the cell (sides or above). */
+    public boolean lavaNextTo(BlockPos q) {
+        for (Direction d : Direction.values()) {
+            if (d == Direction.DOWN) {
+                continue;
+            }
+            BlockState n = mem.get(q.offset(d));
+            if (n != null && Blocks2.isLava(n)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A point on the block to aim at: the centre of the face toward the eyes (so the ray enters that face). */

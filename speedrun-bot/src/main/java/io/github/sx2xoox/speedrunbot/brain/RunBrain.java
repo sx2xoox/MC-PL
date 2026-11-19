@@ -72,6 +72,7 @@ public final class RunBrain {
     private int attackCooldown;
     private Vec3d exploreTarget;
     private int lastLogs;
+    private float lastHealth = 20f;
 
     public RunBrain(BotSenses s, BotInputs in, Params p, PerceptionRules rules, int raysPerTick) {
         this.s = s;
@@ -176,6 +177,13 @@ public final class RunBrain {
         }
         perception.tick();
         goalTicks++;
+        float hp = s.health();
+        if (hp < lastHealth - 0.01f) {
+            Vec3d pos = s.pos();
+            trace(String.format("hurt %.1f -> %.1f at %.1f,%.1f,%.1f lava=%s water=%s fire=%s", lastHealth, hp, pos.x, pos.y, pos.z,
+                    s.inLava(), s.inWater(), s.onFire()));
+        }
+        lastHealth = hp;
         if (goalTicks % 200 == 0) {
             Vec3d pos = s.pos();
             trace(String.format("status pos=%.1f,%.1f,%.1f hp=%.0f food=%d target=%s plans=%d inv=%s", pos.x, pos.y, pos.z,
@@ -221,7 +229,7 @@ public final class RunBrain {
 
     /** Iron the bot owns, counting ore that is in the furnace. */
     private int ironTotal() {
-        return inv.ironEquivalent() + (smeltReady > 0 ? smeltLoaded : 0);
+        return inv.ironEquivalent() + smelter.loaded();
     }
 
     private int ironNeeded() {
@@ -229,7 +237,7 @@ public final class RunBrain {
     }
 
     private Goal choose() {
-        if (bench.busy() || a.equipBusy() || (s.screenOpen() && goalTicks < 400)) {
+        if (bench.busy() || smelter.screenBusy() || a.equipBusy() || (s.screenOpen() && goalTicks < 400)) {
             return goal; // a screen is in use (crafting, furnace): finish first
         }
         if (goal == Goal.SCAN && goalTicks < p.getInt("surface.scanTicks")) {
@@ -267,6 +275,9 @@ public final class RunBrain {
         if (!inv.lighter()) {
             if (inv.count(Items.IRON_INGOT) < 1) {
                 return Goal.SMELT;
+            }
+            if (!inv.has(Items.FLINT) && smelter.smelting()) {
+                return Goal.SMELT; // the bucket is made; flint is looked for next to the furnace meanwhile
             }
             if (!inv.has(Items.FLINT)) {
                 return Goal.FLINT;
@@ -313,6 +324,10 @@ public final class RunBrain {
         subTicks++;
         if (bench.busy()) {
             bench.run(null); // a crafting session in progress owns the hands and the screen
+            return;
+        }
+        if (smelter.screenBusy()) {
+            smelter.tick(); // so does the furnace screen
             return;
         }
         switch (goal) {
@@ -935,128 +950,72 @@ public final class RunBrain {
 
     // ------------------------------------------------------------------ smelting
 
+    final Smelter smelter = new Smelter(this);
+
+    /** Planks to keep for crafts still ahead (another table for the flint and steel if it is not made yet). */
+    int plankReserve() {
+        return inv.has(Items.FLINT_AND_STEEL) ? 0 : 4;
+    }
+
     private void smelt() {
         if (collect()) {
             return;
         }
-        if (furnacePos == null) {
-            if (!inv.has(Items.FURNACE)) {
-                if (inv.cobble() < 8) {
-                    cobble(8);
+        if (smelter.smelting()) {
+            if (smelter.ready()) {
+                smelter.collectTick();
+                return;
+            }
+            whileSmelting();
+            return;
+        }
+        if (smelter.phase() == Smelter.Phase.IDLE && !inv.has(Items.FURNACE)
+                && mem.nearest(WorldMemory.Kind.FURNACE, mover.feet(), 8, l -> !badTargets.contains(l)) == null) {
+            if (inv.cobble() < 8) {
+                cobble(8);
+                return;
+            }
+            craftAtTable(i -> i == Items.FURNACE, 1, "furnace");
+            return;
+        }
+        if (smelter.tick() == Actions.Status.FAILED) {
+            trace("smelter failed: " + smelter.error());
+            if ("no_fuel".equals(smelter.error())) {
+                fail("no_fuel");
+            }
+        }
+    }
+
+    /** Useful work near the furnace while the ore smelts: flint from gravel close by, else look around. */
+    private void whileSmelting() {
+        BlockPos fp = smelter.furnace();
+        if (!inv.lighter() && !inv.has(Items.FLINT)) {
+            if (target != null) {
+                mineTarget(4.2, false);
+                return;
+            }
+            if (fp != null) {
+                BlockPos gr = mem.nearest(WorldMemory.Kind.GRAVEL, fp, 16, l -> !badTargets.contains(l) && exposed(BlockPos.fromLong(l)));
+                if (gr != null) {
+                    target = gr;
+                    subTicks = 0;
                     return;
                 }
-                craftAtTable(i -> i == Items.FURNACE, 1, "furnace");
-                return;
             }
-            if (s.screenOpen() && !a.equipBusy()) {
-                c.closeScreen();
-                return;
-            }
-            BlockPos placed = placeNear(x -> x.getItem() == Items.FURNACE, Blocks.FURNACE);
-            if (placed != null) {
-                furnacePos = placed;
-                trace("furnace at " + placed);
-            }
-            return;
-        }
-        BlockPos f = mover.feet();
-        Navigator.Goal g = furnaceClose ? Navigator.reach(furnacePos, 2.2) : Navigator.reach(furnacePos, 4.0);
-        if (!g.done(f.getX(), f.getY(), f.getZ())) {
-            mover.go(g);
-            return;
-        }
-        if (smeltReady > 0 && now() < smeltReady) {
-            // wait: look around (perception keeps learning)
-            c.lookAngles(s.yaw() + 6f, 15f);
-            return;
-        }
-        if (!(s.screen() instanceof AbstractFurnaceScreenHandler)) {
-            if (s.screenOpen()) {
-                c.closeScreen();
-                return;
-            }
-            if (a.equip(st -> !st.isEmpty() && !(st.getItem() instanceof net.minecraft.item.BlockItem)) == Actions.Status.RUNNING) {
-                return;
-            }
-            if (++furnaceTries > 100) {
-                // cannot get the crosshair on it from here: step closer next time, or use a new furnace
-                trace("cannot open the furnace at " + furnacePos);
-                furnaceTries = 0;
-                if (smeltReady < 0) {
-                    badTargets.add(furnacePos.asLong());
-                    furnacePos = null;
-                } else {
-                    furnaceClose = true;
+            if (inv.has(Items.GRAVEL)) {
+                BlockPos spot = placeSpot();
+                if (spot != null && a.place(spot, st -> st.getItem() == Items.GRAVEL) == Actions.Status.DONE) {
+                    target = spot;
+                    subTicks = 0;
                 }
                 return;
             }
-            if (a.useBlock(furnacePos) == Actions.Status.DONE) {
-                c.screenOpened();
-            }
+        }
+        if (fp != null && mover.feet().getSquaredDistance(fp) > 16) {
+            mover.go(Navigator.reach(fp, 3.5));
             return;
         }
-        furnaceTries = 0;
-        if (!c.guiReady()) {
-            return;
-        }
-        AbstractFurnaceScreenHandler h = (AbstractFurnaceScreenHandler) s.screen();
-        ItemStack out = h.getSlot(2).getStack();
-        if (smeltReady > 0) {
-            if (!out.isEmpty()) {
-                c.click(2, 0, SlotActionType.QUICK_MOVE);
-                return;
-            }
-            if (!h.getSlot(0).getStack().isEmpty()) {
-                // not done yet: close and wait a bit more
-                smeltReady = now() + 40;
-                c.closeScreen();
-                return;
-            }
-            if (!h.getSlot(1).getStack().isEmpty()) {
-                c.click(1, 0, SlotActionType.QUICK_MOVE); // unused fuel back
-                return;
-            }
-            smeltReady = -1;
-            split("iron_ingots");
-            c.closeScreen();
-            return;
-        }
-        // load: ore into the input, fuel into the fuel slot
-        int oreSlot = screenSlotOf(st -> st.getItem() == Items.IRON_ORE);
-        if (oreSlot >= 0) {
-            c.click(oreSlot, 0, SlotActionType.QUICK_MOVE);
-            return;
-        }
-        int ores = h.getSlot(0).getStack().getCount();
-        if (h.getSlot(1).getStack().isEmpty()) {
-            int coal = screenSlotOf(st -> st.getItem() == Items.COAL || st.getItem() == Items.CHARCOAL);
-            if (coal >= 0) {
-                c.click(coal, 0, SlotActionType.QUICK_MOVE);
-                return;
-            }
-        }
-        if (h.getSlot(1).getStack().isEmpty()) {
-            int planks = screenSlotOf(Inv::isPlanks);
-            if (planks < 0) {
-                planks = screenSlotOf(Inv::isLog);
-            }
-            if (planks < 0) {
-                fail("no_fuel");
-                return;
-            }
-            c.click(planks, 0, SlotActionType.QUICK_MOVE); // the whole stack goes in; the rest is taken back later
-            return;
-        }
-        if (ores == 0) {
-            trace("furnace input empty after loading; inv=" + inv.summary());
-            c.closeScreen();
-            furnacePos = null;
-            return;
-        }
-        smeltLoaded = ores;
-        smeltReady = now() + ores * 200L + 5;
-        trace("smelting " + ores + " ore, ready in " + ores * 10 + "s");
-        c.closeScreen();
+        c.lookAngles(s.yaw() + 6f, 15f);
     }
 
     int screenSlotOf(Predicate<ItemStack> pred) {
@@ -1132,8 +1091,9 @@ public final class RunBrain {
             return Actions.Status.DONE;
         }
         BlockPos f = mover.feet();
-        Navigator.Goal g = Navigator.reach(src, 3.8);
+        Navigator.Goal g = Navigator.see(src, 3.6, mem);
         if (!g.done(f.getX(), f.getY(), f.getZ()) || (!s.onGround() && !s.inWater())) {
+            fillAimTicks = 0;
             if (mover.go(g) == Mover.Status.FAILED) {
                 fillStartCount = -1;
                 return Actions.Status.FAILED;
@@ -1147,15 +1107,27 @@ public final class RunBrain {
             }
             return Actions.Status.RUNNING;
         }
-        Vec3d aim = new Vec3d(src.getX() + 0.5, src.getY() + 0.8, src.getZ() + 0.5);
+        Vec3d aim = new Vec3d(src.getX() + 0.5, src.getY() + 0.9, src.getZ() + 0.5);
         c.lookAt(aim);
-        if (c.aimed(aim, 2f)) {
+        net.minecraft.util.hit.HitResult h = s.fluidCrosshair();
+        boolean onSource = false;
+        if (h instanceof BlockHitResult && h.getType() == net.minecraft.util.hit.HitResult.Type.BLOCK) {
+            BlockState hs = mem.get(((BlockHitResult) h).getBlockPos());
+            onSource = hs != null && (filled == Items.LAVA_BUCKET ? Blocks2.isLavaSource(hs) : Blocks2.isWaterSource(hs));
+        }
+        if (onSource && c.aimed(aim, 6f)) {
             c.use();
+        }
+        if (++fillAimTicks > 60) {
+            fillAimTicks = 0;
+            fillStartCount = -1;
+            return Actions.Status.FAILED; // something is in the way
         }
         return Actions.Status.RUNNING;
     }
 
     private int fillStartCount = -1;
+    private int fillAimTicks;
 
     // ------------------------------------------------------------------ helpers for the portal builder
 

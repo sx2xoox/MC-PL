@@ -39,6 +39,8 @@ public interface BotSenses extends BlockSource {
 
     boolean inLava();
 
+    boolean onFire();
+
     boolean horizontalCollision();
 
     float health();
@@ -65,6 +67,12 @@ public interface BotSenses extends BlockSource {
 
     /** What the crosshair points at (client: MinecraftClient#crosshairTarget). */
     HitResult crosshair();
+
+    /**
+     * The fluid source (or block) the crosshair points at when fluid sources count as targets: what an empty bucket
+     * would scoop (the player sees the lava/water surface it aims at).
+     */
+    HitResult fluidCrosshair();
 
     /** Progress per tick of breaking this block with the held item in the current situation (vanilla formula). */
     float breakingDelta(BlockState state, BlockPos pos);

@@ -101,6 +101,47 @@ public final class Navigator {
         };
     }
 
+    /**
+     * Standing at or above the block's level with the eyes within reach of its top face and nothing solid known in
+     * between (to scoop a fluid source or look at a block's top).
+     */
+    public static Goal see(BlockPos p, double reach, WorldMemory mem) {
+        return new Goal() {
+            public String key() {
+                return "see" + p.asLong() + "/" + reach;
+            }
+
+            public boolean done(int x, int y, int z) {
+                if (y < p.getY() || y > p.getY() + 3 || (x == p.getX() && z == p.getZ())) {
+                    return false;
+                }
+                double ex = x + 0.5, ey = y + 1.62, ez = z + 0.5;
+                double tx = p.getX() + 0.5, ty = p.getY() + 0.9, tz = p.getZ() + 0.5;
+                double dx = tx - ex, dy = ty - ey, dz = tz - ez;
+                if (dx * dx + dy * dy + dz * dz > reach * reach) {
+                    return false;
+                }
+                int steps = 16;
+                for (int i = 1; i < steps; i++) {
+                    double f = i / (double) steps;
+                    int cx = (int) Math.floor(ex + dx * f), cy = (int) Math.floor(ey + dy * f), cz = (int) Math.floor(ez + dz * f);
+                    if (cx == p.getX() && cy == p.getY() && cz == p.getZ()) {
+                        break;
+                    }
+                    BlockState s = mem.get(cx, cy, cz);
+                    if (s != null && Blocks2.pass(s) == Blocks2.Pass.SOLID) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            public double h(int x, int y, int z) {
+                return Math.max(0, dist(x, y, z, p.getX(), p.getY(), p.getZ()) - reach);
+            }
+        };
+    }
+
     /** Within r blocks horizontally of the point (any height). */
     public static Goal near(BlockPos p, double r) {
         return new Goal() {
@@ -234,19 +275,31 @@ public final class Navigator {
         return Blocks2.standable(s) ? 0 : Double.POSITIVE_INFINITY;
     }
 
+    /**
+     * Lava next to the body (feet or head level) or above the head can flow onto the player: such cells are never
+     * stood in. Lava one level below a neighbour (a pool edge) only costs extra.
+     */
     private double dangerCost(int x, int y, int z) {
         double c = 0;
         for (int[] d : CARD) {
-            for (int dy = -1; dy <= 0; dy++) {
+            for (int dy = 0; dy <= 1; dy++) {
                 BlockState n = mem.get(x + d[0], y + dy, z + d[1]);
                 if (n != null && Blocks2.isLava(n)) {
-                    c += 30;
+                    return Double.POSITIVE_INFINITY;
                 }
             }
+            BlockState n = mem.get(x + d[0], y - 1, z + d[1]);
+            if (n != null && Blocks2.isLava(n)) {
+                c += 12;
+            }
+        }
+        BlockState above = mem.get(x, y + 2, z);
+        if (above != null && Blocks2.isLava(above)) {
+            return Double.POSITIVE_INFINITY;
         }
         BlockState below = mem.get(x, y - 1, z);
         if (below != null && Blocks2.isLava(below)) {
-            c += 1000;
+            return Double.POSITIVE_INFINITY;
         }
         return c;
     }

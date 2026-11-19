@@ -290,6 +290,11 @@ public final class ServerBot implements BotInputs, BotSenses {
     }
 
     @Override
+    public boolean onFire() {
+        return player.isOnFire();
+    }
+
+    @Override
     public boolean horizontalCollision() {
         return player.horizontalCollision;
     }
@@ -382,6 +387,14 @@ public final class ServerBot implements BotInputs, BotSenses {
             return new EntityHitResult(hit, hitPos);
         }
         return block;
+    }
+
+    @Override
+    public HitResult fluidCrosshair() {
+        Vec3d eye = eyePos();
+        Vec3d end = eye.add(player.getRotationVec(1f).multiply(InputLimits.BLOCK_REACH));
+        return world().rayTrace(new net.minecraft.world.RayTraceContext(eye, end, net.minecraft.world.RayTraceContext.ShapeType.OUTLINE,
+                net.minecraft.world.RayTraceContext.FluidHandling.SOURCE_ONLY, player));
     }
 
     @Override

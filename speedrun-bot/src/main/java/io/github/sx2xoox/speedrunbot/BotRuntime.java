@@ -99,6 +99,7 @@ public final class BotRuntime {
         server.getCommandManager().execute(server.getCommandSource().withSilent(), "gamerule spawnRadius 0");
         FakePlayer p = FakePlayer.join(server, "SpeedrunBot");
         bot = new ServerBot(server, p);
+        DevSetup.apply(server, p);
         Params params;
         try {
             String path = System.getProperty("srb.params");
@@ -135,6 +136,9 @@ public final class BotRuntime {
         r.put("wall_s", (System.nanoTime() - wallStart) / 1e9);
         r.put("fair", Boolean.parseBoolean(System.getProperty("srb.fair", "true")));
         r.put("memory_sections", brain.memory().sectionCount());
+        if (DevSetup.active()) {
+            r.put("dev", DevSetup.describe());
+        }
         Gson g = new GsonBuilder().create();
         String json = g.toJson(r);
         System.out.println("[speedrunbot] result " + json);

@@ -20,7 +20,7 @@ import java.util.List;
  * the interior, light it and walk in.
  */
 public final class PortalBuilder {
-    private enum State { NONE, CARVE, STATION, CAST, INTERIOR, LIGHT, ENTER }
+    private enum State { NONE, RECOVER, CARVE, STATION, CAST, INTERIOR, LIGHT, ENTER }
 
     private final RunBrain b;
     private State state = State.NONE;
@@ -101,7 +101,8 @@ public final class PortalBuilder {
                             if (Double.isInfinite(sc)) {
                                 continue;
                             }
-                            sc += dl * 2 + Math.sqrt(f.getSquaredDistance(stand.x, stand.y, stand.z, true)) * 0.3;
+                            sc += dl * 2 + Math.sqrt(f.getSquaredDistance(stand.x, stand.y, stand.z, true)) * 0.3
+                                    + Math.abs(origin.y - lavaPos.getY()) * 6; // the room floor at the lava's level: fetching is a short walk
                             if (sc < bestScore) {
                                 bestScore = sc;
                                 best = pl;
@@ -174,18 +175,46 @@ public final class PortalBuilder {
         return v * v;
     }
 
+    private Cell recoverFrom;
+    private String lastFailure = "";
+
     private void restartSite(String why) {
         b.trace("portal site failed: " + why);
+        lastFailure = why;
         if (lava != null) {
             b.badTargets().add(lava.asLong());
         }
-        if (++siteAttempts > 4) {
+        if (++siteAttempts > 6) {
             b.fail("portal_" + why);
             return;
         }
-        state = State.NONE;
+        // the water may be parked in this site's station (or poured in front of a pocket): take it along
+        recoverFrom = null;
+        if (plan != null && !b.inv().has(Items.WATER_BUCKET) && waterPlaced) {
+            for (Cell c : new Cell[]{plan.waterStation(), cellIndex < plan.frame().size() ? plan.front(plan.frame().get(cellIndex)) : null}) {
+                if (c != null && isWaterSource(c)) {
+                    recoverFrom = c;
+                }
+            }
+        }
+        state = recoverFrom != null ? State.RECOVER : State.NONE;
         plan = null;
         sub = 0;
+        subTicks = 0;
+    }
+
+    private void recover() {
+        if (b.inv().has(Items.WATER_BUCKET) || subTicks > 400 || !isWaterSource(recoverFrom)) {
+            if (!b.inv().has(Items.WATER_BUCKET)) {
+                b.trace("water could not be recovered from " + recoverFrom);
+            }
+            waterPlaced = false;
+            state = State.NONE;
+            return;
+        }
+        if (b.fillBucket(bp(recoverFrom), Items.WATER_BUCKET) == Actions.Status.FAILED) {
+            subTicks = 999;
+        }
     }
 
     // ================================================================== tick
@@ -212,6 +241,9 @@ public final class PortalBuilder {
             return;
         }
         switch (state) {
+            case RECOVER:
+                recover();
+                break;
             case CARVE:
                 carve();
                 break;
@@ -356,6 +388,16 @@ public final class PortalBuilder {
         }
     }
 
+    private int cellRetries;
+    private int lastSub = -1;
+    private BlockPos fetchSrc;
+    private int fetchTicks;
+
+    private boolean isLavaSource(BlockPos p) {
+        BlockState s = b.mem.get(p);
+        return s != null && Blocks2.isLavaSource(s);
+    }
+
     private boolean isWaterSource(Cell c) {
         BlockState s = mem(c);
         return s != null && Blocks2.isWaterSource(s);
@@ -372,11 +414,13 @@ public final class PortalBuilder {
      */
     private void pourInto(Cell target) {
         List<BlockHitResult> clicks = new ArrayList<>();
+        List<Double> clickScore = new ArrayList<>();
         Vec3d eye = b.s.eyePos();
         for (Direction d : Direction.values()) {
             Cell sup = target.add(d.getOffsetX(), d.getOffsetY(), d.getOffsetZ());
             BlockState s = mem(sup);
-            if (s == null || !Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s)) {
+            // unknown neighbours are usually rock (the crosshair check below confirms the face is really there)
+            if (s != null && (!Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s))) {
                 continue;
             }
             Direction face = d.getOpposite();
@@ -385,13 +429,29 @@ public final class PortalBuilder {
             if (toEye.x * face.getOffsetX() + toEye.y * face.getOffsetY() + toEye.z * face.getOffsetZ() <= 0.05 || toEye.length() > 4.4) {
                 continue;
             }
-            clicks.add(new BlockHitResult(pt, face, bp(sup), false));
+            // known rock first, then faces seen most head-on
+            double score = toEye.normalize().dotProduct(new Vec3d(face.getOffsetX(), face.getOffsetY(), face.getOffsetZ())) + (s == null ? 0 : 1);
+            BlockHitResult hr = new BlockHitResult(pt, face, bp(sup), false);
+            int at = 0;
+            while (at < clicks.size() && clickScore.get(at) >= score) {
+                at++;
+            }
+            clicks.add(at, hr);
+            clickScore.add(at, score);
         }
         if (clicks.isEmpty()) {
+            if (subTicks % 40 == 0) {
+                b.trace("no face to pour into " + target);
+            }
             return;
         }
-        BlockHitResult click = clicks.get((clickChoice / 12) % clicks.size());
+        BlockHitResult click = clicks.get((clickChoice / 6) % clicks.size());
         clickChoice++;
+        if (clickChoice % 30 == 29) {
+            net.minecraft.util.hit.HitResult h = b.s.crosshair();
+            b.trace("pour into " + target + ": " + clicks.size() + " faces, trying " + click.getBlockPos() + "/" + click.getSide() + " xhair="
+                    + (h instanceof BlockHitResult ? ((BlockHitResult) h).getBlockPos() + "/" + ((BlockHitResult) h).getSide() : h.getType()));
+        }
         if (b.a.useOn(click) == Actions.Status.DONE) {
             clickChoice = 0;
         }
@@ -427,12 +487,25 @@ public final class PortalBuilder {
             subTicks = 0;
             return;
         }
-        if (subTicks > 1500) {
-            restartSite("cast_timeout_" + cellIndex + "_" + sub);
-            return;
+        if (subTicks > 900) {
+            if (++cellRetries > 2) {
+                restartSite("cast_timeout_" + cellIndex + "_" + sub);
+                return;
+            }
+            b.trace("cast cell " + cellIndex + " stuck in step " + sub + "; retrying the cell");
+            subTicks = 0;
+            fetchSrc = null;
+            b.mover.reset();
+            if (sub <= 2) {
+                sub = 0;
+            }
         }
         Cell c = frame.get(cellIndex);
         Cell front = plan.front(c);
+        if (sub != lastSub) {
+            b.trace("cast " + cellIndex + " step " + lastSub + "->" + sub + " feet=" + b.feet() + " c=" + mem(c) + " front=" + mem(front));
+            lastSub = sub;
+        }
         boolean bottom = plan.isBottom(c);
         Cell stand = standFor(c);
         switch (sub) {
@@ -446,10 +519,39 @@ public final class PortalBuilder {
                 if (!mineCell(c, 4.2)) {
                     return;
                 }
-                for (Cell n : plan.mustBeSolid(c)) {
+                List<Cell> check = new ArrayList<>(plan.mustBeSolid(c));
+                boolean supported = false;
+                Cell plug = null;
+                for (Cell q : plan.frontSupports(c)) {
+                    BlockState qs = mem(q);
+                    if (qs == null || Blocks2.pass(qs) == Blocks2.Pass.SOLID) {
+                        supported = true;
+                    } else if (plug == null && !Blocks2.isLava(qs)) {
+                        plug = q;
+                    }
+                }
+                if (!supported && plug != null) {
+                    check.add(plug); // no face to pour the water against: make one
+                }
+                for (Cell n : check) {
                     BlockState s = mem(n);
                     if (s != null && Blocks2.pass(s) != Blocks2.Pass.SOLID) {
-                        restartSite("pocket_open_" + cellIndex);
+                        // an opening behind the pocket (cave air, water): plug it with a throwaway block
+                        if (Blocks2.isLava(s) || subTicks > 300 || b.inv().throwaways() == 0) {
+                            restartSite("pocket_open_" + cellIndex);
+                            return;
+                        }
+                        BlockPos f = b.feet();
+                        Navigator.Goal g = Navigator.reach(bp(n), 4.0);
+                        if (!g.done(f.getX(), f.getY(), f.getZ())) {
+                            if (b.mover.go(g) == Mover.Status.FAILED) {
+                                restartSite("pocket_open_" + cellIndex);
+                            }
+                            return;
+                        }
+                        if (b.a.place(bp(n), Actions::isThrowaway) == Actions.Status.FAILED) {
+                            restartSite("pocket_open_" + cellIndex);
+                        }
                         return;
                     }
                 }
@@ -457,16 +559,41 @@ public final class PortalBuilder {
                 return;
             case 2: { // fetch lava
                 if (b.inv().has(Items.LAVA_BUCKET)) {
+                    fetchSrc = null;
                     sub = 3;
                     return;
                 }
-                BlockPos src = chooseLava();
-                if (src == null || src.getSquaredDistance(lava) > 20 * 20) {
-                    restartSite("lava_gone");
+                if (fetchSrc == null || !isLavaSource(fetchSrc) || ++fetchTicks > 240) {
+                    if (fetchSrc != null) {
+                        b.trace("lava source " + fetchSrc + " not scooped; trying another");
+                        b.badTargets().add(fetchSrc.asLong());
+                    }
+                    fetchSrc = chooseLava();
+                    fetchTicks = 0;
+                }
+                BlockPos src = fetchSrc;
+                Cell o = plan.origin();
+                if (src == null || src.getSquaredDistance(o.x, o.y, o.z, true) > 40 * 40) {
+                    // the pool is used up: keep the half-cast frame and look for more lava around it
+                    fetchSrc = null;
+                    if (obsidian == 0 && src == null) {
+                        restartSite("lava_gone");
+                        return;
+                    }
+                    if (subTicks % 100 == 1) {
+                        b.trace("no lava within reach of the frame; searching (" + obsidian + "/10 cast)");
+                    }
+                    if (b.feet().getSquaredDistance(o.x, o.y, o.z, true) > 48 * 48) {
+                        b.mover.go(Navigator.near(bp(o), 3));
+                    } else {
+                        b.exploreForLava();
+                    }
+                    subTicks = Math.min(subTicks, 600); // searching does not count as being stuck
                     return;
                 }
                 if (b.fillBucket(src, Items.LAVA_BUCKET) == Actions.Status.FAILED) {
                     b.badTargets().add(src.asLong());
+                    fetchSrc = null;
                 }
                 return;
             }
@@ -492,6 +619,10 @@ public final class PortalBuilder {
                 scoop(plan.waterStation());
                 return;
             case 5: // water in front of the pocket
+                if (subTicks % 40 == 0) {
+                    b.trace("cast5 c=" + mem(c) + " front=" + mem(front) + " water=" + b.inv().has(Items.WATER_BUCKET) + " held=" + b.s.inventory().getMainHandStack()
+                            + " feet=" + b.feet() + " stand=" + stand + " xhair=" + b.s.crosshair().getPos());
+                }
                 if (isObsidian(c)) {
                     sub = 6;
                     return;
@@ -539,6 +670,7 @@ public final class PortalBuilder {
                     }
                 }
                 b.trace("obsidian " + (cellIndex + 1) + "/10 at " + c);
+                cellRetries = 0;
                 cellIndex++;
                 sub = 0;
                 subTicks = 0;

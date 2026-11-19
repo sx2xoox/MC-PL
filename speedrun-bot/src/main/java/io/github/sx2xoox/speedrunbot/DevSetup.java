@@ -1,0 +1,126 @@
+package io.github.sx2xoox.speedrunbot;
+
+import io.github.sx2xoox.speedrunbot.server.FakePlayer;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.registry.Registry;
+import net.minecraft.world.Heightmap;
+
+/**
+ * Development-only setups for testing one stage of the run in isolation (never used by measurement runs; a result
+ * written with one carries a "dev" field). {@code srb.kit=item:count,...} puts items in the bot's inventory at the
+ * start; {@code srb.devStart=lava} teleports the bot next to a lava pool the harness finds by reading the world
+ * (a test fixture, not bot knowledge), {@code srb.devStart=x,y,z} to a given spot.
+ */
+public final class DevSetup {
+    private static String applied = "";
+
+    private DevSetup() {
+    }
+
+    public static boolean active() {
+        return !applied.isEmpty();
+    }
+
+    public static String describe() {
+        return applied;
+    }
+
+    public static void apply(MinecraftServer server, FakePlayer p) {
+        String kit = System.getProperty("srb.kit", "");
+        if (!kit.isEmpty()) {
+            for (String part : kit.split(",")) {
+                String[] kv = part.trim().split(":");
+                Item item = Registry.ITEM.get(new Identifier(kv[0]));
+                int n = kv.length > 1 ? Integer.parseInt(kv[1]) : 1;
+                while (n > 0) {
+                    int k = Math.min(n, item.getMaxCount());
+                    p.inventory.insertStack(new ItemStack(item, k));
+                    n -= k;
+                }
+            }
+            applied += "kit=" + kit + ";";
+        }
+        String start = System.getProperty("srb.devStart", "");
+        if (start.isEmpty()) {
+            return;
+        }
+        ServerWorld w = server.getOverworld();
+        BlockPos target = null;
+        if (start.equals("lava") || start.equals("lavalow")) {
+            target = findLava(w, p.getBlockPos(), start.equals("lavalow"));
+        } else {
+            String[] xyz = start.split(",");
+            target = new BlockPos(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2]));
+        }
+        if (target != null) {
+            p.teleport(w, target.getX() + 0.5, target.getY(), target.getZ() + 0.5, p.yaw, p.pitch);
+            applied += "start=" + target.getX() + "," + target.getY() + "," + target.getZ() + ";";
+        } else {
+            applied += "start=none;";
+        }
+    }
+
+    /** A dry standable cell 4-8 blocks from a lava source with at least 10 sources around it. */
+    private static BlockPos findLava(ServerWorld w, BlockPos from, boolean low) {
+        BlockPos.Mutable m = new BlockPos.Mutable();
+        for (int r = 0; r <= 160; r += 8) {
+            for (int dx = -r; dx <= r; dx += 2) {
+                for (int dz = -r; dz <= r; dz += 2) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) < r - 7) {
+                        continue;
+                    }
+                    int x = from.getX() + dx, z = from.getZ() + dz;
+                    w.getChunk(x >> 4, z >> 4);
+                    int top = w.getTopY(Heightmap.Type.MOTION_BLOCKING, x, z);
+                    int y0 = low ? 5 : Math.max(1, top - 2);
+                    int y1 = low ? 14 : top;
+                    for (int y = y0; y <= y1; y++) {
+                        m.set(x, y, z);
+                        BlockState st = w.getBlockState(m);
+                        if (st.getBlock() == Blocks.LAVA && st.getFluidState().isStill() && w.getBlockState(m.up()).isAir()
+                                && sources(w, m) >= 10) {
+                            BlockPos stand = standNear(w, m.toImmutable());
+                            if (stand != null) {
+                                return stand;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int sources(ServerWorld w, BlockPos c) {
+        int n = 0;
+        for (BlockPos q : BlockPos.iterate(c.add(-4, -1, -4), c.add(4, 1, 4))) {
+            BlockState st = w.getBlockState(q);
+            if (st.getBlock() == Blocks.LAVA && st.getFluidState().isStill()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static BlockPos standNear(ServerWorld w, BlockPos lava) {
+        for (int d = 5; d <= 9; d++) {
+            for (int[] o : new int[][]{{d, 0}, {-d, 0}, {0, d}, {0, -d}, {d, d}, {-d, -d}}) {
+                for (int dy = 3; dy >= -2; dy--) {
+                    BlockPos q = lava.add(o[0], dy, o[1]);
+                    if (w.getBlockState(q).isAir() && w.getBlockState(q.up()).isAir() && w.getBlockState(q.down()).isSolidBlock(w, q.down())
+                            && !w.getBlockState(q.down()).getFluidState().isEmpty() == false) {
+                        return q;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+}

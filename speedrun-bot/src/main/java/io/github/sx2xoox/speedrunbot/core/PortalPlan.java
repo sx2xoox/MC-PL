@@ -115,6 +115,7 @@ public final class PortalPlan {
             }
             out.add(at(a, 1, 2));
             out.add(at(a, 2, 2));
+            out.add(at(a, 3, 2)); // head room: the third-row fronts are seen from the standing row
         }
         return new ArrayList<>(out);
     }
@@ -154,6 +155,26 @@ public final class PortalPlan {
         return out;
     }
 
+    /**
+     * Neighbours of a frame cell's front cell that are not part of the room, the frame or the floor holes: the faces
+     * the water bucket can be clicked on to put water into the front cell. At least one must be solid when casting.
+     */
+    public List<Cell> frontSupports(Cell frameCell) {
+        Cell f = front(frameCell);
+        List<Cell> room = room();
+        List<Cell> frame = frame();
+        List<Cell> holes = floorHoles();
+        List<Cell> out = new ArrayList<>();
+        Cell[] dirs = {u, u.scale(-1), UP, UP.scale(-1), n};
+        for (Cell d : dirs) {
+            Cell q = f.add(d);
+            if (!room.contains(q) && !frame.contains(q) && !holes.contains(q) && !q.equals(waterStation())) {
+                out.add(q);
+            }
+        }
+        return out;
+    }
+
     /** All cells that the finished portal needs to be rock before carving: frame, interior, corners and backing. */
     public List<Cell> solidBefore() {
         Set<Cell> out = new LinkedHashSet<>();
@@ -161,6 +182,9 @@ public final class PortalPlan {
         out.addAll(interior());
         for (Cell c : frame()) {
             out.addAll(mustBeSolid(c));
+        }
+        for (Cell c : frame()) {
+            out.addAll(frontSupports(c));
         }
         out.removeAll(room());
         out.removeAll(floorHoles());
