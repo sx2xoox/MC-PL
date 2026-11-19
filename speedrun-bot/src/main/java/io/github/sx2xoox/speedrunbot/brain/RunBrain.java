@@ -218,6 +218,8 @@ public final class RunBrain {
     // ------------------------------------------------------------------ hearing
 
     private final java.util.ArrayDeque<double[]> lavaHeard = new java.util.ArrayDeque<>();
+    private BlockPos earGoal;
+    private int earTicks;
     private Vec3d lavaHeardAt;
 
     /** Lava sounds (rough direction and distance, as a human hears them) averaged into a guess where lava is. */
@@ -1554,27 +1556,33 @@ public final class RunBrain {
                 }
             }
         }
-        if (why.equals("lava") && portal.chooseLava() == null && lavaHeardAt != null && p.get("lava.hearing") > 0) {
-            // not seen but heard: dig toward the sound (lava above the usual level: go to its height)
-            double dx = lavaHeardAt.x - f.getX() - 0.5, dz = lavaHeardAt.z - f.getZ() - 0.5;
-            if (lavaHeardAt.y > targetY + 8 && f.getY() > lavaHeardAt.y) {
-                targetY = (int) Math.floor(lavaHeardAt.y);
+        if (why.equals("lava") && portal.chooseLava() == null && lavaHeardAt != null && p.get("lava.hearing") > 0
+                && f.getY() <= Math.max(targetY + 6, lavaHeardAt.y + 6)) {
+            // not seen but heard: dig straight toward where the sound seemed to come from (the lava has air above
+            // it, so a cave is there); arriving there without seeing it, the guess is spent and we listen again
+            BlockPos goal = new BlockPos(lavaHeardAt);
+            if (earGoal == null || earGoal.getSquaredDistance(goal) > 9) {
+                earGoal = goal;
+                earTicks = 0;
+                trace("digging toward the lava heard around " + goal);
             }
-            if (dx * dx + dz * dz > 4) {
-                Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
-                if (digDir != toward && now() - lastTurnTick > 60) {
-                    digDir = toward;
-                    if (subTicks % 100 == 1) {
-                        trace("digging toward the lava heard around " + new BlockPos(lavaHeardAt));
-                    }
-                }
+            act = "toward heard lava";
+            Mover.Status st = ++earTicks > 600 ? Mover.Status.FAILED : mover.go(Navigator.near(earGoal, 2.5));
+            if (st == Mover.Status.RUNNING) {
+                return;
             }
+            trace("heard lava spot " + earGoal + (st == Mover.Status.ARRIVED ? " reached" : " not reached") + " without seeing lava");
+            lavaHeard.clear();
+            lavaHeardAt = null;
+            earGoal = null;
+            lookAround = 16;
+            mover.reset();
+            return;
         }
         if (route == RouteSelector.Route.SURFACE_CAST && why.equals("iron")) {
             targetY = Math.max(targetY, 40);
         }
-        boolean steeredByEar = why.equals("lava") && lavaHeardAt != null && p.get("lava.hearing") > 0;
-        if (!steeredByEar && exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
+        if (exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
             return;
         }
         // with the water bucket in hand (the lava goal) the shaft goes all the way to the lava level: the bucket puts
@@ -1960,7 +1968,10 @@ public final class RunBrain {
             return Actions.Status.RUNNING;
         }
         // a source's surface is 8/9 high: aim into it, not over it (grazing rays from above missed)
-        Vec3d aim = new Vec3d(src.getX() + 0.5, src.getY() + 0.6, src.getZ() + 0.5);
+        // when a block corner is in the way of the centre, try other points of the surface in turn
+        double[][] pts = {{0.5, 0.6, 0.5}, {0.25, 0.8, 0.25}, {0.75, 0.8, 0.75}, {0.25, 0.8, 0.75}, {0.75, 0.8, 0.25}};
+        double[] pt = pts[(fillAimTicks / 8) % pts.length];
+        Vec3d aim = new Vec3d(src.getX() + pt[0], src.getY() + pt[1], src.getZ() + pt[2]);
         c.lookAt(aim);
         net.minecraft.util.hit.HitResult h = s.fluidCrosshair();
         boolean onSource = false;

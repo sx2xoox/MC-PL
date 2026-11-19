@@ -795,6 +795,9 @@ public final class PortalBuilder {
                     b.c.lookAt(new Vec3d(c.x + 0.5, c.y + 0.5, c.z + 0.5));
                     return;
                 }
+                if (!goStand(stand)) {
+                    return; // the faces to pour against are seen from the stand cell (fetching water moved us)
+                }
                 if (b.a.equip(Items.WATER_BUCKET) != Actions.Status.DONE) {
                     return;
                 }
@@ -818,6 +821,9 @@ public final class PortalBuilder {
             case 7: // park it in the station
                 if (isWaterSource(plan.waterStation()) && !b.inv().has(Items.WATER_BUCKET)) {
                     sub = 8;
+                    return;
+                }
+                if (!goStand(stand)) {
                     return;
                 }
                 if (b.a.equip(Items.WATER_BUCKET) != Actions.Status.DONE) {
