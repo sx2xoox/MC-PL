@@ -183,8 +183,31 @@ public final class PortalBuilder {
     private Cell recoverFrom;
     private String lastFailure = "";
 
+    private int softFailures;
+
+    /**
+     * A step of a site that already holds obsidian failed in a way that may pass (a path not found this time, a block
+     * that would not break): retry from the current state a few times before the cast obsidian is thrown away.
+     */
+    private boolean softFail(String why) {
+        if (obsidian > 0 && ++softFailures <= 8) {
+            b.trace("portal step failed (" + why + "), keeping the frame (" + obsidian + "/10): retry " + softFailures);
+            b.mover.reset();
+            b.mover.forgetAvoid();
+            badStands.clear();
+            subTicks = Math.min(subTicks, 300);
+            return true;
+        }
+        return false;
+    }
+
     private void restartSite(String why) {
+        if ((why.equals("unreachable") || why.equals("mine_failed") || why.equals("stand_unreachable")) && softFail(why)) {
+            return;
+        }
         b.trace("portal site failed: " + why);
+        softFailures = 0;
+        noFaceTicks = 0;
         lastFailure = why;
         if (lava != null) {
             b.badTargets().add(lava.asLong());
@@ -476,6 +499,7 @@ public final class PortalBuilder {
         }
     }
 
+    private int noFaceTicks;
     private int cellRetries;
     private int plugTicks;
     private final java.util.Set<Cell> openingsAccepted = new java.util.HashSet<>();
@@ -531,6 +555,7 @@ public final class PortalBuilder {
             clickScore.add(at, score);
         }
         if (clicks.isEmpty()) {
+            noFaceTicks++;
             if (subTicks % 40 == 0) {
                 b.trace("no face to pour into " + target);
             }
@@ -547,6 +572,27 @@ public final class PortalBuilder {
             b.trace("used " + b.s.inventory().getMainHandStack() + " on " + click.getBlockPos() + "/" + click.getSide() + " for " + target);
             clickChoice = 0;
         }
+    }
+
+    /** Some known-solid neighbour of the target shows a face toward the target to the eye of some stand cell. */
+    private boolean pourFaceVisible(Cell target) {
+        for (Cell st : plan.standCells()) {
+            Vec3d eye = new Vec3d(st.x + 0.5, st.y + 1.62, st.z + 0.5);
+            for (Direction d : Direction.values()) {
+                Cell sup = target.add(d.getOffsetX(), d.getOffsetY(), d.getOffsetZ());
+                BlockState s = mem(sup);
+                if (s == null || !Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s) || Blocks2.interactive(s)) {
+                    continue;
+                }
+                Direction face = d.getOpposite();
+                Vec3d pt = new Vec3d(sup.x + 0.5 + face.getOffsetX() * 0.5, sup.y + 0.5 + face.getOffsetY() * 0.5, sup.z + 0.5 + face.getOffsetZ() * 0.5);
+                Vec3d toEye = eye.subtract(pt);
+                if (toEye.x * face.getOffsetX() + toEye.y * face.getOffsetY() + toEye.z * face.getOffsetZ() > 0.05 && toEye.length() <= 4.4) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Scoops a fluid source with the held empty bucket (aims at its surface). */
@@ -658,6 +704,12 @@ public final class PortalBuilder {
                     }
                 }
                 plugTicks = 0;
+                if (!pourFaceVisible(c)) {
+                    // a pocket opened into a cave on every side the stand cells see: the lava would have nothing to
+                    // be poured against (and would run into the cave); this frame cannot be closed here
+                    restartSite("pocket_open_" + cellIndex);
+                    return;
+                }
                 sub = 2;
                 return;
             case 2: { // fetch lava

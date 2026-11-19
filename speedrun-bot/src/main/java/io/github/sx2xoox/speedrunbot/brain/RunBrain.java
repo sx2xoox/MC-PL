@@ -196,7 +196,7 @@ public final class RunBrain {
             attackCooldown--;
         }
         watchdog();
-        if (!survival.tick() && !unstick()) {
+        if (!survival.tick() && !unstick() && !(!s.screenOpen() && relocating())) {
             Goal next = choose();
             if (next != goal) {
                 trace("goal " + goal + " -> " + next + " after " + goalTicks + "t inv=" + inv.summary());
@@ -233,7 +233,7 @@ public final class RunBrain {
         if (now() - lastProgressTick > p.getInt("safety.stallTicks")) {
             stalls++;
             trace("stalled " + (now() - lastProgressTick) + "t in " + goal + " (doing " + act + ", target " + target + ", cave " + caveTarget
-                    + ", mover " + mover.lastPlanInfo() + "): starting the step over");
+                    + ", mover " + mover.lastPlanInfo() + "): starting the step over; " + around(f));
             if (target != null) {
                 badTargets.add(target.asLong());
             }
@@ -256,7 +256,67 @@ public final class RunBrain {
             lastProgressTick = now();
             unstickTicks = 30;
             unstickYaw = rng.nextFloat() * 360f;
+            if (p.get("safety.relocate") > 0 && lastStallPos != null && lastStallPos.getSquaredDistance(f) < 36 && now() - lastStallTick < 1500 && !portal.active()) {
+                // the same spot again: a fresh start from here is not enough, go somewhere else first
+                relocate(f);
+            }
+            lastStallPos = f;
+            lastStallTick = now();
         }
+    }
+
+    private BlockPos lastStallPos;
+    private long lastStallTick;
+    private BlockPos relocateTo;
+    private int relocateTicks;
+    private int relocations;
+
+    private void relocate(BlockPos f) {
+        relocations++;
+        double yaw = rng.nextDouble() * Math.PI * 2;
+        int dist = 8 + rng.nextInt(8);
+        int dy = goal == Goal.WATER || goal == Goal.WOOD ? 2 : (f.getY() > 20 && (goal == Goal.LAVA || goal == Goal.IRON) ? -3 : 0);
+        relocateTo = new BlockPos(f.getX() + Math.round(Math.cos(yaw) * dist), f.getY() + dy, f.getZ() + Math.round(Math.sin(yaw) * dist));
+        relocateTicks = 400;
+        unstickTicks = 0;
+        digDir = Direction.fromHorizontal(rng.nextInt(4));
+        if (act.equals("shaft")) {
+            noStraightUntil = now() + 600;
+        }
+        trace("stalled at the same spot again: relocating to " + relocateTo + " (" + relocations + ")");
+    }
+
+    /** After repeated stalls at one spot: walk (digging as needed) to a spot some blocks away. */
+    private boolean relocating() {
+        if (relocateTicks <= 0 || relocateTo == null) {
+            return false;
+        }
+        relocateTicks--;
+        act = "relocate";
+        Mover.Status st = mover.go(Navigator.near(relocateTo, 2));
+        if (st != Mover.Status.RUNNING) {
+            relocateTicks = 0;
+            mover.reset();
+            if (st == Mover.Status.FAILED) {
+                trace("relocation to " + relocateTo + " failed");
+            }
+        }
+        return relocateTicks > 0;
+    }
+
+    /** The remembered blocks around the feet (stall diagnostics). */
+    private String around(BlockPos f) {
+        StringBuilder sb = new StringBuilder("pos=").append(String.format("%.2f,%.2f,%.2f", s.pos().x, s.pos().y, s.pos().z))
+                .append(" ground=").append(s.onGround()).append(" water=").append(s.inWater());
+        String[] names = {"below", "feet", "head", "N", "S", "E", "W", "Nh", "Sh", "Eh", "Wh", "Nb", "Sb", "Eb", "Wb"};
+        BlockPos[] qs = {f.down(), f, f.up(), f.north(), f.south(), f.east(), f.west(), f.north().up(), f.south().up(), f.east().up(),
+                f.west().up(), f.north().down(), f.south().down(), f.east().down(), f.west().down()};
+        for (int i = 0; i < qs.length; i++) {
+            BlockState st = mem.get(qs[i]);
+            String n = st == null ? "?" : net.minecraft.util.registry.Registry.BLOCK.getId(st.getBlock()).getPath();
+            sb.append(' ').append(names[i]).append('=').append(n);
+        }
+        return sb.toString();
     }
 
     private int unstickTicks;
@@ -274,6 +334,25 @@ public final class RunBrain {
             return false;
         }
         unstickTicks--;
+        {
+            // never walk blindly into lava or over an unseen drop (a stall next to a lava pool killed runs)
+            BlockPos f = mover.feet();
+            double[] d = PerceptionRules.direction(unstickYaw, 0);
+            BlockPos ahead = f.add(Math.round(d[0]), 0, Math.round(d[2]));
+            for (BlockPos q : new BlockPos[]{ahead, ahead.down(), ahead.down(2), ahead.up()}) {
+                BlockState st = mem.get(q);
+                if ((st != null && Blocks2.isLava(st)) || a.lavaNextTo(q)) {
+                    unstickYaw += 90f + rng.nextFloat() * 180f;
+                    c.lookAngles(unstickYaw, 10f);
+                    return true;
+                }
+            }
+            BlockState below = mem.get(ahead.down());
+            if (below == null || (!Blocks2.standable(below) && mem.get(ahead.down(2)) == null)) {
+                c.lookAngles(unstickYaw, 40f); // look before stepping
+                return true;
+            }
+        }
         c.lookAngles(unstickYaw, 10f);
         c.move(1f, 0f, true, false, false);
         if (s.horizontalCollision()) {
@@ -927,7 +1006,13 @@ public final class RunBrain {
             subTicks = 0;
         }
         if (target == null) {
-            stairStep();
+            if (s.inWater() || mem.get(f.down()) != null && Blocks2.isWater(mem.get(f.down()))) {
+                act = "out of the water";
+                if (mover.go(Navigator.dry(f, 24, mem)) != Mover.Status.FAILED) {
+                    return;
+                }
+            }
+            descend();
             return;
         }
         mineTarget(4.2, true);
@@ -1100,6 +1185,7 @@ public final class RunBrain {
         lookAhead();
     }
 
+    private int rimTicks;
     private long noStraightUntil;
     private long forceShaftUntil;
     private int wetTicks;
@@ -1121,16 +1207,54 @@ public final class RunBrain {
         Vec3d pos = s.pos();
         double cx = f.getX() + 0.5 - pos.x, cz = f.getZ() + 0.5 - pos.z;
         if (st != null && (Blocks2.isLava(st) || Blocks2.isWater(st) || a.lavaNextTo(below) || Blocks2.pass(st) == Blocks2.Pass.FORBID)) {
-            trace("fluid below the shaft at " + below + ": staircase from here on");
-            noStraightUntil = now() + 2400;
+            boolean lava = Blocks2.isLava(st) || a.lavaNextTo(below) || Blocks2.pass(st) == Blocks2.Pass.FORBID;
+            trace((lava ? "lava" : "water") + " below the shaft at " + below + ": staircase for a while");
+            noStraightUntil = now() + (lava ? 2400 : 300);
             turn();
             return;
         }
         if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
             // open below (falling, or a cave): look down while it happens
             c.lookAngles(s.yaw(), 90f);
+            if (s.onGround()) {
+                // standing on the hole's rim: how deep is it?
+                int depth = 0;
+                BlockPos q = below;
+                while (depth < 6) {
+                    BlockState qs = mem.get(q);
+                    if (qs == null) {
+                        depth = 99; // not seen yet: keep looking down
+                        break;
+                    }
+                    if (Blocks2.standable(qs)) {
+                        break;
+                    }
+                    if (Blocks2.isLava(qs)) {
+                        depth = 100;
+                        break;
+                    }
+                    depth++;
+                    q = q.down();
+                }
+                if (depth >= 4 && depth != 99) {
+                    trace("drop of " + depth + " under the shaft at " + below + ": staircase / cave from here");
+                    noStraightUntil = now() + 1200;
+                    turn();
+                } else if (depth < 4) {
+                    // a shallow hole: step to the cell centre so we drop into it
+                    float yaw = InputLimits.yawTo(cx, cz);
+                    c.lookAngles(yaw, 90f);
+                    c.move(0.3f, 0f, false, false, true);
+                    if (++rimTicks > 100) {
+                        rimTicks = 0;
+                        noStraightUntil = now() + 400;
+                        turn();
+                    }
+                }
+            }
             return;
         }
+        rimTicks = 0;
         if (Math.abs(cx) > 0.2 || Math.abs(cz) > 0.2) {
             float yaw = InputLimits.yawTo(cx, cz);
             c.lookAngles(yaw, 60f);
@@ -1145,6 +1269,30 @@ public final class RunBrain {
         if (a.mine(below, false) == Actions.Status.FAILED) {
             noStraightUntil = now() + 400;
         }
+    }
+
+    /** One step down: the 1x1 shaft unless lava was seen close by or the shaft just failed here (then the staircase). */
+    private void descend() {
+        BlockPos f = mover.feet();
+        if (now() > noStraightUntil && !lavaSeenNear(f, 10)) {
+            digStraightDown();
+        } else {
+            stairStep();
+        }
+    }
+
+    /** Lava (a source, or flowing lava touching a remembered cell) seen within r blocks. */
+    private boolean lavaSeenNear(BlockPos f, double r) {
+        if (mem.nearest(WorldMemory.Kind.LAVA_SOURCE, f, r, null) != null) {
+            return true;
+        }
+        for (BlockPos q : new BlockPos[]{f.down(2), f.down(3), f.down().north(), f.down().south(), f.down().east(), f.down().west()}) {
+            BlockState st = mem.get(q);
+            if (st != null && Blocks2.isLava(st)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void lookAhead() {
@@ -1236,7 +1384,7 @@ public final class RunBrain {
             return;
         }
         BlockPos f = mover.feet();
-        if (s.inWater() && ++wetTicks > 40) {
+        if (s.inWater() && ++wetTicks > 10) {
             // swimming: no way to dig from here; get onto dry ground first
             act = "out of the water";
             if (mover.go(Navigator.dry(f, 16, mem)) != Mover.Status.FAILED) {
@@ -1276,7 +1424,8 @@ public final class RunBrain {
                 return;
             }
         }
-        int targetY = why.equals("iron") ? p.getInt("dig.ironY") : p.getInt("dig.targetY");
+        // gravel blobs are spread through the stone at every height: tunnel where we are instead of digging down
+        int targetY = why.equals("iron") ? p.getInt("dig.ironY") : why.equals("gravel") ? Math.max(20, Math.min(f.getY(), spawn.getY() - 8)) : p.getInt("dig.targetY");
         if (why.equals("lava") && lavaDescentStart == null && f.getY() >= spawn.getY() - 6) {
             // do not start the way down next to the lake the water came from: a shaft or staircase there floods
             BlockPos wtr = mem.nearest(WorldMemory.Kind.WATER_SOURCE, f, 10, null);
@@ -1323,8 +1472,11 @@ public final class RunBrain {
         if (exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
             return;
         }
-        if (f.getY() > targetY && p.get("dig.straightDown") > 0
-                && (f.getY() > Math.max(targetY, p.getInt("dig.straightMinY")) || now() < forceShaftUntil) && now() > noStraightUntil) {
+        // with the water bucket in hand (the lava goal) the shaft goes all the way to the lava level: the bucket puts
+        // out a fall into lava; without it the shaft stops at dig.straightMinY and a staircase goes on
+        int shaftMin = why.equals("lava") && inv.has(Items.WATER_BUCKET) ? p.getInt("lava.shaftMinY") : p.getInt("dig.straightMinY");
+        if (f.getY() > targetY && p.get("dig.straightDown") > 0 && now() > noStraightUntil
+                && (f.getY() > Math.max(targetY, shaftMin) || now() < forceShaftUntil || !lavaSeenNear(f, 10))) {
             digStraightDown();
         } else if (f.getY() > targetY) {
             stairStep();
@@ -1455,6 +1607,10 @@ public final class RunBrain {
         }
         BlockPos f = mover.feet();
         BlockPos gr = nearestBlock(f, 24, st -> st.getBlock() == Blocks.GRAVEL);
+        if (gr == null) {
+            // gravel seen further away (a beach, a river bed, a cave floor)
+            gr = mem.nearest(WorldMemory.Kind.GRAVEL, f, 64, l -> !badTargets.contains(l) && exposed(BlockPos.fromLong(l)));
+        }
         if (gr != null) {
             target = gr;
             subTicks = 0;
@@ -1665,7 +1821,7 @@ public final class RunBrain {
             return Actions.Status.DONE;
         }
         BlockPos f = mover.feet();
-        Navigator.Goal g = Navigator.see(src, 3.6, mem);
+        Navigator.Goal g = Navigator.see(src, 4.5, mem); // the bucket's own ray reaches 5 blocks
         if (!g.done(f.getX(), f.getY(), f.getZ()) || (!s.onGround() && !s.inWater())) {
             fillAimTicks = 0;
             if (mover.go(g) == Mover.Status.FAILED) {

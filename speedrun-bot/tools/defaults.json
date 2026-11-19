@@ -14,6 +14,7 @@
   "dig.ironY": 50.0,
   "dig.straightDown": 1.0,
   "dig.straightMinY": 45.0,
+  "lava.shaftMinY": 13.0,
   "cave.radius": 24.0,
   "cave.perDepth": 0.6,
   "cave.perUnknown": 0.8,
@@ -42,5 +43,6 @@
   "safety.stallTicks": 300.0,
   "safety.lavaMargin": 1.0,
   "safety.fleeHealth": 8.0,
-  "food.eatBelow": 12.0
+  "food.eatBelow": 12.0,
+  "safety.relocate": 0.0
 }

@@ -192,7 +192,7 @@ public final class Actions {
             mineTarget = p;
             mineTicks = 0;
         }
-        if (++mineTicks > 400) {
+        if (++mineTicks > 200) { // shorter than the stall watchdog, so the caller turns away from what cannot be mined
             mineTarget = null;
             mineTicks = 0;
             return Status.FAILED;
