@@ -1,0 +1,7 @@
+seed,label,success,reason,route,igt_s,igt,last_goal,mspt_avg,mspt_max,wall_s,fair,split_first_log,split_wooden_pickaxe,split_treasure_map,split_treasure,split_stone_pickaxe,split_first_iron,split_furnace,split_iron_ingots,split_bucket,split_flint,split_flint_and_steel,split_water_bucket,split_portal_site,split_portal_room,split_obsidian_10,split_portal_lit,split_in_portal,split_nether
+7303345135129405291,ocean,False,timeout_WOOD,DIG_CAST,600.0,10:00.000,WOOD,5.46,1692.34,87.41,True,,,,,,,,,,,,,,,,,,
+7771255836441644935,ocean,False,timeout_IRON,DIG_CAST,600.0,10:00.000,IRON,5.82,956.15,80.8,True,34.5,73.35,,,217.0,,,,,,,,,,,,,
+-1219659680363841169,ocean,False,timeout_FLINT,DIG_CAST,600.0,10:00.000,FLINT,5.53,872.13,87.75,True,59.75,94.35,,,236.6,238.9,268.45,310.5,315.85,,,,,,,,,
+6059456030040243879,ocean,False,timeout_IRON,DIG_CAST,600.0,10:00.000,IRON,5.87,2068.24,91.54,True,37.8,62.6,,,245.3,,,,,,,,,,,,,
+-3377813342507575976,ocean,False,timeout_IRON,DIG_CAST,600.0,10:00.000,IRON,3.8,1054.5,57.9,True,42.85,97.0,,,431.9,,,,,,,,,,,,,
+6464270968925729657,ocean,False,timeout_WOOD,DIG_CAST,600.0,10:00.000,WOOD,4.09,505.39,77.03,True,,,,,,,,,,,,,,,,,,

@@ -1,0 +1,8 @@
+# Seeds whose spawn has a shipwreck within ~110 blocks (harness probe, structure locator; the bot does not know).
+# Used to report the treasure route separately. 4 of them are also in seeds_eval.txt.
+-1219659680363841169
+6059456030040243879
+7303345135129405291
+7771255836441644935
+6464270968925729657
+-3377813342507575976

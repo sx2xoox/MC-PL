@@ -177,6 +177,9 @@ public final class RunBrain {
         }
         perception.tick();
         goalTicks++;
+        if (inv.has(Items.WATER_BUCKET)) {
+            split("water_bucket"); // however it was filled (the goal may change before water() runs again)
+        }
         float hp = s.health();
         if (hp < lastHealth - 0.01f) {
             Vec3d pos = s.pos();
@@ -245,6 +248,9 @@ public final class RunBrain {
             mover.forgetAvoid();
             if (s.screenOpen()) {
                 c.closeScreen();
+            }
+            if (act.equals("stairs")) {
+                forceShaftUntil = now() + 400; // the staircase is stuck here: dig the shaft for a while instead
             }
             turn();
             lastProgressTick = now();
@@ -1095,6 +1101,7 @@ public final class RunBrain {
     }
 
     private long noStraightUntil;
+    private long forceShaftUntil;
     private int wetTicks;
     private BlockPos lavaDescentStart;
     private int lavaDescentTicks;
@@ -1316,8 +1323,8 @@ public final class RunBrain {
         if (exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
             return;
         }
-        if (f.getY() > targetY && p.get("dig.straightDown") > 0 && f.getY() > Math.max(targetY, p.getInt("dig.straightMinY"))
-                && now() > noStraightUntil) {
+        if (f.getY() > targetY && p.get("dig.straightDown") > 0
+                && (f.getY() > Math.max(targetY, p.getInt("dig.straightMinY")) || now() < forceShaftUntil) && now() > noStraightUntil) {
             digStraightDown();
         } else if (f.getY() > targetY) {
             stairStep();

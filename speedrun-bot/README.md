@@ -80,6 +80,13 @@ python3 tools/run_batch.py --work work2 --port-base 25700 --seed-file seeds.txt 
 python3 tools/group_report.py results/eval.csv --probe results/probe.jsonl --ship-dist 96
 ```
 
+## 현재 상태 (2단계 끝)
+
+평가 시드 48개(IGT 10분 제한): 네더 진입 **0/48**(1단계도 0/48). 단계 도달은 크게 늘었다: 양동이 15→37개
+(중앙값 4:43), 부싯돌과 부시 6→27개(5:45), 물 양동이 0→18개, 포탈 터 0→2개. 실패 1위는 용암 찾기(16).
+바다 스폰용 보물 루트는 구현·단위 테스트까지이고 실제 월드에서 난파선을 본 런은 아직 없다. 자세한 표와 다음
+계획은 docs/design.md §9.
+
 ## 공정 규칙 요약
 
 - 봇의 세계 지식 = 자기 눈 위치에서 시야(FOV 70°, 16:9) 안으로 쏜 광선이 지나간/멈춘 블록 + 몸에 닿는 블록뿐
