@@ -1,0 +1,14 @@
+{
+  "craft.tableReuseDist": 6.547,
+  "dig.gravelDetour": 7,
+  "dig.oreDetour": 11,
+  "dig.targetY": 11,
+  "portal.maxLavaDist": 8.256,
+  "route.digBaseSec": 150.786,
+  "route.ironMissingSec": 14.345,
+  "route.surfaceBaseSec": 142.218,
+  "stone.picks": 2,
+  "surface.lavaMaxDist": 44.452,
+  "surface.scanTicks": 56,
+  "wood.logs": 6
+}
