@@ -26,6 +26,11 @@ public final class Crafter {
     private int waits;
     private int goalTimes;
     private Recipe<?> current;
+    private boolean currentTable;
+
+    public boolean usingTable() {
+        return currentTable;
+    }
 
     /** The recipe being crafted while a craft is under way (its ingredients may sit in the grid). */
     public Recipe<?> current() {
@@ -120,8 +125,12 @@ public final class Crafter {
             }
             return Actions.Status.FAILED;
         }
+        if (current != null && r != null && !current.getId().equals(r.getId())) {
+            reset(); // a different job: start over
+        }
         boolean tableOpen = s.screen() instanceof CraftingScreenHandler;
         current = r;
+        currentTable = useTable;
         if (phase == 0) {
             if (useTable && !tableOpen) {
                 return Actions.Status.FAILED; // the caller opens the table

@@ -26,8 +26,9 @@ public final class Params {
     static {
         Map<String, Double> d = new LinkedHashMap<>();
         // --- wood ---
-        d.put("wood.logs", 5.0);                 // logs before crafting (table + pick + sticks + spare planks)
+        d.put("wood.logs", 7.0);                 // logs before crafting (table + pick + sticks + spare planks)
         d.put("wood.maxSearchTicks", 1200.0);    // give up looking for trees after this
+        d.put("craft.tableReuseDist", 6.0);     // walk back to a known table only within this distance
         // --- stone ---
         d.put("stone.cobble", 12.0);             // cobble to collect (pick 3 + furnace 8 + spare)
         // --- descent / underground search ---

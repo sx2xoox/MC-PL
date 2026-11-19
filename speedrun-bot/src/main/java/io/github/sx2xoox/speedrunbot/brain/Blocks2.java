@@ -81,6 +81,14 @@ public final class Blocks2 {
         return Pass.SOLID;
     }
 
+    /** Right-clicking it does something (opens a screen...) instead of placing against it. */
+    public static boolean interactive(BlockState s) {
+        Block b = s.getBlock();
+        return b instanceof net.minecraft.block.BlockWithEntity || b == Blocks.CRAFTING_TABLE || b instanceof net.minecraft.block.DoorBlock
+                || b instanceof net.minecraft.block.TrapdoorBlock || b instanceof net.minecraft.block.FenceGateBlock
+                || b instanceof net.minecraft.block.AbstractButtonBlock || b == Blocks.LEVER || b instanceof net.minecraft.block.BedBlock;
+    }
+
     /** Whether the block can be stood on. */
     public static boolean standable(BlockState s) {
         Block b = s.getBlock();

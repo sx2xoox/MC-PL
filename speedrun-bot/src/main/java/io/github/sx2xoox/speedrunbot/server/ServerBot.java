@@ -236,6 +236,7 @@ public final class ServerBot implements BotInputs, BotSenses {
     public void closeScreen() {
         if (Boolean.getBoolean("srb.debugGui")) {
             System.out.println("[srb] close " + player.currentScreenHandler.getClass().getSimpleName());
+
         }
         invOpen = false;
         player.closeHandledScreen();

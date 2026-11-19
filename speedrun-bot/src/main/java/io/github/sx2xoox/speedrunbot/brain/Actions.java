@@ -36,6 +36,11 @@ public final class Actions {
 
     public java.util.function.Consumer<String> debug = x -> { };
 
+    /** True while an inventory swap is using the open inventory screen. */
+    public boolean equipBusy() {
+        return equipPhase != 0;
+    }
+
     public Actions(BotSenses s, Controls c, WorldMemory mem) {
         this.s = s;
         this.c = c;
@@ -83,16 +88,20 @@ public final class Actions {
         ItemStack held = inv.getMainHandStack();
         if (!held.isEmpty() && p.test(held)) {
             if (equipPhase != 0 && s.screenOpen()) {
+                c.lockScreen(false);
                 c.closeScreen();
                 equipPhase = 0;
                 return Status.RUNNING;
             }
             equipPhase = 0;
+            equipTicks = 0;
+            c.lockScreen(false);
             return Status.DONE;
         }
         int slot = findSlot(inv, p);
         if (slot < 0) {
             equipPhase = 0;
+            c.lockScreen(false);
             return Status.FAILED;
         }
         if (slot < 9) {
@@ -103,6 +112,7 @@ public final class Actions {
         if (++equipTicks > 60) {
             equipTicks = 0;
             equipPhase = 0;
+            c.lockScreen(false);
             if (s.screenOpen()) {
                 c.closeScreen();
             }
@@ -112,6 +122,7 @@ public final class Actions {
         if (!s.screenOpen()) {
             if (c.openInventory()) {
                 equipPhase = 1;
+                c.lockScreen(true);
             }
             return Status.RUNNING;
         }
@@ -254,7 +265,7 @@ public final class Actions {
         for (Direction dir : Direction.values()) {
             BlockPos support = target.offset(dir);
             BlockState st = mem.get(support);
-            if (st == null || !Blocks2.standable(st) || Blocks2.isLava(st)) {
+            if (st == null || !Blocks2.standable(st) || Blocks2.isLava(st) || Blocks2.interactive(st)) {
                 continue;
             }
             Direction face = dir.getOpposite();
@@ -324,7 +335,8 @@ public final class Actions {
             BlockHitResult b = (BlockHitResult) h;
             BlockState hs = mem.get(b.getBlockPos());
             boolean replace = b.getBlockPos().equals(target) && hs != null && hs.getMaterial().isReplaceable();
-            if (replace || b.getBlockPos().offset(b.getSide()).equals(target)) {
+            boolean usable = hs != null && Blocks2.interactive(hs);
+            if (!usable && (replace || b.getBlockPos().offset(b.getSide()).equals(target))) {
                 c.use();
             }
         }

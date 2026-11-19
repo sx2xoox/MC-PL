@@ -130,7 +130,20 @@ public final class Controls {
         return true;
     }
 
+    private boolean screenLocked;
+
+    /** While locked (an inventory swap in progress) other code cannot close the screen. */
+    public void lockScreen(boolean locked) {
+        screenLocked = locked;
+        lockTicks = locked ? 40 : 0;
+    }
+
+    private int lockTicks;
+
     public boolean closeScreen() {
+        if (screenLocked) {
+            return false;
+        }
         if (guiCooldown > 0) {
             return false;
         }
@@ -179,6 +192,9 @@ public final class Controls {
         attack = false;
         lookSet = false;
         hotbarChanged = false;
+        if (lockTicks > 0 && --lockTicks == 0) {
+            screenLocked = false;
+        }
         if (useCooldown > 0) {
             useCooldown--;
         }

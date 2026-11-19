@@ -58,6 +58,8 @@ public final class RunBrain {
     private BlockPos tablePos;
     private BlockPos furnacePos;
     private long smeltReady = -1;
+    private int furnaceTries;
+    private boolean furnaceClose;
     private int smeltLoaded;
     private Direction digDir = Direction.NORTH;
     private int tunnelLen;
@@ -83,6 +85,7 @@ public final class RunBrain {
         this.igt = new Igt(s.gameTick());
         this.portal = new PortalBuilder(this);
         this.spawn = mover.feet();
+        this.rng = new java.util.Random(spawn.asLong());
         a.debug = this::trace;
         crafter.debug = this::trace;
         mover.debug = this::trace;
@@ -190,6 +193,7 @@ public final class RunBrain {
                 sub = 0;
                 subTicks = 0;
                 target = null;
+                placeTarget = null;
                 mover.reset();
                 crafter.reset();
             }
@@ -215,13 +219,18 @@ public final class RunBrain {
 
     // ================================================================== goal selection
 
+    /** Iron the bot owns, counting ore that is in the furnace. */
+    private int ironTotal() {
+        return inv.ironEquivalent() + (smeltReady > 0 ? smeltLoaded : 0);
+    }
+
     private int ironNeeded() {
         return p.getInt("iron.needed");
     }
 
     private Goal choose() {
-        if (crafter.current() != null || s.screenOpen()) {
-            return goal; // ingredients may sit in a crafting grid: finish first
+        if (bench.busy() || a.equipBusy() || (s.screenOpen() && goalTicks < 400)) {
+            return goal; // a screen is in use (crafting, furnace): finish first
         }
         if (goal == Goal.SCAN && goalTicks < p.getInt("surface.scanTicks")) {
             return Goal.SCAN;
@@ -244,7 +253,7 @@ public final class RunBrain {
         if (!inv.stonePick()) {
             return inv.cobble() >= 3 ? Goal.STONE_PICK : Goal.COBBLE;
         }
-        boolean needIron = inv.ironEquivalent() < ironNeeded();
+        boolean needIron = ironTotal() < ironNeeded();
         if (needIron) {
             return Goal.IRON;
         }
@@ -301,6 +310,10 @@ public final class RunBrain {
 
     private void run() {
         subTicks++;
+        if (bench.busy()) {
+            bench.run(null); // a crafting session in progress owns the hands and the screen
+            return;
+        }
         switch (goal) {
             case SCAN:
                 scan();
@@ -403,7 +416,7 @@ public final class RunBrain {
     private void explore() {
         BlockPos f = mover.feet();
         if (exploreTarget == null || subTicks > 300 || exploreTarget.squaredDistanceTo(Vec3d.ofCenter(f)) < 9) {
-            float yaw = s.yaw() + (float) (Math.random() * 120 - 60);
+            float yaw = s.yaw() + (rng.nextFloat() * 120 - 60);
             double[] d = PerceptionRules.direction(yaw, 0);
             exploreTarget = new Vec3d(f.getX() + d[0] * 24, f.getY(), f.getZ() + d[2] * 24);
             subTicks = 0;
@@ -428,156 +441,87 @@ public final class RunBrain {
         return crafter.recipeFor(out, table);
     }
 
-    private int woodStep;
-    private int badTables;
+    final Workbench bench = new Workbench(this);
 
-    private void woodTools() {
-        // 1) every log into planks (one recipe-book shift-click), 2) a table in the 2x2 grid, 3) at the table: sticks +
-        // wooden pickaxe
-        if (woodStep == 0) {
-            if (inv.logs() == 0 && !s.screenOpen()) {
-                woodStep = 1;
-                return;
+    /** Crafts one item kind (at a table when needed) until the inventory holds {@code count}. */
+    void craftAtTable(Predicate<Item> out, int count, String name) {
+        java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
+        needs.add(new Workbench.Need(name, out, count, true));
+        if (bench.run(needs) == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("no_")) {
+            craftFailures++;
+            if (craftFailures > 3) {
+                fail("craft_" + name + "_" + bench.error());
             }
-            Recipe<?> r = recipe(i -> ItemTags.PLANKS.contains(i), false);
-            if (r == null) {
-                dbg("no planks recipe");
-                return;
-            }
-            if (crafter.craft(r, 1, false, true) == Actions.Status.DONE) {
-                woodStep = 1;
-            }
-            return;
         }
-        if (woodStep == 1) {
-            if (inv.has(Items.CRAFTING_TABLE) || tablePos != null || mem.nearest(WorldMemory.Kind.CRAFTING_TABLE, mover.feet(), 8, null) != null) {
-                woodStep = 2;
-                return;
-            }
-            Recipe<?> r = recipe(i -> i == Items.CRAFTING_TABLE, false);
-            if (r == null) {
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < s.screen().slots.size(); i++) {
-                    if (!s.screen().getSlot(i).getStack().isEmpty()) {
-                        sb.append(i).append('=').append(s.screen().getSlot(i).getStack()).append(' ');
-                    }
-                }
-                dbg("no table recipe " + inv.summary() + " screen=" + s.screen().getClass().getSimpleName() + " slots: " + sb + " cursor=" + s.inventory().getCursorStack());
-                return;
-            }
-            if (crafter.craft(r, 1, false) == Actions.Status.DONE) {
-                woodStep = 2;
-            }
-            return;
-        }
-        craftAtTable(i -> i == Items.WOODEN_PICKAXE, 1, "wooden_pickaxe");
     }
 
-    /** Crafts at a table: uses a known table within reach, else places one (crafting it if needed). */
-    void craftAtTable(Predicate<Item> out, int times, String splitName) {
-        if (s.screen() instanceof CraftingScreenHandler) {
-            // sticks first when the recipe needs them
-            if (out.test(Items.WOODEN_PICKAXE) || out.test(Items.STONE_PICKAXE)) {
-                if (inv.count(Items.STICK) < 2) {
-                    Recipe<?> sr = recipe(i -> i == Items.STICK, true);
-                    if (sr != null) {
-                        crafter.craft(sr, 1, true);
-                        return;
-                    }
-                }
+    private int craftFailures;
+
+    private void woodTools() {
+        java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
+        needs.add(new Workbench.Need("planks", i -> ItemTags.PLANKS.contains(i), inv.planks() + inv.logs() * 4, false));
+        needs.add(new Workbench.Need("wooden_pickaxe", i -> i == Items.WOODEN_PICKAXE, 1, true));
+        if (bench.run(needs) == Actions.Status.FAILED) {
+            craftFailures++;
+            if (craftFailures > 3) {
+                fail("craft_wooden_pickaxe_" + bench.error());
             }
-            Recipe<?> r = recipe(out, true);
-            if (r == null) {
-                c.closeScreen();
-                trace("cannot craft " + splitName + " inv=" + inv.summary());
-                if (subTicks > 200) {
-                    fail("craft_" + splitName);
-                }
-                return;
-            }
-            Actions.Status st = crafter.craft(r, times, true);
-            if (st == Actions.Status.DONE) {
-                split(splitName);
-            }
-            return;
         }
-        if (s.screenOpen()) {
-            if (crafter.current() != null) {
-                crafter.craft(crafter.current(), 1, false); // an inventory craft (planks / table) under way
-            } else {
-                c.closeScreen();
-            }
-            return;
-        }
-        BlockPos f = mover.feet();
-        if (tablePos == null && badTables == 0) {
-            tablePos = mem.nearest(WorldMemory.Kind.CRAFTING_TABLE, f, 8, null);
-        }
-        if (tablePos != null && mem.get(tablePos) != null && mem.get(tablePos).getBlock() != Blocks.CRAFTING_TABLE) {
-            tablePos = null;
-        }
-        if (tablePos != null && tablePos.getSquaredDistance(f) > 24 * 24) {
-            tablePos = null;
-        }
-        if (tablePos == null) {
-            if (!inv.has(Items.CRAFTING_TABLE)) {
-                if (inv.planks() < 4 && inv.logs() > 0) {
-                    Recipe<?> pr = recipe(i -> ItemTags.PLANKS.contains(i), false);
-                    if (pr != null) {
-                        crafter.craft(pr, 1, false);
-                    }
-                    return;
-                }
-                Recipe<?> r = recipe(i -> i == Items.CRAFTING_TABLE, false);
-                if (r == null) {
-                    fail("no_planks_for_table");
-                    return;
-                }
-                crafter.craft(r, 1, false);
-                return;
-            }
-            BlockPos spot = placeSpot();
-            if (spot == null) {
-                // stand still a moment and look down to find a floor
-                c.lookAngles(s.yaw() + 30, 40);
-                dbg("no spot for the table");
-                return;
-            }
-            Actions.Status st = a.place(spot, x -> x.getItem() == Items.CRAFTING_TABLE);
-            dbg("placing table at " + spot + " -> " + st + " click=" + a.placementClick(spot) + " hit=" + s.crosshair().getPos());
-            if (st == Actions.Status.DONE) {
-                tablePos = spot;
-                trace("table at " + spot.toString());
-            }
-            return;
-        }
-        Navigator.Goal g = Navigator.reach(tablePos, 4.0);
-        if (!g.done(f.getX(), f.getY(), f.getZ())) {
-            Mover.Status ms = mover.go(g);
-            dbg("to table " + tablePos + " from " + f + " -> " + ms + " ground=" + s.onGround() + " " + mover.lastPlanInfo());
-            if (ms == Mover.Status.FAILED && subTicks > 200) {
-                trace("table unreachable; a new one will be placed");
-                tablePos = null;
-                badTables++;
-            }
-            return;
-        }
-        // open: right click the table
-        if (a.equip(st -> !st.isEmpty() && !(st.getItem() instanceof net.minecraft.item.BlockItem)) == Actions.Status.RUNNING) {
-            return; // hold a non-block item so the click opens the table instead of placing a block
-        }
-        if (subTicks > 300) {
-            trace("cannot open the table at " + tablePos + "; placing a new one");
-            tablePos = null;
-            subTicks = 0;
-            return;
-        }
-        if (a.useBlock(tablePos) == Actions.Status.DONE) {
-            c.screenOpened();
-        }
+    }
+
+    BlockPos placeTargetOrNull() {
+        return placeTarget;
     }
 
     /** A cell next to the player where a block can stand: air (known) with a solid floor, not the player's cells. */
+    private BlockPos placeTarget;
+    private int placeTries;
+
+    /**
+     * Places a block from the inventory next to the player; tries one spot for a while, then another. Returns the
+     * position once the block is there (seen), else null.
+     */
+    BlockPos placeNear(Predicate<ItemStack> item, net.minecraft.block.Block expected) {
+        if (placeTarget == null || badTargets.contains(placeTarget.asLong())) {
+            placeTarget = placeSpot();
+            placeTries = 0;
+            if (placeTarget == null) {
+                // no free cell with a floor in reach: dig a niche at feet level next to us
+                BlockPos f = mover.feet();
+                for (Direction d : new Direction[]{digDir, digDir.rotateYClockwise(), digDir.rotateYCounterclockwise(), digDir.getOpposite()}) {
+                    BlockPos q = f.offset(d);
+                    BlockState qs = mem.get(q);
+                    BlockState below = mem.get(q.down());
+                    if (qs != null && a.solid(q) && below != null && Blocks2.standable(below) && !badTargets.contains(q.asLong())
+                            && Blocks2.pass(qs) == Blocks2.Pass.SOLID && !lavaAround(q)) {
+                        if (a.mine(q, false) == Actions.Status.FAILED) {
+                            badTargets.add(q.asLong());
+                        }
+                        return null;
+                    }
+                }
+                c.lookAngles(s.yaw() + 30, 40);
+                return null;
+            }
+        }
+        Actions.Status st = a.place(placeTarget, item);
+        if (st == Actions.Status.DONE) {
+            BlockPos done = placeTarget;
+            placeTarget = null;
+            BlockState now = mem.get(done);
+            if (now == null || now.getBlock() != expected) {
+                badTargets.add(done.asLong());
+                return null;
+            }
+            return done;
+        }
+        if (st == Actions.Status.FAILED || ++placeTries > 40) {
+            badTargets.add(placeTarget.asLong());
+            placeTarget = null;
+        }
+        return null;
+    }
+
     private BlockPos placeSpot() {
         BlockPos f = mover.feet();
         BlockPos best = null;
@@ -600,7 +544,7 @@ public final class RunBrain {
                     if (!here.isAir() && !here.getMaterial().isReplaceable()) {
                         continue;
                     }
-                    if (inPlayer(q)) {
+                    if (inPlayer(q) || badTargets.contains(q.asLong())) {
                         continue;
                     }
                     double d = Vec3d.ofCenter(q).distanceTo(s.eyePos());
@@ -612,6 +556,16 @@ public final class RunBrain {
             }
         }
         return best;
+    }
+
+    boolean lavaAround(BlockPos q) {
+        for (Direction d : Direction.values()) {
+            BlockState n = mem.get(q.offset(d));
+            if (n != null && (Blocks2.isLava(n) || Blocks2.isWater(n))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     boolean inPlayer(BlockPos q) {
@@ -741,8 +695,19 @@ public final class RunBrain {
     // ------------------------------------------------------------------ underground
 
     /** One step of a 1x2 staircase down in digDir (mines head, body, step), turning away from fluids. */
+    private boolean escaping() {
+        if (escapeTicks <= 0) {
+            return false;
+        }
+        escapeTicks--;
+        BlockPos f = mover.feet();
+        BlockPos back = f.offset(digDir.getOpposite(), 6).up(3);
+        mover.go(Navigator.near(back, 2));
+        return true;
+    }
+
     private void stairStep() {
-        if (collect()) {
+        if (collect() || escaping()) {
             return;
         }
         BlockPos f = mover.feet();
@@ -806,7 +771,7 @@ public final class RunBrain {
 
     /** One step of a 1x2 tunnel in digDir at the current height. */
     private void tunnelStep() {
-        if (collect()) {
+        if (collect() || escaping()) {
             return;
         }
         BlockPos f = mover.feet();
@@ -850,12 +815,26 @@ public final class RunBrain {
         lookAhead();
     }
 
+    private long lastTurnTick;
+    private int turnStreak;
+
     private void turn() {
         Direction[] order = {digDir.rotateYClockwise(), digDir.rotateYCounterclockwise(), digDir.getOpposite()};
-        digDir = order[(int) (Math.random() * 2)];
+        digDir = order[rng.nextInt(2)];
+        turnStreak = now() - lastTurnTick < 10 ? turnStreak + 1 : 0;
+        lastTurnTick = now();
+        if (turnStreak > 6) {
+            // boxed in by fluids / drops: walk back toward where the run started for a while
+            turnStreak = 0;
+            escapeTicks = 120;
+            trace("boxed in; backing off");
+        }
         trace("turn to " + digDir);
         mover.reset();
     }
+
+    private int escapeTicks;
+    final java.util.Random rng;
 
     /** Ore/gravel within detour reach, else keep digging toward the lava level and along it. */
     private void exploreUnderground(String why) {
@@ -868,7 +847,7 @@ public final class RunBrain {
         }
         BlockPos f = mover.feet();
         int detour = p.getInt("dig.oreDetour");
-        if (inv.ironEquivalent() < ironNeeded()) {
+        if (ironTotal() < ironNeeded()) {
             BlockPos ore = nearestBlock(f, detour, st -> st.getBlock() == Blocks.IRON_ORE);
             if (ore != null) {
                 target = ore;
@@ -967,24 +946,19 @@ public final class RunBrain {
                 craftAtTable(i -> i == Items.FURNACE, 1, "furnace");
                 return;
             }
-            if (s.screenOpen()) {
+            if (s.screenOpen() && !a.equipBusy()) {
                 c.closeScreen();
                 return;
             }
-            BlockPos spot = placeSpot();
-            if (spot == null) {
-                c.lookAngles(s.yaw() + 30, 40);
-                return;
-            }
-            Actions.Status st = a.place(spot, x -> x.getItem() == Items.FURNACE);
-            if (st == Actions.Status.DONE) {
-                furnacePos = spot;
-                trace("furnace at " + spot.toString());
+            BlockPos placed = placeNear(x -> x.getItem() == Items.FURNACE, Blocks.FURNACE);
+            if (placed != null) {
+                furnacePos = placed;
+                trace("furnace at " + placed);
             }
             return;
         }
         BlockPos f = mover.feet();
-        Navigator.Goal g = Navigator.reach(furnacePos, 4.0);
+        Navigator.Goal g = furnaceClose ? Navigator.reach(furnacePos, 2.2) : Navigator.reach(furnacePos, 4.0);
         if (!g.done(f.getX(), f.getY(), f.getZ())) {
             mover.go(g);
             return;
@@ -1002,11 +976,24 @@ public final class RunBrain {
             if (a.equip(st -> !st.isEmpty() && !(st.getItem() instanceof net.minecraft.item.BlockItem)) == Actions.Status.RUNNING) {
                 return;
             }
+            if (++furnaceTries > 100) {
+                // cannot get the crosshair on it from here: step closer next time, or use a new furnace
+                trace("cannot open the furnace at " + furnacePos);
+                furnaceTries = 0;
+                if (smeltReady < 0) {
+                    badTargets.add(furnacePos.asLong());
+                    furnacePos = null;
+                } else {
+                    furnaceClose = true;
+                }
+                return;
+            }
             if (a.useBlock(furnacePos) == Actions.Status.DONE) {
                 c.screenOpened();
             }
             return;
         }
+        furnaceTries = 0;
         if (!c.guiReady()) {
             return;
         }
@@ -1021,6 +1008,10 @@ public final class RunBrain {
                 // not done yet: close and wait a bit more
                 smeltReady = now() + 40;
                 c.closeScreen();
+                return;
+            }
+            if (!h.getSlot(1).getStack().isEmpty()) {
+                c.click(1, 0, SlotActionType.QUICK_MOVE); // unused fuel back
                 return;
             }
             smeltReady = -1;
@@ -1042,36 +1033,22 @@ public final class RunBrain {
                 return;
             }
         }
-        ItemStack fuel = h.getSlot(1).getStack();
-        int fuelItems = fuel.isEmpty() ? 0 : (fuel.getItem() == Items.COAL || fuel.getItem() == Items.CHARCOAL ? fuel.getCount() * 8
-                : (int) Math.floor(fuel.getCount() * 1.5));
-        ItemStack cursor = s.inventory().getCursorStack();
-        if (fuelItems < ores) {
-            if (cursor.isEmpty()) {
-                int planks = screenSlotOf(Inv::isPlanks);
-                if (planks < 0) {
-                    planks = screenSlotOf(Inv::isLog);
-                }
-                if (planks < 0) {
-                    fail("no_fuel");
-                    return;
-                }
-                c.click(planks, 0, SlotActionType.PICKUP);
-            } else {
-                c.click(1, 1, SlotActionType.PICKUP); // right click: one item into the fuel slot
+        if (h.getSlot(1).getStack().isEmpty()) {
+            int planks = screenSlotOf(Inv::isPlanks);
+            if (planks < 0) {
+                planks = screenSlotOf(Inv::isLog);
             }
+            if (planks < 0) {
+                fail("no_fuel");
+                return;
+            }
+            c.click(planks, 0, SlotActionType.QUICK_MOVE); // the whole stack goes in; the rest is taken back later
             return;
         }
-        if (!cursor.isEmpty()) {
-            int empty = -1;
-            for (int i = 3; i < h.slots.size(); i++) {
-                ItemStack st = h.getSlot(i).getStack();
-                if (st.isEmpty() || ItemStack.areItemsEqual(st, cursor)) {
-                    empty = i;
-                    break;
-                }
-            }
-            c.click(empty, 0, SlotActionType.PICKUP);
+        if (ores == 0) {
+            trace("furnace input empty after loading; inv=" + inv.summary());
+            c.closeScreen();
+            furnacePos = null;
             return;
         }
         smeltLoaded = ores;
