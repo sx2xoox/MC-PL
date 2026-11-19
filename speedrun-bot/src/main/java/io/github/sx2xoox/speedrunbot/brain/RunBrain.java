@@ -229,7 +229,8 @@ public final class RunBrain {
         }
         if (now() - lastProgressTick > p.getInt("safety.stallTicks")) {
             stalls++;
-            trace("stalled " + (now() - lastProgressTick) + "t in " + goal + " (target " + target + ", cave " + caveTarget + "): starting the step over");
+            trace("stalled " + (now() - lastProgressTick) + "t in " + goal + " (doing " + act + ", target " + target + ", cave " + caveTarget
+                    + ", mover " + mover.lastPlanInfo() + "): starting the step over");
             if (target != null) {
                 badTargets.add(target.asLong());
             }
@@ -253,6 +254,12 @@ public final class RunBrain {
     }
 
     private int unstickTicks;
+    String act = "";
+
+    private boolean setAct(String a) {
+        act = a;
+        return true;
+    }
     private float unstickYaw;
 
     /** After a stall: walk (and jump, and dig what blocks the way) in a random direction for a moment. */
@@ -332,6 +339,10 @@ public final class RunBrain {
         watchForShip();
         if (goal == Goal.LOOT && looter.busy()) {
             return Goal.LOOT;
+        }
+        if (!inv.pickaxe() && inv.cobble() >= 3 && inv.planks() + inv.logs() * 4 >= 6 && inv.has(Items.STONE_PICKAXE) == false
+                && (goal != Goal.SCAN && goal != Goal.WOOD && goal != Goal.WOOD_TOOLS)) {
+            return Goal.STONE_PICK; // a pickaxe wore out underground: a new stone one from what we carry
         }
         if (!inv.pickaxe()) {
             int planksNeeded = 9 + 4 + 3; // table + sticks + pickaxe, a second table, smelting fuel
@@ -609,6 +620,7 @@ public final class RunBrain {
     private int exploreLegs;
 
     private void explore() {
+        act = "explore";
         BlockPos f = mover.feet();
         if (exploreTarget == null || subTicks > 300 || exploreTarget.squaredDistanceTo(Vec3d.ofCenter(f)) < 9) {
             // hold one heading (a straight line covers new ground; random turns circle the spawn), toward leaves if seen
@@ -923,6 +935,7 @@ public final class RunBrain {
     }
 
     private void stairStep() {
+        act = "stairs";
         if (collect() || escaping()) {
             return;
         }
@@ -979,12 +992,15 @@ public final class RunBrain {
     }
 
     private long noStraightUntil;
+    private BlockPos lavaDescentStart;
+    private int lavaDescentTicks;
 
     /**
      * Digs the block under the feet (1x1 shaft, the fastest way down) while staying in the middle of the cell; turns to
      * the staircase for a while when fluid is seen below or next to the shaft.
      */
     private void digStraightDown() {
+        act = "shaft";
         if (collect()) {
             return;
         }
@@ -1029,6 +1045,7 @@ public final class RunBrain {
 
     /** One step of a 1x2 tunnel in digDir at the current height. */
     private void tunnelStep() {
+        act = "tunnel";
         if (collect() || escaping()) {
             return;
         }
@@ -1140,6 +1157,26 @@ public final class RunBrain {
             }
         }
         int targetY = why.equals("iron") ? p.getInt("dig.ironY") : p.getInt("dig.targetY");
+        if (why.equals("lava") && lavaDescentStart == null && f.getY() >= spawn.getY() - 6) {
+            // do not start the way down next to the lake the water came from: a shaft or staircase there floods
+            BlockPos wtr = mem.nearest(WorldMemory.Kind.WATER_SOURCE, f, 10, null);
+            if (wtr != null) {
+                double dx = f.getX() - wtr.getX(), dz = f.getZ() - wtr.getZ();
+                double len = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+                lavaDescentStart = new BlockPos(f.getX() + dx / len * 12, f.getY(), f.getZ() + dz / len * 12);
+                lavaDescentTicks = 0;
+                trace("moving away from the water before digging down: " + lavaDescentStart);
+            } else {
+                lavaDescentStart = f;
+            }
+        }
+        if (why.equals("lava") && lavaDescentStart != null && !lavaDescentStart.equals(f) && ++lavaDescentTicks < 300
+                && f.getSquaredDistance(lavaDescentStart) > 9) {
+            act = "away from water";
+            if (mover.go(Navigator.near(lavaDescentStart, 2)) == Mover.Status.RUNNING) {
+                return;
+            }
+        }
         if (why.equals("lava")) {
             BlockPos known = portal.chooseLava();
             if (known != null) {
@@ -1152,6 +1189,7 @@ public final class RunBrain {
                         digDir = toward;
                     }
                 } else {
+                    act = "approach lava " + known;
                     if (mover.go(Navigator.near(known, 5)) == Mover.Status.FAILED) {
                         badTargets.add(known.asLong());
                     }
@@ -1215,6 +1253,7 @@ public final class RunBrain {
      * cave walls show far more ore than a tunnel's two walls. False when no cave frontier is known nearby.
      */
     private boolean exploreCave(BlockPos f, int targetY, int maxY) {
+        act = "cave";
         if (lookAround > 0) {
             lookAround--;
             c.lookAngles(s.yaw() + 45f, lookAround % 8 < 4 ? 20f : -10f);
@@ -1442,6 +1481,7 @@ public final class RunBrain {
             }
         }
         if (climbing && f.getY() < Math.max(surface, climbTo)) {
+            act = "climb to " + Math.max(surface, climbTo);
             if (mover.climb(Math.max(surface, climbTo)) != Mover.Status.RUNNING) {
                 climbing = false;
             }
@@ -1457,7 +1497,7 @@ public final class RunBrain {
                     if (mover.go(Navigator.near(seenWater, 4)) == Mover.Status.FAILED) {
                         climbing = true; // no way through what we know: straight up instead
                     }
-                } else if (mover.climb(surface) == Mover.Status.FAILED) {
+                } else if (setAct("climb to surface " + surface) && mover.climb(surface) == Mover.Status.FAILED) {
                     climbing = false;
                     explore();
                 }
@@ -1494,6 +1534,7 @@ public final class RunBrain {
      * own ray picks the source). DONE when the filled bucket is in the inventory.
      */
     Actions.Status fillBucket(BlockPos src, Item filled) {
+        act = "fill";
         int have = inv.count(filled);
         if (fillStartCount < 0) {
             fillStartCount = have;

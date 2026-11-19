@@ -54,7 +54,7 @@ def run_one(args, slot, slot_dir, seed, label):
     for d in ("world", "logs", "crash-reports"):
         shutil.rmtree(os.path.join(slot_dir, d), ignore_errors=True)
     with open(os.path.join(slot_dir, "server.properties"), "w") as f:
-        f.write(SERVER_PROPS.format(port=25610 + slot, view=args.view_distance, seed=seed))
+        f.write(SERVER_PROPS.format(port=args.port_base + slot, view=args.view_distance, seed=seed))
     out = os.path.join(slot_dir, "result.jsonl")
     if os.path.exists(out):
         os.remove(out)
@@ -113,6 +113,7 @@ def main():
     ap.add_argument("--mod", default=None, help="mod jar (default: build/libs/speedrun-bot-*.jar)")
     ap.add_argument("--trace-dir", default=None, help="write a decision trace per seed here")
     ap.add_argument("--keep-worlds", action="store_true")
+    ap.add_argument("--port-base", type=int, default=25610, help="server port of slot 0 (separate batches need separate ranges)")
     ap.add_argument("--jvm-arg", action="append", help="extra -D... for the server (e.g. -Dsrb.probe=true)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
