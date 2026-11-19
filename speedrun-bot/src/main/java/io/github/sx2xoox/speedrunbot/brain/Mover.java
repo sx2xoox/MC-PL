@@ -280,7 +280,7 @@ public final class Mover {
                 break;
         }
         boolean straight = step.move == Navigator.Move.WALK || step.move == Navigator.Move.DIAG;
-        boolean sprint = straight && runAhead() >= 3 && !s.inWater();
+        boolean sprint = straight && runAhead() >= 3 && !s.inWater() && !lavaWithin(f, 3) && !lavaWithin(t, 3);
         boolean jump = false;
         // bobbing at the surface the feet are briefly out of the water and off the ground: still "in the water" for
         // jumping (holding jump while pushing against a one-high bank lifts the player out, as in vanilla)
@@ -297,7 +297,8 @@ public final class Mover {
         if (s.horizontalCollision() && s.onGround() && t.getY() >= f.getY()) {
             jump = true;
         }
-        walkToward(target, sprint, 1f);
+        // next to lava: slow steps (a walk's momentum carried runs over the edge of a lava lake)
+        walkToward(target, sprint, lavaNear(t) && !jump ? 0.55f : 1f);
         if (jump) {
             c.jump();
         }
@@ -489,6 +490,20 @@ public final class Mover {
     }
 
     /** Known lava touching the feet or head cell (sides, below, above). */
+    private boolean lavaWithin(BlockPos f, int r) {
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
+                for (int dy = -2; dy <= 1; dy++) {
+                    BlockState st = mem.get(f.getX() + dx, f.getY() + dy, f.getZ() + dz);
+                    if (st != null && Blocks2.isLava(st)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public boolean lavaNear(BlockPos f) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {

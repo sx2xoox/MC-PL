@@ -222,11 +222,22 @@ public final class RunBrain {
     // ------------------------------------------------------------------ hearing
 
     private final java.util.ArrayDeque<double[]> lavaHeard = new java.util.ArrayDeque<>();
+    /** Places where heard lava turned out to be lava we already see but cannot use (flows, springs). */
+    private final List<Vec3d> lavaExplained = new ArrayList<>();
     private Vec3d lavaHeardAt;
 
     /** Lava sounds (rough direction and distance, as a human hears them) averaged into a guess where lava is. */
     private void listen() {
         for (io.github.sx2xoox.speedrunbot.core.Hearing.Heard h : s.heardLava()) {
+            boolean old = false;
+            for (Vec3d e : lavaExplained) {
+                if (e.squaredDistanceTo(h.x, h.y, h.z) < 7 * 7) {
+                    old = true; // lava already seen there (a lava fall, a spring): no portal pool
+                }
+            }
+            if (old) {
+                continue;
+            }
             lavaHeard.addLast(new double[]{h.x, h.y, h.z, now()});
             if (lavaHeard.size() > 12) {
                 lavaHeard.removeFirst();
@@ -1707,6 +1718,15 @@ public final class RunBrain {
             // without seeing anything, the guess is spent: look around and listen again.
             double dx = lavaHeardAt.x - f.getX() - 0.5, dz = lavaHeardAt.z - f.getZ() - 0.5;
             double dyHeard = lavaHeardAt.y - f.getY();
+            BlockPos hb = new BlockPos(lavaHeardAt);
+            if (nearestBlock(hb, 4, Blocks2::isLava) != null || (dx * dx + dz * dz < 64 && nearestBlock(f, 5, Blocks2::isLava) != null)) {
+                // the sound comes from lava in view that is no scoopable pool (a fall, a spring's flow)
+                trace("heard lava around " + hb + " is lava already seen (no pool there): listening elsewhere");
+                lavaExplained.add(lavaHeardAt);
+                lavaHeard.clear();
+                lavaHeardAt = null;
+                return;
+            }
             if (dyHeard > 2.5 && f.getY() < 50) {
                 // the lava is above the tunnel (a pool higher up in the rock): climb toward its level, a tunnel at
                 // the lava level never sees it (runs heard lava at y 18 for minutes from a tunnel at y 12)

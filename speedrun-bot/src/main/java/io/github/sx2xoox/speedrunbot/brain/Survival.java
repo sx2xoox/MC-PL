@@ -196,8 +196,8 @@ public final class Survival {
                 b.trace("hit by something out of view: looking around");
             }
             interruptScreens();
-            b.c.lookAngles(b.s.yaw() + 45f, 5f);
-            if (++lookTicks >= 8) {
+            b.c.lookAngles(b.s.yaw() + 45f, lookTicks % 4 < 2 ? 5f : -55f); // around and up (a shaft's mouth)
+            if (++lookTicks >= 10) {
                 lookTicks = 0;
                 lookedForAttacker = lastHurtTick;
             }
