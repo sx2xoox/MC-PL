@@ -192,7 +192,8 @@ public final class RunBrain {
         if (attackCooldown > 0) {
             attackCooldown--;
         }
-        if (!survival.tick()) {
+        watchdog();
+        if (!survival.tick() && !unstick()) {
             Goal next = choose();
             if (next != goal) {
                 trace("goal " + goal + " -> " + next + " after " + goalTicks + "t inv=" + inv.summary());
@@ -208,6 +209,78 @@ public final class RunBrain {
             run();
         }
         c.flush();
+    }
+
+    private long progressKey;
+    private long lastProgressTick;
+    private int stalls;
+
+    /**
+     * Nothing moved and nothing changed in the inventory for a long time (a step that can never finish): drop the
+     * sub-goal state so the goal starts over from what it knows now.
+     */
+    private void watchdog() {
+        BlockPos f = mover.feet();
+        long key = f.asLong() * 31 + inventoryHash();
+        if (key != progressKey || smelter.smelting() || bench.busy()) {
+            progressKey = key;
+            lastProgressTick = now();
+            return;
+        }
+        if (now() - lastProgressTick > p.getInt("safety.stallTicks")) {
+            stalls++;
+            trace("stalled " + (now() - lastProgressTick) + "t in " + goal + " (target " + target + ", cave " + caveTarget + "): starting the step over");
+            if (target != null) {
+                badTargets.add(target.asLong());
+            }
+            if (caveTarget != null) {
+                markVisited(caveTarget);
+            }
+            target = null;
+            caveTarget = null;
+            placeTarget = null;
+            exploreTarget = null;
+            mover.reset();
+            mover.forgetAvoid();
+            if (s.screenOpen()) {
+                c.closeScreen();
+            }
+            turn();
+            lastProgressTick = now();
+            unstickTicks = 30;
+            unstickYaw = rng.nextFloat() * 360f;
+        }
+    }
+
+    private int unstickTicks;
+    private float unstickYaw;
+
+    /** After a stall: walk (and jump, and dig what blocks the way) in a random direction for a moment. */
+    private boolean unstick() {
+        if (unstickTicks <= 0) {
+            return false;
+        }
+        unstickTicks--;
+        c.lookAngles(unstickYaw, 10f);
+        c.move(1f, 0f, true, false, false);
+        if (s.horizontalCollision()) {
+            BlockPos f = mover.feet();
+            double[] d = PerceptionRules.direction(unstickYaw, 0);
+            BlockPos ahead = f.add(Math.round(d[0]), 1, Math.round(d[2]));
+            if (a.solid(ahead) && !a.lavaNextTo(ahead)) {
+                a.mine(ahead, false);
+            }
+        }
+        return true;
+    }
+
+    private long inventoryHash() {
+        long h = 0;
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = s.inventory().getStack(i);
+            h = h * 17 + (st.isEmpty() ? 0 : st.getCount() * 131 + Item.getRawId(st.getItem()));
+        }
+        return h;
     }
 
     final Survival survival = new Survival(this);
@@ -970,10 +1043,13 @@ public final class RunBrain {
                 turn();
                 return;
             }
-            if (inv.throwaways() > 0 && Blocks2.pass(floor) == Blocks2.Pass.PASS) {
-                a.place(col.down(), Actions::isThrowaway);
+            if (inv.throwaways() > 0 && Blocks2.pass(floor) == Blocks2.Pass.PASS && ++holeTicks < 60) {
+                if (a.place(col.down(), Actions::isThrowaway) == Actions.Status.FAILED) {
+                    holeTicks = 60;
+                }
                 return;
             }
+            holeTicks = 0;
             turn();
             return;
         }
@@ -995,6 +1071,7 @@ public final class RunBrain {
     }
 
     private long lastTurnTick;
+    private int holeTicks;
     private int turnStreak;
 
     private void turn() {
@@ -1351,13 +1428,14 @@ public final class RunBrain {
             target = mem.nearest(WorldMemory.Kind.WATER_SOURCE, f, p.get("portal.waterSearchDist") * 3,
                     l -> !badTargets.contains(l) && exposedTop(BlockPos.fromLong(l)));
             subTicks = 0;
-            if (target != null && f.getY() < surface - 4 && target.getY() > f.getY() + 6
-                    && Math.abs(target.getX() - f.getX()) + Math.abs(target.getZ() - f.getZ()) > 6) {
-                target = null; // far above us: straight up first (reliable), then walk on the surface
+            if (target != null && target.getY() > f.getY() + 4) {
+                climbTo = target.getY();
+                target = null; // well above us: straight up first (reliable), then walk across
+                climbing = true;
             }
         }
-        if (climbing && f.getY() < surface) {
-            if (mover.climb(surface) != Mover.Status.RUNNING) {
+        if (climbing && f.getY() < Math.max(surface, climbTo)) {
+            if (mover.climb(Math.max(surface, climbTo)) != Mover.Status.RUNNING) {
                 climbing = false;
             }
             return;
@@ -1458,6 +1536,7 @@ public final class RunBrain {
 
     private BlockPos waterToRecover;
     private boolean climbing;
+    private int climbTo;
 
     /** Survival poured the water bucket somewhere: scoop it back before going on. */
     void recoverWater(BlockPos at) {

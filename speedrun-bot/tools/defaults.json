@@ -34,6 +34,7 @@
   "portal.approachDist": 20.0,
   "portal.maxLavaDist": 9.0,
   "portal.waterSearchDist": 64.0,
+  "safety.stallTicks": 300.0,
   "safety.lavaMargin": 1.0,
   "safety.fleeHealth": 8.0,
   "food.eatBelow": 12.0

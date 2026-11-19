@@ -43,10 +43,15 @@ def read_csv(path):
         return list(csv.DictReader(f))
 
 
+# Splits every route passes (treasure and smelting splits are route-specific, so they do not count for progress).
+CORE_SPLITS = ["first_log", "wooden_pickaxe", "stone_pickaxe", "bucket", "flint_and_steel", "water_bucket", "portal_site",
+               "portal_room", "obsidian_10", "portal_lit", "in_portal", "nether"]
+
+
 def milestones(row):
-    """Number of splits reached (progress measure for failed runs)."""
+    """Number of core splits reached (progress measure for failed runs)."""
     n = 0
-    for s in SPLITS:
+    for s in CORE_SPLITS:
         v = row.get("split_" + s, "")
         if v not in ("", None):
             n += 1
@@ -58,7 +63,7 @@ def score(row, timeout_s=600.0):
     ok = str(row.get("success")).lower() == "true"
     if ok:
         return float(row["igt_s"])
-    return timeout_s + 60.0 * (len(SPLITS) - milestones(row))
+    return timeout_s + 60.0 * (len(CORE_SPLITS) - milestones(row))
 
 
 def summary(rows):
