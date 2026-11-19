@@ -1,0 +1,606 @@
+package io.github.sx2xoox.speedrunbot.brain;
+
+import io.github.sx2xoox.speedrunbot.core.Cell;
+import io.github.sx2xoox.speedrunbot.core.PortalPlan;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.item.Items;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Executes a {@link PortalPlan} next to a known lava source with one bucket: pick a site in solid rock, carve the
+ * room, park the water in the station hole, then for each frame cell: mine the pocket, fetch lava, pour it in, grab
+ * the parked water, pour it in front of the pocket (lava source -> obsidian), pick it up and park it again. Then mine
+ * the interior, light it and walk in.
+ */
+public final class PortalBuilder {
+    private enum State { NONE, CARVE, STATION, CAST, INTERIOR, LIGHT, ENTER }
+
+    private final RunBrain b;
+    private State state = State.NONE;
+    private PortalPlan plan;
+    private BlockPos lava;
+    private boolean waterPlaced;
+    private int cellIndex;
+    private int sub;
+    private int subTicks;
+    private int clickChoice;
+    private int siteAttempts;
+    private int obsidian;
+    private long castTick;
+
+    public PortalBuilder(RunBrain b) {
+        this.b = b;
+    }
+
+    public boolean active() {
+        return state != State.NONE;
+    }
+
+    public boolean waterPlaced() {
+        return waterPlaced;
+    }
+
+    public int obsidian() {
+        return obsidian;
+    }
+
+    private static BlockPos bp(Cell c) {
+        return new BlockPos(c.x, c.y, c.z);
+    }
+
+    private static Cell cell(BlockPos p) {
+        return new Cell(p.getX(), p.getY(), p.getZ());
+    }
+
+    private BlockState mem(Cell c) {
+        return b.mem.get(c.x, c.y, c.z);
+    }
+
+    /** Nearest known lava source the bot could scoop (top face open). */
+    public BlockPos chooseLava() {
+        BlockPos f = b.feet();
+        return b.mem.nearest(WorldMemory.Kind.LAVA_SOURCE, f, 160, l -> {
+            if (b.badTargets().contains(l)) {
+                return false;
+            }
+            BlockState up = b.mem.get(BlockPos.fromLong(l).up());
+            return up != null && up.isAir();
+        });
+    }
+
+    // ================================================================== site
+
+    private PortalPlan findSite(BlockPos lavaPos) {
+        double maxLava = b.p.get("portal.maxLavaDist");
+        Cell[] dirs = {new Cell(1, 0, 0), new Cell(-1, 0, 0), new Cell(0, 0, 1), new Cell(0, 0, -1)};
+        PortalPlan best = null;
+        double bestScore = Double.MAX_VALUE;
+        BlockPos f = b.feet();
+        int r = (int) Math.ceil(maxLava) + 2;
+        for (int dy = -3; dy <= 3; dy++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    Cell origin = new Cell(lavaPos.getX() + dx, lavaPos.getY() + dy, lavaPos.getZ() + dz);
+                    for (Cell n : dirs) {
+                        for (int sgn = -1; sgn <= 1; sgn += 2) {
+                            Cell u = new Cell(-n.z * sgn, 0, n.x * sgn);
+                            PortalPlan pl = new PortalPlan(origin, u, n);
+                            Cell stand = pl.at(2, 1, 2);
+                            double dl = Math.sqrt(sq(stand.x - lavaPos.getX()) + sq(stand.y - lavaPos.getY()) + sq(stand.z - lavaPos.getZ()));
+                            if (dl > maxLava) {
+                                continue;
+                            }
+                            double sc = score(pl);
+                            if (Double.isInfinite(sc)) {
+                                continue;
+                            }
+                            sc += dl * 2 + Math.sqrt(f.getSquaredDistance(stand.x, stand.y, stand.z, true)) * 0.3;
+                            if (sc < bestScore) {
+                                bestScore = sc;
+                                best = pl;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    private double score(PortalPlan pl) {
+        double unknown = 0;
+        for (Cell c : pl.solidBefore()) {
+            BlockState s = mem(c);
+            if (s == null) {
+                unknown++;
+                continue;
+            }
+            if (Blocks2.pass(s) != Blocks2.Pass.SOLID || Blocks2.falls(s)) {
+                return Double.POSITIVE_INFINITY;
+            }
+            if (lavaNear(c)) {
+                return Double.POSITIVE_INFINITY;
+            }
+        }
+        List<Cell> room = pl.room();
+        for (Cell c : room) {
+            BlockState s = mem(c);
+            if (s != null && (Blocks2.isLava(s) || Blocks2.isWater(s) || Blocks2.pass(s) == Blocks2.Pass.FORBID)) {
+                return Double.POSITIVE_INFINITY;
+            }
+            if (lavaNear(c)) {
+                return Double.POSITIVE_INFINITY;
+            }
+            BlockState up = mem(c.add(0, 1, 0));
+            if (up != null && Blocks2.falls(up) && !room.contains(c.add(0, 1, 0))) {
+                return Double.POSITIVE_INFINITY;
+            }
+        }
+        List<Cell> floors = new ArrayList<>();
+        for (int a = 0; a <= 3; a++) {
+            floors.add(pl.at(a, 0, 1));
+            floors.add(pl.at(a, 0, 2));
+        }
+        floors.add(pl.waterStation().add(0, -1, 0));
+        for (Cell c : floors) {
+            BlockState s = mem(c);
+            if (s == null) {
+                unknown += 0.5;
+            } else if (!Blocks2.standable(s) || Blocks2.isLava(s)) {
+                return Double.POSITIVE_INFINITY;
+            }
+        }
+        return unknown;
+    }
+
+    private boolean lavaNear(Cell c) {
+        for (Direction d : Direction.values()) {
+            BlockState s = b.mem.get(c.x + d.getOffsetX(), c.y + d.getOffsetY(), c.z + d.getOffsetZ());
+            if (s != null && Blocks2.isLava(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static double sq(double v) {
+        return v * v;
+    }
+
+    private void restartSite(String why) {
+        b.trace("portal site failed: " + why);
+        if (lava != null) {
+            b.badTargets().add(lava.asLong());
+        }
+        if (++siteAttempts > 4) {
+            b.fail("portal_" + why);
+            return;
+        }
+        state = State.NONE;
+        plan = null;
+        sub = 0;
+    }
+
+    // ================================================================== tick
+
+    public void tick() {
+        subTicks++;
+        if (state == State.NONE) {
+            lava = chooseLava();
+            if (lava == null) {
+                b.exploreForLava();
+                return;
+            }
+            plan = findSite(lava);
+            if (plan == null) {
+                b.trace("no portal site near lava " + lava.toString());
+                b.badTargets().add(lava.asLong());
+                return;
+            }
+            b.split("portal_site");
+            b.trace("portal site origin=" + plan.origin() + " u=" + plan.u() + " n=" + plan.n() + " lava=" + lava.toString());
+            state = State.CARVE;
+            sub = 0;
+            subTicks = 0;
+            return;
+        }
+        switch (state) {
+            case CARVE:
+                carve();
+                break;
+            case STATION:
+                station();
+                break;
+            case CAST:
+                cast();
+                break;
+            case INTERIOR:
+                interior();
+                break;
+            case LIGHT:
+                light();
+                break;
+            case ENTER:
+                enter();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private boolean mineCell(Cell c, double reach) {
+        BlockPos p = bp(c);
+        if (!b.a.solid(p) && b.mem.get(p) != null) {
+            return true;
+        }
+        BlockPos f = b.feet();
+        Navigator.Goal g = Navigator.reach(p, reach);
+        if (!g.done(f.getX(), f.getY(), f.getZ()) || !b.s.onGround()) {
+            if (b.mover.go(g) == Mover.Status.FAILED) {
+                restartSite("unreachable");
+            }
+            return false;
+        }
+        Actions.Status st = b.a.mine(p, false);
+        if (st == Actions.Status.FAILED) {
+            restartSite("mine_failed");
+        }
+        return false;
+    }
+
+    private void carve() {
+        if (subTicks > 2400) {
+            restartSite("carve_timeout");
+            return;
+        }
+        // top cells first in each column, nearest column first
+        List<Cell> room = new ArrayList<>(plan.room());
+        BlockPos f = b.feet();
+        Cell next = null;
+        double bestD = Double.MAX_VALUE;
+        for (Cell c : room) {
+            BlockPos p = bp(c);
+            if (!b.a.solid(p) && b.mem.get(p) != null) {
+                continue;
+            }
+            double d = Math.sqrt(f.getSquaredDistance(p)) - c.y * 0.01;
+            if (d < bestD) {
+                bestD = d;
+                next = c;
+            }
+        }
+        if (next == null) {
+            state = State.STATION;
+            sub = 0;
+            subTicks = 0;
+            b.split("portal_room");
+            return;
+        }
+        // prefer the top of that column
+        Cell top = next;
+        while (room.contains(top.add(0, 1, 0)) && (b.a.solid(bp(top.add(0, 1, 0))) || mem(top.add(0, 1, 0)) == null)) {
+            top = top.add(0, 1, 0);
+        }
+        mineCell(top, 4.2);
+    }
+
+    /** Where to stand for casting a cell: a stand cell within reach of the pocket, its front and the station. */
+    private Cell standFor(Cell c) {
+        Cell best = null;
+        double bestD = Double.MAX_VALUE;
+        Cell front = plan.front(c);
+        for (Cell s : plan.standCells()) {
+            Vec3d eye = new Vec3d(s.x + 0.5, s.y + 1.62, s.z + 0.5);
+            double d = Math.max(dist(eye, c), Math.max(dist(eye, front), dist(eye, plan.waterStation())));
+            if (d < bestD) {
+                bestD = d;
+                best = s;
+            }
+        }
+        return best;
+    }
+
+    private static double dist(Vec3d e, Cell c) {
+        return e.distanceTo(new Vec3d(c.x + 0.5, c.y + 0.5, c.z + 0.5));
+    }
+
+    private boolean goStand(Cell stand) {
+        BlockPos f = b.feet();
+        if (f.equals(bp(stand)) && b.s.onGround()) {
+            return true;
+        }
+        if (b.mover.go(Navigator.at(bp(stand))) == Mover.Status.FAILED) {
+            restartSite("stand_unreachable");
+        }
+        return false;
+    }
+
+    private void station() {
+        Cell st = plan.waterStation();
+        if (sub == 0) {
+            if (!mineCell(st, 4.2)) {
+                return;
+            }
+            sub = 1;
+            subTicks = 0;
+        }
+        if (sub == 1) {
+            if (!goStand(plan.standCells().get(0))) {
+                return;
+            }
+            if (isWaterSource(st)) {
+                waterPlaced = true;
+                state = State.CAST;
+                cellIndex = 0;
+                sub = 0;
+                subTicks = 0;
+                return;
+            }
+            if (b.a.equip(Items.WATER_BUCKET) != Actions.Status.DONE) {
+                if (!b.inv().has(Items.WATER_BUCKET)) {
+                    restartSite("no_water");
+                }
+                return;
+            }
+            pourInto(st);
+            if (subTicks > 200) {
+                restartSite("station_pour");
+            }
+        }
+    }
+
+    private boolean isWaterSource(Cell c) {
+        BlockState s = mem(c);
+        return s != null && Blocks2.isWaterSource(s);
+    }
+
+    private boolean isObsidian(Cell c) {
+        BlockState s = mem(c);
+        return s != null && s.getBlock() == Blocks.OBSIDIAN;
+    }
+
+    /**
+     * Pours the held bucket into an empty cell by clicking a solid neighbour's face that points into it; tries the
+     * candidate faces in turn until the crosshair lands on one.
+     */
+    private void pourInto(Cell target) {
+        List<BlockHitResult> clicks = new ArrayList<>();
+        Vec3d eye = b.s.eyePos();
+        for (Direction d : Direction.values()) {
+            Cell sup = target.add(d.getOffsetX(), d.getOffsetY(), d.getOffsetZ());
+            BlockState s = mem(sup);
+            if (s == null || !Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s)) {
+                continue;
+            }
+            Direction face = d.getOpposite();
+            Vec3d pt = new Vec3d(sup.x + 0.5 + face.getOffsetX() * 0.5, sup.y + 0.5 + face.getOffsetY() * 0.5, sup.z + 0.5 + face.getOffsetZ() * 0.5);
+            Vec3d toEye = eye.subtract(pt);
+            if (toEye.x * face.getOffsetX() + toEye.y * face.getOffsetY() + toEye.z * face.getOffsetZ() <= 0.05 || toEye.length() > 4.4) {
+                continue;
+            }
+            clicks.add(new BlockHitResult(pt, face, bp(sup), false));
+        }
+        if (clicks.isEmpty()) {
+            return;
+        }
+        BlockHitResult click = clicks.get((clickChoice / 12) % clicks.size());
+        clickChoice++;
+        if (b.a.useOn(click) == Actions.Status.DONE) {
+            clickChoice = 0;
+        }
+    }
+
+    /** Scoops a fluid source with the held empty bucket (aims at its surface). */
+    private void scoop(Cell src) {
+        if (b.a.equip(Items.BUCKET) != Actions.Status.DONE) {
+            return;
+        }
+        Vec3d aim = new Vec3d(src.x + 0.5, src.y + 0.75, src.z + 0.5);
+        b.c.lookAt(aim);
+        if (b.c.aimed(aim, 2.5f)) {
+            b.c.use();
+        }
+    }
+
+    private void cast() {
+        List<Cell> frame = plan.frame();
+        while (cellIndex < frame.size() && isObsidian(frame.get(cellIndex)) && sub == 0) {
+            cellIndex++;
+        }
+        obsidian = 0;
+        for (Cell c : frame) {
+            if (isObsidian(c)) {
+                obsidian++;
+            }
+        }
+        if (cellIndex >= frame.size()) {
+            b.split("obsidian_10");
+            state = State.INTERIOR;
+            sub = 0;
+            subTicks = 0;
+            return;
+        }
+        if (subTicks > 1500) {
+            restartSite("cast_timeout_" + cellIndex + "_" + sub);
+            return;
+        }
+        Cell c = frame.get(cellIndex);
+        Cell front = plan.front(c);
+        boolean bottom = plan.isBottom(c);
+        Cell stand = standFor(c);
+        switch (sub) {
+            case 0: // floor hole for the bottom row
+                if (bottom && !mineCell(front, 4.2)) {
+                    return;
+                }
+                sub = 1;
+                return;
+            case 1: // pocket
+                if (!mineCell(c, 4.2)) {
+                    return;
+                }
+                for (Cell n : plan.mustBeSolid(c)) {
+                    BlockState s = mem(n);
+                    if (s != null && Blocks2.pass(s) != Blocks2.Pass.SOLID) {
+                        restartSite("pocket_open_" + cellIndex);
+                        return;
+                    }
+                }
+                sub = 2;
+                return;
+            case 2: { // fetch lava
+                if (b.inv().has(Items.LAVA_BUCKET)) {
+                    sub = 3;
+                    return;
+                }
+                BlockPos src = chooseLava();
+                if (src == null || src.getSquaredDistance(lava) > 20 * 20) {
+                    restartSite("lava_gone");
+                    return;
+                }
+                if (b.fillBucket(src, Items.LAVA_BUCKET) == Actions.Status.FAILED) {
+                    b.badTargets().add(src.asLong());
+                }
+                return;
+            }
+            case 3: // pour lava into the pocket
+                if (!goStand(stand)) {
+                    return;
+                }
+                if (!b.inv().has(Items.LAVA_BUCKET)) {
+                    castTick = b.now();
+                    sub = 4;
+                    return;
+                }
+                if (b.a.equip(Items.LAVA_BUCKET) != Actions.Status.DONE) {
+                    return;
+                }
+                pourInto(c);
+                return;
+            case 4: // grab the parked water
+                if (b.inv().has(Items.WATER_BUCKET)) {
+                    sub = 5;
+                    return;
+                }
+                scoop(plan.waterStation());
+                return;
+            case 5: // water in front of the pocket
+                if (isObsidian(c)) {
+                    sub = 6;
+                    return;
+                }
+                if (!b.inv().has(Items.WATER_BUCKET)) {
+                    // poured: wait for the obsidian to show
+                    b.c.lookAt(new Vec3d(c.x + 0.5, c.y + 0.5, c.z + 0.5));
+                    return;
+                }
+                if (b.a.equip(Items.WATER_BUCKET) != Actions.Status.DONE) {
+                    return;
+                }
+                pourInto(front);
+                return;
+            case 6: // pick the water up again
+                if (b.inv().has(Items.WATER_BUCKET)) {
+                    sub = 7;
+                    return;
+                }
+                if (isWaterSource(front)) {
+                    scoop(front);
+                } else {
+                    // the source is gone (flowed); look around for it
+                    b.c.lookAt(new Vec3d(front.x + 0.5, front.y + 0.5, front.z + 0.5));
+                    if (subTicks > 600) {
+                        restartSite("water_lost");
+                    }
+                }
+                return;
+            case 7: // park it in the station
+                if (isWaterSource(plan.waterStation()) && !b.inv().has(Items.WATER_BUCKET)) {
+                    sub = 8;
+                    return;
+                }
+                if (b.a.equip(Items.WATER_BUCKET) != Actions.Status.DONE) {
+                    return;
+                }
+                pourInto(plan.waterStation());
+                return;
+            case 8: // refill the floor hole
+                if (bottom) {
+                    Actions.Status st = b.a.place(bp(front), Actions::isThrowaway);
+                    if (st == Actions.Status.RUNNING) {
+                        return;
+                    }
+                }
+                b.trace("obsidian " + (cellIndex + 1) + "/10 at " + c);
+                cellIndex++;
+                sub = 0;
+                subTicks = 0;
+                return;
+            default:
+                break;
+        }
+    }
+
+    private void interior() {
+        for (int bIdx = 3; bIdx >= 1; bIdx--) {
+            for (int a = 1; a <= 2; a++) {
+                Cell c = plan.at(a, bIdx);
+                if (b.a.solid(bp(c)) || mem(c) == null) {
+                    mineCell(c, 4.2);
+                    return;
+                }
+            }
+        }
+        state = State.LIGHT;
+        sub = 0;
+        subTicks = 0;
+    }
+
+    private void light() {
+        BlockState fire = mem(plan.fireCell());
+        if (fire != null && fire.getBlock() == Blocks.NETHER_PORTAL) {
+            b.split("portal_lit");
+            state = State.ENTER;
+            subTicks = 0;
+            return;
+        }
+        if (subTicks > 400) {
+            restartSite("light_failed");
+            return;
+        }
+        if (!goStand(plan.at(1, 1, 2))) {
+            return;
+        }
+        if (b.a.equip(Items.FLINT_AND_STEEL) != Actions.Status.DONE) {
+            return;
+        }
+        Cell t = plan.lightTarget();
+        BlockHitResult click = new BlockHitResult(new Vec3d(t.x + 0.5, t.y + 1.0, t.z + 0.5), Direction.UP, bp(t), false);
+        b.a.useOn(click);
+    }
+
+    private void enter() {
+        Cell e = plan.entryCell();
+        if (b.s.inPortal()) {
+            b.split("in_portal");
+            b.c.lookAngles(b.s.yaw(), 0f);
+            return; // stand still until the dimension changes
+        }
+        if (subTicks > 400) {
+            b.fail("enter_failed");
+            return;
+        }
+        Vec3d target = new Vec3d(e.x + 0.5, e.y, e.z + 0.5);
+        Vec3d p = b.s.pos();
+        float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(target.x - p.x, target.z - p.z);
+        b.c.lookAngles(yaw, 10f);
+        b.c.move(0.6f, 0f, false, false, false);
+    }
+}
