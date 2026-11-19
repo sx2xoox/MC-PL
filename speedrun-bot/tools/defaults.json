@@ -1,5 +1,5 @@
 {
-  "wood.logs": 5.0,
+  "wood.logs": 6.0,
   "wood.maxSearchTicks": 1200.0,
   "craft.spareWood": 4.0,
   "craft.tableReuseDist": 16.0,
@@ -24,7 +24,7 @@
   "treasure.shipDist": 64.0,
   "treasure.shipTicks": 1600.0,
   "treasure.seaSources": 150.0,
-  "treasure.scoutTicks": 700.0,
+  "treasure.scoutTicks": 0.0,
   "treasure.maxTicks": 4800.0,
   "route.treasureBaseSec": 110.0,
   "loot.chestDist": 20.0,

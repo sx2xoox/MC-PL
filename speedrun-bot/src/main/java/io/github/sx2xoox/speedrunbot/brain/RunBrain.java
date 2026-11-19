@@ -265,6 +265,7 @@ public final class RunBrain {
     }
 
     private long progressKey;
+    private Vec3d progressAnchor;
     private long lastProgressTick;
     private int stalls;
 
@@ -274,9 +275,13 @@ public final class RunBrain {
      */
     private void watchdog() {
         BlockPos f = mover.feet();
-        long key = BlockPos.asLong(f.getX(), f.getY() >> 2, f.getZ()) * 31 + inventoryHash(); // bobbing in water is no progress
-        if (key != progressKey || smelter.smelting() || bench.busy()) {
+        // progress = the inventory changed or the bot got 2.5 blocks away from where it was (pacing back and forth
+        // between two cells for minutes on a mineshaft's rails counted as moving before)
+        long key = inventoryHash();
+        Vec3d here = s.pos();
+        if (key != progressKey || progressAnchor == null || here.squaredDistanceTo(progressAnchor) > 2.5 * 2.5 || smelter.smelting() || bench.busy()) {
             progressKey = key;
+            progressAnchor = here;
             lastProgressTick = now();
             return;
         }
@@ -1993,6 +1998,12 @@ public final class RunBrain {
                     target = spot;
                     subTicks = 0;
                 }
+                return;
+            }
+            if (fp != null && mover.feet().getSquaredDistance(fp) < 10 * 10 && smelter.secondsLeft(now()) > 8) {
+                // no gravel known: look for some close to the furnace while the ore smelts (the lighter is needed
+                // once the frame stands; getting flint then cost minutes in runs)
+                exploreUnderground("gravel");
                 return;
             }
         }

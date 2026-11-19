@@ -26,7 +26,7 @@ public final class Params {
     static {
         Map<String, Double> d = new LinkedHashMap<>();
         // --- wood ---
-        d.put("wood.logs", 5.0);                 // logs before crafting (table + pick + sticks + spare planks)
+        d.put("wood.logs", 6.0);                 // logs before crafting (table + pick + sticks + spare planks)
         d.put("wood.maxSearchTicks", 1200.0);    // give up looking for trees after this
         d.put("craft.spareWood", 4.0);           // keep the table when planks for a new one + this spare are missing
         d.put("craft.tableReuseDist", 16.0);    // walk back to a known table only within this distance
@@ -58,7 +58,7 @@ public final class Params {
         d.put("treasure.shipDist", 64.0);        // go for a shipwreck seen within this distance
         d.put("treasure.shipTicks", 1600.0);
         d.put("treasure.seaSources", 150.0);     // sea-level water sources seen near the spawn that count as an ocean
-        d.put("treasure.scoutTicks", 700.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
+        d.put("treasure.scoutTicks", 0.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
         d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
         d.put("route.treasureBaseSec", 110.0);   // expected seconds to iron via the treasure route (plus the walk)
         d.put("loot.chestDist", 20.0);           // open a chest seen this close while iron is still missing

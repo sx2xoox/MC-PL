@@ -54,6 +54,11 @@ public final class Smelter {
         return phase == Phase.SMELTING || phase == Phase.GO_COLLECT || phase == Phase.OPEN_COLLECT || phase == Phase.COLLECT;
     }
 
+    /** Seconds until the loaded ore is done (0 when not smelting). */
+    public double secondsLeft(long now) {
+        return smelting() ? Math.max(0, (readyTick - now) / 20.0) : 0;
+    }
+
     public boolean ready() {
         return smelting() && b.now() >= readyTick;
     }

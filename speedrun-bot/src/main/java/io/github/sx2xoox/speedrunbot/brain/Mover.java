@@ -320,7 +320,8 @@ public final class Mover {
             bestDist = Double.MAX_VALUE;
         }
         // deviation: fell somewhere else
-        if (!f.equals(t) && !f.equals(from) && s.onGround() && f.getManhattanDistance(t) > 2) {
+        boolean sankBelowFrom = (wet || s.inWater()) && f.getX() == from.getX() && f.getZ() == from.getZ() && f.getY() >= from.getY() - 2;
+        if (!f.equals(t) && !f.equals(from) && s.onGround() && f.getManhattanDistance(t) > 2 && !sankBelowFrom) {
             return replan("deviation");
         }
         stuckCheck(t, false);
