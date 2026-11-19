@@ -29,7 +29,8 @@ import java.util.Map;
  *   <li>{@code srb.trace} - optional trace log path</li>
  *   <li>{@code srb.timeoutTicks} (12000 = 10 IGT minutes)</li>
  *   <li>{@code srb.fair} (true) - fair perception; false = relaxed comparison mode</li>
- *   <li>{@code srb.warp} (true) - no sleeping between ticks</li>
+ *   <li>{@code srb.warp} (true) - no sleeping between ticks; {@code srb.warpBudgetMs} (0) - extra wall time per tick for
+ *   queued tasks (queued chunk work still runs at the start of the next tick, so 0 changes no tick)</li>
  *   <li>{@code srb.renderChunks} (10), {@code srb.rays} (220 rays per tick)</li>
  *   <li>{@code srb.exit} (true) - halt the JVM after writing the result (the world is thrown away anyway)</li>
  * </ul>
@@ -37,7 +38,7 @@ import java.util.Map;
 public final class BotRuntime {
     private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("srb.enabled", "true"));
     private static final boolean WARP = Boolean.parseBoolean(System.getProperty("srb.warp", "true"));
-    private static final long WARP_BUDGET_MS = Long.getLong("srb.warpBudgetMs", 3L);
+    private static final long WARP_BUDGET_MS = Long.getLong("srb.warpBudgetMs", 0L);
 
     private static ServerBot bot;
     private static RunBrain brain;
