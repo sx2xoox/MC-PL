@@ -76,6 +76,13 @@ public final class BotRuntime {
         tickNanosSum += last;
         tickNanosMax = Math.max(tickNanosMax, last);
         ticksMeasured++;
+        try {
+            bot.player().networkTick();
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            finish(server, "exception:" + e.getClass().getSimpleName());
+            return;
+        }
         bot.newTick();
         try {
             brain.tick();

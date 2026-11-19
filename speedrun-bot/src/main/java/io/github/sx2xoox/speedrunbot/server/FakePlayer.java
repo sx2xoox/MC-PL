@@ -41,7 +41,18 @@ public final class FakePlayer extends ServerPlayerEntity {
             getServerWorld().getChunkManager().updateCameraPosition(this);
         }
         super.tick();
-        playerTick();
+    }
+
+    /**
+     * What the network handler of a real player does once per server tick, outside the worlds' entity loops: the
+     * player's own movement and status tick. Called from the server tick hook, not from {@link #tick()}: going through
+     * a nether portal removes the player from its world, which vanilla forbids while that world ticks its entities
+     * (it crashed every run that entered the nether: "Removing entity while ticking!").
+     */
+    public void networkTick() {
+        if (!removed) {
+            playerTick();
+        }
     }
 
     /** Server players skip fall damage because the client reports falls; this player reports its own. */

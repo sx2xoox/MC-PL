@@ -94,4 +94,10 @@ public interface BotSenses extends BlockSource {
 
     /** True while the bot is inside a nether portal block. */
     boolean inPortal();
+
+    /**
+     * Lava sounds heard this tick, as a player perceives them (rough direction and distance only, see
+     * {@link io.github.sx2xoox.speedrunbot.core.Hearing}); empty when hearing is off.
+     */
+    List<io.github.sx2xoox.speedrunbot.core.Hearing.Heard> heardLava();
 }

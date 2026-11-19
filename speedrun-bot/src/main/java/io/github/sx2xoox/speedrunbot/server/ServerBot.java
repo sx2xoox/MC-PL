@@ -470,6 +470,34 @@ public final class ServerBot implements BotInputs, BotSenses {
     /** Call at the start of a tick: chunk objects may have been unloaded. */
     public void newTick() {
         cachedChunk = null;
+        heard = null;
+    }
+
+    private static final boolean HEARING = !"false".equals(System.getProperty("srb.hearing"));
+    private final java.util.Random earRandom = new java.util.Random(0x5EED);
+    private List<io.github.sx2xoox.speedrunbot.core.Hearing.Heard> heard;
+
+    @Override
+    public List<io.github.sx2xoox.speedrunbot.core.Hearing.Heard> heardLava() {
+        if (heard != null) {
+            return heard;
+        }
+        heard = new java.util.ArrayList<>();
+        if (!HEARING) {
+            return heard;
+        }
+        BlockPos p = player.getBlockPos();
+        Vec3d e = eyePos();
+        // the sounds the vanilla client would play this tick (its random display ticks), heard from the ears
+        for (io.github.sx2xoox.speedrunbot.core.Hearing.Sound snd : io.github.sx2xoox.speedrunbot.core.Hearing.lavaSounds(
+                p.getX(), p.getY(), p.getZ(), e.x, e.y, e.z, (x, y, z) -> {
+                    BlockState st = blockAt(x, y, z);
+                    BlockState up = blockAt(x, y + 1, z);
+                    return st != null && up != null && st.getFluidState().isIn(FluidTags.LAVA) && up.isAir();
+                }, earRandom)) {
+            heard.add(io.github.sx2xoox.speedrunbot.core.Hearing.perceive(snd, e.x, e.y, e.z, earRandom));
+        }
+        return heard;
     }
 
     @Override

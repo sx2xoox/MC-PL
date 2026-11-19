@@ -176,6 +176,7 @@ public final class RunBrain {
             return;
         }
         perception.tick();
+        listen();
         goalTicks++;
         if (inv.has(Items.WATER_BUCKET)) {
             split("water_bucket"); // however it was filled (the goal may change before water() runs again)
@@ -212,6 +213,40 @@ public final class RunBrain {
             run();
         }
         c.flush();
+    }
+
+    // ------------------------------------------------------------------ hearing
+
+    private final java.util.ArrayDeque<double[]> lavaHeard = new java.util.ArrayDeque<>();
+    private Vec3d lavaHeardAt;
+
+    /** Lava sounds (rough direction and distance, as a human hears them) averaged into a guess where lava is. */
+    private void listen() {
+        for (io.github.sx2xoox.speedrunbot.core.Hearing.Heard h : s.heardLava()) {
+            lavaHeard.addLast(new double[]{h.x, h.y, h.z, now()});
+            if (lavaHeard.size() > 12) {
+                lavaHeard.removeFirst();
+            }
+        }
+        while (!lavaHeard.isEmpty() && now() - lavaHeard.peekFirst()[3] > 1200) {
+            lavaHeard.removeFirst();
+        }
+        if (lavaHeard.size() < 2) {
+            lavaHeardAt = null;
+            return;
+        }
+        double x = 0, y = 0, z = 0;
+        for (double[] q : lavaHeard) {
+            x += q[0];
+            y += q[1];
+            z += q[2];
+        }
+        int n = lavaHeard.size();
+        Vec3d est = new Vec3d(x / n, y / n, z / n);
+        if (lavaHeardAt == null) {
+            trace(String.format("heard lava %d times, around %.0f,%.0f,%.0f", n, est.x, est.y, est.z));
+        }
+        lavaHeardAt = est;
     }
 
     private long progressKey;
@@ -1198,7 +1233,7 @@ public final class RunBrain {
      */
     private void digStraightDown() {
         act = "shaft";
-        if (collect()) {
+        if (collect() || movingToDryLand()) {
             return;
         }
         BlockPos f = mover.feet();
@@ -1208,6 +1243,11 @@ public final class RunBrain {
         double cx = f.getX() + 0.5 - pos.x, cz = f.getZ() + 0.5 - pos.z;
         if (st != null && (Blocks2.isLava(st) || Blocks2.isWater(st) || a.lavaNextTo(below) || Blocks2.pass(st) == Blocks2.Pass.FORBID)) {
             boolean lava = Blocks2.isLava(st) || a.lavaNextTo(below) || Blocks2.pass(st) == Blocks2.Pass.FORBID;
+            if (!lava && f.getY() >= spawn.getY() - 12) {
+                // a lake or the sea at the surface: walk away from the water and start the shaft on dry land
+                moveAwayFromWater(f);
+                return;
+            }
             trace((lava ? "lava" : "water") + " below the shaft at " + below + ": staircase for a while");
             noStraightUntil = now() + (lava ? 2400 : 300);
             turn();
@@ -1293,6 +1333,50 @@ public final class RunBrain {
             }
         }
         return false;
+    }
+
+    private BlockPos dryTarget;
+    private int dryTicks;
+    private int dryMoves;
+
+    /** Picks a spot about 12 blocks away from the water seen around f (the opposite side of its centroid). */
+    private void moveAwayFromWater(BlockPos f) {
+        double wx = 0, wz = 0;
+        int n = 0;
+        for (int dx = -8; dx <= 8; dx++) {
+            for (int dz = -8; dz <= 8; dz++) {
+                for (int dy = -3; dy <= 1; dy++) {
+                    BlockState st = mem.get(f.getX() + dx, f.getY() + dy, f.getZ() + dz);
+                    if (st != null && Blocks2.isWater(st)) {
+                        wx += dx;
+                        wz += dz;
+                        n++;
+                    }
+                }
+            }
+        }
+        double ang = n == 0 ? rng.nextDouble() * Math.PI * 2 : Math.atan2(-wz / n, -wx / n) + (rng.nextDouble() - 0.5) * (dryMoves > 1 ? 2.0 : 0.6);
+        int dist = 10 + 4 * Math.min(dryMoves, 4);
+        dryTarget = new BlockPos(f.getX() + Math.round(Math.cos(ang) * dist), f.getY(), f.getZ() + Math.round(Math.sin(ang) * dist));
+        dryTicks = 300;
+        dryMoves++;
+        trace("water under the shaft at the surface: moving to dry land at " + dryTarget);
+    }
+
+    /** True while walking to the dry spot picked by {@link #moveAwayFromWater}. */
+    private boolean movingToDryLand() {
+        if (dryTarget == null || dryTicks <= 0) {
+            return false;
+        }
+        dryTicks--;
+        act = "to dry land";
+        Mover.Status st = mover.go(Navigator.dry(dryTarget, 4, mem));
+        if (st != Mover.Status.RUNNING) {
+            dryTicks = 0;
+            dryTarget = null;
+            mover.reset();
+        }
+        return dryTicks > 0;
     }
 
     private void lookAhead() {
@@ -1466,10 +1550,27 @@ public final class RunBrain {
                 }
             }
         }
+        if (why.equals("lava") && portal.chooseLava() == null && lavaHeardAt != null && p.get("lava.hearing") > 0) {
+            // not seen but heard: dig toward the sound (lava above the usual level: go to its height)
+            double dx = lavaHeardAt.x - f.getX() - 0.5, dz = lavaHeardAt.z - f.getZ() - 0.5;
+            if (lavaHeardAt.y > targetY + 8 && f.getY() > lavaHeardAt.y) {
+                targetY = (int) Math.floor(lavaHeardAt.y);
+            }
+            if (dx * dx + dz * dz > 4) {
+                Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+                if (digDir != toward && now() - lastTurnTick > 60) {
+                    digDir = toward;
+                    if (subTicks % 100 == 1) {
+                        trace("digging toward the lava heard around " + new BlockPos(lavaHeardAt));
+                    }
+                }
+            }
+        }
         if (route == RouteSelector.Route.SURFACE_CAST && why.equals("iron")) {
             targetY = Math.max(targetY, 40);
         }
-        if (exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
+        boolean steeredByEar = why.equals("lava") && lavaHeardAt != null && p.get("lava.hearing") > 0;
+        if (!steeredByEar && exploreCave(f, targetY, why.equals("lava") ? targetY + p.getInt("cave.lavaAbove") : Integer.MAX_VALUE)) {
             return;
         }
         // with the water bucket in hand (the lava goal) the shaft goes all the way to the lava level: the bucket puts
@@ -1801,9 +1902,25 @@ public final class RunBrain {
         return st != null && Blocks2.isWaterSource(st);
     }
 
+    /**
+     * A water source the bucket can reach: air above it, or (a spring in a cave wall) air beside it while the cells
+     * around it hold no more water (a lake's edge source is no spring and is taken from above).
+     */
     boolean exposedTop(BlockPos q) {
         BlockState up = mem.get(q.up());
-        return up != null && (up.isAir() || Blocks2.isWater(up) && false);
+        if (up != null && up.isAir()) {
+            return true;
+        }
+        if (p.get("water.springs") <= 0) {
+            return false;
+        }
+        for (Direction d : Direction.Type.HORIZONTAL) {
+            BlockState side = mem.get(q.offset(d));
+            if (side != null && side.isAir()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
