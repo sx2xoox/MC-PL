@@ -1,9 +1,10 @@
-# speedrun-bot — Minecraft Java 1.16.1 RSG 스피드런 봇 (1단계)
+# speedrun-bot — Minecraft Java 1.16.1 RSG 스피드런 봇 (2단계)
 
 무작위 시드 1.16.1에서 엔더드래곤까지 IGT 10분 이하를 목표로 하는 봇의 1단계입니다. 게임 상태를 코드로 읽고
 조종하는 봇(화면 기반 신경망 아님)이고, 루트는 코드, 판단 수치(`params.json`)는 여러 시드 반복 실행으로 자동
-튜닝합니다. 이번 단계 범위: 기반 + 공정 규칙 + 오버월드에서 네더 진입까지 + 헤드리스 측정/튜닝 하네스.
-설계와 측정 결과는 [docs/design.md](docs/design.md).
+튜닝합니다. 1단계: 기반 + 공정 규칙 + 오버월드에서 네더 진입까지 + 헤드리스 측정/튜닝 하네스. 2단계: 화면 세션
+단일 소유(제작·화로·상자), 동굴 프런티어 탐색, 등반·물 확보, 포탈 주조 실전 검증과 수정, 생존, 바다 스폰용 보물
+루트(난파선 → 보물 지도 → 매장 보물), 감시견. 설계와 측정 결과는 [docs/design.md](docs/design.md) (2단계는 §9).
 
 이 폴더는 MC-PL 저장소 안의 **독립 프로젝트**입니다(자체 Gradle 빌드, MC-PL 빌드에 포함되지 않음).
 
@@ -12,21 +13,26 @@
 ```
 src/main/java/io/github/sx2xoox/speedrunbot/
   core/     순수 로직 (MC 의존 없음, 단위 테스트): 캐기 시간, IGT, 입력 상한, 공정 인지 규칙, 파라미터,
-            루트 선택기, 버킷 포탈 주조 계획
+            루트 선택기(DIG_CAST / SURFACE_CAST / TREASURE), 버킷 포탈 주조 계획, 동굴 프런티어(Frontier),
+            보물 지도 읽기(TreasureMap)
   brain/    봇 두뇌: 두 인터페이스(BotInputs = 사람이 낼 수 있는 입력, BotSenses = 사람이 보는 것) 뒤에서만 동작.
-            Perception(시야 레이캐스트 → WorldMemory), Navigator(A*, 기억 지도), Mover, Actions, Workbench(제작),
-            PortalBuilder, RunBrain(목표 순서)
+            Perception(시야 레이캐스트 → WorldMemory), Navigator(A*, 기억 지도), Mover(경로 추종, 등반), Actions,
+            화면 세션 Workbench(제작)·Smelter(화로)·Looter(상자), PortalBuilder, Survival(전투·용암·공기·식사),
+            TreasureHunt(난파선·지도·보물), RunBrain(목표 순서, 감시견)
   server/   서버 구현: FakePlayer(ServerPlayerEntity 하위 클래스) + FakeConnection, ServerBot(두 인터페이스 구현)
   mixin/    서버 틱 훅 + 틱 워프(대기 없이 연속 틱), Slot 접근자
   BotRuntime.java  서버 시작 1회 = 런 1회, 결과 JSON 한 줄 기록
+  DevSetup.java    개발 전용: 시작 키트·순간이동(한 단계만 시험), 시드 분류 probe (측정에는 안 씀)
 tools/      setup_server.py, run_batch.py(병렬 헤드리스 측정), summarize.py, tune.py(자동 탐색),
-            param_space.json(탐색 범위), defaults.json(코드 기본값, 테스트가 동기화 확인), seeds_*.txt
+            group_report.py(시드 그룹·루트별 요약), param_space.json(탐색 범위),
+            defaults.json(코드 기본값, 테스트가 동기화 확인), seeds_*.txt
 docs/design.md
 ```
 
 ## 빌드
 
-JDK 17 이상(Gradle 실행용; 모드는 Java 8 바이트코드로 컴파일)과 인터넷(Fabric/Mojang maven)이 필요합니다.
+Gradle 실행에 JDK 25가 필요합니다(fabric-loom 1.19.4의 요구; 모드는 Java 8 바이트코드로 컴파일, 서버 실행은
+JDK 17). 처음 빌드에는 인터넷(Fabric/Mojang maven)이 필요합니다.
 
 ```bash
 cd speedrun-bot
@@ -63,8 +69,16 @@ python3 tools/tune.py --seed-file tools/seeds_tune.txt --generations 2 --populat
 최종 IGT, 구간별 IGT(`split_*`, 초), MSPT 평균/최대, 실제 걸린 시간.
 
 서버 하나를 손으로 띄울 때 쓰는 시스템 속성(`-Dsrb.*`): `params`, `out`, `trace`, `timeoutTicks`, `fair`
-(false = 비교용 완화 인지), `warp`(대기 없는 연속 틱), `renderChunks`, `rays`, `exit`. 자세한 내용은
-`BotRuntime.java` 주석.
+(false = 비교용 완화 인지), `warp`(대기 없는 연속 틱), `warpBudgetMs`, `renderChunks`, `rays`, `exit`. 자세한
+내용은 `BotRuntime.java` 주석. 개발 전용(결과에 `dev` 표시, 측정에 쓰지 않음): `kit=item:개수,...`(시작 인벤토리),
+`devStart=lavalow|lava|x,y,z`(한 단계만 시험), `probe=true`(하네스가 구조물 탐색기로 스폰~난파선 등 거리를 기록하고
+종료: 시드 분류 전용, 봇은 모름), `debugUse`, `debugMove`, `debugGui`.
+
+```bash
+# 배치 여러 개를 동시에 돌릴 때는 work 디렉터리와 포트 범위를 나눈다 (메모리: 서버 1개 ≈ 2.3GB, 15GB에서 4개까지)
+python3 tools/run_batch.py --work work2 --port-base 25700 --seed-file seeds.txt --parallel 1 --jvm-arg=-Dsrb.probe=true --out results/probe.csv
+python3 tools/group_report.py results/eval.csv --probe results/probe.jsonl --ship-dist 96
+```
 
 ## 공정 규칙 요약
 
@@ -73,4 +87,7 @@ python3 tools/tune.py --seed-file tools/seeds_tune.txt --generations 2 --populat
 - 입력은 사람이 낼 수 있는 것만: 시점 회전 45°/틱 상한, 사용 클릭 4틱 간격, 화면 클릭 2틱(100ms) 간격,
   핫바 1회/틱, 블록 도달 4.5칸. 채굴은 바닐라 클라이언트의 진행 누적 규칙(+5틱 쿨다운)을 그대로 따름.
 - IGT = 봇이 월드에 들어온 틱부터의 서버 틱 수 / 20 (SpeedRunIGT의 일시정지 없는 IGT와 같음).
+- 2단계 추가: 물을 16칸 넘게 지나간 시야 광선은 끝남(물 안개). 상자는 본 것만 연다. 보물 지도는 손에 들었을 때
+  화면의 표식(자기 표식과 빨간 X)만 읽고, 자기 좌표(F3)로 청크 9,9 칸을 판다. 블록이 우클릭을 먹으면(레드스톤
+  광석) 아이템은 쓰이지 않는 바닐라 규칙 그대로.
 - 자세한 근거와 테스트는 docs/design.md §2.

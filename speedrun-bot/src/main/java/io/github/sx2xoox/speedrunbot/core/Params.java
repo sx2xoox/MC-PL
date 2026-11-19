@@ -66,7 +66,9 @@ public final class Params {
         d.put("route.noWaterSec", 30.0);         // penalty when no water is known
         // --- portal site ---
         d.put("portal.approachDist", 20.0);     // walk/dig to within this distance of seen lava before choosing a site
-        d.put("portal.maxLavaDist", 9.0);        // site must be within this distance of a lava source
+        d.put("portal.maxLavaDist", 9.0);
+        d.put("portal.minSources", 12.0);        // build next to a pool with at least this many seen sources...
+        d.put("portal.poolSearchTicks", 900.0);  // ...unless none was found for this long        // site must be within this distance of a lava source
         d.put("portal.waterSearchDist", 64.0);   // max distance to walk back for water
         // --- safety ---
         d.put("safety.stallTicks", 300.0);       // no movement and no inventory change this long: restart the step

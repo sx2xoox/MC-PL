@@ -1559,6 +1559,7 @@ public final class RunBrain {
         if (!g.done(f.getX(), f.getY(), f.getZ()) || (!s.onGround() && !s.inWater())) {
             fillAimTicks = 0;
             if (mover.go(g) == Mover.Status.FAILED) {
+                trace("cannot get to a spot that sees " + src + " (" + mover.lastPlanInfo() + ")");
                 fillStartCount = -1;
                 return Actions.Status.FAILED;
             }
@@ -1583,6 +1584,7 @@ public final class RunBrain {
             c.use();
         }
         if (++fillAimTicks > 60) {
+            trace("bucket ray never on " + src + " from " + f + " (hit " + h.getType() + " " + (h instanceof BlockHitResult ? ((BlockHitResult) h).getBlockPos() : "") + ")");
             fillAimTicks = 0;
             fillStartCount = -1;
             return Actions.Status.FAILED; // something is in the way

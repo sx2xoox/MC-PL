@@ -63,6 +63,11 @@ public final class PortalBuilder {
         return b.mem.get(c.x, c.y, c.z);
     }
 
+    /** Air or flowing lava above a source: the bucket's ray (sources only) reaches its top. */
+    static boolean openAbove(BlockState up) {
+        return up != null && (up.isAir() || (Blocks2.isLava(up) && !up.getFluidState().isStill()));
+    }
+
     /** Nearest known lava source the bot could scoop (top face open). */
     public BlockPos chooseLava() {
         BlockPos f = b.feet();
@@ -71,7 +76,7 @@ public final class PortalBuilder {
                 return false;
             }
             BlockState up = b.mem.get(BlockPos.fromLong(l).up());
-            return up != null && up.isAir();
+            return openAbove(up);
         });
     }
 
@@ -220,10 +225,72 @@ public final class PortalBuilder {
 
     // ================================================================== tick
 
+    /** Scoopable lava sources known within r of p. */
+    private int sourcesNear(BlockPos p, double r) {
+        int n = 0;
+        it.unimi.dsi.fastutil.longs.LongIterator it = b.mem.of(WorldMemory.Kind.LAVA_SOURCE).iterator();
+        while (it.hasNext()) {
+            long l = it.nextLong();
+            if (b.badTargets().contains(l)) {
+                continue;
+            }
+            BlockPos q = BlockPos.fromLong(l);
+            if (q.getSquaredDistance(p) <= r * r) {
+                BlockState up = b.mem.get(q.up());
+                if (openAbove(up)) {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    /**
+     * The lava to build next to: ten frame cells need ten scoops, so a pool with enough known sources around it,
+     * nearest first. A small pool is accepted only after looking for a bigger one for a while.
+     */
+    private BlockPos chooseRichLava() {
+        BlockPos f = b.feet();
+        BlockPos best = null;
+        double bestScore = Double.MAX_VALUE;
+        int need = b.p.getInt("portal.minSources");
+        boolean settle = ++lavaLookTicks > b.p.getInt("portal.poolSearchTicks");
+        it.unimi.dsi.fastutil.longs.LongIterator it = b.mem.of(WorldMemory.Kind.LAVA_SOURCE).iterator();
+        int checked = 0;
+        while (it.hasNext() && checked < 600) {
+            long l = it.nextLong();
+            if (b.badTargets().contains(l)) {
+                continue;
+            }
+            BlockPos q = BlockPos.fromLong(l);
+            double d = Math.sqrt(q.getSquaredDistance(f));
+            if (d > 160) {
+                continue;
+            }
+            BlockState up = b.mem.get(q.up());
+            if (!openAbove(up)) {
+                continue;
+            }
+            checked++;
+            int n = sourcesNear(q, 8);
+            if (n < need && !settle) {
+                continue;
+            }
+            double sc = d - Math.min(n, 30) * 1.5;
+            if (sc < bestScore) {
+                bestScore = sc;
+                best = q;
+            }
+        }
+        return best;
+    }
+
+    private int lavaLookTicks;
+
     public void tick() {
         subTicks++;
         if (state == State.NONE) {
-            lava = chooseLava();
+            lava = chooseRichLava();
             if (lava == null) {
                 b.exploreForLava();
                 return;
@@ -410,6 +477,8 @@ public final class PortalBuilder {
     }
 
     private int cellRetries;
+    private int plugTicks;
+    private final java.util.Set<Cell> openingsAccepted = new java.util.HashSet<>();
     private int lastSub = -1;
     private int searchTicks;
     private BlockPos fetchSrc;
@@ -558,26 +627,37 @@ public final class PortalBuilder {
                 }
                 for (Cell n : check) {
                     BlockState s = mem(n);
-                    if (s != null && Blocks2.pass(s) != Blocks2.Pass.SOLID) {
-                        // an opening behind the pocket (cave air, water): plug it with a throwaway block
-                        if (Blocks2.isLava(s) || subTicks > 300 || b.inv().throwaways() == 0) {
-                            restartSite("pocket_open_" + cellIndex);
-                            return;
-                        }
+                    if (s != null && Blocks2.pass(s) != Blocks2.Pass.SOLID && !openingsAccepted.contains(n)) {
+                        // An opening around the pocket (cave air, water). A lava source turns to obsidian as soon as
+                        // water touches it wherever its flow went, so an opening is only a nuisance: plug it if that
+                        // is quick, else go on. Only the face for the water is a must.
+                        boolean must = n.equals(plug);
+                        boolean give = Blocks2.isLava(s) || ++plugTicks > 120 || b.inv().throwaways() == 0;
                         BlockPos f = b.feet();
                         Navigator.Goal g = Navigator.reach(bp(n), 4.0);
-                        if (!g.done(f.getX(), f.getY(), f.getZ())) {
-                            if (b.mover.go(g) == Mover.Status.FAILED) {
-                                restartSite("pocket_open_" + cellIndex);
+                        if (!give && !g.done(f.getX(), f.getY(), f.getZ())) {
+                            give = b.mover.go(g) == Mover.Status.FAILED;
+                            if (!give) {
+                                return;
                             }
+                        }
+                        if (!give) {
+                            give = b.a.place(bp(n), Actions::isThrowaway) == Actions.Status.FAILED;
+                            if (!give) {
+                                return;
+                            }
+                        }
+                        if (must) {
+                            restartSite("no_water_face_" + cellIndex);
                             return;
                         }
-                        if (b.a.place(bp(n), Actions::isThrowaway) == Actions.Status.FAILED) {
-                            restartSite("pocket_open_" + cellIndex);
-                        }
+                        b.trace("pocket " + cellIndex + " stays open at " + n + " (" + s + "); casting anyway");
+                        openingsAccepted.add(n);
+                        plugTicks = 0;
                         return;
                     }
                 }
+                plugTicks = 0;
                 sub = 2;
                 return;
             case 2: { // fetch lava
@@ -603,7 +683,15 @@ public final class PortalBuilder {
                         restartSite("lava_gone");
                         return;
                     }
+                    if (searchTicks % 400 == 399) {
+                        // sources given up on earlier (a bad angle, a flow in the way) get another chance
+                        it.unimi.dsi.fastutil.longs.LongIterator li = b.mem.of(WorldMemory.Kind.LAVA_SOURCE).iterator();
+                        while (li.hasNext()) {
+                            b.badTargets().remove(li.nextLong());
+                        }
+                    }
                     if (++searchTicks % 100 == 1) {
+                        b.trace("known lava sources: " + b.mem.count(WorldMemory.Kind.LAVA_SOURCE) + ", usable " + sourcesNear(bp(o), 40));
                         b.trace("no lava within reach of the frame; searching (" + obsidian + "/10 cast)");
                     }
                     if (b.feet().getSquaredDistance(o.x, o.y, o.z, true) > 48 * 48) {
