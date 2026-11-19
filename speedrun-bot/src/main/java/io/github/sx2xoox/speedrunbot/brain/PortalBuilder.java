@@ -390,6 +390,7 @@ public final class PortalBuilder {
 
     private int cellRetries;
     private int lastSub = -1;
+    private int searchTicks;
     private BlockPos fetchSrc;
     private int fetchTicks;
 
@@ -420,7 +421,7 @@ public final class PortalBuilder {
             Cell sup = target.add(d.getOffsetX(), d.getOffsetY(), d.getOffsetZ());
             BlockState s = mem(sup);
             // unknown neighbours are usually rock (the crosshair check below confirms the face is really there)
-            if (s != null && (!Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s))) {
+            if (s != null && (!Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s) || Blocks2.interactive(s))) {
                 continue;
             }
             Direction face = d.getOpposite();
@@ -453,6 +454,7 @@ public final class PortalBuilder {
                     + (h instanceof BlockHitResult ? ((BlockHitResult) h).getBlockPos() + "/" + ((BlockHitResult) h).getSide() : h.getType()));
         }
         if (b.a.useOn(click) == Actions.Status.DONE) {
+            b.trace("used " + b.s.inventory().getMainHandStack() + " on " + click.getBlockPos() + "/" + click.getSide() + " for " + target);
             clickChoice = 0;
         }
     }
@@ -524,7 +526,7 @@ public final class PortalBuilder {
                 Cell plug = null;
                 for (Cell q : plan.frontSupports(c)) {
                     BlockState qs = mem(q);
-                    if (qs == null || Blocks2.pass(qs) == Blocks2.Pass.SOLID) {
+                    if (qs == null || (Blocks2.pass(qs) == Blocks2.Pass.SOLID && !Blocks2.interactive(qs))) {
                         supported = true;
                     } else if (plug == null && !Blocks2.isLava(qs)) {
                         plug = q;
@@ -580,7 +582,7 @@ public final class PortalBuilder {
                         restartSite("lava_gone");
                         return;
                     }
-                    if (subTicks % 100 == 1) {
+                    if (++searchTicks % 100 == 1) {
                         b.trace("no lava within reach of the frame; searching (" + obsidian + "/10 cast)");
                     }
                     if (b.feet().getSquaredDistance(o.x, o.y, o.z, true) > 48 * 48) {

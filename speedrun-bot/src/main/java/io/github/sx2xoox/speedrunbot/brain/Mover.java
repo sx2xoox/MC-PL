@@ -240,8 +240,10 @@ public final class Mover {
         if (step.move == Navigator.Move.UP && hd < 1.6 && s.onGround()) {
             jump = true;
         }
-        if (step.move == Navigator.Move.SWIM_UP || s.inWater()) {
+        if (step.move == Navigator.Move.SWIM_UP || (s.inWater() && t.getY() >= f.getY())) {
             jump = true;
+        } else if (s.inWater() && t.getY() < f.getY()) {
+            c.sink();
         }
         if (s.horizontalCollision() && s.onGround() && t.getY() >= f.getY()) {
             jump = true;
@@ -351,6 +353,21 @@ public final class Mover {
 
     private static double sq(double v) {
         return v * v;
+    }
+
+    /** Known lava touching the feet or head cell (sides, below, above). */
+    public boolean lavaNear(BlockPos f) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dy = -1; dy <= 2; dy++) {
+                    BlockState st = mem.get(f.getX() + dx, f.getY() + dy, f.getZ() + dz);
+                    if (st != null && Blocks2.isLava(st)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     public void forgetAvoid() {

@@ -63,6 +63,13 @@ public final class Controls {
         this.jump = true;
     }
 
+    private boolean sink;
+
+    /** In water: do not hold space this tick (let the body sink toward something below). */
+    public void sink() {
+        this.sink = true;
+    }
+
     public void attack(boolean held) {
         this.attack = held;
     }
@@ -178,8 +185,11 @@ public final class Controls {
             pitch = InputLimits.approachPitch(pitch, targetPitch, InputLimits.MAX_PITCH_PER_TICK);
         }
         in.setLook(yaw, pitch);
-        if (s.inWater() && !jump && s.screenOpen() == false) {
+        if (s.inWater() && !jump && !sink && s.screenOpen() == false) {
             jump = true; // hold space in water: stay at the surface (players do this to avoid drowning)
+        }
+        if (sink && s.inWater()) {
+            sneak = true; // shift sinks faster
         }
         boolean canSprint = sprint && forward >= 0.8f && s.food() > 6 && !sneak && !s.horizontalCollision();
         in.setMovement(forward, strafe, jump, canSprint, sneak);
@@ -190,6 +200,7 @@ public final class Controls {
         sprint = false;
         sneak = false;
         attack = false;
+        sink = false;
         lookSet = false;
         hotbarChanged = false;
         if (lockTicks > 0 && --lockTicks == 0) {

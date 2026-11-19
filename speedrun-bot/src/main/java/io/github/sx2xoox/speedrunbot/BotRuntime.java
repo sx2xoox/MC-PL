@@ -99,6 +99,21 @@ public final class BotRuntime {
         server.getCommandManager().execute(server.getCommandSource().withSilent(), "gamerule spawnRadius 0");
         FakePlayer p = FakePlayer.join(server, "SpeedrunBot");
         bot = new ServerBot(server, p);
+        if (Boolean.getBoolean("srb.probe")) {
+            String probe = DevSetup.probe(server, p.getBlockPos());
+            System.out.println("[speedrunbot] probe " + probe);
+            try {
+                String out = System.getProperty("srb.out");
+                if (out != null) {
+                    Files.write(Paths.get(out), ("{\"seed\":\"" + server.getOverworld().getSeed() + "\",\"probe\":" + probe + "}\n").getBytes(StandardCharsets.UTF_8),
+                            StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            System.out.flush();
+            Runtime.getRuntime().halt(0);
+        }
         DevSetup.apply(server, p);
         Params params;
         try {

@@ -162,6 +162,9 @@ public final class ServerBot implements BotInputs, BotSenses {
             if (h instanceof BlockHitResult && h.getType() == HitResult.Type.BLOCK) {
                 int before = stack.getCount();
                 ActionResult r = player.interactionManager.interactBlock(player, world(), stack, hand, (BlockHitResult) h);
+                if (Boolean.getBoolean("srb.debugUse")) {
+                    System.out.println("[srb] useBlock " + stack + " " + hand + " on " + world().getBlockState(((BlockHitResult) h).getBlockPos()) + " -> " + r);
+                }
                 if (r.isAccepted()) {
                     if (r.shouldSwingHand()) {
                         player.swingHand(hand);
@@ -177,6 +180,9 @@ public final class ServerBot implements BotInputs, BotSenses {
             }
             if (!stack.isEmpty()) {
                 ActionResult r = player.interactionManager.interactItem(player, world(), stack, hand);
+                if (Boolean.getBoolean("srb.debugUse")) {
+                    System.out.println("[srb] use " + stack + " " + hand + " -> " + r + " xhair=" + (h instanceof BlockHitResult ? ((BlockHitResult) h).getBlockPos() + "/" + ((BlockHitResult) h).getSide() : h.getType()));
+                }
                 if (r.isAccepted()) {
                     if (r.shouldSwingHand()) {
                         player.swingHand(hand);
@@ -287,6 +293,33 @@ public final class ServerBot implements BotInputs, BotSenses {
     @Override
     public boolean inLava() {
         return player.isInLava();
+    }
+
+    @Override
+    public io.github.sx2xoox.speedrunbot.core.TreasureMap.Reading heldMap() {
+        ItemStack st = player.getMainHandStack();
+        if (st.getItem() != net.minecraft.item.Items.FILLED_MAP) {
+            return null;
+        }
+        net.minecraft.item.map.MapState ms = net.minecraft.item.FilledMapItem.getMapState(st, world());
+        if (ms == null) {
+            return null;
+        }
+        io.github.sx2xoox.speedrunbot.core.TreasureMap.Reading r = new io.github.sx2xoox.speedrunbot.core.TreasureMap.Reading(ms.scale);
+        for (net.minecraft.item.map.MapIcon icon : ms.icons.values()) {
+            r.add(icon.getType().name(), icon.getX(), icon.getZ());
+        }
+        return r;
+    }
+
+    @Override
+    public int air() {
+        return player.getAir();
+    }
+
+    @Override
+    public boolean submerged() {
+        return player.isSubmergedInWater();
     }
 
     @Override

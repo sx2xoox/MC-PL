@@ -25,7 +25,9 @@ public final class WorldMemory {
     private long writes;
 
     public enum Kind {
-        LOG, IRON_ORE, COAL_ORE, GRAVEL, LAVA_SOURCE, WATER_SOURCE, CRAFTING_TABLE, FURNACE, CHEST, OBSIDIAN
+        LOG, IRON_ORE, COAL_ORE, GRAVEL, LAVA_SOURCE, WATER_SOURCE, CRAFTING_TABLE, FURNACE, CHEST, OBSIDIAN,
+        /** Worked wood (planks, wooden stairs/slabs/fences/trapdoors/doors): ships, houses, mineshafts. */
+        WOODWORK
     }
 
     public WorldMemory() {
@@ -134,8 +136,12 @@ public final class WorldMemory {
         if (b == Blocks.FURNACE) {
             return Kind.FURNACE;
         }
-        if (b == Blocks.CHEST) {
+        if (b == Blocks.CHEST || b == Blocks.TRAPPED_CHEST) {
             return Kind.CHEST;
+        }
+        if (s.isIn(BlockTags.PLANKS) || s.isIn(BlockTags.WOODEN_STAIRS) || s.isIn(BlockTags.WOODEN_SLABS) || s.isIn(BlockTags.WOODEN_FENCES)
+                || s.isIn(BlockTags.WOODEN_TRAPDOORS) || s.isIn(BlockTags.WOODEN_DOORS)) {
+            return Kind.WOODWORK;
         }
         if (b == Blocks.OBSIDIAN) {
             return Kind.OBSIDIAN;

@@ -16,7 +16,12 @@ public final class RouteSelector {
         /** Dig down to the lava level (y ~ 11), mine iron on the way, cast the portal next to cave lava. */
         DIG_CAST,
         /** A lava pool is visible on the surface: mine iron where seen, cast the portal next to that pool. */
-        SURFACE_CAST
+        SURFACE_CAST,
+        /**
+         * A shipwreck is in view: loot it, follow its treasure map, dig up the buried treasure; its iron replaces
+         * mining (then the portal is cast as in the other routes).
+         */
+        TREASURE
     }
 
     /** What the bot knows when it chooses (distances in blocks, negative = not seen). */
@@ -26,6 +31,12 @@ public final class RouteSelector {
         public double lavaToWaterDist = -1;
         public int ironKnown;
         public double nearestIronDist = -1;
+        public double shipDist = -1;
+
+        public Observation ship(double d) {
+            shipDist = d;
+            return this;
+        }
 
         public Observation surfaceLava(double d) {
             surfaceLavaDist = d;
@@ -85,6 +96,13 @@ public final class RouteSelector {
                 double water = o.lavaToWaterDist >= 0 ? o.lavaToWaterDist * secPerBlock * 2 : p.get("route.noWaterSec");
                 return p.get("route.surfaceBaseSec") + o.surfaceLavaDist * secPerBlock
                         + ironMissing * p.get("route.ironMissingSec") + water;
+            }
+            case TREASURE: {
+                if (o.shipDist < 0 || o.shipDist > p.get("treasure.shipDist")) {
+                    return Double.POSITIVE_INFINITY;
+                }
+                double water = o.waterDist >= 0 ? 0 : p.get("route.noWaterSec");
+                return p.get("route.treasureBaseSec") + o.shipDist * secPerBlock + water;
             }
             default:
                 return Double.POSITIVE_INFINITY;

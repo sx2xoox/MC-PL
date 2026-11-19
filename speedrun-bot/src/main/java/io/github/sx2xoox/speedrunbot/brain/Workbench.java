@@ -57,6 +57,14 @@ public final class Workbench {
         return phase != Phase.IDLE;
     }
 
+    /** Drops the session (a fight): the screen is closed, the next call starts over. */
+    public void interrupt() {
+        if (b.s.screenOpen()) {
+            b.c.closeScreen();
+        }
+        phase = Phase.IDLE;
+    }
+
     public String error() {
         return error;
     }

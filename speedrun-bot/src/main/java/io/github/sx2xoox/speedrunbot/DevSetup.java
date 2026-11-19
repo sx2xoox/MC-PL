@@ -32,6 +32,26 @@ public final class DevSetup {
         return applied;
     }
 
+    /**
+     * Seed classification for the harness (never bot input): distances from the spawn to the nearest shipwreck,
+     * ruined portal and village by the structure locator, so eval seeds can be grouped (e.g. "ocean spawns").
+     */
+    public static String probe(MinecraftServer server, BlockPos spawn) {
+        ServerWorld w = server.getOverworld();
+        StringBuilder sb = new StringBuilder("{");
+        net.minecraft.world.gen.feature.StructureFeature<?>[] fs = {net.minecraft.world.gen.feature.StructureFeature.SHIPWRECK,
+                net.minecraft.world.gen.feature.StructureFeature.RUINED_PORTAL, net.minecraft.world.gen.feature.StructureFeature.VILLAGE,
+                net.minecraft.world.gen.feature.StructureFeature.BURIED_TREASURE};
+        String[] names = {"shipwreck", "ruined_portal", "village", "buried_treasure"};
+        for (int i = 0; i < fs.length; i++) {
+            BlockPos q = w.locateStructure(fs[i], spawn, 8, false);
+            double d = q == null ? -1 : Math.sqrt(Math.pow(q.getX() - spawn.getX(), 2) + Math.pow(q.getZ() - spawn.getZ(), 2));
+            sb.append('"').append(names[i]).append("\":").append(Math.round(d)).append(',');
+        }
+        sb.append("\"biome\":\"").append(net.minecraft.util.registry.Registry.BIOME.getId(w.getBiome(spawn))).append("\"}");
+        return sb.toString();
+    }
+
     public static void apply(MinecraftServer server, FakePlayer p) {
         String kit = System.getProperty("srb.kit", "");
         if (!kit.isEmpty()) {

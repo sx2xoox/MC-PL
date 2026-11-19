@@ -86,7 +86,10 @@ public final class Blocks2 {
         Block b = s.getBlock();
         return b instanceof net.minecraft.block.BlockWithEntity || b == Blocks.CRAFTING_TABLE || b instanceof net.minecraft.block.DoorBlock
                 || b instanceof net.minecraft.block.TrapdoorBlock || b instanceof net.minecraft.block.FenceGateBlock
-                || b instanceof net.minecraft.block.AbstractButtonBlock || b == Blocks.LEVER || b instanceof net.minecraft.block.BedBlock;
+                || b instanceof net.minecraft.block.AbstractButtonBlock || b == Blocks.LEVER || b instanceof net.minecraft.block.BedBlock
+                // right-clicking these is accepted by the block itself (redstone ore lights up), so the held item is not used
+                || b == Blocks.REDSTONE_ORE || b == Blocks.NOTE_BLOCK || b == Blocks.CAKE || b == Blocks.REPEATER || b == Blocks.COMPARATOR
+                || b == Blocks.DRAGON_EGG || b instanceof net.minecraft.block.AnvilBlock;
     }
 
     /** Whether the block can be stood on. */

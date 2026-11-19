@@ -41,6 +41,18 @@ public interface BotSenses extends BlockSource {
 
     boolean onFire();
 
+    /** Remaining air ticks (300 = full; the client shows it as bubbles). */
+    int air();
+
+    /** Eyes under water. */
+    boolean submerged();
+
+    /**
+     * The map held in the main hand as its screen shows it (scale and markers: the player's own and decorations such
+     * as the treasure X), or null when no filled map is held.
+     */
+    io.github.sx2xoox.speedrunbot.core.TreasureMap.Reading heldMap();
+
     boolean horizontalCollision();
 
     float health();

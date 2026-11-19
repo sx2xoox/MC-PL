@@ -33,7 +33,7 @@ import java.util.function.Predicate;
  * Numbers that steer it come from {@link Params} (tuned by tools/tune.py).
  */
 public final class RunBrain {
-    public enum Goal { SCAN, WOOD, WOOD_TOOLS, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
+    public enum Goal { SCAN, WOOD, WOOD_TOOLS, TREASURE, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
 
     final BotSenses s;
     final Controls c;
@@ -192,7 +192,7 @@ public final class RunBrain {
         if (attackCooldown > 0) {
             attackCooldown--;
         }
-        if (!defend()) {
+        if (!survival.tick()) {
             Goal next = choose();
             if (next != goal) {
                 trace("goal " + goal + " -> " + next + " after " + goalTicks + "t inv=" + inv.summary());
@@ -210,8 +210,15 @@ public final class RunBrain {
         c.flush();
     }
 
-    /** Swings at hostile mobs in melee range (the player sees them). Returns true when it used this tick. */
-    private boolean defend() {
+    final Survival survival = new Survival(this);
+    private final Looter looter = new Looter(this);
+
+    Looter looter() {
+        return looter;
+    }
+
+    /** Old melee-only defence (kept for reference; Survival replaces it). */
+    private boolean defendOld() {
         List<HostileEntity> near = perception.visible(HostileEntity.class, 3.2, null);
         if (near.isEmpty() || s.screenOpen()) {
             return false;
@@ -237,7 +244,7 @@ public final class RunBrain {
     }
 
     private Goal choose() {
-        if (bench.busy() || smelter.screenBusy() || a.equipBusy() || (s.screenOpen() && goalTicks < 400)) {
+        if (bench.busy() || smelter.screenBusy() || looter.screenBusy() || a.equipBusy() || (s.screenOpen() && goalTicks < 400)) {
             return goal; // a screen is in use (crafting, furnace): finish first
         }
         if (goal == Goal.SCAN && goalTicks < p.getInt("surface.scanTicks")) {
@@ -249,6 +256,10 @@ public final class RunBrain {
         if (portal.active()) {
             return Goal.PORTAL;
         }
+        watchForShip();
+        if (goal == Goal.LOOT && looter.busy()) {
+            return Goal.LOOT;
+        }
         if (!inv.pickaxe()) {
             int planksNeeded = 9 + 4 + 3; // table + sticks + pickaxe, a second table, smelting fuel
             if (inv.logs() * 4 + inv.planks() < Math.max(planksNeeded, p.getInt("wood.logs") * 4) && goalTicks < 99999) {
@@ -257,6 +268,12 @@ public final class RunBrain {
                 }
             }
             return Goal.WOOD_TOOLS;
+        }
+        if (route == RouteSelector.Route.TREASURE && !treasure.finished() && ironTotal() < ironNeeded()) {
+            return Goal.TREASURE;
+        }
+        if (goal != Goal.PORTAL && chestWorthLooting() != null) {
+            return Goal.LOOT;
         }
         if (!inv.stonePick()) {
             return inv.cobble() >= 3 * p.getInt("stone.picks") || (inv.cobble() >= 3 && goal == Goal.COBBLE && goalTicks > 400)
@@ -293,12 +310,45 @@ public final class RunBrain {
         return Goal.PORTAL;
     }
 
+    final TreasureHunt treasure = new TreasureHunt(this);
+    private BlockPos shipPos;
+    private long lastShipLook;
+    private BlockPos lootChest;
+
+    /** Later in the run a wreck may come into view (walking for wood): switch to the treasure route then. */
+    private void watchForShip() {
+        if (route == RouteSelector.Route.TREASURE || treasure.finished() || now() - lastShipLook < 100 || ironTotal() >= ironNeeded()
+                || inv.buckets() > 0) {
+            return;
+        }
+        lastShipLook = now();
+        BlockPos sp = TreasureHunt.findShip(mem, mover.feet(), p.get("treasure.shipDist"));
+        if (sp != null) {
+            shipPos = sp;
+            route = RouteSelector.Route.TREASURE;
+            routeNote += " -> TREASURE(ship seen at " + sp.getX() + "," + sp.getY() + "," + sp.getZ() + ")";
+            trace("shipwreck seen at " + sp + ": treasure route");
+        }
+    }
+
+    /** A chest seen close by while iron is still missing (village, ruined portal, shipwreck): worth a look. */
+    private BlockPos chestWorthLooting() {
+        if (inv.buckets() > 0 && inv.lighter()) {
+            return null;
+        }
+        return mem.nearest(WorldMemory.Kind.CHEST, mover.feet(), p.get("loot.chestDist"), l -> !badTargets.contains(l));
+    }
+
     private void chooseRoute() {
         RouteSelector.Observation o = new RouteSelector.Observation();
         BlockPos f = mover.feet();
         BlockPos lava = mem.nearest(WorldMemory.Kind.LAVA_SOURCE, f, 200, l -> BlockPos.unpackLongY(l) >= 50);
         BlockPos water = mem.nearest(WorldMemory.Kind.WATER_SOURCE, f, 200, null);
         BlockPos iron = mem.nearest(WorldMemory.Kind.IRON_ORE, f, 200, null);
+        shipPos = TreasureHunt.findShip(mem, f, p.get("treasure.shipDist"));
+        if (shipPos != null) {
+            o.ship(Math.sqrt(shipPos.getSquaredDistance(f)));
+        }
         if (lava != null) {
             o.surfaceLava(Math.sqrt(lava.getSquaredDistance(f)));
             BlockPos w2 = mem.nearest(WorldMemory.Kind.WATER_SOURCE, lava, 200, null);
@@ -315,7 +365,7 @@ public final class RunBrain {
         RouteSelector.Choice ch = new RouteSelector(p).choose(o);
         route = ch.route;
         routeNote = new RouteSelector(p).rank(o).toString();
-        trace("route " + routeNote + " lava=" + o.surfaceLavaDist + " water=" + o.waterDist + " iron=" + o.ironKnown);
+        trace("route " + routeNote + " lava=" + o.surfaceLavaDist + " water=" + o.waterDist + " iron=" + o.ironKnown + " ship=" + shipPos);
     }
 
     // ================================================================== goals
@@ -330,6 +380,13 @@ public final class RunBrain {
             smelter.tick(); // so does the furnace screen
             return;
         }
+        if (recoveringWater()) {
+            return;
+        }
+        if (looter.screenBusy()) {
+            looter.tick(); // and a chest
+            return;
+        }
         switch (goal) {
             case SCAN:
                 scan();
@@ -339,6 +396,27 @@ public final class RunBrain {
                 break;
             case WOOD_TOOLS:
                 woodTools();
+                break;
+            case TREASURE:
+                if (!treasure.active()) {
+                    treasure.start(shipPos);
+                }
+                treasure.tick();
+                if (treasure.phase() == TreasureHunt.Phase.FAILED) {
+                    trace("treasure route failed: " + treasure.why());
+                }
+                break;
+            case LOOT:
+                if (!looter.busy()) {
+                    BlockPos ch = chestWorthLooting();
+                    if (ch == null) {
+                        break;
+                    }
+                    looter.start(ch);
+                }
+                if (looter.tick() == Actions.Status.FAILED) {
+                    badTargets.add(looter.chest().asLong());
+                }
                 break;
             case COBBLE:
                 cobble(3 * p.getInt("stone.picks"));
@@ -866,9 +944,15 @@ public final class RunBrain {
         int detour = p.getInt("dig.oreDetour");
         if (ironTotal() < ironNeeded()) {
             BlockPos ore = nearestBlock(f, detour, st -> st.getBlock() == Blocks.IRON_ORE);
+            if (ore == null) {
+                // ore seen further away (a cave wall, a cliff): worth a walk when it is in the open
+                ore = mem.nearest(WorldMemory.Kind.IRON_ORE, f, p.get("iron.seenDist"),
+                        l -> !badTargets.contains(l) && exposed(BlockPos.fromLong(l)));
+            }
             if (ore != null) {
                 target = ore;
                 subTicks = 0;
+                caveTarget = null;
                 return;
             }
         }
@@ -888,13 +972,101 @@ public final class RunBrain {
                 return;
             }
         }
-        int targetY = route == RouteSelector.Route.SURFACE_CAST && why.equals("iron") ? 40 : p.getInt("dig.targetY");
+        int targetY = why.equals("iron") ? p.getInt("dig.ironY") : p.getInt("dig.targetY");
+        if (route == RouteSelector.Route.SURFACE_CAST && why.equals("iron")) {
+            targetY = Math.max(targetY, 40);
+        }
+        if (exploreCave(f, targetY)) {
+            return;
+        }
         if (f.getY() > targetY) {
             stairStep();
         } else {
             tunnelStep();
             if (tunnelLen > p.getInt("dig.tunnelMax")) {
                 fail("tunnel_exhausted_" + why);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ caves
+
+    private BlockPos caveTarget;
+    private int caveTicks;
+    private int lookAround;
+    private long lastCaveSearch = -1000;
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet caveVisited = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+    private io.github.sx2xoox.speedrunbot.core.Frontier frontier() {
+        io.github.sx2xoox.speedrunbot.core.Frontier.Weights w = new io.github.sx2xoox.speedrunbot.core.Frontier.Weights();
+        w.radius = p.getInt("cave.radius");
+        w.perDepth = p.get("cave.perDepth");
+        w.perUnknown = p.get("cave.perUnknown");
+        return new io.github.sx2xoox.speedrunbot.core.Frontier((x, y, z) -> {
+            BlockState st = mem.get(x, y, z);
+            if (st == null) {
+                return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.UNKNOWN;
+            }
+            if (Blocks2.isLava(st)) {
+                return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.LAVA;
+            }
+            if (Blocks2.isWater(st)) {
+                return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.WATER;
+            }
+            return Blocks2.pass(st) == Blocks2.Pass.PASS ? io.github.sx2xoox.speedrunbot.core.Frontier.Seen.AIR
+                    : io.github.sx2xoox.speedrunbot.core.Frontier.Seen.SOLID;
+        }, w);
+    }
+
+    /**
+     * Walks known caves toward their unseen parts (frontier exploration on memory) and looks around at each stop:
+     * cave walls show far more ore than a tunnel's two walls. False when no cave frontier is known nearby.
+     */
+    private boolean exploreCave(BlockPos f, int targetY) {
+        if (lookAround > 0) {
+            lookAround--;
+            c.lookAngles(s.yaw() + 45f, lookAround % 8 < 4 ? 20f : -10f);
+            return true;
+        }
+        if (caveTarget == null) {
+            if (now() - lastCaveSearch < 20) {
+                return false;
+            }
+            lastCaveSearch = now();
+            io.github.sx2xoox.speedrunbot.core.Cell cell = frontier().best(f.getX(), f.getY(), f.getZ(), targetY, caveVisited::contains);
+            if (cell == null) {
+                return false;
+            }
+            caveTarget = new BlockPos(cell.x, cell.y, cell.z);
+            caveTicks = 0;
+            trace("cave frontier " + caveTarget);
+        }
+        if (++caveTicks > 400) {
+            markVisited(caveTarget);
+            caveTarget = null;
+            return false;
+        }
+        Mover.Status st = mover.go(Navigator.at(caveTarget));
+        if (st == Mover.Status.ARRIVED) {
+            markVisited(caveTarget);
+            caveTarget = null;
+            lookAround = 16;
+            return true;
+        }
+        if (st == Mover.Status.FAILED) {
+            markVisited(caveTarget);
+            caveTarget = null;
+            return false;
+        }
+        return true;
+    }
+
+    private void markVisited(BlockPos q) {
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    caveVisited.add(io.github.sx2xoox.speedrunbot.core.Cell.pack(q.getX() + dx, q.getY() + dy, q.getZ() + dz));
+                }
             }
         }
     }
@@ -1128,6 +1300,29 @@ public final class RunBrain {
 
     private int fillStartCount = -1;
     private int fillAimTicks;
+
+    private BlockPos waterToRecover;
+
+    /** Survival poured the water bucket somewhere: scoop it back before going on. */
+    void recoverWater(BlockPos at) {
+        waterToRecover = at;
+    }
+
+    /** True while taking back water poured in an emergency. */
+    private boolean recoveringWater() {
+        if (waterToRecover == null) {
+            return false;
+        }
+        if (inv.has(Items.WATER_BUCKET) || !inv.has(Items.BUCKET)) {
+            waterToRecover = null;
+            return false;
+        }
+        BlockPos src = mem.nearest(WorldMemory.Kind.WATER_SOURCE, waterToRecover, 3, l -> true);
+        if (src == null || fillBucket(src, Items.WATER_BUCKET) != Actions.Status.RUNNING) {
+            waterToRecover = null;
+        }
+        return true;
+    }
 
     // ------------------------------------------------------------------ helpers for the portal builder
 

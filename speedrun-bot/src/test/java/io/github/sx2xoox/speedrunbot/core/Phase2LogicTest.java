@@ -107,4 +107,40 @@ class Phase2LogicTest {
             assertTrue(room.contains(p.at(0, 3, 2)) && room.contains(p.at(3, 3, 2)));
         }
     }
+
+    // ---------------------------------------------------------------- treasure map
+
+    /** The vanilla map icon formula (MapState#addIcon): half-pixel units from the map centre. */
+    private static int icon(double world, int centre, int scale) {
+        float f = (float) (world - centre) / (1 << scale);
+        return (byte) (f * 2.0F + 0.5);
+    }
+
+    @Test
+    void treasureMapPointsAtTheChunkOffsetNineNine() {
+        int scale = 1, cx = 64, cz = -192; // a scale-1 explorer map centred on a 256-block grid cell
+        int treasureX = 4 * 16 + 9, treasureZ = -12 * 16 + 9; // buried treasure at chunk (4, -12)
+        for (double[] player : new double[][]{{30.5, -150.2}, {120.7, -250.9}, {73.3, -183.6}}) {
+            TreasureMap.Reading r = new TreasureMap.Reading(scale)
+                    .add("PLAYER", icon(player[0], cx, scale), icon(player[1], cz, scale))
+                    .add("RED_X", icon(treasureX, cx, scale), icon(treasureZ, cz, scale));
+            TreasureMap.Estimate e = TreasureMap.locate(r, player[0], player[1]);
+            assertNotNull(e);
+            assertTrue(e.exact);
+            assertTrue(Math.abs(e.x - treasureX) <= 2.0 && Math.abs(e.z - treasureZ) <= 2.0, "estimate " + e);
+            int[] col = e.digColumn();
+            assertEquals(treasureX, col[0]);
+            assertEquals(treasureZ, col[1]);
+        }
+    }
+
+    @Test
+    void offMapPlayerOnlyGetsADirection() {
+        TreasureMap.Reading r = new TreasureMap.Reading(1).add("PLAYER_OFF_MAP", 127, 0).add("RED_X", 10, 0);
+        TreasureMap.Estimate e = TreasureMap.locate(r, 1000, 50);
+        assertNotNull(e);
+        assertFalse(e.exact);
+        assertTrue(e.x < 1000 && Math.abs(e.z - 50) < 1e-6, "walk toward -x: " + e);
+        assertNull(TreasureMap.locate(new TreasureMap.Reading(1).add("PLAYER", 0, 0), 0, 0), "no X, no estimate");
+    }
 }

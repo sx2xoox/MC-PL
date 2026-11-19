@@ -67,6 +67,7 @@ def run_one(args, slot, slot_dir, seed, label):
            "-Dsrb.label=" + label]
     if args.params:
         cmd.append("-Dsrb.params=" + os.path.abspath(args.params))
+    cmd += args.jvm_arg or []
     if trace:
         cmd.append("-Dsrb.trace=" + trace)
     cmd += ["-jar", "fabric-server-launch.jar", "nogui"]
@@ -112,6 +113,7 @@ def main():
     ap.add_argument("--mod", default=None, help="mod jar (default: build/libs/speedrun-bot-*.jar)")
     ap.add_argument("--trace-dir", default=None, help="write a decision trace per seed here")
     ap.add_argument("--keep-worlds", action="store_true")
+    ap.add_argument("--jvm-arg", action="append", help="extra -D... for the server (e.g. -Dsrb.probe=true)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

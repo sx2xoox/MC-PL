@@ -5,7 +5,7 @@ import os
 import statistics
 
 SPLITS = [
-    "first_log", "wooden_pickaxe", "stone_pickaxe", "first_iron", "furnace", "iron_ingots", "bucket",
+    "first_log", "wooden_pickaxe", "treasure_map", "treasure", "stone_pickaxe", "first_iron", "furnace", "iron_ingots", "bucket",
     "flint", "flint_and_steel", "water_bucket", "portal_site", "portal_room", "obsidian_10", "portal_lit",
     "in_portal", "nether",
 ]

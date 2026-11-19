@@ -142,6 +142,24 @@ public final class Navigator {
         };
     }
 
+    /** Feet in the given block column at any height (digging down a map's X). */
+    public static Goal column(int cx, int cz, int yHint) {
+        return new Goal() {
+            public String key() {
+                return "col" + cx + "/" + cz;
+            }
+
+            public boolean done(int x, int y, int z) {
+                return x == cx && z == cz;
+            }
+
+            public double h(int x, int y, int z) {
+                double dx = x - cx, dz = z - cz;
+                return Math.sqrt(dx * dx + dz * dz);
+            }
+        };
+    }
+
     /** Within r blocks horizontally of the point (any height). */
     public static Goal near(BlockPos p, double r) {
         return new Goal() {

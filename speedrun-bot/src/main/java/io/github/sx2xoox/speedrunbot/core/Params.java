@@ -38,7 +38,18 @@ public final class Params {
         d.put("dig.tunnelMax", 220.0);           // give up the tunnel after this many blocks
         d.put("dig.gravelDetour", 10.0);         // max detour for gravel (flint) while digging
         d.put("iron.needed", 4.0);               // bucket (3) + flint and steel (1)
+        d.put("iron.seenDist", 40.0);            // walk to iron ore seen in the open this far away
+        d.put("dig.ironY", 35.0);                // feet Y of the staircase / tunnel while looking for iron
+        d.put("cave.radius", 24.0);              // frontier search radius in caves
+        d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height
+        d.put("cave.perUnknown", 0.8);           // frontier bonus per unseen cell around it
         d.put("gravel.maxBreaks", 14.0);         // gravel to break for flint before giving up
+        // --- treasure route (shipwreck -> map -> buried treasure) ---
+        d.put("treasure.shipDist", 64.0);        // go for a shipwreck seen within this distance
+        d.put("treasure.shipTicks", 1600.0);     // give up searching a wreck for chests after this
+        d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
+        d.put("route.treasureBaseSec", 110.0);   // expected seconds to iron via the treasure route (plus the walk)
+        d.put("loot.chestDist", 20.0);           // open a chest seen this close while iron is still missing
         // --- surface route ---
         d.put("surface.lavaMaxDist", 72.0);      // commit to a surface lava pool seen within this distance
         d.put("surface.scanTicks", 60.0);        // look-around ticks at spawn before choosing a route
