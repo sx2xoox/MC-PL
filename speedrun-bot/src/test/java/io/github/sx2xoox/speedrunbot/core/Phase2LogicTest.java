@@ -45,11 +45,8 @@ class Phase2LogicTest {
         FakeGrid g = new FakeGrid();
         // a seen cave tunnel along +x at y=30 (feet), rock around it, its far end not seen yet
         g.box(-2, 28, -2, 20, 34, 2, Frontier.Seen.SOLID);
-        g.box(0, 30, 0, 20, 31, 0, Frontier.Seen.AIR);
+        g.box(0, 30, -1, 20, 32, 1, Frontier.Seen.AIR); // a natural cave: 3 wide, 3 high
         g.box(16, 29, -2, 22, 34, 2, Frontier.Seen.UNKNOWN); // beyond x=15 nothing is known
-        g.box(16, 30, 0, 22, 31, 0, Frontier.Seen.UNKNOWN);
-        g.box(12, 30, 0, 15, 31, 0, Frontier.Seen.AIR);
-        g.box(12, 29, 0, 15, 29, 0, Frontier.Seen.SOLID);
         Frontier f = new Frontier(g, new Frontier.Weights());
         Cell best = f.best(0, 30, 0, 30, null);
         assertNotNull(best);
@@ -75,10 +72,21 @@ class Phase2LogicTest {
     }
 
     @Test
+    void theBotsOwnTunnelIsNoCave() {
+        FakeGrid g = new FakeGrid();
+        g.box(-2, 28, -2, 20, 34, 2, Frontier.Seen.SOLID);
+        g.box(0, 30, 0, 12, 31, 0, Frontier.Seen.AIR); // a dug 1x2 tunnel
+        g.box(-2, 29, -2, 20, 34, -2, Frontier.Seen.UNKNOWN);
+        g.box(-2, 29, 2, 20, 34, 2, Frontier.Seen.UNKNOWN); // rock behind its walls never seen
+        g.box(13, 29, -2, 20, 34, 2, Frontier.Seen.UNKNOWN);
+        assertNull(new Frontier(g, new Frontier.Weights()).best(0, 30, 0, 30, null));
+    }
+
+    @Test
     void visitedCellsAreSkipped() {
         FakeGrid g = new FakeGrid();
         g.box(-2, 28, -2, 12, 34, 2, Frontier.Seen.SOLID);
-        g.box(0, 30, 0, 8, 31, 0, Frontier.Seen.AIR);
+        g.box(0, 30, -1, 8, 32, 1, Frontier.Seen.AIR);
         g.box(9, 29, -2, 12, 34, 2, Frontier.Seen.UNKNOWN);
         Frontier f = new Frontier(g, new Frontier.Weights());
         Cell first = f.best(0, 30, 0, 30, null);
@@ -142,5 +150,13 @@ class Phase2LogicTest {
         assertFalse(e.exact);
         assertTrue(e.x < 1000 && Math.abs(e.z - 50) < 1e-6, "walk toward -x: " + e);
         assertNull(TreasureMap.locate(new TreasureMap.Reading(1).add("PLAYER", 0, 0), 0, 0), "no X, no estimate");
+    }
+
+    @Test
+    void waterFogEndsSightRays() {
+        PerceptionRules fair = new PerceptionRules(true, 10, 160);
+        assertTrue(fair.seesThroughWater(PerceptionRules.WATER_VIEW_BLOCKS));
+        assertFalse(fair.seesThroughWater(PerceptionRules.WATER_VIEW_BLOCKS + 1));
+        assertTrue(new PerceptionRules(false, 10, 160).seesThroughWater(100), "relaxed comparison mode has no fog");
     }
 }

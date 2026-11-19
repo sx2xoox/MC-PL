@@ -79,6 +79,12 @@ public final class DevSetup {
             String[] xyz = start.split(",");
             target = new BlockPos(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2]));
         }
+        if (target != null && !start.startsWith("lava")) {
+            // a fixed test spot may be inside rock: clear a pocket (test fixture only)
+            w.getChunk(target.getX() >> 4, target.getZ() >> 4);
+            w.setBlockState(target, Blocks.AIR.getDefaultState());
+            w.setBlockState(target.up(), Blocks.AIR.getDefaultState());
+        }
         if (target != null) {
             p.teleport(w, target.getX() + 0.5, target.getY(), target.getZ() + 0.5, p.yaw, p.pitch);
             applied += "start=" + target.getX() + "," + target.getY() + "," + target.getZ() + ";";

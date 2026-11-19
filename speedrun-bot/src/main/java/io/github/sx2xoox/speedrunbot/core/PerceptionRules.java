@@ -12,6 +12,17 @@ public final class PerceptionRules {
     public static final double V_FOV_DEG = 70.0;
     /** Horizontal FOV for a 16:9 window at vertical FOV 70: 2*atan(tan(35deg)*16/9) ~= 102 deg. */
     public static final double H_FOV_DEG = Math.toDegrees(2 * Math.atan(Math.tan(Math.toRadians(V_FOV_DEG / 2)) * 16.0 / 9.0));
+    /**
+     * Water fog: a sight ray that has passed through this many water blocks ends (the vanilla client fogs water out
+     * within roughly 15-25 blocks; the lower end is used).
+     */
+    public static final int WATER_VIEW_BLOCKS = 16;
+
+    /** True when a ray that crossed {@code waterBlocks} water cells may still go on (always in relaxed mode). */
+    public boolean seesThroughWater(int waterBlocks) {
+        return !fair || waterBlocks <= WATER_VIEW_BLOCKS;
+    }
+
     /** Blocks closer than this are also "seen" around the player regardless of view direction (what is at your feet). */
     public static final double NEAR_SENSE = 1.5;
 

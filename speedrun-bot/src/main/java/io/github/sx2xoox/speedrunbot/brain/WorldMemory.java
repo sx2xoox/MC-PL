@@ -27,7 +27,9 @@ public final class WorldMemory {
     public enum Kind {
         LOG, IRON_ORE, COAL_ORE, GRAVEL, LAVA_SOURCE, WATER_SOURCE, CRAFTING_TABLE, FURNACE, CHEST, OBSIDIAN,
         /** Worked wood (planks, wooden stairs/slabs/fences/trapdoors/doors): ships, houses, mineshafts. */
-        WOODWORK
+        WOODWORK,
+        /** Tree leaves: a tree is there even when its trunk is hidden. */
+        LEAVES
     }
 
     public WorldMemory() {
@@ -120,6 +122,9 @@ public final class WorldMemory {
         Block b = s.getBlock();
         if (s.isIn(BlockTags.LOGS) && b != Blocks.CRIMSON_STEM && b != Blocks.WARPED_STEM) {
             return Kind.LOG;
+        }
+        if (s.isIn(BlockTags.LEAVES)) {
+            return Kind.LEAVES;
         }
         if (b == Blocks.IRON_ORE) {
             return Kind.IRON_ORE;

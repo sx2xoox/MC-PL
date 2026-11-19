@@ -38,8 +38,18 @@ public final class Actions {
 
     /** True while an inventory swap is using the open inventory screen. */
     public boolean equipBusy() {
+        if (equipPhase != 0 && s.gameTick() - lastEquipCall > 5) {
+            // the caller gave up on this swap (its item is gone, its goal changed): release the screen
+            equipPhase = 0;
+            c.lockScreen(false);
+            if (s.screenOpen()) {
+                c.closeScreen();
+            }
+        }
         return equipPhase != 0;
     }
+
+    private long lastEquipCall;
 
     public Actions(BotSenses s, Controls c, WorldMemory mem) {
         this.s = s;
@@ -84,6 +94,7 @@ public final class Actions {
 
     /** Puts a matching item in the main hand. DONE when held; FAILED when none is carried. */
     public Status equip(Predicate<ItemStack> p) {
+        lastEquipCall = s.gameTick();
         PlayerInventory inv = s.inventory();
         ItemStack held = inv.getMainHandStack();
         if (!held.isEmpty() && p.test(held)) {

@@ -87,9 +87,14 @@ public final class Perception {
         double tmy = d[1] == 0 ? Double.POSITIVE_INFINITY : ((sy > 0 ? (y + 1 - eye.y) : (eye.y - y)) * tdy);
         double tmz = d[2] == 0 ? Double.POSITIVE_INFINITY : ((sz > 0 ? (z + 1 - eye.z) : (eye.z - z)) * tdz);
         double t = 0;
+        int water = 0;
         while (t <= range) {
             BlockState s = senses.blockAt(x, y, z);
             if (s == null) {
+                return;
+            }
+            if (!s.getFluidState().isEmpty() && s.getFluidState().getFluid() != Fluids.LAVA && s.getFluidState().getFluid() != Fluids.FLOWING_LAVA
+                    && !rules.seesThroughWater(++water)) {
                 return;
             }
             memory.put(x, y, z, s);

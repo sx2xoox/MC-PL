@@ -142,6 +142,23 @@ public final class Navigator {
         };
     }
 
+    /** Feet at or above the given height (anywhere): back up to the surface. */
+    public static Goal above(int y0) {
+        return new Goal() {
+            public String key() {
+                return "above" + y0;
+            }
+
+            public boolean done(int x, int y, int z) {
+                return y >= y0;
+            }
+
+            public double h(int x, int y, int z) {
+                return Math.max(0, y0 - y);
+            }
+        };
+    }
+
     /** Feet in the given block column at any height (digging down a map's X). */
     public static Goal column(int cx, int cz, int yHint) {
         return new Goal() {

@@ -269,6 +269,13 @@ public final class RunBrain {
             }
             return Goal.WOOD_TOOLS;
         }
+        if (needWood) {
+            if (inv.logs() * 4 + inv.planks() >= 8) {
+                needWood = false;
+            } else {
+                return Goal.WOOD;
+            }
+        }
         if (route == RouteSelector.Route.TREASURE && !treasure.finished() && ironTotal() < ironNeeded()) {
             return Goal.TREASURE;
         }
@@ -304,8 +311,12 @@ public final class RunBrain {
         if (!inv.has(Items.WATER_BUCKET) && !portal.waterPlaced()) {
             return Goal.WATER;
         }
-        if (portal.chooseLava() == null) {
+        BlockPos lavaKnown = portal.chooseLava();
+        if (lavaKnown == null) {
             return Goal.LAVA;
+        }
+        if (Math.sqrt(lavaKnown.getSquaredDistance(mover.feet())) > p.get("portal.approachDist")) {
+            return Goal.LAVA; // seen far away (a ravine, a pool): get close first, the site is chosen there
         }
         return Goal.PORTAL;
     }
@@ -470,8 +481,16 @@ public final class RunBrain {
         }
         lastLogs = logs;
         BlockPos f = mover.feet();
-        if (target == null || !isLog(target) || badTargets.contains(target.asLong())) {
-            target = mem.nearest(WorldMemory.Kind.LOG, f, 96, l -> !badTargets.contains(l) && BlockPos.unpackLongY(l) <= f.getY() + 6);
+        if (target == null || !(isLog(target) || isPlanks(target)) || badTargets.contains(target.asLong())) {
+            target = mem.nearest(WorldMemory.Kind.LOG, f, 160, l -> !badTargets.contains(l) && BlockPos.unpackLongY(l) <= f.getY() + 6);
+            if (target == null || target.getSquaredDistance(f) > 24 * 24) {
+                // planks of a mineshaft, a wreck or a house are wood too (and closer underground)
+                BlockPos pl = mem.nearest(WorldMemory.Kind.WOODWORK, f, 32,
+                        l -> !badTargets.contains(l) && isPlanks(BlockPos.fromLong(l)) && exposed(BlockPos.fromLong(l)));
+                if (pl != null && (target == null || pl.getSquaredDistance(f) < target.getSquaredDistance(f))) {
+                    target = pl;
+                }
+            }
             sub = 0;
             subTicks = 0;
         }
@@ -502,18 +521,32 @@ public final class RunBrain {
         }
     }
 
+    private boolean isPlanks(BlockPos p) {
+        BlockState st = mem.get(p);
+        return st != null && st.isIn(net.minecraft.tag.BlockTags.PLANKS);
+    }
+
     private boolean isLog(BlockPos p) {
         BlockState st = mem.get(p);
         return st != null && WorldMemory.classify(st) == WorldMemory.Kind.LOG;
     }
 
     /** Walk somewhere new, looking around, to discover trees / water / lava. */
+    private float exploreYaw = Float.NaN;
+    private int exploreLegs;
+
     private void explore() {
         BlockPos f = mover.feet();
         if (exploreTarget == null || subTicks > 300 || exploreTarget.squaredDistanceTo(Vec3d.ofCenter(f)) < 9) {
-            float yaw = s.yaw() + (rng.nextFloat() * 120 - 60);
-            double[] d = PerceptionRules.direction(yaw, 0);
-            exploreTarget = new Vec3d(f.getX() + d[0] * 24, f.getY(), f.getZ() + d[2] * 24);
+            // hold one heading (a straight line covers new ground; random turns circle the spawn), toward leaves if seen
+            BlockPos leaves = goal == Goal.WOOD ? mem.nearest(WorldMemory.Kind.LEAVES, f, 160, l -> !badTargets.contains(l)) : null;
+            if (leaves != null) {
+                exploreYaw = yawTo(leaves);
+            } else if (Float.isNaN(exploreYaw) || subTicks > 300 || ++exploreLegs % 4 == 0) {
+                exploreYaw = (Float.isNaN(exploreYaw) ? s.yaw() : exploreYaw) + (rng.nextFloat() * 120 - 60) + (subTicks > 300 ? 90 : 0);
+            }
+            double[] d = PerceptionRules.direction(exploreYaw + (rng.nextFloat() * 30 - 15), 0);
+            exploreTarget = new Vec3d(f.getX() + d[0] * 32, f.getY(), f.getZ() + d[2] * 32);
             subTicks = 0;
             mover.reset();
         }
@@ -544,11 +577,21 @@ public final class RunBrain {
         needs.add(new Workbench.Need(name, out, count, true));
         if (bench.run(needs) == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("no_")) {
             craftFailures++;
+            if (bench.error().contains("wood") && woodRefills < 3) {
+                // out of planks for a table: fetch wood (trees, or planks of a mineshaft / wreck seen underground)
+                woodRefills++;
+                needWood = true;
+                trace("out of wood for " + name + ": fetching more");
+                return;
+            }
             if (craftFailures > 3) {
                 fail("craft_" + name + "_" + bench.error());
             }
         }
     }
+
+    private boolean needWood;
+    private int woodRefills;
 
     private int craftFailures;
 
@@ -857,6 +900,47 @@ public final class RunBrain {
         lookAhead();
     }
 
+    private long noStraightUntil;
+
+    /**
+     * Digs the block under the feet (1x1 shaft, the fastest way down) while staying in the middle of the cell; turns to
+     * the staircase for a while when fluid is seen below or next to the shaft.
+     */
+    private void digStraightDown() {
+        if (collect()) {
+            return;
+        }
+        BlockPos f = mover.feet();
+        BlockPos below = f.down();
+        BlockState st = mem.get(below);
+        Vec3d pos = s.pos();
+        double cx = f.getX() + 0.5 - pos.x, cz = f.getZ() + 0.5 - pos.z;
+        if (st != null && (Blocks2.isLava(st) || Blocks2.isWater(st) || a.lavaNextTo(below) || Blocks2.pass(st) == Blocks2.Pass.FORBID)) {
+            trace("fluid below the shaft at " + below + ": staircase for a while");
+            noStraightUntil = now() + 400;
+            return;
+        }
+        if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
+            // open below (falling, or a cave): look down while it happens
+            c.lookAngles(s.yaw(), 90f);
+            return;
+        }
+        if (Math.abs(cx) > 0.2 || Math.abs(cz) > 0.2) {
+            float yaw = InputLimits.yawTo(cx, cz);
+            c.lookAngles(yaw, 60f);
+            if (Math.abs(InputLimits.wrap(yaw - s.yaw())) < 30) {
+                c.move(0.3f, 0f, false, false, true);
+            }
+            return;
+        }
+        if (!s.onGround()) {
+            return;
+        }
+        if (a.mine(below, false) == Actions.Status.FAILED) {
+            noStraightUntil = now() + 400;
+        }
+    }
+
     private void lookAhead() {
         // keep the eyes on the work face, slightly down, so new rock and ores are seen
         if (subTicks % 30 < 6) {
@@ -973,13 +1057,35 @@ public final class RunBrain {
             }
         }
         int targetY = why.equals("iron") ? p.getInt("dig.ironY") : p.getInt("dig.targetY");
+        if (why.equals("lava")) {
+            BlockPos known = portal.chooseLava();
+            if (known != null) {
+                // lava seen: head for it (down first through a shaft / staircase toward it, then across)
+                if (f.getY() > known.getY() + 3) {
+                    targetY = known.getY() + 1;
+                    int dx = known.getX() - f.getX(), dz = known.getZ() - f.getZ();
+                    Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+                    if (digDir != toward && now() - lastTurnTick > 100) {
+                        digDir = toward;
+                    }
+                } else {
+                    if (mover.go(Navigator.near(known, 5)) == Mover.Status.FAILED) {
+                        badTargets.add(known.asLong());
+                    }
+                    return;
+                }
+            }
+        }
         if (route == RouteSelector.Route.SURFACE_CAST && why.equals("iron")) {
             targetY = Math.max(targetY, 40);
         }
         if (exploreCave(f, targetY)) {
             return;
         }
-        if (f.getY() > targetY) {
+        if (f.getY() > targetY && p.get("dig.straightDown") > 0 && f.getY() > Math.max(targetY, p.getInt("dig.straightMinY"))
+                && now() > noStraightUntil) {
+            digStraightDown();
+        } else if (f.getY() > targetY) {
             stairStep();
         } else {
             tunnelStep();
@@ -1013,6 +1119,9 @@ public final class RunBrain {
             if (Blocks2.isWater(st)) {
                 return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.WATER;
             }
+            if (st.isIn(net.minecraft.tag.BlockTags.LEAVES) || st.isIn(net.minecraft.tag.BlockTags.LOGS)) {
+                return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.AIR; // a canopy is no cave roof
+            }
             return Blocks2.pass(st) == Blocks2.Pass.PASS ? io.github.sx2xoox.speedrunbot.core.Frontier.Seen.AIR
                     : io.github.sx2xoox.speedrunbot.core.Frontier.Seen.SOLID;
         }, w);
@@ -1033,7 +1142,9 @@ public final class RunBrain {
                 return false;
             }
             lastCaveSearch = now();
-            io.github.sx2xoox.speedrunbot.core.Cell cell = frontier().best(f.getX(), f.getY(), f.getZ(), targetY, caveVisited::contains);
+            // caves are under the ground: well below the height the run started at (trees and overhangs are no caves)
+            io.github.sx2xoox.speedrunbot.core.Cell cell = frontier().best(f.getX(), f.getY(), f.getZ(), targetY,
+                    Math.min(spawn.getY() - p.getInt("cave.belowSurface"), 60), caveVisited::contains);
             if (cell == null) {
                 return false;
             }
@@ -1124,6 +1235,12 @@ public final class RunBrain {
 
     final Smelter smelter = new Smelter(this);
 
+    /** Crafts at a table are still ahead (bucket, flint and steel) and the wood for a new table is short. */
+    boolean tableNeededLater() {
+        boolean ahead = inv.buckets() == 0 || !inv.lighter();
+        return ahead && inv.planks() + inv.logs() * 4 < 4 + p.getInt("craft.spareWood");
+    }
+
     /** Planks to keep for crafts still ahead (another table for the flint and steel if it is not made yet). */
     int plankReserve() {
         return inv.has(Items.FLINT_AND_STEEL) ? 0 : 4;
@@ -1212,15 +1329,51 @@ public final class RunBrain {
             return;
         }
         BlockPos f = mover.feet();
+        if (s.inWater() && inv.has(Items.BUCKET)) {
+            // standing in water: scoop a source right here (the one at the feet or the head, or any touching us)
+            for (BlockPos q : new BlockPos[]{f, f.up(), f.down(), f.north(), f.south(), f.east(), f.west()}) {
+                if (isWaterSource(q)) {
+                    if (a.equip(Items.BUCKET) == Actions.Status.DONE) {
+                        Vec3d aim = Vec3d.ofCenter(q);
+                        c.lookAt(aim);
+                        net.minecraft.util.hit.HitResult h = s.fluidCrosshair();
+                        if (h instanceof BlockHitResult && h.getType() == net.minecraft.util.hit.HitResult.Type.BLOCK
+                                && isWaterSource(((BlockHitResult) h).getBlockPos())) {
+                            c.use();
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        int surface = Math.max(spawn.getY() - 2, 60);
         if (target == null || !isWaterSource(target) || badTargets.contains(target.asLong())) {
             target = mem.nearest(WorldMemory.Kind.WATER_SOURCE, f, p.get("portal.waterSearchDist") * 3,
                     l -> !badTargets.contains(l) && exposedTop(BlockPos.fromLong(l)));
             subTicks = 0;
+            if (target != null && f.getY() < surface - 4 && target.getY() > f.getY() + 6
+                    && Math.abs(target.getX() - f.getX()) + Math.abs(target.getZ() - f.getZ()) > 6) {
+                target = null; // far above us: straight up first (reliable), then walk on the surface
+            }
         }
+        if (climbing && f.getY() < surface) {
+            if (mover.climb(surface) != Mover.Status.RUNNING) {
+                climbing = false;
+            }
+            return;
+        }
+        climbing = false;
         if (target == null) {
-            // go up toward the surface where we came from, looking around
-            if (f.getY() < 60 && spawn != null) {
-                if (mover.go(Navigator.near(spawn, 3)) == Mover.Status.FAILED) {
+            // go back up to the surface (where water was seen or is likely), looking around
+
+            if (f.getY() < surface) {
+                BlockPos seenWater = mem.nearest(WorldMemory.Kind.WATER_SOURCE, f, 400, l -> !badTargets.contains(l));
+                if (seenWater != null && seenWater.getSquaredDistance(f) < 160 * 160 && !climbing) {
+                    if (mover.go(Navigator.near(seenWater, 4)) == Mover.Status.FAILED) {
+                        climbing = true; // no way through what we know: straight up instead
+                    }
+                } else if (mover.climb(surface) == Mover.Status.FAILED) {
+                    climbing = false;
                     explore();
                 }
             } else {
@@ -1228,14 +1381,16 @@ public final class RunBrain {
             }
             return;
         }
-        if (subTicks > 900) {
+        if (subTicks > 600) {
             badTargets.add(target.asLong());
             target = null;
+            climbing = f.getY() < surface;
             return;
         }
         if (fillBucket(target, Items.WATER_BUCKET) == Actions.Status.FAILED) {
             badTargets.add(target.asLong());
             target = null;
+            climbing = f.getY() < surface;
         }
     }
 
@@ -1302,6 +1457,7 @@ public final class RunBrain {
     private int fillAimTicks;
 
     private BlockPos waterToRecover;
+    private boolean climbing;
 
     /** Survival poured the water bucket somewhere: scoop it back before going on. */
     void recoverWater(BlockPos at) {

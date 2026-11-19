@@ -36,7 +36,7 @@ public final class Workbench {
         }
     }
 
-    private enum Phase { IDLE, PREP_TABLE_ITEM, PLACE_TABLE, GO_TABLE, OPEN, CRAFT, WAIT_RESULT, CLOSE }
+    private enum Phase { IDLE, PREP_TABLE_ITEM, PLACE_TABLE, GO_TABLE, OPEN, CRAFT, WAIT_RESULT, CLOSE, PICKUP }
 
     private final RunBrain b;
     private Phase phase = Phase.IDLE;
@@ -135,16 +135,46 @@ public final class Workbench {
                 return waitResult();
             case CLOSE:
                 if (!b.s.screenOpen() || b.c.closeScreen()) {
+                    if (table != null && b.tableNeededLater()) {
+                        // too little wood for another table and crafts still ahead (underground): take this one along
+                        b.trace("picking the table up again (" + b.inv().planks() + " planks)");
+                        go(Phase.PICKUP);
+                        return Actions.Status.RUNNING;
+                    }
                     phase = Phase.IDLE;
                     return Actions.Status.DONE;
                 }
                 return Actions.Status.RUNNING;
+            case PICKUP: {
+                BlockState st = b.mem.get(table);
+                if (st != null && st.getBlock() == Blocks.CRAFTING_TABLE && phaseTicks < 200) {
+                    if (b.a.mine(table, true) == Actions.Status.FAILED) {
+                        phase = Phase.IDLE;
+                        return Actions.Status.DONE;
+                    }
+                    return Actions.Status.RUNNING;
+                }
+                // walk over the drop
+                BlockPos f = b.feet();
+                if (b.inv().has(Items.CRAFTING_TABLE) || phaseTicks > 260 || (f.getX() == table.getX() && f.getZ() == table.getZ())) {
+                    phase = Phase.IDLE;
+                    return Actions.Status.DONE;
+                }
+                if (b.mover.go(Navigator.near(table, 0.5)) != Mover.Status.RUNNING) {
+                    phase = Phase.IDLE;
+                    return Actions.Status.DONE;
+                }
+                return Actions.Status.RUNNING;
+            }
             default:
                 return Actions.Status.RUNNING;
         }
     }
 
     private BlockPos knownTable() {
+        if (b.inv().has(Items.CRAFTING_TABLE)) {
+            return null; // carried along: place it here
+        }
         double reuse = b.p.get("craft.tableReuseDist");
         return b.mem.nearest(WorldMemory.Kind.CRAFTING_TABLE, b.feet(), reuse, l -> !b.badTargets().contains(l));
     }

@@ -26,9 +26,10 @@ public final class Params {
     static {
         Map<String, Double> d = new LinkedHashMap<>();
         // --- wood ---
-        d.put("wood.logs", 7.0);                 // logs before crafting (table + pick + sticks + spare planks)
+        d.put("wood.logs", 6.0);                 // logs before crafting (table + pick + sticks + spare planks)
         d.put("wood.maxSearchTicks", 1200.0);    // give up looking for trees after this
-        d.put("craft.tableReuseDist", 6.0);     // walk back to a known table only within this distance
+        d.put("craft.spareWood", 4.0);           // keep the table when planks for a new one + this spare are missing
+        d.put("craft.tableReuseDist", 16.0);    // walk back to a known table only within this distance
         // --- stone ---
         d.put("stone.cobble", 12.0);             // cobble to collect (pick 3 + furnace 8 + spare)
         d.put("stone.picks", 2.0);              // stone pickaxes crafted at once (one wears out after 131 blocks)
@@ -40,9 +41,12 @@ public final class Params {
         d.put("iron.needed", 4.0);               // bucket (3) + flint and steel (1)
         d.put("iron.seenDist", 40.0);            // walk to iron ore seen in the open this far away
         d.put("dig.ironY", 35.0);                // feet Y of the staircase / tunnel while looking for iron
+        d.put("dig.straightDown", 1.0);          // 1 = dig a 1x1 shaft straight down (fast) above dig.straightMinY
+        d.put("dig.straightMinY", 24.0);         // below this the staircase is used (lava at y <= 10 in caves)
         d.put("cave.radius", 24.0);              // frontier search radius in caves
         d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height
         d.put("cave.perUnknown", 0.8);           // frontier bonus per unseen cell around it
+        d.put("cave.belowSurface", 8.0);         // cave frontiers must be this far below the starting height
         d.put("gravel.maxBreaks", 14.0);         // gravel to break for flint before giving up
         // --- treasure route (shipwreck -> map -> buried treasure) ---
         d.put("treasure.shipDist", 64.0);        // go for a shipwreck seen within this distance
@@ -60,6 +64,7 @@ public final class Params {
         d.put("route.ironMissingSec", 25.0);     // cost of each missing iron on the surface route
         d.put("route.noWaterSec", 30.0);         // penalty when no water is known
         // --- portal site ---
+        d.put("portal.approachDist", 20.0);     // walk/dig to within this distance of seen lava before choosing a site
         d.put("portal.maxLavaDist", 9.0);        // site must be within this distance of a lava source
         d.put("portal.waterSearchDist", 64.0);   // max distance to walk back for water
         // --- safety ---

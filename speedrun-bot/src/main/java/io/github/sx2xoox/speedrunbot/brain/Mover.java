@@ -32,6 +32,9 @@ public final class Mover {
     private double bestDist;
     private int failures;
     private int pillarPhase;
+    private int peekTicks;
+    private int pillarIndex = -1;
+    private static final boolean DEBUG = Boolean.getBoolean("srb.debugMove");
     private long plannedNodes;
     private int plans;
 
@@ -89,7 +92,7 @@ public final class Mover {
         }
         StepResult r = follow(f);
         if (r == StepResult.REPLAN) {
-            if (failures % 5 == 0) {
+            if (failures % 5 == 0 || DEBUG) {
                 debug.accept("replan " + why + " at " + f + " step=" + (path != null && index < path.steps.size() ? path.steps.get(index) : null) + " failures=" + failures);
             }
             path = null;
@@ -180,6 +183,20 @@ public final class Mover {
                 }
             }
         }
+        // look before dropping: the landing (and what is under it) must be seen, it may be lava
+        if (step.move == Navigator.Move.DOWN && from.getY() - t.getY() >= 1) {
+            BlockState land = mem.get(t.down());
+            if (land == null && peekTicks < 12) {
+                peekTicks++;
+                c.lookAt(new Vec3d(t.getX() + 0.5, t.getY(), t.getZ() + 0.5));
+                return StepResult.OK;
+            }
+            if (land != null && Blocks2.isLava(land)) {
+                avoid.add(t.asLong());
+                return replan("lava_landing");
+            }
+        }
+        peekTicks = 0;
         // clear the way first
         for (BlockPos cell : bodyCells(step, from)) {
             if (a.solid(cell)) {
@@ -197,6 +214,14 @@ public final class Mover {
         double hd = Math.sqrt(sq(target.x - pos.x) + sq(target.z - pos.z));
         switch (step.move) {
             case PILLAR: {
+                if (pillarIndex != index) {
+                    pillarIndex = index; // a new pillar step (the skip-ahead may have moved the index)
+                    pillarPhase = 0;
+                }
+                if (DEBUG && s.gameTick() % 10 == 0) {
+                    debug.accept("pillar phase=" + pillarPhase + " pos=" + s.pos() + " ground=" + s.onGround() + " pitch=" + s.pitch() + " from=" + from
+                            + " t=" + t + " held=" + s.inventory().getMainHandStack() + " above=" + mem.get(from.up(2)));
+                }
                 if (a.equip(Actions::isThrowaway) != Actions.Status.DONE) {
                     return StepResult.OK;
                 }
@@ -353,6 +378,63 @@ public final class Mover {
 
     private static double sq(double v) {
         return v * v;
+    }
+
+    private int climbPhase;
+    private BlockPos climbFrom;
+
+    /**
+     * Straight up to height y0 the way players get out of a hole: mine what is above the head, jump, place a block
+     * under the feet at the top of the jump, repeat. ARRIVED at y0, FAILED without blocks or when lava/water is above.
+     */
+    public Status climb(int y0) {
+        BlockPos f = feet();
+        if (f.getY() >= y0 && s.onGround()) {
+            climbPhase = 0;
+            return Status.ARRIVED;
+        }
+        BlockPos head = f.up(2);
+        BlockState hs = mem.get(head);
+        if (hs != null && (Blocks2.isLava(hs) || Blocks2.isWater(hs) || Blocks2.pass(hs) == Blocks2.Pass.FORBID)) {
+            return Status.FAILED;
+        }
+        if (s.onGround() && (hs == null || Blocks2.pass(hs) == Blocks2.Pass.SOLID)) {
+            if (a.lavaNextTo(head)) {
+                return Status.FAILED;
+            }
+            Actions.Status st = a.mine(head, false);
+            return st == Actions.Status.FAILED ? Status.FAILED : Status.RUNNING;
+        }
+        if (Actions.count(s.inventory(), Actions::isThrowaway) == 0) {
+            return Status.FAILED;
+        }
+        if (a.equip(Actions::isThrowaway) != Actions.Status.DONE) {
+            return Status.RUNNING;
+        }
+        c.lookAngles(s.yaw(), 90f);
+        Vec3d p = s.pos();
+        double cx = f.getX() + 0.5 - p.x, cz = f.getZ() + 0.5 - p.z;
+        if (s.onGround()) {
+            if (Math.abs(cx) > 0.25 || Math.abs(cz) > 0.25) {
+                // centre on the cell first (sneak-walk) so the block goes under the feet
+                float yaw = InputLimits.yawTo(cx, cz);
+                c.lookAngles(yaw, 60f);
+                c.move(0.3f, 0f, false, false, true);
+                return Status.RUNNING;
+            }
+            if (s.pitch() > 80f) {
+                c.jump();
+                climbFrom = f;
+                climbPhase = 1;
+            }
+            return Status.RUNNING;
+        }
+        if (climbPhase == 1 && climbFrom != null && p.y >= climbFrom.getY() + 1.0) {
+            if (a.place(climbFrom, Actions::isThrowaway) == Actions.Status.DONE) {
+                climbPhase = 0;
+            }
+        }
+        return Status.RUNNING;
     }
 
     /** Known lava touching the feet or head cell (sides, below, above). */

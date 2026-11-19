@@ -23,6 +23,8 @@ public final class Frontier {
         public int roofSearch = 12;
         public int radius = 32;
         public int minDistance = 3;
+        /** Air cells needed around a frontier (a straight 1x2 tunnel has at most 10 in the box). */
+        public int minAir = 14;
     }
 
     private final Grid g;
@@ -60,6 +62,21 @@ public final class Frontier {
         return false;
     }
 
+    /** Air cells in the 5x3x5 box around the feet cell: a natural cave is wider than a dug 1x2 tunnel. */
+    public int airAround(int x, int y, int z) {
+        int n = 0;
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 0; dy <= 2; dy++) {
+                    if (g.at(x + dx, y + dy, z + dz) == Seen.AIR) {
+                        n++;
+                    }
+                }
+            }
+        }
+        return n;
+    }
+
     /** Unknown cells in the 5x3x5 box around the feet cell (how much there is still to see from here). */
     public int unknownAround(int x, int y, int z) {
         int n = 0;
@@ -81,7 +98,7 @@ public final class Frontier {
             return Double.POSITIVE_INFINITY;
         }
         int unknown = unknownAround(x, y, z);
-        if (unknown < 3) {
+        if (unknown < 3 || airAround(x, y, z) < w.minAir) {
             return Double.POSITIVE_INFINITY;
         }
         double dx = x - fx, dy = y - fy, dz = z - fz;
@@ -99,6 +116,11 @@ public final class Frontier {
 
     /** Best frontier cell around the feet, or null. */
     public Cell best(int fx, int fy, int fz, int targetY, Visited visited) {
+        return best(fx, fy, fz, targetY, Integer.MAX_VALUE, visited);
+    }
+
+    /** As {@link #best(int, int, int, int, Visited)}, only cells with feet at or below maxY (under the ground). */
+    public Cell best(int fx, int fy, int fz, int targetY, int maxY, Visited visited) {
         Cell best = null;
         double bestScore = Double.POSITIVE_INFINITY;
         int r = w.radius;
@@ -109,7 +131,7 @@ public final class Frontier {
                 }
                 for (int dy = -12; dy <= 8; dy++) {
                     int x = fx + dx, y = fy + dy, z = fz + dz;
-                    if (y < 6) {
+                    if (y < 6 || y > maxY) {
                         continue;
                     }
                     if (g.at(x, y, z) != Seen.AIR) {

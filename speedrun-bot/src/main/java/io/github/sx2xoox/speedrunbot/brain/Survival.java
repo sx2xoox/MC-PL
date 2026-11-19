@@ -109,7 +109,15 @@ public final class Survival {
             b.recoverWater(waterAt);
             waterAt = null;
         }
-        // 2. air: swim up
+        // 2. buried (gravel or sand fell on the head): dig the head free
+        BlockPos eye = new BlockPos(b.s.eyePos());
+        net.minecraft.block.BlockState es = b.mem.get(eye);
+        if (es != null && Blocks2.pass(es) == Blocks2.Pass.SOLID && es.isOpaque()) {
+            interruptScreens();
+            b.a.mine(eye, false);
+            return true;
+        }
+        // 2b. air: swim up
         if (b.s.air() < 100 && b.s.submerged()) {
             b.c.lookAngles(b.s.yaw(), -60f);
             b.c.move(0.6f, 0f, true, false, false);
@@ -153,6 +161,33 @@ public final class Survival {
                     b.a.equip(Survival::weapon);
                     b.c.attackEntity();
                     attackCooldown = 12;
+                }
+                return true;
+            }
+        }
+        // shot at: charge the archer we see (healthy) or get out of its sight (hurt)
+        if (ticks - lastHurtTick < 60) {
+            List<net.minecraft.entity.mob.AbstractSkeletonEntity> archers = b.perception.visible(net.minecraft.entity.mob.AbstractSkeletonEntity.class, 16.0, null);
+            if (!archers.isEmpty()) {
+                net.minecraft.entity.mob.AbstractSkeletonEntity e = closest(archers);
+                interruptScreens();
+                if (b.s.health() > b.p.get("safety.fleeHealth")) {
+                    Vec3d aim = e.getPos().add(0, e.getHeight() * 0.6, 0);
+                    double d = e.getPos().distanceTo(b.s.pos());
+                    if (d > 2.8) {
+                        b.mover.go(Navigator.near(e.getBlockPos(), 1.5));
+                    } else {
+                        b.c.lookAt(aim);
+                        if (attackCooldown == 0 && b.c.aimed(aim, 15f)) {
+                            b.a.equip(Survival::weapon);
+                            b.c.attackEntity();
+                            attackCooldown = 12;
+                        }
+                    }
+                } else {
+                    fleeFrom = e.getPos();
+                    fleeTicks = 40;
+                    b.trace("hurt by an archer: getting out of sight");
                 }
                 return true;
             }
