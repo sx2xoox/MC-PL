@@ -74,8 +74,20 @@ public final class Survival {
 
     /** Hurt by what the player knows without looking: magma underfoot, no air left. */
     private boolean burnOrDrown() {
-        net.minecraft.block.BlockState under = b.mem.get(b.feet().down());
-        return b.s.air() <= 0 || (under != null && under.getBlock() == net.minecraft.block.Blocks.MAGMA_BLOCK);
+        if (b.s.air() <= 0) {
+            return true;
+        }
+        // magma under any part of the body (it burns from the block the player stands on, the box spans up to four)
+        BlockPos d = b.feet().down();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                net.minecraft.block.BlockState under = b.mem.get(d.add(dx, 0, dz));
+                if (under != null && under.getBlock() == net.minecraft.block.Blocks.MAGMA_BLOCK) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public boolean tick() {

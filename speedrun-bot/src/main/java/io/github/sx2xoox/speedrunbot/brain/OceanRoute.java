@@ -962,25 +962,42 @@ public final class OceanRoute {
         }
     }
 
+    private boolean breathing;
+
     private void dryDig() {
         BlockPos w2 = stand.offset(wallDir, 2);
-        if (b.s.air() < 200) {
-            // breathe in the door: its cells hold no water
-            Vec3d p = b.s.pos();
-            double into = (p.x - (stand.getX() + 0.5)) * wallDir.getOffsetX() + (p.z - (stand.getZ() + 0.5)) * wallDir.getOffsetZ();
-            if (into < 0.8) {
-                b.c.lookAngles(wallDir.asRotation(), 30f);
-                b.c.move(0.6f, 0f, false, false, false);
+        if (b.s.air() < 110 || breathing) {
+            // breathe in the door: its cells hold no water (the eyes in the upper door cell are out of the water);
+            // lined up with the free part of the door like entering, then back to the digging when the air is full
+            breathing = b.s.air() < 280;
+            if (breathing) {
+                if (!b.feet().equals(stand.offset(wallDir))) {
+                    walkThroughDoor(stand.offset(wallDir));
+                } else {
+                    b.c.move(0f, 0f, false, false, false);
+                }
+                if (phaseTicks % 40 == 0) {
+                    b.trace("breathing in the door, air " + b.s.air());
+                }
+                return;
             }
+        }
+        BlockPos w1 = stand.offset(wallDir);
+        if (!b.feet().equals(w1) && phaseTicks < 200) {
+            // dig the pocket from inside the open door: out of the water there (mining at full speed, breathing)
+            walkThroughDoor(w1);
+            return;
         }
         for (BlockPos q : new BlockPos[]{w2.up(), w2}) {
             BlockState st = b.mem.get(q);
             if (st == null || Blocks2.pass(st) == Blocks2.Pass.SOLID) {
-                b.c.sink();
+                if (!b.feet().equals(w1)) {
+                    b.c.sink();
+                }
                 if (b.a.mine(q, false) == Actions.Status.FAILED) {
                     fail("dry_mine");
                 }
-                if (phaseTicks > 600) {
+                if (phaseTicks > 800) {
                     fail("dry_timeout");
                 }
                 return;
@@ -1013,6 +1030,11 @@ public final class OceanRoute {
             fail("enter_timeout");
             return;
         }
+        walkThroughDoor(w2);
+    }
+
+    /** Toward {@code cell} (the door cell or the pocket behind it) through the free part of the open door. */
+    private void walkThroughDoor(BlockPos w2) {
         // through the middle of the free part of the door cell (the open door is a plate along one side, and the
         // player is 0.6 wide in a 0.81 wide gap)
         BlockPos w1 = stand.offset(wallDir);
