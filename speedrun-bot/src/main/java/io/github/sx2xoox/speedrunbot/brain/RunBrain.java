@@ -1794,9 +1794,16 @@ public final class RunBrain {
             if (dyHeard < -2.5 && f.getY() > 11 && dx * dx + dz * dz < 12 * 12) {
                 // the lava is below (a cave floor at y 10 under the tunnel): a staircase down toward it; walking on
                 // over the spot ("reached") kept a run circling above heard lava for three minutes
+                // a cave going down there is quicker (and the staircase refuses drops into one)
+                if (exploreCave(f, (int) Math.round(lavaHeardAt.y) + 1, f.getY()) && caveTarget != null && caveTarget.getY() < f.getY()) {
+                    return;
+                }
                 Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
-                if (dx * dx + dz * dz >= 4 && digDir != toward && now() - lastTurnTick > 60) {
+                // a turn the staircase made itself (fluid, drop ahead) stands for a while: turning straight back
+                // toward the sound each time kept a run stepping in place
+                if (dx * dx + dz * dz >= 4 && digDir != toward && now() - lastTurnTick > 300) {
                     digDir = toward;
+                    lastTurnTick = now();
                     trace("stairs down toward the lava heard around " + new BlockPos(lavaHeardAt));
                 }
                 stairStep();

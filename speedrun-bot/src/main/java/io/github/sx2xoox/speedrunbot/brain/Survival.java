@@ -171,7 +171,10 @@ public final class Survival {
             if (!archers.isEmpty()) {
                 net.minecraft.entity.mob.AbstractSkeletonEntity e = closest(archers);
                 interruptScreens();
-                if (b.s.health() > b.p.get("safety.fleeHealth")) {
+                double dArcher = e.getPos().distanceTo(b.s.pos());
+                // charge only while healthy and close: chasing an archer that backs off across a cave cost runs
+                // four arrows in a row (20 -> 2.5 hp in 15 s)
+                if (b.s.health() > Math.max(12, b.p.get("safety.fleeHealth")) && dArcher < 10) {
                     Vec3d aim = e.getPos().add(0, e.getHeight() * 0.6, 0);
                     double d = e.getPos().distanceTo(b.s.pos());
                     if (d > 2.8) {
