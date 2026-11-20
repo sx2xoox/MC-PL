@@ -236,13 +236,13 @@ public final class OceanRoute {
 
     /** A little gravel from the shore or shallow sea floor: under the sea every gravel block is next to water. */
     private void gravel() {
-        if (b.inv().has(Items.FLINT) || b.inv().count(Items.GRAVEL) >= 3 || b.inv().lighter() || phaseTicks > 600) {
+        if (b.inv().has(Items.FLINT) || b.inv().count(Items.GRAVEL) >= 3 || b.inv().lighter() || phaseTicks > 300) {
             go(Phase.LAUNCH);
             return;
         }
         BlockPos f = b.feet();
         if (gravelTarget == null || b.mem.get(gravelTarget) == null || b.mem.get(gravelTarget).getBlock() != Blocks.GRAVEL) {
-            gravelTarget = b.mem.nearest(WorldMemory.Kind.GRAVEL, f, 28, l -> !b.badTargets().contains(l) && BlockPos.unpackLongY(l) >= 48);
+            gravelTarget = b.mem.nearest(WorldMemory.Kind.GRAVEL, f, 20, l -> !b.badTargets().contains(l) && BlockPos.unpackLongY(l) >= 48);
             if (gravelTarget == null) {
                 b.trace("no gravel seen near the shore: flint later");
                 go(Phase.LAUNCH);
@@ -275,7 +275,7 @@ public final class OceanRoute {
                 for (int y = 61; y <= 62; y++) {
                     BlockPos q = new BlockPos(f.getX() + dx, y, f.getZ() + dz);
                     BlockState st = b.mem.get(q), up = b.mem.get(q.up());
-                    if (st == null || up == null || !Blocks2.isWater(st) || !up.isAir() || !openWater(q)) {
+                    if (st == null || up == null || !Blocks2.isWater(st) || !up.isAir() || !openWater(q) || badLaunch.contains(q)) {
                         continue;
                     }
                     double d = Vec3d.ofCenter(q).squaredDistanceTo(b.s.eyePos());
@@ -344,6 +344,8 @@ public final class OceanRoute {
         b.c.lookAt(aim);
         if (b.c.aimed(aim, 2f) && b.c.use()) {
             launchTries++;
+            launchedAt = spot;
+            boatsBefore = count(OceanRoute::isBoat);
             go(Phase.BOARD);
         }
     }
@@ -352,10 +354,26 @@ public final class OceanRoute {
         return !st.isEmpty() && isBoat(st.getItem());
     }
 
+    private BlockPos launchedAt;
+    private int boatsBefore;
+    private final java.util.Set<BlockPos> badLaunch = new java.util.HashSet<>();
+
     private void board() {
         if (b.s.inBoat()) {
             b.split("boat");
             go(Phase.SAIL);
+            return;
+        }
+        if (phaseTicks == 8 && launchedAt != null && count(OceanRoute::isBoat) >= boatsBefore) {
+            // the boat is still in the hand (the click hit seagrass, kelp or a bank): another water cell
+            b.trace("boat not placed at " + launchedAt + ": another spot");
+            badLaunch.add(launchedAt);
+            if (badLaunch.size() > 6) {
+                fail("launch_spots");
+                return;
+            }
+            launchTries--;
+            go(Phase.LAUNCH);
             return;
         }
         List<BoatEntity> boats = b.perception.visible(BoatEntity.class, 24, e -> !e.hasPassengers());
@@ -658,6 +676,9 @@ public final class OceanRoute {
 
     private int floorTicks;
 
+    private double diveLastY;
+    private int diveStill;
+
     private void dive() {
         Vec3d p = b.s.pos();
         if (column == null && RunBrain.DEV_OCEAN != null) {
@@ -682,6 +703,29 @@ public final class OceanRoute {
         if (over) {
             b.c.lookAngles(b.s.yaw() + 4f, 80f); // look down and around: the floor and walls come into view
             b.c.sink();
+            // held on a ledge at the edge of the column (the drag only pulls where the bubbles are): toward a bubble
+            // cell lower down, else the column's middle
+            if (Math.abs(p.y - diveLastY) < 0.2) {
+                diveStill++;
+            } else {
+                diveStill = 0;
+                diveLastY = p.y;
+            }
+            if (diveStill > 30) {
+                BlockPos t = b.mem.nearest(WorldMemory.Kind.BUBBLES_DOWN, f, 6, l -> BlockPos.unpackLongY(l) < f.getY() - 1);
+                if (t == null) {
+                    t = column;
+                }
+                if (t != null) {
+                    double dx = t.getX() + 0.5 - p.x, dz = t.getZ() + 0.5 - p.z;
+                    float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz);
+                    b.c.lookAngles(yaw, 60f);
+                    b.c.move(1f, 0f, false, false, false);
+                    if (diveStill % 40 == 31) {
+                        b.trace(String.format("held at y %.1f: toward the bubbles at %s", p.y, t));
+                    }
+                }
+            }
         }
         if (phaseTicks % 20 == 0) {
             b.trace(String.format("diving y=%.1f air=%d hp=%.0f over=%s", p.y, b.s.air(), b.s.health(), over));
@@ -756,8 +800,25 @@ public final class OceanRoute {
     }
 
     private void wall() {
-        if (b.s.air() < 60 && phaseTicks > 40) {
-            b.trace("air low at the floor (" + b.s.air() + ")");
+        if ((b.s.air() < 60 && phaseTicks > 40) || bubbleBreath) {
+            // eyes in a bubble column lose no air (vanilla LivingEntity#baseTick): the nearest column on this level
+            BlockPos f0 = b.feet();
+            BlockPos t = b.mem.nearest(WorldMemory.Kind.BUBBLES_DOWN, f0.up(), 8, l -> Math.abs(BlockPos.unpackLongY(l) - f0.getY() - 1) <= 1);
+            bubbleBreath = t != null && b.s.air() < 280;
+            if (bubbleBreath) {
+                if (phaseTicks % 20 == 0) {
+                    b.trace("air low at the floor (" + b.s.air() + "): breathing in the bubbles at " + t);
+                }
+                Vec3d p = b.s.pos();
+                double dx = t.getX() + 0.5 - p.x, dz = t.getZ() + 0.5 - p.z;
+                if (dx * dx + dz * dz > 0.09) {
+                    b.c.lookAngles(io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz), 20f);
+                    b.c.move(dx * dx + dz * dz > 1 ? 1f : 0.4f, 0f, false, false, false);
+                }
+                b.c.holdSneak(); // the column stands on magma
+                stand = null; // choose the wall spot again from here
+                return;
+            }
         }
         BlockPos f = b.feet();
         if (stand == null || (phaseTicks % 60 == 0 && !f.equals(stand) && !wallStarted)) {
@@ -963,6 +1024,7 @@ public final class OceanRoute {
     }
 
     private boolean breathing;
+    private boolean bubbleBreath;
 
     private void dryDig() {
         BlockPos w2 = stand.offset(wallDir, 2);
