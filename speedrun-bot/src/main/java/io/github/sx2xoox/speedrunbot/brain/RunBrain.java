@@ -1061,7 +1061,12 @@ public final class RunBrain {
             // a spare pickaxe while the table is open anyway (one wears out after 131 blocks, deep underground)
             needs.add(new Workbench.Need("spare_pickaxe", i -> i == Items.STONE_PICKAXE, inv.count(Items.STONE_PICKAXE) + 1, true));
         }
-        if (bench.run(needs) == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("no_")) {
+        Actions.Status benchSt = bench.run(needs);
+        if (benchSt == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("place")) {
+            relocate(mover.feet());
+            return;
+        }
+        if (benchSt == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("no_")) {
             craftFailures++;
             if (bench.error().contains("wood") && name.equals("flint_and_steel") && p.get("route.flintLate") > 0 && !portal.waitingForLighter()) {
                 // the lighter is only needed once the frame stands: no trip back to the trees for it now (a run went
@@ -1118,6 +1123,10 @@ public final class RunBrain {
         needs.add(new Workbench.Need("wooden_pickaxe", i -> i == Items.WOODEN_PICKAXE, 1, true));
         if (bench.run(needs) == Actions.Status.FAILED) {
             craftFailures++;
+            if (bench.error() != null && bench.error().startsWith("place")) {
+                relocate(mover.feet()); // no spot for the table here (a run stood 9 minutes on one spot): elsewhere
+                return;
+            }
             if (craftFailures > 3) {
                 fail("craft_wooden_pickaxe_" + bench.error());
             }
