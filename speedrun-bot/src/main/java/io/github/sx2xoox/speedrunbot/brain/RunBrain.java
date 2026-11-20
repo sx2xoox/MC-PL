@@ -564,7 +564,7 @@ public final class RunBrain {
             return Goal.TREASURE; // the ocean route: the treasure first, from the spawn (the sweep needs no tools)
         }
         if (oceanOn() && !ocean.finished()) {
-            if (ocean.phase() == OceanRoute.Phase.CRAFT && inv.logs() * 4 + inv.planks() < p.getInt("ocean.planks")
+            if (ocean.phase() == OceanRoute.Phase.CRAFT && inv.logs() * 4 + inv.planks() < ocean.planksNeeded()
                     && (goal != Goal.OCEAN || !bench.busy())) {
                 return Goal.WOOD;
             }

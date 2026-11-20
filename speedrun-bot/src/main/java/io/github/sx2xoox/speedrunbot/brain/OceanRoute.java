@@ -181,6 +181,21 @@ public final class OceanRoute {
         return Actions.count(b.s.inventory(), st -> !st.isEmpty() && p.test(st.getItem()));
     }
 
+    /** Planks the crafts still ahead take (a table unless one is carried, the boat, the door, sticks or a wooden pickaxe). */
+    public int planksNeeded() {
+        int n = b.inv().has(Items.CRAFTING_TABLE) ? 0 : 4;
+        if (count(OceanRoute::isBoat) == 0) {
+            n += 5;
+        }
+        if (count(OceanRoute::isDoor) == 0) {
+            n += 6;
+        }
+        if (!b.inv().pickaxe()) {
+            n += (b.inv().count(Items.IRON_INGOT) >= 7 ? 0 : 3) + (b.inv().count(Items.STICK) >= 2 ? 0 : 2);
+        }
+        return n;
+    }
+
     private void craft() {
         List<Workbench.Need> needs = new ArrayList<>();
         int iron = b.inv().count(Items.IRON_INGOT);
@@ -260,7 +275,7 @@ public final class OceanRoute {
                 for (int y = 61; y <= 62; y++) {
                     BlockPos q = new BlockPos(f.getX() + dx, y, f.getZ() + dz);
                     BlockState st = b.mem.get(q), up = b.mem.get(q.up());
-                    if (st == null || up == null || !Blocks2.isWater(st) || !up.isAir()) {
+                    if (st == null || up == null || !Blocks2.isWater(st) || !up.isAir() || !openWater(q)) {
                         continue;
                     }
                     double d = Vec3d.ofCenter(q).squaredDistanceTo(b.s.eyePos());
@@ -272,6 +287,19 @@ public final class OceanRoute {
             }
         }
         return best;
+    }
+
+    /** Water with air above in the 3x3 around: room for the boat's 1.4-wide box (BoatItem refuses a crowded place). */
+    private boolean openWater(BlockPos q) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                BlockState w = b.mem.get(q.getX() + dx, q.getY(), q.getZ() + dz), a = b.mem.get(q.getX() + dx, q.getY() + 1, q.getZ() + dz);
+                if (w == null || a == null || !(Blocks2.isWater(w) || w.isAir()) || !a.isAir()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private BlockPos seaGoal;
@@ -546,7 +574,17 @@ public final class OceanRoute {
      * when there is no boat to use.
      */
     public Mover.Status ferry(int x, int z) {
+        return ferry(x, z, 1.8, false);
+    }
+
+    private Vec3d lastBoatPos;
+
+    /** As {@link #ferry(int, int)}; with {@code stayIn} the boat stops {@code stopDist} blocks short and we stay in it. */
+    public Mover.Status ferry(int x, int z, double stopDist, boolean stayIn) {
         ferryTicks++;
+        if (b.s.inBoat()) {
+            lastBoatPos = b.s.pos();
+        }
         Vec3d p = b.s.pos();
         double dx = x + 0.5 - p.x, dz = z + 0.5 - p.z;
         double dist = Math.sqrt(dx * dx + dz * dz);
@@ -565,6 +603,14 @@ public final class OceanRoute {
             }
             List<BoatEntity> boats = b.perception.visible(BoatEntity.class, 8, e -> !e.hasPassengers());
             if (boats.isEmpty()) {
+                if (lastBoatPos != null && lastBoatPos.distanceTo(b.s.pos()) < 24 && ferryTicks % 200 < 120) {
+                    // where we left it: turn (and swim) that way until it is in view
+                    b.c.lookAt(lastBoatPos);
+                    if (lastBoatPos.distanceTo(b.s.pos()) > 3) {
+                        b.c.move(1f, 0f, false, false, false);
+                    }
+                    return Mover.Status.RUNNING;
+                }
                 return Mover.Status.FAILED;
             }
             Vec3d aim = boats.get(0).getPos().add(0, 0.3, 0);
@@ -578,13 +624,17 @@ public final class OceanRoute {
             return Mover.Status.RUNNING;
         }
         float h = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz);
-        if (dist < 1.8 || (dist < 40 && landAhead(h, 2))) {
+        if (stayIn && dist < stopDist) {
+            return Mover.Status.ARRIVED;
+        }
+        if (dist < stopDist || (dist < 40 && landAhead(h, 2))) {
             b.trace(String.format("ferry: out of the boat %.0f blocks from %d,%d", dist, x, z));
             b.c.move(0f, 0f, false, false, true);
             return Mover.Status.ARRIVED;
         }
         b.c.lookAngles(h, 20f);
-        steer(h, dist < 4 ? 0.3f : dist < 10 ? 0.6f : 1f);
+        double left = dist - (stayIn ? stopDist : 0);
+        steer(h, left < 4 ? 0.3f : left < 10 ? 0.6f : 1f);
         return Mover.Status.RUNNING;
     }
 

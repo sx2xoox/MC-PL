@@ -80,6 +80,10 @@ public final class Params {
         d.put("treasure.seaSources", 150.0);     // sea-level water sources seen near the spawn that count as an ocean
         d.put("treasure.scoutTicks", 0.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
         d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
+        d.put("treasure.byPlace", 1.0);          // 1 = columns scored by agreeing sweep places (nearest first on ties)
+        d.put("treasure.thirdSweep", 1.0);       // 1 = always a third sweep (toward the best column, off the line of the first two)
+        d.put("treasure.verify", 1.0);           // 1 = check a candidate column with the pie chart from 10-18 blocks before digging
+        d.put("treasure.verifyMax", 4.0);        // candidate columns checked at most
         d.put("treasure.maxDepth", 16.0);        // a treasure floor deeper than this under the water surface is skipped
         d.put("treasure.digTicks", 900.0);       // give up one column after digging this long (the chest sits on stone/sandstone)
         d.put("route.treasureBaseSec", 110.0);   // expected seconds to iron via the treasure route (plus the walk)

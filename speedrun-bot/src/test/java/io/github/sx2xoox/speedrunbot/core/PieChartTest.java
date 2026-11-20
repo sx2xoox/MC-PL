@@ -124,4 +124,31 @@ class PieChartTest {
         assertEquals(tx, best[0]);
         assertEquals(tz, best[1]);
     }
+
+    @Test
+    void placeVotesBeatAGhostCrossingWithManyHits() {
+        int[] t = {73, 9}, g = {41, 41};
+        double[][] places = {{0, 0}, {0, 60}, {40, -30}};
+        TreasureLocator byReading = new TreasureLocator(), byPlace = new TreasureLocator();
+        byPlace.byPlace = true;
+        for (int i = 0; i < places.length; i++) {
+            double[] q = places[i];
+            java.util.List<TreasureLocator.Reading> rs = new java.util.ArrayList<>();
+            rs.add(new TreasureLocator.Reading(q[0], q[1], TreasureLocator.yawTo(q[0], q[1], t[0] + 0.5, t[1] + 0.5), 8, true));
+            if (i < 2) {
+                for (int k = 0; k < 5; k++) { // a wide sector of other chests around the ghost's bearing
+                    rs.add(new TreasureLocator.Reading(q[0], q[1], TreasureLocator.yawTo(q[0], q[1], g[0] + 0.5, g[1] + 0.5) + (k - 2) * 0.5f, 8, true));
+                }
+            }
+            for (TreasureLocator.Reading r : rs) {
+                byReading.add(r);
+                byPlace.add(r);
+            }
+        }
+        int[] a = byReading.best(0, 0, 120);
+        int[] b = byPlace.best(0, 0, 120);
+        assertEquals(g[0], a[0]); // many hits from two places win the plain score
+        assertEquals(t[0], b[0]); // the column all three places agree on wins by place
+        assertEquals(t[1], b[1]);
+    }
 }

@@ -15,7 +15,7 @@ import net.minecraft.util.math.Vec3d;
  * Everything comes from what the bot saw: wood blocks in the water, chests in view, the map screen.
  */
 public final class TreasureHunt {
-    public enum Phase { NONE, LOCATE, SHIP, LOOT_SHIP, READ_MAP, WALK, DIG, LOOT_TREASURE, DONE, FAILED }
+    public enum Phase { NONE, LOCATE, VERIFY, SHIP, LOOT_SHIP, READ_MAP, WALK, DIG, LOOT_TREASURE, DONE, FAILED }
 
     private final RunBrain b;
     private Phase phase = Phase.NONE;
@@ -183,6 +183,7 @@ public final class TreasureHunt {
         ship = null;
         totalTicks = 0;
         locator = new io.github.sx2xoox.speedrunbot.core.TreasureLocator();
+        locator.byPlace = b.p.get("treasure.byPlace") > 0;
         // FOV option 30 and a thin window: about 8 x 30 degrees, so the slice only shows chests near one bearing and
         // in one band of heights/distances
         narrow = new io.github.sx2xoox.speedrunbot.core.PieChart.View(30, 0.27, b.rules().renderChunks());
@@ -219,7 +220,10 @@ public final class TreasureHunt {
                     if (fs == Mover.Status.ARRIVED) {
                         phaseTicks = 900; // there (or at the shore on the way): sweep here
                     }
-                } else if (b.mover.go(Navigator.near(secondSpot, 2)) != Mover.Status.FAILED) {
+                } else {
+                    if (b.mover.go(Navigator.near(secondSpot, 2)) == Mover.Status.FAILED) {
+                        b.mover.reset(); // plan again next tick (the place is not given up before the time runs out)
+                    }
                     return;
                 }
             }
@@ -265,6 +269,13 @@ public final class TreasureHunt {
 
     private void endSweep() {
         Vec3d p = b.s.pos();
+        StringBuilder hy = new StringBuilder();
+        for (io.github.sx2xoox.speedrunbot.core.TreasureLocator.Reading r : locator.readings()) {
+            if (r.hit && Math.hypot(r.x - p.x, r.z - p.z) < 2) {
+                hy.append(String.format("%.0f/%.0f ", r.yaw, r.pitch));
+            }
+        }
+        b.trace(String.format("treasure: sweep %d at %.1f,%.1f,%.1f hits(yaw/pitch): %s", sweeps + 1, p.x, b.s.eyePos().y, p.z, hy));
         band1Yaws.clear();
         sweeps++;
         if (locator.hits() == 0) {
@@ -276,10 +287,19 @@ public final class TreasureHunt {
         pieSignal = 1;
         double bearing = locator.bearingFrom(p.x, p.z);
         int[] best = locator.best(p.x, p.z, b.p.get("treasure.pieRange"));
-        if (sweeps == 1 || (sweeps == 2 && best != null && best[3] > 1)) {
-            // triangulate: another sweep some blocks to the side of the bearing (a third one when columns still tie)
-            double side = Math.toRadians(bearing + (sweeps == 1 ? 90 : 0));
-            double dist = sweeps == 1 ? (b.ocean.hasBoat() || b.p.get("ocean.route") > 0 ? b.p.get("treasure.sideDist") : 24) : 20;
+        boolean third = sweeps == 2 && best != null && (best[3] > 1 || b.p.get("treasure.thirdSweep") > 0);
+        if (sweeps == 1 || third) {
+            // triangulate: another sweep some blocks to the side of the bearing; a third one off the line of the first
+            // two, toward the best column so far (several chests make ghost crossings of two sweeps' bearings, which
+            // a third place does not repeat)
+            double side, dist;
+            if (sweeps == 1) {
+                side = Math.toRadians(bearing + 90);
+                dist = b.ocean.hasBoat() || b.p.get("ocean.route") > 0 ? b.p.get("treasure.sideDist") : 24;
+            } else {
+                side = Math.toRadians(io.github.sx2xoox.speedrunbot.core.TreasureLocator.yawTo(p.x, p.z, best[0] + 0.5, best[1] + 0.5));
+                dist = Math.min(b.p.get("treasure.sideDist"), 0.5 * Math.hypot(best[0] + 0.5 - p.x, best[1] + 0.5 - p.z));
+            }
             secondSpot = new BlockPos(p.x - Math.sin(side) * dist, p.y, p.z + Math.cos(side) * dist);
             b.trace(String.format("treasure: chest slice around yaw %.0f (%d hits)%s; sweep %d from %s", bearing, locator.hits(),
                     best == null ? "" : " best " + best[0] + "," + best[1] + " ties " + best[3], sweeps + 1, secondSpot));
@@ -316,9 +336,108 @@ public final class TreasureHunt {
         } else {
             column = afterView;
             estimate = null;
-            go(Phase.WALK);
+            boolean checked = verifyStep == -2;
+            verifyStep = -1;
+            go(locator != null && b.p.get("treasure.verify") > 0 && !checked ? Phase.VERIFY : Phase.WALK);
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------ close-range check of a candidate column
+
+    private final java.util.Set<Long> excluded = new java.util.HashSet<>();
+    private int verifyStep = -1;
+    private int verifyHits;
+    private int settle;
+    private int verified;
+    private final java.util.List<Float> verifyPitches = new java.util.ArrayList<>();
+
+    /**
+     * Before digging, the candidate column is checked from 10-18 blocks with the same narrow pie chart view pointed
+     * straight at it, at the pitches that cover every height a treasure chest can have there: several buried treasures
+     * (one chunk in a hundred near beaches) and other chests make ghost crossings of the sweep bearings, and a column
+     * pointed at from close by is the only one in such a thin view. No slice = not this column: the next best.
+     */
+    private void verify() {
+        if (viewWait > 0) {
+            viewWait--; // a window change under way
+            return;
+        }
+        Vec3d p = b.s.pos();
+        double dx = column[0] + 0.5 - p.x, dz = column[1] + 0.5 - p.z;
+        double far = Math.hypot(dx, dz);
+        if (verifyStep < 0) {
+            if (far > 1.6 && travel(1.2)) {
+                return;
+            }
+            if (far > 2.5 && !b.s.inBoat()) {
+                // out of the boat at a shore short of it: on foot, or the last strokes straight over the water
+                if (b.s.inWater()) {
+                    float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz);
+                    b.c.lookAngles(yaw, 20f);
+                    b.c.move(Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 45 ? 1f : 0f, 0f, false, false, false);
+                } else if (b.mover.go(Navigator.column(column[0], column[1], b.feet().getY())) == Mover.Status.FAILED) {
+                    b.mover.reset();
+                }
+                return;
+            }
+            if (far > 2.5) {
+                return;
+            }
+            if (b.s.inBoat() && settle++ < 12) {
+                b.c.move(settle < 8 ? -1f : 0f, 0f, false, false, false); // brake (S) and let the boat settle
+                return;
+            }
+            settle = 0;
+            // straight down at the column: the thin view then holds only what lies under it (a far chest on the same
+            // bearing, which fooled checks from the side, cannot be in it)
+            verifyPitches.clear();
+            verifyPitches.add(58f);
+            verifyPitches.add(42f);
+            verifyStep = 0;
+            verifyHits = 0;
+            viewWait = io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS; // narrow window again
+            b.trace(String.format("treasure: checking column %d,%d from %.1f blocks", column[0], column[1], far));
+            return;
+        }
+        if (verifyStep < verifyPitches.size()) {
+            Vec3d at = new Vec3d(column[0] + 0.5, verifyPitches.get(verifyStep), column[1] + 0.5);
+            b.c.lookAt(at);
+            if (b.s.inBoat()) {
+                b.c.move(0f, 0f, false, false, false);
+            }
+            if (!b.c.aimed(at, 1.5f)) {
+                if (phaseTicks > 200 && b.s.inBoat()) {
+                    b.c.move(0f, 0f, false, false, true); // the passenger cannot turn that far: out of the boat
+                }
+                return;
+            }
+            int chests = b.s.pieChests(narrow);
+            if (chests > 0) {
+                verifyHits++;
+            }
+            verifyStep++;
+            return;
+        }
+        verified++;
+        if (verifyHits > 0) {
+            b.trace("treasure: column " + column[0] + "," + column[1] + " confirmed (" + verifyHits + " hits)");
+            restoreViewThen(column);
+            verifyStep = -2; // after the restore: walk
+            return;
+        }
+        excluded.add(io.github.sx2xoox.speedrunbot.core.TreasureLocator.key(column[0], column[1]));
+        int[] next = verified >= b.p.getInt("treasure.verifyMax") ? null : locator.best(p.x, p.z, b.p.get("treasure.pieRange") + 32, excluded);
+        b.trace("treasure: no chest at " + column[0] + "," + column[1] + (next == null ? ": giving up" : "; next " + next[0] + "," + next[1] + " (score " + next[2] / 100.0 + ")"));
+        if (next == null) {
+            restoreViewThen(null);
+            return;
+        }
+        column = new int[]{next[0], next[1]};
+        verifyStep = -1;
+        phaseTicks = 0;
+        // the window back to normal for the trip (narrowed again there)
+        viewWait = io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS;
     }
 
     public void tick() {
@@ -334,6 +453,9 @@ public final class TreasureHunt {
         switch (phase) {
             case LOCATE:
                 locate();
+                break;
+            case VERIFY:
+                verify();
                 break;
             case SHIP:
                 searchShip();
@@ -662,6 +784,33 @@ public final class TreasureHunt {
             return;
         }
         fail("dig_nothing");
+    }
+
+    /** Toward the column (boat over water, else on foot); false once within {@code stop} blocks or out of a boat at a shore. */
+    private boolean travel(double stop) {
+        Vec3d p = b.s.pos();
+        double far = Math.hypot(column[0] + 0.5 - p.x, column[1] + 0.5 - p.z);
+        if (far <= stop) {
+            return false;
+        }
+        if (b.ocean.hasBoat() && (b.s.inBoat() || b.s.inWater() || nearWater())) {
+            Mover.Status fs = b.ocean.ferry(column[0], column[1], stop, true);
+            if (fs == Mover.Status.RUNNING) {
+                return true;
+            }
+            if (fs == Mover.Status.ARRIVED) {
+                return far > 40;
+            }
+        }
+        if (b.s.inBoat()) {
+            b.c.move(0f, 0f, false, false, true);
+            return true;
+        }
+        BlockPos f = b.feet();
+        if (b.mover.go(Navigator.column(column[0], column[1], f.getY())) == Mover.Status.FAILED) {
+            b.mover.reset();
+        }
+        return true;
     }
 
     /** Sea-level water within 3 blocks: the boat can go in here. */

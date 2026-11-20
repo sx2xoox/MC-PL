@@ -43,6 +43,8 @@ public final class TreasureLocator {
     public static final double CHEST_Y_LO = 40, CHEST_Y_HI = 66;
 
     private final List<Reading> readings = new ArrayList<>();
+    /** Score columns by agreeing sweep places (see {@link #placeVotes}) instead of by single readings. */
+    public boolean byPlace;
 
     public void add(Reading r) {
         readings.add(r);
@@ -99,6 +101,41 @@ public final class TreasureLocator {
         return hi >= r.pitch - r.vFovDeg / 2 - vs && lo <= r.pitch + r.vFovDeg / 2 + vs;
     }
 
+    /**
+     * Agreement by sweep place: the number of places (readings taken within 3 blocks of each other) where some
+     * reading that saw a chest had this column in view. Several chests (ocean ruins, wrecks, other treasures) make a
+     * place's hits cover wide sectors; counting each place once keeps a sector's many hits from outweighing a column
+     * that every place agrees on.
+     */
+    int placeVotes(double cx, double cz) {
+        java.util.List<double[]> places = new java.util.ArrayList<>();
+        java.util.List<Boolean> votes = new java.util.ArrayList<>();
+        for (Reading r : readings) {
+            int k = -1;
+            for (int i = 0; i < places.size(); i++) {
+                if (Math.hypot(places.get(i)[0] - r.x, places.get(i)[1] - r.z) < 3) {
+                    k = i;
+                    break;
+                }
+            }
+            if (k < 0) {
+                places.add(new double[]{r.x, r.z});
+                votes.add(false);
+                k = places.size() - 1;
+            }
+            if (r.hit && !votes.get(k) && inView(r, cx, cz)) {
+                votes.set(k, true);
+            }
+        }
+        int n = 0;
+        for (boolean v : votes) {
+            if (v) {
+                n++;
+            }
+        }
+        return n;
+    }
+
     /** Agreement score of a column with all readings. */
     double score(double cx, double cz) {
         double s = 0;
@@ -123,6 +160,18 @@ public final class TreasureLocator {
 
     /** As {@link #best(double, double, double)}, skipping the column (exX, exZ) (already dug). */
     public int[] best(double x, double z, double range, int exX, int exZ) {
+        java.util.Set<Long> ex = new java.util.HashSet<>();
+        ex.add(key(exX, exZ));
+        return best(x, z, range, ex);
+    }
+
+    /** Column key for the exclusion set (same packing as a block position with y 0 is not needed: plain x,z). */
+    public static long key(int x, int z) {
+        return ((long) x << 32) ^ (z & 0xffffffffL);
+    }
+
+    /** As {@link #best(double, double, double)}, skipping the excluded columns (keys from {@link #key}). */
+    public int[] best(double x, double z, double range, java.util.Collection<Long> excluded) {
         if (hits() == 0) {
             return null;
         }
@@ -133,10 +182,10 @@ public final class TreasureLocator {
         for (int cx = x0; cx <= x + range; cx += 16) {
             for (int cz = z0; cz <= z + range; cz += 16) {
                 double d = Math.hypot(cx + 0.5 - x, cz + 0.5 - z);
-                if (d > range || (cx == exX && cz == exZ)) {
+                if (d > range || excluded.contains(key(cx, cz))) {
                     continue;
                 }
-                double s = score(cx + 0.5, cz + 0.5);
+                double s = byPlace ? placeVotes(cx + 0.5, cz + 0.5) : score(cx + 0.5, cz + 0.5);
                 if (s > bestS + 1e-9 || (Math.abs(s - bestS) < 1e-9 && d < bestD)) {
                     if (s > bestS + 1e-9) {
                         ties = 0;
