@@ -507,6 +507,33 @@ public final class PortalBuilder {
         return false;
     }
 
+    /** Why no face of the target is seen from the eye (diagnostics). */
+    private String faceReport(Vec3d eye, Cell target) {
+        StringBuilder sb = new StringBuilder();
+        for (Direction d : Direction.values()) {
+            Cell sup = target.add(d.getOffsetX(), d.getOffsetY(), d.getOffsetZ());
+            BlockState s = mem(sup);
+            sb.append(' ').append(d).append(':');
+            if (s != null && (!Blocks2.standable(s) || Blocks2.isLava(s) || Blocks2.isWater(s) || Blocks2.interactive(s))) {
+                sb.append("notface(").append(s.getBlock()).append(')');
+                continue;
+            }
+            Direction face = d.getOpposite();
+            Vec3d pt = new Vec3d(sup.x + 0.5 + face.getOffsetX() * 0.5, sup.y + 0.5 + face.getOffsetY() * 0.5, sup.z + 0.5 + face.getOffsetZ() * 0.5);
+            Vec3d toEye = eye.subtract(pt);
+            if (toEye.x * face.getOffsetX() + toEye.y * face.getOffsetY() + toEye.z * face.getOffsetZ() <= 0.05 || toEye.length() > 4.4) {
+                sb.append("away");
+                continue;
+            }
+            blocker = null;
+            clearLine(eye, pt.add(face.getOffsetX() * 0.02, face.getOffsetY() * 0.02, face.getOffsetZ() * 0.02), sup);
+            sb.append(blocker == null ? "ok" : "blocked@" + blocker);
+        }
+        return sb.toString();
+    }
+
+    private String blocker;
+
     /** No known solid block on the segment (the end block itself excepted). */
     private boolean clearLine(Vec3d from, Vec3d to, Cell end) {
         Vec3d d = to.subtract(from);
@@ -523,6 +550,7 @@ public final class PortalBuilder {
                 }
                 BlockState s = b.mem.get(x, y, z);
                 if (s != null && Blocks2.pass(s) == Blocks2.Pass.SOLID) {
+                    blocker = x + "," + y + "," + z + "=" + s.getBlock();
                     return false;
                 }
             }
@@ -578,7 +606,8 @@ public final class PortalBuilder {
                     sb.append(' ').append(o).append(badStands.contains(o) ? " bad" : "").append(blindStands.contains(o) ? " blind" : "")
                             .append(faceSeenFrom(eyeOf(o), target) ? " sees" : " no");
                 }
-                b.trace("stand for " + target + ": wanted " + stand + ", picked " + pick + " |" + sb);
+                b.trace("stand for " + target + ": wanted " + stand + ", picked " + pick + " |" + sb
+                        + (pick == null ? " | from wanted:" + faceReport(eyeOf(stand), target) : ""));
             }
             if (pick == null && !blindStands.isEmpty()) {
                 blindStands.clear();

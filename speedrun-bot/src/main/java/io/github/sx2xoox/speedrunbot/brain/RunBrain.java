@@ -873,7 +873,18 @@ public final class RunBrain {
             badTargets.add(target.asLong());
             target = null;
         } else if (st == Actions.Status.DONE) {
-            target = null; // next log; drops are collected by walking under the tree
+            // the drop falls to the ground under the log: remember where (it is often out of view later)
+            BlockPos d = target;
+            for (int k = 0; k < 8; k++) {
+                BlockState below = mem.get(d.down());
+                if (below == null || Blocks2.standable(below) && !isLog(d.down())) {
+                    break;
+                }
+                d = d.down();
+            }
+            woodDrops.put(-(++dropIds), new Vec3d(d.getX() + 0.5, d.getY(), d.getZ() + 0.5));
+            woodDropSeen.put(-dropIds, now());
+            target = null; // next log
         }
     }
 
@@ -881,6 +892,7 @@ public final class RunBrain {
     private final java.util.Map<Integer, Vec3d> woodDrops = new java.util.HashMap<>();
     private final java.util.Map<Integer, Long> woodDropSeen = new java.util.HashMap<>();
     private int dropWalkTicks;
+    private int dropIds;
 
     /**
      * Picks up the logs mined so far once no more log is in reach from where we stand (the drops fall to the trunk's
