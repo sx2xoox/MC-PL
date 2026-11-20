@@ -81,6 +81,7 @@ public final class Params {
         d.put("treasure.scoutTicks", 0.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
         d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
         d.put("treasure.byPlace", 1.0);          // 1 = columns scored by agreeing sweep places (nearest first on ties)
+        d.put("treasure.nearestNext", 0.0);      // 1 = after a miss, the nearest of the equally voted columns
         d.put("treasure.thirdSweep", 1.0);       // 1 = always a third sweep (toward the best column, off the line of the first two)
         d.put("treasure.verify", 1.0);           // 1 = check a candidate column with the pie chart from 10-18 blocks before digging
         d.put("treasure.verifyMax", 4.0);        // candidate columns checked at most

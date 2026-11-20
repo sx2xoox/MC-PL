@@ -285,7 +285,8 @@ public final class Mover {
                 break;
         }
         boolean straight = step.move == Navigator.Move.WALK || step.move == Navigator.Move.DIAG;
-        boolean sprint = straight && runAhead() >= 3 && !s.inWater() && !lavaWithin(f, 3) && !lavaWithin(t, 3);
+        // (in water: sprint swimming, twice the speed of plain strokes, once the eyes dip under; level look keeps the depth)
+        boolean sprint = straight && runAhead() >= 3 && !lavaWithin(f, 3) && !lavaWithin(t, 3) && (!s.inWater() || t.getY() >= f.getY());
         boolean jump = false;
         // bobbing at the surface the feet are briefly out of the water and off the ground: still "in the water" for
         // jumping (holding jump while pushing against a one-high bank lifts the player out, as in vanilla)
@@ -353,7 +354,7 @@ public final class Mover {
     private void walkToward(Vec3d target, boolean sprint, float speed) {
         Vec3d p = s.pos();
         float yaw = InputLimits.yawTo(target.x - p.x, target.z - p.z);
-        c.lookAngles(yaw, 12f);
+        c.lookAngles(yaw, s.inWater() && sprint ? 0f : 12f);
         float diff = Math.abs(InputLimits.wrap(yaw - s.yaw()));
         float fwd = diff < 60 ? speed : 0f;
         c.move(fwd, 0f, false, sprint && diff < 20, false);

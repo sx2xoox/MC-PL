@@ -50,6 +50,7 @@
   "treasure.scoutTicks": 0.0,
   "treasure.maxTicks": 4800.0,
   "treasure.byPlace": 1.0,
+  "treasure.nearestNext": 0.0,
   "treasure.thirdSweep": 1.0,
   "treasure.verify": 1.0,
   "treasure.verifyMax": 4.0,

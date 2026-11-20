@@ -316,6 +316,13 @@ public final class TreasureHunt {
             return;
         }
         b.trace("treasure: column " + best[0] + "," + best[1] + " (score " + best[2] / 100.0 + ", " + best[3] + " equal)");
+        if (Boolean.getBoolean("srb.dumpPie")) {
+            StringBuilder rd = new StringBuilder("treasure readings:");
+            for (io.github.sx2xoox.speedrunbot.core.TreasureLocator.Reading r : locator.readings()) {
+                rd.append(String.format(" %.1f,%.1f,%.1f,%.1f,%.1f,%d", r.x, r.eyeY, r.z, r.yaw, r.pitch, r.hit ? 1 : 0));
+            }
+            b.trace(rd.toString());
+        }
         restoreViewThen(new int[]{best[0], best[1]});
     }
 
@@ -388,8 +395,8 @@ public final class TreasureHunt {
                 // out of the boat at a shore short of it: on foot, or the last strokes straight over the water
                 if (b.s.inWater()) {
                     float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz);
-                    b.c.lookAngles(yaw, 20f);
-                    b.c.move(Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 45 ? 1f : 0f, 0f, false, false, false);
+                    b.c.lookAngles(yaw, 0f);
+                    b.c.move(Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 45 ? 1f : 0f, 0f, false, far > 3, false);
                 } else if (b.mover.go(Navigator.column(column[0], column[1], b.feet().getY())) == Mover.Status.FAILED) {
                     b.mover.reset();
                 }
@@ -441,7 +448,9 @@ public final class TreasureHunt {
             return;
         }
         excluded.add(io.github.sx2xoox.speedrunbot.core.TreasureLocator.key(column[0], column[1]));
-        locator.nearestOnTies = true; // the next check: as many agreeing places, nearest first (a boat trip each)
+        // the next check: the next best by agreeing places, then by readings (measured on logged sweeps: the
+        // readings order put the true column first or third; nearest-first put it 3rd to 10th)
+        locator.nearestOnTies = b.p.get("treasure.nearestNext") > 0;
         int[] next = verified >= b.p.getInt("treasure.verifyMax") ? null : locator.best(p.x, p.z, b.p.get("treasure.pieRange") + 32, excluded);
         b.trace("treasure: no chest at " + column[0] + "," + column[1] + (next == null ? ": giving up" : "; next " + next[0] + "," + next[1] + " (score " + next[2] / 100.0 + ")"));
         if (next == null) {
@@ -673,8 +682,8 @@ public final class TreasureHunt {
         if (b.s.inWater() && far < 14) {
             // the last strokes straight over the water (path steps through water are slow and drift)
             float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(column[0] + 0.5 - p.x, column[1] + 0.5 - p.z);
-            b.c.lookAngles(yaw, 20f);
-            b.c.move(Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 45 ? 1f : 0f, 0f, false, false, false);
+            b.c.lookAngles(yaw, 0f);
+            b.c.move(Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 45 ? 1f : 0f, 0f, false, far > 3, false);
             return;
         }
         if (b.mover.go(Navigator.column(column[0], column[1], f.getY())) == Mover.Status.FAILED) {

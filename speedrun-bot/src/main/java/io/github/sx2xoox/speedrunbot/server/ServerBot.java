@@ -80,6 +80,9 @@ public final class ServerBot implements BotInputs, BotSenses {
         player.sidewaysSpeed = strafe * k;
         player.setJumping(jump);
         player.setSneaking(sneak);
+        if (sprint && player.isTouchingWater() && !player.isSwimming() && !player.isSubmergedInWater()) {
+            sprint = false; // ClientPlayerEntity#tickMovement: in water, sprinting starts only with the eyes under water
+        }
         player.setSprinting(sprint);
         if (sneak && player.isTouchingWater() && !player.hasVehicle()) {
             player.sinkInWater(); // ClientPlayerEntity#tickMovement: shift in water pulls the player down
