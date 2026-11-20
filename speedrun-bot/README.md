@@ -5,7 +5,7 @@
 튜닝합니다. 1단계: 기반 + 공정 규칙 + 오버월드에서 네더 진입까지 + 헤드리스 측정/튜닝 하네스. 2단계: 화면 세션
 단일 소유(제작·화로·상자), 동굴 프런티어 탐색, 등반·물 확보, 포탈 주조 실전 검증과 수정, 생존, 바다 스폰용 보물
 루트(난파선 → 보물 지도 → 매장 보물), 감시견. 3단계 M1(첫 네더 진입): 네더 입장 시 서버 충돌 수정, 멈춤 원인 정리(수직 굴, 물가), 용암 소리 듣기, 주조 실패 수정,
-부싯돌은 틀 뒤로. 설계와 측정 결과는 [docs/design.md](docs/design.md) (2단계는 §9, M1은 §10).
+부싯돌은 틀 뒤로. 설계와 측정 결과는 [docs/design.md](docs/design.md) (2단계는 §9, M1은 §10·§11).
 
 이 폴더는 MC-PL 저장소 안의 **독립 프로젝트**입니다(자체 Gradle 빌드, MC-PL 빌드에 포함되지 않음).
 
@@ -100,6 +100,14 @@ python3 tools/group_report.py results/eval.csv --probe results/probe.jsonl --shi
 python3 tools/run_batch.py --seed-file tools/seeds_eval.txt --timeout-ticks 7200 --out results/late.csv \
   --jvm-arg=-Dsrb.kit=water_bucket:1,flint_and_steel:1,stone_pickaxe:2,cobblestone:32,oak_planks:8,bread:8
 ```
+
+## 현재 상태 (3단계 M1 2회차)
+
+전체 런(평가 시드 48개, IGT 10분): 처음으로 네더 진입 **2/48**(7:57, 8:32). 돌 곡괭이 2:08 → 1:44, 첫 철 3:10 → 2:36,
+물 양동이 25 → 27개. 후반 단계 런(개발 시드 24개, 키트로 시작, 6분): 네더 3/24(1회차 코드) → 6/24. 남은 병목: 물을
+뜬 시각(중앙값 6:05)이 늦어 용암 찾기 시간초과(18), 제련·철. 자세한 것은 docs/design.md §11.
+
+개발 시드는 `tools/seeds_dev.txt`(평가 시드와 겹치지 않음), 결과는 `results/*_m1r2*.csv`.
 
 ## 공정 규칙 요약
 
