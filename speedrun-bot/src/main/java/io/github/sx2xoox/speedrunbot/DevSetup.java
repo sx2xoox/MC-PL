@@ -93,6 +93,27 @@ public final class DevSetup {
                 applied += "ravine=" + rav.getX() + "," + rav.getZ() + ";";
                 start = "shipx"; // no pocket clearing
             }
+        } else if (start.equals("treasure")) {
+            // test fixture: on top of the nearest buried treasure column (the structure locator is harness-only)
+            BlockPos q = w.locateStructure(net.minecraft.world.gen.feature.StructureFeature.BURIED_TREASURE, p.getBlockPos(), 16, false);
+            if (q != null) {
+                w.getChunk(q.getX() >> 4, q.getZ() >> 4);
+                int top = w.getTopY(Heightmap.Type.MOTION_BLOCKING, q.getX(), q.getZ());
+                target = new BlockPos(q.getX(), top, q.getZ());
+                int chestY = -1;
+                StringBuilder col = new StringBuilder();
+                for (int y = top; y >= 30; y--) {
+                    net.minecraft.block.BlockState bs = w.getBlockState(new BlockPos(q.getX(), y, q.getZ()));
+                    if (bs.getBlock() == Blocks.CHEST && chestY < 0) {
+                        chestY = y;
+                    }
+                    if (y >= top - 10) {
+                        col.append(Registry.BLOCK.getId(bs.getBlock()).getPath()).append(y == top - 10 ? "" : "/");
+                    }
+                }
+                applied += "treasure=" + q.getX() + "," + chestY + "," + q.getZ() + " top=" + top + " column=" + col + ";";
+            }
+            start = "shipx";
         } else if (start.equals("ship")) {
             // test fixture: next to the nearest shipwreck (the structure locator is harness-only)
             BlockPos q = w.locateStructure(net.minecraft.world.gen.feature.StructureFeature.SHIPWRECK, p.getBlockPos(), 8, false);

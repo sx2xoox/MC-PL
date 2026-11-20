@@ -36,7 +36,7 @@ public final class Workbench {
         }
     }
 
-    private enum Phase { IDLE, PREP_TABLE_ITEM, PLACE_TABLE, GO_TABLE, OPEN, CRAFT, WAIT_RESULT, CLOSE, PICKUP }
+    private enum Phase { IDLE, PREP_TABLE_ITEM, PLACE_TABLE, GO_TABLE, OPEN, CRAFT, WAIT_RESULT, CLOSE, PICKUP, REOPEN }
 
     private final RunBrain b;
     private Phase phase = Phase.IDLE;
@@ -48,6 +48,7 @@ public final class Workbench {
     private int phaseTicks;
     private String error;
     private boolean subCraft;
+    private boolean reopened;
 
     public Workbench(RunBrain b) {
         this.b = b;
@@ -104,6 +105,7 @@ public final class Workbench {
             needs = new ArrayList<>(requested);
             needIndex = 0;
             error = null;
+            reopened = false;
             ticks = 0;
             boolean anyTable = false;
             for (Need n : needs) {
@@ -133,6 +135,18 @@ public final class Workbench {
                 return craft();
             case WAIT_RESULT:
                 return waitResult();
+            case REOPEN:
+                // vanilla unlocks recipes when the player's own inventory screen handler sees the new items (the
+                // inventory_changed trigger), i.e. once the table screen is closed: close, wait a tick, open again
+                if (b.s.screenOpen()) {
+                    b.c.closeScreen();
+                    phaseTicks = 0;
+                    return Actions.Status.RUNNING;
+                }
+                if (phaseTicks >= 3) {
+                    go(Phase.OPEN);
+                }
+                return Actions.Status.RUNNING;
             case CLOSE:
                 if (!b.s.screenOpen() || b.c.closeScreen()) {
                     if (table != null && b.tableNeededLater()) {
@@ -355,6 +369,12 @@ public final class Workbench {
                     }
                 }
                 b.trace("no recipe for " + n.name + " (" + known + " known)");
+                if (known == 0 && !reopened) {
+                    reopened = true;
+                    b.trace("closing and reopening the screen: new recipes unlock once the inventory sees the new items");
+                    go(Phase.REOPEN);
+                    return Actions.Status.RUNNING;
+                }
                 return fail("no_recipe_" + n.name);
             }
             if (subCraft) {

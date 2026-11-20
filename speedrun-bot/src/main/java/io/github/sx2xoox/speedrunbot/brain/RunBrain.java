@@ -534,6 +534,9 @@ public final class RunBrain {
         if (goal == Goal.SCAN) {
             chooseRoute();
         }
+        if (DEV_TREASURE && !treasure.finished()) {
+            return Goal.TREASURE;
+        }
         if (pieRoute && !treasure.finished() && p.get("ocean.route") > 0) {
             int[] col = treasure.column();
             if (treasure.phase() == TreasureHunt.Phase.WALK && col != null && !ocean.hasBoat() && !boatTried
@@ -665,6 +668,8 @@ public final class RunBrain {
     }
     /** Development only (-Dsrb.devOcean=PHASE): play the ocean route from that phase (with a kit), no treasure. */
     static final String DEV_OCEAN = System.getProperty("srb.devOcean");
+    /** Development only (-Dsrb.devTreasure=true, with -Dsrb.devStart=treasure): dig the column the bot stands on. */
+    static final boolean DEV_TREASURE = Boolean.getBoolean("srb.devTreasure");
 
     /** The ocean route is being played: an ocean spawn whose pie chart treasure was dug up. */
     private boolean oceanOn() {
@@ -877,7 +882,9 @@ public final class RunBrain {
                 break;
             case TREASURE:
                 if (!treasure.active()) {
-                    if (pieRoute && shipPos == null && !inv.has(Items.FILLED_MAP)) {
+                    if (DEV_TREASURE) {
+                        treasure.startAt(mover.feet().getX(), mover.feet().getZ());
+                    } else if (pieRoute && shipPos == null && !inv.has(Items.FILLED_MAP)) {
                         treasure.startPie();
                     } else {
                         treasure.start(shipPos);

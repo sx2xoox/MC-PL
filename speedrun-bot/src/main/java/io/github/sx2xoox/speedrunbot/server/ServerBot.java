@@ -81,6 +81,9 @@ public final class ServerBot implements BotInputs, BotSenses {
         player.setJumping(jump);
         player.setSneaking(sneak);
         player.setSprinting(sprint);
+        if (sneak && player.isTouchingWater() && !player.hasVehicle()) {
+            player.sinkInWater(); // ClientPlayerEntity#tickMovement: shift in water pulls the player down
+        }
         if (player.getVehicle() instanceof net.minecraft.entity.vehicle.BoatEntity) {
             // ClientPlayerEntity#tickRiding: A = left, D = right, W = forward, S = back
             ((BoatControl) player.getVehicle()).srb$setInputs(strafe > 0.1f, strafe < -0.1f, forward > 0.1f, forward < -0.1f);

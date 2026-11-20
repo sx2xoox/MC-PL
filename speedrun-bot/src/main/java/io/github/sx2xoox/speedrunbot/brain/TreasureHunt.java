@@ -47,6 +47,11 @@ public final class TreasureHunt {
         return column;
     }
 
+    /** Digging the column (under water the air threshold for swimming up is lower). */
+    public boolean digging() {
+        return phase == Phase.DIG || phase == Phase.LOOT_TREASURE;
+    }
+
     public boolean active() {
         return phase != Phase.NONE && phase != Phase.DONE && phase != Phase.FAILED;
     }
@@ -137,6 +142,13 @@ public final class TreasureHunt {
         ship = shipPos;
         totalTicks = 0;
         go(b.inv().has(Items.FILLED_MAP) ? Phase.READ_MAP : Phase.SHIP);
+    }
+
+    /** Development only: dig this column (a test fixture puts the bot on the treasure column). */
+    public void startAt(int x, int z) {
+        totalTicks = 0;
+        column = new int[]{x, z};
+        go(Phase.WALK);
     }
 
     // ------------------------------------------------------------------ pie chart (no map)
@@ -467,6 +479,7 @@ public final class TreasureHunt {
         BlockPos f = b.feet();
         if (f.getX() == column[0] && f.getZ() == column[1] && (b.s.onGround() || b.s.inWater())) {
             digStartY = f.getY();
+            digTicks = 0;
             go(Phase.DIG);
             return;
         }
@@ -499,46 +512,114 @@ public final class TreasureHunt {
         }
     }
 
+    /**
+     * The blocks a 1.16 buried treasure chest sits on (BuriedTreasureGenerator: the chest goes at the first place down
+     * the column whose block below is one of these; public generation knowledge). Reaching one of them in the 9,9
+     * column without a chest means the chest is not in this column.
+     */
+    static boolean treasureFloor(BlockState st) {
+        net.minecraft.block.Block k = st.getBlock();
+        return k == net.minecraft.block.Blocks.STONE || k == net.minecraft.block.Blocks.SANDSTONE || k == net.minecraft.block.Blocks.ANDESITE
+                || k == net.minecraft.block.Blocks.GRANITE || k == net.minecraft.block.Blocks.DIORITE;
+    }
+
+    private static boolean isChest(BlockState st) {
+        return st != null && (st.getBlock() == net.minecraft.block.Blocks.CHEST || st.getBlock() == net.minecraft.block.Blocks.TRAPPED_CHEST);
+    }
+
+    private int digTicks;
+
+    /**
+     * Digs straight down the column: centred over it (yaw toward the centre, pitch straight down, small steps), under
+     * water sneaking so the body stands on the bottom (mining speed is a fifth off the ground and another fifth under
+     * water), mining the next solid block of the column by hand. The chest sits on stone or sandstone: reaching one of
+     * those without a chest = wrong column.
+     */
     private void dig() {
+        digTicks++;
         BlockPos f = b.feet();
-        BlockPos chest = b.mem.nearest(WorldMemory.Kind.CHEST, f, 4, l -> !b.badTargets().contains(l));
+        BlockPos chest = b.mem.nearest(WorldMemory.Kind.CHEST, new BlockPos(column[0], f.getY(), column[1]), 6,
+                l -> !b.badTargets().contains(l) && Math.abs(BlockPos.unpackLongX(l) - column[0]) <= 1 && Math.abs(BlockPos.unpackLongZ(l) - column[1]) <= 1);
         if (chest != null) {
+            b.trace("treasure chest at " + chest + " after " + digTicks + " ticks of digging");
             b.looter().start(chest);
             go(Phase.LOOT_TREASURE);
             return;
         }
-        if (f.getX() != column[0] || f.getZ() != column[1]) {
-            // slid off the column (sand fell): step back onto it
-            b.mover.go(Navigator.column(column[0], column[1], f.getY()));
-            return;
-        }
-        if (f.getY() < digStartY - 12 || phaseTicks > 1200) {
-            if (++columnTries <= 1 && (estimate != null || locator != null)) {
-                // the estimate may sit next to a chunk border: try the nearer neighbouring chunk's column
-                int[] alt = neighbourColumn();
-                b.trace("no treasure in column " + column[0] + "," + column[1] + "; trying " + alt[0] + "," + alt[1]);
-                column = alt;
-                go(Phase.WALK);
-                return;
+        // the next block of the column at or below the feet
+        BlockPos next = null;
+        BlockState nextSt = null;
+        int water = 0;
+        for (int y = f.getY(); y >= Math.max(1, f.getY() - 24); y--) {
+            BlockState st = b.mem.get(column[0], y, column[1]);
+            if (st == null) {
+                break; // not seen yet: sink toward it
             }
-            fail("dig_nothing");
+            if (Blocks2.isWater(st)) {
+                water++;
+            }
+            if (Blocks2.pass(st) == Blocks2.Pass.SOLID || Blocks2.pass(st) == Blocks2.Pass.FORBID || isChest(st)) {
+                next = new BlockPos(column[0], y, column[1]);
+                nextSt = st;
+                break;
+            }
+        }
+        if (nextSt != null && (treasureFloor(nextSt) || Blocks2.isLava(nextSt) || nextSt.getBlock() == net.minecraft.block.Blocks.BEDROCK)) {
+            b.trace("treasure: " + net.minecraft.util.registry.Registry.BLOCK.getId(nextSt.getBlock()).getPath() + " at " + next
+                    + " in column " + column[0] + "," + column[1] + " and no chest: not here");
+            wrongColumn();
             return;
         }
-        BlockPos below = f.down();
-        BlockState st = b.mem.get(below);
-        if (st != null && (Blocks2.isLava(st))) {
-            fail("dig_lava");
+        if (digTicks > b.p.getInt("treasure.digTicks") || f.getY() < digStartY - 16) {
+            b.trace("treasure: digging too long in column " + column[0] + "," + column[1]);
+            wrongColumn();
             return;
         }
-        if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
-            b.c.lookAngles(b.s.yaw(), 90f);
-            b.c.sink();
-            return; // falling / swimming down
+        Vec3d p = b.s.pos();
+        double cx = column[0] + 0.5 - p.x, cz = column[1] + 0.5 - p.z;
+        double off = Math.hypot(cx, cz);
+        float yaw = off > 0.05 ? io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(cx, cz) : b.s.yaw();
+        boolean wet = b.s.inWater();
+        float fwd = off > 0.45 ? 1f : off > 0.2 ? 0.35f : 0f;
+        if (next != null && off < 0.35 && b.s.eyePos().squaredDistanceTo(Vec3d.ofCenter(next)) < 4.4 * 4.4) {
+            Actions.Status ms = b.a.mine(next, false);
+            if (ms == Actions.Status.FAILED && b.s.onGround()) {
+                b.trace("treasure: cannot mine " + next + " (" + nextSt + ")");
+            }
+        } else {
+            b.c.lookAngles(yaw, 90f);
         }
-        b.c.sink();
-        if (b.a.mine(below, false) == Actions.Status.FAILED) {
-            fail("dig_blocked");
+        if (fwd > 0 && Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) > 30) {
+            // the look belongs to the mining: step toward the centre with the keys that point there
+            double rad = Math.toRadians(b.s.yaw());
+            double fx = -Math.sin(rad), fz = Math.cos(rad);
+            double rx = -Math.sin(rad + Math.PI / 2), rz = Math.cos(rad + Math.PI / 2);
+            float kf = (float) ((cx * fx + cz * fz) / Math.max(off, 1e-3));
+            float ks = (float) -((cx * rx + cz * rz) / Math.max(off, 1e-3));
+            b.c.move(kf * fwd, ks * fwd, false, false, wet);
+        } else {
+            b.c.move(fwd, 0f, false, false, wet);
         }
+        if (wet) {
+            b.c.sink(); // shift: down to the bottom, and stay there
+        }
+        if (digTicks % 100 == 0) {
+            b.trace(String.format("digging pos=%.2f,%.2f,%.2f off=%.2f ground=%s water=%s next=%s %s water-above=%d", p.x, p.y, p.z, off,
+                    b.s.onGround(), wet, next, nextSt == null ? "?" : net.minecraft.util.registry.Registry.BLOCK.getId(nextSt.getBlock()).getPath(), water));
+        }
+    }
+
+    private void wrongColumn() {
+        if (++columnTries <= 1 && (estimate != null || locator != null)) {
+            // the estimate may sit next to a chunk border: try the nearer neighbouring chunk's column
+            int[] alt = neighbourColumn();
+            b.trace("no treasure in column " + column[0] + "," + column[1] + "; trying " + alt[0] + "," + alt[1]);
+            column = alt;
+            digTicks = 0;
+            go(Phase.WALK);
+            return;
+        }
+        fail("dig_nothing");
     }
 
     /** Sea-level water within 3 blocks: the boat can go in here. */

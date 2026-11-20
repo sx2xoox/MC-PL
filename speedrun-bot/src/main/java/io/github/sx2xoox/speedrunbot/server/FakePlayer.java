@@ -60,6 +60,16 @@ public final class FakePlayer extends ServerPlayerEntity {
         }
     }
 
+    /**
+     * What the vanilla client does each tick while shift is held in water (ClientPlayerEntity#tickMovement ->
+     * knockDownwards): the player sinks. The server never runs that client code, so the bot's body does it here.
+     */
+    public void sinkInWater() {
+        if (method_29920()) {
+            setVelocity(getVelocity().add(0.0, -0.04F, 0.0)); // LivingEntity#knockDownwards (client-only in the server jar)
+        }
+    }
+
     /** Server players skip fall damage because the client reports falls; this player reports its own. */
     @Override
     protected void fall(double heightDifference, boolean onGround, BlockState landedState, BlockPos landedPosition) {

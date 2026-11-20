@@ -126,7 +126,9 @@ public final class Survival {
             return true;
         }
         // 2b. air: swim up
-        if (b.s.air() < 100 && b.s.submerged() && !b.ocean.managesAir()) {
+        // (a treasure chest open under water: take the iron first, a little drowning is cheaper than a second dive)
+        int airMin = b.looter().screenBusy() ? 10 : b.treasure.digging() ? 40 : 100;
+        if (b.s.air() < airMin && b.s.submerged() && !b.ocean.managesAir()) {
             b.c.lookAngles(b.s.yaw(), -60f);
             b.c.move(0.6f, 0f, true, false, false);
             interruptScreens();

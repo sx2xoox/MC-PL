@@ -53,6 +53,28 @@ public final class Looter {
                 || (i.isFood() && i != Items.ROTTEN_FLESH && i != Items.SUSPICIOUS_STEW && i != Items.POISONOUS_POTATO && i != Items.SPIDER_EYE);
     }
 
+    /** Taking order: iron (tools, bucket), food, the map, flint, obsidian, then gold (bartering later) and the rest. */
+    static int rank(ItemStack st) {
+        Item i = st.getItem();
+        if (i == Items.IRON_INGOT || i == Items.FILLED_MAP) {
+            return 0;
+        }
+        if (i == Items.IRON_NUGGET || i == Items.IRON_PICKAXE || i == Items.BUCKET || i == Items.WATER_BUCKET || i == Items.LAVA_BUCKET
+                || i == Items.FLINT_AND_STEEL) {
+            return 1;
+        }
+        if (i.isFood()) {
+            return 2;
+        }
+        if (i == Items.FLINT || i == Items.OBSIDIAN || i == Items.FIRE_CHARGE) {
+            return 3;
+        }
+        if (i == Items.GOLD_INGOT || i == Items.GOLD_NUGGET) {
+            return 4;
+        }
+        return 5;
+    }
+
     private void go(Phase p) {
         phase = p;
         phaseTicks = 0;
@@ -78,6 +100,19 @@ public final class Looter {
                     return Actions.Status.FAILED;
                 }
                 BlockPos f = b.feet();
+                if (b.s.inWater() && b.s.eyePos().squaredDistanceTo(net.minecraft.util.math.Vec3d.ofCenter(chest)) < 4.0 * 4.0) {
+                    go(Phase.OPEN); // under water within reach: open from here (swimming to a "standing" cell drifts)
+                    return Actions.Status.RUNNING;
+                }
+                net.minecraft.util.math.Vec3d p = b.s.pos();
+                double hx = chest.getX() + 0.5 - p.x, hz = chest.getZ() + 0.5 - p.z;
+                if (b.s.inWater() && Math.hypot(hx, hz) < 3 && chest.getY() < p.y) {
+                    // straight above it in the water (back from a breath): sink onto it
+                    b.c.lookAt(net.minecraft.util.math.Vec3d.ofCenter(chest));
+                    b.c.move(Math.hypot(hx, hz) > 0.8 ? 0.5f : 0f, 0f, false, false, false);
+                    b.c.sink();
+                    return phaseTicks > 900 ? fail() : Actions.Status.RUNNING;
+                }
                 Navigator.Goal g = Navigator.reach(chest, 3.6);
                 if (!g.done(f.getX(), f.getY(), f.getZ()) || (!b.s.onGround() && !b.s.inWater())) {
                     if (b.mover.go(g) == Mover.Status.FAILED || phaseTicks > 900) {
@@ -90,6 +125,9 @@ public final class Looter {
                 return Actions.Status.RUNNING;
             }
             case OPEN:
+                if (b.s.inWater()) {
+                    b.c.noFloat(); // do not hold space (it lifts us away), nor shift (shift + item in hand skips the chest)
+                }
                 if (b.s.screen() instanceof GenericContainerScreenHandler) {
                     go(Phase.TAKE);
                     return Actions.Status.RUNNING;
@@ -126,13 +164,22 @@ public final class Looter {
                 }
                 GenericContainerScreenHandler h = (GenericContainerScreenHandler) b.s.screen();
                 int n = h.getInventory().size();
+                // the most useful first (the screen may have to close early: air under water, a mob)
+                int best = -1, bestRank = Integer.MAX_VALUE;
                 for (int i = 0; i < n; i++) {
                     ItemStack st = h.getSlot(i).getStack();
-                    if (!st.isEmpty() && wanted(st)) {
-                        report += st.getCount() + " " + net.minecraft.util.registry.Registry.ITEM.getId(st.getItem()).getPath() + ", ";
-                        b.c.click(i, 0, SlotActionType.QUICK_MOVE);
-                        return Actions.Status.RUNNING;
+                    if (!st.isEmpty() && wanted(st) && rank(st) < bestRank) {
+                        bestRank = rank(st);
+                        best = i;
                     }
+                }
+                if (best >= 0) {
+                    ItemStack st = h.getSlot(best).getStack();
+                    String what = st.getCount() + " " + net.minecraft.util.registry.Registry.ITEM.getId(st.getItem()).getPath() + ", ";
+                    if (b.c.click(best, 0, SlotActionType.QUICK_MOVE)) {
+                        report += what;
+                    }
+                    return Actions.Status.RUNNING;
                 }
                 go(Phase.CLOSE);
                 return Actions.Status.RUNNING;
@@ -149,6 +196,11 @@ public final class Looter {
             default:
                 return Actions.Status.RUNNING;
         }
+    }
+
+    private Actions.Status fail() {
+        go(Phase.IDLE);
+        return Actions.Status.FAILED;
     }
 
     public void interrupt() {

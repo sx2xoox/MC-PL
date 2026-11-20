@@ -46,6 +46,7 @@
   "treasure.seaSources": 150.0,
   "treasure.scoutTicks": 0.0,
   "treasure.maxTicks": 4800.0,
+  "treasure.digTicks": 900.0,
   "route.treasureBaseSec": 110.0,
   "loot.chestDist": 20.0,
   "surface.lavaMaxDist": 72.0,
