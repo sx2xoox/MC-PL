@@ -1,0 +1,7 @@
+seed,label,success,reason,route,igt_s,igt,last_goal,mspt_avg,mspt_max,wall_s,fair,split_first_log,split_wooden_pickaxe,split_treasure_map,split_treasure,split_stone_pickaxe,split_first_iron,split_furnace,split_iron_ingots,split_bucket,split_flint,split_flint_and_steel,split_water_bucket,split_portal_site,split_portal_room,split_obsidian_10,split_portal_lit,split_in_portal,split_nether
+-1634345698353814711,,False,death_drown,TREASURE,194.75,3:14.750,OCEAN,8.82,914.93,41.12,True,26.3,,,10.9,,,,,52.45,,,,,,,,,
+-8125048733386817170,,False,timeout_LAVA,TREASURE,360.0,6:00.000,LAVA,6.3,920.98,54.9,True,32.5,,,14.6,,,,,45.4,,,84.25,,,,,,
+-6445837464022711768,,False,timeout_LAVA,TREASURE,360.0,6:00.000,LAVA,6.4,1073.87,56.37,True,29.9,,,14.2,,,,,43.1,,,87.35,,,,,,
+2793727738271376487,,False,timeout_LAVA,TREASURE,360.0,6:00.000,LAVA,8.76,1444.01,106.62,True,51.65,,,8.05,,,,,64.05,,,311.3,,,,,,
+6464270968925729657,,False,timeout_WOOD,TREASURE,360.0,6:00.000,WOOD,3.87,433.47,41.95,True,,,,116.45,,,,,,,,,,,,,,
+233111690278107210,,False,timeout_COBBLE,TREASURE,360.0,6:00.000,COBBLE,5.15,628.36,128.27,True,32.25,47.3,,13.4,,,,,47.5,,,86.0,,,,,,

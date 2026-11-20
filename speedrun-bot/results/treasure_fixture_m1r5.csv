@@ -1,0 +1,11 @@
+seed,label,success,reason,route,igt_s,igt,last_goal,mspt_avg,mspt_max,wall_s,fair,split_first_log,split_wooden_pickaxe,split_treasure_map,split_treasure,split_stone_pickaxe,split_first_iron,split_furnace,split_iron_ingots,split_bucket,split_flint,split_flint_and_steel,split_water_bucket,split_portal_site,split_portal_room,split_obsidian_10,split_portal_lit,split_in_portal,split_nether
+-8125048733386817170,,False,timeout_WATER,TREASURE,120.0,2:00.000,WATER,8.72,566.31,27.46,True,32.5,,,14.6,,,,,41.25,,,115.4,,,,,,
+-1828573601549762205,,False,timeout_WOOD,TREASURE,120.0,2:00.000,WOOD,9.02,691.21,28.34,True,,,,,,,,,,,,,,,,,,
+-1634345698353814711,,False,timeout_OCEAN,TREASURE,120.0,2:00.000,OCEAN,9.83,1315.25,27.09,True,26.25,,,10.9,,,,,36.25,,,,,,,,,
+-1219659680363841169,,False,timeout_WOOD,TREASURE,120.0,2:00.000,WOOD,8.71,522.16,31.1,True,,,,,,,,,,,,,,,,,,
+8573267887210020210,,False,timeout_WOOD,TREASURE,120.0,2:00.000,WOOD,8.01,735.78,27.65,True,,,,,,,,,,,,,,,,,,
+-6445837464022711768,,False,timeout_OCEAN,TREASURE,120.0,2:00.000,OCEAN,9.32,755.99,27.84,True,29.95,,,14.2,,,,,39.55,,,113.45,,,,,,
+6464270968925729657,,False,timeout_WOOD,TREASURE,120.0,2:00.000,WOOD,8.91,464.63,28.29,True,,,,116.45,,,,,,,,,,,,,,
+2793727738271376487,,False,timeout_WOOD,TREASURE,120.0,2:00.000,WOOD,11.03,881.96,33.94,True,51.45,,,8.05,,,,,60.35,,,,,,,,,
+7589065171990274706,,False,timeout_STONE_PICK,TREASURE,120.0,2:00.000,STONE_PICK,5.28,433.97,16.5,True,62.8,94.7,,,,,,,,,,,,,,,,
+233111690278107210,,False,timeout_OCEAN,TREASURE,120.0,2:00.000,OCEAN,5.49,358.94,17.09,True,32.25,48.55,,13.4,,,,,48.75,,,,,,,,,

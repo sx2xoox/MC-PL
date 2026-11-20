@@ -1,0 +1,5 @@
+seed,label,success,reason,route,igt_s,igt,last_goal,mspt_avg,mspt_max,wall_s,fair,split_first_log,split_wooden_pickaxe,split_treasure_map,split_treasure,split_stone_pickaxe,split_first_iron,split_furnace,split_iron_ingots,split_bucket,split_flint,split_flint_and_steel,split_water_bucket,split_portal_site,split_portal_room,split_obsidian_10,split_portal_lit,split_in_portal,split_nether
+7859758050112882844,,False,death_drown,DIG_CAST,37.0,0:37.000,OCEAN,26.39,647.36,20.38,True,,,,,,,,,,,,0.05,,,,,,
+-1634345698353814711,,True,nether,DIG_CAST,108.75,1:48.750,PORTAL,12.23,942.55,30.93,True,,,,,,,,,,,,0.05,24.8,46.35,99.5,104.0,104.8,108.75
+4689709432956513359,,False,timeout_WOOD,DIG_CAST,300.0,5:00.000,WOOD,6.89,933.99,46.56,True,,,,,,,,,,,,0.05,191.1,216.7,,,,
+9024960761264595115,,False,death_drown,DIG_CAST,55.0,0:55.000,LAVA,14.28,1230.3,45.46,True,,,,,,,,,,,,0.05,,,,,,

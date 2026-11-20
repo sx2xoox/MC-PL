@@ -800,8 +800,8 @@ public final class OceanRoute {
                 b.trace("wall spot " + stand + " facing " + wallDir + " (feet " + f + ")");
             }
             if (stand == null) {
-                // look around to see the walls
-                b.c.lookAngles(b.s.yaw() + 30f, 20f);
+                // look around to see the walls (level and a little down: the wall rock at feet and head height)
+                b.c.lookAngles(b.s.yaw() + 30f, (phaseTicks / 24) % 2 == 0 ? 0f : 20f);
                 if (phaseTicks > 160) {
                     int rock = 0, known = 0;
                     for (BlockPos q : BlockPos.iterate(f.add(-8, 0, -8), f.add(8, 1, 8))) {
