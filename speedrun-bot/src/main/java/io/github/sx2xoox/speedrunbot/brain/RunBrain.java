@@ -2146,7 +2146,9 @@ public final class RunBrain {
                 climbing = true;
             }
         }
-        if (climbing && f.getY() < Math.max(surface, climbTo)) {
+        // climb on until the climb itself says we can step out (at the surface height but still in our shaft, a
+        // walk out through the grass got stuck for minutes)
+        if (climbing) {
             act = "climb to " + Math.max(surface, climbTo);
             if (mover.climb(Math.max(surface, climbTo)) != Mover.Status.RUNNING) {
                 climbing = false;
@@ -2165,6 +2167,11 @@ public final class RunBrain {
                     }
                 } else if (setAct("climb to surface " + surface) && mover.climb(surface) == Mover.Status.FAILED) {
                     climbing = false;
+                    explore();
+                }
+            } else if (f.getY() < surface + 4 && !mover.canStepOutHere() && s.onGround()) {
+                // at the surface height but walled in (our own shaft): up until a side opens
+                if (setAct("climb out") && mover.climb(f.getY() + 1) == Mover.Status.FAILED) {
                     explore();
                 }
             } else {

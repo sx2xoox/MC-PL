@@ -491,6 +491,11 @@ public final class Mover {
         return Status.RUNNING;
     }
 
+    /** Standing where some side is open at feet and head height. */
+    public boolean canStepOutHere() {
+        return canStepOut(feet());
+    }
+
     /** Some side cell is open at feet and head height (out of the climbing shaft). */
     private boolean canStepOut(BlockPos f) {
         for (int[] d : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
