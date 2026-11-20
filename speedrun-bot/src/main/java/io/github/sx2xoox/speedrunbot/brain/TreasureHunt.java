@@ -931,6 +931,11 @@ public final class TreasureHunt {
      * a path along the sea floor. False when not in the water, there, or a bank above the water is seen on the way
      * (then the path finder takes over).
      */
+    private long swimPauseUntil;
+    private double swimTx = Double.NaN, swimTz = Double.NaN;
+    private int swimStill;
+    private double swimBestFar = Double.MAX_VALUE;
+
     private boolean swimStraight(double tx, double tz) {
         if (!b.s.inWater() || b.s.inBoat()) {
             return false;
@@ -940,12 +945,26 @@ public final class TreasureHunt {
         if (far < 2.5) {
             return false;
         }
-        for (double t = 1; t < far - 1.5; t += 1) {
-            int x = (int) Math.floor(p.x + (tx - p.x) * t / far), z = (int) Math.floor(p.z + (tz - p.z) * t / far);
-            BlockState st = b.mem.get(x, 63, z);
-            if (st != null && Blocks2.pass(st) == Blocks2.Pass.SOLID) {
-                return false; // land on the way
-            }
+        // straight on like a player, also toward land (a bank level with the water is climbed by swimming into it,
+        // vanilla's out-of-water boost); no progress for 3 seconds: the path finder for 6 seconds
+        if (Math.abs(tx - swimTx) + Math.abs(tz - swimTz) > 1) {
+            swimTx = tx;
+            swimTz = tz;
+            swimBestFar = Double.MAX_VALUE;
+            swimStill = 0;
+        }
+        if (b.s.gameTick() < swimPauseUntil) {
+            return false;
+        }
+        if (far < swimBestFar - 0.5) {
+            swimBestFar = far;
+            swimStill = 0;
+        } else if (++swimStill > 60) {
+            swimStill = 0;
+            swimBestFar = Double.MAX_VALUE;
+            swimPauseUntil = b.s.gameTick() + 120;
+            b.mover.reset();
+            return false;
         }
         float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(tx - p.x, tz - p.z);
         boolean needAir = b.s.submerged() && b.s.air() < 150;

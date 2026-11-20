@@ -478,7 +478,9 @@ public final class Navigator {
                 }
                 col += c;
                 double fl = isWaterAt(tx, y - k, tz) ? 0 : floorCost(tx, y - k - 1, tz);
-                relax(n, tx, y - k, tz, WALK + k + col + fl, Move.DOWN, nodes, open, goal);
+                // diving from the surface to walk the sea floor is slower than swimming on: a cost per block down
+                double dive = (surface || inWater) && isWaterAt(tx, y - k, tz) ? 4 * k : 0;
+                relax(n, tx, y - k, tz, WALK + k + col + fl + dive, Move.DOWN, nodes, open, goal);
                 BlockState below = mem.get(tx, y - k - 1, tz);
                 if (below == null || Blocks2.standable(below)) {
                     break; // landed
@@ -491,6 +493,9 @@ public final class Navigator {
                     + clearCost(x + d[0], y, z, false) + clearCost(x + d[0], y + 1, z, false)
                     + clearCost(x, y, z + d[1], false) + clearCost(x, y + 1, z + d[1], false);
             double floor = floorCost(tx, y - 1, tz);
+            if (surface && !isWaterAt(tx, y - 1, tz)) {
+                continue; // out of the water onto a bank only straight at it (vanilla's boost needs a head-on collision)
+            }
             relax(n, tx, y, tz, WALK * 1.414 + c + floor, Move.DIAG, nodes, open, goal);
         }
         // dig down

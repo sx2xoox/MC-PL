@@ -711,6 +711,15 @@ public final class OceanRoute {
                 diveStill = 0;
                 diveLastY = p.y;
             }
+            BlockState below = b.mem.get(f.down());
+            if (diveStill > 50 && below != null && Blocks2.pass(below) == Blocks2.Pass.SOLID && below.getBlock() != Blocks.MAGMA_BLOCK) {
+                // standing on something inside the column (a ledge block, kelp-free seagrass rock): dig it away
+                if (diveStill % 40 == 11) {
+                    b.trace(String.format("held at y %.1f on %s: digging it", p.y, below));
+                }
+                b.a.mine(f.down(), false);
+                return;
+            }
             if (diveStill > 30) {
                 BlockPos t = b.mem.nearest(WorldMemory.Kind.BUBBLES_DOWN, f, 6, l -> BlockPos.unpackLongY(l) < f.getY() - 1);
                 if (t == null) {
