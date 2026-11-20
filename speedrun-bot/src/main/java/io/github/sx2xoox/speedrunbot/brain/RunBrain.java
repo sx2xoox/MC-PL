@@ -2146,6 +2146,9 @@ public final class RunBrain {
                 climbing = true;
             }
         }
+        if (climbing && target != null && target.getY() <= f.getY() + 4 && f.getSquaredDistance(target) < 16 * 16) {
+            climbing = false; // water close by at our height (a run pillared in a fern two blocks from its pond)
+        }
         // climb on until the climb itself says we can step out (at the surface height but still in our shaft, a
         // walk out through the grass got stuck for minutes)
         if (climbing) {

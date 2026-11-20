@@ -176,6 +176,9 @@ public final class Workbench {
             return null; // carried along: place it here
         }
         double reuse = b.p.get("craft.tableReuseDist");
+        if (b.inv().planks() + b.inv().logs() * 4 < 4) {
+            reuse = Math.max(reuse, 64); // no wood for a new one: a walk to an old table beats a trip to the trees
+        }
         return b.mem.nearest(WorldMemory.Kind.CRAFTING_TABLE, b.feet(), reuse, l -> !b.badTargets().contains(l));
     }
 
