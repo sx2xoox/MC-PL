@@ -310,6 +310,14 @@ public final class Navigator {
         if (above != null && Blocks2.isWater(above)) {
             extra += 40;
         }
+        if (Actions.keepWaterOut) {
+            for (int[] d : new int[][]{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}}) {
+                BlockState n = mem.get(x + d[0], y + d[1], z + d[2]);
+                if (n != null && Blocks2.isWater(n)) {
+                    return Double.POSITIVE_INFINITY; // the dry pocket under the sea must stay dry
+                }
+            }
+        }
         if (above != null && Blocks2.falls(above)) {
             extra += 15;
         }

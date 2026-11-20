@@ -186,6 +186,19 @@ public final class Actions {
     /** Cells this bot mined out (its own tunnels and shafts are no cave to explore). */
     public final it.unimi.dsi.fastutil.longs.LongOpenHashSet dug = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
 
+    /** Set once the bot works in a dry pocket under the sea: never mine a block that has water beside or above it. */
+    public static boolean keepWaterOut;
+
+    public boolean opensWater(BlockPos p) {
+        for (Direction d : new Direction[]{Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST}) {
+            BlockState n = mem.get(p.offset(d));
+            if (n != null && Blocks2.isWater(n)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Status mine(BlockPos p, boolean needDrop) {
         BlockState st = mem.get(p);
         if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
@@ -196,6 +209,10 @@ public final class Actions {
             mineTarget = null;
             mineTicks = 0;
             return Status.DONE;
+        }
+        BlockState aboveP = mem.get(p.up());
+        if (keepWaterOut && (opensWater(p) || (aboveP != null && aboveP.getBlock() instanceof net.minecraft.block.DoorBlock))) {
+            return Status.FAILED; // under the sea: this block holds the water back
         }
         if (!p.equals(mineTarget)) {
             mineTarget = p;
@@ -244,6 +261,13 @@ public final class Actions {
         }
         if (lavaNextTo(aimPos)) {
             return Status.FAILED; // opening it would let lava in
+        }
+        if (keepWaterOut && !aimPos.equals(p)) {
+            BlockState ab = mem.get(aimPos.up());
+            if (opensWater(aimPos) || (hit != null && hit.getBlock() instanceof net.minecraft.block.DoorBlock)
+                    || (ab != null && ab.getBlock() instanceof net.minecraft.block.DoorBlock)) {
+                return Status.FAILED; // the door and what holds it keep the sea out
+            }
         }
         BlockState target = mem.get(aimPos);
         int tool = target == null ? -1 : Blocks2.bestToolSlot(target, s.inventory(), needDrop && aimPos.equals(p));

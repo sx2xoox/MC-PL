@@ -158,6 +158,7 @@ public final class OceanRoute {
             case ENTER:
                 enter();
                 break;
+
             default:
                 break;
         }
@@ -834,7 +835,8 @@ public final class OceanRoute {
             dry = w2;
             b.split("dry_pocket");
             b.trace("in a dry pocket behind the door at " + w2 + " air=" + b.s.air());
-            go(Phase.DONE);
+            Actions.keepWaterOut = true;
+            go(Phase.DONE); // the casting goals take over: lava (heard or found in the rock), site, frame
             return;
         }
         if (phaseTicks % 40 == 1) {
