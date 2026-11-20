@@ -25,7 +25,7 @@ import java.util.List;
  * bucket filled at sea). Boat physics are vanilla; the bot only holds keys (W/A/D, sneak to get out).
  */
 public final class OceanRoute {
-    public enum Phase { CRAFT, LAUNCH, BOARD, SAIL, DIVE, SURFACE, WALL, DOOR, OPEN, DRY_DIG, ENTER, DONE, FAILED }
+    public enum Phase { CRAFT, GRAVEL, LAUNCH, BOARD, SAIL, DIVE, SURFACE, WALL, DOOR, OPEN, DRY_DIG, ENTER, DONE, FAILED }
 
     private final RunBrain b;
     private Phase phase = Phase.CRAFT;
@@ -123,6 +123,9 @@ public final class OceanRoute {
             case CRAFT:
                 craft();
                 break;
+            case GRAVEL:
+                gravel();
+                break;
             case LAUNCH:
                 launch();
                 break;
@@ -200,7 +203,7 @@ public final class OceanRoute {
         }
         if (needs.isEmpty()) {
             if (!b.s.screenOpen()) {
-                go(Phase.LAUNCH);
+                go(Phase.GRAVEL);
             } else {
                 b.c.closeScreen();
             }
@@ -209,6 +212,39 @@ public final class OceanRoute {
         Actions.Status st = b.bench.run(needs);
         if (st == Actions.Status.FAILED) {
             fail("craft_" + b.bench.error());
+        }
+    }
+
+    // ------------------------------------------------------------------ gravel (flint for the lighter, later)
+
+    private BlockPos gravelTarget;
+
+    /** A little gravel from the shore or shallow sea floor: under the sea every gravel block is next to water. */
+    private void gravel() {
+        if (b.inv().has(Items.FLINT) || b.inv().count(Items.GRAVEL) >= 3 || b.inv().lighter() || phaseTicks > 600) {
+            go(Phase.LAUNCH);
+            return;
+        }
+        BlockPos f = b.feet();
+        if (gravelTarget == null || b.mem.get(gravelTarget) == null || b.mem.get(gravelTarget).getBlock() != Blocks.GRAVEL) {
+            gravelTarget = b.mem.nearest(WorldMemory.Kind.GRAVEL, f, 28, l -> !b.badTargets().contains(l) && BlockPos.unpackLongY(l) >= 48);
+            if (gravelTarget == null) {
+                b.trace("no gravel seen near the shore: flint later");
+                go(Phase.LAUNCH);
+                return;
+            }
+        }
+        Navigator.Goal g = Navigator.reach(gravelTarget, 4.0);
+        if (!g.done(f.getX(), f.getY(), f.getZ())) {
+            if (b.mover.go(g) == Mover.Status.FAILED) {
+                b.badTargets().add(gravelTarget.asLong());
+                gravelTarget = null;
+            }
+            return;
+        }
+        if (b.a.mine(gravelTarget, true) == Actions.Status.FAILED) {
+            b.badTargets().add(gravelTarget.asLong());
+            gravelTarget = null;
         }
     }
 
@@ -476,7 +512,13 @@ public final class OceanRoute {
             lookPitch = 25f;
         }
         b.c.lookAngles(lookYaw, lookPitch);
-        float err = io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(heading - by);
+        steer(heading, forward);
+    }
+
+    /** Holds the boat keys for one tick: W (forward) and A/D toward the wanted heading. */
+    private void steer(float wanted, float forward) {
+        float by = b.s.boatYaw();
+        float err = io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(wanted - by);
         float yawVel = Float.isNaN(lastBoatYaw) ? 0f : io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(by - lastBoatYaw);
         lastBoatYaw = by;
         // steer: A turns left (yaw down), D right (yaw up); lead the turn by the current turn rate
@@ -486,6 +528,64 @@ public final class OceanRoute {
             forward = 0.0f; // turn on the spot first
         }
         b.c.move(forward, strafe, false, false, false);
+    }
+
+    // ------------------------------------------------------------------ ferry (the boat to a place, e.g. the treasure)
+
+    /** Boat or no boat to take over water: carried, or ridden. */
+    public boolean hasBoat() {
+        return b.s.inBoat() || count(OceanRoute::isBoat) > 0 || !b.perception.visible(BoatEntity.class, 8, e -> !e.hasPassengers()).isEmpty();
+    }
+
+    private int ferryTicks;
+    private int ferryPlace;
+
+    /**
+     * One tick of crossing water by boat toward (x,z): put the boat in, get in, steer, and get out when there or when
+     * land is right ahead. RUNNING while under way, ARRIVED when out of the boat near the place or the shore, FAILED
+     * when there is no boat to use.
+     */
+    public Mover.Status ferry(int x, int z) {
+        ferryTicks++;
+        Vec3d p = b.s.pos();
+        double dx = x + 0.5 - p.x, dz = z + 0.5 - p.z;
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        if (!b.s.inBoat()) {
+            if (count(OceanRoute::isBoat) > 0) {
+                BlockPos spot = waterSpot();
+                if (spot == null || b.a.equip(OceanRoute::isBoatStack) != Actions.Status.DONE) {
+                    return spot == null ? Mover.Status.FAILED : Mover.Status.RUNNING;
+                }
+                Vec3d aim = Vec3d.ofCenter(spot).add(0, 0.45, 0);
+                b.c.lookAt(aim);
+                if (b.c.aimed(aim, 2f) && b.c.use()) {
+                    ferryPlace++;
+                }
+                return ferryPlace > 4 ? Mover.Status.FAILED : Mover.Status.RUNNING;
+            }
+            List<BoatEntity> boats = b.perception.visible(BoatEntity.class, 8, e -> !e.hasPassengers());
+            if (boats.isEmpty()) {
+                return Mover.Status.FAILED;
+            }
+            Vec3d aim = boats.get(0).getPos().add(0, 0.3, 0);
+            b.c.lookAt(aim);
+            if (aim.distanceTo(b.s.eyePos()) > 2.6) {
+                b.c.move(1f, 0f, false, false, false);
+            }
+            if (b.c.aimed(aim, 4f)) {
+                b.c.useEntity();
+            }
+            return Mover.Status.RUNNING;
+        }
+        float h = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz);
+        if (dist < 2.5 || (dist < 40 && landAhead(h, 3))) {
+            b.trace(String.format("ferry: out of the boat %.0f blocks from %d,%d", dist, x, z));
+            b.c.move(0f, 0f, false, false, true);
+            return Mover.Status.ARRIVED;
+        }
+        b.c.lookAngles(h, 20f);
+        steer(h, dist < 6 ? 0.4f : 1f);
+        return Mover.Status.RUNNING;
     }
 
     // ------------------------------------------------------------------ under water

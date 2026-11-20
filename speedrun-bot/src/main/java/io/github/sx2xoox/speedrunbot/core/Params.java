@@ -57,7 +57,8 @@ public final class Params {
         d.put("ocean.minOpen", 50.0);            // ...of which this many open 8 blocks out in all directions (no river)
         d.put("ocean.minDeep", 0.0);             // ...and this many sources 7+ below the surface (seen from a shore: rarely; off)
         d.put("ocean.route", 1.0);               // 1 = an ocean spawn plays the ocean route
-        d.put("ocean.planks", 24.0);             // wood for table, tools, boat and doors
+        d.put("ocean.planks", 16.0);             // wood after the treasure: table, iron tools, a boat, a door
+        d.put("ocean.boatPlanks", 20.0);         // wood before a treasure across water: table, boat, door, wooden pickaxe
         d.put("ocean.sailTicks", 2400.0);        // give up looking for a magma ravine from the boat after this
         d.put("reset.oceanOnly", 1.0);           // RSG policy: reset spawns that are not ocean / no treasure signal
         d.put("reset.treasureBySec", 120.0);

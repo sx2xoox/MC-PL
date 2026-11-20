@@ -33,7 +33,7 @@ import java.util.function.Predicate;
  * Numbers that steer it come from {@link Params} (tuned by tools/tune.py).
  */
 public final class RunBrain {
-    public enum Goal { SCAN, WOOD, WOOD_TOOLS, SCOUT, TREASURE, OCEAN, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
+    public enum Goal { SCAN, WOOD, WOOD_TOOLS, SCOUT, TREASURE, OCEAN, OCEAN_BOAT, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
 
     final BotSenses s;
     final Controls c;
@@ -535,6 +535,15 @@ public final class RunBrain {
             chooseRoute();
         }
         if (pieRoute && !treasure.finished() && p.get("ocean.route") > 0) {
+            int[] col = treasure.column();
+            if (treasure.phase() == TreasureHunt.Phase.WALK && col != null && !ocean.hasBoat() && !boatTried
+                    && Math.hypot(col[0] - mover.feet().getX(), col[1] - mover.feet().getZ()) > 32 && seaBetween(col)) {
+                // the treasure is across water: wood and a boat first (the boat also carries the route later)
+                if (inv.logs() * 4 + inv.planks() < p.getInt("ocean.boatPlanks") && !bench.busy() && goal != Goal.OCEAN_BOAT) {
+                    return Goal.WOOD;
+                }
+                return Goal.OCEAN_BOAT;
+            }
             return Goal.TREASURE; // the ocean route: the treasure first, from the spawn (the sweep needs no tools)
         }
         if (oceanOn() && !ocean.finished()) {
@@ -637,6 +646,23 @@ public final class RunBrain {
 
     final TreasureHunt treasure = new TreasureHunt(this);
     final OceanRoute ocean = new OceanRoute(this);
+    private boolean boatTried;
+
+    /** Seen sea-level water on the straight line to the column (the treasure is across water). */
+    private boolean seaBetween(int[] col) {
+        BlockPos f = mover.feet();
+        int n = 0, steps = 0;
+        double d = Math.hypot(col[0] - f.getX(), col[1] - f.getZ());
+        for (double t = 4; t < d - 4; t += 2) {
+            int x = (int) Math.floor(f.getX() + (col[0] - f.getX()) * t / d), z = (int) Math.floor(f.getZ() + (col[1] - f.getZ()) * t / d);
+            BlockState st = mem.get(x, 62, z);
+            steps++;
+            if (st != null && Blocks2.isWater(st)) {
+                n++;
+            }
+        }
+        return steps > 0 && n * 3 >= steps;
+    }
     /** Development only (-Dsrb.devOcean=PHASE): play the ocean route from that phase (with a kit), no treasure. */
     static final String DEV_OCEAN = System.getProperty("srb.devOcean");
 
@@ -865,6 +891,21 @@ public final class RunBrain {
             case OCEAN:
                 ocean.tick();
                 break;
+            case OCEAN_BOAT: {
+                // a boat (and the door while the table is out), the table taken along for the iron tools later
+                java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
+                needs.add(new Workbench.Need("boat", i -> i instanceof net.minecraft.item.BoatItem, 1, true));
+                needs.add(new Workbench.Need("door", i -> net.minecraft.tag.ItemTags.WOODEN_DOORS.contains(i), 1, true));
+                if (!inv.pickaxe()) {
+                    needs.add(new Workbench.Need("wooden_pickaxe", i -> i == Items.WOODEN_PICKAXE, 1, true)); // the treasure may lie under stone
+                }
+                Actions.Status bs = bench.run(needs);
+                if (bs == Actions.Status.FAILED || goalTicks > 900) {
+                    trace("no boat: " + bench.error());
+                    boatTried = true;
+                }
+                break;
+            }
             case LOOT:
                 if (!looter.busy()) {
                     BlockPos ch = chestWorthLooting();

@@ -30,6 +30,7 @@ public final class TreasureHunt {
     private int readTicks;
     private int digStartY = Integer.MIN_VALUE;
     private int columnTries;
+    private boolean ferryDone;
     private String why = "";
 
     public TreasureHunt(RunBrain b) {
@@ -38,6 +39,11 @@ public final class TreasureHunt {
 
     public Phase phase() {
         return phase;
+    }
+
+    /** The column being walked to (null before one is chosen). */
+    public int[] column() {
+        return column;
     }
 
     public boolean active() {
@@ -463,6 +469,20 @@ public final class TreasureHunt {
             go(Phase.DIG);
             return;
         }
+        double far = Math.hypot(p.x - column[0], p.z - column[1]);
+        if (!ferryDone && b.ocean.hasBoat() && far > 12 && (b.s.inWater() || b.s.inBoat() || nearWater())) {
+            // across the water by boat (swimming is slow, and climbing out of the sea onto a ledge often stalls)
+            Mover.Status fs = b.ocean.ferry(column[0], column[1]);
+            if (fs == Mover.Status.RUNNING) {
+                return;
+            }
+            ferryDone = fs == Mover.Status.ARRIVED && far < 12;
+            if (fs == Mover.Status.FAILED) {
+                ferryDone = true;
+            }
+            b.mover.reset();
+            return;
+        }
         if (b.mover.go(Navigator.column(column[0], column[1], f.getY())) == Mover.Status.FAILED) {
             b.mover.reset();
         }
@@ -511,6 +531,21 @@ public final class TreasureHunt {
         if (b.a.mine(below, false) == Actions.Status.FAILED) {
             fail("dig_blocked");
         }
+    }
+
+    /** Sea-level water within 3 blocks: the boat can go in here. */
+    private boolean nearWater() {
+        BlockPos f = b.feet();
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dz = -3; dz <= 3; dz++) {
+                BlockState st = b.mem.get(f.getX() + dx, 62, f.getZ() + dz);
+                BlockState up = b.mem.get(f.getX() + dx, 63, f.getZ() + dz);
+                if (st != null && up != null && Blocks2.isWater(st) && up.isAir()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private int[] neighbourColumn() {
