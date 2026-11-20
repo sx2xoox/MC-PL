@@ -183,12 +183,15 @@ public final class Actions {
      */
     /** Blocks this bot has broken (progress for the watchdog). */
     public int broken;
+    /** Cells this bot mined out (its own tunnels and shafts are no cave to explore). */
+    public final it.unimi.dsi.fastutil.longs.LongOpenHashSet dug = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
 
     public Status mine(BlockPos p, boolean needDrop) {
         BlockState st = mem.get(p);
         if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
             if (p.equals(mineTarget)) {
                 broken++; // the block we were mining is gone
+                dug.add(p.asLong());
             }
             mineTarget = null;
             mineTicks = 0;

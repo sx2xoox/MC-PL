@@ -190,8 +190,8 @@ public final class RunBrain {
         lastHealth = hp;
         if (goalTicks % 200 == 0) {
             Vec3d pos = s.pos();
-            trace(String.format("status pos=%.1f,%.1f,%.1f hp=%.0f food=%d target=%s plans=%d inv=%s", pos.x, pos.y, pos.z,
-                    s.health(), s.food(), target, mover.plans(), inv.summary()));
+            trace(String.format("status pos=%.1f,%.1f,%.1f hp=%.0f food=%d act=%s broken=%d target=%s plans=%d inv=%s", pos.x, pos.y, pos.z,
+                    s.health(), s.food(), act, a.broken, target, mover.plans(), inv.summary()));
         }
         if (attackCooldown > 0) {
             attackCooldown--;
@@ -1646,6 +1646,7 @@ public final class RunBrain {
         return st != null && (st.getBlock() == Blocks.FURNACE || (st.getBlock() == Blocks.CRAFTING_TABLE && bench.busy()));
     }
 
+    private int heardMisses;
     private int probeUntilLen;
     private long probeUntilTick;
     private long lastTurnTick;
@@ -1782,6 +1783,17 @@ public final class RunBrain {
                 lavaHeardAt = null;
                 return;
             }
+            if (dyHeard < -2.5 && f.getY() > 11 && dx * dx + dz * dz < 12 * 12) {
+                // the lava is below (a cave floor at y 10 under the tunnel): a staircase down toward it; walking on
+                // over the spot ("reached") kept a run circling above heard lava for three minutes
+                Direction toward = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+                if (dx * dx + dz * dz >= 4 && digDir != toward && now() - lastTurnTick > 60) {
+                    digDir = toward;
+                    trace("stairs down toward the lava heard around " + new BlockPos(lavaHeardAt));
+                }
+                stairStep();
+                return;
+            }
             if (dyHeard > 2.5 && f.getY() < 50) {
                 // the lava is above the tunnel (a pool higher up in the rock): climb toward its level, a tunnel at
                 // the lava level never sees it (runs heard lava at y 18 for minutes from a tunnel at y 12)
@@ -1802,6 +1814,12 @@ public final class RunBrain {
                 // the guess is rough along the line of hearing (distance by loudness): go on through it for a few
                 // blocks (each mined face shows what is behind) before the guess is spent
                 trace("heard lava spot " + new BlockPos(lavaHeardAt) + " reached without seeing lava: probing on " + digDir);
+                if (++heardMisses >= 4) {
+                    // the same sound reached again and again without seeing anything: stop following it here
+                    trace("heard lava around " + new BlockPos(lavaHeardAt) + " missed " + heardMisses + " times: listening elsewhere");
+                    lavaExplained.add(lavaHeardAt);
+                    heardMisses = 0;
+                }
                 lavaHeard.clear();
                 lavaHeardAt = null;
                 probeUntilLen = tunnelLen + 5;
@@ -1853,6 +1871,11 @@ public final class RunBrain {
             BlockState st = mem.get(x, y, z);
             if (st == null) {
                 return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.UNKNOWN;
+            }
+            if (st.isAir() && a.dug.contains(io.github.sx2xoox.speedrunbot.core.Cell.pack(x, y, z))) {
+                // our own tunnel: no cave (a tunnel next to a flooded or older tunnel looked like a cave and the bot
+                // walked its own dead ends three blocks at a time)
+                return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.SOLID;
             }
             if (Blocks2.isLava(st)) {
                 return io.github.sx2xoox.speedrunbot.core.Frontier.Seen.LAVA;
