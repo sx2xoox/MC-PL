@@ -562,7 +562,23 @@ public final class OceanRoute {
 
     /** Boat or no boat to take over water: carried, or ridden. */
     public boolean hasBoat() {
-        return b.s.inBoat() || count(OceanRoute::isBoat) > 0 || !b.perception.visible(BoatEntity.class, 8, e -> !e.hasPassengers()).isEmpty();
+        return b.s.inBoat() || count(OceanRoute::isBoat) > 0 || !b.perception.visible(BoatEntity.class, 8, e -> !e.hasPassengers()).isEmpty()
+                || (lastBoatPos != null && lastBoatPos.distanceTo(b.s.pos()) < 16);
+    }
+
+    /** Each tick: where the boat was last ridden (a player remembers where they left it; it does not drift far). */
+    public void observe() {
+        if (b.s.inBoat()) {
+            lastBoatPos = b.s.pos();
+        } else if (lastBoatPos != null && lastBoatPos.distanceTo(b.s.pos()) < 5
+                && b.perception.visible(BoatEntity.class, 6, e -> !e.hasPassengers()).isEmpty() && b.s.pitch() < 60) {
+            // looking at where it was and it is not there (broken, taken, drifted): forget it
+            Vec3d d = lastBoatPos.subtract(b.s.eyePos());
+            float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(d.x, d.z);
+            if (Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 30) {
+                lastBoatPos = null;
+            }
+        }
     }
 
     private int ferryTicks;

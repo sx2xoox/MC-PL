@@ -219,6 +219,11 @@ public final class TreasureHunt {
                     }
                     if (fs == Mover.Status.ARRIVED) {
                         phaseTicks = 900; // there (or at the shore on the way): sweep here
+                    } else {
+                        if (b.mover.go(Navigator.near(secondSpot, 2)) == Mover.Status.FAILED) {
+                            b.mover.reset();
+                        }
+                        return;
                     }
                 } else {
                     if (b.mover.go(Navigator.near(secondSpot, 2)) == Mover.Status.FAILED) {
@@ -348,6 +353,7 @@ public final class TreasureHunt {
     private final java.util.Set<Long> excluded = new java.util.HashSet<>();
     private int verifyStep = -1;
     private int verifyHits;
+    private boolean landed;
     private int settle;
     private int verified;
     private final java.util.List<Float> verifyPitches = new java.util.ArrayList<>();
@@ -366,6 +372,14 @@ public final class TreasureHunt {
         Vec3d p = b.s.pos();
         double dx = column[0] + 0.5 - p.x, dz = column[1] + 0.5 - p.z;
         double far = Math.hypot(dx, dz);
+        if (verifyStep < 0 && phaseTicks > 700) {
+            // cannot get there (no water way, no path): the next candidate
+            b.trace("treasure: column " + column[0] + "," + column[1] + " not reached");
+            verifyHits = 0;
+            verifyStep = verifyPitches.size();
+            verifyPitches.clear();
+            verifyStep = 0;
+        }
         if (verifyStep < 0) {
             if (far > 1.6 && travel(1.2)) {
                 return;
@@ -427,6 +441,7 @@ public final class TreasureHunt {
             return;
         }
         excluded.add(io.github.sx2xoox.speedrunbot.core.TreasureLocator.key(column[0], column[1]));
+        locator.nearestOnTies = true; // the next check: as many agreeing places, nearest first (a boat trip each)
         int[] next = verified >= b.p.getInt("treasure.verifyMax") ? null : locator.best(p.x, p.z, b.p.get("treasure.pieRange") + 32, excluded);
         b.trace("treasure: no chest at " + column[0] + "," + column[1] + (next == null ? ": giving up" : "; next " + next[0] + "," + next[1] + " (score " + next[2] / 100.0 + ")"));
         if (next == null) {
@@ -434,6 +449,7 @@ public final class TreasureHunt {
             return;
         }
         column = new int[]{next[0], next[1]};
+        landed = false;
         verifyStep = -1;
         phaseTicks = 0;
         // the window back to normal for the trip (narrowed again there)
@@ -793,12 +809,13 @@ public final class TreasureHunt {
         if (far <= stop) {
             return false;
         }
-        if (b.ocean.hasBoat() && (b.s.inBoat() || b.s.inWater() || nearWater())) {
+        if (!landed && b.ocean.hasBoat() && (b.s.inBoat() || b.s.inWater() || nearWater())) {
             Mover.Status fs = b.ocean.ferry(column[0], column[1], stop, true);
             if (fs == Mover.Status.RUNNING) {
                 return true;
             }
             if (fs == Mover.Status.ARRIVED) {
+                landed = !b.s.inBoat() || far > stop + 1; // out at a shore short of it: the rest without the boat
                 return far > 40;
             }
         }

@@ -204,6 +204,7 @@ public final class RunBrain {
             attackCooldown--;
         }
         resetCheck();
+        ocean.observe();
         if (s.onGround()) {
             BlockState under = mem.get(mover.feet().down());
             if (under != null && under.getBlock() == net.minecraft.block.Blocks.MAGMA_BLOCK) {
@@ -922,6 +923,8 @@ public final class RunBrain {
                 java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
                 needs.add(new Workbench.Need("boat", i -> i instanceof net.minecraft.item.BoatItem, 1, true));
                 needs.add(new Workbench.Need("spare_door", OceanRoute::isDoor, 1, true)); // optional here (made again after the treasure)
+                // a wooden shovel digs the treasure's sand twice as fast as a hand (under water: 38 ticks a block, not 75)
+                needs.add(new Workbench.Need("spare_shovel", i -> i == Items.WOODEN_SHOVEL || i == Items.IRON_SHOVEL, 1, true));
                 Actions.Status bs = bench.run(needs);
                 if (bs == Actions.Status.FAILED || goalTicks > 900) {
                     trace("no boat: " + bench.error());
@@ -1310,7 +1313,8 @@ public final class RunBrain {
                     }
                     BlockState here = mem.get(q);
                     BlockState below = mem.get(q.down());
-                    if (here == null || below == null || Blocks2.pass(here) != Blocks2.Pass.PASS || !Blocks2.standable(below)) {
+                    // (under water a block goes into a water cell: water is replaceable)
+                    if (here == null || below == null || (Blocks2.pass(here) != Blocks2.Pass.PASS && !Blocks2.isWater(here)) || !Blocks2.standable(below)) {
                         continue;
                     }
                     if (!here.isAir() && !here.getMaterial().isReplaceable()) {
