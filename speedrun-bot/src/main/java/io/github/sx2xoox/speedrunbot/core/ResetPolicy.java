@@ -18,6 +18,9 @@ public final class ResetPolicy {
         public long waterBucketTick = -1;
         public long ironTick = -1;
         public long portalSiteTick = -1;
+        /** Ocean route checkpoints: treasure opened, magma ravine found (-1 not yet). */
+        public long treasureTick = -1;
+        public long ravineTick = -1;
     }
 
     private final Params p;
@@ -28,6 +31,25 @@ public final class ResetPolicy {
 
     /** The reason to reset now, or null to play on. */
     public String decide(State s) {
+        if (p.get("reset.oceanOnly") > 0) {
+            // the ocean route policy: only ocean spawns with a treasure signal are played
+            if (s.scanned && !s.oceanSeen) {
+                return "spawn_no_ocean";
+            }
+            if (s.oceanSeen && s.treasureSignal == 0) {
+                return "ocean_no_treasure_signal";
+            }
+            if (s.oceanSeen && s.treasureTick < 0 && s.tick > 20 * p.get("reset.treasureBySec")) {
+                return "slow_treasure";
+            }
+            if (s.oceanSeen && s.ravineTick < 0 && s.tick > 20 * p.get("reset.ravineBySec")) {
+                return "slow_ravine";
+            }
+            if (s.oceanSeen && s.tick > 20 * p.get("reset.netherBySec")) {
+                return "slow_nether";
+            }
+            return null;
+        }
         if (s.scanned && s.tick <= 20 * 20 && s.logsSeen == 0 && !s.oceanSeen) {
             return "spawn_no_trees";
         }

@@ -364,6 +364,8 @@ public final class RunBrain {
         st.ironTick = inv.ironEquivalent() > 0 || igt.splits().containsKey("first_iron") ? 0 : -1;
         st.waterBucketTick = igt.splits().containsKey("water_bucket") ? 0 : -1;
         st.portalSiteTick = igt.splits().containsKey("portal_site") ? 0 : -1;
+        st.treasureTick = igt.splits().containsKey("treasure") ? 0 : -1;
+        st.ravineTick = igt.splits().containsKey("ravine") ? 0 : -1;
         String why = resetPolicy.decide(st);
         if (why != null) {
             resetWhy = why;
@@ -526,6 +528,9 @@ public final class RunBrain {
         if (goal == Goal.SCAN) {
             chooseRoute();
         }
+        if (pieRoute && !treasure.finished() && p.get("ocean.route") > 0) {
+            return Goal.TREASURE; // the ocean route: the treasure first, from the spawn (the sweep needs no tools)
+        }
         if (!inv.pickaxe() && inv.cobble() >= 3 && inv.planks() + inv.logs() * 4 >= 5 && goal != Goal.SCAN && goal != Goal.WOOD
                 && goal != Goal.WOOD_TOOLS && (goal == Goal.STONE_PICK || goalTicks > 20)) {
             return Goal.STONE_PICK; // the pickaxe wore out (tunnels, the portal room): a new one before anything else
@@ -626,20 +631,31 @@ public final class RunBrain {
     private int scoutTicks;
     private Boolean seaSeenCache;
 
-    /** Many water sources at sea level around the spawn: an ocean or a big lake shore. */
+    io.github.sx2xoox.speedrunbot.core.OceanSense.Result oceanSeen;
+
+    /**
+     * An open ocean at the spawn, judged from the water seen (core/OceanSense: a wide sheet of sea-level water, open
+     * in every direction and deep; not a river, swamp or lake).
+     */
     private boolean seaSeen() {
         if (seaSeenCache == null && goalTicks > 0) {
-            int n = 0;
+            java.util.List<int[]> water = new java.util.ArrayList<>(), sand = new java.util.ArrayList<>();
             it.unimi.dsi.fastutil.longs.LongIterator it = mem.of(WorldMemory.Kind.WATER_SOURCE).iterator();
             while (it.hasNext()) {
                 long l = it.nextLong();
-                int y = BlockPos.unpackLongY(l);
-                if (y >= 58 && y <= 63 && BlockPos.fromLong(l).getSquaredDistance(spawn) < 80 * 80) {
-                    n++;
+                if (BlockPos.fromLong(l).getSquaredDistance(spawn) < 96 * 96) {
+                    water.add(new int[]{BlockPos.unpackLongX(l), BlockPos.unpackLongY(l), BlockPos.unpackLongZ(l)});
                 }
             }
-            seaSeenCache = n >= p.getInt("treasure.seaSources");
-            trace("sea level water sources near the spawn: " + n + (seaSeenCache ? " (ocean: scouting for a wreck)" : ""));
+            it = mem.of(WorldMemory.Kind.SAND).iterator();
+            while (it.hasNext()) {
+                long l = it.nextLong();
+                sand.add(new int[]{BlockPos.unpackLongX(l), BlockPos.unpackLongY(l), BlockPos.unpackLongZ(l)});
+            }
+            oceanSeen = new io.github.sx2xoox.speedrunbot.core.OceanSense(p.getInt("ocean.minSurface"), p.getInt("ocean.minOpen"),
+                    p.getInt("ocean.minDeep")).judge(water, sand);
+            seaSeenCache = oceanSeen.ocean;
+            trace("ocean judgement at the spawn: " + oceanSeen);
         }
         return seaSeenCache != null && seaSeenCache;
     }
@@ -767,7 +783,8 @@ public final class RunBrain {
         }
         RouteSelector.Choice ch = new RouteSelector(p).choose(o);
         route = ch.route;
-        if (route != RouteSelector.Route.TREASURE && p.get("treasure.pie") > 0 && seaSeen()) {
+        boolean sea = seaSeen();
+        if (route != RouteSelector.Route.TREASURE && (p.get("treasure.pie") > 0 || p.get("ocean.route") > 0) && sea) {
             // an ocean spawn: the pie chart sweep (a few seconds) tells whether a buried treasure is in reach
             route = RouteSelector.Route.TREASURE;
             pieRoute = true;

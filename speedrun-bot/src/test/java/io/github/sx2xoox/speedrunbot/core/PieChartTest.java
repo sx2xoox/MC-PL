@@ -64,7 +64,7 @@ class PieChartTest {
 
     @Test
     void resetPolicyUsesOnlyWhatWasSeen() {
-        ResetPolicy rp = new ResetPolicy(Params.defaults());
+        ResetPolicy rp = new ResetPolicy(Params.defaults().with("reset.oceanOnly", 0));
         ResetPolicy.State s = new ResetPolicy.State();
         s.scanned = true;
         s.tick = 100;
@@ -77,5 +77,48 @@ class PieChartTest {
         assertEquals(null, rp.decide(s));
         s.tick = 20 * 400;
         assertEquals("slow_water", rp.decide(s));
+    }
+
+    @Test
+    void oceanRoutePolicyResetsWhatIsNotAnOceanWithATreasure() {
+        ResetPolicy rp = new ResetPolicy(Params.defaults());
+        ResetPolicy.State s = new ResetPolicy.State();
+        s.tick = 60;
+        assertEquals(null, rp.decide(s)); // still scanning
+        s.scanned = true;
+        assertEquals("spawn_no_ocean", rp.decide(s));
+        s.oceanSeen = true;
+        assertEquals(null, rp.decide(s)); // sweeping
+        s.treasureSignal = 0;
+        assertEquals("ocean_no_treasure_signal", rp.decide(s));
+        s.treasureSignal = 1;
+        s.tick = 20 * 200;
+        assertEquals("slow_treasure", rp.decide(s));
+        s.treasureTick = 20 * 80;
+        assertEquals(null, rp.decide(s));
+        s.tick = 20 * 300;
+        assertEquals("slow_ravine", rp.decide(s));
+    }
+
+    @Test
+    void twoPitchBandsSkipDeepChestsAndKeepTheTreasure() {
+        int tx = 16 * 4 + 9, tz = 16 * 2 + 9, ty = 56; // the treasure, about 76 blocks away
+        int[] deep = {-40, 22, 30}; // a mineshaft chest: steep below the eyes
+        PieChart.View v = new PieChart.View(30, 0.27, 10);
+        TreasureLocator loc = new TreasureLocator();
+        double[][] places = {{0.5, 0.5}, {-15.5, 20.5}};
+        for (double[] at : places) {
+            for (float pitch : new float[]{4f, 18f}) {
+                for (int yaw = -180; yaw < 180; yaw += 6) {
+                    boolean hit = PieChart.blockInFrustum(v, at[0], 66.6, at[1], yaw, pitch, tx, ty, tz)
+                            || PieChart.blockInFrustum(v, at[0], 66.6, at[1], yaw, pitch, deep[0], deep[1], deep[2]);
+                    loc.add(new TreasureLocator.Reading(at[0], 66.6, at[1], yaw, pitch, v.hFovDeg(), v.vFovDeg, hit));
+                }
+            }
+        }
+        int[] best = loc.best(0.5, 0.5, 150);
+        assertNotNull(best);
+        assertEquals(tx, best[0]);
+        assertEquals(tz, best[1]);
     }
 }

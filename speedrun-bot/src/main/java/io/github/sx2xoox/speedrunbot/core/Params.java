@@ -52,6 +52,17 @@ public final class Params {
         d.put("reset.ironBySec", 240.0);         // RSG reset decision: no iron by then
         d.put("reset.waterBySec", 330.0);        // ... no water bucket by then
         d.put("reset.portalSiteBySec", 480.0);   // ... no portal site by then
+        // --- ocean route (pie chart treasure, boat, magma ravine; design.md section 13) ---
+        d.put("ocean.minSurface", 300.0);        // seen sea-level water sources for an ocean...
+        d.put("ocean.minOpen", 50.0);            // ...of which this many open 8 blocks out in all directions (no river)
+        d.put("ocean.minDeep", 0.0);             // ...and this many sources 7+ below the surface (seen from a shore: rarely; off)
+        d.put("ocean.route", 1.0);               // 1 = an ocean spawn plays the ocean route
+        d.put("ocean.planks", 24.0);             // wood for table, tools, boat and doors
+        d.put("ocean.sailTicks", 2400.0);        // give up looking for a magma ravine from the boat after this
+        d.put("reset.oceanOnly", 1.0);           // RSG policy: reset spawns that are not ocean / no treasure signal
+        d.put("reset.treasureBySec", 120.0);
+        d.put("reset.ravineBySec", 240.0);
+        d.put("reset.netherBySec", 420.0);
         d.put("route.flintLate", 1.0);           // 1 = water and lava before the flint (gravel on the way down)             // 1 = also scoop water sources open at a side (springs in cave walls)              // 1 = dig toward lava heard (sounds as a player hears them)           // 1 = walk away after two stalls at one spot (measured: no gain)           // with the water bucket the shaft goes down to here looking for lava
         d.put("cave.radius", 24.0);              // frontier search radius in caves
         d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height

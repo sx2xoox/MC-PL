@@ -92,7 +92,10 @@ public final class BotRuntime {
             return;
         }
         long timeout = Long.getLong("srb.timeoutTicks", 12000L);
-        if (brain.finished()) {
+        if (Boolean.getBoolean("srb.rsgStop") && brain.resetWhy() != null && !brain.finished()) {
+            // RSG pool mode: the attempt ends at the reset decision (a runner would make a new world now)
+            finish(server, "reset_" + brain.resetWhy());
+        } else if (brain.finished()) {
             String f = brain.failure();
             if ("death".equals(f) && bot.player().deathSource() != null) {
                 f = "death_" + bot.player().deathSource().getName();

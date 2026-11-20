@@ -51,6 +51,13 @@ public final class DevSetup {
                 sb.append('"').append(names[i]).append("_at\":\"").append(q.getX()).append(',').append(q.getZ()).append("\",");
             }
         }
+        BlockPos rav = findMagmaRavine(w, spawn, 10);
+        if (rav != null) {
+            sb.append("\"magma_ravine\":").append(Math.round(Math.sqrt(Math.pow(rav.getX() - spawn.getX(), 2) + Math.pow(rav.getZ() - spawn.getZ(), 2))))
+                    .append(",\"magma_ravine_at\":\"").append(rav.getX()).append(',').append(rav.getZ()).append("\",");
+        } else {
+            sb.append("\"magma_ravine\":-1,");
+        }
         sb.append("\"biome\":\"").append(net.minecraft.util.registry.Registry.BIOME.getId(w.getBiome(spawn))).append("\"}");
         return sb.toString();
     }
@@ -78,6 +85,14 @@ public final class DevSetup {
         BlockPos target = null;
         if (start.equals("lava") || start.equals("lavalow")) {
             target = findLava(w, p.getBlockPos(), start.equals("lavalow"));
+        } else if (start.equals("ravine") || start.equals("ravinefloor")) {
+            // test fixture: above (or at the floor of) the nearest underwater magma ravine (harness reads the world)
+            BlockPos rav = findMagmaRavine(w, p.getBlockPos(), 12);
+            if (rav != null) {
+                target = start.equals("ravine") ? new BlockPos(rav.getX(), 63, rav.getZ()) : rav.up();
+                applied += "ravine=" + rav.getX() + "," + rav.getZ() + ";";
+                start = "shipx"; // no pocket clearing
+            }
         } else if (start.equals("ship")) {
             // test fixture: next to the nearest shipwreck (the structure locator is harness-only)
             BlockPos q = w.locateStructure(net.minecraft.world.gen.feature.StructureFeature.SHIPWRECK, p.getBlockPos(), 8, false);
@@ -116,6 +131,44 @@ public final class DevSetup {
         } else {
             applied += "start=none;";
         }
+    }
+
+    /**
+     * Nearest magma block at y 10 (an underwater ravine/cave floor, see UnderwaterCaveCarver) with open water above it up
+     * to the sea (a magma ravine: bubble columns reach the surface), within r chunks; harness-only (reads the world).
+     */
+    public static BlockPos findMagmaRavine(ServerWorld w, BlockPos from, int r) {
+        BlockPos.Mutable m = new BlockPos.Mutable();
+        BlockPos best = null;
+        double bd = Double.MAX_VALUE;
+        int cx0 = from.getX() >> 4, cz0 = from.getZ() >> 4;
+        for (int cx = cx0 - r; cx <= cx0 + r; cx++) {
+            for (int cz = cz0 - r; cz <= cz0 + r; cz++) {
+                net.minecraft.world.chunk.Chunk ch = w.getChunk(cx, cz);
+                for (int x = 0; x < 16; x++) {
+                    for (int z = 0; z < 16; z++) {
+                        m.set((cx << 4) + x, 10, (cz << 4) + z);
+                        if (ch.getBlockState(m).getBlock() != Blocks.MAGMA_BLOCK) {
+                            continue;
+                        }
+                        boolean open = true;
+                        for (int y = 11; y <= 62 && open; y += 3) {
+                            m.setY(y);
+                            open = ch.getFluidState(m).isIn(net.minecraft.tag.FluidTags.WATER);
+                        }
+                        if (!open) {
+                            continue;
+                        }
+                        double d = Math.pow(m.getX() - from.getX(), 2) + Math.pow(m.getZ() - from.getZ(), 2);
+                        if (d < bd) {
+                            bd = d;
+                            best = new BlockPos(m.getX(), 10, m.getZ());
+                        }
+                    }
+                }
+            }
+        }
+        return best;
     }
 
     /** A dry standable cell 4-8 blocks from a lava source with at least 10 sources around it. */

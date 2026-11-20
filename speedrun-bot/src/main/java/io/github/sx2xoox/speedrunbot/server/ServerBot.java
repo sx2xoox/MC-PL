@@ -81,6 +81,53 @@ public final class ServerBot implements BotInputs, BotSenses {
         player.setJumping(jump);
         player.setSneaking(sneak);
         player.setSprinting(sprint);
+        if (player.getVehicle() instanceof net.minecraft.entity.vehicle.BoatEntity) {
+            // ClientPlayerEntity#tickRiding: A = left, D = right, W = forward, S = back
+            ((BoatControl) player.getVehicle()).srb$setInputs(strafe > 0.1f, strafe < -0.1f, forward > 0.1f, forward < -0.1f);
+        }
+    }
+
+    @Override
+    public void useEntity() {
+        Entity e = targetedEntity();
+        if (e != null) {
+            ActionResult r = player.interact(e, Hand.MAIN_HAND);
+            if (r.isAccepted() && r.shouldSwingHand()) {
+                player.swingHand(Hand.MAIN_HAND);
+            }
+        }
+    }
+
+    /** The entity under the crosshair within entity reach (any targetable entity: the client's GameRenderer rule). */
+    private Entity targetedEntity() {
+        HitResult block = player.rayTrace(InputLimits.BLOCK_REACH, 1f, false);
+        Vec3d eye = eyePos();
+        Vec3d look = player.getRotationVec(1f);
+        double maxD = block.getType() == HitResult.Type.MISS ? InputLimits.ENTITY_REACH
+                : Math.min(InputLimits.ENTITY_REACH, block.getPos().distanceTo(eye));
+        Vec3d end = eye.add(look.multiply(maxD));
+        Box box = player.getBoundingBox().stretch(look.multiply(maxD)).expand(1.0);
+        Entity hit = null;
+        double hitD = maxD;
+        for (Entity x : world().getEntities(player, box, en -> !en.isSpectator() && en.collides() && en != player.getVehicle())) {
+            Box eb = x.getBoundingBox().expand(x.getTargetingMargin());
+            Optional<Vec3d> o = eb.rayTrace(eye, end);
+            if (o.isPresent() && o.get().distanceTo(eye) < hitD) {
+                hitD = o.get().distanceTo(eye);
+                hit = x;
+            }
+        }
+        return hit;
+    }
+
+    @Override
+    public boolean inBoat() {
+        return player.getVehicle() instanceof net.minecraft.entity.vehicle.BoatEntity;
+    }
+
+    @Override
+    public float boatYaw() {
+        return inBoat() ? player.getVehicle().yaw : Float.NaN;
     }
 
     @Override

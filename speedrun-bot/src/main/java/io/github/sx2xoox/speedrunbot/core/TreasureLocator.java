@@ -18,15 +18,29 @@ public final class TreasureLocator {
         public final float yaw;
         public final double hFovDeg;
         public final boolean hit;
+        /** Vertical view: eye height, pitch (down positive) and vertical FOV; NaN eye = no vertical model. */
+        public final double eyeY;
+        public final float pitch;
+        public final double vFovDeg;
 
         public Reading(double x, double z, float yaw, double hFovDeg, boolean hit) {
+            this(x, Double.NaN, z, yaw, 0f, hFovDeg, 0, hit);
+        }
+
+        public Reading(double x, double eyeY, double z, float yaw, float pitch, double hFovDeg, double vFovDeg, boolean hit) {
             this.x = x;
             this.z = z;
             this.yaw = yaw;
             this.hFovDeg = hFovDeg;
             this.hit = hit;
+            this.eyeY = eyeY;
+            this.pitch = pitch;
+            this.vFovDeg = vFovDeg;
         }
     }
+
+    /** Heights a buried treasure chest can have (under a beach or the shallow sea floor; public generation knowledge). */
+    public static final double CHEST_Y_LO = 40, CHEST_Y_HI = 66;
 
     private final List<Reading> readings = new ArrayList<>();
 
@@ -72,7 +86,17 @@ public final class TreasureLocator {
     static boolean inView(Reading r, double cx, double cz) {
         double dist = Math.max(1, Math.hypot(cx - r.x, cz - r.z));
         double slack = Math.toDegrees(Math.atan(0.71 / dist));
-        return angleDiff(yawTo(r.x, r.z, cx, cz), r.yaw) <= r.hFovDeg / 2 + slack;
+        if (angleDiff(yawTo(r.x, r.z, cx, cz), r.yaw) > r.hFovDeg / 2 + slack) {
+            return false;
+        }
+        if (Double.isNaN(r.eyeY)) {
+            return true;
+        }
+        // the chest's possible heights seen from here span a pitch interval; it must overlap the vertical view
+        double hi = Math.toDegrees(Math.atan2(r.eyeY - CHEST_Y_LO, dist)); // lowest chest: steepest down
+        double lo = Math.toDegrees(Math.atan2(r.eyeY - (CHEST_Y_HI + 1), dist));
+        double vs = Math.toDegrees(Math.atan(0.71 / dist));
+        return hi >= r.pitch - r.vFovDeg / 2 - vs && lo <= r.pitch + r.vFovDeg / 2 + vs;
     }
 
     /** Agreement score of a column with all readings. */

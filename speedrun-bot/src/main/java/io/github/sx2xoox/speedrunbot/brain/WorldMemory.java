@@ -29,7 +29,13 @@ public final class WorldMemory {
         /** Worked wood (planks, wooden stairs/slabs/fences/trapdoors/doors): ships, houses, mineshafts. */
         WOODWORK,
         /** Tree leaves: a tree is there even when its trunk is hidden. */
-        LEAVES
+        LEAVES,
+        /** Sand (beaches, sea floor). */
+        SAND,
+        /** Magma blocks (underwater ravine floors). */
+        MAGMA,
+        /** Bubble column cells over magma (dragging down): the bubbles show a magma floor below. */
+        BUBBLES_DOWN
     }
 
     public WorldMemory() {
@@ -150,6 +156,15 @@ public final class WorldMemory {
         }
         if (b == Blocks.OBSIDIAN) {
             return Kind.OBSIDIAN;
+        }
+        if (b == Blocks.SAND) {
+            return Kind.SAND;
+        }
+        if (b == Blocks.MAGMA_BLOCK) {
+            return Kind.MAGMA;
+        }
+        if (b == Blocks.BUBBLE_COLUMN && s.get(net.minecraft.block.BubbleColumnBlock.DRAG)) {
+            return Kind.BUBBLES_DOWN;
         }
         FluidState f = s.getFluidState();
         if (!f.isEmpty() && f.isStill()) {

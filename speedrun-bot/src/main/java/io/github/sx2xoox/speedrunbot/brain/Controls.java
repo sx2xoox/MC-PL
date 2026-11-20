@@ -90,6 +90,17 @@ public final class Controls {
         return true;
     }
 
+    /** Right click on the entity under the crosshair (get into a boat). */
+    public boolean useEntity() {
+        if (useCooldown > 0) {
+            return false;
+        }
+        in.useEntity();
+        useCooldown = InputLimits.USE_COOLDOWN_TICKS;
+        clicks++;
+        return true;
+    }
+
     public boolean attackEntity() {
         if (useCooldown > 0) {
             return false;
@@ -185,10 +196,11 @@ public final class Controls {
             pitch = InputLimits.approachPitch(pitch, targetPitch, InputLimits.MAX_PITCH_PER_TICK);
         }
         in.setLook(yaw, pitch);
-        if (s.inWater() && !jump && !sink && s.screenOpen() == false) {
+        boolean boat = s.inBoat();
+        if (!boat && s.inWater() && !jump && !sink && s.screenOpen() == false) {
             jump = true; // hold space in water: stay at the surface (players do this to avoid drowning)
         }
-        if (sink && s.inWater()) {
+        if (sink && s.inWater() && !boat) {
             sneak = true; // shift sinks faster
         }
         boolean canSprint = sprint && forward >= 0.8f && s.food() > 6 && !sneak && !s.horizontalCollision();

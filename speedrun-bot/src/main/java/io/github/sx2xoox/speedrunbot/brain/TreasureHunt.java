@@ -153,14 +153,22 @@ public final class TreasureHunt {
         ship = null;
         totalTicks = 0;
         locator = new io.github.sx2xoox.speedrunbot.core.TreasureLocator();
-        narrow = new io.github.sx2xoox.speedrunbot.core.PieChart.View(70, 0.1, b.rules().renderChunks());
+        // FOV option 30 and a thin window: about 8 x 30 degrees, so the slice only shows chests near one bearing and
+        // in one band of heights/distances
+        narrow = new io.github.sx2xoox.speedrunbot.core.PieChart.View(30, 0.27, b.rules().renderChunks());
         viewWait = io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS; // resize the window
         sweepStep = 0;
         sweeps = 0;
+        band = 0;
         sweepYaw0 = b.s.yaw();
         b.trace("treasure: narrow view for the pie chart (" + narrow + ")");
         go(Phase.LOCATE);
     }
+
+    /** Pitches of the two sweep bands: level (far chests near the surface) and lower (closer or deeper ones). */
+    private static final float BAND0_PITCH = 4f, BAND1_PITCH = 18f;
+    private int band;
+    private final java.util.List<Float> band1Yaws = new java.util.ArrayList<>();
 
     private void locate() {
         if (viewWait > 0) {
@@ -176,20 +184,42 @@ public final class TreasureHunt {
             }
             secondSpot = null;
             sweepStep = 0;
+            band = 0;
             sweepYaw0 = b.s.yaw();
         }
-        int steps = 60;
-        float yaw = sweepYaw0 + sweepStep * 6f;
-        b.c.lookAngles(yaw, 8f);
-        if (io.github.sx2xoox.speedrunbot.core.TreasureLocator.angleDiffPublic(b.s.yaw(), yaw) > 1.0 || Math.abs(b.s.pitch() - 8f) > 1.0) {
+        float yaw, pitch;
+        if (band == 0) {
+            yaw = sweepYaw0 + sweepStep * 6f;
+            pitch = BAND0_PITCH;
+        } else {
+            if (sweepStep >= band1Yaws.size()) {
+                endSweep();
+                return;
+            }
+            yaw = band1Yaws.get(sweepStep);
+            pitch = BAND1_PITCH;
+        }
+        b.c.lookAngles(yaw, pitch);
+        if (io.github.sx2xoox.speedrunbot.core.TreasureLocator.angleDiffPublic(b.s.yaw(), yaw) > 1.0 || Math.abs(b.s.pitch() - pitch) > 1.0) {
             return;
         }
         Vec3d p = b.s.pos();
         int chests = b.s.pieChests(narrow);
-        locator.add(new io.github.sx2xoox.speedrunbot.core.TreasureLocator.Reading(p.x, p.z, b.s.yaw(), narrow.hFovDeg(), chests > 0));
-        if (++sweepStep < steps) {
-            return;
+        locator.add(new io.github.sx2xoox.speedrunbot.core.TreasureLocator.Reading(p.x, b.s.eyePos().y, p.z, b.s.yaw(), b.s.pitch(),
+                narrow.hFovDeg(), narrow.vFovDeg, chests > 0));
+        if (band == 0 && chests > 0) {
+            band1Yaws.add(yaw);
         }
+        sweepStep++;
+        if (band == 0 && sweepStep >= 60) {
+            band = 1;
+            sweepStep = 0;
+        }
+    }
+
+    private void endSweep() {
+        Vec3d p = b.s.pos();
+        band1Yaws.clear();
         sweeps++;
         if (locator.hits() == 0) {
             pieSignal = 0;
@@ -199,15 +229,17 @@ public final class TreasureHunt {
         }
         pieSignal = 1;
         double bearing = locator.bearingFrom(p.x, p.z);
-        if (sweeps == 1) {
-            // triangulate: a second sweep some blocks to the side of the bearing
-            double side = Math.toRadians(bearing + 90);
-            secondSpot = new BlockPos(p.x - Math.sin(side) * 24, p.y, p.z + Math.cos(side) * 24);
-            b.trace(String.format("treasure: chest slice around yaw %.0f (%d hits); second sweep from %s", bearing, locator.hits(), secondSpot));
+        int[] best = locator.best(p.x, p.z, b.p.get("treasure.pieRange"));
+        if (sweeps == 1 || (sweeps == 2 && best != null && best[3] > 1)) {
+            // triangulate: another sweep some blocks to the side of the bearing (a third one when columns still tie)
+            double side = Math.toRadians(bearing + (sweeps == 1 ? 90 : 0));
+            double dist = sweeps == 1 ? 24 : 20;
+            secondSpot = new BlockPos(p.x - Math.sin(side) * dist, p.y, p.z + Math.cos(side) * dist);
+            b.trace(String.format("treasure: chest slice around yaw %.0f (%d hits)%s; sweep %d from %s", bearing, locator.hits(),
+                    best == null ? "" : " best " + best[0] + "," + best[1] + " ties " + best[3], sweeps + 1, secondSpot));
             phaseTicks = 0;
             return;
         }
-        int[] best = locator.best(p.x, p.z, b.p.get("treasure.pieRange"));
         if (best == null) {
             restoreViewThen(null);
             return;

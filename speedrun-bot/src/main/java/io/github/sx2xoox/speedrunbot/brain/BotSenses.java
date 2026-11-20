@@ -55,6 +55,12 @@ public interface BotSenses extends BlockSource {
 
     boolean horizontalCollision();
 
+    /** Riding a boat (the player sees the boat around it). */
+    boolean inBoat();
+
+    /** Yaw of the boat ridden (its bow, which the player sees), NaN when not in a boat. */
+    float boatYaw();
+
     float health();
 
     int food();

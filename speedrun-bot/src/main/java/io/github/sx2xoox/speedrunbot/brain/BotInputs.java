@@ -26,6 +26,12 @@ public interface BotInputs {
     /** One right click: use the held item on the crosshair block, or in the air (buckets, food...). */
     void use();
 
+    /**
+     * One right click on the entity under the crosshair (any entity the client can target, e.g. a boat to get in).
+     * While riding a boat, the movement keys steer it (A/D turn, W/S paddle) and sneak gets out, as on a client.
+     */
+    void useEntity();
+
     /** Hotbar key 1-9 (0-based). */
     void selectHotbar(int slot);
 
