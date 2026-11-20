@@ -186,4 +186,16 @@ class PieChartTest {
         assertEquals(t[0], b[0]); // the column all three places agree on wins by place
         assertEquals(t[1], b[1]);
     }
+
+    @Test
+    void aSwimmerDriftingDuringOneSweepIsStillOnePlace() {
+        TreasureLocator loc = new TreasureLocator();
+        loc.byPlace = true;
+        loc.minVotes = 2;
+        int[] g = {41, 41};
+        // one sweep, the swimmer drifting 5 blocks between two readings that both see the same chest
+        loc.add(new TreasureLocator.Reading(0, 0, TreasureLocator.yawTo(0, 0, g[0] + 0.5, g[1] + 0.5), 8, true));
+        loc.add(new TreasureLocator.Reading(0, 5, TreasureLocator.yawTo(0, 5, g[0] + 0.5, g[1] + 0.5), 8, true));
+        org.junit.jupiter.api.Assertions.assertNull(loc.best(0, 0, 120)); // one place: one vote
+    }
 }

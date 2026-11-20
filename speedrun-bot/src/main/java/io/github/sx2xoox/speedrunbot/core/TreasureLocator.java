@@ -41,6 +41,11 @@ public final class TreasureLocator {
 
     /** Heights a buried treasure chest can have (under a beach or the shallow sea floor; public generation knowledge). */
     public static final double CHEST_Y_LO = 40, CHEST_Y_HI = 66;
+    /**
+     * Readings within this many blocks of each other are one sweep place (a swimmer drifts a few blocks during a
+     * sweep; counted as two places it would vote twice). Sweep places are 25+ blocks apart.
+     */
+    static final double PLACE_RADIUS = 10;
 
     private final List<Reading> readings = new ArrayList<>();
     /** Score columns by agreeing sweep places (see {@link #placeVotes}) instead of by single readings. */
@@ -117,7 +122,7 @@ public final class TreasureLocator {
         for (Reading r : readings) {
             int k = -1;
             for (int i = 0; i < places.size(); i++) {
-                if (Math.hypot(places.get(i)[0] - r.x, places.get(i)[1] - r.z) < 3) {
+                if (Math.hypot(places.get(i)[0] - r.x, places.get(i)[1] - r.z) < PLACE_RADIUS) {
                     k = i;
                     break;
                 }

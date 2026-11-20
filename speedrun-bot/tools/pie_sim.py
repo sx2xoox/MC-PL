@@ -142,7 +142,7 @@ def in_view(r, cx, cz, lo=CHEST_LO, hi_=CHEST_HI):
 
 def place_index(places, r):
     for i, p in enumerate(places):
-        if math.hypot(p[0] - r.x, p[1] - r.z) < 3:
+        if math.hypot(p[0] - r.x, p[1] - r.z) < 10:
             return i
     places.append((r.x, r.z))
     return len(places) - 1
@@ -384,7 +384,11 @@ def main():
     ap.add_argument('--opt', action='append', default=[], help='key=value strategy options')
     ap.add_argument('--verbose', action='store_true')
     ap.add_argument('--stats', action='store_true')
+    ap.add_argument('--replay', help='trace dir with logged sweeps (-Dsrb.dumpPie=true)')
     a = ap.parse_args()
+    if a.replay:
+        replay(a.dumps, a.replay)
+        return
     if a.stats:
         stats(a.dumps)
         return
@@ -421,6 +425,28 @@ def main():
     with_t = [r for r in res if r['nearest'] >= 0]
     print('seeds with a buried treasure within 10 chunks: %d; found %d' % (len(with_t), len(tr)))
 
+
+
+def replay(dumps, trace_dir):
+    """Logged sweeps (-Dsrb.dumpPie=true traces) against the dumps: does the simulator reproduce each reading, and
+    where does the true column rank among the candidates the bot had."""
+    for fn in sorted(glob.glob(os.path.join(trace_dir, '*.txt'))):
+        seed = os.path.basename(fn)[:-4]
+        dump = os.path.join(dumps, seed + '.json')
+        lines = [l for l in open(fn) if 'treasure readings' in l]
+        if not lines or not os.path.exists(dump):
+            continue
+        w = World(json.load(open(dump)))
+        rs, mism = [], 0
+        for t in lines[0].split('readings:')[1].split():
+            x, ey, z, yaw, pitch, hit = map(float, t.split(','))
+            if (w.count(NARROW, x, ey, z, yaw, pitch, (x, z)) > 0) != (hit > 0):
+                mism += 1
+            rs.append(Reading(x, ey, z, yaw, pitch, hfov(*NARROW), NARROW[0], int(hit)))
+        cand = rank_columns(rs, rs[0].x, rs[0].z, 150)
+        ranks = [i for i, c in enumerate(cand) if (c[1], c[2]) in w.treasures]
+        print('%s readings %d, not reproduced %d, true column rank %s, top %s' % (seed, len(rs), mism, ranks[:2],
+              [(c[1], c[2], c[3]) for c in cand[:3]]))
 
 
 def stats(dumps):
