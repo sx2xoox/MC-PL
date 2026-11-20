@@ -47,7 +47,7 @@ public final class Params {
         d.put("safety.relocate", 0.0);
         d.put("lava.hearing", 1.0);
         d.put("water.springs", 1.0);
-        d.put("treasure.pie", 1.0);              // 1 = ocean spawn: sweep a narrow view for the pie chart's chest slice
+        d.put("treasure.pie", 0.0);              // 1 = ocean spawn: sweep a narrow view for the pie chart's chest slice
         d.put("treasure.pieRange", 150.0);       // treasure columns considered (blocks from the sweep)
         d.put("reset.ironBySec", 240.0);         // RSG reset decision: no iron by then
         d.put("reset.waterBySec", 330.0);        // ... no water bucket by then
