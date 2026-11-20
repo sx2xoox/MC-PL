@@ -509,4 +509,21 @@ public final class ServerBot implements BotInputs, BotSenses {
     public boolean submergedInWater() {
         return player.isSubmergedIn(FluidTags.WATER);
     }
+
+    @Override
+    public int pieChests(io.github.sx2xoox.speedrunbot.core.PieChart.View view) {
+        // what the client's block entity renderer would draw: loaded chests in the frustum within render distance
+        Vec3d e = eyePos();
+        int n = 0;
+        for (net.minecraft.block.entity.BlockEntity be : player.getServerWorld().blockEntities) {
+            if (!(be instanceof net.minecraft.block.entity.ChestBlockEntity) && !(be instanceof net.minecraft.block.entity.EnderChestBlockEntity)) {
+                continue;
+            }
+            BlockPos q = be.getPos();
+            if (io.github.sx2xoox.speedrunbot.core.PieChart.blockInFrustum(view, e.x, e.y, e.z, player.yaw, player.pitch, q.getX(), q.getY(), q.getZ())) {
+                n++;
+            }
+        }
+        return n;
+    }
 }

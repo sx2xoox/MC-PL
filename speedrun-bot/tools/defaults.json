@@ -47,5 +47,10 @@
   "safety.relocate": 0.0,
   "lava.hearing": 1.0,
   "water.springs": 1.0,
-  "route.flintLate": 1.0
+  "route.flintLate": 1.0,
+  "treasure.pie": 1.0,
+  "treasure.pieRange": 150.0,
+  "reset.ironBySec": 240.0,
+  "reset.waterBySec": 330.0,
+  "reset.portalSiteBySec": 480.0
 }

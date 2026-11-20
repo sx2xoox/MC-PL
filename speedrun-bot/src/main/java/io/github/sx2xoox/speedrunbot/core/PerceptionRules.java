@@ -28,6 +28,7 @@ public final class PerceptionRules {
 
     private final boolean fair;
     private final double maxRange;
+    private final int renderChunks;
 
     /**
      * @param fair          false = omniscient comparison mode (no FOV / line of sight limit)
@@ -37,6 +38,11 @@ public final class PerceptionRules {
     public PerceptionRules(boolean fair, int renderChunks, double rayRange) {
         this.fair = fair;
         this.maxRange = Math.min(rayRange, renderChunks * 16.0);
+        this.renderChunks = renderChunks;
+    }
+
+    public int renderChunks() {
+        return renderChunks;
     }
 
     public boolean fair() {

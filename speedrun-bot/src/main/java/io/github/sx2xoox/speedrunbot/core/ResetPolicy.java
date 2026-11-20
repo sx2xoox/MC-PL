@@ -1,0 +1,48 @@
+package io.github.sx2xoox.speedrunbot.core;
+
+/**
+ * When an RSG runner would reset the seed, decided from what the bot perceived so far (never from the world): a
+ * spawn with nothing to work with, or a split far behind pace. The per-seed evaluation does not stop at a reset
+ * decision (so it stays comparable); the decision is recorded (tick and reason) and the RSG-style report treats the
+ * attempt as ended there, which is exact because the decision only used what was known by then.
+ */
+public final class ResetPolicy {
+    /** What the bot knows at a checkpoint. */
+    public static final class State {
+        public long tick;
+        public boolean scanned;
+        public int logsSeen;
+        public boolean oceanSeen;
+        /** -1 unknown (no sweep), 0 swept and no chest signal, 1 signal. */
+        public int treasureSignal = -1;
+        public long waterBucketTick = -1;
+        public long ironTick = -1;
+        public long portalSiteTick = -1;
+    }
+
+    private final Params p;
+
+    public ResetPolicy(Params p) {
+        this.p = p;
+    }
+
+    /** The reason to reset now, or null to play on. */
+    public String decide(State s) {
+        if (s.scanned && s.tick <= 20 * 20 && s.logsSeen == 0 && !s.oceanSeen) {
+            return "spawn_no_trees";
+        }
+        if (s.oceanSeen && s.treasureSignal == 0 && s.logsSeen == 0) {
+            return "ocean_no_treasure_no_trees";
+        }
+        if (s.ironTick < 0 && s.tick > 20 * p.get("reset.ironBySec")) {
+            return "slow_iron";
+        }
+        if (s.waterBucketTick < 0 && s.tick > 20 * p.get("reset.waterBySec")) {
+            return "slow_water";
+        }
+        if (s.portalSiteTick < 0 && s.tick > 20 * p.get("reset.portalSiteBySec")) {
+            return "slow_lava";
+        }
+        return null;
+    }
+}

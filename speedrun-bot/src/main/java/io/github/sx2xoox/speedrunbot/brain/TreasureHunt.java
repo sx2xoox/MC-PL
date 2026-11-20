@@ -15,7 +15,7 @@ import net.minecraft.util.math.Vec3d;
  * Everything comes from what the bot saw: wood blocks in the water, chests in view, the map screen.
  */
 public final class TreasureHunt {
-    public enum Phase { NONE, SHIP, LOOT_SHIP, READ_MAP, WALK, DIG, LOOT_TREASURE, DONE, FAILED }
+    public enum Phase { NONE, LOCATE, SHIP, LOOT_SHIP, READ_MAP, WALK, DIG, LOOT_TREASURE, DONE, FAILED }
 
     private final RunBrain b;
     private Phase phase = Phase.NONE;
@@ -132,6 +132,117 @@ public final class TreasureHunt {
         go(b.inv().has(Items.FILLED_MAP) ? Phase.READ_MAP : Phase.SHIP);
     }
 
+    // ------------------------------------------------------------------ pie chart (no map)
+
+    private io.github.sx2xoox.speedrunbot.core.TreasureLocator locator;
+    private io.github.sx2xoox.speedrunbot.core.PieChart.View narrow;
+    private int viewWait;
+    private int sweepStep;
+    private int sweeps;
+    private float sweepYaw0;
+    private BlockPos secondSpot;
+    /** -1 no sweep yet, 0 swept without a chest signal, 1 signal. */
+    public int pieSignal = -1;
+
+    /**
+     * An ocean spawn without a map: find the buried treasure with the F3 pie chart. A thin window (horizontal FOV
+     * about 8 degrees) is swept around; the yaws where the chest slice shows give bearings; a second sweep a few
+     * dozen blocks to the side triangulates, and the chunk offset 9,9 rule picks the column (see TreasureLocator).
+     */
+    public void startPie() {
+        ship = null;
+        totalTicks = 0;
+        locator = new io.github.sx2xoox.speedrunbot.core.TreasureLocator();
+        narrow = new io.github.sx2xoox.speedrunbot.core.PieChart.View(70, 0.1, b.rules().renderChunks());
+        viewWait = io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS; // resize the window
+        sweepStep = 0;
+        sweeps = 0;
+        sweepYaw0 = b.s.yaw();
+        b.trace("treasure: narrow view for the pie chart (" + narrow + ")");
+        go(Phase.LOCATE);
+    }
+
+    private void locate() {
+        if (viewWait > 0) {
+            viewWait--;
+            return;
+        }
+        if (secondSpot != null) {
+            BlockPos f = b.feet();
+            if (f.getSquaredDistance(secondSpot) > 9 && phaseTicks < 400) {
+                if (b.mover.go(Navigator.near(secondSpot, 2)) != Mover.Status.FAILED) {
+                    return;
+                }
+            }
+            secondSpot = null;
+            sweepStep = 0;
+            sweepYaw0 = b.s.yaw();
+        }
+        int steps = 60;
+        float yaw = sweepYaw0 + sweepStep * 6f;
+        b.c.lookAngles(yaw, 8f);
+        if (io.github.sx2xoox.speedrunbot.core.TreasureLocator.angleDiffPublic(b.s.yaw(), yaw) > 1.0 || Math.abs(b.s.pitch() - 8f) > 1.0) {
+            return;
+        }
+        Vec3d p = b.s.pos();
+        int chests = b.s.pieChests(narrow);
+        locator.add(new io.github.sx2xoox.speedrunbot.core.TreasureLocator.Reading(p.x, p.z, b.s.yaw(), narrow.hFovDeg(), chests > 0));
+        if (++sweepStep < steps) {
+            return;
+        }
+        sweeps++;
+        if (locator.hits() == 0) {
+            pieSignal = 0;
+            b.trace("treasure: no chest in the pie chart all around");
+            restoreViewThen(null);
+            return;
+        }
+        pieSignal = 1;
+        double bearing = locator.bearingFrom(p.x, p.z);
+        if (sweeps == 1) {
+            // triangulate: a second sweep some blocks to the side of the bearing
+            double side = Math.toRadians(bearing + 90);
+            secondSpot = new BlockPos(p.x - Math.sin(side) * 24, p.y, p.z + Math.cos(side) * 24);
+            b.trace(String.format("treasure: chest slice around yaw %.0f (%d hits); second sweep from %s", bearing, locator.hits(), secondSpot));
+            phaseTicks = 0;
+            return;
+        }
+        int[] best = locator.best(p.x, p.z, b.p.get("treasure.pieRange"));
+        if (best == null) {
+            restoreViewThen(null);
+            return;
+        }
+        b.trace("treasure: column " + best[0] + "," + best[1] + " (score " + best[2] / 100.0 + ", " + best[3] + " equal)");
+        restoreViewThen(new int[]{best[0], best[1]});
+    }
+
+    private int[] afterView;
+    private boolean restoring;
+
+    private void restoreViewThen(int[] col) {
+        restoring = true;
+        afterView = col;
+        viewWait = io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS; // the window back to normal
+    }
+
+    private boolean restoreTick() {
+        if (!restoring) {
+            return false;
+        }
+        if (viewWait-- > 0) {
+            return true;
+        }
+        restoring = false;
+        if (afterView == null) {
+            fail("pie_no_signal");
+        } else {
+            column = afterView;
+            estimate = null;
+            go(Phase.WALK);
+        }
+        return true;
+    }
+
     public void tick() {
         phaseTicks++;
         totalTicks++;
@@ -139,7 +250,13 @@ public final class TreasureHunt {
             fail("timeout_" + phase);
             return;
         }
+        if (restoreTick()) {
+            return;
+        }
         switch (phase) {
+            case LOCATE:
+                locate();
+                break;
             case SHIP:
                 searchShip();
                 break;
@@ -304,7 +421,7 @@ public final class TreasureHunt {
 
     private void walk() {
         Vec3d p = b.s.pos();
-        if (column == null || phaseTicks % 200 == 199) {
+        if (column == null || (phaseTicks % 200 == 199 && b.inv().has(Items.FILLED_MAP))) {
             go(Phase.READ_MAP); // read again (closer now, or still off the map)
             return;
         }
@@ -336,7 +453,7 @@ public final class TreasureHunt {
             return;
         }
         if (f.getY() < digStartY - 12 || phaseTicks > 1200) {
-            if (++columnTries <= 1 && estimate != null) {
+            if (++columnTries <= 1 && (estimate != null || locator != null)) {
                 // the estimate may sit next to a chunk border: try the nearer neighbouring chunk's column
                 int[] alt = neighbourColumn();
                 b.trace("no treasure in column " + column[0] + "," + column[1] + "; trying " + alt[0] + "," + alt[1]);
@@ -365,6 +482,11 @@ public final class TreasureHunt {
     }
 
     private int[] neighbourColumn() {
+        if (estimate == null) {
+            Vec3d p = b.s.pos();
+            int[] alt = locator.best(p.x, p.z, b.p.get("treasure.pieRange") + 32, column[0], column[1]);
+            return alt == null ? column : new int[]{alt[0], alt[1]};
+        }
         double fx = estimate.x - Math.floor(estimate.x / 16.0) * 16, fz = estimate.z - Math.floor(estimate.z / 16.0) * 16;
         int dx = 0, dz = 0;
         double ex = Math.min(fx, 16 - fx), ez = Math.min(fz, 16 - fz);

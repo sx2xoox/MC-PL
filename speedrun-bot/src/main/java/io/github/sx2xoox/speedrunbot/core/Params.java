@@ -47,6 +47,11 @@ public final class Params {
         d.put("safety.relocate", 0.0);
         d.put("lava.hearing", 1.0);
         d.put("water.springs", 1.0);
+        d.put("treasure.pie", 1.0);              // 1 = ocean spawn: sweep a narrow view for the pie chart's chest slice
+        d.put("treasure.pieRange", 150.0);       // treasure columns considered (blocks from the sweep)
+        d.put("reset.ironBySec", 240.0);         // RSG reset decision: no iron by then
+        d.put("reset.waterBySec", 330.0);        // ... no water bucket by then
+        d.put("reset.portalSiteBySec", 480.0);   // ... no portal site by then
         d.put("route.flintLate", 1.0);           // 1 = water and lava before the flint (gravel on the way down)             // 1 = also scoop water sources open at a side (springs in cave walls)              // 1 = dig toward lava heard (sounds as a player hears them)           // 1 = walk away after two stalls at one spot (measured: no gain)           // with the water bucket the shaft goes down to here looking for lava
         d.put("cave.radius", 24.0);              // frontier search radius in caves
         d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height

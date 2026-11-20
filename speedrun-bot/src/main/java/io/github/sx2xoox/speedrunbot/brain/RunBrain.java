@@ -43,6 +43,11 @@ public final class RunBrain {
     final Mover mover;
     final Crafter crafter;
     final Params p;
+    private PerceptionRules rulesRef;
+
+    PerceptionRules rules() {
+        return rulesRef;
+    }
     final Inv inv;
     final Igt igt;
     final PortalBuilder portal;
@@ -79,6 +84,8 @@ public final class RunBrain {
         this.c = new Controls(in, s);
         this.p = p;
         this.perception = new Perception(s, mem, rules, raysPerTick);
+        this.rulesRef = rules;
+        this.resetPolicy = new io.github.sx2xoox.speedrunbot.core.ResetPolicy(p);
         this.a = new Actions(s, c, mem);
         this.mover = new Mover(s, c, a, mem);
         this.crafter = new Crafter(s, c);
@@ -196,6 +203,7 @@ public final class RunBrain {
         if (attackCooldown > 0) {
             attackCooldown--;
         }
+        resetCheck();
         watchdog();
         if (!survival.tick() && !unstick() && !(!s.screenOpen() && relocating())) {
             Goal next = choose();
@@ -329,6 +337,40 @@ public final class RunBrain {
 
     private BlockPos lastStallPos;
     private long lastStallTick;
+    private boolean pieRoute;
+    private final io.github.sx2xoox.speedrunbot.core.ResetPolicy resetPolicy;
+    private String resetWhy;
+    private long resetTick = -1;
+
+    /** The first RSG reset decision (null = none): recorded, the run goes on (see ResetPolicy). */
+    public String resetWhy() {
+        return resetWhy;
+    }
+
+    public long resetTick() {
+        return resetTick;
+    }
+
+    private void resetCheck() {
+        if (resetWhy != null || goalTicks % 20 != 0) {
+            return;
+        }
+        io.github.sx2xoox.speedrunbot.core.ResetPolicy.State st = new io.github.sx2xoox.speedrunbot.core.ResetPolicy.State();
+        st.tick = now();
+        st.scanned = goal != Goal.SCAN;
+        st.logsSeen = mem.count(WorldMemory.Kind.LOG);
+        st.oceanSeen = seaSeenCache != null && seaSeenCache;
+        st.treasureSignal = treasure.pieSignal;
+        st.ironTick = inv.ironEquivalent() > 0 || igt.splits().containsKey("first_iron") ? 0 : -1;
+        st.waterBucketTick = igt.splits().containsKey("water_bucket") ? 0 : -1;
+        st.portalSiteTick = igt.splits().containsKey("portal_site") ? 0 : -1;
+        String why = resetPolicy.decide(st);
+        if (why != null) {
+            resetWhy = why;
+            resetTick = now();
+            trace("RSG reset decision: " + why + " (the run goes on for the per-seed table)");
+        }
+    }
     private BlockPos relocateTo;
     private int relocateTicks;
     private int relocations;
@@ -725,6 +767,11 @@ public final class RunBrain {
         }
         RouteSelector.Choice ch = new RouteSelector(p).choose(o);
         route = ch.route;
+        if (route != RouteSelector.Route.TREASURE && p.get("treasure.pie") > 0 && seaSeen()) {
+            // an ocean spawn: the pie chart sweep (a few seconds) tells whether a buried treasure is in reach
+            route = RouteSelector.Route.TREASURE;
+            pieRoute = true;
+        }
         routeNote = new RouteSelector(p).rank(o).toString();
         trace("route " + routeNote + " lava=" + o.surfaceLavaDist + " water=" + o.waterDist + " iron=" + o.ironKnown + " ship=" + shipPos);
     }
@@ -763,7 +810,11 @@ public final class RunBrain {
                 break;
             case TREASURE:
                 if (!treasure.active()) {
-                    treasure.start(shipPos);
+                    if (pieRoute && shipPos == null && !inv.has(Items.FILLED_MAP)) {
+                        treasure.startPie();
+                    } else {
+                        treasure.start(shipPos);
+                    }
                 }
                 treasure.tick();
                 if (treasure.phase() == TreasureHunt.Phase.FAILED) {

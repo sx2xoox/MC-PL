@@ -154,6 +154,8 @@ public final class BotRuntime {
         Map<String, Long> splits = new LinkedHashMap<>(igt.splits());
         r.put("splits", splits);
         r.put("last_goal", brain.goal().name());
+        r.put("reset_why", brain.resetWhy() == null ? "" : brain.resetWhy());
+        r.put("reset_ticks", brain.resetTick());
         r.put("mspt_avg", ticksMeasured == 0 ? 0 : tickNanosSum / 1e6 / ticksMeasured);
         r.put("mspt_max", tickNanosMax / 1e6);
         r.put("wall_s", (System.nanoTime() - wallStart) / 1e9);

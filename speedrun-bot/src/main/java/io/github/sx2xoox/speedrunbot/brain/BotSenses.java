@@ -100,4 +100,10 @@ public interface BotSenses extends BlockSource {
      * {@link io.github.sx2xoox.speedrunbot.core.Hearing}); empty when hearing is off.
      */
     List<io.github.sx2xoox.speedrunbot.core.Hearing.Heard> heardLava();
+
+    /**
+     * Chests inside the camera frustum within render distance for this view, as the F3 pie chart's "blockentities"
+     * slice shows it (see {@link io.github.sx2xoox.speedrunbot.core.PieChart}): a count, never a position.
+     */
+    int pieChests(io.github.sx2xoox.speedrunbot.core.PieChart.View view);
 }
