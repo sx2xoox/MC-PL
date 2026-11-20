@@ -372,6 +372,7 @@ public final class RunBrain {
         st.portalSiteTick = igt.splits().containsKey("portal_site") ? 0 : -1;
         st.treasureTick = igt.splits().containsKey("treasure") ? 0 : -1;
         st.ravineTick = igt.splits().containsKey("ravine") ? 0 : -1;
+        st.hasBoat = ocean.hasBoat();
         String why = resetPolicy.decide(st);
         if (why != null) {
             resetWhy = why;
@@ -539,6 +540,19 @@ public final class RunBrain {
         }
         if (pieRoute && !treasure.finished() && p.get("ocean.route") > 0) {
             int[] col = treasure.column();
+            if (treasure.betweenSweeps() && !ocean.hasBoat() && !boatTried && p.get("ocean.boatFirst") > 0 && mem.count(WorldMemory.Kind.LOG) > 0) {
+                // a chest bearing from the spawn: wood and a boat before the next sweep place (out on the sea, 40+
+                // blocks to the side), the boat carries the rest of the route too
+                treasurePaused = true;
+                if (inv.logs() * 4 + inv.planks() < p.getInt("ocean.boatPlanks") && !bench.busy() && goal != Goal.OCEAN_BOAT) {
+                    return Goal.WOOD;
+                }
+                return Goal.OCEAN_BOAT;
+            }
+            if (treasurePaused) {
+                treasurePaused = false;
+                treasure.resumeAfterPause();
+            }
             if (treasure.phase() == TreasureHunt.Phase.WALK && col != null && !ocean.hasBoat() && !boatTried
                     && Math.hypot(col[0] - mover.feet().getX(), col[1] - mover.feet().getZ()) > 32 && seaBetween(col)) {
                 // the treasure is across water: wood and a boat first (the boat also carries the route later)
@@ -650,6 +664,7 @@ public final class RunBrain {
     final TreasureHunt treasure = new TreasureHunt(this);
     final OceanRoute ocean = new OceanRoute(this);
     private boolean boatTried;
+    private boolean treasurePaused;
 
     /** Seen sea-level water on the straight line to the column (the treasure is across water). */
     private boolean seaBetween(int[] col) {
@@ -853,7 +868,11 @@ public final class RunBrain {
     private void run() {
         subTicks++;
         if (bench.busy()) {
-            bench.run(null); // a crafting session in progress owns the hands and the screen
+            // a crafting session in progress owns the hands and the screen
+            if (bench.run(null) == Actions.Status.FAILED && goal == Goal.OCEAN_BOAT) {
+                trace("no boat: " + bench.error());
+                boatTried = true;
+            }
             return;
         }
         if (smelter.screenBusy()) {
@@ -903,9 +922,6 @@ public final class RunBrain {
                 java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
                 needs.add(new Workbench.Need("boat", i -> i instanceof net.minecraft.item.BoatItem, 1, true));
                 needs.add(new Workbench.Need("spare_door", OceanRoute::isDoor, 1, true)); // optional here (made again after the treasure)
-                if (!inv.pickaxe()) {
-                    needs.add(new Workbench.Need("wooden_pickaxe", i -> i == Items.WOODEN_PICKAXE, 1, true)); // the treasure may lie under stone
-                }
                 Actions.Status bs = bench.run(needs);
                 if (bs == Actions.Status.FAILED || goalTicks > 900) {
                     trace("no boat: " + bench.error());

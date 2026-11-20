@@ -452,6 +452,10 @@ public final class Navigator {
     private void expand(Node n, Long2ObjectOpenHashMap<Node> nodes, PriorityQueue<Node> open, Goal goal) {
         int x = n.x, y = n.y, z = n.z;
         boolean inWater = isWaterAt(x, y, z);
+        // floating at the surface (the air cell above water, no floor): a swimmer's feet bob about 0.4 under the water
+        // top, and vanilla's out-of-water boost (LivingEntity#travel: horizontal collision and room 0.6 higher) only
+        // clears a bank level with the water; a bank one block higher must be dug (or another place found)
+        boolean surface = !inWater && isWaterAt(x, y - 1, z);
         for (int[] d : CARD) {
             int tx = x + d[0], tz = z + d[1];
             // walk
@@ -462,7 +466,9 @@ public final class Navigator {
             double up = clearCost(x, y + 2, z, true) + clearCost(tx, y + 1, tz, true) + clearCost(tx, y + 2, tz, true);
             BlockState step = mem.get(tx, y, tz);
             double stepFloor = step == null ? UNKNOWN_FLOOR : (Blocks2.standable(step) ? 0 : Double.POSITIVE_INFINITY);
-            relax(n, tx, y + 1, tz, WALK + 3 + up + stepFloor, Move.UP, nodes, open, goal);
+            if (!surface) {
+                relax(n, tx, y + 1, tz, WALK + 3 + up + stepFloor, Move.UP, nodes, open, goal);
+            }
             // drop down 1..3 (only the first may be dug: staircase)
             double col = clearCost(tx, y + 1, tz, true) + clearCost(tx, y, tz, true);
             for (int k = 1; k <= 3 && !Double.isInfinite(col); k++) {
@@ -498,7 +504,7 @@ public final class Navigator {
         // swim up / pillar
         if (inWater) {
             relax(n, x, y + 1, z, 4 + clearCost(x, y + 2, z, false), Move.SWIM_UP, nodes, open, goal);
-        } else if (canPillar) {
+        } else if (canPillar && !surface) {
             relax(n, x, y + 1, z, 14 + clearCost(x, y + 2, z, true), Move.PILLAR, nodes, open, goal);
         }
     }

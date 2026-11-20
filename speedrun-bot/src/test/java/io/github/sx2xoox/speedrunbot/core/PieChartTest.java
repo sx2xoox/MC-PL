@@ -92,6 +92,9 @@ class PieChartTest {
         s.treasureSignal = 0;
         assertEquals("ocean_no_treasure_signal", rp.decide(s));
         s.treasureSignal = 1;
+        assertEquals("ocean_no_trees", rp.decide(s)); // a whole turn swept and not one log seen
+        s.logsSeen = 3;
+        assertEquals(null, rp.decide(s));
         s.tick = 20 * 200;
         assertEquals("slow_treasure", rp.decide(s));
         s.treasureTick = 20 * 80;

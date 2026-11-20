@@ -59,9 +59,12 @@ public final class Params {
         d.put("ocean.route", 1.0);               // 1 = an ocean spawn plays the ocean route
         d.put("ocean.planks", 16.0);             // wood after the treasure: table, iron tools, a boat, a door
         d.put("ocean.boatPlanks", 20.0);         // wood before a treasure across water: table, boat, door, wooden pickaxe
+        d.put("ocean.boatFirst", 1.0);           // 1 = wood and a boat right after the first sweep (the next sweeps from the sea)
+        d.put("treasure.sideDist", 40.0);        // second sweep this far to the side of the first bearing
         d.put("ocean.sailTicks", 2400.0);        // give up looking for a magma ravine from the boat after this
         d.put("reset.oceanOnly", 1.0);           // RSG policy: reset spawns that are not ocean / no treasure signal
         d.put("reset.treasureBySec", 120.0);
+        d.put("reset.oceanNoTrees", 1.0);        // RSG policy: an ocean spawn with a chest bearing but no tree seen in the sweep
         d.put("reset.ravineBySec", 240.0);
         d.put("reset.netherBySec", 420.0);
         d.put("route.flintLate", 1.0);           // 1 = water and lava before the flint (gravel on the way down)             // 1 = also scoop water sources open at a side (springs in cave walls)              // 1 = dig toward lava heard (sounds as a player hears them)           // 1 = walk away after two stalls at one spot (measured: no gain)           // with the water bucket the shaft goes down to here looking for lava
@@ -77,6 +80,7 @@ public final class Params {
         d.put("treasure.seaSources", 150.0);     // sea-level water sources seen near the spawn that count as an ocean
         d.put("treasure.scoutTicks", 0.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
         d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
+        d.put("treasure.maxDepth", 16.0);        // a treasure floor deeper than this under the water surface is skipped
         d.put("treasure.digTicks", 900.0);       // give up one column after digging this long (the chest sits on stone/sandstone)
         d.put("route.treasureBaseSec", 110.0);   // expected seconds to iron via the treasure route (plus the walk)
         d.put("loot.chestDist", 20.0);           // open a chest seen this close while iron is still missing

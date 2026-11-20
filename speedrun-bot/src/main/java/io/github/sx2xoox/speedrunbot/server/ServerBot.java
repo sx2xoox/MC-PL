@@ -462,6 +462,17 @@ public final class ServerBot implements BotInputs, BotSenses {
     }
 
     @Override
+    public Collection<Recipe<?>> allCraftingRecipes() {
+        List<Recipe<?>> out = new ArrayList<>();
+        for (Recipe<?> r : server.getRecipeManager().values()) {
+            if (r.getType() == RecipeType.CRAFTING) {
+                out.add(r);
+            }
+        }
+        return out;
+    }
+
+    @Override
     public HitResult crosshair() {
         double reach = InputLimits.BLOCK_REACH;
         HitResult block = player.rayTrace(reach, 1f, false);

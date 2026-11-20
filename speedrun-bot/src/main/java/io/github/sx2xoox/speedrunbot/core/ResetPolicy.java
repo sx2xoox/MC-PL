@@ -21,6 +21,8 @@ public final class ResetPolicy {
         /** Ocean route checkpoints: treasure opened, magma ravine found (-1 not yet). */
         public long treasureTick = -1;
         public long ravineTick = -1;
+        /** A boat carried or ridden. */
+        public boolean hasBoat;
     }
 
     private final Params p;
@@ -38,6 +40,9 @@ public final class ResetPolicy {
             }
             if (s.oceanSeen && s.treasureSignal == 0) {
                 return "ocean_no_treasure_signal";
+            }
+            if (s.oceanSeen && s.treasureSignal == 1 && s.logsSeen == 0 && !s.hasBoat && p.get("reset.oceanNoTrees") > 0) {
+                return "ocean_no_trees"; // the boat (and the door) need wood: none seen during the whole first sweep
             }
             if (s.oceanSeen && s.treasureTick < 0 && s.tick > 20 * p.get("reset.treasureBySec")) {
                 return "slow_treasure";

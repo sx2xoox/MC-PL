@@ -47,6 +47,17 @@ public final class TreasureHunt {
         return column;
     }
 
+    /** One sweep done, the next sweep place chosen but not reached (the bot may first fetch wood for a boat). */
+    public boolean betweenSweeps() {
+        return phase == Phase.LOCATE && secondSpot != null && !restoring;
+    }
+
+    /** A pause for other goals between sweeps: the window back to normal and narrow again when resuming. */
+    public void resumeAfterPause() {
+        viewWait = 2 * io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS;
+        phaseTicks = 0;
+    }
+
     /** Digging the column (under water the air threshold for swimming up is lower). */
     public boolean digging() {
         return phase == Phase.DIG || phase == Phase.LOOT_TREASURE;
@@ -196,11 +207,27 @@ public final class TreasureHunt {
         }
         if (secondSpot != null) {
             BlockPos f = b.feet();
-            if (f.getSquaredDistance(secondSpot) > 9 && phaseTicks < 400) {
-                if (b.mover.go(Navigator.near(secondSpot, 2)) != Mover.Status.FAILED) {
+            double far = Math.hypot(f.getX() - secondSpot.getX(), f.getZ() - secondSpot.getZ());
+            if (far > 3 && phaseTicks < 900) {
+                if (b.ocean.hasBoat() && (b.s.inBoat() || b.s.inWater() || nearWater())) {
+                    // the next sweep place is out on the sea: by boat, then out of it (a passenger's yaw is held to
+                    // the boat's heading +-105 degrees; swimming, the whole circle can be swept)
+                    Mover.Status fs = b.ocean.ferry(secondSpot.getX(), secondSpot.getZ());
+                    if (fs == Mover.Status.RUNNING) {
+                        return;
+                    }
+                    if (fs == Mover.Status.ARRIVED) {
+                        phaseTicks = 900; // there (or at the shore on the way): sweep here
+                    }
+                } else if (b.mover.go(Navigator.near(secondSpot, 2)) != Mover.Status.FAILED) {
                     return;
                 }
             }
+            if (b.s.inBoat()) {
+                b.c.move(0f, 0f, false, false, true); // out of the boat; it stays here for the way on
+                return;
+            }
+            b.trace(String.format("treasure: sweep %d at %s (%.0f blocks from the planned place)", sweeps + 1, f, far));
             secondSpot = null;
             sweepStep = 0;
             band = 0;
@@ -252,7 +279,7 @@ public final class TreasureHunt {
         if (sweeps == 1 || (sweeps == 2 && best != null && best[3] > 1)) {
             // triangulate: another sweep some blocks to the side of the bearing (a third one when columns still tie)
             double side = Math.toRadians(bearing + (sweeps == 1 ? 90 : 0));
-            double dist = sweeps == 1 ? 24 : 20;
+            double dist = sweeps == 1 ? (b.ocean.hasBoat() || b.p.get("ocean.route") > 0 ? b.p.get("treasure.sideDist") : 24) : 20;
             secondSpot = new BlockPos(p.x - Math.sin(side) * dist, p.y, p.z + Math.cos(side) * dist);
             b.trace(String.format("treasure: chest slice around yaw %.0f (%d hits)%s; sweep %d from %s", bearing, locator.hits(),
                     best == null ? "" : " best " + best[0] + "," + best[1] + " ties " + best[3], sweeps + 1, secondSpot));
@@ -477,7 +504,8 @@ public final class TreasureHunt {
             return;
         }
         BlockPos f = b.feet();
-        if (f.getX() == column[0] && f.getZ() == column[1] && (b.s.onGround() || b.s.inWater())) {
+        boolean overIt = b.s.inWater() && !b.s.inBoat() && Math.hypot(column[0] + 0.5 - p.x, column[1] + 0.5 - p.z) < 1.6;
+        if ((f.getX() == column[0] && f.getZ() == column[1] && (b.s.onGround() || b.s.inWater())) || overIt) {
             digStartY = f.getY();
             digTicks = 0;
             go(Phase.DIG);
@@ -502,6 +530,13 @@ public final class TreasureHunt {
         }
         if (b.s.inBoat()) {
             b.c.move(0f, 0f, false, false, true); // close enough: out of the boat, the rest on foot
+            return;
+        }
+        if (b.s.inWater() && far < 14) {
+            // the last strokes straight over the water (path steps through water are slow and drift)
+            float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(column[0] + 0.5 - p.x, column[1] + 0.5 - p.z);
+            b.c.lookAngles(yaw, 20f);
+            b.c.move(Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 45 ? 1f : 0f, 0f, false, false, false);
             return;
         }
         if (b.mover.go(Navigator.column(column[0], column[1], f.getY())) == Mover.Status.FAILED) {
@@ -570,7 +605,14 @@ public final class TreasureHunt {
             wrongColumn();
             return;
         }
-        if (digTicks > b.p.getInt("treasure.digTicks") || f.getY() < digStartY - 16) {
+        if (next != null && digStartY - next.getY() > b.p.getInt("treasure.maxDepth") && b.s.inWater()) {
+            // the floor deep under the sea: the dive, three blocks of digging under water and back up do not fit in one
+            // breath (a runner resets here)
+            b.trace("treasure: the floor of column " + column[0] + "," + column[1] + " is " + (digStartY - next.getY()) + " blocks down: too deep");
+            fail("too_deep");
+            return;
+        }
+        if (digTicks > b.p.getInt("treasure.digTicks") || f.getY() < digStartY - b.p.getInt("treasure.maxDepth") - 8) {
             b.trace("treasure: digging too long in column " + column[0] + "," + column[1]);
             wrongColumn();
             return;

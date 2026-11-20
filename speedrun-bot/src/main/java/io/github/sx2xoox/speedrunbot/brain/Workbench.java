@@ -36,7 +36,7 @@ public final class Workbench {
         }
     }
 
-    private enum Phase { IDLE, PREP_TABLE_ITEM, PLACE_TABLE, GO_TABLE, OPEN, CRAFT, WAIT_RESULT, CLOSE, PICKUP, REOPEN }
+    private enum Phase { IDLE, PREP_TABLE_ITEM, PLACE_TABLE, GO_TABLE, OPEN, CRAFT, WAIT_RESULT, CLOSE, PICKUP, REOPEN, MANUAL }
 
     private final RunBrain b;
     private Phase phase = Phase.IDLE;
@@ -135,6 +135,8 @@ public final class Workbench {
                 return craft();
             case WAIT_RESULT:
                 return waitResult();
+            case MANUAL:
+                return manual();
             case REOPEN:
                 // vanilla unlocks recipes when the player's own inventory screen handler sees the new items (the
                 // inventory_changed trigger), i.e. once the table screen is closed: close, wait a tick, open again
@@ -369,6 +371,11 @@ public final class Workbench {
                     }
                 }
                 b.trace("no recipe for " + n.name + " (" + known + " known)");
+                if (known == 0 && reopened && planManual(n.output, tableGrid)) {
+                    b.trace("placing the " + n.name + " recipe by hand in the grid (" + manualQueue.size() + " clicks; not in the recipe book yet)");
+                    go(Phase.MANUAL);
+                    return Actions.Status.RUNNING;
+                }
                 if (known == 0 && !reopened) {
                     reopened = true;
                     b.trace("closing and reopening the screen: new recipes unlock once the inventory sees the new items");
@@ -386,6 +393,101 @@ public final class Workbench {
         if (b.c.craft(r.getId(), false)) {
             subCraft = false;
             go(Phase.WAIT_RESULT);
+        }
+        return Actions.Status.RUNNING;
+    }
+
+    // ------------------------------------------------------------------ by hand (no recipe book entry)
+
+    private final java.util.ArrayDeque<int[]> manualQueue = new java.util.ArrayDeque<>();
+
+    /**
+     * Click plan for placing a shaped or shapeless recipe by hand: per ingredient, pick up a matching stack, right
+     * click one item into each grid cell it goes to, put the rest back. Empty grid and cursor assumed.
+     */
+    private boolean planManual(Predicate<Item> out, boolean tableGrid) {
+        manualQueue.clear();
+        net.minecraft.screen.ScreenHandler h = b.s.screen();
+        int gridW = tableGrid ? 3 : 2;
+        int invFrom = tableGrid ? 10 : 9, invTo = tableGrid ? 45 : 44;
+        for (int g = 1; g <= gridW * gridW; g++) {
+            if (!h.getSlot(g).getStack().isEmpty()) {
+                return false;
+            }
+        }
+        for (Recipe<?> r : b.s.allCraftingRecipes()) {
+            if (!out.test(r.getOutput().getItem())) {
+                continue;
+            }
+            java.util.List<net.minecraft.recipe.Ingredient> ings = r.getPreviewInputs();
+            int w = r instanceof net.minecraft.recipe.ShapedRecipe ? ((net.minecraft.recipe.ShapedRecipe) r).getWidth() : gridW;
+            int hgt = r instanceof net.minecraft.recipe.ShapedRecipe ? ((net.minecraft.recipe.ShapedRecipe) r).getHeight() : gridW;
+            if (w > gridW || hgt > gridW || ings.size() > gridW * gridW) {
+                continue;
+            }
+            // grid cell for ingredient index i
+            int[] cell = new int[ings.size()];
+            for (int i = 0; i < ings.size(); i++) {
+                cell[i] = 1 + (i / w) * gridW + (i % w);
+            }
+            int[] used = new int[h.slots.size()];
+            java.util.List<int[]> plan = new java.util.ArrayList<>();
+            boolean ok = true;
+            boolean[] placed = new boolean[ings.size()];
+            for (int i = 0; i < ings.size() && ok; i++) {
+                if (ings.get(i).isEmpty() || placed[i]) {
+                    continue;
+                }
+                // a source stack for this ingredient, used for every later cell it also fits (same item)
+                int src = -1;
+                for (int sl = invFrom; sl <= invTo; sl++) {
+                    ItemStack st = h.getSlot(sl).getStack();
+                    if (!st.isEmpty() && ings.get(i).test(st)) {
+                        src = sl;
+                        break;
+                    }
+                }
+                if (src < 0) {
+                    ok = false;
+                    break;
+                }
+                ItemStack st = h.getSlot(src).getStack();
+                plan.add(new int[]{src, 0});
+                for (int j = i; j < ings.size(); j++) {
+                    if (!placed[j] && !ings.get(j).isEmpty() && ings.get(j).test(st) && used[src] < st.getCount()) {
+                        plan.add(new int[]{cell[j], 1});
+                        used[src]++;
+                        placed[j] = true;
+                    }
+                }
+                plan.add(new int[]{src, 0});
+            }
+            for (int i = 0; i < ings.size(); i++) {
+                ok &= ings.get(i).isEmpty() || placed[i];
+            }
+            if (ok) {
+                for (int[] c : plan) {
+                    manualQueue.add(c);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Actions.Status manual() {
+        if (!b.s.screenOpen()) {
+            manualQueue.clear();
+            go(Phase.OPEN);
+            return Actions.Status.RUNNING;
+        }
+        if (manualQueue.isEmpty()) {
+            go(Phase.WAIT_RESULT);
+            return Actions.Status.RUNNING;
+        }
+        int[] c = manualQueue.peek();
+        if (b.c.click(c[0], c[1], SlotActionType.PICKUP)) {
+            manualQueue.poll();
         }
         return Actions.Status.RUNNING;
     }

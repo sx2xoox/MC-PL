@@ -83,6 +83,12 @@ public interface BotSenses extends BlockSource {
     /** Crafting recipes unlocked in the player's recipe book. */
     Collection<Recipe<?>> knownCraftingRecipes();
 
+    /**
+     * Every crafting recipe of the game (public game knowledge a player has: the shapes, placed by hand in the grid
+     * when the recipe book does not show one yet, e.g. boats before the player was ever in water).
+     */
+    Collection<Recipe<?>> allCraftingRecipes();
+
     /** What the crosshair points at (client: MinecraftClient#crosshairTarget). */
     HitResult crosshair();
 

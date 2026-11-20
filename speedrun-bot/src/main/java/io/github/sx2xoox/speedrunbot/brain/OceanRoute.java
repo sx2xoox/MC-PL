@@ -578,13 +578,13 @@ public final class OceanRoute {
             return Mover.Status.RUNNING;
         }
         float h = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(dx, dz);
-        if (dist < 2.5 || (dist < 40 && landAhead(h, 3))) {
+        if (dist < 1.8 || (dist < 40 && landAhead(h, 2))) {
             b.trace(String.format("ferry: out of the boat %.0f blocks from %d,%d", dist, x, z));
             b.c.move(0f, 0f, false, false, true);
             return Mover.Status.ARRIVED;
         }
         b.c.lookAngles(h, 20f);
-        steer(h, dist < 6 ? 0.4f : 1f);
+        steer(h, dist < 4 ? 0.3f : dist < 10 ? 0.6f : 1f);
         return Mover.Status.RUNNING;
     }
 
