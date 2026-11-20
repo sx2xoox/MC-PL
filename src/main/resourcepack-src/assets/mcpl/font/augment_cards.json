@@ -1,0 +1,1017 @@
+{
+  "providers": [
+    {
+      "type": "space",
+      "advances": {
+        "\ue000": -1,
+        "\ue010": 1,
+        "\ue001": -2,
+        "\ue011": 2,
+        "\ue002": -4,
+        "\ue012": 4,
+        "\ue003": -8,
+        "\ue013": 8,
+        "\ue004": -16,
+        "\ue014": 16,
+        "\ue005": -32,
+        "\ue015": 32,
+        "\ue006": -64,
+        "\ue016": 64,
+        "\ue007": -128,
+        "\ue017": 128,
+        "\ue008": -256,
+        "\ue018": 256
+      }
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/frame_silver.png",
+      "height": 160,
+      "ascent": 78,
+      "chars": [
+        "\ue100"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/frame_gold.png",
+      "height": 160,
+      "ascent": 78,
+      "chars": [
+        "\ue101"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/frame_prism.png",
+      "height": 160,
+      "ascent": 78,
+      "chars": [
+        "\ue102"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/frame_silver_lit.png",
+      "height": 160,
+      "ascent": 78,
+      "chars": [
+        "\ue108"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/frame_gold_lit.png",
+      "height": 160,
+      "ascent": 78,
+      "chars": [
+        "\ue109"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/frame_prism_lit.png",
+      "height": 160,
+      "ascent": 78,
+      "chars": [
+        "\ue10a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_1.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue110"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_2.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue111"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_3.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue112"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_4.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue113"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_5.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue114"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_1_lit.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue118"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_2_lit.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue119"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_3_lit.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue11a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_4_lit.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue11b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/key_5_lit.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue11c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/reroll.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue11e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/reroll_lit.png",
+      "height": 16,
+      "ascent": 6,
+      "chars": [
+        "\ue11f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/ribbon_silver.png",
+      "height": 18,
+      "ascent": 7,
+      "chars": [
+        "\ue120"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/ribbon_gold.png",
+      "height": 18,
+      "ascent": 7,
+      "chars": [
+        "\ue121"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/ribbon_prism.png",
+      "height": 18,
+      "ascent": 7,
+      "chars": [
+        "\ue122"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_00.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue130"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_01.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue131"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_02.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue132"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_03.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue133"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_04.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue134"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_05.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue135"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_06.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue136"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_07.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue137"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_08.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue138"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_09.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue139"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_10.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue13a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_11.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue13b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_12.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue13c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_13.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue13d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_14.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue13e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_15.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue13f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_16.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue140"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_17.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue141"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_18.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue142"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_19.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue143"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/bar_20.png",
+      "height": 8,
+      "ascent": 2,
+      "chars": [
+        "\ue144"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_1.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue150"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_2.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue151"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_3.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue152"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_4.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue153"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_5.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue154"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_f.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue155"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_q.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue156"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/small_key_shift.png",
+      "height": 11,
+      "ascent": 9,
+      "chars": [
+        "\ue157"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_auto_smelt.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue200"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_beast_friend.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue201"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_berserker_pact.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue202"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_blast_arrow.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue203"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_blink.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue204"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_bloodthirst.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue205"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_clairvoyance.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue206"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_cobweb_trap.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue207"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_collector.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue208"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_combo.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue209"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_diamond_vein.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue20a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_double_jump.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue20b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_earth_blessing.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue20c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_enchant_kit.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue20d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_executioner.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue20e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_feast.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue20f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_feather_fall.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue210"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_fire_blade.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue211"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_footsteps.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue212"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_fortress.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue213"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_frost_arrow.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue214"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_gale.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue215"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_gambler.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue216"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_giant.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue217"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_heavy_hitter.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue218"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_high_jump.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue219"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_hunter_compass.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue21a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_iron_body.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue21b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_iron_bundle.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue21c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_lucky_coin.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue21d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_lucky_pick.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue21e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_lumberjack.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue21f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_midas_pick.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue220"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_miner_touch.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue221"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_netherite_scrap.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue222"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_night_eyes.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue223"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_pearls.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue224"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_phoenix_feather.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue225"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_potion_bag.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue226"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_quiver.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue227"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_rations.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue228"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_regen_heart.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue229"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_rewind.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue22a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_shadow_strike.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue22b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_sharp_edge.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue22c"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_shield_master.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue22d"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_smith_blessing.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue22e"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_sniper.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue22f"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_sprinter.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue230"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_still_cloak.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue231"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_swimmer.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue232"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_thick_skin.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue233"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_thorns.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue234"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_treasure_sense.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue235"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_triple_shot.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue236"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_vengeful.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue237"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_venom.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue238"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_war_god.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue239"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_wings.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue23a"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "mcpl:font/augment_cards/icon_xp_spring.png",
+      "height": 36,
+      "ascent": 16,
+      "chars": [
+        "\ue23b"
+      ]
+    }
+  ]
+}

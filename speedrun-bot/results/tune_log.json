@@ -1,0 +1,162 @@
+[
+  {
+    "gen": 0,
+    "tag": "g0_c0",
+    "score": 1305.0,
+    "success": 0,
+    "params": {
+      "wood.logs": 7.0,
+      "stone.picks": 2.0,
+      "dig.targetY": 12.0,
+      "dig.oreDetour": 7.0,
+      "dig.gravelDetour": 10.0,
+      "craft.tableReuseDist": 6.0,
+      "surface.scanTicks": 60.0,
+      "surface.lavaMaxDist": 72.0,
+      "route.digBaseSec": 150.0,
+      "route.surfaceBaseSec": 120.0,
+      "route.ironMissingSec": 25.0,
+      "portal.maxLavaDist": 9.0
+    }
+  },
+  {
+    "gen": 0,
+    "tag": "g0_c1",
+    "score": 1290.0,
+    "success": 0,
+    "params": {
+      "wood.logs": 7,
+      "stone.picks": 2,
+      "dig.targetY": 11,
+      "dig.oreDetour": 6,
+      "dig.gravelDetour": 7,
+      "craft.tableReuseDist": 5.52,
+      "surface.scanTicks": 88,
+      "surface.lavaMaxDist": 82.18,
+      "route.digBaseSec": 186.291,
+      "route.surfaceBaseSec": 128.712,
+      "route.ironMissingSec": 30.428,
+      "portal.maxLavaDist": 9.417
+    }
+  },
+  {
+    "gen": 0,
+    "tag": "g0_c2",
+    "score": 1267.5,
+    "success": 0,
+    "params": {
+      "wood.logs": 5,
+      "stone.picks": 2,
+      "dig.targetY": 16,
+      "dig.oreDetour": 8,
+      "dig.gravelDetour": 5,
+      "craft.tableReuseDist": 3.0,
+      "surface.scanTicks": 38,
+      "surface.lavaMaxDist": 60.763,
+      "route.digBaseSec": 160.691,
+      "route.surfaceBaseSec": 118.393,
+      "route.ironMissingSec": 32.163,
+      "portal.maxLavaDist": 7.555
+    }
+  },
+  {
+    "gen": 0,
+    "tag": "g0_c3",
+    "score": 1267.5,
+    "success": 0,
+    "params": {
+      "wood.logs": 7,
+      "stone.picks": 2,
+      "dig.targetY": 11,
+      "dig.oreDetour": 11,
+      "dig.gravelDetour": 12,
+      "craft.tableReuseDist": 8.693,
+      "surface.scanTicks": 44,
+      "surface.lavaMaxDist": 54.252,
+      "route.digBaseSec": 137.958,
+      "route.surfaceBaseSec": 116.275,
+      "route.ironMissingSec": 33.691,
+      "portal.maxLavaDist": 9.559
+    }
+  },
+  {
+    "gen": 1,
+    "tag": "g1_c0",
+    "score": 1252.5,
+    "success": 0,
+    "params": {
+      "wood.logs": 6,
+      "stone.picks": 2,
+      "dig.targetY": 11,
+      "dig.oreDetour": 11,
+      "dig.gravelDetour": 7,
+      "craft.tableReuseDist": 6.547,
+      "surface.scanTicks": 56,
+      "surface.lavaMaxDist": 44.452,
+      "route.digBaseSec": 150.786,
+      "route.surfaceBaseSec": 142.218,
+      "route.ironMissingSec": 14.345,
+      "portal.maxLavaDist": 8.256
+    }
+  },
+  {
+    "gen": 1,
+    "tag": "g1_c1",
+    "score": 1305.0,
+    "success": 0,
+    "params": {
+      "wood.logs": 6,
+      "stone.picks": 2,
+      "dig.targetY": 15,
+      "dig.oreDetour": 8,
+      "dig.gravelDetour": 4,
+      "craft.tableReuseDist": 8.033,
+      "surface.scanTicks": 60,
+      "surface.lavaMaxDist": 77.643,
+      "route.digBaseSec": 183.06,
+      "route.surfaceBaseSec": 125.198,
+      "route.ironMissingSec": 29.829,
+      "portal.maxLavaDist": 6.666
+    }
+  },
+  {
+    "gen": 1,
+    "tag": "g1_c2",
+    "score": 1252.5,
+    "success": 0,
+    "params": {
+      "wood.logs": 7,
+      "stone.picks": 2,
+      "dig.targetY": 11,
+      "dig.oreDetour": 6,
+      "dig.gravelDetour": 6,
+      "craft.tableReuseDist": 4.57,
+      "surface.scanTicks": 69,
+      "surface.lavaMaxDist": 37.065,
+      "route.digBaseSec": 115.868,
+      "route.surfaceBaseSec": 122.982,
+      "route.ironMissingSec": 39.438,
+      "portal.maxLavaDist": 9.719
+    }
+  },
+  {
+    "gen": 1,
+    "tag": "g1_c3",
+    "score": 1372.5,
+    "success": 0,
+    "params": {
+      "wood.logs": 4,
+      "stone.picks": 2,
+      "dig.targetY": 14,
+      "dig.oreDetour": 7,
+      "dig.gravelDetour": 6,
+      "craft.tableReuseDist": 8.414,
+      "surface.scanTicks": 66,
+      "surface.lavaMaxDist": 66.897,
+      "route.digBaseSec": 155.36,
+      "route.surfaceBaseSec": 126.498,
+      "route.ironMissingSec": 40.531,
+      "portal.maxLavaDist": 9.785
+    }
+  }
+]

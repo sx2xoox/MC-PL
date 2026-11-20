@@ -1,0 +1,1259 @@
+package io.github.sx2xoox.mcpl.game.superpower.abilities;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.LongPredicate;
+
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Combat;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Displays;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Fx;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Loop;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Motion;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Spots;
+import io.github.sx2xoox.mcpl.game.superpower.abilities.kit.Vfx;
+import io.github.sx2xoox.mcpl.game.superpower.ability.Ability;
+import io.github.sx2xoox.mcpl.game.superpower.ability.AbilityInfo;
+import io.github.sx2xoox.mcpl.game.superpower.ability.ActivationResult;
+import io.github.sx2xoox.mcpl.util.Text;
+import net.kyori.adventure.text.format.TextColor;
+import org.bukkit.Color;
+import org.bukkit.FluidCollisionMode;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
+import org.bukkit.Tag;
+import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * 창술사 — a spear fighter. Sprinting hits strike harder, the active throws a spear that pierces everything on its way
+ * out and strikes again (dragging enemies along) on its way back to the hand, and the ultimate is a long straight
+ * charge that skewers every enemy in its path, carries them on the spear point and hurls them away at the end.
+ *
+ * <p>Look: sea green, silver and white. The spear is built from display blocks (a silver shaft, a prismarine head,
+ * a white point) and spins as it flies, trailing sea-green light and spray. The charge is read before it starts: a
+ * glowing lane on the ground, the spear drawn back; then the lancer becomes a riptide of light with the giant spear
+ * in front, and the end is a burst of spray and a shockwave.
+ */
+public final class LancerAbility extends Ability {
+
+    public static final AbilityInfo INFO = AbilityInfo.builder("lancer", "창술사", Material.TRIDENT)
+            .color(TextColor.color(0x4FD1A5))
+            .difficulty(2)
+            .passive("돌격 자세", "달리면서 근접 공격하면 피해가 {sprint_bonus}% 증가합니다.")
+            .active("창 투척",
+                    "창을 던져 {throw_range}블록까지 꿰뚫으며 날립니다. 맞은 적은 {throw_damage} 피해를 입고, 손으로 "
+                            + "되돌아오는 창에 다시 맞으면 {return_damage} 피해를 입고 창술사 쪽으로 끌려옵니다.",
+                    8)
+            .ultimate("일섬 돌격",
+                    "잠시 창을 겨눈 뒤 {ult_distance}블록을 일직선으로 돌격합니다. 길목의 적은 {ult_damage} 피해를 입고 "
+                            + "창끝에 꿰여 끌려가다가, 돌격이 끝나면 {ult_fling_damage} 피해와 함께 내동댕이쳐집니다.")
+            .param("sprint_bonus", 30)
+            .param("throw_range", 16)
+            .param("throw_damage", 4)
+            .param("return_damage", 3)
+            .param("ult_distance", 14)
+            .param("ult_damage", 4)
+            .param("ult_fling_damage", 4)
+            .build();
+
+    private static final String COLOR_TAG = "#4FD1A5";
+    private static final double TAU = Math.PI * 2;
+
+    // Spear throw
+    private static final double THROW_SPEED = 1.5;
+    private static final double RETURN_SPEED = 1.7;
+    /** How far from the spear's point (to the hitbox) an enemy is struck. */
+    private static final double SPEAR_REACH = 0.55;
+    private static final double SAMPLE_STEP = 0.4;
+    /** Ticks the spear trembles at the end of its flight (or stuck in a wall) before it flies back. */
+    private static final long TURN_TICKS = 4;
+    private static final long MAX_RETURN_TICKS = 40;
+    /** The spear is caught once its point comes this close to the lancer's chest. */
+    private static final double CATCH_DISTANCE = 1.0;
+    private static final double RETURN_PULL = 0.65;
+    private static final double RETURN_LIFT = 0.25;
+    private static final float SPIN_PER_TICK = 28f;
+    /** How deep the spear point sinks into a wall it hits. */
+    private static final double WALL_BITE = 0.3;
+    /** How far the turning spear trembles from its spot. */
+    private static final double TREMBLE = 0.04;
+
+    // Piercing charge
+    private static final long WINDUP_TICKS = 7;
+    private static final double CHARGE_SPEED = 1.25;
+    private static final double CHARGE_SINK = -0.08;
+    /** Ticks before stall detection starts (the client needs a moment to pick up the new velocity). */
+    private static final long CHARGE_GRACE_TICKS = 3;
+    private static final double STALL_EPSILON = 0.12;
+    private static final int STALL_LIMIT = 3;
+    private static final long MAX_LAG_TICKS = 8;
+    private static final double MILLIS_PER_TICK = 50.0;
+    /** Where the spear point sweeps for new victims, ahead of the lancer's chest. */
+    private static final double SKEWER_AHEAD = 1.4;
+    private static final double SKEWER_REACH = 1.2;
+    /** Skewered enemies ride this far ahead of the lancer, a little further for each one already on the spear. */
+    private static final double CARRY_AHEAD = 1.9;
+    private static final double CARRY_SPACING = 0.55;
+    private static final double CARRY_PULL = 0.5;
+    /**
+     * A skewered enemy left this far behind its spot on the spear (stopped by a wall) slips off. A player is measured
+     * where its client is reckoned to be (see {@link Rider}), so its ping adds nothing to this.
+     */
+    private static final double CARRY_LEASH = 3.5;
+    private static final double FLING_FORWARD = 1.4;
+    private static final double FLING_UP = 0.6;
+    private static final double MAX_VELOCITY = 2.5;
+    private static final long LANDING_GRACE_TICKS = 100;
+    private static final float CHARGE_SPEAR_SCALE = 1.6f;
+    /** Charge ticks beyond its length at full speed, for stairs or a cobweb that slow the client down. */
+    private static final long CHARGE_SLACK_TICKS = 8;
+    /** How far ahead the charge looks for ground; it stops at the edge of the void or a lava pit. */
+    private static final double VOID_LOOKAHEAD = CHARGE_SPEED + 0.6;
+    /** The client steps up onto anything this high (a slab, a stair) while it runs on the ground. */
+    private static final double STEP_HEIGHT = 0.6;
+    /**
+     * The server seeing a player this far from every place its client was reckoned to be means something else moved
+     * it (a knockback, a teleport): the reckoning has lost it.
+     */
+    private static final double STRAY_DISTANCE = 3.0;
+
+    // Visuals
+    /** White core, sea green body, deep sea edge; silver for the shaft and streaks. */
+    private static final Vfx.Palette PALETTE = Vfx.Palette.of(0xEFFFFA, 0x4FD1A5, 0x1E6E5C);
+    private static final Color SILVER = Color.fromRGB(0xC9D3DC);
+    private static final Particle.DustOptions SILVER_DUST = new Particle.DustOptions(SILVER, 0.8f);
+    private static final long STANCE_PERIOD = 4;
+
+    /** Spear parts in the spear's frame (+z is the point). */
+    private static final Part SHAFT = new Part(Material.LIGHT_GRAY_CONCRETE, 0.07f, 0.07f, 2.0f, -0.55f, 0);
+    private static final Part HEAD = new Part(Material.PRISMARINE_BRICKS, 0.2f, 0.2f, 0.5f, 0.68f, 45);
+    private static final Part TIP = new Part(Material.WHITE_CONCRETE, 0.08f, 0.08f, 0.26f, 1.0f, 45);
+    private static final Part[] SPEAR_PARTS = {SHAFT, HEAD, TIP};
+    /** Distance from the spear's center to its point. */
+    private static final double POINT = 1.13;
+
+    private record Part(Material material, float width, float thickness, float length, float offset, float twist) {
+    }
+
+    private boolean charging;
+    /** Generation of the running landing protection; a newer one retires the older loop. */
+    private int fallGuardToken;
+    /** The target of the spear hit being dealt right now, and whether it landed (see {@link #onDamageDealt}). */
+    private @Nullable LivingEntity pendingTarget;
+    private boolean landed;
+    /** The hooks run for this instance (a charge borrowed by the gambler gets none, see {@link #land}). */
+    private boolean granted;
+
+    @Override
+    public AbilityInfo info() {
+        return INFO;
+    }
+
+    @Override
+    public void onGrant() {
+        granted = true;
+    }
+
+    @Override
+    public void onRevoke() {
+        charging = false;
+    }
+
+    // ------------------------------------------------------------------ passive: charge stance
+
+    @Override
+    public void onDealDamage(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (event.isCancelled() || !isSprintHit(event)) {
+            return;
+        }
+        double bonus = Math.max(0, params().num("sprint_bonus")) / 100.0;
+        if (bonus > 0) {
+            event.setDamage(event.getDamage() * (1 + bonus));
+        }
+    }
+
+    @Override
+    public void onDamageDealt(EntityDamageByEntityEvent event, LivingEntity victim) {
+        if (ctx().isAbilityDamage() && victim.equals(pendingTarget)) {
+            landed = true;
+        }
+        if (!isSprintHit(event) || params().num("sprint_bonus") <= 0) {
+            return;
+        }
+        // A thrust: a streak of light through the victim along the attack, spray and a spear's ring.
+        Player owner = player();
+        Location body = Fx.body(victim);
+        Vector thrust = Motion.horizontal(body.toVector().subtract(owner.getLocation().toVector()));
+        if (thrust.lengthSquared() < 1.0E-6) {
+            thrust = Motion.horizontalFacing(owner.getLocation());
+        }
+        Location from = body.clone().subtract(thrust.clone().multiply(1.1));
+        Location to = body.clone().add(thrust.clone().multiply(1.3));
+        Vfx.line(ctx(), from, to, 6, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
+        Vfx.trail(from, to.clone().add(thrust), PALETTE.core(), 4, false);
+        Vfx.cloud(ctx(), body, Particle.SPLASH, 8, 0.25, 0.1, null, false);
+        Vfx.cloud(ctx(), body, Particle.CRIT, 6, 0.2, 0.25, null, false);
+        Fx.sound(body, Sound.ITEM_SPEAR_HIT, 0.8f, 1.1f + Fx.jitter(0.1f));
+        owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">➶ 돌격 자세</" + COLOR_TAG + "> <gray>+"
+                + AbilityInfo.formatNumber(params().num("sprint_bonus")) + "%</gray>"));
+    }
+
+    /** The owner's own sword (or fist) swing while sprinting; ability damage never counts. */
+    private boolean isSprintHit(EntityDamageByEntityEvent event) {
+        return !ctx().isAbilityDamage() && event.getCause() == DamageCause.ENTITY_ATTACK
+                && player().equals(event.getDamager()) && player().isSprinting();
+    }
+
+    @Override
+    public void onTick(long tick) {
+        if (tick % STANCE_PERIOD != 0 || charging) {
+            return;
+        }
+        Player owner = player();
+        if (!owner.isSprinting()) {
+            return;
+        }
+        // The stance shows: silver wind streaming back along the lancer's side and a glint at the spear point.
+        Location at = owner.getLocation();
+        Vector forward = Motion.horizontalFacing(at);
+        Vector side = new Vector(-forward.getZ(), 0, forward.getX());
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Location from = at.clone().add(side.clone().multiply(random.nextDouble(-0.5, 0.5)))
+                .add(0, random.nextDouble(0.3, owner.getHeight() * 0.9), 0).add(forward.clone().multiply(0.4));
+        Vfx.trail(from, from.clone().subtract(forward.clone().multiply(1.6)), random.nextBoolean() ? SILVER
+                : PALETTE.body(), 5, false);
+        Location tip = at.clone().add(0, owner.getHeight() * 0.6, 0).add(forward.multiply(1.1));
+        Vfx.dot(tip, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.5f), false);
+    }
+
+    // ------------------------------------------------------------------ active: spear throw
+
+    @Override
+    public ActivationResult onActive() {
+        Player owner = player();
+        Location eye = owner.getEyeLocation();
+        Vector direction = eye.getDirection();
+        if (!(direction.lengthSquared() > 1.0E-6)) {
+            return ActivationResult.fail("던질 방향이 없습니다");
+        }
+        direction.normalize();
+        Spear spear = new Spear(eye, direction, Math.max(1, params().num("throw_range")));
+        long maxTicks = (long) Math.ceil(spear.range / THROW_SPEED) + TURN_TICKS + MAX_RETURN_TICKS + 2;
+        Loop.repeat(ctx(), owner, 1, 1, maxTicks, spear, spear::finish);
+
+        Location hand = eye.clone().subtract(0, 0.3, 0).add(direction.clone().multiply(0.6));
+        World world = eye.getWorld();
+        world.spawnParticle(Particle.FLASH, hand, 1, 0, 0, 0, 0, PALETTE.core());
+        Vfx.cloud(ctx(), hand, Particle.SPLASH, 10, 0.2, 0.15, null, false);
+        Vfx.arc(ctx(), eye.clone().subtract(0, 0.35, 0), 1.0, eye.getYaw(), 70, 9, Particle.DUST_COLOR_TRANSITION,
+                PALETTE.glow(0.9f), false);
+        Fx.sound(eye, Sound.ITEM_TRIDENT_THROW, 1.0f, 0.9f + Fx.jitter(0.08f));
+        Fx.sound(eye, Sound.ITEM_SPEAR_LUNGE_1, 0.8f, 1.1f + Fx.jitter(0.1f));
+        Fx.sound(eye, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.5f, 1.5f + Fx.jitter(0.1f));
+        return ActivationResult.success();
+    }
+
+    private enum Flight { OUT, TURN, BACK, DONE }
+
+    /** A thrown spear: three block displays flying point first; out, a short turn, then back to the hand. */
+    private final class Spear implements LongPredicate {
+
+        private final double range;
+        private final World world;
+        private final double throwDamage = params().num("throw_damage");
+        private final double returnDamage = params().num("return_damage");
+        private final BlockDisplay[] parts = new BlockDisplay[SPEAR_PARTS.length];
+        private final Set<UUID> outHits = new HashSet<>();
+        private final Set<UUID> backHits = new HashSet<>();
+        private Flight flight = Flight.OUT;
+        private Vector point;
+        private Vector heading;
+        private double travelled;
+        private long phaseTicks;
+        private float spin;
+        private boolean stuck;
+
+        Spear(Location eye, Vector direction, double range) {
+            this.range = range;
+            this.world = eye.getWorld();
+            this.heading = direction.clone();
+            // Thrown from inside the lancer like a real throw, so a hugging enemy is not skipped.
+            this.point = eye.toVector().subtract(new Vector(0, 0.2, 0));
+            Location at = placement();
+            Aim aim = Aim.of(heading);
+            long lifetime = (long) Math.ceil(range / THROW_SPEED) + TURN_TICKS + MAX_RETURN_TICKS + 10;
+            for (int i = 0; i < SPEAR_PARTS.length; i++) {
+                parts[i] = Displays.block(ctx(), player(), at, SPEAR_PARTS[i].material().createBlockData(),
+                        pose(SPEAR_PARTS[i], 1f, 0, aim), lifetime);
+                parts[i].setTeleportDuration(1);
+            }
+        }
+
+        @Override
+        public boolean test(long tick) {
+            Player owner = player();
+            if (!owner.getWorld().equals(world)) {
+                return false;
+            }
+            phaseTicks++;
+            spin = (spin + SPIN_PER_TICK) % 360f;
+            return switch (flight) {
+                case OUT -> flyOut(owner);
+                case TURN -> turn(owner);
+                case BACK -> flyBack(owner);
+                case DONE -> false;
+            };
+        }
+
+        private boolean flyOut(Player owner) {
+            double step = Math.min(THROW_SPEED, range - travelled);
+            Location from = point.toLocation(world);
+            RayTraceResult wall = world.rayTraceBlocks(from, heading, step, FluidCollisionMode.NEVER, true);
+            double advance = wall == null ? step : Math.max(0, wall.getHitPosition().distance(point) - 0.05);
+            strike(owner, from, heading, advance, outHits, throwDamage, false);
+            point.add(heading.clone().multiply(advance));
+            travelled += advance;
+            move();
+            flightTrail(from, point.toLocation(world));
+            if (wall != null) {
+                stuck = true;
+                wallHit(point.toLocation(world), wall);
+                // The point bites into the wall (only the displays; the return flies through blocks anyway).
+                point.add(heading.clone().multiply(WALL_BITE));
+                move();
+                startTurn();
+            } else if (travelled >= range - 1.0E-6) {
+                startTurn();
+            }
+            return true;
+        }
+
+        private void startTurn() {
+            flight = Flight.TURN;
+            phaseTicks = 0;
+        }
+
+        /** The spear trembles in place (or in the wall), then rips free and turns towards the hand. */
+        private boolean turn(Player owner) {
+            Location at = point.toLocation(world);
+            Location shaken = at.clone();
+            if (phaseTicks < TURN_TICKS) {
+                ThreadLocalRandom random = ThreadLocalRandom.current();
+                shaken.add(random.nextDouble(-TREMBLE, TREMBLE), random.nextDouble(-TREMBLE, TREMBLE),
+                        random.nextDouble(-TREMBLE, TREMBLE));
+            }
+            Location place = shaken.clone().subtract(heading.clone().multiply(POINT));
+            for (BlockDisplay part : parts) {
+                Displays.moveTo(part, place);
+            }
+            if (phaseTicks % 2 == 0) {
+                Vfx.ring(ctx(), at, 0.35, 8, phaseTicks * 0.5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f),
+                        false);
+            }
+            if (phaseTicks >= TURN_TICKS) {
+                flight = Flight.BACK;
+                phaseTicks = 0;
+                Fx.sound(at, Sound.ITEM_TRIDENT_RETURN, 1.0f, 1.0f + Fx.jitter(0.1f));
+                if (stuck) {
+                    Vfx.cloud(ctx(), at, Particle.CRIT, 6, 0.15, 0.2, null, false);
+                }
+                Vfx.cloud(ctx(), at, Particle.SPLASH, 10, 0.2, 0.2, null, false);
+            }
+            return true;
+        }
+
+        /** Homing back to the lancer's chest through anything in the way, striking enemies it passes again. */
+        private boolean flyBack(Player owner) {
+            Vector chest = owner.getLocation().add(0, owner.getHeight() * 0.6, 0).toVector();
+            Vector toChest = chest.clone().subtract(point);
+            double distance = toChest.length();
+            if (distance <= CATCH_DISTANCE + RETURN_SPEED * 0.5 || phaseTicks > MAX_RETURN_TICKS) {
+                catchSpear(owner, phaseTicks <= MAX_RETURN_TICKS);
+                return false;
+            }
+            Vector direction = toChest.multiply(1 / distance);
+            double step = Math.min(RETURN_SPEED, distance - CATCH_DISTANCE * 0.5);
+            Location from = point.toLocation(world);
+            // The point leads: it turns to face the hand.
+            heading = direction;
+            strike(owner, from, direction, step, backHits, returnDamage, true);
+            point.add(direction.clone().multiply(step));
+            move();
+            flightTrail(from, point.toLocation(world));
+            return true;
+        }
+
+        /** Hits every new enemy along the next {@code length} blocks of flight. */
+        private void strike(Player owner, Location from, Vector direction, double length, Set<UUID> hit,
+                            double damage, boolean pull) {
+            for (double d = 0; d <= length + 1.0E-6; d += SAMPLE_STEP) {
+                Location sample = from.clone().add(direction.clone().multiply(Math.min(d, length)));
+                for (LivingEntity enemy : ctx().enemiesNear(owner, sample, SPEAR_REACH)) {
+                    if (!hit.add(enemy.getUniqueId())) {
+                        continue;
+                    }
+                    boolean struck = land(enemy, damage);
+                    pierce(enemy, direction, pull);
+                    // A dodged or blocked spear drags nobody along.
+                    if (pull && struck && Combat.isTargetable(ctx(), owner, enemy)) {
+                        Vector toOwner = Motion.horizontal(owner.getLocation().toVector()
+                                .subtract(enemy.getLocation().toVector()));
+                        Motion.push(enemy, toOwner.multiply(RETURN_PULL).setY(RETURN_LIFT), MAX_VELOCITY);
+                    }
+                }
+            }
+        }
+
+        private void move() {
+            Location place = placement();
+            Aim aim = Aim.of(heading);
+            for (int i = 0; i < parts.length; i++) {
+                BlockDisplay part = parts[i];
+                if (part.isValid()) {
+                    Displays.moveTo(part, place);
+                    Displays.animate(part, pose(SPEAR_PARTS[i], 1f, spin, aim), 1);
+                }
+            }
+        }
+
+        /** Where the displays stand (the spear's center) for the current point and heading. */
+        private Location placement() {
+            return point.toLocation(world).subtract(heading.clone().multiply(POINT));
+        }
+
+        private void catchSpear(Player owner, boolean caught) {
+            flight = Flight.DONE;
+            Location at = point.toLocation(world);
+            for (BlockDisplay part : parts) {
+                if (part.isValid()) {
+                    Displays.shrinkAway(ctx(), owner, part, 3);
+                }
+            }
+            if (caught) {
+                Location hand = owner.getLocation().add(0, owner.getHeight() * 0.6, 0);
+                Vfx.ring(ctx(), hand, 0.5, 10, 0, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), false);
+                Vfx.cloud(ctx(), hand, Particle.SPLASH, 8, 0.2, 0.1, null, false);
+                Fx.sound(hand, Sound.ITEM_TRIDENT_RETURN, 0.8f, 1.4f + Fx.jitter(0.1f));
+                Fx.sound(hand, Sound.ITEM_ARMOR_EQUIP_CHAIN, 0.6f, 1.3f + Fx.jitter(0.1f));
+                int hits = outHits.size() + backHits.size();
+                if (hits > 0) {
+                    owner.sendActionBar(Text.mm("<" + COLOR_TAG + ">➶ 창 투척</" + COLOR_TAG + "> <gray>" + hits
+                            + "회 적중</gray>"));
+                }
+            } else {
+                Vfx.cloud(ctx(), at, Particle.DUST_COLOR_TRANSITION, 8, 0.3, 0, PALETTE.fade(0.8f), false);
+            }
+        }
+
+        void finish() {
+            if (flight != Flight.DONE) {
+                catchSpear(player(), false);
+            }
+        }
+
+        /** Sea-green light along the flight, silver motes and a little spray. */
+        private void flightTrail(Location from, Location to) {
+            Vfx.line(ctx(), from, to, 4, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.7f), false);
+            Location back = to.clone().subtract(heading.clone().multiply(1.6));
+            Vfx.dot(back, Particle.DUST, SILVER_DUST, false);
+            if (phaseTicks % 2 == 0) {
+                Vfx.cloud(ctx(), to, Particle.SPLASH, 3, 0.1, 0.05, null, false);
+            }
+            Vfx.dot(to, Particle.END_ROD, null, false);
+        }
+
+        private void wallHit(Location at, RayTraceResult wall) {
+            if (wall.getHitBlock() != null) {
+                BlockData data = wall.getHitBlock().getBlockData();
+                at.getWorld().spawnParticle(Particle.BLOCK, at, Vfx.n(ctx(), 12), 0.15, 0.15, 0.15, 0.1, data);
+            }
+            Vfx.cloud(ctx(), at, Particle.CRIT, 8, 0.15, 0.25, null, false);
+            Fx.sound(at, Sound.ITEM_TRIDENT_HIT_GROUND, 1.0f, 1.0f + Fx.jitter(0.1f));
+        }
+    }
+
+    /** A pierced enemy: a spray of sea-green light out of its back, sparks and the spear's hit. */
+    private void pierce(LivingEntity enemy, Vector direction, boolean returning) {
+        Location body = Fx.body(enemy);
+        Vfx.burst(ctx(), body, PALETTE, 0.5, Particle.CRIT, false);
+        Location exit = body.clone().add(direction.clone().multiply(0.4));
+        int motes = Vfx.n(ctx(), 5);
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        for (int i = 0; i < motes; i++) {
+            Vector spray = direction.clone().multiply(random.nextDouble(0.8, 1.6))
+                    .add(new Vector(random.nextGaussian() * 0.35, random.nextGaussian() * 0.35,
+                            random.nextGaussian() * 0.35));
+            Vfx.trail(exit, exit.clone().add(spray), i % 2 == 0 ? PALETTE.core() : PALETTE.body(), 5, false);
+        }
+        Vfx.cloud(ctx(), body, Particle.SPLASH, 6, 0.2, 0.1, null, false);
+        Fx.sound(body, Sound.ITEM_TRIDENT_HIT, 1.0f, (returning ? 1.3f : 1.0f) + Fx.jitter(0.1f));
+        Fx.sound(body, Sound.ITEM_SPEAR_HIT, 0.6f, 1.2f + Fx.jitter(0.1f));
+    }
+
+    // ------------------------------------------------------------------ ultimate: piercing charge
+
+    @Override
+    public ActivationResult onUltimate() {
+        Player owner = player();
+        if (owner.isInsideVehicle()) {
+            return ActivationResult.fail("탈것에 탄 채로는 돌격할 수 없습니다");
+        }
+        if (charging) {
+            return ActivationResult.fail("이미 돌격 중입니다");
+        }
+        Location start = owner.getLocation();
+        Vector direction = Motion.horizontalFacing(start);
+        double distance = Spots.arenaReach(ctx(), start, direction, Math.max(1, params().num("ult_distance")));
+        if (distance < 2) {
+            return ActivationResult.fail("자기장 밖으로는 돌격할 수 없습니다");
+        }
+        if (!Spots.hasGroundBelow(start.getWorld(), start.clone().add(direction.clone().multiply(VOID_LOOKAHEAD)))) {
+            return ActivationResult.fail("앞이 낭떠러지입니다");
+        }
+        charging = true;
+        // The client runs the steps the same whatever the ping, so the time the charge gets does not depend on it.
+        long budget = (long) Math.ceil(distance / CHARGE_SPEED) + CHARGE_SLACK_TICKS;
+        Charge charge = new Charge(direction, distance, budget);
+        // The wind-up, the launch with the first step, the steps, and one run more that only skewers and stops.
+        Loop.repeat(ctx(), owner, 0, 1, WINDUP_TICKS + budget + 1, charge, charge::end);
+        return ActivationResult.success();
+    }
+
+    /** Ticks the server sees the owner's movement late: one round trip, capped (ping can read 0 after joining). */
+    private static long lagTicks(Player player) {
+        return Math.min(MAX_LAG_TICKS, (long) Math.ceil(Math.max(0, player.getPing()) / MILLIS_PER_TICK));
+    }
+
+    /**
+     * One 일섬 돌격: the wind-up with its lane marker, the charge carrying skewered enemies, and the hurl. The lancer's
+     * client runs every velocity step sent to it at once, while the server hears where it is only a round trip later.
+     * So everything the charge meets is met where the lancer really is, reckoned from the launch along the steps sent
+     * the way the client runs them ({@link Reckoning}: it slides along a wall, steps up stairs, crawls through a
+     * cobweb), and the charge is measured on that run. The spear point skewers there, never through a wall, the
+     * skewered enemies ride ahead of it (each steered from where its own client is reckoned to be, not from its
+     * lagging server position) and the hurl goes off where the lancer stops.
+     */
+    private final class Charge implements LongPredicate {
+
+        private final Vector direction;
+        /** The charge's length, measured again from where it actually starts (the lancer may walk while aiming). */
+        private double distance;
+        /** Charge ticks that may send a step; the tick after them ends the charge wherever it got to. */
+        private final long budget;
+        private final double damage = params().num("ult_damage");
+        private final double flingDamage = params().num("ult_fling_damage");
+        private final List<Rider> skewered = new ArrayList<>();
+        private final Set<UUID> struck = new HashSet<>();
+        private final BlockDisplay[] spear = new BlockDisplay[SPEAR_PARTS.length];
+        /** The charge spear points along the charge (its facing lives in the parts' transformations). */
+        private final Aim aim;
+        private final long lag = lagTicks(player());
+        private @Nullable Location start;
+        /** Where the lancer's client is (from the launch on): it has already run every step sent. */
+        private @Nullable Reckoning client;
+        private Location last;
+        private int stalls;
+        private boolean moved;
+        private boolean ended;
+        /** The charge pulled up at the edge of the void. */
+        private boolean edge;
+        /** The arena border cut the charge short: it ends dead still at the border, without a glide. */
+        private boolean bordered;
+        /** The charge ran into a wall: it ends there, without a glide. */
+        private boolean wall;
+        /** Something else moved the lancer far off its path (a knockback, a teleport): it ends there, still. */
+        private boolean lost;
+        /** Where the lancer stops, once the charge is over. */
+        private @Nullable Location stop;
+
+        Charge(Vector direction, double distance, long budget) {
+            this.direction = direction;
+            this.distance = distance;
+            this.budget = budget;
+            this.aim = Aim.of(direction);
+            Player owner = player();
+            this.last = owner.getLocation();
+            long lifetime = WINDUP_TICKS + budget + 30;
+            Location at = spearSpot(owner, -0.6);
+            for (int i = 0; i < SPEAR_PARTS.length; i++) {
+                spear[i] = Displays.block(ctx(), owner, at, SPEAR_PARTS[i].material().createBlockData(),
+                        pose(SPEAR_PARTS[i], 0.3f, 0, aim), lifetime);
+                spear[i].setTeleportDuration(1);
+            }
+            windupCast(owner);
+        }
+
+        @Override
+        public boolean test(long tick) {
+            Player owner = player();
+            if (tick < WINDUP_TICKS) {
+                windup(owner, tick);
+                return true;
+            }
+            if (start == null) {
+                launch(owner);
+            }
+            return charge(owner, tick - WINDUP_TICKS);
+        }
+
+        /**
+         * The lane lights up from the lancer's feet (wherever it stands now) to the end of the charge; the spear is
+         * drawn back.
+         */
+        private void windup(Player owner, long tick) {
+            double progress = Math.min(1.0, (tick + 1) / (double) (WINDUP_TICKS - 2));
+            Location from = owner.getLocation().add(0, 0.1, 0);
+            Location to = from.clone().add(direction.clone().multiply(distance * progress));
+            Vfx.line(ctx(), from, to, 2.5, Particle.DUST_COLOR_TRANSITION, PALETTE.glow(0.9f), true);
+            Vector side = new Vector(-direction.getZ(), 0, direction.getX()).multiply(0.6);
+            if (tick % 2 == 0) {
+                Vfx.line(ctx(), from.clone().add(side), to.clone().add(side), 1.2, Particle.DUST, SILVER_DUST, true);
+                Vfx.line(ctx(), from.clone().subtract(side), to.clone().subtract(side), 1.2, Particle.DUST,
+                        SILVER_DUST, true);
+            }
+            if (progress >= 1.0) {
+                Vfx.ring(ctx(), to, 1.0, 14, tick * 0.3, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.0f), true);
+            }
+            double drawn = Math.min(1.0, (tick + 1) / (double) WINDUP_TICKS);
+            double pull = -0.6 - 0.35 * drawn;
+            float scale = 0.3f + (CHARGE_SPEAR_SCALE - 0.3f) * (float) Math.min(1.0, (tick + 1) / 4.0);
+            placeSpear(owner, pull, scale, tick * 4f);
+            Location hand = spearSpot(owner, pull);
+            Vfx.trail(hand.clone().add(direction.clone().multiply(2.5)), hand, PALETTE.core(), 4, false);
+        }
+
+        /** The charge sets off from wherever the lancer stands now; its first step goes out in the same run. */
+        private void launch(Player owner) {
+            Location begin = owner.getLocation();
+            start = begin;
+            last = begin;
+            client = new Reckoning(owner, begin);
+            // Still never past the arena border, from where the charge really begins.
+            distance = Spots.arenaReach(ctx(), begin, direction, distance);
+            bordered = distance < Math.max(1, params().num("ult_distance")) - 1.0E-6;
+            Location chest = begin.clone().add(0, owner.getHeight() * 0.55, 0);
+            World world = chest.getWorld();
+            world.spawnParticle(Particle.FLASH, chest, 1, 0, 0, 0, 0, PALETTE.core(), true);
+            world.spawnParticle(Particle.GUST_EMITTER_SMALL, begin.clone().add(0, 0.2, 0), 1, 0, 0, 0, 0, null, true);
+            Vfx.cloud(ctx(), chest, Particle.SPLASH, 24, 0.5, 0.3, null, true);
+            Fx.sound(begin, Sound.ITEM_TRIDENT_RIPTIDE_3, 1.2f, 1.0f + Fx.jitter(0.05f));
+            Fx.sound(begin, Sound.ITEM_SPEAR_LUNGE_3, 1.0f, 0.9f + Fx.jitter(0.05f));
+            Fx.sound(begin, Sound.ENTITY_BREEZE_WIND_BURST, 0.8f, 0.8f + Fx.jitter(0.05f));
+        }
+
+        private boolean charge(Player owner, long tick) {
+            Location begin = start;
+            Reckoning reckoning = client;
+            Location now = owner.getLocation();
+            if (begin == null || reckoning == null || !now.getWorld().equals(begin.getWorld())) {
+                return false;
+            }
+            if (reckoning.lost(now)) {
+                lost = true;
+                return stopAt(now);
+            }
+            if (!moved && horizontalDistance(begin, now) >= STALL_EPSILON) {
+                moved = true;
+            }
+            // Its client has already run every step sent: the spear point skewers what it meets there, never through a
+            // wall (the point reaches past the body, and a wall the lancer stops at is right in front of it).
+            Location reached = reckoning.at();
+            Location point = reached.clone().add(0, owner.getHeight() * 0.55, 0)
+                    .add(direction.clone().multiply(SKEWER_AHEAD));
+            for (LivingEntity enemy : ctx().enemiesNear(owner, point, SKEWER_REACH)) {
+                if (!struck.contains(enemy.getUniqueId()) && inSight(owner, reached, enemy)) {
+                    struck.add(enemy.getUniqueId());
+                    skewer(owner, enemy);
+                }
+            }
+            if (reckoning.travelled() >= distance - 0.2 || tick >= budget) {
+                return stopAt(reached);
+            }
+            if (moved || tick >= CHARGE_GRACE_TICKS + lag) {
+                stalls = horizontalDistance(last, now) < STALL_EPSILON ? stalls + 1 : 0;
+                if (stalls >= STALL_LIMIT) {
+                    // Stopped by something the reckoning cannot see: the server has seen it stand still there.
+                    wall = true;
+                    return stopAt(now);
+                }
+            }
+            last = now;
+            // The last step is only as long as what is left, so the charge ends exactly at its end.
+            double step = Math.min(CHARGE_SPEED, distance - reckoning.travelled());
+            Vector velocity = direction.clone().multiply(step).setY(CHARGE_SINK);
+            Vector move = reckoning.next(velocity);
+            double progress = Math.hypot(move.getX(), move.getZ());
+            if (progress < STALL_EPSILON) {
+                // Flush against a wall (or anything too high to step up onto): the client would not get anywhere.
+                wall = true;
+                return stopAt(reached);
+            }
+            // Never into the void (or a lava pit): the charge pulls up at the edge, looking ahead along where this
+            // step carries the lancer (the server sees it behind that).
+            Location ahead = reached.clone().add(move.clone().setY(0).multiply(VOID_LOOKAHEAD / progress));
+            if (!Spots.hasGroundBelow(now.getWorld(), ahead)) {
+                edge = true;
+                return stopAt(reached);
+            }
+            owner.setVelocity(velocity);
+            owner.setFallDistance(0);
+            reckoning.advance(move);
+
+            carry(owner, reached, move);
+            placeSpear(owner, 0.9 + CHARGE_SPEED, CHARGE_SPEAR_SCALE, WINDUP_TICKS * 4f + tick * 20f);
+            riptide(owner, now, tick);
+            return true;
+        }
+
+        /** Ends the charge with the lancer standing {@code at}. */
+        private boolean stopAt(Location at) {
+            stop = at.clone();
+            return false;
+        }
+
+        private void skewer(Player owner, LivingEntity enemy) {
+            // Only a hit that landed puts the enemy on the spear: a dodge or a shield slips past it.
+            if (!land(enemy, damage) || !Combat.isTargetable(ctx(), owner, enemy)) {
+                return;
+            }
+            skewered.add(new Rider(enemy));
+            pierce(enemy, direction, false);
+            Fx.sound(Fx.body(enemy), Sound.ENTITY_GOAT_RAM_IMPACT, 0.8f, 1.2f + Fx.jitter(0.1f));
+        }
+
+        /**
+         * Keeps every skewered enemy riding on the spear ahead of the lancer, which stands {@code reached} and makes
+         * {@code move} this tick; one stopped by a wall (or knocked off the spear) slips off.
+         */
+        private void carry(Player owner, Location reached, Vector move) {
+            Vector pace = move.clone().setY(0);
+            for (int i = skewered.size() - 1; i >= 0; i--) {
+                Rider rider = skewered.get(i);
+                LivingEntity enemy = rider.body;
+                if (!Combat.isTargetable(ctx(), owner, enemy) || !enemy.getWorld().equals(reached.getWorld())
+                        || rider.lost()) {
+                    skewered.remove(i);
+                    continue;
+                }
+                Location spot = reached.clone().add(direction.clone().multiply(CARRY_AHEAD + i * CARRY_SPACING));
+                Vector offset = spot.toVector().subtract(rider.at().toVector());
+                if (offset.length() > CARRY_LEASH) {
+                    skewered.remove(i);
+                    continue;
+                }
+                Vector velocity = pace.clone().add(offset.multiply(CARRY_PULL));
+                velocity.setY(Math.max(0.02, Math.min(0.3, velocity.getY())));
+                rider.push(velocity);
+                Vfx.dot(Fx.body(enemy), Particle.DUST_COLOR_TRANSITION, PALETTE.fade(1.0f), false);
+            }
+        }
+
+        /** The end of the charge: everyone on the spear is hurled forward and up. */
+        void end() {
+            if (ended) {
+                return;
+            }
+            ended = true;
+            charging = false;
+            Player owner = player();
+            Location now = owner.getLocation();
+            Location at = stop;
+            if (at == null) {
+                // Carried off to another world, or never launched (or a failing run).
+                Reckoning reckoning = client;
+                Location begin = start;
+                at = reckoning != null && begin != null && now.getWorld().equals(begin.getWorld()) ? reckoning.at()
+                        : now;
+            }
+            owner.setVelocity(edge || bordered || wall || lost ? new Vector(0, CHARGE_SINK, 0)
+                    : direction.clone().multiply(0.2).setY(CHARGE_SINK));
+            guardLanding(owner);
+            wake(owner, at);
+            int flung = 0;
+            for (Rider rider : skewered) {
+                LivingEntity enemy = rider.body;
+                Combat.hit(ctx(), owner, enemy, flingDamage);
+                if (!Combat.isTargetable(ctx(), owner, enemy)) {
+                    continue;
+                }
+                flung++;
+                Motion.push(enemy, direction.clone().multiply(FLING_FORWARD).setY(FLING_UP), MAX_VELOCITY);
+                Vfx.burst(ctx(), Fx.body(enemy), PALETTE, 0.7, Particle.CRIT, true);
+            }
+            skewered.clear();
+            hurl(owner, at, flung);
+            if (!struck.isEmpty()) {
+                owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>➶ 일섬 돌격</b></" + COLOR_TAG + "> <gray>"
+                        + struck.size() + "명 관통</gray>"));
+            }
+        }
+
+        private void hurl(Player owner, Location at, int flung) {
+            World world = at.getWorld();
+            Location front = at.clone().add(0, owner.getHeight() * 0.55, 0).add(direction.clone().multiply(1.6));
+            world.spawnParticle(Particle.FLASH, front, 1, 0, 0, 0, 0, PALETTE.core(), true);
+            Vfx.cloud(ctx(), front, Particle.SPLASH, 30, 0.6, 0.4, null, true);
+            float yaw = yawOf(direction);
+            Loop.repeat(ctx(), owner, 0, 1, 5, tick -> {
+                double r = 1.0 + tick * 0.8;
+                Vfx.arc(ctx(), front, r, yaw, 120 - tick * 10, 10 + (int) tick * 3, Particle.DUST_COLOR_TRANSITION,
+                        PALETTE.glow(1.3f), true);
+                Vfx.arc(ctx(), at.clone().add(0, 0.15, 0), r, yaw, 110, 8 + (int) tick * 2, Particle.CLOUD, null,
+                        false);
+                return true;
+            });
+            Fx.sound(front, Sound.ITEM_MACE_SMASH_GROUND_HEAVY, 0.8f, 1.2f + Fx.jitter(0.1f));
+            Fx.sound(front, Sound.ENTITY_PLAYER_ATTACK_KNOCKBACK, 1.0f, 0.8f + Fx.jitter(0.05f));
+            if (flung > 0) {
+                Fx.sound(front, Sound.ITEM_TRIDENT_THUNDER, 0.5f, 1.8f);
+                Fx.sound(front, Sound.ENTITY_GOAT_RAM_IMPACT, 1.0f, 0.8f + Fx.jitter(0.1f));
+            }
+            // The spear thrusts once more where the lancer stops and dissolves into spray.
+            for (int i = 0; i < spear.length; i++) {
+                BlockDisplay part = spear[i];
+                if (!part.isValid()) {
+                    continue;
+                }
+                Displays.moveTo(part, spearSpot(owner, at, 1.6));
+                Displays.animate(part, pose(SPEAR_PARTS[i], CHARGE_SPEAR_SCALE * 1.2f, 0, aim), 3);
+                ctx().runLater(owner, 4, () -> {
+                    if (part.isValid()) {
+                        Displays.shrinkAway(ctx(), owner, part, 5);
+                    }
+                });
+            }
+        }
+
+        /** Afterglow: the charged lane fades out in sea-green motes and rising spray. */
+        private void wake(Player owner, Location end) {
+            Location from = start;
+            if (from == null || !from.getWorld().equals(end.getWorld())) {
+                return;
+            }
+            Location a = from.clone().add(0, 0.15, 0);
+            Location b = end.clone().add(0, 0.15, 0);
+            Vfx.line(ctx(), a, b, 2, Particle.DUST_COLOR_TRANSITION, PALETTE.fade(0.9f), false);
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            Vector path = b.toVector().subtract(a.toVector());
+            Loop.repeat(ctx(), owner, 2, 3, 5, run -> {
+                for (int i = 0; i < Vfx.n(ctx(), 3); i++) {
+                    Location mote = a.clone().add(path.clone().multiply(random.nextDouble()));
+                    Vfx.trail(mote, mote.clone().add(0, random.nextDouble(0.6, 1.4), 0),
+                            i % 2 == 0 ? PALETTE.body() : SILVER, 12, false);
+                }
+                return true;
+            });
+        }
+
+        private void windupCast(Player owner) {
+            Location at = owner.getLocation();
+            Location chest = at.clone().add(0, owner.getHeight() * 0.55, 0);
+            Fx.sound(at, Sound.ITEM_CROSSBOW_QUICK_CHARGE_3, 1.0f, 0.7f);
+            Fx.sound(at, Sound.ITEM_TRIDENT_RIPTIDE_1, 0.8f, 0.7f + Fx.jitter(0.05f));
+            Fx.sound(at, Sound.ITEM_ARMOR_EQUIP_CHAIN, 1.0f, 0.8f);
+            Vfx.helix(ctx(), at, 0.7, owner.getHeight() + 0.4, 1.5, 2, 12, 0, Particle.DUST_COLOR_TRANSITION,
+                    PALETTE.glow(1.0f), true);
+            Vfx.cloud(ctx(), chest, Particle.SPLASH, 16, 0.4, 0.2, null, true);
+            owner.sendActionBar(Text.mm("<" + COLOR_TAG + "><b>➶ 일섬 돌격</b></" + COLOR_TAG + ">"));
+        }
+
+        /** A spiral of sea-green light and spray around the lancer, the riptide that carries it. */
+        private void riptide(Player owner, Location now, long tick) {
+            World world = now.getWorld();
+            double height = owner.getHeight();
+            Location axis = now.clone().add(0, height * 0.55, 0);
+            Vector side = new Vector(-direction.getZ(), 0, direction.getX());
+            Vector up = new Vector(0, 1, 0);
+            int points = Vfx.n(ctx(), 5);
+            for (int strand = 0; strand < 3; strand++) {
+                for (int k = 0; k < points; k++) {
+                    double along = 1.2 - k * 0.45;
+                    double angle = tick * 0.9 + k * 0.6 + strand * TAU / 3;
+                    double radius = 0.75 + k * 0.05;
+                    Location at = axis.clone().add(direction.clone().multiply(along))
+                            .add(side.clone().multiply(Math.cos(angle) * radius))
+                            .add(up.clone().multiply(Math.sin(angle) * radius));
+                    Vfx.dot(at, Particle.DUST_COLOR_TRANSITION,
+                            strand == 0 ? PALETTE.glow(1.0f) : PALETTE.fade(0.9f), false);
+                }
+            }
+            ThreadLocalRandom random = ThreadLocalRandom.current();
+            int streaks = Vfx.n(ctx(), 2);
+            for (int i = 0; i < streaks; i++) {
+                Location from = now.clone().add(side.clone().multiply(random.nextDouble(-0.5, 0.5)))
+                        .add(0, random.nextDouble(0.2, height), 0).add(direction.clone().multiply(0.5));
+                Vfx.trail(from, from.clone().subtract(direction.clone().multiply(2.2)), i == 0 ? SILVER
+                        : PALETTE.core(), 5, false);
+            }
+            world.spawnParticle(Particle.SPLASH, now.clone().add(0, 0.3, 0), Vfx.n(ctx(), 4), 0.3, 0.1, 0.3, 0.1);
+        }
+
+        /** Moves the charge spear {@code lead} blocks ahead of the chest, at {@code scale}, turned {@code roll}. */
+        private void placeSpear(Player owner, double lead, float scale, float roll) {
+            Location at = spearSpot(owner, lead);
+            for (int i = 0; i < spear.length; i++) {
+                BlockDisplay part = spear[i];
+                if (part.isValid()) {
+                    Displays.moveTo(part, at);
+                    Displays.animate(part, pose(SPEAR_PARTS[i], scale, roll % 360f, aim), 1);
+                }
+            }
+        }
+
+        /** The charge spear's center: at the lancer's side, {@code lead} blocks ahead of its chest. */
+        private Location spearSpot(Player owner, double lead) {
+            return spearSpot(owner, owner.getLocation(), lead);
+        }
+
+        /** The charge spear's center for the lancer standing at {@code feet}. */
+        private Location spearSpot(Player owner, Location feet, double lead) {
+            Vector side = new Vector(-direction.getZ(), 0, direction.getX()).multiply(-0.35);
+            return feet.clone().add(0, owner.getHeight() * 0.5, 0).add(side).add(direction.clone().multiply(lead));
+        }
+    }
+
+    /** True if no block stands between the lancer at {@code feet} and {@code enemy} (chest to chest, eye to eye). */
+    private static boolean inSight(Player owner, Location feet, LivingEntity enemy) {
+        return Spots.clearPath(feet.clone().add(0, owner.getHeight() * 0.5, 0), Fx.body(enemy))
+                || Spots.clearPath(feet.clone().add(0, owner.getEyeHeight(), 0), enemy.getEyeLocation());
+    }
+
+    /**
+     * An enemy on the spear. A player is steered from where its client is reckoned to be ({@link Reckoning}): its
+     * position on the server trails its client by its ping, and steering by that would keep pulling a rider that is
+     * already there, throwing it blocks past the spear point. Anything else the server moves itself.
+     */
+    private static final class Rider {
+        final LivingEntity body;
+        final @Nullable Reckoning client;
+
+        Rider(LivingEntity body) {
+            this.body = body;
+            this.client = body instanceof Player player ? new Reckoning(player, player.getLocation()) : null;
+        }
+
+        /** Where the rider is. */
+        Location at() {
+            Reckoning reckoning = client;
+            return reckoning != null ? reckoning.at() : body.getLocation();
+        }
+
+        /** True if something else moved the rider far off the spear (a knockback, a teleport). */
+        boolean lost() {
+            Reckoning reckoning = client;
+            return reckoning != null && reckoning.lost(body.getLocation());
+        }
+
+        /** Sends {@code velocity} to the rider; a player's reckoning follows what was actually sent. */
+        void push(Vector velocity) {
+            Reckoning reckoning = client;
+            if (Motion.push(body, velocity, MAX_VELOCITY) && reckoning != null) {
+                Vector sent = Motion.clamp(velocity.clone().multiply(Motion.knockbackFactor(body)), MAX_VELOCITY);
+                reckoning.advance(reckoning.next(sent));
+            }
+        }
+    }
+
+    /**
+     * Where a player's client is while it follows the velocities sent to it, one every tick. The server hears where
+     * the client is only a round trip late, but the client moves by each velocity as soon as it arrives (with a new
+     * one every tick nothing else moves it), so it is reckoned from where it set off, moving the way the client
+     * moves: y first, then the longer horizontal axis first, each stopped flush against a block (sliding along it on
+     * the other axis), stepping up onto anything up to {@link #STEP_HEIGHT} high while on the ground, held back on
+     * ladders and vines, and slowed down on the move after it went through a cobweb, a berry bush or powder snow.
+     */
+    private static final class Reckoning {
+        /** Samples of a sweep lie closer together than the body is wide, so no block between two is missed. */
+        private static final double SWEEP_SAMPLE = 0.5;
+        private static final int SWEEP_ITERATIONS = 12;
+        /** A client on a ladder or a vine moves at most this fast along each horizontal axis. */
+        private static final double CLIMB_SPEED = 0.15;
+        /** The blocks a body touches are looked up this far inside its box. */
+        private static final double TOUCH_INSET = 0.01;
+
+        private final World world;
+        private final double width;
+        private final double height;
+        private final Location at;
+        /** Every place the client was reckoned to be, to compare the lagging server position with. */
+        private final List<Vector> trail = new ArrayList<>();
+        /** How much a block the last move went through slows the next move down (x, y and z), if any. */
+        private @Nullable Vector stuck;
+        private double travelled;
+
+        Reckoning(LivingEntity body, Location from) {
+            this.world = from.getWorld();
+            this.width = body.getWidth();
+            this.height = body.getHeight();
+            this.at = from.clone();
+            trail.add(at.toVector());
+        }
+
+        /** Where the client is. */
+        Location at() {
+            return at.clone();
+        }
+
+        /** How far the client has run, along the ground. */
+        double travelled() {
+            return travelled;
+        }
+
+        /** The move the client makes with {@code velocity} from where it is; {@link #advance} makes it. */
+        Vector next(Vector velocity) {
+            Vector v = velocity.clone();
+            if (climbable()) {
+                v.setX(Math.clamp(v.getX(), -CLIMB_SPEED, CLIMB_SPEED)).setY(Math.max(v.getY(), -CLIMB_SPEED))
+                        .setZ(Math.clamp(v.getZ(), -CLIMB_SPEED, CLIMB_SPEED));
+            }
+            Vector slowdown = stuck;
+            if (slowdown != null) {
+                v.multiply(slowdown);
+            }
+            if (!fits(at)) {
+                return v; // already inside a block (a shape the box check misreads): only the velocity is known
+            }
+            Vector moved = collide(at, v.getX(), v.getY(), v.getZ());
+            boolean blocked = moved.getX() != v.getX() || moved.getZ() != v.getZ();
+            if (blocked && v.getY() < 0 && moved.getY() != v.getY()) {
+                // On the ground against a block: like the client, up by as much as a step, across and back down.
+                Vector climbed = collide(at, v.getX(), STEP_HEIGHT, v.getZ());
+                climbed.setY(climbed.getY() + sweep(at.clone().add(climbed), 1, v.getY() - climbed.getY()));
+                if (horizontalSquared(climbed) > horizontalSquared(moved)) {
+                    moved = climbed;
+                }
+            }
+            return moved;
+        }
+
+        /** Makes a move found by {@link #next}. */
+        void advance(Vector move) {
+            Location from = at.clone();
+            at.add(move);
+            stuck = slowdown(from, at);
+            travelled += Math.hypot(move.getX(), move.getZ());
+            trail.add(at.toVector());
+        }
+
+        /** True if the server sees the body farther than {@link #STRAY_DISTANCE} from every place it was reckoned. */
+        boolean lost(Location seen) {
+            if (!world.equals(seen.getWorld())) {
+                return true;
+            }
+            Vector place = seen.toVector();
+            for (Vector reckoned : trail) {
+                if (reckoned.distanceSquared(place) <= STRAY_DISTANCE * STRAY_DISTANCE) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** The body's move from {@code from} by (x, y, z): y first, then the longer horizontal axis, like vanilla. */
+        private Vector collide(Location from, double x, double y, double z) {
+            Location to = from.clone();
+            double dy = sweep(to, 1, y);
+            to.setY(to.getY() + dy);
+            double dx;
+            double dz;
+            if (Math.abs(x) < Math.abs(z)) {
+                dz = sweep(to, 2, z);
+                to.setZ(to.getZ() + dz);
+                dx = sweep(to, 0, x);
+            } else {
+                dx = sweep(to, 0, x);
+                to.setX(to.getX() + dx);
+                dz = sweep(to, 2, z);
+            }
+            return new Vector(dx, dy, dz);
+        }
+
+        /** How far the body gets from {@code from} along one axis (0 x, 1 y, 2 z) towards {@code delta}. */
+        private double sweep(Location from, int axis, double delta) {
+            double length = Math.abs(delta);
+            if (length < 1.0E-9) {
+                return delta;
+            }
+            int samples = (int) Math.ceil(length / SWEEP_SAMPLE);
+            double free = 0;
+            for (int i = 1; i <= samples; i++) {
+                double reach = length * i / samples;
+                if (fits(shifted(from, axis, Math.copySign(reach, delta)))) {
+                    free = reach;
+                    continue;
+                }
+                double blocked = reach;
+                for (int k = 0; k < SWEEP_ITERATIONS; k++) {
+                    double mid = (free + blocked) / 2;
+                    if (fits(shifted(from, axis, Math.copySign(mid, delta)))) {
+                        free = mid;
+                    } else {
+                        blocked = mid;
+                    }
+                }
+                return Math.copySign(free, delta);
+            }
+            return delta;
+        }
+
+        private static Location shifted(Location from, int axis, double by) {
+            return from.clone().add(axis == 0 ? by : 0, axis == 1 ? by : 0, axis == 2 ? by : 0);
+        }
+
+        private boolean fits(Location feet) {
+            return Spots.isFree(world, feet, width, height);
+        }
+
+        /** True if the client's feet are in a ladder, a vine or anything else it climbs. */
+        private boolean climbable() {
+            int y = (int) Math.floor(at.getY() + TOUCH_INSET);
+            if (y < world.getMinHeight() || y >= world.getMaxHeight()) {
+                return false;
+            }
+            return tagged(Tag.CLIMBABLE, world.getBlockAt(at.getBlockX(), y, at.getBlockZ()).getType());
+        }
+
+        /** The strongest slowdown of the blocks the body went through moving from {@code from} to {@code to}. */
+        private @Nullable Vector slowdown(Location from, Location to) {
+            double half = width / 2 - TOUCH_INSET;
+            int minX = (int) Math.floor(Math.min(from.getX(), to.getX()) - half);
+            int maxX = (int) Math.floor(Math.max(from.getX(), to.getX()) + half);
+            int minY = Math.max(world.getMinHeight(), (int) Math.floor(Math.min(from.getY(), to.getY()) + TOUCH_INSET));
+            int maxY = Math.min(world.getMaxHeight() - 1,
+                    (int) Math.floor(Math.max(from.getY(), to.getY()) + height - TOUCH_INSET));
+            int minZ = (int) Math.floor(Math.min(from.getZ(), to.getZ()) - half);
+            int maxZ = (int) Math.floor(Math.max(from.getZ(), to.getZ()) + half);
+            Vector slowest = null;
+            for (int x = minX; x <= maxX; x++) {
+                for (int y = minY; y <= maxY; y++) {
+                    for (int z = minZ; z <= maxZ; z++) {
+                        Vector factor = slowdownOf(world.getBlockAt(x, y, z).getType());
+                        if (factor != null && (slowest == null || factor.getX() < slowest.getX())) {
+                            slowest = factor;
+                        }
+                    }
+                }
+            }
+            return slowest;
+        }
+
+        /** How much the client's move is scaled after it went through a block of {@code type} (vanilla). */
+        private static @Nullable Vector slowdownOf(Material type) {
+            return switch (type) {
+                case COBWEB -> new Vector(0.25, 0.05, 0.25);
+                case SWEET_BERRY_BUSH -> new Vector(0.8, 0.75, 0.8);
+                case POWDER_SNOW -> new Vector(0.9, 1.5, 0.9);
+                default -> null;
+            };
+        }
+
+        private static boolean tagged(@Nullable Tag<Material> tag, Material type) {
+            return tag != null && tag.isTagged(type);
+        }
+
+        private static double horizontalSquared(Vector move) {
+            return move.getX() * move.getX() + move.getZ() * move.getZ();
+        }
+    }
+
+    /**
+     * Keeps the owner's fall distance at zero until it stands on the ground or swims (at most
+     * {@link #LANDING_GRACE_TICKS}), so a charge that ran off a ledge never turns into fall damage. A loop of its
+     * own (no hooks), so a borrowed charge is protected too.
+     */
+    private void guardLanding(Player owner) {
+        int token = ++fallGuardToken;
+        Loop.repeat(ctx(), owner, 0, 1, LANDING_GRACE_TICKS, run -> {
+            if (token != fallGuardToken) {
+                return false;
+            }
+            owner.setFallDistance(0);
+            return run < 2 || (!Motion.isGrounded(owner) && !owner.isInWater());
+        });
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    /**
+     * Deals a spear hit and tells whether it landed (nothing cancelled it). A charge borrowed by the gambler never
+     * hears {@link #onDamageDealt}; it counts every hit on a target that is still standing as landed.
+     */
+    private boolean land(LivingEntity target, double damage) {
+        if (!(damage > 0) || !granted) {
+            Combat.hit(ctx(), player(), target, damage);
+            return Combat.isTargetable(ctx(), player(), target);
+        }
+        pendingTarget = target;
+        landed = false;
+        try {
+            Combat.hit(ctx(), player(), target, damage);
+        } finally {
+            pendingTarget = null;
+        }
+        return landed;
+    }
+
+    /** One spear part at {@code scale}, rolled {@code roll} degrees about the spear's length, along {@code aim}. */
+    private static Transformation pose(Part part, float scale, float roll, Aim aim) {
+        return aim.box(part.offset() * scale, part.width() * scale, part.thickness() * scale, part.length() * scale,
+                (roll + part.twist()) % 360f);
+    }
+
+    /**
+     * A direction as Minecraft yaw and pitch (degrees), for display transformations: the displays themselves keep
+     * yaw and pitch 0 (their own rotation would turn the model on top of its transformation, see
+     * {@link Displays#moveTo}), so the spear carries its facing in its transformation.
+     */
+    private record Aim(float yaw, float pitch) {
+
+        /** The yaw and pitch {@code direction} points along (as {@link Location#setDirection}), 0/0 for none. */
+        static Aim of(Vector direction) {
+            double x = direction.getX();
+            double z = direction.getZ();
+            double horizontal = Math.sqrt(x * x + z * z);
+            if (!(direction.lengthSquared() > 1.0E-8) || !Double.isFinite(direction.lengthSquared())) {
+                return new Aim(0, 0);
+            }
+            if (horizontal < 1.0E-9) {
+                return new Aim(0, direction.getY() > 0 ? -90 : 90);
+            }
+            return new Aim((float) Math.toDegrees(Math.atan2(-x, z)),
+                    (float) Math.toDegrees(Math.atan(-direction.getY() / horizontal)));
+        }
+
+        /**
+         * A block display box of {@code (sx, sy, sz)} whose local +z points along this aim, rolled {@code roll} degrees
+         * about it and centered {@code forward} blocks along it from the display's origin.
+         */
+        Transformation box(float forward, float sx, float sy, float sz, float roll) {
+            Vector3f offset = new Quaternionf().rotateY((float) Math.toRadians(-yaw))
+                    .rotateX((float) Math.toRadians(pitch)).transform(new Vector3f(0, 0, forward));
+            return Displays.transform(offset.x(), offset.y(), offset.z(), sx, sy, sz, yaw, pitch, roll);
+        }
+    }
+
+    private static float yawOf(Vector direction) {
+        return (float) Math.toDegrees(Math.atan2(-direction.getX(), direction.getZ()));
+    }
+
+    private static double horizontalDistance(Location a, Location b) {
+        return Math.hypot(a.getX() - b.getX(), a.getZ() - b.getZ());
+    }
+}

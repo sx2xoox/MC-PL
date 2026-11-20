@@ -1,0 +1,88 @@
+package io.github.sx2xoox.speedrunbot.server;
+
+import com.mojang.authlib.GameProfile;
+import net.minecraft.block.BlockState;
+import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.network.ServerPlayerInteractionManager;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.math.BlockPos;
+
+/**
+ * A real {@link ServerPlayerEntity} without a client. A normal server player is moved by its client's packets; this
+ * one runs the same player physics on the server ({@code playerTick} -> {@code LivingEntity#tickMovement} -> travel)
+ * from the inputs the bot sets each tick (forward/sideways speed, jumping, sprinting, sneaking, yaw/pitch). Mining,
+ * using items, damage, hunger, inventory and portals are the vanilla code paths. Idea from Carpet mod's
+ * EntityPlayerMPFake (MIT, gnembon); written anew for 1.16.1 Yarn names.
+ */
+public final class FakePlayer extends ServerPlayerEntity {
+    private DamageSource deathSource;
+
+    private FakePlayer(MinecraftServer server, ServerWorld world, GameProfile profile) {
+        super(server, world, profile, new ServerPlayerInteractionManager(world));
+    }
+
+    public static FakePlayer join(MinecraftServer server, String name) {
+        ServerWorld world = server.getOverworld();
+        GameProfile profile = new GameProfile(PlayerEntity.getOfflinePlayerUuid(name), name);
+        FakePlayer p = new FakePlayer(server, world, profile);
+        server.getPlayerManager().onPlayerConnect(new FakeConnection(), p);
+        p.stepHeight = 0.6f; // the server sets 1.0 for players because clients send their own positions
+        return p;
+    }
+
+    @Override
+    public void tick() {
+        if (getServer().getTicks() % 5 == 0) {
+            // what the network handler does for a moving client: keep the chunk view around the player
+            networkHandler.syncWithPlayerPosition();
+            getServerWorld().getChunkManager().updateCameraPosition(this);
+        }
+        super.tick();
+    }
+
+    /**
+     * What the network handler of a real player does once per server tick, outside the worlds' entity loops: the
+     * player's own movement and status tick. Called from the server tick hook, not from {@link #tick()}: going through
+     * a nether portal removes the player from its world, which vanilla forbids while that world ticks its entities
+     * (it crashed every run that entered the nether: "Removing entity while ticking!").
+     */
+    public void networkTick() {
+        if (!removed) {
+            playerTick();
+            if (hasVehicle()) {
+                // a client's player in a boat does not fall on its own (the vehicle places it); this server-side body
+                // still runs its own gravity between the boat's placements, which must not add up to fall damage
+                fallDistance = 0;
+            }
+        }
+    }
+
+    /**
+     * What the vanilla client does each tick while shift is held in water (ClientPlayerEntity#tickMovement ->
+     * knockDownwards): the player sinks. The server never runs that client code, so the bot's body does it here.
+     */
+    public void sinkInWater() {
+        if (method_29920()) {
+            setVelocity(getVelocity().add(0.0, -0.04F, 0.0)); // LivingEntity#knockDownwards (client-only in the server jar)
+        }
+    }
+
+    /** Server players skip fall damage because the client reports falls; this player reports its own. */
+    @Override
+    protected void fall(double heightDifference, boolean onGround, BlockState landedState, BlockPos landedPosition) {
+        handleFall(heightDifference, onGround);
+    }
+
+    @Override
+    public void onDeath(DamageSource source) {
+        deathSource = source;
+        super.onDeath(source);
+    }
+
+    public DamageSource deathSource() {
+        return deathSource;
+    }
+}

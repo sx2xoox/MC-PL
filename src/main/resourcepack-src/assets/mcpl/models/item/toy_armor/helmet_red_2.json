@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "mcpl:item/toy_armor/helmet_red_2"
+  }
+}

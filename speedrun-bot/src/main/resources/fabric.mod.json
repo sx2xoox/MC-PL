@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "speedrunbot",
+  "version": "${version}",
+  "name": "Speedrun Bot",
+  "description": "Headless 1.16.1 RSG speedrun bot (fake player) with fair-play perception rules.",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["io.github.sx2xoox.speedrunbot.SpeedrunBotMod"]
+  },
+  "mixins": ["speedrunbot.mixins.json"],
+  "depends": { "fabricloader": ">=0.11", "minecraft": "1.16.1" }
+}

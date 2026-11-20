@@ -1,0 +1,173 @@
+package io.github.sx2xoox.speedrunbot.core;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * Tunable decision numbers (weights, thresholds, budgets). Every value has a code default; {@code params.json} only
+ * overrides. The tuner (tools/tune.py) searches over the keys listed in {@link #DEFAULTS} with the bounds in
+ * {@code tools/param_space.json}.
+ */
+public final class Params {
+    public static final Map<String, Double> DEFAULTS;
+
+    static {
+        Map<String, Double> d = new LinkedHashMap<>();
+        // --- wood ---
+        d.put("wood.logs", 6.0);                 // logs before crafting (table + pick + sticks + spare planks)
+        d.put("wood.maxSearchTicks", 1200.0);    // give up looking for trees after this
+        d.put("craft.spareWood", 4.0);           // keep the table when planks for a new one + this spare are missing
+        d.put("craft.tableReuseDist", 16.0);    // walk back to a known table only within this distance
+        // --- stone ---
+        d.put("stone.cobble", 12.0);             // cobble to collect (pick 3 + furnace 8 + spare)
+        d.put("stone.picks", 2.0);              // stone pickaxes crafted at once (one wears out after 131 blocks)
+        // --- descent / underground search ---
+        d.put("dig.targetY", 12.0);              // feet Y of the mining tunnel (cave lava is at y <= 10)
+        d.put("dig.oreDetour", 7.0);             // max detour (blocks) to mine a seen ore while digging
+        d.put("dig.tunnelMax", 220.0);           // give up the tunnel after this many blocks
+        d.put("dig.gravelDetour", 10.0);         // max detour for gravel (flint) while digging
+        d.put("iron.needed", 4.0);               // bucket (3) + flint and steel (1)
+        d.put("iron.seenDist", 40.0);            // walk to iron ore seen in the open this far away
+        d.put("dig.ironY", 50.0);                // feet Y of the staircase / tunnel while looking for iron
+        d.put("dig.straightDown", 1.0);          // 1 = dig a 1x1 shaft straight down (fast) above dig.straightMinY
+        d.put("dig.straightMinY", 45.0);         // below this the staircase is used (lava at y <= 10 in caves)
+        d.put("lava.shaftMinY", 13.0);
+        d.put("safety.relocate", 0.0);
+        d.put("lava.hearing", 1.0);
+        d.put("water.springs", 1.0);
+        d.put("treasure.pie", 0.0);              // 1 = ocean spawn: sweep a narrow view for the pie chart's chest slice
+        d.put("treasure.pieRange", 150.0);       // treasure columns considered (blocks from the sweep)
+        d.put("reset.ironBySec", 240.0);         // RSG reset decision: no iron by then
+        d.put("reset.waterBySec", 330.0);        // ... no water bucket by then
+        d.put("reset.portalSiteBySec", 480.0);   // ... no portal site by then
+        // --- ocean route (pie chart treasure, boat, magma ravine; design.md section 13) ---
+        d.put("ocean.minSurface", 300.0);        // seen sea-level water sources for an ocean...
+        d.put("ocean.minOpen", 50.0);            // ...of which this many open 8 blocks out in all directions (no river)
+        d.put("ocean.minDeep", 0.0);             // ...and this many sources 7+ below the surface (seen from a shore: rarely; off)
+        d.put("ocean.route", 1.0);               // 1 = an ocean spawn plays the ocean route
+        d.put("ocean.planks", 16.0);             // wood after the treasure: table, iron tools, a boat, a door
+        d.put("ocean.boatPlanks", 20.0);         // wood before a treasure across water: table, boat, door, wooden pickaxe
+        d.put("ocean.boatFirst", 1.0);           // 1 = wood and a boat right after the first sweep (the next sweeps from the sea)
+        d.put("treasure.sideDist", 40.0);        // second sweep this far to the side of the first bearing
+        d.put("ocean.sailTicks", 2400.0);        // give up looking for a magma ravine from the boat after this
+        d.put("reset.oceanOnly", 1.0);           // RSG policy: reset spawns that are not ocean / no treasure signal
+        d.put("reset.treasureBySec", 120.0);
+        d.put("reset.oceanNoTrees", 1.0);        // RSG policy: an ocean spawn with a chest bearing but no tree seen in the sweep
+        d.put("reset.ravineBySec", 240.0);
+        d.put("reset.netherBySec", 420.0);
+        d.put("route.flintLate", 1.0);           // 1 = water and lava before the flint (gravel on the way down)             // 1 = also scoop water sources open at a side (springs in cave walls)              // 1 = dig toward lava heard (sounds as a player hears them)           // 1 = walk away after two stalls at one spot (measured: no gain)           // with the water bucket the shaft goes down to here looking for lava
+        d.put("cave.radius", 24.0);              // frontier search radius in caves
+        d.put("cave.perDepth", 0.6);             // frontier cost per block away from the wanted height
+        d.put("cave.perUnknown", 0.8);           // frontier bonus per unseen cell around it
+        d.put("cave.belowSurface", 8.0);
+        d.put("cave.lavaAbove", 10.0);           // looking for lava: only caves at most this far above the lava level         // cave frontiers must be this far below the starting height
+        d.put("gravel.maxBreaks", 14.0);         // gravel to break for flint before giving up
+        // --- treasure route (shipwreck -> map -> buried treasure) ---
+        d.put("treasure.shipDist", 64.0);        // go for a shipwreck seen within this distance
+        d.put("treasure.shipTicks", 1600.0);
+        d.put("treasure.seaSources", 150.0);     // sea-level water sources seen near the spawn that count as an ocean
+        d.put("treasure.scoutTicks", 0.0);     // how long to look over the ocean for a wreck     // give up searching a wreck for chests after this
+        d.put("treasure.maxTicks", 4800.0);      // give up the whole treasure route after this
+        d.put("treasure.byPlace", 1.0);          // 1 = columns scored by agreeing sweep places (nearest first on ties)
+        d.put("treasure.nearestNext", 0.0);      // 1 = after a miss, the nearest of the equally voted columns
+        d.put("treasure.thirdSweep", 1.0);       // 1 = always a third sweep (toward the best column, off the line of the first two)
+        d.put("treasure.verify", 1.0);           // 1 = check a candidate column with the pie chart from 10-18 blocks before digging
+        d.put("treasure.verifyMax", 4.0);        // candidate columns checked at most
+        d.put("treasure.early", 1.0);            // 1 = decide before any wood: two sweeps on foot, one crossed check from above, else reset
+        d.put("treasure.earlyRange", 80.0);      // early: candidate columns only this close to the spawn (farther ones cost more than a reset)
+        d.put("treasure.earlyChecks", 1.0);      // early: candidate columns checked before giving up
+        d.put("treasure.maxDepth", 16.0);        // a treasure floor deeper than this under the water surface is skipped
+        d.put("treasure.digTicks", 900.0);       // give up one column after digging this long (the chest sits on stone/sandstone)
+        d.put("route.treasureBaseSec", 110.0);   // expected seconds to iron via the treasure route (plus the walk)
+        d.put("loot.chestDist", 20.0);           // open a chest seen this close while iron is still missing
+        // --- surface route ---
+        d.put("surface.lavaMaxDist", 72.0);      // commit to a surface lava pool seen within this distance
+        d.put("surface.scanTicks", 60.0);        // look-around ticks at spawn before choosing a route
+        // --- route selector (expected seconds model) ---
+        d.put("route.digBaseSec", 150.0);
+        d.put("route.surfaceBaseSec", 120.0);
+        d.put("route.secPerBlock", 0.22);        // walking cost (sprint ~5.6 b/s plus terrain)
+        d.put("route.ironMissingSec", 25.0);     // cost of each missing iron on the surface route
+        d.put("route.noWaterSec", 30.0);         // penalty when no water is known
+        // --- portal site ---
+        d.put("portal.approachDist", 20.0);     // walk/dig to within this distance of seen lava before choosing a site
+        d.put("portal.maxLavaDist", 9.0);
+        d.put("portal.minSources", 12.0);        // build next to a pool with at least this many seen sources...
+        d.put("portal.poolSearchTicks", 400.0);  // ...unless none was found for this long        // site must be within this distance of a lava source
+        d.put("portal.waterSearchDist", 64.0);   // max distance to walk back for water
+        // --- safety ---
+        d.put("safety.stallTicks", 220.0);       // no movement and no inventory change this long: restart the step
+        d.put("safety.lavaMargin", 1.0);         // blocks kept between feet and lava when pathing
+        d.put("safety.fleeHealth", 8.0);         // retreat from mobs below this health
+        d.put("food.eatBelow", 12.0);            // eat when food level below this (if food carried)
+        DEFAULTS = Collections.unmodifiableMap(d);
+    }
+
+    private final Map<String, Double> values = new LinkedHashMap<>(DEFAULTS);
+
+    public static Params defaults() {
+        return new Params();
+    }
+
+    public static Params load(Path file) throws IOException {
+        Params p = new Params();
+        if (file != null && Files.isRegularFile(file)) {
+            try (Reader r = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                p.merge(new JsonParser().parse(r).getAsJsonObject());
+            }
+        }
+        return p;
+    }
+
+    public static Params fromJson(String json) {
+        Params p = new Params();
+        p.merge(new JsonParser().parse(json).getAsJsonObject());
+        return p;
+    }
+
+    private void merge(JsonObject o) {
+        for (Map.Entry<String, JsonElement> e : o.entrySet()) {
+            if (e.getValue().isJsonPrimitive() && e.getValue().getAsJsonPrimitive().isNumber()) {
+                values.put(e.getKey(), e.getValue().getAsDouble());
+            }
+        }
+    }
+
+    public double get(String key) {
+        Double v = values.get(key);
+        if (v == null) {
+            throw new IllegalArgumentException("unknown param " + key);
+        }
+        return v;
+    }
+
+    public int getInt(String key) {
+        return (int) Math.round(get(key));
+    }
+
+    public Params with(String key, double value) {
+        values.put(key, value);
+        return this;
+    }
+
+    public Map<String, Double> asMap() {
+        return Collections.unmodifiableMap(values);
+    }
+
+    public String toJson() {
+        Gson g = new GsonBuilder().setPrettyPrinting().create();
+        return g.toJson(values);
+    }
+}

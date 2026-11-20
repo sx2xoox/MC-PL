@@ -1,0 +1,391 @@
+# ─────────────────────────────────────────────────────────────
+#  초능력 공성전 메시지 (MiniMessage 형식: https://docs.advntr.dev/minimessage/format)
+#  prefix 를 지정하지 않으면 messages.yml 의 prefix 를 그대로 씁니다.
+#  이 파일에 없는 키는 플러그인에 내장된 기본 문구를 사용합니다. 수정 후 /게임 리로드
+# ─────────────────────────────────────────────────────────────
+
+game:
+  name: "<gradient:#f59e0b:#ef4444><bold>초능력 공성전</bold></gradient>"
+  description:
+    - "파랑 성과 빨강 성이 두 라인의 타워를 밀고 상대 코어를 부수는 팀전 (3라운드 2선승)."
+    - "라운드마다 20분 점수전, 코어를 부수면 바로 승리. 초능력전쟁의 능력을 처음부터 모두 씁니다."
+    - "<click:suggest_command:'/게임 공성전'><hover:show_text:'<gray>클릭하여 입력'><white>/게임 공성전</white></hover></click> <gray>능력풀 <dark_gray>·</dark_gray> <white>/게임 점수</white> <gray>· <white>/게임 리롤</white> <gray>· <white>/게임 내정보"
+
+start:
+  map-not-built: "<red>공성전 맵이 아직 지어지지 않았습니다. <white>/게임 맵 <id></white> 로 먼저 지어 주세요."
+  no-teams: "공성전은 두 팀이 필요합니다"
+  no-abilities: "공성전에 쓸 수 있는 능력이 없습니다"
+
+score:
+  kill-points: "<gold>+<points>점</gold> <gray>처치!"
+  assist-points: "<gold>+<points>점</gold> <gray>도움!"
+
+result:
+  team-left: "<team><gray> 이(가) 모두 나갔습니다."
+  reason-left: "상대 팀이 모두 나감"
+  reason-core: "<team><gray>의 코어 파괴"
+  reason-time: "시간 종료 (점수 → 부순 타워 → 처치 순)"
+  reason-overtime: "연장전에서 먼저 득점"
+  reason-overtime-time: "연장전 종료 (점수 → 부순 타워 → 처치 순)"
+  reason-structures: "연장전 종료, 건물 체력이 더 많이 남음"
+  reason-coin: "연장전까지 완전 동점, 동전 던지기"
+  reason-rounds: "라운드 스코어 <a> : <b>"
+
+reroll:
+  announce: "<gray>리롤 <white><count>번</white> <dark_gray>(웅크리고 검 우클릭)"
+  hint: "<white>웅크리고 우클릭</white><gray>하면 능력 리롤 (<white><count>번</white> 남음)"
+  done: "<green>능력을 다시 뽑았습니다. <gray>(남은 리롤 <white><count></white>번)"
+  not-participant: "<red>이 경기의 참가자가 아닙니다."
+  wrong-phase: "<red>리롤은 라운드 시작 준비 시간에만 할 수 있습니다."
+  none-left: "<red>이번 라운드의 리롤을 모두 썼습니다."
+  no-options: "<red>뽑을 수 있는 다른 능력이 없습니다."
+
+pool:
+  unknown-warning: "<yellow>공성전 능력풀에 없거나 꺼진 능력이 있어 건너뜁니다: <white><ids>"
+  filled-warning: "<yellow>공성전 능력풀이 한 팀 인원(<count>명)보다 작아 켜진 다른 능력으로 채웠습니다. <white>/게임 공성전 능력풀 추가</white>"
+  list: "<gray>공성전 능력풀 (<white><count></white>개): <abilities>"
+  list-empty: "<gray>공성전 능력풀이 비어 있어 켜진 모든 능력이 나옵니다."
+  unknown-entry: "<red><id>(알 수 없음)</red>"
+  unknown: "<red>'<input>' 능력을 찾을 수 없습니다."
+  already: "<red><ability><red> 은(는) 이미 능력풀에 있습니다."
+  added: "<green><ability><green> 을(를) 공성전 능력풀에 추가했습니다. <gray>(<count>개, 다음 라운드부터)"
+  disabled-warning: "<yellow><ability><yellow> 은(는) abilities.yml 에서 꺼져 있어 켤 때까지 나오지 않습니다."
+  not-in-pool: "<red>'<input>' 은(는) 능력풀에 없습니다."
+  removed: "<green><ability><green> 을(를) 공성전 능력풀에서 뺐습니다. <gray>(<count>개)"
+  reset: "<green>공성전 능력풀을 기본값으로 되돌렸습니다. <gray>(<count>개)"
+
+round:
+  title: "<gold><bold><round>라운드"
+  subtitle: "<gray>라운드 스코어 <white><a> : <b>"
+  started: "<gold><round>라운드</gold><gray> 시작"
+  won-title: "<team><gold><bold> 라운드 승리!"
+  won-subtitle: "<white><a></white><gray> : </gray><white><b></white>"
+  won: "<gold><round>라운드</gold><gray> 승리: <team><gray> (<reason>) — <white><a> : <b>"
+  mvp: "<gold>⭐ 이번 라운드 MVP:</gold> <player><gray> (기여 <white><points></white>점)"
+  break: "<gray>라운드 스코어 <white><a> : <b></white> · 다음 라운드 <white><seconds>초"
+
+prep:
+  countdown: "<yellow><bold><seconds>"
+
+fight:
+  title: "<gold><bold>전투 시작!"
+  subtitle: "<gray>라인을 밀어 상대 코어를 부수세요"
+
+climax:
+  title: "<red><bold>마지막 <minutes>분!"
+  subtitle: "<gray>점수를 뒤집을 시간입니다"
+
+overtime:
+  title: "<red><bold>연장전"
+  subtitle: "<gray>먼저 점수 내는 팀 승리"
+  announce: "<red>동점! 연장전 <white><seconds>초</white></red><gray> · 먼저 점수 내는 팀 승리"
+
+spawn:
+  zone-warning: "<red>적 본진에 진입해 피해를 입습니다."
+  protection-ended: "<gray>부활 보호가 풀렸습니다"
+
+structure:
+  bar-name: "<team> <white><name>"
+  shielded: "<gray>바깥 타워를 먼저 파괴하세요."
+  core-shielded: "<gray>안쪽 타워를 먼저 파괴하세요."
+  under-attack: "<red>아군 <name>이(가) 공격받고 있습니다. <white>(<percent>%)"
+  health-warning: "<red>아군 <name>의 체력이 <white><percent>%</white> 남았습니다."
+  destroyed-title: "<red><bold><name> 파괴!"
+  destroyed-subtitle: "<team><gray> <gold>+<points>점"
+  destroyed: "<red>💥</red> <owner><gray>의 <white><name></white> 파괴! <player><gray> (<team><gray>) <gold>+<points>점"
+
+guide:
+  line: "<line>"
+
+tutorial:
+  title-1: "<aqua><bold>라인을 밀어라"
+  subtitle-1: "<gray>바깥 타워 → 안쪽 타워"
+  title-2: "<gold><bold>코어를 부수면 승리"
+  subtitle-2: "<gray>안쪽 타워가 모두 무너지면 코어 보호막이 꺼짐"
+  title-3: "<yellow><bold>20분 점수전"
+  subtitle-3: "<gray>처치 +2 · 타워 +8 · 3라운드 2선승"
+  summary:
+    - "<gray>검 우클릭 <white>액티브</white> · <white>F</white> 궁극기 · 좌클릭 <white>평타</white>"
+
+hud:
+  bossbar: "<phase><gray> · </gray><white><time>"
+  phase-prep: "<yellow><round>라운드 준비"
+  phase-fight: "<gold><round>라운드"
+  phase-climax: "<red><bold><round>라운드 마지막"
+  phase-overtime: "<red><bold><round>라운드 연장전"
+  phase-break: "<aqua><round>라운드 준비 중"
+  phase-over: "<gray>경기 종료"
+  score: "<gray>점수 </gray><team_a> <white><bold><a></bold></white><gray> : </gray><white><bold><b></bold></white> <team_b>"
+  rounds: "<gray>라운드 </gray><white><a></white><gray> : </gray><white><b>"
+  level: "<yellow>Lv.<white><level></white> <gray>(<xp>/<next>)"
+  level-max: "<yellow>Lv.<white><level></white> <gold>MAX"
+  level-gold: "<level> <gold>💰 <money>"
+  next-perk: "<gray><level>레벨: <white><perk>"
+  panel-title: "<#fff8ea><bold>초능력 공성전"
+  ability: "<gray>능력 </gray><ability>"
+  ability-reroll: "<gray>능력 </gray><ability> <dark_gray>(리롤 <count>)"
+  spectating: "<gray>관전 중"
+  plate: "<level><name><newline><bar> <red>❤</red> <white><health></white><gray>/<max></gray><absorption>"
+  plate-level: "<gold>Lv.<level></gold> "
+  plate-absorption: " <yellow>+<amount>"
+
+# ── 공성전 봇전 (/게임 시작 공성전 봇전) ──────────────────────
+bots:
+  starting: "<green>공성전 봇전을 시작합니다:</green> <gray>팀마다 <white><size></white>명이 되도록 봇이 채웁니다 (난이도 <white><difficulty></white>)"
+  bad-option: "<red>'<white><input></white>'(을)를 알 수 없습니다. <gray>사용법: <white>/게임 시작 공성전 봇전 [팀당 인원] [쉬움|보통|어려움]</white> <dark_gray>(예: 3 보통)"
+  everyone-left: "플레이어가 모두 나가 봇전을 끝냅니다"
+  no-match: "<red>진행 중인 공성전 봇전이 없습니다."
+  status: "<name> <gray><job> · <lane> · <gold>Lv.<level></gold> · <red>❤</red><white><health></white>/<max> · <white><action></white> <dark_gray>(<x>, <z>) 강화 <upgrades>"
+  status-dead: "<name> <gray><job> · <lane> · <dark_gray>부활 대기 <white><seconds></white>초"
+  joined: "<gray>봇전 <team> <gray>봇: <bots>"
+
+command:
+  help:
+    - "<gold>── 초능력 공성전 ──"
+    - "<white>/게임 점수</white> <gray>지금 점수"
+    - "<white>/게임 리롤</white> <gray>라운드 시작 준비 시간에 능력 다시 뽑기"
+    - "<white>/게임 내정보</white> <gray>내 능력과 레벨 · <white>/게임 팀</white> <gray>팀원의 능력"
+  help-admin:
+    - "<white>/게임 시작 공성전</white> <gray>공성전 시작"
+    - "<white>/게임 시작 공성전 봇전 [팀당 인원] [쉬움|보통|어려움]</white> <gray>봇이 두 팀의 빈자리를 채우는 공성전"
+    - "<white>/게임 공성전 봇</white> <gray>봇전의 봇마다 직업·라인·레벨·체력·하는 일"
+    - "<white>/게임 공성전 능력풀 [목록|추가|제거|초기화] [능력]</white> <gray>공성전에서 나오는 능력"
+    - "<white>/게임 공성전 통계 [봇] [피해|건물|승률|KDA] [쪽]</white> <gray>실전 밸런스 누적 기록"
+  usage-pool: "<red>사용법: /게임 공성전 능력풀 <추가|제거> <능력>"
+  player-only: "<red>플레이어만 쓸 수 있습니다."
+  no-match: "<red>진행 중인 공성전이 없습니다."
+  me: "<gray>내 능력 <ability> <dark_gray>·</dark_gray> <gray>레벨 <white><level></white> <dark_gray>(경험치 <xp>)</dark_gray> <dark_gray>·</dark_gray> <gray>남은 리롤 <white><rerolls></white>"
+  me-none: "<gray>아직 능력을 받지 않았습니다."
+  team-none: "<red>공성전 팀에 속해 있지 않습니다."
+  team: "<team> <gray>팀원: <members>"
+  status: "<gold><round>라운드</gold><gray> — <team_a> <white><a></white> : <white><b></white> <team_b><gray> (라운드 스코어 <white><rounds_a> : <rounds_b></white>)"
+
+# 실전 밸런스 기록 (/게임 공성전 통계, 관리자만)
+stats:
+  header: "<gold>공성전 통계</gold> <dark_gray>· <sort>순 · <page>/<pages>"
+  header-bots: "<gold>공성전 통계 · 봇 직업</gold> <dark_gray>· <sort>순 · <page>/<pages>"
+  row: "<white><name></white> <dark_gray><rounds>판</dark_gray> <gray>적</gray> <white><damage></white><dark_gray>/분</dark_gray> <gray>건물</gray> <white><structure></white><dark_gray>/분</dark_gray> <gray>KDA</gray> <white><kda></white> <gray>승률</gray> <white><win>%</white><mark>"
+  row-few: "<dark_gray><name> <rounds>판 적 <damage>/분 건물 <structure>/분 KDA <kda> 승률 <win>%"
+  mark-high: " <red>▲"
+  mark-low: " <aqua>▼"
+  next: "<dark_gray>▶ 다음 쪽"
+  empty: "<gray>아직 기록이 없습니다."
+  failed: "<red>통계 파일을 읽거나 쓰지 못했습니다. <gray>(서버 로그)"
+  reset-confirm: "<yellow>누적 통계를 지우려면 <white><command></white> <gray>(경기별 CSV는 남음)"
+  reset-done: "<green>누적 통계를 지웠습니다."
+  sort:
+    damage: "분당 적 피해"
+    structure: "분당 건물 피해"
+    winrate: "승률"
+    kda: "KDA"
+
+settings:
+  section:
+    match:
+      name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>진행"
+      lore:
+        - "<gray>라운드 수, 라운드 시간, 쉬는 시간, 연장전, 리롤"
+    battle:
+      name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>전투"
+      lore:
+        - "<gray>부활, 건물 체력"
+    progress:
+      name: "<gradient:#f59e0b:#ef4444><bold>공성전</bold></gradient> <gray>레벨"
+      lore:
+        - "<gray>최대 레벨, 기본 경험치"
+  rounds-to-win:
+    name: "승리 라운드 수"
+    lore:
+      - "<gray>이 라운드 수를 먼저 이긴 팀이 우승합니다 (2 = 3라운드 2선승)."
+  round:
+    name: "라운드 제한 시간"
+    lore:
+      - "<gray>한 라운드의 시간. 끝나면 점수가 높은 팀이 이깁니다."
+      - "<gray>코어를 부수면 시간과 상관없이 바로 승리."
+  round-break:
+    name: "라운드 사이 쉬는 시간"
+    lore:
+      - "<gray>라운드가 끝나고 다음 라운드까지의 시간"
+  overtime:
+    name: "연장전"
+    lore:
+      - "<gray>점수·타워·처치가 모두 같을 때의 연장 시간"
+      - "<gray>먼저 점수를 낸 팀이 승리합니다."
+  rerolls:
+    name: "라운드마다 리롤"
+    lore:
+      - "<gray>라운드 시작 준비 시간에 능력을 다시 뽑을 수 있는 횟수"
+    zero: "<red>리롤 없음"
+  respawn:
+    name: "부활 대기"
+    lore:
+      - "<gray>기본 부활 대기 시간. 그 라운드에서 많이 죽을수록 길어집니다 (최대 14초)."
+    zero: "<aqua>바로 부활"
+  tower-per-attacker:
+    name: "상대 1명당 건물 체력"
+    lore:
+      - "<gray>건물 체력 = 설정 체력 × (기본 비율 + 이 값 × 상대 팀 인원)"
+      - "<gray>상대가 많을수록 건물이 단단해집니다."
+  max-level:
+    name: "최대 레벨"
+    lore:
+      - "<gray>라운드마다 1레벨에서 시작해 이 레벨까지 오릅니다."
+      - "<gray>레벨은 능력을 잠그지 않고 최대 체력 등 강화만 합니다."
+  passive-xp:
+    name: "기본 경험치 (초당)"
+    lore:
+      - "<gray>싸우는 동안 1초마다 모두가 받는 경험치"
+    zero: "<red>없음"
+
+level:
+  up-title: "<gradient:#facc15:#f97316><bold>LEVEL UP!</bold></gradient>"
+  up-subtitle: "<yellow>레벨 <white><level></white>"
+  health: "<red>❤ +<hearts>"
+  perk: "<light_purple>✦ 추가 효과</light_purple> <white><perk>"
+
+minion:
+  name:
+    melee: "태엽 병정"
+    ranged: "장난감 궁수"
+    cannon: "장난감 대포"
+
+gold:
+  gain: "<gold>+<amount> 골드</gold> <gray><reason>"
+  reason:
+    minion: "미니언 막타"
+    kill: "처치"
+    assist: "도움"
+    jungle: "정글"
+    jungle-buff: "버프 몬스터"
+    capture: "점령"
+    dragon: "장난감 드래곤"
+    tower: "타워 파괴"
+
+jungle:
+  name:
+    jelly: "<green>젤리 무리"
+    mice: "<gray>태엽 쥐 떼"
+    teddy: "<#c8915a><bold>곰인형 대장"
+    rabbit: "<yellow><bold>시계 토끼"
+    fountain: "<light_purple>사탕 샘물"
+    telescope: "<aqua>망원경 탑"
+    dragon: "<gradient:#f472b6:#a78bfa><bold>장난감 드래곤"
+  mob:
+    jelly: "<green>젤리"
+    mice: "<gray>태엽 쥐"
+    teddy: "<#c8915a>곰인형 대장"
+    rabbit: "<yellow>시계 토끼"
+    dragon: "<light_purple>장난감 드래곤"
+  short:
+    dragon: "<light_purple>드래곤</light_purple>"
+    teddy: "<#c8915a>곰인형</#c8915a>"
+    rabbit: "<yellow>토끼</yellow>"
+  side:
+    blue: "<aqua>블루 팀</aqua>"
+    red: "<red>레드 팀</red>"
+  status-down: "<gray>다시 나타남 <white><time>"
+  status-contested: "<yellow>경합 중!"
+  hud-up: "<name> <green>등장</green>"
+  hud-down: "<name> <white><time></white>"
+  dragon-spawned: "<gray>드래곤이 생성되었습니다."
+  dragon-enraged: "<red>장난감 드래곤이 화났습니다! <gray>기술이 더 자주, 더 세게 옵니다."
+  small-cleared: "<name><gray> 처치!"
+  taken:
+    fountain: "<team><gray> · <name> 점령"
+    telescope: "<team><gray> · <name> 점령"
+    dragon: "<team><gray> <white><player></white> · <name> 처치"
+  buff:
+    teddy: "<red>곰인형의 힘! 공격 강화 <white><seconds>초"
+    rabbit: "<yellow>째깍째깍! 쿨타임 감소 <white><seconds>초"
+    dragon: "<light_purple>드래곤의 축복! 피해 +10% <white><seconds>초"
+
+shop:
+  title: "<dark_gray>태엽 상점"
+  terminal: "<gold><bold>상점"
+  keeper: "태엽 상인"
+  gold: "<gold>골드 <white><balance></white>"
+  empty-slot: "<gray>빈 칸"
+  price: "<gold><price> 골드"
+  price-short: "<red><price> 골드"
+  bought: "<green><item> 구매! <gray>남은 골드 <gold><balance>"
+  candy-used: "<light_purple>+<heal> ❤"
+  ward-placed: "<aqua>와드 설치"
+  recall-channel: "<aqua>귀환 <white><seconds>초"
+  recall-done: "<aqua>귀환"
+  recall-stopped: "<gray>귀환 취소"
+  recall-interrupted: "<red>귀환 취소"
+  # the worn armour as the team's toy soldier uniform (<tier> = " I" / " II" / " III" with 장난감 갑옷, else empty)
+  toy-armor:
+    helmet: "<white>장난감 병정 모자<tier>"
+    chestplate: "<white>장난감 병정 제복<tier>"
+    leggings: "<white>장난감 병정 바지<tier>"
+    boots: "<white>장난감 병정 장화<tier>"
+  refused:
+    not-playing: "<red>이 경기의 참가자가 아닙니다"
+    too-far: "<red>자기 본진 상점 <white><range>칸</white> 안에서만 살 수 있습니다"
+    owned: "<red>이미 가지고 있습니다"
+    stack-full: "<red>더 들 수 없습니다"
+    slots-full: "<red>아이템 칸(<white><slots>칸</white>)이 가득 찼습니다"
+    no-gold: "<red>골드가 부족합니다"
+  flag:
+    name: "<aqua>귀환 깃발"
+    lore:
+      - "<gray><white><seconds>초</white> 뒤 본진으로"
+  category:
+    basic: "<white>기본"
+    attack: "<red>공격"
+    utility: "<yellow>유틸"
+    siege: "<gold>공성"
+    vision: "<aqua>시야"
+    survival: "<green>생존"
+  item:
+    candy:
+      name: "<light_purple>체력 사탕"
+      lore:
+        - "<gray>우클릭: 10초에 걸쳐 체력 8 회복"
+        - "<gray>3개 묶음, 소모품"
+    armor_1:
+      name: "<white>장난감 갑옷 I"
+      lore:
+        - "<gray>방어 +4, 스킬 피해 <green>-6%"
+    armor_2:
+      name: "<white>장난감 갑옷 II"
+      lore:
+        - "<gray>방어 +7, 스킬 피해 <green>-12%"
+    armor_3:
+      name: "<white>장난감 갑옷 III"
+      lore:
+        - "<gray>방어 +10, 스킬 피해 <green>-18%"
+    wooden_sword:
+      name: "<red>나무검"
+      lore:
+        - "<gray>평타 피해 +0.75"
+    steel_sword:
+      name: "<red>강철검"
+      lore:
+        - "<gray>평타 피해 +1.5"
+    orb:
+      name: "<light_purple>마법 구슬"
+      lore:
+        - "<gray>스킬 피해 <red>+20%</red>, 평타 피해 <red>+8%"
+    shoes:
+      name: "<yellow>태엽 신발"
+      lore:
+        - "<gray>이동 속도 +8%"
+    hourglass:
+      name: "<yellow>모래시계 장신구"
+      lore:
+        - "<gray>쿨타임 -20%"
+    hammer:
+      name: "<gold>망치 장갑"
+      lore:
+        - "<gray>타워·코어 피해 +25%"
+    ward:
+      name: "<aqua>망원경 와드"
+      lore:
+        - "<gray>우클릭: 설치 지점 12칸 안의 적이 90초 동안 빛남"
+        - "<gray>2개 묶음"
+    revive_clock:
+      name: "<green>부활 시계"
+      lore:
+        - "<gray>부활 시간 -3초"
