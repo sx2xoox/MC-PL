@@ -2019,6 +2019,9 @@ public final class RunBrain {
             if ("no_fuel".equals(smelter.error())) {
                 fail("no_fuel");
             }
+            if ("place_furnace".equals(smelter.error())) {
+                relocate(mover.feet()); // no spot for the furnace here (a run tried for six minutes): somewhere else
+            }
         }
     }
 

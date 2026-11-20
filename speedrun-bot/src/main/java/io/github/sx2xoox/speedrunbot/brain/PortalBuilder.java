@@ -430,12 +430,20 @@ public final class PortalBuilder {
         BlockPos f = b.feet();
         Navigator.Goal g = Navigator.reach(p, reach);
         if (!g.done(f.getX(), f.getY(), f.getZ()) || !b.s.onGround()) {
+            if (subTicks % 100 == 50) {
+                b.trace("[" + state + "] going to mine " + p + " from " + f + " ground=" + b.s.onGround() + " " + b.mover.lastPlanInfo());
+            }
             if (b.mover.go(g) == Mover.Status.FAILED) {
                 restartSite("unreachable");
             }
             return false;
         }
         Actions.Status st = b.a.mine(p, false);
+        if (subTicks % 100 == 50) {
+            net.minecraft.util.hit.HitResult h = b.s.crosshair();
+            b.trace("[" + state + "] mining " + p + " state " + b.mem.get(p) + " from " + f + " -> " + st + " xhair="
+                    + (h instanceof BlockHitResult ? ((BlockHitResult) h).getBlockPos() : h.getType()));
+        }
         if (st == Actions.Status.FAILED) {
             restartSite("mine_failed");
         }
