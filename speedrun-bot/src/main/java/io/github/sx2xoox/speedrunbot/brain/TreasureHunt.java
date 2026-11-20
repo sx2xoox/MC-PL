@@ -31,6 +31,7 @@ public final class TreasureHunt {
     private int digStartY = Integer.MIN_VALUE;
     private int columnTries;
     private boolean ferryDone;
+    private int ferryWait;
     private String why = "";
 
     public TreasureHunt(RunBrain b) {
@@ -470,7 +471,10 @@ public final class TreasureHunt {
             return;
         }
         double far = Math.hypot(p.x - column[0], p.z - column[1]);
-        if (!ferryDone && b.ocean.hasBoat() && far > 12 && (b.s.inWater() || b.s.inBoat() || nearWater())) {
+        if (ferryWait > 0) {
+            ferryWait--;
+        }
+        if (!ferryDone && ferryWait == 0 && b.ocean.hasBoat() && far > 12 && (b.s.inWater() || b.s.inBoat() || nearWater())) {
             // across the water by boat (swimming is slow, and climbing out of the sea onto a ledge often stalls)
             Mover.Status fs = b.ocean.ferry(column[0], column[1]);
             if (fs == Mover.Status.RUNNING) {
@@ -478,7 +482,7 @@ public final class TreasureHunt {
             }
             ferryDone = fs == Mover.Status.ARRIVED && far < 12;
             if (fs == Mover.Status.FAILED) {
-                ferryDone = true;
+                ferryWait = 100; // no water spot here: walk on a little and try again
             }
             b.mover.reset();
             return;

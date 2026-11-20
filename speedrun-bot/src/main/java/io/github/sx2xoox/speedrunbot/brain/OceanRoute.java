@@ -8,7 +8,6 @@ import net.minecraft.entity.vehicle.BoatEntity;
 import net.minecraft.item.BoatItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
-import net.minecraft.tag.ItemTags;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -169,8 +168,9 @@ public final class OceanRoute {
 
     // ------------------------------------------------------------------ crafting
 
-    private static boolean isDoor(Item i) {
-        return ItemTags.WOODEN_DOORS.contains(i);
+    static boolean isDoor(Item i) {
+        return i == Items.OAK_DOOR || i == Items.SPRUCE_DOOR || i == Items.BIRCH_DOOR || i == Items.JUNGLE_DOOR || i == Items.ACACIA_DOOR
+                || i == Items.DARK_OAK_DOOR;
     }
 
     private static boolean isBoat(Item i) {
