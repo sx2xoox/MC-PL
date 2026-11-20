@@ -487,6 +487,10 @@ public final class TreasureHunt {
             b.mover.reset();
             return;
         }
+        if (b.s.inBoat()) {
+            b.c.move(0f, 0f, false, false, true); // close enough: out of the boat, the rest on foot
+            return;
+        }
         if (b.mover.go(Navigator.column(column[0], column[1], f.getY())) == Mover.Status.FAILED) {
             b.mover.reset();
         }

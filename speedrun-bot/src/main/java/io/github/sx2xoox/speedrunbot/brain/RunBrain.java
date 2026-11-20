@@ -895,7 +895,7 @@ public final class RunBrain {
                 // a boat (and the door while the table is out), the table taken along for the iron tools later
                 java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();
                 needs.add(new Workbench.Need("boat", i -> i instanceof net.minecraft.item.BoatItem, 1, true));
-                needs.add(new Workbench.Need("door", OceanRoute::isDoor, 1, true));
+                needs.add(new Workbench.Need("spare_door", OceanRoute::isDoor, 1, true)); // optional here (made again after the treasure)
                 if (!inv.pickaxe()) {
                     needs.add(new Workbench.Need("wooden_pickaxe", i -> i == Items.WOODEN_PICKAXE, 1, true)); // the treasure may lie under stone
                 }

@@ -347,6 +347,14 @@ public final class Workbench {
                     needIndex++; // optional extra: skip it
                     return Actions.Status.RUNNING;
                 }
+                int known = 0;
+                for (Recipe<?> kr : b.s.knownCraftingRecipes()) {
+                    if (n.output.test(kr.getOutput().getItem())) {
+                        known++;
+                        b.trace("known recipe for " + n.name + ": " + kr.getId() + " affordable=" + Crafter.affordable(kr, b.s.inventory()));
+                    }
+                }
+                b.trace("no recipe for " + n.name + " (" + known + " known)");
                 return fail("no_recipe_" + n.name);
             }
             if (subCraft) {
