@@ -246,10 +246,15 @@ public final class Mover {
                     return StepResult.OK;
                 }
                 c.lookAngles(s.yaw(), 90f);
-                if (hd > 0.25) {
-                    walkToward(target, false, 0.5f);
+                if (hd > 0.15 && s.onGround()) {
+                    // sneak to the cell centre (precise; a walk overshoots)
+                    float yaw = InputLimits.yawTo(target.x - pos.x, target.z - pos.z);
+                    c.lookAngles(yaw, 60f);
+                    if (Math.abs(InputLimits.wrap(yaw - s.yaw())) < 30) {
+                        c.move(0.3f, 0f, false, false, true);
+                    }
                 }
-                if (s.onGround() && pillarPhase == 0 && s.pitch() > 80f) {
+                if (s.onGround() && pillarPhase == 0 && s.pitch() > 80f && hd <= 0.2) {
                     c.jump();
                     pillarPhase = 1;
                 } else if (pillarPhase == 1 && pos.y >= from.getY() + 1.0) {
@@ -455,9 +460,15 @@ public final class Mover {
         c.lookAngles(s.yaw(), 90f);
         Vec3d p = s.pos();
         double cx = f.getX() + 0.5 - p.x, cz = f.getZ() + 0.5 - p.z;
+        if (DEBUG && s.gameTick() % 5 == 0) {
+            debug.accept("climb phase=" + climbPhase + " pos=" + p + " ground=" + s.onGround() + " pitch=" + s.pitch() + " from=" + climbFrom
+                    + " held=" + s.inventory().getMainHandStack() + " head=" + hs + " xhair=" + s.crosshair().getPos());
+        }
         if (s.onGround()) {
-            if (Math.abs(cx) > 0.25 || Math.abs(cz) > 0.25) {
-                // centre on the cell first (sneak-walk) so the block goes under the feet
+            if (Math.abs(cx) > 0.15 || Math.abs(cz) > 0.15) {
+                // centre on the cell first (sneak-walk) so the block goes under the feet; the body is 0.6 wide, so
+                // more than 0.2 off centre it overlaps the next column and a block there caps the jump (a run jumped
+                // 0.2 high in its shaft for minutes)
                 float yaw = InputLimits.yawTo(cx, cz);
                 c.lookAngles(yaw, 60f);
                 c.move(0.3f, 0f, false, false, true);

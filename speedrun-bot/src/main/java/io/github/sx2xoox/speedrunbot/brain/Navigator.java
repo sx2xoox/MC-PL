@@ -293,6 +293,9 @@ public final class Navigator {
     }
 
     private double digCost(int x, int y, int z, BlockState s) {
+        if (s.getBlock() instanceof net.minecraft.block.AbstractFurnaceBlock || s.getBlock() == net.minecraft.block.Blocks.CRAFTING_TABLE) {
+            return Double.POSITIVE_INFINITY; // a path through our own furnace broke it with the ore inside
+        }
         // never open lava; water next to the cell is expensive
         for (int[] d : new int[][]{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}}) {
             BlockState n = mem.get(x + d[0], y + d[1], z + d[2]);
