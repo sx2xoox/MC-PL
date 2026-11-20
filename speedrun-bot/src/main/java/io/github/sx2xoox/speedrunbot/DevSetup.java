@@ -47,6 +47,9 @@ public final class DevSetup {
             BlockPos q = w.locateStructure(fs[i], spawn, 8, false);
             double d = q == null ? -1 : Math.sqrt(Math.pow(q.getX() - spawn.getX(), 2) + Math.pow(q.getZ() - spawn.getZ(), 2));
             sb.append('"').append(names[i]).append("\":").append(Math.round(d)).append(',');
+            if (q != null) {
+                sb.append('"').append(names[i]).append("_at\":\"").append(q.getX()).append(',').append(q.getZ()).append("\",");
+            }
         }
         sb.append("\"biome\":\"").append(net.minecraft.util.registry.Registry.BIOME.getId(w.getBiome(spawn))).append("\"}");
         return sb.toString();

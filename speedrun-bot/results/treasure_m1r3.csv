@@ -1,0 +1,13 @@
+seed,label,success,reason,route,igt_s,igt,last_goal,mspt_avg,mspt_max,wall_s,fair,split_first_log,split_wooden_pickaxe,split_treasure_map,split_treasure,split_stone_pickaxe,split_first_iron,split_furnace,split_iron_ingots,split_bucket,split_flint,split_flint_and_steel,split_water_bucket,split_portal_site,split_portal_room,split_obsidian_10,split_portal_lit,split_in_portal,split_nether
+-1219659680363841169,,False,death_trident,TREASURE,187.9,3:07.900,WOOD,9.94,726.81,51.87,True,12.6,38.6,,,,,,,,,,,,,,,,
+-1634345698353814711,,False,timeout_WOOD,TREASURE,600.0,10:00.000,WOOD,7.96,1248.63,117.73,True,14.85,33.45,,,,,,,,,,,,,,,,
+-6445837464022711768,,False,timeout_IRON,TREASURE,600.0,10:00.000,IRON,5.66,1078.94,80.83,True,10.65,42.95,,,225.75,,,,,,,,,,,,,
+-8125048733386817170,,False,timeout_LAVA,TREASURE,600.0,10:00.000,LAVA,5.19,752.31,76.7,True,11.95,36.05,,,151.5,,,,151.95,,258.2,208.8,,,,,,
+2793727738271376487,,False,timeout_LAVA,TREASURE,600.0,10:00.000,LAVA,6.22,1058.58,103.25,True,25.45,57.75,,,438.45,,,,438.9,,,491.75,,,,,,
+6464270968925729657,,False,death_cactus,TREASURE,375.1,6:15.100,WOOD,4.97,882.95,55.79,True,,,,,,,,,,,,,,,,,,
+7303345135129405291,,False,timeout_WOOD,TREASURE,600.0,10:00.000,WOOD,4.46,780.2,86.13,True,19.85,,,,,,,,,,,,,,,,,
+-1828573601549762205,,False,timeout_COBBLE,TREASURE,600.0,10:00.000,COBBLE,6.62,1180.47,545.21,True,135.0,158.3,,,,,,,,,,,,,,,,
+8573267887210020210,,False,death_trident,TREASURE,288.0,4:48.000,TREASURE,4.86,676.15,41.39,True,10.25,47.15,,,,,,,,,,,,,,,,
+-3377813342507575976,,False,timeout_COBBLE,TREASURE,600.0,10:00.000,COBBLE,6.5,1034.71,705.2,True,41.2,79.25,,,,,,,,,,,,,,,,
+6059456030040243879,,False,timeout_COBBLE,TREASURE,600.0,10:00.000,COBBLE,5.62,828.49,670.1,True,11.3,46.8,,,,,,,,,,,,,,,,
+7771255836441644935,,False,timeout_COBBLE,TREASURE,600.0,10:00.000,COBBLE,6.34,786.15,663.3,True,9.65,34.1,,,,,,,,,,,,,,,,
