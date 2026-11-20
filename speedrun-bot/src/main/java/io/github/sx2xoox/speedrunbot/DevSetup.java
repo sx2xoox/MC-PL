@@ -62,6 +62,63 @@ public final class DevSetup {
         return sb.toString();
     }
 
+    /**
+     * Harness-only world dump for the offline pie chart simulator ({@code tools/pie_sim.py}; never bot input): every
+     * chest within {@code r} chunks of the spawn (position and loot table: buried treasure, shipwreck, ruins, ...) and
+     * a surface grid (per column the motion-blocking top; water columns as minus the floor height). The pie chart sense
+     * is a pure function of the chest positions and the camera, so sweeps and locator rules can be replayed offline.
+     */
+    public static void dumpWorld(MinecraftServer server, BlockPos spawn, int r, java.nio.file.Path out) throws java.io.IOException {
+        ServerWorld w = server.getOverworld();
+        int cx0 = spawn.getX() >> 4, cz0 = spawn.getZ() >> 4;
+        StringBuilder chests = new StringBuilder();
+        BlockPos.Mutable m = new BlockPos.Mutable();
+        int x0 = (cx0 - r) << 4, z0 = (cz0 - r) << 4, n = (2 * r + 1) * 16;
+        int[] grid = new int[n * n];
+        for (int cx = cx0 - r; cx <= cx0 + r; cx++) {
+            for (int cz = cz0 - r; cz <= cz0 + r; cz++) {
+                net.minecraft.world.chunk.WorldChunk ch = w.getChunk(cx, cz);
+                for (BlockPos q : ch.getBlockEntityPositions()) {
+                    net.minecraft.block.entity.BlockEntity be = ch.getBlockEntity(q);
+                    if (be instanceof net.minecraft.block.entity.ChestBlockEntity) {
+                        String lt = be.toTag(new net.minecraft.nbt.CompoundTag()).getString("LootTable");
+                        chests.append(chests.length() == 0 ? "" : ",").append("[").append(q.getX()).append(',').append(q.getY()).append(',')
+                                .append(q.getZ()).append(",\"").append(lt).append("\"]");
+                    }
+                }
+                for (int x = 0; x < 16; x++) {
+                    for (int z = 0; z < 16; z++) {
+                        int wx = (cx << 4) + x, wz = (cz << 4) + z;
+                        int top = ch.sampleHeightmap(Heightmap.Type.MOTION_BLOCKING, x, z) + 1;
+                        m.set(wx, top - 1, wz);
+                        int v = top;
+                        if (!ch.getFluidState(m).isEmpty() && ch.getFluidState(m).isIn(net.minecraft.tag.FluidTags.WATER)) {
+                            int fy = top - 1;
+                            while (fy > 0) {
+                                m.setY(fy);
+                                if (ch.getFluidState(m).isEmpty()) {
+                                    break;
+                                }
+                                fy--;
+                            }
+                            v = -(fy + 1);
+                        }
+                        grid[(wx - x0) * n + (wz - z0)] = v;
+                    }
+                }
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"seed\":\"").append(w.getSeed()).append("\",\"spawn\":[").append(spawn.getX()).append(',').append(spawn.getY()).append(',')
+                .append(spawn.getZ()).append("],\"x0\":").append(x0).append(",\"z0\":").append(z0).append(",\"n\":").append(n)
+                .append(",\"chests\":[").append(chests).append("],\"grid\":[");
+        for (int i = 0; i < grid.length; i++) {
+            sb.append(i == 0 ? "" : ",").append(grid[i]);
+        }
+        sb.append("]}\n");
+        java.nio.file.Files.write(out, sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     public static void apply(MinecraftServer server, FakePlayer p) {
         String kit = System.getProperty("srb.kit", "");
         if (!kit.isEmpty()) {

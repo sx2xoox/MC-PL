@@ -104,6 +104,39 @@ class PieChartTest {
     }
 
     @Test
+    void earlyDecisionResetsWhenTheTreasureSearchGivesUp() {
+        ResetPolicy rp = new ResetPolicy(Params.defaults());
+        ResetPolicy.State s = new ResetPolicy.State();
+        s.tick = 20 * 30;
+        s.scanned = true;
+        s.oceanSeen = true;
+        s.treasureSignal = 1;
+        s.logsSeen = 3;
+        assertEquals(null, rp.decide(s));
+        s.treasureGaveUp = true;
+        assertEquals("ocean_no_treasure", rp.decide(s));
+        s.treasureTick = 20 * 25; // already dug: a later give-up does not matter
+        assertEquals(null, rp.decide(s));
+    }
+
+    @Test
+    void columnsOnlyOnePlaceSawAreNoCandidatesWithMinVotes() {
+        TreasureLocator loc = new TreasureLocator();
+        loc.byPlace = true;
+        int[] t = {73, 9};
+        // only the first place sees anything (toward t); the second place sees nothing toward it
+        loc.add(new TreasureLocator.Reading(0, 0, TreasureLocator.yawTo(0, 0, t[0] + 0.5, t[1] + 0.5), 8, true));
+        loc.add(new TreasureLocator.Reading(0, 60, TreasureLocator.yawTo(0, 60, 200, 200), 8, true));
+        org.junit.jupiter.api.Assertions.assertNotNull(loc.best(0, 0, 120));
+        loc.minVotes = 2;
+        org.junit.jupiter.api.Assertions.assertNull(loc.best(0, 0, 120));
+        loc.add(new TreasureLocator.Reading(0, 60, TreasureLocator.yawTo(0, 60, t[0] + 0.5, t[1] + 0.5), 8, true));
+        int[] b = loc.best(0, 0, 120);
+        assertEquals(t[0], b[0]);
+        assertEquals(t[1], b[1]);
+    }
+
+    @Test
     void twoPitchBandsSkipDeepChestsAndKeepTheTreasure() {
         int tx = 16 * 4 + 9, tz = 16 * 2 + 9, ty = 56; // the treasure, about 76 blocks away
         int[] deep = {-40, 22, 30}; // a mineshaft chest: steep below the eyes

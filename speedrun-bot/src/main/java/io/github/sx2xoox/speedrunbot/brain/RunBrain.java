@@ -372,6 +372,7 @@ public final class RunBrain {
         st.waterBucketTick = igt.splits().containsKey("water_bucket") ? 0 : -1;
         st.portalSiteTick = igt.splits().containsKey("portal_site") ? 0 : -1;
         st.treasureTick = igt.splits().containsKey("treasure") ? 0 : -1;
+        st.treasureGaveUp = treasure.phase() == TreasureHunt.Phase.FAILED && treasure.why().startsWith("pie_");
         st.ravineTick = igt.splits().containsKey("ravine") ? 0 : -1;
         st.hasBoat = ocean.hasBoat();
         String why = resetPolicy.decide(st);
@@ -541,7 +542,7 @@ public final class RunBrain {
         }
         if (pieRoute && !treasure.finished() && p.get("ocean.route") > 0) {
             int[] col = treasure.column();
-            if (treasure.betweenSweeps() && !ocean.hasBoat() && !boatTried && p.get("ocean.boatFirst") > 0 && mem.count(WorldMemory.Kind.LOG) > 0) {
+            if (treasure.betweenSweeps() && !ocean.hasBoat() && !boatTried && p.get("ocean.boatFirst") > 0 && p.get("treasure.early") <= 0 && mem.count(WorldMemory.Kind.LOG) > 0) {
                 // a chest bearing from the spawn: wood and a boat before the next sweep place (out on the sea, 40+
                 // blocks to the side), the boat carries the rest of the route too
                 treasurePaused = true;

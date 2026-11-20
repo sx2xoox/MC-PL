@@ -47,6 +47,8 @@ public final class TreasureLocator {
     public boolean byPlace;
     /** With {@link #byPlace}: equal votes go to the nearest column (checking candidates one after another). */
     public boolean nearestOnTies;
+    /** With {@link #byPlace}: columns fewer sweep places agree on are not candidates (0 = all). */
+    public int minVotes;
 
     public void add(Reading r) {
         readings.add(r);
@@ -187,7 +189,11 @@ public final class TreasureLocator {
                 if (d > range || excluded.contains(key(cx, cz))) {
                     continue;
                 }
-                double s = byPlace ? placeVotes(cx + 0.5, cz + 0.5) * 100 + (nearestOnTies ? 0 : score(cx + 0.5, cz + 0.5)) : score(cx + 0.5, cz + 0.5);
+                int votes = byPlace ? placeVotes(cx + 0.5, cz + 0.5) : 0;
+                if (byPlace && votes < minVotes) {
+                    continue;
+                }
+                double s = byPlace ? votes * 100 + (nearestOnTies ? 0 : score(cx + 0.5, cz + 0.5)) : score(cx + 0.5, cz + 0.5);
                 if (s > bestS + 1e-9 || (Math.abs(s - bestS) < 1e-9 && d < bestD)) {
                     if (s > bestS + 1e-9) {
                         ties = 0;

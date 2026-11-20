@@ -145,6 +145,15 @@ public final class BotRuntime {
         bot = new ServerBot(server, p);
         if (Boolean.getBoolean("srb.probe")) {
             String probe = DevSetup.probe(server, p.getBlockPos());
+            String dump = System.getProperty("srb.probeDump");
+            if (dump != null) {
+                try {
+                    Files.createDirectories(Paths.get(dump));
+                    DevSetup.dumpWorld(server, p.getBlockPos(), 10, Paths.get(dump, server.getOverworld().getSeed() + ".json"));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
             System.out.println("[speedrunbot] probe " + probe);
             try {
                 String out = System.getProperty("srb.out");

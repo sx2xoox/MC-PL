@@ -173,6 +173,10 @@ public final class TreasureHunt {
     private BlockPos secondSpot;
     /** -1 no sweep yet, 0 swept without a chest signal, 1 signal. */
     public int pieSignal = -1;
+    /** Early decision (treasure.early): two sweeps on foot, one crossed check from above, else the seed is reset. */
+    private boolean early;
+    private double startX, startZ;
+    private String giveUpWhy = "pie_no_signal";
 
     /**
      * An ocean spawn without a map: find the buried treasure with the F3 pie chart. A thin window (horizontal FOV
@@ -192,7 +196,10 @@ public final class TreasureHunt {
         sweeps = 0;
         band = 0;
         sweepYaw0 = b.s.yaw();
-        b.trace("treasure: narrow view for the pie chart (" + narrow + ")");
+        early = b.p.get("treasure.early") > 0;
+        startX = b.s.pos().x;
+        startZ = b.s.pos().z;
+        b.trace("treasure: narrow view for the pie chart (" + narrow + ")" + (early ? ", early decision" : ""));
         go(Phase.LOCATE);
     }
 
@@ -292,7 +299,19 @@ public final class TreasureHunt {
         pieSignal = 1;
         double bearing = locator.bearingFrom(p.x, p.z);
         int[] best = locator.best(p.x, p.z, b.p.get("treasure.pieRange"));
-        boolean third = sweeps == 2 && best != null && (best[3] > 1 || b.p.get("treasure.thirdSweep") > 0);
+        if (early && sweeps == 2) {
+            // only a column both places agree on and near the spawn is worth the trip; else the seed is reset (measured
+            // offline on world dumps, tools/pie_sim.py: farther or one-vote candidates were almost never the treasure)
+            locator.minVotes = 2;
+            best = locator.best(startX, startZ, b.p.get("treasure.earlyRange"));
+            if (best == null) {
+                b.trace("treasure: no column both sweep places agree on within " + b.p.get("treasure.earlyRange") + " of the spawn");
+                giveUpWhy = "pie_no_candidate";
+                restoreViewThen(null);
+                return;
+            }
+        }
+        boolean third = !early && sweeps == 2 && best != null && (best[3] > 1 || b.p.get("treasure.thirdSweep") > 0);
         if (sweeps == 1 || third) {
             // triangulate: another sweep some blocks to the side of the bearing; a third one off the line of the first
             // two, toward the best column so far (several chests make ghost crossings of two sweeps' bearings, which
@@ -300,6 +319,10 @@ public final class TreasureHunt {
             double side, dist;
             if (sweeps == 1) {
                 side = Math.toRadians(bearing + 90);
+                if (early && !seaSide(p.x, p.z, side, b.p.get("treasure.sideDist"))
+                        && seaSide(p.x, p.z, side + Math.PI, b.p.get("treasure.sideDist"))) {
+                    side += Math.PI; // the other side is the sea: swim there (no boat yet)
+                }
                 dist = b.ocean.hasBoat() || b.p.get("ocean.route") > 0 ? b.p.get("treasure.sideDist") : 24;
             } else {
                 side = Math.toRadians(io.github.sx2xoox.speedrunbot.core.TreasureLocator.yawTo(p.x, p.z, best[0] + 0.5, best[1] + 0.5));
@@ -344,7 +367,7 @@ public final class TreasureHunt {
         }
         restoring = false;
         if (afterView == null) {
-            fail("pie_no_signal");
+            fail(giveUpWhy);
         } else {
             column = afterView;
             estimate = null;
@@ -415,10 +438,55 @@ public final class TreasureHunt {
             verifyPitches.clear();
             verifyPitches.add(58f);
             verifyPitches.add(42f);
+            if (early) {
+                // straight down with the thin window at two yaws 90 degrees apart: both strips hold the column's axis,
+                // a deeper chest a few blocks off it (a dungeon, a ruin) is in one strip at most
+                verifyPitches.clear();
+                verifyPitches.add(-1f);
+                verifyPitches.add(-2f);
+            }
             verifyStep = 0;
             verifyHits = 0;
             viewWait = io.github.sx2xoox.speedrunbot.core.PieChart.VIEW_CHANGE_TICKS; // narrow window again
             b.trace(String.format("treasure: checking column %d,%d from %.1f blocks", column[0], column[1], far));
+            return;
+        }
+        if (verifyStep < verifyPitches.size() && verifyPitches.get(verifyStep) < 0) {
+            float yaw = verifyPitches.get(verifyStep) == -1f ? 0f : 90f;
+            if (b.s.inBoat()) {
+                b.c.move(0f, 0f, false, false, true); // a passenger's yaw is held to the boat: out
+                return;
+            }
+            b.c.lookAngles(yaw, 90f);
+            // over the column itself (the strips are about 4 degrees wide: a shallow chest is only in them from above)
+            double ox = column[0] + 0.5 - p.x, oz = column[1] + 0.5 - p.z, off = Math.hypot(ox, oz);
+            if (off > 0.3) {
+                double rad = Math.toRadians(b.s.yaw());
+                double fx = -Math.sin(rad), fz = Math.cos(rad);
+                double rx = -Math.sin(rad + Math.PI / 2), rz = Math.cos(rad + Math.PI / 2);
+                float k = off > 0.6 ? 1f : 0.4f;
+                b.c.move((float) ((ox * fx + oz * fz) / off) * k, (float) -((ox * rx + oz * rz) / off) * k, false, false, false);
+                if (phaseTicks > 1200) {
+                    verifyStep = verifyPitches.size(); // cannot hold still over it: not confirmed
+                    verifyHits = 0;
+                    return;
+                }
+                if (phaseTicks < 900 || off > 0.45) {
+                    return;
+                }
+            } else {
+                b.c.move(0f, 0f, false, false, false);
+            }
+            if (io.github.sx2xoox.speedrunbot.core.TreasureLocator.angleDiffPublic(b.s.yaw(), yaw) > 1.0 || b.s.pitch() < 89f) {
+                return;
+            }
+            if (b.s.pieChests(narrow) > 0) {
+                verifyHits++;
+            }
+            verifyStep++;
+            if (verifyStep == verifyPitches.size() && verifyHits < 2) {
+                verifyHits = 0; // both strips must show it
+            }
             return;
         }
         if (verifyStep < verifyPitches.size()) {
@@ -451,7 +519,11 @@ public final class TreasureHunt {
         // the next check: the next best by agreeing places, then by readings (measured on logged sweeps: the
         // readings order put the true column first or third; nearest-first put it 3rd to 10th)
         locator.nearestOnTies = b.p.get("treasure.nearestNext") > 0;
-        int[] next = verified >= b.p.getInt("treasure.verifyMax") ? null : locator.best(p.x, p.z, b.p.get("treasure.pieRange") + 32, excluded);
+        int maxChecks = early ? b.p.getInt("treasure.earlyChecks") : b.p.getInt("treasure.verifyMax");
+        if (verified >= maxChecks) {
+            giveUpWhy = "pie_not_confirmed";
+        }
+        int[] next = verified >= maxChecks ? null : locator.best(p.x, p.z, b.p.get("treasure.pieRange") + 32, excluded);
         b.trace("treasure: no chest at " + column[0] + "," + column[1] + (next == null ? ": giving up" : "; next " + next[0] + "," + next[1] + " (score " + next[2] / 100.0 + ")"));
         if (next == null) {
             restoreViewThen(null);
@@ -837,6 +909,21 @@ public final class TreasureHunt {
             b.mover.reset();
         }
         return true;
+    }
+
+    /** True when the place {@code dist} blocks from (x,z) toward {@code side} (radians, yaw convention) was seen as sea. */
+    private boolean seaSide(double x, double z, double side, double dist) {
+        int tx = (int) Math.floor(x - Math.sin(side) * dist), tz = (int) Math.floor(z + Math.cos(side) * dist);
+        int sea = 0;
+        for (int dx = -4; dx <= 4; dx += 2) {
+            for (int dz = -4; dz <= 4; dz += 2) {
+                BlockState st = b.mem.get(tx + dx, 62, tz + dz);
+                if (st != null && Blocks2.isWater(st)) {
+                    sea++;
+                }
+            }
+        }
+        return sea >= 5;
     }
 
     /** Sea-level water within 3 blocks: the boat can go in here. */

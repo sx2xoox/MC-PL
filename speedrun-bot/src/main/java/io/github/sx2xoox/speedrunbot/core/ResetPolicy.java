@@ -20,6 +20,8 @@ public final class ResetPolicy {
         public long portalSiteTick = -1;
         /** Ocean route checkpoints: treasure opened, magma ravine found (-1 not yet). */
         public long treasureTick = -1;
+        /** The treasure search gave up (no candidate worth the trip, or the check found no chest). */
+        public boolean treasureGaveUp;
         public long ravineTick = -1;
         /** A boat carried or ridden. */
         public boolean hasBoat;
@@ -40,6 +42,9 @@ public final class ResetPolicy {
             }
             if (s.oceanSeen && s.treasureSignal == 0) {
                 return "ocean_no_treasure_signal";
+            }
+            if (s.oceanSeen && s.treasureGaveUp && s.treasureTick < 0) {
+                return "ocean_no_treasure"; // the early decision found no column worth the trip (or it was not there)
             }
             if (s.oceanSeen && s.treasureSignal == 1 && s.logsSeen == 0 && !s.hasBoat && p.get("reset.oceanNoTrees") > 0) {
                 return "ocean_no_trees"; // the boat (and the door) need wood: none seen during the whole first sweep
