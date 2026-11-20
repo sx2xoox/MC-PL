@@ -175,13 +175,17 @@ def rank_columns(readings, x, z, rng, rule='current', excluded=()):
                         miss_places.add(pi)
                 if rule == 'current':
                     key = (len(votes) * 100 + s, -d)
+                elif rule == 'nearest':
+                    key = (len(votes), -d)
+                elif rule.startswith('dpen'):
+                    key = (len(votes), s - d / float(rule[4:]))
                 elif rule == 'veto':
                     # a place that looked at the column at some band and saw nothing there vetoes it
                     key = (len(votes) - 2 * len(miss_places - votes), len(votes) * 100 + s, -d)
                 else:
                     raise ValueError(rule)
                 if s > 0.5:
-                    out.append((key, cx, cz))
+                    out.append((key, cx, cz, len(votes)))
             cz += 16
         cx += 16
     out.sort(reverse=True)
@@ -354,7 +358,7 @@ def run_early(w, opts):
     minvotes = opts.get('minvotes', 2)
     while checks < opts.get('verify', 3) and ticks < budget:
         cand = [c for c in rank_columns(rs, x, z, 150, opts.get('rule', 'current'), excluded)
-                if math.hypot(c[1] + .5 - sx, c[2] + .5 - sz) <= rmax and c[0][0] >= minvotes * 100]
+                if math.hypot(c[1] + .5 - sx, c[2] + .5 - sz) <= rmax and c[3] >= minvotes]
         if not cand:
             break
         cx, cz = cand[0][1], cand[0][2]

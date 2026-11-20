@@ -233,6 +233,9 @@ public final class TreasureHunt {
                         return;
                     }
                 } else {
+                    if (swimStraight(secondSpot.getX() + 0.5, secondSpot.getZ() + 0.5)) {
+                        return;
+                    }
                     if (b.mover.go(Navigator.near(secondSpot, 2)) == Mover.Status.FAILED) {
                         b.mover.reset(); // plan again next tick (the place is not given up before the time runs out)
                     }
@@ -298,6 +301,15 @@ public final class TreasureHunt {
         }
         pieSignal = 1;
         double bearing = locator.bearingFrom(p.x, p.z);
+        if (Double.isNaN(bearing)) {
+            // hits all around cancel out: the first hit's yaw
+            for (io.github.sx2xoox.speedrunbot.core.TreasureLocator.Reading r : locator.readings()) {
+                if (r.hit && Math.hypot(r.x - p.x, r.z - p.z) < 2) {
+                    bearing = r.yaw;
+                    break;
+                }
+            }
+        }
         int[] best = locator.best(p.x, p.z, b.p.get("treasure.pieRange"));
         if (early && sweeps == 2) {
             // only a column both places agree on and near the spawn is worth the trip; else the seed is reset (measured
@@ -904,10 +916,42 @@ public final class TreasureHunt {
             b.c.move(0f, 0f, false, false, true);
             return true;
         }
+        if (swimStraight(column[0] + 0.5, column[1] + 0.5)) {
+            return true;
+        }
         BlockPos f = b.feet();
         if (b.mover.go(Navigator.column(column[0], column[1], f.getY())) == Mover.Status.FAILED) {
             b.mover.reset();
         }
+        return true;
+    }
+
+    /**
+     * Open water toward (tx,tz): swim straight (sprint strokes, level look; up for air), as a player does instead of
+     * a path along the sea floor. False when not in the water, there, or a bank above the water is seen on the way
+     * (then the path finder takes over).
+     */
+    private boolean swimStraight(double tx, double tz) {
+        if (!b.s.inWater() || b.s.inBoat()) {
+            return false;
+        }
+        Vec3d p = b.s.pos();
+        double far = Math.hypot(tx - p.x, tz - p.z);
+        if (far < 2.5) {
+            return false;
+        }
+        for (double t = 1; t < far - 1.5; t += 1) {
+            int x = (int) Math.floor(p.x + (tx - p.x) * t / far), z = (int) Math.floor(p.z + (tz - p.z) * t / far);
+            BlockState st = b.mem.get(x, 63, z);
+            if (st != null && Blocks2.pass(st) == Blocks2.Pass.SOLID) {
+                return false; // land on the way
+            }
+        }
+        float yaw = io.github.sx2xoox.speedrunbot.core.InputLimits.yawTo(tx - p.x, tz - p.z);
+        boolean needAir = b.s.submerged() && b.s.air() < 150;
+        b.c.lookAngles(yaw, needAir ? -25f : (b.s.pos().y > 61.6 ? 4f : -6f));
+        boolean ahead = Math.abs(io.github.sx2xoox.speedrunbot.core.InputLimits.wrap(yaw - b.s.yaw())) < 40;
+        b.c.move(ahead ? 1f : 0f, 0f, b.s.horizontalCollision() || needAir, ahead, false);
         return true;
     }
 
