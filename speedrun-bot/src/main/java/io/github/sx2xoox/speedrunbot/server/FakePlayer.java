@@ -52,6 +52,11 @@ public final class FakePlayer extends ServerPlayerEntity {
     public void networkTick() {
         if (!removed) {
             playerTick();
+            if (hasVehicle()) {
+                // a client's player in a boat does not fall on its own (the vehicle places it); this server-side body
+                // still runs its own gravity between the boat's placements, which must not add up to fall damage
+                fallDistance = 0;
+            }
         }
     }
 

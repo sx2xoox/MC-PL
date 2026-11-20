@@ -70,6 +70,19 @@ public final class Controls {
         this.sink = true;
     }
 
+    private boolean holdSneak;
+    private boolean noFloat;
+
+    /** In water: do not hold space this tick, without sneaking either (walk the bottom at full speed). */
+    public void noFloat() {
+        noFloat = true;
+    }
+
+    /** Hold shift this tick whatever else asks (standing on magma). */
+    public void holdSneak() {
+        holdSneak = true;
+    }
+
     public void attack(boolean held) {
         this.attack = held;
     }
@@ -197,12 +210,17 @@ public final class Controls {
         }
         in.setLook(yaw, pitch);
         boolean boat = s.inBoat();
-        if (!boat && s.inWater() && !jump && !sink && s.screenOpen() == false) {
+        if (!boat && s.inWater() && !jump && !sink && !noFloat && s.screenOpen() == false) {
             jump = true; // hold space in water: stay at the surface (players do this to avoid drowning)
         }
         if (sink && s.inWater() && !boat) {
             sneak = true; // shift sinks faster
         }
+        if (holdSneak && !boat && Math.abs(forward) < 0.5f && Math.abs(strafe) < 0.5f) { // walking off it beats creeping
+            sneak = true;
+        }
+        holdSneak = false;
+        noFloat = false;
         boolean canSprint = sprint && forward >= 0.8f && s.food() > 6 && !sneak && !s.horizontalCollision();
         in.setMovement(forward, strafe, jump, canSprint, sneak);
         in.setAttackHeld(attack && !s.screenOpen());

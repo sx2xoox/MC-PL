@@ -33,7 +33,7 @@ import java.util.function.Predicate;
  * Numbers that steer it come from {@link Params} (tuned by tools/tune.py).
  */
 public final class RunBrain {
-    public enum Goal { SCAN, WOOD, WOOD_TOOLS, SCOUT, TREASURE, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
+    public enum Goal { SCAN, WOOD, WOOD_TOOLS, SCOUT, TREASURE, OCEAN, LOOT, COBBLE, STONE_PICK, IRON, FLINT, SMELT, IRON_TOOLS, WATER, LAVA, PORTAL, DONE }
 
     final BotSenses s;
     final Controls c;
@@ -204,6 +204,12 @@ public final class RunBrain {
             attackCooldown--;
         }
         resetCheck();
+        if (s.onGround()) {
+            BlockState under = mem.get(mover.feet().down());
+            if (under != null && under.getBlock() == net.minecraft.block.Blocks.MAGMA_BLOCK) {
+                c.holdSneak(); // magma burns only those who do not sneak
+            }
+        }
         watchdog();
         if (!survival.tick() && !unstick() && !(!s.screenOpen() && relocating())) {
             Goal next = choose();
@@ -531,6 +537,13 @@ public final class RunBrain {
         if (pieRoute && !treasure.finished() && p.get("ocean.route") > 0) {
             return Goal.TREASURE; // the ocean route: the treasure first, from the spawn (the sweep needs no tools)
         }
+        if (oceanOn() && !ocean.finished()) {
+            if (ocean.phase() == OceanRoute.Phase.CRAFT && inv.logs() * 4 + inv.planks() < p.getInt("ocean.planks")
+                    && (goal != Goal.OCEAN || !bench.busy())) {
+                return Goal.WOOD;
+            }
+            return Goal.OCEAN;
+        }
         if (!inv.pickaxe() && inv.cobble() >= 3 && inv.planks() + inv.logs() * 4 >= 5 && goal != Goal.SCAN && goal != Goal.WOOD
                 && goal != Goal.WOOD_TOOLS && (goal == Goal.STONE_PICK || goalTicks > 20)) {
             return Goal.STONE_PICK; // the pickaxe wore out (tunnels, the portal room): a new one before anything else
@@ -623,6 +636,17 @@ public final class RunBrain {
     }
 
     final TreasureHunt treasure = new TreasureHunt(this);
+    final OceanRoute ocean = new OceanRoute(this);
+    /** Development only (-Dsrb.devOcean=PHASE): play the ocean route from that phase (with a kit), no treasure. */
+    static final String DEV_OCEAN = System.getProperty("srb.devOcean");
+
+    /** The ocean route is being played: an ocean spawn whose pie chart treasure was dug up. */
+    private boolean oceanOn() {
+        if (DEV_OCEAN != null) {
+            return !ocean.failed();
+        }
+        return pieRoute && p.get("ocean.route") > 0 && treasure.phase() == TreasureHunt.Phase.DONE && !ocean.failed();
+    }
     private BlockPos shipPos;
     private long lastShipLook;
     private BlockPos lootChest;
@@ -784,7 +808,7 @@ public final class RunBrain {
         RouteSelector.Choice ch = new RouteSelector(p).choose(o);
         route = ch.route;
         boolean sea = seaSeen();
-        if (route != RouteSelector.Route.TREASURE && (p.get("treasure.pie") > 0 || p.get("ocean.route") > 0) && sea) {
+        if (route != RouteSelector.Route.TREASURE && (p.get("treasure.pie") > 0 || p.get("ocean.route") > 0) && sea && DEV_OCEAN == null) {
             // an ocean spawn: the pie chart sweep (a few seconds) tells whether a buried treasure is in reach
             route = RouteSelector.Route.TREASURE;
             pieRoute = true;
@@ -837,6 +861,9 @@ public final class RunBrain {
                 if (treasure.phase() == TreasureHunt.Phase.FAILED) {
                     trace("treasure route failed: " + treasure.why());
                 }
+                break;
+            case OCEAN:
+                ocean.tick();
                 break;
             case LOOT:
                 if (!looter.busy()) {

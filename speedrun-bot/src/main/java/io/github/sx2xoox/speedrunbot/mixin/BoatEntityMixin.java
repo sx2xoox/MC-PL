@@ -16,6 +16,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(BoatEntity.class)
 public abstract class BoatEntityMixin implements io.github.sx2xoox.speedrunbot.server.BoatControl {
+    private static final boolean DEBUG = Boolean.getBoolean("srb.debugBoat");
+    @Shadow
+    private BoatEntity.Location location;
+    @Shadow
+    private double waterLevel;
     @Shadow
     private boolean pressingLeft;
     @Shadow
@@ -43,6 +48,10 @@ public abstract class BoatEntityMixin implements io.github.sx2xoox.speedrunbot.s
         BoatEntity self = (BoatEntity) (Object) this;
         if (!self.world.isClient && self.getPrimaryPassenger() instanceof FakePlayer) {
             updatePaddles();
+            if (DEBUG && self.getVelocity().y < -0.1) {
+                System.out.println("[srb] boat " + location + " y=" + self.getY() + " v=" + self.getVelocity() + " waterLevel=" + waterLevel
+                        + " at " + self.world.getBlockState(self.getBlockPos()) + " loaded=" + self.world.isChunkLoaded(self.getBlockPos()));
+            }
         }
     }
 }

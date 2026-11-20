@@ -120,6 +120,26 @@ public final class ServerBot implements BotInputs, BotSenses {
         return hit;
     }
 
+    /**
+     * Warp (ticks without sleeping) can outrun the asynchronous chunk generation when the bot travels fast (a boat at
+     * 8 blocks/s): entities in chunks that are not entity-ticking yet freeze. A client at 20 TPS never sees that, so
+     * while the chunks two seconds ahead are not ticking the server runs at normal speed (IGT is in ticks either way).
+     */
+    public boolean worldReadyAhead() {
+        if (!(player.getVehicle() instanceof net.minecraft.entity.vehicle.BoatEntity)) {
+            return true;
+        }
+        Entity boat = player.getVehicle();
+        Vec3d ahead = boat.getPos().add(boat.getVelocity().multiply(40));
+        for (Vec3d q : new Vec3d[]{boat.getPos(), ahead}) {
+            int cx = net.minecraft.util.math.MathHelper.floor(q.x) >> 4, cz = net.minecraft.util.math.MathHelper.floor(q.z) >> 4;
+            if (!world().getChunkManager().shouldTickChunk(new net.minecraft.util.math.ChunkPos(cx, cz))) {
+                return false;
+            }
+        }
+        return world().getChunkManager().shouldTickEntity(boat);
+    }
+
     @Override
     public boolean inBoat() {
         return player.getVehicle() instanceof net.minecraft.entity.vehicle.BoatEntity;

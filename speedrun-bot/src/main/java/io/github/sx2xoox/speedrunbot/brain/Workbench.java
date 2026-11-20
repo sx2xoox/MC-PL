@@ -334,7 +334,8 @@ public final class Workbench {
         Recipe<?> r = b.crafter.recipeFor(n.output, tableGrid);
         if (r == null) {
             // ingredients: sticks / planks first
-            boolean needsSticks = n.output.test(Items.WOODEN_PICKAXE) || n.output.test(Items.STONE_PICKAXE);
+            boolean needsSticks = n.output.test(Items.WOODEN_PICKAXE) || n.output.test(Items.STONE_PICKAXE) || n.output.test(Items.IRON_PICKAXE)
+                    || n.output.test(Items.WOODEN_SHOVEL) || n.output.test(Items.IRON_SHOVEL);
             if (needsSticks && b.inv().count(Items.STICK) < 2 && b.inv().planks() >= 2) {
                 subCraft = clickRecipe(i -> i == Items.STICK, tableGrid);
             } else if (b.inv().logs() > 0 && b.inv().planks() < 8) {

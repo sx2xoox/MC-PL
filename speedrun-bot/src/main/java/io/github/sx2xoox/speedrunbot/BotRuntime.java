@@ -54,7 +54,7 @@ public final class BotRuntime {
     }
 
     public static boolean warp() {
-        return WARP && brain != null && !done;
+        return WARP && brain != null && !done && bot.worldReadyAhead();
     }
 
     public static long warpTaskBudgetMs() {
@@ -84,6 +84,39 @@ public final class BotRuntime {
             return;
         }
         bot.newTick();
+        if (Boolean.getBoolean("srb.debugMap") && server.getTicks() % 400 == 0) {
+            // dev only: the real blocks around the bot, layer by layer (to compare with what it decided)
+            net.minecraft.util.math.BlockPos c = bot.player().getBlockPos();
+            for (int dy = -1; dy <= 2; dy++) {
+                StringBuilder sb = new StringBuilder("[srb] map y=" + (c.getY() + dy) + " (x right, z down)\n");
+                for (int dz = -8; dz <= 8; dz++) {
+                    for (int dx = -8; dx <= 8; dx++) {
+                        net.minecraft.block.BlockState st = server.getOverworld().getBlockState(c.add(dx, dy, dz));
+                        String n = net.minecraft.util.registry.Registry.BLOCK.getId(st.getBlock()).getPath();
+                        char ch = dx == 0 && dz == 0 ? '@' : n.equals("water") ? '.' : n.equals("bubble_column") ? 'o' : n.equals("magma_block") ? 'M'
+                                : n.equals("obsidian") ? 'O' : n.equals("lava") ? 'L' : n.equals("gravel") ? 'g' : n.contains("kelp") || n.contains("grass") ? ',' : '#';
+                        sb.append(ch);
+                    }
+                    sb.append('\n');
+                }
+                System.out.println(sb);
+            }
+        }
+        String dc = System.getProperty("srb.debugColumn");
+        if (dc != null && server.getTicks() % 100 == 0) {
+            String[] xz = dc.split(",");
+            StringBuilder sb = new StringBuilder("[srb] column " + dc + ":");
+            String prevName = "";
+            for (int y = 8; y <= 64; y++) {
+                String n = server.getOverworld().getBlockState(new net.minecraft.util.math.BlockPos(Integer.parseInt(xz[0]), y, Integer.parseInt(xz[1])))
+                        .getBlock().toString().replace("Block{minecraft:", "").replace("}", "");
+                if (!n.equals(prevName)) {
+                    sb.append(' ').append(y).append('=').append(n);
+                    prevName = n;
+                }
+            }
+            System.out.println(sb);
+        }
         try {
             brain.tick();
         } catch (RuntimeException e) {

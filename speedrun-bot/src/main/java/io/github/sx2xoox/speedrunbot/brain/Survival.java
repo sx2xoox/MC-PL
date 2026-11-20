@@ -72,6 +72,12 @@ public final class Survival {
         return eatTicks > 0;
     }
 
+    /** Hurt by what the player knows without looking: magma underfoot, no air left. */
+    private boolean burnOrDrown() {
+        net.minecraft.block.BlockState under = b.mem.get(b.feet().down());
+        return b.s.air() <= 0 || (under != null && under.getBlock() == net.minecraft.block.Blocks.MAGMA_BLOCK);
+    }
+
     public boolean tick() {
         ticks++;
         if (attackCooldown > 0) {
@@ -120,7 +126,7 @@ public final class Survival {
             return true;
         }
         // 2b. air: swim up
-        if (b.s.air() < 100 && b.s.submerged()) {
+        if (b.s.air() < 100 && b.s.submerged() && !b.ocean.managesAir()) {
             b.c.lookAngles(b.s.yaw(), -60f);
             b.c.move(0.6f, 0f, true, false, false);
             interruptScreens();
@@ -194,7 +200,7 @@ public final class Survival {
             }
         }
         // hit by something not in view (a zombie behind us): turn around to see it, as a player would
-        if (ticks - lastHurtTick < 24 && !b.s.inLava() && !b.s.onFire() && lastHurtTick != lookedForAttacker) {
+        if (ticks - lastHurtTick < 24 && !b.s.inLava() && !b.s.onFire() && lastHurtTick != lookedForAttacker && !burnOrDrown()) {
             if (lookTicks == 0) {
                 b.trace("hit by something out of view: looking around");
             }

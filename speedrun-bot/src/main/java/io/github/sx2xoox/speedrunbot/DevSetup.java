@@ -151,11 +151,15 @@ public final class DevSetup {
                         if (ch.getBlockState(m).getBlock() != Blocks.MAGMA_BLOCK) {
                             continue;
                         }
+                        // a clear water column to the sea (kelp or seagrass stops a bubble column) and lava under the floor
                         boolean open = true;
-                        for (int y = 11; y <= 62 && open; y += 3) {
+                        for (int y = 11; y <= 62 && open; y++) {
                             m.setY(y);
-                            open = ch.getFluidState(m).isIn(net.minecraft.tag.FluidTags.WATER);
+                            net.minecraft.block.Block bl = ch.getBlockState(m).getBlock();
+                            open = bl == Blocks.WATER || bl == Blocks.BUBBLE_COLUMN;
                         }
+                        m.setY(9);
+                        open &= ch.getBlockState(m).getBlock() == Blocks.LAVA;
                         if (!open) {
                             continue;
                         }
