@@ -834,6 +834,11 @@ public final class RunBrain {
         }
         lastLogs = logs;
         BlockPos f = mover.feet();
+        if (target != null && woodMining && mem.get(target) != null && Blocks2.pass(mem.get(target)) != Blocks2.Pass.SOLID) {
+            logMined(target); // broken (seen gone before the mining call could say so)
+            target = null;
+        }
+        woodMining = false;
         if (target == null && collectWoodDrops(f)) {
             return;
         }
@@ -873,19 +878,28 @@ public final class RunBrain {
             badTargets.add(target.asLong());
             target = null;
         } else if (st == Actions.Status.DONE) {
-            // the drop falls to the ground under the log: remember where (it is often out of view later)
-            BlockPos d = target;
-            for (int k = 0; k < 8; k++) {
-                BlockState below = mem.get(d.down());
-                if (below == null || Blocks2.standable(below) && !isLog(d.down())) {
-                    break;
-                }
-                d = d.down();
-            }
-            woodDrops.put(-(++dropIds), new Vec3d(d.getX() + 0.5, d.getY(), d.getZ() + 0.5));
-            woodDropSeen.put(-dropIds, now());
+            logMined(target);
             target = null; // next log
+        } else {
+            woodMining = true;
         }
+    }
+
+    private boolean woodMining;
+
+    /** The drop falls to the ground under the log: remember where (it is often out of view later). */
+    private void logMined(BlockPos log) {
+        BlockPos d = log;
+        for (int k = 0; k < 8; k++) {
+            BlockState below = mem.get(d.down());
+            if (below == null || Blocks2.standable(below) && !isLog(d.down())) {
+                break;
+            }
+            d = d.down();
+        }
+        woodDrops.put(-(++dropIds), new Vec3d(d.getX() + 0.5, d.getY(), d.getZ() + 0.5));
+        woodDropSeen.put(-dropIds, now());
+        trace("log mined; its drop expected at " + d + " (" + woodDrops.size() + " waiting)");
     }
 
     /** Log drops seen lying around (item entities in view), remembered for a while once out of view. */
@@ -925,8 +939,11 @@ public final class RunBrain {
                 best = v;
             }
         }
-        act = "log drops";
         BlockPos at = new BlockPos(best);
+        if (!act.equals("log drops")) {
+            trace("picking up " + woodDrops.size() + " log drops, nearest at " + at);
+        }
+        act = "log drops";
         if (mover.go(Navigator.near(at, 0.5)) == Mover.Status.FAILED) {
             woodDrops.values().remove(best);
         }

@@ -78,7 +78,7 @@ public final class Params {
         d.put("portal.poolSearchTicks", 400.0);  // ...unless none was found for this long        // site must be within this distance of a lava source
         d.put("portal.waterSearchDist", 64.0);   // max distance to walk back for water
         // --- safety ---
-        d.put("safety.stallTicks", 300.0);       // no movement and no inventory change this long: restart the step
+        d.put("safety.stallTicks", 220.0);       // no movement and no inventory change this long: restart the step
         d.put("safety.lavaMargin", 1.0);         // blocks kept between feet and lava when pathing
         d.put("safety.fleeHealth", 8.0);         // retreat from mobs below this health
         d.put("food.eatBelow", 12.0);            // eat when food level below this (if food carried)
