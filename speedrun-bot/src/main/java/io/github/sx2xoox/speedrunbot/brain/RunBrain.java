@@ -556,7 +556,7 @@ public final class RunBrain {
             if (!inv.has(Items.FLINT) && (p.get("route.flintLate") <= 0 || inv.count(Items.IRON_INGOT) < 1)) {
                 return Goal.FLINT;
             }
-            if (inv.has(Items.FLINT)) {
+            if (inv.has(Items.FLINT) && !lighterDeferred) {
                 return Goal.IRON_TOOLS;
             }
             // flint later: gravel is picked up on the way down to the lava (caves have plenty); the lighter is only
@@ -1012,6 +1012,13 @@ public final class RunBrain {
         }
         if (bench.run(needs) == Actions.Status.FAILED && bench.error() != null && bench.error().startsWith("no_")) {
             craftFailures++;
+            if (bench.error().contains("wood") && name.equals("flint_and_steel") && p.get("route.flintLate") > 0 && !portal.waitingForLighter()) {
+                // the lighter is only needed once the frame stands: no trip back to the trees for it now (a run went
+                // from y 50 back to the surface for wood after its table was lost)
+                lighterDeferred = true;
+                trace("no wood for a table: the lighter waits for the frame");
+                return;
+            }
             if (bench.error().contains("wood") && woodRefills < 3) {
                 // out of planks for a table: fetch wood (trees, or planks of a mineshaft / wreck seen underground)
                 woodRefills++;
@@ -1052,6 +1059,7 @@ public final class RunBrain {
     private int woodRefills;
 
     private int craftFailures;
+    private boolean lighterDeferred;
 
     private void woodTools() {
         java.util.List<Workbench.Need> needs = new java.util.ArrayList<>();

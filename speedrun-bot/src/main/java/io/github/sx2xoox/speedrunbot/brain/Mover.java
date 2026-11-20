@@ -326,7 +326,9 @@ public final class Mover {
         }
         // deviation: fell somewhere else
         boolean sankBelowFrom = (wet || s.inWater()) && f.getX() == from.getX() && f.getZ() == from.getZ() && f.getY() >= from.getY() - 2;
-        if (!f.equals(t) && !f.equals(from) && s.onGround() && f.getManhattanDistance(t) > 2 && !sankBelowFrom) {
+        // (also when swimming: a current carried runs three blocks off a SWIM_UP step that then never ended)
+        if (!f.equals(t) && !f.equals(from) && (s.onGround() || (s.inWater() && f.getManhattanDistance(from) > 1)) && f.getManhattanDistance(t) > 2
+                && !sankBelowFrom) {
             return replan("deviation");
         }
         stuckCheck(t, false);
