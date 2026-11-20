@@ -1,4 +1,4 @@
-# speedrun-bot — Minecraft Java 1.16.1 RSG 스피드런 봇 (3단계 M1 진행 중, 3회차)
+# speedrun-bot — Minecraft Java 1.16.1 RSG 스피드런 봇 (3단계 M1 진행 중, 4회차: 바다 루트)
 
 무작위 시드 1.16.1에서 엔더드래곤까지 IGT 10분 이하를 목표로 하는 봇의 1단계입니다. 게임 상태를 코드로 읽고
 조종하는 봇(화면 기반 신경망 아님)이고, 루트는 코드, 판단 수치(`params.json`)는 여러 시드 반복 실행으로 자동
@@ -123,6 +123,24 @@ python3 tools/rsg_report.py results/eval_m1r3_e.jsonl      # 시도당 네더 �
 python3 tools/run_batch.py --seed-file tools/seeds_treasure.txt ...   # 보물 근처 스폰(하네스 probe로 고름)
 ```
 
+## 현재 상태 (3단계 M1 4회차: 바다 루트로 전략 전환)
+
+일반 굴착 루트가 구조적으로 10분에 닿지 못해(네더 8~9분), 상위 RSG 런의 바다 루트를 짓고 RSG 방식으로 평가하기 시작했다:
+바다 판단(`core/OceanSense`: 열린 해수면, 강·호수 제외), 파이 차트 두 높이 띠 회전 + 세로 모형 + 세 번째 회전, **보트**(바닐라
+물리를 서버에서, 봇은 W/A/D·웅크리기만), 거품 기둥으로 **마그마 협곡** 찾기, 기둥으로 하강, 협곡 벽에 **문 주머니**(물이 못 들어오는
+마른 칸), 그 뒤 일반 주조 목표. RSG 리셋 정책 기본값은 바다 루트용(`reset.oceanOnly`), 풀 측정은 `-Dsrb.rsgStop=true`.
+뒤쪽 절반(보트 → 협곡 → 주머니)은 개발 고정 장면에서 끝까지 동작하지만 실제 시드에서 보물 단계가 끝나지 않아 바다 루트 네더 진입은
+아직 0이다. 무작위 120 시드 풀: 바다 스폰 21%, 네더 0. 자세한 것과 다음 계획은 docs/design.md §13.
+
+```bash
+# RSG 풀 (리셋 판단에서 런 종료; 바다가 아닌 스폰은 IGT 4초)
+python3 tools/run_batch.py --seeds 120 --rng 4410 --jvm-arg=-Dsrb.rsgStop=true --out results/rsg.csv ...
+python3 tools/rsg_report.py results/rsg.jsonl
+# 개발 고정 장면: 협곡 위 수면 / 협곡 바닥에서 바다 루트의 한 단계부터
+--jvm-arg=-Dsrb.devStart=ravine --jvm-arg=-Dsrb.devOcean=LAUNCH --jvm-arg=-Dsrb.kit=oak_boat:1,oak_door:1,iron_pickaxe:1,bucket:1
+--jvm-arg=-Dsrb.devStart=ravinefloor --jvm-arg=-Dsrb.devOcean=WALL --jvm-arg=-Dsrb.kit=oak_door:1,iron_pickaxe:1,water_bucket:1
+```
+
 ## 공정 규칙 요약
 
 - 봇의 세계 지식 = 자기 눈 위치에서 시야(FOV 70°, 16:9) 안으로 쏜 광선이 지나간/멈춘 블록 + 몸에 닿는 블록뿐
@@ -137,4 +155,6 @@ python3 tools/run_batch.py --seed-file tools/seeds_treasure.txt ...   # 보물 �
   ±15°·거리 ±30% 정도의 짐작만). `-Dsrb.hearing=false`로 끈다.
 - 3단계 M1 3회차: F3 파이 차트의 블록 엔티티 조각 = 지금 시야 절두체 안·렌더 거리 안 상자 수(바닐라 클라이언트처럼
   가림 검사 없음, 위치는 주지 않음). FOV 옵션(30~110)과 창 비율을 바꿀 수 있고, 바꾸는 데 20틱.
+- 4회차: 보트는 바닐라 클라이언트의 보트 물리 코드를 서버에서 돌리고 봇은 키만 누른다. 거품 기둥은 시야 광선이 지나간 칸만
+  안다(물 안개 16칸 그대로). 협곡 바닥 y 10의 마그마/흑요석과 그 밑 용암은 공개 생성 지식.
 - 자세한 근거와 테스트는 docs/design.md §2.
