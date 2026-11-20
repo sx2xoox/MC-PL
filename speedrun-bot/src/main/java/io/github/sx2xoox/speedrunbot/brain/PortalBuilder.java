@@ -422,10 +422,16 @@ public final class PortalBuilder {
         }
     }
 
+    /** A cell whose mining failed from afar (something in the line, lava next to the block hit): mined from close by next. */
+    private Cell closeFor;
+
     private boolean mineCell(Cell c, double reach) {
         BlockPos p = bp(c);
         if (!b.a.solid(p) && b.mem.get(p) != null) {
             return true;
+        }
+        if (c.equals(closeFor)) {
+            reach = Math.min(reach, 2.6);
         }
         BlockPos f = b.feet();
         Navigator.Goal g = Navigator.reach(p, reach);
@@ -445,6 +451,14 @@ public final class PortalBuilder {
                     + (h instanceof BlockHitResult ? ((BlockHitResult) h).getBlockPos() : h.getType()));
         }
         if (st == Actions.Status.FAILED) {
+            if (!c.equals(closeFor)) {
+                // the first failure retried from a closer spot (a run spent all eight retries in one second at the
+                // same spot and left a frame with one obsidian)
+                closeFor = c;
+                b.trace("[" + state + "] mining " + p + " failed from " + f + ": trying from closer");
+                return false;
+            }
+            closeFor = null;
             restartSite("mine_failed");
         }
         return false;

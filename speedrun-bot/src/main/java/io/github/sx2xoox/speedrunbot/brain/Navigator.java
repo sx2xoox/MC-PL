@@ -88,7 +88,9 @@ public final class Navigator {
             }
 
             public boolean done(int x, int y, int z) {
-                if ((x == p.getX() && z == p.getZ() && (y == p.getY() || y + 1 == p.getY()))) {
+                if ((x == p.getX() && z == p.getZ() && (y == p.getY() || y + 1 == p.getY() || y > p.getY()))) {
+                    // in the block, under it, or standing over it (the floor would go first: carving a portal room
+                    // from above dropped two runs into the lava pool under the room)
                     return false;
                 }
                 double dx = x + 0.5 - (p.getX() + 0.5), dy = y + 1.62 - (p.getY() + 0.5), dz = z + 0.5 - (p.getZ() + 0.5);
