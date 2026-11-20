@@ -22,6 +22,8 @@ public final class ResetPolicy {
         public long treasureTick = -1;
         /** The treasure search gave up (no candidate worth the trip, or the check found no chest). */
         public boolean treasureGaveUp;
+        /** The ocean route (boat, ravine, door pocket) failed: the rest would be the slow general route. */
+        public boolean oceanFailed;
         public long ravineTick = -1;
         /** A boat carried or ridden. */
         public boolean hasBoat;
@@ -42,6 +44,9 @@ public final class ResetPolicy {
             }
             if (s.oceanSeen && s.treasureSignal == 0) {
                 return "ocean_no_treasure_signal";
+            }
+            if (s.oceanSeen && s.oceanFailed) {
+                return "ocean_route_failed";
             }
             if (s.oceanSeen && s.treasureGaveUp && s.treasureTick < 0) {
                 return "ocean_no_treasure"; // the early decision found no column worth the trip (or it was not there)

@@ -117,6 +117,8 @@ class PieChartTest {
         assertEquals("ocean_no_treasure", rp.decide(s));
         s.treasureTick = 20 * 25; // already dug: a later give-up does not matter
         assertEquals(null, rp.decide(s));
+        s.oceanFailed = true;
+        assertEquals("ocean_route_failed", rp.decide(s));
     }
 
     @Test

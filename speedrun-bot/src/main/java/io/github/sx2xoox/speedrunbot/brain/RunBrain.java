@@ -372,6 +372,7 @@ public final class RunBrain {
         st.waterBucketTick = igt.splits().containsKey("water_bucket") ? 0 : -1;
         st.portalSiteTick = igt.splits().containsKey("portal_site") ? 0 : -1;
         st.treasureTick = igt.splits().containsKey("treasure") ? 0 : -1;
+        st.oceanFailed = ocean.phase() == OceanRoute.Phase.FAILED;
         st.treasureGaveUp = treasure.phase() == TreasureHunt.Phase.FAILED && treasure.why().startsWith("pie_");
         st.ravineTick = igt.splits().containsKey("ravine") ? 0 : -1;
         st.hasBoat = ocean.hasBoat();
