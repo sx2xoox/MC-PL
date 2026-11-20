@@ -314,9 +314,7 @@ public final class Mover {
                 return StepResult.OK;
             }
         }
-        // in the step's cell: centred, or going straight on, or the last step of the path (runs stood for minutes at
-        // a cell edge "walking" to the cell they were in)
-        if (f.equals(t) && (hd < 0.35 || (straight && hd < 0.7)) && (s.onGround() || s.inWater())) {
+        if (f.equals(t) && (hd < 0.35 || (straight && index + 1 < path.steps.size() && hd < 0.7)) && (s.onGround() || s.inWater())) {
             index++;
             stuck = 0;
             bestDist = Double.MAX_VALUE;
