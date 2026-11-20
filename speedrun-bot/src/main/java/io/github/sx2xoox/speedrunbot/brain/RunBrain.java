@@ -277,7 +277,7 @@ public final class RunBrain {
         BlockPos f = mover.feet();
         // progress = the inventory changed or the bot got 2.5 blocks away from where it was (pacing back and forth
         // between two cells for minutes on a mineshaft's rails counted as moving before)
-        long key = inventoryHash();
+        long key = inventoryHash() * 31 + a.broken;
         Vec3d here = s.pos();
         if (key != progressKey || progressAnchor == null || here.squaredDistanceTo(progressAnchor) > 2.5 * 2.5 || smelter.smelting() || bench.busy()) {
             progressKey = key;
@@ -911,8 +911,8 @@ public final class RunBrain {
             return false;
         }
         BlockPos next = mem.nearest(WorldMemory.Kind.LOG, f, 6, l -> !badTargets.contains(l) && BlockPos.unpackLongY(l) <= f.getY() + 6);
-        if (next != null && Navigator.reach(next, 4.2).done(f.getX(), f.getY(), f.getZ())) {
-            return false; // more logs from here first
+        if (next != null && Navigator.reach(next, 4.2).done(f.getX(), f.getY(), f.getZ()) && woodDrops.size() < 3) {
+            return false; // more logs from here first (three drops waiting: get them, they are a few steps away)
         }
         if (++dropWalkTicks > 160) {
             woodDrops.clear(); // could not get there (a drop on a ledge, in leaves)
@@ -1313,6 +1313,10 @@ public final class RunBrain {
             return;
         }
         for (BlockPos cell : cells) {
+            if (ownBlock(cell)) {
+                turn(); // never dig through our own furnace (a smelting furnace broke and dropped the ore)
+                return;
+            }
             if (a.solid(cell) || mem.get(cell) == null) {
                 Actions.Status st = a.mine(cell, false);
                 if (st == Actions.Status.FAILED) {
@@ -1548,6 +1552,10 @@ public final class RunBrain {
             return;
         }
         for (BlockPos cell : cells) {
+            if (ownBlock(cell)) {
+                turn(); // never dig through our own furnace (a smelting furnace broke and dropped the ore)
+                return;
+            }
             if (a.solid(cell) || mem.get(cell) == null) {
                 Actions.Status st = a.mine(cell, false);
                 if (st == Actions.Status.FAILED) {
@@ -1594,6 +1602,10 @@ public final class RunBrain {
             return;
         }
         for (BlockPos cell : cells) {
+            if (ownBlock(cell)) {
+                turn(); // never dig through our own furnace (a smelting furnace broke and dropped the ore)
+                return;
+            }
             if (a.solid(cell) || mem.get(cell) == null) {
                 if (a.lavaNextTo(cell)) {
                     turn(); // opening it would let the lava in
@@ -1610,6 +1622,11 @@ public final class RunBrain {
         }
         mover.go(Navigator.at(col.up()));
         lookAhead();
+    }
+
+    private boolean ownBlock(BlockPos q) {
+        BlockState st = mem.get(q);
+        return st != null && (st.getBlock() == Blocks.FURNACE || (st.getBlock() == Blocks.CRAFTING_TABLE && bench.busy()));
     }
 
     private int probeUntilLen;
@@ -2010,12 +2027,6 @@ public final class RunBrain {
                     target = spot;
                     subTicks = 0;
                 }
-                return;
-            }
-            if (fp != null && mover.feet().getSquaredDistance(fp) < 10 * 10 && smelter.secondsLeft(now()) > 8) {
-                // no gravel known: look for some close to the furnace while the ore smelts (the lighter is needed
-                // once the frame stands; getting flint then cost minutes in runs)
-                exploreUnderground("gravel");
                 return;
             }
         }

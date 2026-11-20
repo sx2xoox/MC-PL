@@ -181,9 +181,15 @@ public final class Actions {
      * Mines the block: selects the best tool, aims, holds attack until the block is gone. When another block is in
      * the way under the crosshair it is mined first.
      */
+    /** Blocks this bot has broken (progress for the watchdog). */
+    public int broken;
+
     public Status mine(BlockPos p, boolean needDrop) {
         BlockState st = mem.get(p);
         if (st != null && Blocks2.pass(st) != Blocks2.Pass.SOLID) {
+            if (p.equals(mineTarget)) {
+                broken++; // the block we were mining is gone
+            }
             mineTarget = null;
             mineTicks = 0;
             return Status.DONE;
